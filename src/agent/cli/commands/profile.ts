@@ -9,8 +9,10 @@
  *   multica profile delete <id>       Delete a profile
  */
 
-import { existsSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, rmSync, readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import * as readline from "node:readline";
 import {
   createAgentProfile,
   loadAgentProfile,
@@ -18,11 +20,15 @@ import {
   profileExists,
 } from "../../profile/index.js";
 import { DATA_DIR } from "../../../shared/index.js";
-import { cyan, yellow, green, dim, red } from "../colors.js";
+import { cyan, yellow, green, dim, red, brightCyan, gray, colors } from "../colors.js";
+import { Agent } from "../../runner.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SETUP_SKILL_PATH = join(__dirname, "../../../../skills/profile-setup/SKILL.md");
 
 const PROFILES_DIR = join(DATA_DIR, "agent-profiles");
 
-type Command = "new" | "list" | "show" | "edit" | "delete" | "help";
+type Command = "new" | "list" | "show" | "edit" | "delete" | "setup" | "help";
 
 function printHelp() {
   console.log(`
@@ -31,6 +37,7 @@ ${cyan("Usage:")} multica profile <command> [options]
 ${cyan("Commands:")}
   ${yellow("list")}                List all profiles
   ${yellow("new")} <id>            Create a new profile
+  ${yellow("setup")} <id>          Interactive setup for a profile
   ${yellow("show")} <id>           Show profile contents
   ${yellow("edit")} <id>           Open profile directory in file manager
   ${yellow("delete")} <id>         Delete a profile
@@ -38,15 +45,17 @@ ${cyan("Commands:")}
 
 ${cyan("Profile Structure:")}
   Each profile is a directory containing:
-  - soul.md       Personality and constraints
-  - identity.md   Name and role
-  - tools.md      Tool usage instructions
+  - soul.md       Agent identity, personality and behavior
+  - user.md       Information about the user
+  - workspace.md  Workspace rules and conventions
   - memory.md     Persistent knowledge
-  - bootstrap.md  Initial context
 
 ${cyan("Examples:")}
   ${dim("# Create a new profile")}
   multica profile new my-agent
+
+  ${dim("# Interactive setup")}
+  multica profile setup my-agent
 
   ${dim("# List all profiles")}
   multica profile list
@@ -82,13 +91,15 @@ function cmdNew(profileId: string | undefined) {
   console.log(`${dim("Location:")} ${dir}`);
   console.log("");
   console.log("Files created:");
-  console.log("  - soul.md       (personality and constraints)");
-  console.log("  - identity.md   (name and role)");
-  console.log("  - tools.md      (tool usage instructions)");
+  console.log("  - soul.md       (identity, personality and behavior)");
+  console.log("  - user.md       (information about the user)");
+  console.log("  - workspace.md  (workspace rules and conventions)");
   console.log("  - memory.md     (persistent knowledge)");
-  console.log("  - bootstrap.md  (initial context)");
   console.log("");
-  console.log("Edit these files to customize your agent, then run:");
+  console.log("Run interactive setup to personalize your agent:");
+  console.log(`  multica profile setup ${profileId}`);
+  console.log("");
+  console.log("Or start chatting directly:");
   console.log(`  multica chat --profile ${profileId}`);
 }
 
@@ -136,33 +147,27 @@ function cmdShow(profileId: string | undefined) {
   console.log(`${dim("Location:")} ${getProfileDir(profileId)}`);
   console.log("");
 
-  if (profile.identity) {
-    console.log(`${green("=== identity.md ===")}`);
-    console.log(profile.identity.trim());
-    console.log("");
-  }
-
   if (profile.soul) {
     console.log(`${green("=== soul.md ===")}`);
     console.log(profile.soul.trim());
     console.log("");
   }
 
-  if (profile.tools) {
-    console.log(`${green("=== tools.md ===")}`);
-    console.log(profile.tools.trim());
+  if (profile.user) {
+    console.log(`${green("=== user.md ===")}`);
+    console.log(profile.user.trim());
+    console.log("");
+  }
+
+  if (profile.workspace) {
+    console.log(`${green("=== workspace.md ===")}`);
+    console.log(profile.workspace.trim());
     console.log("");
   }
 
   if (profile.memory) {
     console.log(`${green("=== memory.md ===")}`);
     console.log(profile.memory.trim());
-    console.log("");
-  }
-
-  if (profile.bootstrap) {
-    console.log(`${green("=== bootstrap.md ===")}`);
-    console.log(profile.bootstrap.trim());
     console.log("");
   }
 }
@@ -213,6 +218,150 @@ function cmdDelete(profileId: string | undefined) {
   }
 }
 
+/**
+ * Load setup skill instructions from SKILL.md
+ */
+function loadSetupSkillInstructions(): string | undefined {
+  try {
+    if (!existsSync(SETUP_SKILL_PATH)) {
+      return undefined;
+    }
+    const content = readFileSync(SETUP_SKILL_PATH, "utf-8");
+    // Extract instructions after frontmatter (after the second ---)
+    const parts = content.split("---");
+    if (parts.length >= 3) {
+      return parts.slice(2).join("---").trim();
+    }
+    return content;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Interactive setup for a profile
+ */
+async function cmdSetup(profileId: string | undefined) {
+  if (!profileId) {
+    console.error("Error: Profile ID is required");
+    console.error("Usage: multica profile setup <id>");
+    process.exit(1);
+  }
+
+  if (!profileExists(profileId)) {
+    console.error(`Error: Profile "${profileId}" not found`);
+    console.error(`Create it first with: multica profile new ${profileId}`);
+    process.exit(1);
+  }
+
+  // Check TTY
+  if (!process.stdin.isTTY) {
+    console.error(colors.error("Error: Interactive setup requires a TTY."));
+    process.exit(1);
+  }
+
+  // Load setup skill instructions
+  const setupInstructions = loadSetupSkillInstructions();
+  if (!setupInstructions) {
+    console.error(colors.error("Error: Could not load setup skill instructions."));
+    process.exit(1);
+  }
+
+  const profileDir = getProfileDir(profileId);
+
+  // Build system prompt with setup instructions
+  const systemPrompt = `${setupInstructions}
+
+## Profile Context
+
+You are setting up the profile "${profileId}".
+The profile directory is: ${profileDir}
+
+Available profile files to update:
+- ${profileDir}/user.md - Information about the user
+- ${profileDir}/workspace.md - Workspace rules and conventions
+- ${profileDir}/config.json - Configuration (provider, model, etc.)
+
+Start the setup conversation now.`;
+
+  // Create agent with setup instructions
+  const agent = new Agent({
+    profileId,
+    systemPrompt,
+  });
+
+  // Print welcome
+  console.log("");
+  console.log(cyan("╭─────────────────────────────────────────╮"));
+  console.log(`${cyan("│")}     ${brightCyan("Profile Setup Wizard")}               ${cyan("│")}`);
+  console.log(cyan("╰─────────────────────────────────────────╯"));
+  console.log("");
+  console.log(`${dim("Profile:")} ${yellow(profileId)}`);
+  console.log(`${dim("Location:")} ${gray(profileDir)}`);
+  console.log(`${dim("Type")} ${cyan("/exit")} ${dim("to finish setup.")}`);
+  console.log("");
+
+  // Start the conversation with an initial prompt
+  try {
+    await agent.run("Start the setup process.");
+    console.log("");
+  } catch (err) {
+    console.error(`\n${colors.error(`Error: ${err instanceof Error ? err.message : String(err)}`)}`);
+  }
+
+  // Interactive loop
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  const askQuestion = (prompt: string): Promise<string> => {
+    return new Promise((resolve) => {
+      rl.question(prompt, (answer) => {
+        resolve(answer);
+      });
+    });
+  };
+
+  let running = true;
+
+  // Handle Ctrl+C
+  process.on("SIGINT", () => {
+    console.log(`\n${dim("Setup cancelled.")}`);
+    rl.close();
+    process.exit(0);
+  });
+
+  while (running) {
+    const input = await askQuestion(`${brightCyan("You:")} `);
+    const trimmed = input.trim();
+
+    if (!trimmed) continue;
+
+    // Check for exit command
+    if (trimmed.toLowerCase() === "/exit" || trimmed.toLowerCase() === "/quit" || trimmed.toLowerCase() === "/q") {
+      console.log("");
+      console.log(`${green("Setup complete!")} Your profile has been updated.`);
+      console.log(`${dim("Start chatting with:")} multica chat --profile ${profileId}`);
+      console.log("");
+      running = false;
+      break;
+    }
+
+    // Send to agent
+    try {
+      console.log("");
+      await agent.run(trimmed);
+      console.log("");
+    } catch (err) {
+      console.error(`\n${colors.error(`Error: ${err instanceof Error ? err.message : String(err)}`)}`);
+      console.log("");
+    }
+  }
+
+  rl.close();
+}
+
 export async function profileCommand(args: string[]): Promise<void> {
   const command = (args[0] || "help") as Command;
   const arg1 = args[1];
@@ -237,6 +386,9 @@ export async function profileCommand(args: string[]): Promise<void> {
       break;
     case "delete":
       cmdDelete(arg1);
+      break;
+    case "setup":
+      await cmdSetup(arg1);
       break;
     case "help":
     default:
