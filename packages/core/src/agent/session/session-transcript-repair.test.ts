@@ -112,6 +112,28 @@ describe("sanitizeToolUseResultPairing", () => {
     expect(out.some((m) => m.role === "toolResult")).toBe(false);
     expect(out.map((m) => m.role)).toEqual(["user", "assistant"]);
   });
+
+  it("drops tool results with empty tool call id", () => {
+    const input = [
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_1", name: "read", arguments: {} }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "",
+        toolName: "read",
+        content: [{ type: "text", text: "invalid id" }],
+        isError: true,
+      },
+      { role: "user", content: "next" },
+    ] as AgentMessage[];
+
+    const out = sanitizeToolUseResultPairing(input);
+    const toolResults = out.filter((m) => m.role === "toolResult") as Array<{ toolCallId?: string }>;
+    expect(toolResults).toHaveLength(1);
+    expect(toolResults[0]?.toolCallId).toBe("call_1");
+  });
 });
 
 describe("sanitizeToolCallInputs", () => {
@@ -146,5 +168,21 @@ describe("sanitizeToolCallInputs", () => {
       ? assistant.content.map((block) => (block as { type?: unknown }).type)
       : [];
     expect(types).toEqual(["text", "toolUse"]);
+  });
+
+  it("drops tool calls with empty id even when input exists", () => {
+    const input = [
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "", name: "read", arguments: { path: "a" } },
+          { type: "toolUse", id: " ", name: "exec", input: { cmd: "pwd" } },
+        ],
+      },
+      { role: "user", content: "hello" },
+    ] as AgentMessage[];
+
+    const out = sanitizeToolCallInputs(input);
+    expect(out.map((m) => m.role)).toEqual(["user"]);
   });
 });

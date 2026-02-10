@@ -38,6 +38,10 @@ import {
   type SystemPromptMode,
 } from "./system-prompt/index.js";
 import type { AuthProfileFailureReason } from "./auth-profiles/index.js";
+import {
+  sanitizeToolCallInputs,
+  sanitizeToolUseResultPairing,
+} from "./session/session-transcript-repair.js";
 
 // ============================================================
 // Error classification for auth profile rotation
@@ -180,6 +184,10 @@ export class Agent {
           throw new Error(`No API key configured for provider: ${this.resolvedProvider}`);
         }
         return this.currentApiKey;
+      },
+      transformContext: async (messages) => {
+        const sanitizedInputs = sanitizeToolCallInputs(messages);
+        return sanitizeToolUseResultPairing(sanitizedInputs);
       },
     });
 
