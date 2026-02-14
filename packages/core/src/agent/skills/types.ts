@@ -66,8 +66,6 @@ export interface SkillMetadata {
   always?: boolean | undefined;
   /** Custom key for config lookup (defaults to skill id) */
   skillKey?: string | undefined;
-  /** Primary environment variable for API key injection */
-  primaryEnv?: string | undefined;
   /** Emoji for display (e.g., "📝") */
   emoji?: string | undefined;
   /** Homepage URL for documentation */
@@ -162,10 +160,6 @@ export interface Skill {
 export interface SkillConfig {
   /** Explicitly enable/disable this skill */
   enabled?: boolean | undefined;
-  /** API key for skills with primaryEnv set */
-  apiKey?: string | undefined;
-  /** Environment variables to inject */
-  env?: Record<string, string> | undefined;
   /** Custom per-skill configuration */
   config?: Record<string, unknown> | undefined;
 }

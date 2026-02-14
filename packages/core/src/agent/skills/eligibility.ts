@@ -308,12 +308,6 @@ export function checkEligibilityDetailed(
       // Check if env var exists
       if (envExists(envVar)) continue;
 
-      // Check if provided via skill config env
-      if (skillConfig?.env?.[envVar]) continue;
-
-      // Check if provided via apiKey + primaryEnv match
-      if (skillConfig?.apiKey && metadata?.primaryEnv === envVar) continue;
-
       missingEnvVars.push(envVar);
       reasons.push(`Required environment variable not set: ${envVar}`);
     }
@@ -443,9 +437,8 @@ function getBinaryInstallHint(binary: string, platform: NodeJS.Platform): string
 /**
  * Generate hints for missing environment variables
  */
-function generateEnvHint(envVars: string[], skill: Skill): string {
+function generateEnvHint(envVars: string[], _skill: Skill): string {
   const hints: string[] = [];
-  const skillKey = getSkillKey(skill);
 
   for (const envVar of envVars) {
     // Check for well-known API key patterns
@@ -462,9 +455,6 @@ function generateEnvHint(envVars: string[], skill: Skill): string {
       hints.push(`export ${envVar}=<value>`);
     }
   }
-
-  // Also suggest config-based approach
-  hints.push(`Or configure via: skills.${skillKey}.env.${envVars[0]}`);
 
   return hints.slice(0, 3).join(" OR ");
 }

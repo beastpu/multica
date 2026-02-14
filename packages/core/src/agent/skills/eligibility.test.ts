@@ -284,56 +284,6 @@ describe("eligibility", () => {
         expect(result.reasons?.length).toBe(2);
       });
 
-      it("should be eligible when env var provided via skillConfig", () => {
-        delete process.env.API_KEY;
-
-        const skill = createSkill("test", {
-          name: "Test Skill",
-          metadata: {
-            requires: {
-              env: ["API_KEY"],
-            },
-          },
-        });
-
-        const result = checkEligibility(skill, {
-          platform: "darwin",
-          config: {
-            entries: {
-              test: {
-                env: { API_KEY: "secret" },
-              },
-            },
-          },
-        });
-        expect(result.eligible).toBe(true);
-      });
-
-      it("should be eligible when env var provided via apiKey + primaryEnv", () => {
-        delete process.env.GEMINI_API_KEY;
-
-        const skill = createSkill("test", {
-          name: "Test Skill",
-          metadata: {
-            primaryEnv: "GEMINI_API_KEY",
-            requires: {
-              env: ["GEMINI_API_KEY"],
-            },
-          },
-        });
-
-        const result = checkEligibility(skill, {
-          platform: "darwin",
-          config: {
-            entries: {
-              test: {
-                apiKey: "my-api-key",
-              },
-            },
-          },
-        });
-        expect(result.eligible).toBe(true);
-      });
     });
 
     describe("always flag", () => {
