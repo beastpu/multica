@@ -478,6 +478,7 @@ export class Hub {
         const shouldForward =
           ((item.type === "message_start" || item.type === "message_update" || item.type === "message_end") && isAssistantMessage)
           || item.type === "tool_execution_start"
+          || item.type === "tool_execution_update"
           || item.type === "tool_execution_end";
         if (!shouldForward) continue;
 

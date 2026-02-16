@@ -51,6 +51,17 @@ type TaskResult = {
   error?: string;
 };
 
+type DelegateTaskProgressStatus = "pending" | "running" | "success" | "error" | "timeout";
+
+type DelegateTaskProgress = {
+  index: number;
+  label: string;
+  status: DelegateTaskProgressStatus;
+  startedAtMs?: number;
+  durationMs?: number;
+  error?: string;
+};
+
 export type DelegateResult = {
   taskCount: number;
   ok: number;
@@ -59,6 +70,20 @@ export type DelegateResult = {
   totalDurationMs: number;
   tasks: TaskResult[];
 };
+
+export type DelegateProgress = {
+  kind: "delegate_progress";
+  taskCount: number;
+  completed: number;
+  running: number;
+  ok: number;
+  errors: number;
+  timeouts: number;
+  tasks: DelegateTaskProgress[];
+  updatedAtMs: number;
+};
+
+export type DelegateToolDetails = DelegateResult | DelegateProgress;
 
 export interface CreateDelegateToolOptions {
   /** Whether the current agent is itself a subagent */
@@ -101,6 +126,7 @@ async function runSubagentTask(
   timeoutMs: number,
   parentOptions: CreateDelegateToolOptions,
   runLog?: RunLog,
+  onTaskStateChange?: (task: DelegateTaskProgress) => void,
 ): Promise<TaskResult> {
   const label = taskDef.label || `Task ${index + 1}`;
   const start = Date.now();
@@ -109,6 +135,12 @@ async function runSubagentTask(
     index,
     label,
     task: taskDef.task.slice(0, 200),
+  });
+  onTaskStateChange?.({
+    index,
+    label,
+    status: "running",
+    startedAtMs: start,
   });
 
   const childAgent = new Agent({
@@ -176,6 +208,14 @@ async function runSubagentTask(
       findings_chars: taskResult.findings.length,
       error: taskResult.error,
     });
+    onTaskStateChange?.({
+      index,
+      label,
+      status: status === "ok" ? "success" : status,
+      startedAtMs: start,
+      durationMs,
+      error: taskResult.error,
+    });
 
     return taskResult;
   } catch (err) {
@@ -199,6 +239,14 @@ async function runSubagentTask(
       findings_chars: 0,
       error: message,
     });
+    onTaskStateChange?.({
+      index,
+      label,
+      status: "error",
+      startedAtMs: start,
+      durationMs,
+      error: message,
+    });
 
     return taskResult;
   } finally {
@@ -219,7 +267,7 @@ async function runSubagentTask(
 
 export function createDelegateTool(
   options: CreateDelegateToolOptions,
-): AgentTool<typeof DelegateSchema, DelegateResult> {
+): AgentTool<typeof DelegateSchema, DelegateToolDetails> {
   return {
     name: "delegate",
     label: "Delegate Tasks",
@@ -230,7 +278,7 @@ export function createDelegateTool(
       "Use this for parallelizable work: multi-stock research, comparative analysis, " +
       "data collection from multiple sources, or any task that benefits from parallel execution.",
     parameters: DelegateSchema,
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, _signal, onUpdate) => {
       const { tasks, timeoutSeconds } = args as DelegateArgs;
       const timeoutMs = (timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
 
@@ -250,6 +298,40 @@ export function createDelegateTool(
       }
 
       const labels = tasks.map((t, i) => t.label || `Task ${i + 1}`);
+      const progressTasks: DelegateTaskProgress[] = labels.map((label, index) => ({
+        index,
+        label,
+        status: "pending",
+      }));
+
+      const emitProgress = () => {
+        if (!onUpdate) return;
+        const completed = progressTasks.filter((t) => t.status !== "pending" && t.status !== "running").length;
+        const running = progressTasks.filter((t) => t.status === "running").length;
+        const ok = progressTasks.filter((t) => t.status === "success").length;
+        const errors = progressTasks.filter((t) => t.status === "error").length;
+        const timeouts = progressTasks.filter((t) => t.status === "timeout").length;
+
+        const snapshot: DelegateProgress = {
+          kind: "delegate_progress",
+          taskCount: tasks.length,
+          completed,
+          running,
+          ok,
+          errors,
+          timeouts,
+          tasks: progressTasks.map((task) => ({ ...task })),
+          updatedAtMs: Date.now(),
+        };
+
+        onUpdate({
+          content: [{
+            type: "text",
+            text: `Tasks: ${completed}/${tasks.length} completed (${ok} success, ${errors} failed, ${timeouts} timed out)`,
+          }],
+          details: snapshot,
+        });
+      };
 
       options.runLog?.log("delegate_start", {
         task_count: tasks.length,
@@ -262,7 +344,17 @@ export function createDelegateTool(
       // Run all tasks in parallel
       const results = await Promise.all(
         tasks.map((taskDef, index) =>
-          runSubagentTask(taskDef, index, timeoutMs, options, options.runLog),
+          runSubagentTask(taskDef, index, timeoutMs, options, options.runLog, (taskProgress) => {
+            progressTasks[index] = {
+              index: taskProgress.index,
+              label: taskProgress.label,
+              status: taskProgress.status,
+              startedAtMs: taskProgress.startedAtMs,
+              durationMs: taskProgress.durationMs,
+              error: taskProgress.error,
+            };
+            emitProgress();
+          }),
         ),
       );
 

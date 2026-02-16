@@ -2,6 +2,29 @@ import type { ContentBlock } from "@multica/sdk"
 
 export type ToolStatus = "running" | "success" | "error" | "interrupted"
 
+export type DelegateTaskStatus = "pending" | "running" | "success" | "error" | "timeout"
+
+export interface DelegateTaskProgress {
+  index: number
+  label: string
+  status: DelegateTaskStatus
+  startedAtMs?: number
+  durationMs?: number
+  error?: string
+}
+
+export interface DelegateToolProgress {
+  kind: "delegate_progress"
+  taskCount: number
+  completed: number
+  running: number
+  ok: number
+  errors: number
+  timeouts: number
+  tasks: DelegateTaskProgress[]
+  updatedAtMs: number
+}
+
 /** Message source: where did this message come from? */
 export type MessageSource =
   | { type: "local" }
@@ -26,6 +49,7 @@ export interface Message {
   toolName?: string
   toolArgs?: Record<string, unknown>
   toolStatus?: ToolStatus
+  toolProgress?: DelegateToolProgress
   isError?: boolean
   systemType?: "compaction"
   compaction?: CompactionInfo

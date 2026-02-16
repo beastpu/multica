@@ -290,6 +290,7 @@ export function registerHubIpcHandlers(): void {
       const shouldForward =
         ((event.type === 'message_start' || event.type === 'message_update' || event.type === 'message_end') && isAssistantMessage)
         || event.type === 'tool_execution_start'
+        || event.type === 'tool_execution_update'
         || event.type === 'tool_execution_end'
 
       if (!shouldForward) return

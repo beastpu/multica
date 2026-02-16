@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useState } from "react"
+import { memo, useEffect, useState } from "react"
 import {
   File,
   Save,
@@ -16,7 +16,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { cn, getTextContent } from "@multica/ui/lib/utils"
-import type { Message } from "@multica/store"
+import type { DelegateTaskProgress, DelegateTaskStatus, DelegateToolProgress, Message } from "@multica/store"
 
 // ---------------------------------------------------------------------------
 // Tool display config
@@ -134,13 +134,83 @@ function getStats(toolName: string, toolStatus: string, resultText: string): str
   }
 }
 
+function getDelegateProgress(message: Message): DelegateToolProgress | undefined {
+  const progress = message.toolProgress
+  if (!progress) return undefined
+  if (progress.kind !== "delegate_progress") return undefined
+  return progress
+}
+
+function formatElapsed(ms?: number): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) return ""
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+  return remainingSeconds > 0 ? `${minutes}m${remainingSeconds}s` : `${minutes}m`
+}
+
+function delegateTaskStatusLabel(task: DelegateTaskProgress, nowMs: number): string {
+  const elapsed = task.status === "running"
+    ? formatElapsed(
+        typeof task.startedAtMs === "number" && Number.isFinite(task.startedAtMs)
+          ? Math.max(0, nowMs - task.startedAtMs)
+          : undefined,
+      )
+    : formatElapsed(task.durationMs)
+
+  switch (task.status) {
+    case "pending":
+      return "pending"
+    case "running":
+      return "running"
+    case "success":
+      return elapsed ? `success · ${elapsed}` : "success"
+    case "error":
+      return elapsed ? `error · ${elapsed}` : "error"
+    case "timeout":
+      return elapsed ? `timeout · ${elapsed}` : "timeout"
+    default:
+      return task.status
+  }
+}
+
+function delegateTaskStatusDotClass(status: DelegateTaskStatus): string {
+  switch (status) {
+    case "pending":
+      return "bg-muted-foreground/40"
+    case "running":
+      return "bg-[var(--tool-running)] motion-safe:animate-pulse"
+    case "success":
+      return "bg-[var(--tool-success)]"
+    case "error":
+      return "bg-[var(--tool-error)]"
+    case "timeout":
+      return "bg-amber-500"
+    default:
+      return "bg-muted-foreground/40"
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export const ToolCallItem = memo(function ToolCallItem({ message }: { message: Message }) {
   const [expanded, setExpanded] = useState(false)
+  const [nowMs, setNowMs] = useState(() => Date.now())
   const { toolName = "", toolStatus = "running", toolArgs, content } = message
+  const delegateProgress = toolName === "delegate" ? getDelegateProgress(message) : undefined
+  const hasRunningDelegateTask = delegateProgress?.tasks.some((task) => task.status === "running") ?? false
+
+  useEffect(() => {
+    if (!hasRunningDelegateTask) return
+    setNowMs(Date.now())
+    const timer = globalThis.setInterval(() => {
+      setNowMs(Date.now())
+    }, 1000)
+    return () => globalThis.clearInterval(timer)
+  }, [hasRunningDelegateTask])
 
   const display = TOOL_DISPLAY[toolName] ?? { label: toolName, icon: Terminal }
   const isFinished = toolStatus !== "running"
@@ -222,6 +292,35 @@ export const ToolCallItem = memo(function ToolCallItem({ message }: { message: M
           />
         )}
       </button>
+
+      {/* Delegate task statuses */}
+      {delegateProgress && delegateProgress.tasks.length > 0 && (
+        <div className="px-2.5 pb-2">
+          <div className="px-2.5 py-1 text-xs text-muted-foreground/70 font-[tabular-nums]">
+            {delegateProgress.completed}/{delegateProgress.taskCount} completed
+            {" · "}
+            {delegateProgress.running} running
+            {" · "}
+            {delegateProgress.errors} failed
+            {" · "}
+            {delegateProgress.timeouts} timed out
+          </div>
+          <div className="space-y-0.5 px-2.5">
+            {delegateProgress.tasks.map((task) => (
+              <div key={`delegate-task-${task.index}`} className="flex items-center gap-2 text-xs">
+                <span className={cn("size-1.5 rounded-full shrink-0", delegateTaskStatusDotClass(task.status))} />
+                <span className="truncate min-w-0">{task.label}</span>
+                <span className={cn(
+                  "ml-auto shrink-0 text-muted-foreground/70 font-[tabular-nums]",
+                  task.status === "running" && "motion-safe:animate-pulse",
+                )}>
+                  {delegateTaskStatusLabel(task, nowMs)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Expanded result */}
       {expanded && resultText && (

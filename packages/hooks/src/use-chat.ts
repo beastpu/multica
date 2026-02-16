@@ -22,6 +22,29 @@ export interface CompactionInfo {
   reason: string;
 }
 
+export type DelegateTaskStatus = "pending" | "running" | "success" | "error" | "timeout";
+
+export interface DelegateTaskProgress {
+  index: number;
+  label: string;
+  status: DelegateTaskStatus;
+  startedAtMs?: number;
+  durationMs?: number;
+  error?: string;
+}
+
+export interface DelegateToolProgress {
+  kind: "delegate_progress";
+  taskCount: number;
+  completed: number;
+  running: number;
+  ok: number;
+  errors: number;
+  timeouts: number;
+  tasks: DelegateTaskProgress[];
+  updatedAtMs: number;
+}
+
 /** Message source: where did this message come from? */
 export type MessageSource =
   | { type: "local" }
@@ -38,6 +61,7 @@ export interface Message {
   toolName?: string;
   toolArgs?: Record<string, unknown>;
   toolStatus?: ToolStatus;
+  toolProgress?: DelegateToolProgress;
   isError?: boolean;
   systemType?: "compaction";
   compaction?: CompactionInfo;
@@ -72,6 +96,68 @@ function extractContent(event: AgentEvent): ContentBlock[] {
   if (!msg || !("content" in msg)) return [];
   const content = msg.content;
   return Array.isArray(content) ? (content as ContentBlock[]) : [];
+}
+
+function toTextContentBlock(value: unknown): ContentBlock[] {
+  if (value == null) return [];
+  return [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }];
+}
+
+function extractToolResultContent(result: unknown): ContentBlock[] {
+  if (result == null || typeof result !== "object") return toTextContentBlock(result);
+  const content = (result as { content?: unknown }).content;
+  if (Array.isArray(content)) return content as ContentBlock[];
+  return toTextContentBlock(result);
+}
+
+function extractDelegateProgress(partialResult: unknown): DelegateToolProgress | undefined {
+  if (!partialResult || typeof partialResult !== "object") return undefined;
+  const details = (partialResult as { details?: unknown }).details;
+  if (!details || typeof details !== "object") return undefined;
+  if ((details as { kind?: unknown }).kind !== "delegate_progress") return undefined;
+
+  const toSafeNumber = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  const rawTasks = (details as { tasks?: unknown }).tasks;
+  const tasks: DelegateTaskProgress[] = Array.isArray(rawTasks)
+    ? rawTasks.flatMap((task, fallbackIndex) => {
+        if (!task || typeof task !== "object") return [];
+        const status = (task as { status?: unknown }).status;
+        if (
+          status !== "pending"
+          && status !== "running"
+          && status !== "success"
+          && status !== "error"
+          && status !== "timeout"
+        ) {
+          return [];
+        }
+        const index = (task as { index?: unknown }).index;
+        const label = (task as { label?: unknown }).label;
+        const startedAtMs = (task as { startedAtMs?: unknown }).startedAtMs;
+        const durationMs = (task as { durationMs?: unknown }).durationMs;
+        const error = (task as { error?: unknown }).error;
+        return [{
+          index: typeof index === "number" && Number.isFinite(index) ? index : fallbackIndex,
+          label: typeof label === "string" && label.length > 0 ? label : `Task ${fallbackIndex + 1}`,
+          status,
+          startedAtMs: typeof startedAtMs === "number" && Number.isFinite(startedAtMs) ? startedAtMs : undefined,
+          durationMs: typeof durationMs === "number" && Number.isFinite(durationMs) ? durationMs : undefined,
+          error: typeof error === "string" ? error : undefined,
+        }];
+      })
+    : [];
+
+  return {
+    kind: "delegate_progress",
+    taskCount: toSafeNumber((details as { taskCount?: unknown }).taskCount) || tasks.length,
+    completed: toSafeNumber((details as { completed?: unknown }).completed),
+    running: toSafeNumber((details as { running?: unknown }).running),
+    ok: toSafeNumber((details as { ok?: unknown }).ok),
+    errors: toSafeNumber((details as { errors?: unknown }).errors),
+    timeouts: toSafeNumber((details as { timeouts?: unknown }).timeouts),
+    tasks,
+    updatedAtMs: toSafeNumber((details as { updatedAtMs?: unknown }).updatedAtMs) || Date.now(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -237,18 +323,32 @@ export function useChat() {
                   ...m,
                   toolStatus: (event.isError ? "error" : "success") as ToolStatus,
                   isError: event.isError ?? false,
-                  content:
-                    event.result != null
-                      ? [{ type: "text" as const, text: typeof event.result === "string" ? event.result : JSON.stringify(event.result) }]
-                      : [],
+                  content: extractToolResultContent(event.result),
                 }
               : m,
           ),
         );
         break;
       }
-      case "tool_execution_update":
+      case "tool_execution_update": {
+        const partialContent = extractToolResultContent(event.partialResult);
+        const delegateProgress = event.toolName === "delegate"
+          ? extractDelegateProgress(event.partialResult)
+          : undefined;
+
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.role === "toolResult" && m.toolCallId === event.toolCallId
+              ? {
+                  ...m,
+                  content: partialContent.length > 0 ? partialContent : m.content,
+                  toolProgress: delegateProgress ?? m.toolProgress,
+                }
+              : m,
+          ),
+        );
         break;
+      }
       case "compaction_end": {
         const ce = event as CompactionEndEvent;
         setMessages((prev) => [
