@@ -77,21 +77,16 @@ Browser ← WSClient (SDK) ← WebSocket ← Hub.Broadcast() ← Handlers/TaskSe
 
 ### Backend Structure (`server/`)
 
-- **Entry points** (`cmd/`): `server` (HTTP API), `daemon` (local agent runtime), `migrate`, `seed`
+- **Entry points** (`cmd/`): `server` (HTTP API), `multica` (CLI — daemon, agent management, config), `migrate`
 - **Handlers** (`internal/handler/`): One file per domain (issue, comment, agent, auth, daemon, etc.). Each handler holds `Queries`, `DB`, `Hub`, and `TaskService`.
 - **Real-time** (`internal/realtime/`): Hub manages WebSocket clients. Server broadcasts events; inbound WS message routing is still TODO.
 - **Auth** (`internal/auth/` + `internal/middleware/`): JWT (HS256). Middleware sets `X-User-ID` and `X-User-Email` headers. Login creates user on-the-fly if not found.
 - **Task lifecycle** (`internal/service/task.go`): Orchestrates agent work — enqueue → claim → start → complete/fail. Syncs issue status automatically and broadcasts WS events at each transition.
+- **Agent SDK** (`pkg/agent/`): Unified `Backend` interface for executing prompts via Claude Code or Codex. Each backend spawns its CLI and streams results via `Session.Messages` + `Session.Result` channels.
+- **Daemon** (`internal/daemon/`): Local agent runtime — auto-detects available CLIs (claude, codex), registers runtimes, polls for tasks, routes by provider.
+- **CLI** (`internal/cli/`): Shared helpers for the `multica` CLI — API client, config management, output formatting.
 - **Database**: sqlc generates Go code from SQL in `pkg/db/queries/` → `pkg/db/generated/`. Migrations in `migrations/`.
 - **Routes** (`cmd/server/router.go`): Public routes (auth, health, ws) + protected routes (require JWT) + daemon routes (unauthenticated, separate auth model).
-
-### Frontend Structure (`apps/web/`)
-
-- **App Router layout groups**: `(auth)/` for login, `(dashboard)/` for protected routes
-- **Auth context** (`lib/auth-context.tsx`): Global provider for user, workspace, members, agents. Hydrates from localStorage. Provides actor lookup helpers (`getMemberName`, `getAgentName`, `getActorName`).
-- **WebSocket context** (`lib/ws-context.tsx`): Wraps `WSClient` from SDK. `useWSEvent()` hook auto-subscribes/unsubscribes.
-- **API client** (`lib/api.ts`): Singleton `ApiClient` from `@multica/sdk`, initialized from localStorage.
-- **State**: Zustand stores (`@multica/store`) for issues, agents, inbox. WebSocket events keep stores in sync without re-fetching.
 
 ### Key Packages
 
