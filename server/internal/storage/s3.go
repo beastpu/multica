@@ -83,6 +83,46 @@ func sanitizeFilename(name string) string {
 	return b.String()
 }
 
+// KeyFromURL extracts the S3 object key from a CDN or bucket URL.
+// e.g. "https://multica-static.copilothub.ai/abc123.png" → "abc123.png"
+func (s *S3Storage) KeyFromURL(rawURL string) string {
+	// Strip the "https://domain/" prefix.
+	for _, prefix := range []string{
+		"https://" + s.cdnDomain + "/",
+		"https://" + s.bucket + "/",
+	} {
+		if strings.HasPrefix(rawURL, prefix) {
+			return strings.TrimPrefix(rawURL, prefix)
+		}
+	}
+	// Fallback: take everything after the last "/".
+	if i := strings.LastIndex(rawURL, "/"); i >= 0 {
+		return rawURL[i+1:]
+	}
+	return rawURL
+}
+
+// Delete removes an object from S3. Errors are logged but not fatal.
+func (s *S3Storage) Delete(ctx context.Context, key string) {
+	if key == "" {
+		return
+	}
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		slog.Error("s3 DeleteObject failed", "key", key, "error", err)
+	}
+}
+
+// DeleteKeys removes multiple objects from S3. Best-effort, errors are logged.
+func (s *S3Storage) DeleteKeys(ctx context.Context, keys []string) {
+	for _, key := range keys {
+		s.Delete(ctx, key)
+	}
+}
+
 func (s *S3Storage) Upload(ctx context.Context, key string, data []byte, contentType string, filename string) (string, error) {
 	safe := sanitizeFilename(filename)
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{

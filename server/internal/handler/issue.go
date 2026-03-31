@@ -548,12 +548,16 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 
 	h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
 
+	// Collect all attachment URLs (issue-level + comment-level) before CASCADE delete.
+	attachmentURLs, _ := h.Queries.ListAttachmentURLsByIssueOrComments(r.Context(), issue.ID)
+
 	err := h.Queries.DeleteIssue(r.Context(), parseUUID(id))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete issue")
 		return
 	}
 
+	h.deleteS3Objects(r.Context(), attachmentURLs)
 	userID := requestUserID(r)
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 	h.publish(protocol.EventIssueDeleted, uuidToString(issue.WorkspaceID), actorType, actorID, map[string]any{"issue_id": id})

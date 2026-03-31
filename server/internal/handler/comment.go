@@ -342,11 +342,16 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Collect attachment URLs before CASCADE delete removes them.
+	attachmentURLs, _ := h.Queries.ListAttachmentURLsByCommentID(r.Context(), parseUUID(commentId))
+
 	if err := h.Queries.DeleteComment(r.Context(), parseUUID(commentId)); err != nil {
 		slog.Warn("delete comment failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete comment")
 		return
 	}
+
+	h.deleteS3Objects(r.Context(), attachmentURLs)
 	slog.Info("comment deleted", append(logger.RequestAttrs(r), "comment_id", commentId, "issue_id", uuidToString(comment.IssueID))...)
 	h.publish(protocol.EventCommentDeleted, workspaceID, actorType, actorID, map[string]any{
 		"comment_id": commentId,
