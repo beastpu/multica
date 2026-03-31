@@ -174,11 +174,11 @@ export function useIssueTimeline(issueId: string, userId?: string) {
   // --- Mutation functions ---
 
   const submitComment = useCallback(
-    async (content: string) => {
+    async (content: string, attachmentIds?: string[]) => {
       if (!content.trim() || submitting || !userId) return;
       setSubmitting(true);
       try {
-        const comment = await api.createComment(issueId, content);
+        const comment = await api.createComment(issueId, content, undefined, undefined, attachmentIds);
         setTimeline((prev) => {
           if (prev.some((e) => e.id === comment.id)) return prev;
           return [...prev, commentToTimelineEntry(comment)];
@@ -193,10 +193,10 @@ export function useIssueTimeline(issueId: string, userId?: string) {
   );
 
   const submitReply = useCallback(
-    async (parentId: string, content: string) => {
+    async (parentId: string, content: string, attachmentIds?: string[]) => {
       if (!content.trim() || !userId) return;
       try {
-        const comment = await api.createComment(issueId, content, "comment", parentId);
+        const comment = await api.createComment(issueId, content, "comment", parentId, attachmentIds);
         setTimeline((prev) => {
           if (prev.some((e) => e.id === comment.id)) return prev;
           return [...prev, commentToTimelineEntry(comment)];

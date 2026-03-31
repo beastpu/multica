@@ -83,9 +83,10 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateCommentRequest struct {
-	Content  string  `json:"content"`
-	Type     string  `json:"type"`
-	ParentID *string `json:"parent_id"`
+	Content       string   `json:"content"`
+	Type          string   `json:"type"`
+	ParentID      *string  `json:"parent_id"`
+	AttachmentIDs []string `json:"attachment_ids"`
 }
 
 func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +141,11 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("create comment failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
 		writeError(w, http.StatusInternalServerError, "failed to create comment: "+err.Error())
 		return
+	}
+
+	// Link uploaded attachments to this comment.
+	if len(req.AttachmentIDs) > 0 {
+		h.linkAttachmentsByIDs(r.Context(), comment.ID, issue.ID, req.AttachmentIDs)
 	}
 
 	resp := commentToResponse(comment, nil, nil)

@@ -297,6 +297,26 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ---------------------------------------------------------------------------
+// Attachment linking
+// ---------------------------------------------------------------------------
+
+// linkAttachmentsByIDs links the given attachment IDs to a comment.
+// Only updates attachments that belong to the same issue and have no comment_id yet.
+func (h *Handler) linkAttachmentsByIDs(ctx context.Context, commentID, issueID pgtype.UUID, ids []string) {
+	uuids := make([]pgtype.UUID, len(ids))
+	for i, id := range ids {
+		uuids[i] = parseUUID(id)
+	}
+	if err := h.Queries.LinkAttachmentsToComment(ctx, db.LinkAttachmentsToCommentParams{
+		CommentID: commentID,
+		IssueID:   issueID,
+		Column3:   uuids,
+	}); err != nil {
+		slog.Error("failed to link attachments to comment", "error", err)
+	}
+}
+
 // deleteS3Object removes a single file from S3 by its CDN URL.
 func (h *Handler) deleteS3Object(ctx context.Context, url string) {
 	if h.Storage == nil || url == "" {

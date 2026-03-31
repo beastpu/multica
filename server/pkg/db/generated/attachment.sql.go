@@ -101,6 +101,25 @@ func (q *Queries) GetAttachment(ctx context.Context, arg GetAttachmentParams) (A
 	return i, err
 }
 
+const linkAttachmentsToComment = `-- name: LinkAttachmentsToComment :exec
+UPDATE attachment
+SET comment_id = $1
+WHERE issue_id = $2
+  AND comment_id IS NULL
+  AND id = ANY($3::uuid[])
+`
+
+type LinkAttachmentsToCommentParams struct {
+	CommentID pgtype.UUID   `json:"comment_id"`
+	IssueID   pgtype.UUID   `json:"issue_id"`
+	Column3   []pgtype.UUID `json:"column_3"`
+}
+
+func (q *Queries) LinkAttachmentsToComment(ctx context.Context, arg LinkAttachmentsToCommentParams) error {
+	_, err := q.db.Exec(ctx, linkAttachmentsToComment, arg.CommentID, arg.IssueID, arg.Column3)
+	return err
+}
+
 const listAttachmentURLsByCommentID = `-- name: ListAttachmentURLsByCommentID :many
 SELECT url FROM attachment
 WHERE comment_id = $1

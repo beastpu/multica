@@ -32,7 +32,7 @@ interface CommentCardProps {
   entry: TimelineEntry;
   allReplies: Map<string, TimelineEntry[]>;
   currentUserId?: string;
-  onReply: (parentId: string, content: string) => Promise<void>;
+  onReply: (parentId: string, content: string, attachmentIds?: string[]) => Promise<void>;
   onEdit: (commentId: string, content: string) => Promise<void>;
   onDelete: (commentId: string) => void;
   onToggleReaction: (commentId: string, emoji: string) => void;
@@ -374,7 +374,7 @@ function CommentCard({
               size="sm"
               avatarType="member"
               avatarId={currentUserId ?? ""}
-              onSubmit={(content) => onReply(entry.id, content)}
+              onSubmit={(content, attachmentIds) => onReply(entry.id, content, attachmentIds)}
             />
           </div>
         </CollapsibleContent>

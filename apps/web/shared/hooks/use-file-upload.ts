@@ -32,6 +32,7 @@ function isAllowedType(type: string): boolean {
 }
 
 export interface UploadResult {
+  id: string;
   filename: string;
   link: string;
 }
@@ -59,7 +60,7 @@ export function useFileUpload() {
           issueId: ctx?.issueId,
           commentId: ctx?.commentId,
         });
-        return { filename: att.filename, link: att.url };
+        return { id: att.id, filename: att.filename, link: att.url };
       } finally {
         setUploading(false);
       }

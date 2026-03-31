@@ -8,17 +8,22 @@ import { useFileUpload } from "@/shared/hooks/use-file-upload";
 
 interface CommentInputProps {
   issueId: string;
-  onSubmit: (content: string) => Promise<void>;
+  onSubmit: (content: string, attachmentIds?: string[]) => Promise<void>;
 }
 
 function CommentInput({ issueId, onSubmit }: CommentInputProps) {
   const editorRef = useRef<RichTextEditorRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachmentIdsRef = useRef<string[]>([]);
   const [isEmpty, setIsEmpty] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const { uploadWithToast, uploading } = useFileUpload();
 
-  const handleUpload = (file: File) => uploadWithToast(file, { issueId });
+  const handleUpload = async (file: File) => {
+    const result = await uploadWithToast(file, { issueId });
+    if (result) attachmentIdsRef.current.push(result.id);
+    return result;
+  };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -35,8 +40,10 @@ function CommentInput({ issueId, onSubmit }: CommentInputProps) {
     if (!content || submitting) return;
     setSubmitting(true);
     try {
-      await onSubmit(content);
+      const ids = attachmentIdsRef.current.length > 0 ? [...attachmentIdsRef.current] : undefined;
+      await onSubmit(content, ids);
       editorRef.current?.clearContent();
+      attachmentIdsRef.current = [];
       setIsEmpty(true);
     } finally {
       setSubmitting(false);
