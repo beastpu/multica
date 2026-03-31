@@ -14,7 +14,6 @@ import Typography from "@tiptap/extension-typography";
 import Mention from "@tiptap/extension-mention";
 import { Markdown } from "@tiptap/markdown";
 import { Extension } from "@tiptap/core";
-import type { JSONContent, MarkdownParseHelpers, MarkdownToken } from "@tiptap/core";
 import { cn } from "@/lib/utils";
 import { createMentionSuggestion } from "./mention-suggestion";
 import "./rich-text-editor.css";
@@ -83,9 +82,6 @@ const LinkExtension = Link.configure({
   },
 });
 
-const MENTION_LINK_RE =
-  /^\[(@?[^\]]*)\]\(mention:\/\/(member|agent|issue)\/([^)]+)\)/;
-
 const MentionExtension = Mention.configure({
   HTMLAttributes: { class: "mention" },
   suggestion: createMentionSuggestion(),
@@ -109,58 +105,21 @@ const MentionExtension = Mention.configure({
       ...this.parent?.(),
       type: {
         default: "member",
-        parseHTML: (el: HTMLElement) =>
-          el.getAttribute("data-mention-type") ?? "member",
+        parseHTML: (el: HTMLElement) => el.getAttribute("data-mention-type") ?? "member",
       },
       description: {
         default: null,
-        parseHTML: (el: HTMLElement) =>
-          el.getAttribute("data-mention-description"),
+        parseHTML: (el: HTMLElement) => el.getAttribute("data-mention-description"),
       },
     };
   },
-
-  // -- Markdown serialization: [@Label](mention://type/id) --
-  renderMarkdown(node: JSONContent) {
-    const type = (node.attrs?.type as string) ?? "member";
-    const label = (node.attrs?.label as string) ?? node.attrs?.id;
+  // @tiptap/markdown 3.x uses renderMarkdown as a top-level extension field
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  renderMarkdown(node: any) {
+    const type = node.attrs?.type ?? "member";
+    const label = node.attrs?.label ?? node.attrs?.id;
     const display = type === "issue" ? label : `@${label}`;
     return `[${display}](mention://${type}/${node.attrs?.id})`;
-  },
-
-  // -- Markdown parsing: turn the link back into a mention node --
-  parseMarkdown(token: MarkdownToken, h: MarkdownParseHelpers) {
-    return h.createNode("mention", {
-      id: token.attributes?.id,
-      label: token.attributes?.label,
-      type: token.attributes?.type ?? "member",
-    });
-  },
-
-  markdownTokenizer: {
-    name: "mention",
-    level: "inline" as const,
-    start(src: string) {
-      // Find [@ or [ followed by ](mention://
-      const idx = src.indexOf("](mention://");
-      if (idx === -1) return -1;
-      // Walk back to find the opening [
-      const bracketIdx = src.lastIndexOf("[", idx);
-      return bracketIdx === -1 ? -1 : bracketIdx;
-    },
-    tokenize(src: string) {
-      const match = MENTION_LINK_RE.exec(src);
-      if (!match) return undefined;
-      const [raw, displayLabel = "", type, id] = match;
-      const label =
-        displayLabel.startsWith("@") ? displayLabel.slice(1) : displayLabel;
-      return {
-        type: "mention",
-        raw,
-        content: "",
-        attributes: { id, label, type },
-      };
-    },
   },
 });
 

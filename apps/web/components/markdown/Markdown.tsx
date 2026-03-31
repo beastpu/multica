@@ -1,11 +1,11 @@
 import * as React from 'react'
-import Link from 'next/link'
 import ReactMarkdown, { type Components, defaultUrlTransform } from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
 import { CodeBlock, InlineCode } from './CodeBlock'
 import { preprocessLinks } from './linkify'
+import { IssueMentionCard } from '@/features/issues/components/issue-mention-card'
 
 /**
  * Render modes for markdown content:
@@ -71,17 +71,9 @@ function createComponents(
       // Mention links: mention://member/id, mention://agent/id, mention://issue/id
       if (href?.startsWith('mention://')) {
         const mentionMatch = href.match(/^mention:\/\/(member|agent|issue)\/(.+)$/)
-        if (mentionMatch?.[1] === 'issue') {
-          const issueId = mentionMatch[2]
-          return (
-            <Link
-              href={`/issues/${issueId}`}
-              className="text-primary font-medium cursor-pointer hover:underline"
-              style={{ background: 'color-mix(in srgb, var(--primary) 8%, transparent)', padding: '0 0.2em', borderRadius: 'calc(var(--radius) * 0.5)' }}
-            >
-              {children}
-            </Link>
-          )
+        if (mentionMatch?.[1] === 'issue' && mentionMatch[2]) {
+          const label = typeof children === 'string' ? children : Array.isArray(children) ? children.join('') : undefined
+          return <IssueMentionCard issueId={mentionMatch[2]} fallbackLabel={label} />
         }
         return (
           <span
