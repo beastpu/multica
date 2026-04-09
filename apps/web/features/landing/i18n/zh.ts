@@ -273,6 +273,25 @@ export const zh: LandingDict = {
     subtitle: "Multica \u7684\u6700\u65b0\u66f4\u65b0\u548c\u6539\u8fdb\u3002",
     entries: [
       {
+        version: "0.1.10",
+        date: "2026-04-09",
+        title: "项目、搜索与 Monorepo",
+        changes: [
+          "项目实体全栈 CRUD——创建、编辑项目并按项目组织 Issue",
+          "创建 Issue 弹窗新增项目选择器，CLI 新增项目命令",
+          "基于 pg_bigm 的 Issue 全文搜索",
+          "Monorepo 拆包——共享 core、UI、views 三个包（Turborepo）",
+          "全屏 Agent 执行日志视图",
+          "编辑器支持拖拽上传文件并展示文件卡片",
+          "Issue 新增附件区域，支持图片网格和文件卡片展示",
+          "运行时支持所有者追踪、筛选、头像展示和点对点更新通知",
+          "列表视图行内显示子 Issue 进度",
+          "列表视图支持已完成 Issue 分页加载",
+          "Codex 会话日志扫描以报告 token 用量",
+          "修复守护进程 repo 缓存卡在初始快照的问题",
+        ],
+      },
+      {
         version: "0.1.9",
         date: "2026-04-08",
         title: "子 Issue、TanStack Query 与用量追踪",

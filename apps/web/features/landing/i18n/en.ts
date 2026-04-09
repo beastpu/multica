@@ -273,6 +273,25 @@ export const en: LandingDict = {
     subtitle: "New updates and improvements to Multica.",
     entries: [
       {
+        version: "0.1.10",
+        date: "2026-04-09",
+        title: "Projects, Search & Monorepo",
+        changes: [
+          "Project entity with full-stack CRUD — create, edit, and organize issues by project",
+          "Project picker in the create-issue modal and CLI project commands",
+          "Full-text search for issues with pg_bigm",
+          "Monorepo extraction — shared packages for core, UI, and views (Turborepo)",
+          "Fullscreen agent execution transcript view",
+          "Drag-and-drop file upload with file card display in the editor",
+          "Attachment section with image grid and file cards on issues",
+          "Runtime owner tracking, filtering, avatar display, and point-to-point update notifications",
+          "Sub-issue progress indicator in list view rows",
+          "Done issue pagination in list view",
+          "Codex session log scan for token usage reporting",
+          "Daemon repo-cache fix for stale initial snapshots",
+        ],
+      },
+      {
         version: "0.1.9",
         date: "2026-04-08",
         title: "Sub-Issues, TanStack Query & Usage Tracking",
