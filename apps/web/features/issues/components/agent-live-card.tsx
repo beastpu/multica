@@ -111,7 +111,6 @@ interface AgentLiveCardProps {
 export function AgentLiveCard({ issueId }: AgentLiveCardProps) {
   const { getActorName } = useActorName();
   const [taskStates, setTaskStates] = useState<Map<string, TaskState>>(new Map());
-  const [expanded, setExpanded] = useState(false);
   const seenSeqs = useRef(new Set<string>());
 
   // Fetch active tasks on mount
@@ -206,34 +205,23 @@ export function AgentLiveCard({ issueId }: AgentLiveCardProps) {
   if (taskStates.size === 0) return null;
 
   const entries = Array.from(taskStates.values());
-  if (entries.length === 0) return null;
-  const firstEntry = entries[0]!;
-  const restEntries = entries.slice(1);
+  const [firstEntry, ...restEntries] = entries;
+  if (!firstEntry) return null;
 
   return (
-    <div className="sticky top-4 z-10 space-y-1.5">
-      {/* Primary agent card — always visible */}
-      <SingleAgentLiveCard
-        task={firstEntry.task}
-        items={firstEntry.items}
-        issueId={issueId}
-        agentName={firstEntry.task.agent_id ? getActorName("agent", firstEntry.task.agent_id) : "Agent"}
-      />
-
-      {/* Expand button for additional agents */}
-      {restEntries.length > 0 && !expanded && (
-        <button
-          onClick={() => setExpanded(true)}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-info/20 bg-info/5 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-info/10 transition-colors"
-        >
-          <ChevronDown className="h-3 w-3" />
-          <span>{restEntries.length} more agent{restEntries.length > 1 ? "s" : ""} working</span>
-        </button>
-      )}
-
-      {/* Additional agent cards — shown when expanded */}
-      {restEntries.length > 0 && expanded && (
-        <>
+    <>
+      {/* Primary agent — sticky at top of the Activity section */}
+      <div className="mt-4 sticky top-4 z-10">
+        <SingleAgentLiveCard
+          task={firstEntry.task}
+          items={firstEntry.items}
+          issueId={issueId}
+          agentName={firstEntry.task.agent_id ? getActorName("agent", firstEntry.task.agent_id) : "Agent"}
+        />
+      </div>
+      {/* Additional agents — scroll with the page */}
+      {restEntries.length > 0 && (
+        <div className="mt-1.5 space-y-1.5">
           {restEntries.map(({ task, items }) => (
             <SingleAgentLiveCard
               key={task.id}
@@ -243,16 +231,9 @@ export function AgentLiveCard({ issueId }: AgentLiveCardProps) {
               agentName={task.agent_id ? getActorName("agent", task.agent_id) : "Agent"}
             />
           ))}
-          <button
-            onClick={() => setExpanded(false)}
-            className="flex w-full items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors py-0.5"
-          >
-            <ChevronDown className="h-3 w-3 rotate-180" />
-            <span>Collapse</span>
-          </button>
-        </>
+        </div>
       )}
-    </div>
+    </>
   );
 }
 

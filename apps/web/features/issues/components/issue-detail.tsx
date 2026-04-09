@@ -994,10 +994,9 @@ export function IssueDetail({ issueId, onDelete, defaultSidebarOpen = true, layo
               </div>
             </div>
 
-            {/* Agent live output */}
-            <div className="mt-4">
-              <AgentLiveCard issueId={id} />
-            </div>
+            {/* Agent live output — sticky inside the Activity section so it
+                stays pinned while scrolling through TaskRunHistory + comments. */}
+            <AgentLiveCard issueId={id} />
 
             {/* Agent execution history */}
             <div className="mt-3">
