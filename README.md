@@ -55,18 +55,19 @@ The fastest way to get started — no setup required: **[multica.ai](https://mul
 
 ### Self-Host with Docker
 
+**Prerequisites:** Docker and Docker Compose.
+
 ```bash
 git clone https://github.com/multica-ai/multica.git
 cd multica
 cp .env.example .env
-# Edit .env — at minimum, change JWT_SECRET
-
-docker compose up -d                              # Start PostgreSQL
-cd server && go run ./cmd/migrate up && cd ..     # Run migrations
-make start                                         # Start the app
+# Edit .env — change JWT_SECRET at minimum
+docker compose -f docker-compose.selfhost.yml up -d
 ```
 
-See the [Self-Hosting Guide](SELF_HOSTING.md) for full instructions.
+This builds and starts PostgreSQL, the backend (with auto-migration), and the frontend. Open http://localhost:3000 when ready.
+
+See the [Self-Hosting Guide](SELF_HOSTING.md) for full configuration, reverse proxy setup, and CLI/daemon instructions.
 
 ## CLI
 
@@ -152,10 +153,9 @@ For contributors working on the Multica codebase, see the [Contributing Guide](C
 **Prerequisites:** [Node.js](https://nodejs.org/) v20+, [pnpm](https://pnpm.io/) v10.28+, [Go](https://go.dev/) v1.26+, [Docker](https://www.docker.com/)
 
 ```bash
-pnpm install
-cp .env.example .env
-make setup
-make start
+make dev
 ```
+
+`make dev` auto-detects your environment (main checkout or worktree), creates the env file, installs dependencies, sets up the database, runs migrations, and starts all services.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow, worktree support, testing, and troubleshooting.
