@@ -18,7 +18,6 @@
 将编码 Agent 变成真正的队友——分配任务、跟踪进度、积累技能。
 
 [![CI](https://github.com/multica-ai/multica/actions/workflows/ci.yml/badge.svg)](https://github.com/multica-ai/multica/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![GitHub stars](https://img.shields.io/github/stars/multica-ai/multica?style=flat)](https://github.com/multica-ai/multica/stargazers)
 
 [官网](https://multica.ai) · [云服务](https://multica.ai/app) · [X](https://x.com/multica_hq) · [自部署指南](SELF_HOSTING.md) · [参与贡献](CONTRIBUTING.md)
