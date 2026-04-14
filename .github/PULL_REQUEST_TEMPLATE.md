@@ -41,6 +41,17 @@ Closes #
 - [ ] Changes follow existing code patterns and conventions
 - [ ] No unrelated changes included
 
+## Manual Testing / Acceptance
+
+<!-- Verify that the change works correctly in a real environment. Check all that apply. -->
+
+- [ ] Tested the happy path end-to-end in a running app (`make dev`)
+- [ ] Tested edge cases (empty states, long text, error responses, missing data)
+- [ ] Verified no visual regressions on affected pages (layout, alignment, overflow)
+- [ ] Tested across relevant platforms (web / desktop) if the change touches shared code
+- [ ] Confirmed API changes work with both frontend and CLI consumers
+- [ ] Checked browser console and server logs for unexpected errors or warnings
+
 ## AI Disclosure
 
 <!-- Most PRs involve AI coding tools — that's totally fine! We're curious about your process. -->
