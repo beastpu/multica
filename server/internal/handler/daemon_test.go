@@ -908,6 +908,108 @@ func TestDaemonRegister_MergesLegacyDaemonIDRuntime_CaseDrift(t *testing.T) {
 	}
 }
 
+// TestDaemonRegister_MergesAllCaseDuplicateLegacyRuntimes covers the case
+// where the DB already holds *two* legacy runtime rows that differ only in
+// casing (e.g. `Jiayuans-MacBook-Pro.local` AND `jiayuans-macbook-pro.local`
+// coexist under the same workspace+provider because earlier hostname drift
+// already minted a duplicate). A single-row lookup would merge only one of
+// them and leave the other orphaned; the lookup must return every row whose
+// daemon_id case-insensitively matches and the handler must consolidate them
+// all. This is the acceptance-standard path: after registration there must
+// not be two runtime rows for the same machine.
+func TestDaemonRegister_MergesAllCaseDuplicateLegacyRuntimes(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	const storedUpperID = "DupHost.local"
+	const storedLowerID = "duphost.local"
+	const newDaemonID = "0192a7b0-0033-7ee9-9c21-30a5bcf86aa4"
+
+	var legacyUpperID, legacyLowerID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at)
+		VALUES ($1, $2, 'legacy-upper', 'local', 'claude', 'offline', '', '{}'::jsonb, $3, now() - interval '2 hours')
+		RETURNING id
+	`, testWorkspaceID, storedUpperID, testUserID).Scan(&legacyUpperID); err != nil {
+		t.Fatalf("seed upper-case legacy runtime: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyUpperID) })
+
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at)
+		VALUES ($1, $2, 'legacy-lower', 'local', 'claude', 'offline', '', '{}'::jsonb, $3, now() - interval '1 hour')
+		RETURNING id
+	`, testWorkspaceID, storedLowerID, testUserID).Scan(&legacyLowerID); err != nil {
+		t.Fatalf("seed lower-case legacy runtime: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyLowerID) })
+
+	// Bind one agent to each legacy row to verify both sides get reassigned.
+	var upperAgentID, lowerAgentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (workspace_id, name, runtime_mode, runtime_config, runtime_id, visibility, max_concurrent_tasks)
+		VALUES ($1, 'dup-agent-upper', 'local', '{}'::jsonb, $2, 'workspace', 1)
+		RETURNING id
+	`, testWorkspaceID, legacyUpperID).Scan(&upperAgentID); err != nil {
+		t.Fatalf("seed upper agent: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, upperAgentID) })
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (workspace_id, name, runtime_mode, runtime_config, runtime_id, visibility, max_concurrent_tasks)
+		VALUES ($1, 'dup-agent-lower', 'local', '{}'::jsonb, $2, 'workspace', 1)
+		RETURNING id
+	`, testWorkspaceID, legacyLowerID).Scan(&lowerAgentID); err != nil {
+		t.Fatalf("seed lower agent: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, lowerAgentID) })
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/daemon/register", map[string]any{
+		"workspace_id":      testWorkspaceID,
+		"daemon_id":         newDaemonID,
+		"legacy_daemon_ids": []string{storedLowerID}, // a single candidate must resolve both stored casings
+		"device_name":       "DupHost",
+		"runtimes": []map[string]any{
+			{"name": "dup-runtime", "type": "claude", "version": "1.0.0", "status": "online"},
+		},
+	})
+	testHandler.DaemonRegister(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("DaemonRegister: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	newRuntimeID := resp["runtimes"].([]any)[0].(map[string]any)["id"].(string)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, newRuntimeID)
+	})
+
+	// Both case-duplicate legacy rows must be gone — not just one.
+	var stillPresent int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_runtime WHERE id = ANY($1)
+	`, []string{legacyUpperID, legacyLowerID}).Scan(&stillPresent); err != nil {
+		t.Fatalf("count legacy runtimes: %v", err)
+	}
+	if stillPresent != 0 {
+		t.Fatalf("expected both case-duplicate legacy rows merged and deleted, %d still present", stillPresent)
+	}
+
+	// Both agents must point at the new runtime.
+	for _, agentID := range []string{upperAgentID, lowerAgentID} {
+		var runtimeID string
+		if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, agentID).Scan(&runtimeID); err != nil {
+			t.Fatalf("read agent runtime_id: %v", err)
+		}
+		if runtimeID != newRuntimeID {
+			t.Fatalf("agent %s not reassigned: runtime_id=%s, want %s", agentID, runtimeID, newRuntimeID)
+		}
+	}
+}
+
 // TestDaemonRegister_LegacyIDNoMatchIsNoop guards the common case where the
 // daemon sends legacy candidates but no matching row exists (e.g. first
 // registration on a fresh machine). Registration must still succeed, the new

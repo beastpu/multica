@@ -79,8 +79,8 @@ SELECT count(*) FROM agent WHERE runtime_id = $1 AND archived_at IS NULL;
 -- name: DeleteArchivedAgentsByRuntime :exec
 DELETE FROM agent WHERE runtime_id = $1 AND archived_at IS NOT NULL;
 
--- name: FindLegacyRuntimeByDaemonID :one
--- Looks up a runtime row keyed on a prior (hostname-derived) daemon_id. Used
+-- name: FindLegacyRuntimesByDaemonID :many
+-- Looks up runtime rows keyed on a prior (hostname-derived) daemon_id. Used
 -- at register-time to find rows owned by the same machine under its old
 -- identity so agents/tasks can be re-pointed at the new UUID-keyed row.
 --
@@ -89,6 +89,12 @@ DELETE FROM agent WHERE runtime_id = $1 AND archived_at IS NOT NULL;
 -- vs `jiayuans-macbook-pro`) across reboots/mDNS state changes. A case-
 -- sensitive `=` would strand the old row; LOWER() on both sides handles drift
 -- without forcing the daemon to enumerate cased permutations.
+--
+-- Returns many rather than one because case drift may have already minted
+-- duplicate rows historically (e.g. `Foo.local` AND `foo.local` under the
+-- same workspace+provider). A single-row lookup would consolidate only one
+-- of them and leave the rest orphaned. Callers must merge every returned
+-- row into the new UUID-keyed runtime.
 SELECT * FROM agent_runtime
 WHERE workspace_id = @workspace_id
   AND provider = @provider

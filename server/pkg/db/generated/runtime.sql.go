@@ -114,20 +114,20 @@ func (q *Queries) FailTasksForOfflineRuntimes(ctx context.Context) ([]FailTasksF
 	return items, nil
 }
 
-const findLegacyRuntimeByDaemonID = `-- name: FindLegacyRuntimeByDaemonID :one
+const findLegacyRuntimesByDaemonID = `-- name: FindLegacyRuntimesByDaemonID :many
 SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id FROM agent_runtime
 WHERE workspace_id = $1
   AND provider = $2
   AND LOWER(daemon_id) = LOWER($3)
 `
 
-type FindLegacyRuntimeByDaemonIDParams struct {
+type FindLegacyRuntimesByDaemonIDParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	Provider    string      `json:"provider"`
 	DaemonID    string      `json:"daemon_id"`
 }
 
-// Looks up a runtime row keyed on a prior (hostname-derived) daemon_id. Used
+// Looks up runtime rows keyed on a prior (hostname-derived) daemon_id. Used
 // at register-time to find rows owned by the same machine under its old
 // identity so agents/tasks can be re-pointed at the new UUID-keyed row.
 //
@@ -136,26 +136,45 @@ type FindLegacyRuntimeByDaemonIDParams struct {
 // vs `jiayuans-macbook-pro`) across reboots/mDNS state changes. A case-
 // sensitive `=` would strand the old row; LOWER() on both sides handles drift
 // without forcing the daemon to enumerate cased permutations.
-func (q *Queries) FindLegacyRuntimeByDaemonID(ctx context.Context, arg FindLegacyRuntimeByDaemonIDParams) (AgentRuntime, error) {
-	row := q.db.QueryRow(ctx, findLegacyRuntimeByDaemonID, arg.WorkspaceID, arg.Provider, arg.DaemonID)
-	var i AgentRuntime
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.DaemonID,
-		&i.Name,
-		&i.RuntimeMode,
-		&i.Provider,
-		&i.Status,
-		&i.DeviceInfo,
-		&i.Metadata,
-		&i.LastSeenAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.OwnerID,
-		&i.LegacyDaemonID,
-	)
-	return i, err
+//
+// Returns many rather than one because case drift may have already minted
+// duplicate rows historically (e.g. `Foo.local` AND `foo.local` under the
+// same workspace+provider). A single-row lookup would consolidate only one
+// of them and leave the rest orphaned. Callers must merge every returned
+// row into the new UUID-keyed runtime.
+func (q *Queries) FindLegacyRuntimesByDaemonID(ctx context.Context, arg FindLegacyRuntimesByDaemonIDParams) ([]AgentRuntime, error) {
+	rows, err := q.db.Query(ctx, findLegacyRuntimesByDaemonID, arg.WorkspaceID, arg.Provider, arg.DaemonID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentRuntime{}
+	for rows.Next() {
+		var i AgentRuntime
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.DaemonID,
+			&i.Name,
+			&i.RuntimeMode,
+			&i.Provider,
+			&i.Status,
+			&i.DeviceInfo,
+			&i.Metadata,
+			&i.LastSeenAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OwnerID,
+			&i.LegacyDaemonID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getAgentRuntime = `-- name: GetAgentRuntime :one
