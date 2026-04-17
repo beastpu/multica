@@ -332,6 +332,27 @@ multica issue comment add <issue-id> --parent <comment-id> --content "Thanks!"
 multica issue comment delete <comment-id>
 ```
 
+### Subscribers
+
+```bash
+# List subscribers of an issue
+multica issue subscriber list <issue-id>
+
+# Subscribe yourself to an issue
+multica issue subscriber add <issue-id>
+
+# Subscribe another member or agent by name
+multica issue subscriber add <issue-id> --user "Lambda"
+
+# Unsubscribe yourself
+multica issue subscriber remove <issue-id>
+
+# Unsubscribe another member or agent
+multica issue subscriber remove <issue-id> --user "Lambda"
+```
+
+Subscribers receive notifications about issue activity (new comments, status changes, etc.). Without `--user`, the command acts on the caller.
+
 ### Execution History
 
 ```bash
