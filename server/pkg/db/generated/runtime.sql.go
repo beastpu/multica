@@ -481,7 +481,7 @@ DO UPDATE SET
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()
-RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id
+RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, (xmax = 0) AS inserted
 `
 
 type UpsertAgentRuntimeParams struct {
@@ -496,7 +496,28 @@ type UpsertAgentRuntimeParams struct {
 	OwnerID     pgtype.UUID `json:"owner_id"`
 }
 
-func (q *Queries) UpsertAgentRuntime(ctx context.Context, arg UpsertAgentRuntimeParams) (AgentRuntime, error) {
+type UpsertAgentRuntimeRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	DaemonID       pgtype.Text        `json:"daemon_id"`
+	Name           string             `json:"name"`
+	RuntimeMode    string             `json:"runtime_mode"`
+	Provider       string             `json:"provider"`
+	Status         string             `json:"status"`
+	DeviceInfo     string             `json:"device_info"`
+	Metadata       []byte             `json:"metadata"`
+	LastSeenAt     pgtype.Timestamptz `json:"last_seen_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	OwnerID        pgtype.UUID        `json:"owner_id"`
+	LegacyDaemonID pgtype.Text        `json:"legacy_daemon_id"`
+	Inserted       bool               `json:"inserted"`
+}
+
+// (xmax = 0) AS inserted distinguishes a fresh insert (true) from an upsert
+// that updated an existing row (false). Analytics reads this to fire the
+// runtime_registered event only on first-time registration.
+func (q *Queries) UpsertAgentRuntime(ctx context.Context, arg UpsertAgentRuntimeParams) (UpsertAgentRuntimeRow, error) {
 	row := q.db.QueryRow(ctx, upsertAgentRuntime,
 		arg.WorkspaceID,
 		arg.DaemonID,
@@ -508,7 +529,7 @@ func (q *Queries) UpsertAgentRuntime(ctx context.Context, arg UpsertAgentRuntime
 		arg.Metadata,
 		arg.OwnerID,
 	)
-	var i AgentRuntime
+	var i UpsertAgentRuntimeRow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
@@ -524,6 +545,7 @@ func (q *Queries) UpsertAgentRuntime(ctx context.Context, arg UpsertAgentRuntime
 		&i.UpdatedAt,
 		&i.OwnerID,
 		&i.LegacyDaemonID,
+		&i.Inserted,
 	)
 	return i, err
 }

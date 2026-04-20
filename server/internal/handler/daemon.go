@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -262,7 +263,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			"launched_by": req.LaunchedBy,
 		})
 
-		registered, err := h.Queries.UpsertAgentRuntime(r.Context(), db.UpsertAgentRuntimeParams{
+		row, err := h.Queries.UpsertAgentRuntime(r.Context(), db.UpsertAgentRuntimeParams{
 			WorkspaceID: parseUUID(req.WorkspaceID),
 			DaemonID:    strToText(req.DaemonID),
 			Name:        name,
@@ -276,6 +277,34 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to register runtime: "+err.Error())
 			return
+		}
+
+		registered := db.AgentRuntime{
+			ID:             row.ID,
+			WorkspaceID:    row.WorkspaceID,
+			DaemonID:       row.DaemonID,
+			Name:           row.Name,
+			RuntimeMode:    row.RuntimeMode,
+			Provider:       row.Provider,
+			Status:         row.Status,
+			DeviceInfo:     row.DeviceInfo,
+			Metadata:       row.Metadata,
+			LastSeenAt:     row.LastSeenAt,
+			CreatedAt:      row.CreatedAt,
+			UpdatedAt:      row.UpdatedAt,
+			OwnerID:        row.OwnerID,
+			LegacyDaemonID: row.LegacyDaemonID,
+		}
+
+		if row.Inserted {
+			h.Analytics.Capture(analytics.RuntimeRegistered(
+				uuidToString(ownerID),
+				req.WorkspaceID,
+				uuidToString(registered.ID),
+				provider,
+				runtime.Version,
+				req.CLIVersion,
+			))
 		}
 
 		// Seamless migration from the previous hostname-derived identity. The
@@ -799,8 +828,52 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.emitIssueExecutedOnFirstCompletion(r, task)
+
 	slog.Info("task completed", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task))
+}
+
+// emitIssueExecutedOnFirstCompletion atomically flips issue.first_executed_at
+// and fires the issue_executed analytics event iff this is the first task on
+// the issue to reach terminal done. Retries / re-assignments / comment-
+// triggered follow-ups hit the WHERE first_executed_at IS NULL clause and
+// no-op, so the funnel counts unique issues, not tasks.
+func (h *Handler) emitIssueExecutedOnFirstCompletion(r *http.Request, task *db.AgentTaskQueue) {
+	if task == nil {
+		return
+	}
+	marked, err := h.Queries.MarkIssueFirstExecuted(r.Context(), task.IssueID)
+	if err != nil {
+		if !isNotFound(err) {
+			slog.Warn("analytics: mark issue first-executed failed", "issue_id", uuidToString(task.IssueID), "error", err)
+		}
+		return
+	}
+	count, countErr := h.Queries.CountExecutedIssuesInWorkspace(r.Context(), marked.WorkspaceID)
+	if countErr != nil {
+		slog.Warn("analytics: count executed issues failed", "workspace_id", uuidToString(marked.WorkspaceID), "error", countErr)
+		// count == 0 falls through; event still useful with issue_id + workspace_id.
+	}
+	var durationMS int64
+	if task.StartedAt.Valid && task.CompletedAt.Valid {
+		durationMS = task.CompletedAt.Time.Sub(task.StartedAt.Time).Milliseconds()
+	}
+	// distinct_id prefers the human creator so agent-driven events flow into
+	// the issue-author's person profile (same place signup and
+	// workspace_created land). Agent-created issues keep the agent id with a
+	// prefix so PostHog doesn't merge them into a user by accident.
+	distinct := uuidToString(marked.CreatorID)
+	if marked.CreatorType == "agent" {
+		distinct = "agent:" + distinct
+	}
+	h.Analytics.Capture(analytics.IssueExecuted(
+		distinct,
+		uuidToString(marked.WorkspaceID),
+		uuidToString(marked.ID),
+		count,
+		durationMS,
+	))
 }
 
 // ReportTaskUsage stores per-task token usage. Called independently of

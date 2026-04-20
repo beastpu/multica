@@ -12,6 +12,9 @@ SELECT * FROM agent_runtime
 WHERE id = $1 AND workspace_id = $2;
 
 -- name: UpsertAgentRuntime :one
+-- (xmax = 0) AS inserted distinguishes a fresh insert (true) from an upsert
+-- that updated an existing row (false). Analytics reads this to fire the
+-- runtime_registered event only on first-time registration.
 INSERT INTO agent_runtime (
     workspace_id,
     daemon_id,
@@ -34,7 +37,7 @@ DO UPDATE SET
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()
-RETURNING *;
+RETURNING *, (xmax = 0) AS inserted;
 
 -- name: UpdateAgentRuntimeHeartbeat :one
 UPDATE agent_runtime
