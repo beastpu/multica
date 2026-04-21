@@ -185,6 +185,12 @@ function LoginPageContent() {
     );
   }
 
+  // Next.js will SSR this client component on first request, so window is
+  // undefined during the server render. Compute origin lazily and substitute
+  // an empty string on the server; hydration replaces it with the real value
+  // before the user can click the OAuth button.
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+
   return (
     <LoginPage
       onSuccess={handleSuccess}
@@ -192,7 +198,7 @@ function LoginPageContent() {
         googleClientId
           ? {
               clientId: googleClientId,
-              redirectUri: `${window.location.origin}/auth/callback`,
+              redirectUri: `${origin}/auth/callback`,
               state: googleState,
             }
           : undefined
