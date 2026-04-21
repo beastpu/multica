@@ -54,6 +54,11 @@ async function resolveLoggedInDestination(
   return resolvePostAuthDestination(workspaces, hasOnboarded);
 }
 
+// Feishu app id stays as a build-time env var. The Google client id was
+// migrated to useConfigStore in main; Feishu can follow that pattern in a
+// later refactor — for now keep it inline so the rebase stays narrow.
+const feishuAppId = process.env.NEXT_PUBLIC_FEISHU_APP_ID;
+
 function LoginPageContent() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -126,9 +131,10 @@ function LoginPageContent() {
     router.push(dest);
   };
 
-  // Build Google OAuth state: encode platform + next URL so the callback
-  // can redirect to the right place after login.
-  const googleState = [
+  // Build OAuth state: encode platform + next URL so the callback can
+  // redirect to the right place after login. Shared between Google and
+  // Feishu since the encoding is the same.
+  const oauthState = [
     platform === "desktop" ? "platform:desktop" : "",
     nextUrl ? `next:${nextUrl}` : "",
   ]
@@ -188,7 +194,7 @@ function LoginPageContent() {
   // Next.js will SSR this client component on first request, so window is
   // undefined during the server render. Compute origin lazily and substitute
   // an empty string on the server; hydration replaces it with the real value
-  // before the user can click the OAuth button.
+  // before the user can click either OAuth button.
   const origin = typeof window !== "undefined" ? window.location.origin : "";
 
   return (
@@ -199,7 +205,16 @@ function LoginPageContent() {
           ? {
               clientId: googleClientId,
               redirectUri: `${origin}/auth/callback`,
-              state: googleState,
+              state: oauthState,
+            }
+          : undefined
+      }
+      feishu={
+        feishuAppId
+          ? {
+              appId: feishuAppId,
+              redirectUri: `${origin}/auth/feishu/callback`,
+              state: oauthState,
             }
           : undefined
       }
