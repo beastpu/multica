@@ -96,7 +96,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analytics
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Workspace-ID", "X-Workspace-Slug", "X-Request-ID", "X-Agent-ID", "X-Task-ID", "X-CSRF-Token"},
 		AllowCredentials: true,
-		MaxAge:           300,
+		MaxAge:           86400,
 	}))
 
 	// Health check
@@ -132,6 +132,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analytics
 	r.Post("/auth/verify-code", h.VerifyCode)
 	r.Post("/auth/google", h.GoogleLogin)
 	r.Post("/auth/feishu", h.FeishuLogin)
+	r.Post("/auth/feishu-plugin", h.FeishuPluginLogin)
 	r.Post("/auth/logout", h.Logout)
 
 	// Daemon API routes (require daemon token or valid user token)

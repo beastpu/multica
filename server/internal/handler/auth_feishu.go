@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -171,7 +172,7 @@ func (h *Handler) FeishuLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.ToLower(strings.TrimSpace(rawEmail))
 
-	user, err := h.findOrCreateUser(r.Context(), email)
+	user, isNew, err := h.findOrCreateUser(r.Context(), email)
 	if err != nil {
 		var signupErr SignupError
 		if errors.As(err, &signupErr) {
@@ -180,6 +181,9 @@ func (h *Handler) FeishuLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, "failed to create user")
 		return
+	}
+	if isNew {
+		h.Analytics.Capture(analytics.Signup(uuidToString(user.ID), user.Email, "feishu"))
 	}
 
 	// Backfill name and avatar from Feishu profile if the user was just
