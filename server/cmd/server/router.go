@@ -132,6 +132,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analytics
 	r.Post("/auth/verify-code", h.VerifyCode)
 	r.Post("/auth/google", h.GoogleLogin)
 	r.Post("/auth/feishu", h.FeishuLogin)
+	r.Post("/auth/feishu-plugin", h.FeishuPluginLogin)
 	r.Post("/auth/logout", h.Logout)
 
 	// Daemon API routes (require daemon token or valid user token)
