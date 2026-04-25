@@ -62,6 +62,18 @@ func isSecureCookie() bool {
 	return strings.EqualFold(u.Scheme, "https")
 }
 
+// sessionSameSite returns the SameSite policy for session cookies.
+// None is required so the cookie is sent when ship is embedded as an iframe
+// or called cross-site (e.g. Feishu Project plugin at projectplg.feishupkg.com
+// hitting ship.lilithgames.com). None requires Secure, so fall back to Lax on
+// plain-HTTP dev where Secure isn't set and browsers would reject None.
+func sessionSameSite(secure bool) http.SameSite {
+	if secure {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteLaxMode
+}
+
 // generateCSRFToken creates a CSRF token bound to the auth token via HMAC.
 // Format: hex(nonce) + "." + hex(HMAC-SHA256(nonce, authToken)).
 // This ensures an attacker who can write cookies on a subdomain cannot forge
@@ -84,6 +96,7 @@ func generateCSRFToken(authToken string) (string, error) {
 func SetAuthCookies(w http.ResponseWriter, token string) error {
 	secure := isSecureCookie()
 	domain := cookieDomain()
+	sameSite := sessionSameSite(secure)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     AuthCookieName,
@@ -94,7 +107,7 @@ func SetAuthCookies(w http.ResponseWriter, token string) error {
 		Expires:  time.Now().Add(30 * 24 * time.Hour),
 		HttpOnly: true,
 		Secure:   secure,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: sameSite,
 	})
 
 	csrfToken, err := generateCSRFToken(token)
@@ -111,7 +124,7 @@ func SetAuthCookies(w http.ResponseWriter, token string) error {
 		Expires:  time.Now().Add(30 * 24 * time.Hour),
 		HttpOnly: false,
 		Secure:   secure,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: sameSite,
 	})
 
 	return nil
@@ -121,6 +134,7 @@ func SetAuthCookies(w http.ResponseWriter, token string) error {
 func ClearAuthCookies(w http.ResponseWriter) {
 	domain := cookieDomain()
 	secure := isSecureCookie()
+	sameSite := sessionSameSite(secure)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     AuthCookieName,
@@ -131,7 +145,7 @@ func ClearAuthCookies(w http.ResponseWriter) {
 		Expires:  time.Unix(0, 0),
 		HttpOnly: true,
 		Secure:   secure,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: sameSite,
 	})
 
 	http.SetCookie(w, &http.Cookie{
@@ -143,7 +157,7 @@ func ClearAuthCookies(w http.ResponseWriter) {
 		Expires:  time.Unix(0, 0),
 		HttpOnly: false,
 		Secure:   secure,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: sameSite,
 	})
 }
 
