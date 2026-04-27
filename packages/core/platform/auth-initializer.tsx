@@ -15,6 +15,7 @@ import { workspaceKeys } from "../workspace/queries";
 import { createLogger } from "../logger";
 import { defaultStorage } from "./storage";
 import { setCurrentWorkspace } from "./workspace-storage";
+import { pickSessionToken, clearSessionToken } from "./session-token";
 import type { StorageAdapter } from "../types/storage";
 import type { User } from "../types";
 
@@ -66,6 +67,27 @@ export function AuthInitializer({
       resetAnalytics();
       useAuthStore.setState({ user: null, isLoading: false });
     };
+
+    // Embedded-host bearer flow takes precedence over cookieAuth. The Feishu
+    // Project plugin opens ship with `#shipToken=<jwt>`; we pulled it out of
+    // the hash above and stashed it in sessionStorage. While that token is
+    // present we authenticate via Bearer and skip cookie handling entirely.
+    const sessionToken = pickSessionToken();
+    if (sessionToken) {
+      api.setToken(sessionToken);
+      Promise.all([api.getMe(), api.listWorkspaces()])
+        .then(([user, wsList]) => {
+          onAuthSuccess(user);
+          qc.setQueryData(workspaceKeys.list(), wsList);
+        })
+        .catch((err) => {
+          logger.error("session-token auth init failed", err);
+          api.setToken(null);
+          clearSessionToken();
+          onAuthFailure();
+        });
+      return;
+    }
 
     if (cookieAuth) {
       // Cookie mode: the HttpOnly cookie is sent automatically by the browser.

@@ -10,6 +10,7 @@ import { QueryProvider } from "../provider";
 import { createLogger } from "../logger";
 import { defaultStorage } from "./storage";
 import { AuthInitializer } from "./auth-initializer";
+import { pickSessionToken } from "./session-token";
 import type { CoreProviderProps } from "./types";
 import type { StorageAdapter } from "../types/storage";
 
@@ -35,8 +36,15 @@ function initCore(
   });
   setApiInstance(api);
 
-  // In token mode, hydrate token from storage.
-  if (!cookieAuth) {
+  // Hydrate the bearer token before any child query can fire. Order matters:
+  // a session token (Feishu Project plugin iframe) wins over the legacy
+  // localStorage token, and we install it synchronously here — the alternative
+  // is letting AuthInitializer's effect do it, which races the first wave of
+  // useQuery calls and leaves them stuck with cached 401s.
+  const sessionToken = pickSessionToken();
+  if (sessionToken) {
+    api.setToken(sessionToken);
+  } else if (!cookieAuth) {
     const token = storage.getItem("multica_token");
     if (token) api.setToken(token);
   }
