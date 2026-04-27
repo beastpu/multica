@@ -16,7 +16,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
-	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -30,7 +29,13 @@ import (
 //	1. plugin_id + plugin_secret  →  plugin_token   (cached, ~2h TTL)
 //	2. plugin_token + code        →  user_plugin_token + user_key
 //	3. plugin_token + user_key    →  user info (email, name, avatar)
-//	4. find/create user by email, issue ship session cookie
+//	4. find/create user by email, return ship JWT in JSON body
+//
+// Bearer-token (not cookie) response shape: Safari's third-party cookie
+// policy drops Set-Cookie when the iframe and ship are on different sites.
+// The plugin frontend stores the JWT and sends it back via
+// Authorization: Bearer <token>; ship's existing JWT middleware handles
+// it just like a PAT, so no rewiring is needed downstream.
 //
 // Endpoints and field names verified against two open-source Meego clients:
 //   - github.com/Roland0511/mcp-feishu-proj (archived; was prod-tested)
@@ -208,22 +213,20 @@ func (h *Handler) FeishuPluginLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := auth.SetAuthCookies(w, tokenString); err != nil {
-		slog.Warn("failed to set auth cookies", "error", err)
-	}
-	if h.CFSigner != nil {
-		for _, cookie := range h.CFSigner.SignedCookies(time.Now().Add(72 * time.Hour)) {
-			http.SetCookie(w, cookie)
-		}
-	}
-
 	slog.Info("user logged in via feishu plugin",
 		append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email, "plugin_id", req.PluginID)...)
 
-	// Body intentionally minimal — the plugin frontend authenticates by cookie
-	// and doesn't need the JWT in JS. Returning {ok:true} matches the spec the
-	// plugin team published.
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	// Bearer-token response shape (Zadig-style). Cookie-based auth doesn't
+	// survive Safari's third-party cookie policy when the plugin runs inside
+	// the projectplg.feishupkg.com iframe, so we return the JWT in JSON and
+	// the plugin sends it back as Authorization: Bearer <token>.
+	// expires_at matches issueJWT's 30-day exp claim.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token":      tokenString,
+		"user_key":   upt.Data.UserKey,
+		"user":       userToResponse(user),
+		"expires_at": time.Now().Add(30 * 24 * time.Hour).Unix(),
+	})
 }
 
 // lookupPluginSecret returns the plugin_secret for the given plugin_id. It
