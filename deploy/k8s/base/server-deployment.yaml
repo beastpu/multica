@@ -33,7 +33,7 @@ spec:
         - name: regcred
       containers:
         - name: server
-          image: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server:v0.2.3-meego
+          image: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server:v0.2.4-token
           imagePullPolicy: IfNotPresent
           # Override the docker entrypoint so each replica skips the inline
           # `./migrate up` — migrations are run as a separate Job before rollout.

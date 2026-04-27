@@ -28,7 +28,7 @@ spec:
         - name: regcred
       containers:
         - name: web
-          image: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web:dev
+          image: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web:v0.2.5-token-sync
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
