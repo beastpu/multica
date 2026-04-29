@@ -45,7 +45,17 @@ func buildQuickCreatePrompt(task Task) string {
 	b.WriteString("- title: required. A short, imperative summary extracted from the user input (e.g. \"fix inbox loading\"). Strip filler words.\n")
 	b.WriteString("- description: optional. Include only if the user supplied detail beyond the title; otherwise omit. Never echo the title here.\n")
 	b.WriteString("- priority: one of `urgent`, `high`, `medium`, `low`, or omit. Map P0/P1 → urgent/high; \"asap\"/\"紧急\" → urgent; \"低优先级\" → low. If unspecified, omit.\n")
-	b.WriteString("- assignee: when the user says \"分给 X\" / \"assign to X\" / \"@X\", call `multica workspace members --output json` and find the matching member by display name (case-insensitive substring match is fine). On a clean match, pass `--assignee <name>`. On no match or ambiguous match, do NOT pass `--assignee` — instead append a final line to the description: `未识别 assignee: X`.\n")
+	b.WriteString("- assignee:\n")
+	b.WriteString("    - When the user names someone (\"分给 X\" / \"assign to X\" / \"@X\"), call `multica workspace members --output json` and find the matching member by display name (case-insensitive substring match is fine). On a clean match, pass `--assignee <name>`. On no match or ambiguous match, do NOT pass `--assignee` — instead append a final line to the description: `未识别 assignee: X`.\n")
+	agentName := ""
+	if task.Agent != nil {
+		agentName = task.Agent.Name
+	}
+	if agentName != "" {
+		fmt.Fprintf(&b, "    - When the user did NOT name an assignee, default to YOURSELF: pass `--assignee %q`. The picker agent is the expected owner because the user opened quick-create with you selected — never leave the issue unassigned.\n", agentName)
+	} else {
+		b.WriteString("    - When the user did NOT name an assignee, default to YOURSELF (the picker agent): pass `--assignee <your agent name>`. Never leave the issue unassigned.\n")
+	}
 	b.WriteString("- project: omit. The platform will route the issue to the workspace default.\n")
 	b.WriteString("- status: omit (defaults to `todo`).\n\n")
 	b.WriteString("Output format:\n")

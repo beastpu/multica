@@ -151,24 +151,17 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- If the task requires code changes, use `multica repo checkout <url>` to get the code first\n")
 		b.WriteString("- Keep responses concise and direct\n\n")
 	} else if ctx.QuickCreatePrompt != "" {
-		// Quick-create task: no issue exists yet. The agent's only job is to
-		// translate one line of natural language into a single
-		// `multica issue create` call. Suppress the default assignment
-		// workflow that would tell the agent to call `multica issue get` /
-		// `multica issue status` / `multica issue comment add` against an
-		// empty IssueID — those would either error or silently target the
-		// wrong issue.
-		b.WriteString("**This task was triggered by quick-create.** There is NO existing Multica issue. Translate the user's input into a single `multica issue create` invocation and exit.\n\n")
-		fmt.Fprintf(&b, "User input:\n> %s\n\n", ctx.QuickCreatePrompt)
-		b.WriteString("Field rules:\n")
-		b.WriteString("- title: required, short imperative summary extracted from the user input.\n")
-		b.WriteString("- description: optional; only include if the user supplied detail beyond the title.\n")
-		b.WriteString("- priority: one of `urgent`, `high`, `medium`, `low`, or omit. Map P0/P1 → urgent/high; \"asap\"/\"紧急\" → urgent; \"低优先级\" → low.\n")
-		b.WriteString("- assignee: when the user says \"分给 X\" / \"assign to X\" / \"@X\", call `multica workspace members --output json` and find the matching member. On clean match, pass `--assignee <name>`. On no/ambiguous match, OMIT `--assignee` and append a final line to the description: `未识别 assignee: X`.\n")
-		b.WriteString("- project / status: omit (defaults apply).\n\n")
-		b.WriteString("Output rules:\n")
-		b.WriteString("- Run exactly one `multica issue create` invocation.\n")
-		b.WriteString("- After it succeeds, print exactly one line: `Created MUL-<n>: <title>` and exit.\n")
+		// Quick-create task: detailed field / output rules live in the
+		// per-turn prompt (BuildPrompt → buildQuickCreatePrompt) so they
+		// have a single source of truth. Quick-create is one-shot, so the
+		// per-turn message is always present and the agent reads the rules
+		// from there. We only keep the hard guardrails here so a provider
+		// that doesn't propagate the user message into its working context
+		// (or a resumed session) still avoids the assignment-task workflow
+		// pointing at an empty issue id.
+		b.WriteString("**This task was triggered by quick-create.** There is NO existing Multica issue. Follow the field and output rules in the user message you just received; ignore the default assignment-task workflow.\n\n")
+		b.WriteString("Hard guardrails (apply even if the user message is missing):\n")
+		b.WriteString("- Run exactly one `multica issue create` invocation, then exit.\n")
 		b.WriteString("- Do NOT call `multica issue get`, `multica issue status`, or `multica issue comment add` for this task — there is no issue to query, transition, or comment on. The platform writes the user's success/failure inbox notification automatically based on whether `multica issue create` succeeded.\n")
 		b.WriteString("- If the CLI returns an error, exit with that error as the only output. Do not retry.\n\n")
 	} else if ctx.AutopilotRunID != "" {
