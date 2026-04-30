@@ -532,7 +532,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             </span>
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            {issue.status !== "done" && issue.status !== "cancelled" && (
+            {onDone && issue.status !== "done" && issue.status !== "cancelled" && (
               <Tooltip>
                 <TooltipTrigger
                   render={
