@@ -1,5 +1,18 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { I18nProvider } from "@multica/core/i18n/react";
+import enInvite from "../locales/en/invite.json";
+
+const TEST_RESOURCES = { en: { invite: enInvite } };
+
+function I18nWrapper({ children }: { children: ReactNode }) {
+  return (
+    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      {children}
+    </I18nProvider>
+  );
+}
 
 const { mockGetInvitation, mockAcceptInvitation, mockDeclineInvitation, mockListWorkspaces } =
   vi.hoisted(() => ({
@@ -26,6 +39,23 @@ vi.mock("../auth", () => ({
   useLogout: () => vi.fn(),
 }));
 
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: Object.assign(
+    (selector?: (s: unknown) => unknown) => {
+      const state = { user: { onboarded_at: "2026-01-01" } };
+      return selector ? selector(state) : state;
+    },
+    { getState: () => ({ refreshMe: vi.fn() }) },
+  ),
+}));
+
+vi.mock("@multica/core/paths", async () => {
+  const actual = await vi.importActual<typeof import("@multica/core/paths")>(
+    "@multica/core/paths",
+  );
+  return { ...actual, useHasOnboarded: () => true };
+});
+
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { InvitePage } from "./invite-page";
 
@@ -34,9 +64,11 @@ function renderPage() {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={qc}>
-      <InvitePage invitationId="inv-1" />
-    </QueryClientProvider>,
+    <I18nWrapper>
+      <QueryClientProvider client={qc}>
+        <InvitePage invitationId="inv-1" />
+      </QueryClientProvider>
+    </I18nWrapper>,
   );
 }
 
