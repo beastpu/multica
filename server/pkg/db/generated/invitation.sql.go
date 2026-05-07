@@ -107,6 +107,29 @@ func (q *Queries) DeclineInvitation(ctx context.Context, id pgtype.UUID) (Worksp
 	return i, err
 }
 
+const expireStalePendingInvitations = `-- name: ExpireStalePendingInvitations :exec
+UPDATE workspace_invitation
+SET status = 'expired', updated_at = now()
+WHERE workspace_id = $1
+  AND invitee_email = $2
+  AND status = 'pending'
+  AND expires_at <= now()
+`
+
+type ExpireStalePendingInvitationsParams struct {
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	InviteeEmail pgtype.Text `json:"invitee_email"`
+}
+
+// Mark any past-due pending invitations for (workspace_id, invitee_email) as expired,
+// so the next CreateInvitation does not collide with the partial unique index
+// idx_invitation_unique_pending (which is WHERE status = 'pending' and cannot
+// itself reference now() in its predicate).
+func (q *Queries) ExpireStalePendingInvitations(ctx context.Context, arg ExpireStalePendingInvitationsParams) error {
+	_, err := q.db.Exec(ctx, expireStalePendingInvitations, arg.WorkspaceID, arg.InviteeEmail)
+	return err
+}
+
 const getInvitation = `-- name: GetInvitation :one
 SELECT id, workspace_id, inviter_id, invitee_email, invitee_user_id, role, status, created_at, updated_at, expires_at, max_uses, use_count FROM workspace_invitation
 WHERE id = $1
@@ -134,7 +157,7 @@ func (q *Queries) GetInvitation(ctx context.Context, id pgtype.UUID) (WorkspaceI
 
 const getPendingInvitationByEmail = `-- name: GetPendingInvitationByEmail :one
 SELECT id, workspace_id, inviter_id, invitee_email, invitee_user_id, role, status, created_at, updated_at, expires_at, max_uses, use_count FROM workspace_invitation
-WHERE workspace_id = $1 AND invitee_email = $2 AND status = 'pending'
+WHERE workspace_id = $1 AND invitee_email = $2 AND status = 'pending' AND expires_at > now()
 `
 
 type GetPendingInvitationByEmailParams struct {

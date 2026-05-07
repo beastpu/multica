@@ -329,10 +329,18 @@ function main() {
   //
   // CI invokes this script via `node scripts/package.mjs`, so we cannot
   // rely on pnpm/npm to inject package-local binaries into PATH.
+  //
+  // `shell: true` is required on Windows: `node_modules/.bin/electron-vite`
+  // ships as a `.cmd` shim there, and Node's `spawnSync` does not honour
+  // PATHEXT when spawning a bare command without a shell — it would fail
+  // with `ENOENT`. On POSIX hosts the shim is a real executable so going
+  // through the shell is harmless. See
+  // https://nodejs.org/api/child_process.html#spawning-bat-and-cmd-files-on-windows
   const viteResult = spawnSync("electron-vite", ["build"], {
     stdio: "inherit",
     cwd: desktopRoot,
     env: envWithLocalBins(),
+    shell: true,
   });
   if (viteResult.error) {
     console.error(
@@ -391,10 +399,13 @@ function main() {
     });
 
     // Step 4: invoke electron-builder for the current target only.
+    // `shell: true` for the same Windows `.cmd` shim reason as the
+    // electron-vite invocation above.
     const result = spawnSync("electron-builder", builderArgs, {
       stdio: "inherit",
       cwd: desktopRoot,
       env: envWithLocalBins(),
+      shell: true,
     });
 
     if (result.error) {
