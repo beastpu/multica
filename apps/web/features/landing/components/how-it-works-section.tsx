@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useAuthStore } from "@multica/core/auth";
 import { useLocale } from "../i18n";
-import { GitHubMark, githubUrl, heroButtonClassName } from "./shared";
+import { heroButtonClassName } from "./shared";
 
 export function HowItWorksSection() {
   const { t } = useLocale();
@@ -43,15 +43,6 @@ export function HowItWorksSection() {
         <div className="mt-14 flex flex-wrap items-center gap-4">
           <Link href={user ? "/" : "/login"} className={heroButtonClassName("solid")}>
             {user ? t.header.dashboard : t.howItWorks.cta}
-          </Link>
-          <Link
-            href={githubUrl}
-            target="_blank"
-            rel="noreferrer"
-            className={heroButtonClassName("ghost")}
-          >
-            <GitHubMark className="size-4" />
-            {t.howItWorks.ctaGithub}
           </Link>
         </div>
       </div>

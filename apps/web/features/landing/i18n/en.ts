@@ -1,4 +1,3 @@
-import { githubUrl } from "../components/shared";
 import type { LandingDict } from "./types";
 
 export const ALLOW_SIGNUP = process.env.NEXT_PUBLIC_ALLOW_SIGNUP !== "false";
@@ -11,14 +10,14 @@ export const en: LandingDict = {
   },
 
   hero: {
-    headlineLine1: "Your next 10 hires",
-    headlineLine2: "won\u2019t be human.",
+    headlineLine1: "Make coding agents",
+    headlineLine2: "real teammates.",
     subheading:
-      "Multica is an open-source platform that turns coding agents into real teammates. Assign tasks, track progress, compound skills \u2014 manage your human + agent workforce in one place.",
-    cta: "Start free trial",
-    downloadDesktop: "Download Desktop",
+      "Ship plugs coding agents into your daily workflow \u2014 assign tasks, track progress, compound skills, and manage your human + AI team from one place.",
+    cta: "Open Workspace",
+    downloadDesktop: "",
     worksWith: "Works with",
-    imageAlt: "Multica board view \u2014 issues managed by humans and agents",
+    imageAlt: "Ship board view \u2014 issues managed by humans and agents",
   },
 
   features: {
@@ -227,27 +226,16 @@ export const en: LandingDict = {
           { label: "Features", href: "#features" },
           { label: "How it Works", href: "#how-it-works" },
           { label: "Changelog", href: "/changelog" },
-          { label: "Desktop", href: "https://github.com/multica-ai/multica/releases/latest" },
-        ],
-      },
-      resources: {
-        label: "Resources",
-        links: [
-          { label: "Documentation", href: githubUrl },
-          { label: "API", href: githubUrl },
-          { label: "X (Twitter)", href: "https://x.com/MulticaAI" },
         ],
       },
       company: {
         label: "Company",
         links: [
           { label: "About", href: "/about" },
-          { label: "Open Source", href: "#open-source" },
-          { label: "GitHub", href: githubUrl },
         ],
       },
     },
-    copyright: "\u00a9 {year} Multica. All rights reserved.",
+    copyright: "\u00a9 {year} Ship. All rights reserved.",
   },
 
   about: {

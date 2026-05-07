@@ -62,7 +62,6 @@ export type LandingDict = {
     cta: string;
     groups: {
       product: FooterGroup;
-      resources: FooterGroup;
       company: FooterGroup;
     };
     copyright: string;

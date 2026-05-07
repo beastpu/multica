@@ -1,4 +1,3 @@
-import { githubUrl } from "../components/shared";
 import type { LandingDict } from "./types";
 
 export const ALLOW_SIGNUP = process.env.NEXT_PUBLIC_ALLOW_SIGNUP !== "false";
@@ -11,14 +10,14 @@ export const zh: LandingDict = {
   },
 
   hero: {
-    headlineLine1: "\u4f60\u7684\u4e0b\u4e00\u6279\u5458\u5de5",
-    headlineLine2: "\u4e0d\u662f\u4eba\u7c7b\u3002",
+    headlineLine1: "让编码 Agent",
+    headlineLine2: "成为团队队友。",
     subheading:
-      "Multica \u662f\u4e00\u4e2a\u5f00\u6e90\u5e73\u53f0\uff0c\u5c06\u7f16\u7801 Agent \u53d8\u6210\u771f\u6b63\u7684\u961f\u53cb\u3002\u5206\u914d\u4efb\u52a1\u3001\u8ddf\u8e2a\u8fdb\u5ea6\u3001\u79ef\u7d2f\u6280\u80fd\u2014\u2014\u5728\u4e00\u4e2a\u5730\u65b9\u7ba1\u7406\u4f60\u7684\u4eba\u7c7b + Agent \u56e2\u961f\u3002",
+      "Ship 把编码 Agent 接入到日常协作里——统一分配任务、追踪进度、沉淀技能，在一个地方管理人 + AI 的团队。",
     cta: "免费开始",
     downloadDesktop: "下载桌面端",
     worksWith: "支持",
-    imageAlt: "Multica \u770b\u677f\u89c6\u56fe\u2014\u2014\u4eba\u7c7b\u548c Agent \u534f\u540c\u7ba1\u7406\u4efb\u52a1",
+    imageAlt: "Ship 看板视图——人类和 Agent 协同管理任务",
   },
 
   features: {
@@ -226,28 +225,17 @@ export const zh: LandingDict = {
         links: [
           { label: "\u529f\u80fd\u7279\u6027", href: "#features" },
           { label: "\u5982\u4f55\u5de5\u4f5c", href: "#how-it-works" },
-          { label: "更新日志", href: "/changelog" },
-          { label: "桌面端", href: "https://github.com/multica-ai/multica/releases/latest" },
-        ],
-      },
-      resources: {
-        label: "\u8d44\u6e90",
-        links: [
-          { label: "\u6587\u6863", href: githubUrl },
-          { label: "API", href: githubUrl },
-          { label: "X (Twitter)", href: "https://x.com/MulticaAI" },
+          { label: "\u66f4\u65b0\u65e5\u5fd7", href: "/changelog" },
         ],
       },
       company: {
         label: "\u5173\u4e8e",
         links: [
           { label: "\u5173\u4e8e\u6211\u4eec", href: "/about" },
-          { label: "\u5f00\u6e90", href: "#open-source" },
-          { label: "GitHub", href: githubUrl },
         ],
       },
     },
-    copyright: "\u00a9 {year} Multica. \u4fdd\u7559\u6240\u6709\u6743\u5229\u3002",
+    copyright: "© {year} Ship. 保留所有权利。",
   },
 
   about: {
