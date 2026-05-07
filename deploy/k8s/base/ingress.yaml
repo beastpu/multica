@@ -20,7 +20,7 @@ metadata:
     # IP whitelist. The ACL was pre-created via Aliyun CLI + Python SDK
     # (85 CIDRs covering Lilith office / VPN / cloud egress). Controller
     # associates it with both listeners on apply.
-    alb.ingress.kubernetes.io/acl-id: "acl-0vcyku5jmg7b7r3l0q"
+    alb.ingress.kubernetes.io/acl-id: "acl-ry04o6lyky6tmscnfu"
     alb.ingress.kubernetes.io/acl-type: "White"
 spec:
   ingressClassName: multica-alb
@@ -75,6 +75,15 @@ spec:
             backend:
               service:
                 name: multica-server
+                port:
+                  number: 8080
+          # Meego (Feishu Project) webhook ingest. Routed to the bridge
+          # which captures the payload and (later) syncs to multica issues.
+          - path: /webhook/meego
+            pathType: Prefix
+            backend:
+              service:
+                name: multica-feishu-bridge
                 port:
                   number: 8080
           - path: /

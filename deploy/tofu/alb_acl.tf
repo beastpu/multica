@@ -1,7 +1,22 @@
-# ALB ACL entries. The ACL itself (acl-0vcyku5jmg7b7r3l0q, name "multica-prod-whitelist")
-# was pre-created via aliyun CLI; this file only manages the CIDR entries.
-# To fully IaC the ACL, import it:
-#   tofu import alicloud_alb_acl.multica acl-0vcyku5jmg7b7r3l0q
+# ALB ACL — fully IaC managed (resource + entries).
+# The previous out-of-band ACL acl-0vcyku5jmg7b7r3l0q was deleted manually
+# in the Aliyun console, leaving the ALB listener without any ACL (open).
+# This file recreates the ACL via OpenTofu so future drift is detectable.
+#
+# After `tofu apply`, the ACL ID will be `alicloud_alb_acl.multica.id`.
+# That value must be set on the ingress annotation:
+#   alb.ingress.kubernetes.io/acl-id: <new id>
+# (See deploy/k8s/base/ingress.yaml in this repo.)
+
+resource "alicloud_alb_acl" "multica" {
+  acl_name      = "multica-prod-whitelist"
+  resource_group_id = null
+  lifecycle {
+    # The ACL is referenced by the live ALB listener via ingress annotation.
+    # Prevent accidental deletion that would re-open the ALB to the world.
+    prevent_destroy = true
+  }
+}
 
 locals {
   whitelist_cidrs = [
@@ -90,13 +105,27 @@ locals {
     "203.208.188.124/32",
     "47.252.55.195/32",
     "47.252.55.196/32",
+    # Meego (Feishu Project) webhook source IPs — added 2026-04-30
+    # Used by /webhook/meego/* ingest endpoint on the bridge.
+    # 78/79/80 came from advertised list; 49.7.49.5 captured from real
+    # webhook hit (User-Agent: Go-http-client/1.1). Keep both — Meego may
+    # rotate egress.
+    "101.126.59.78/32",
+    "101.126.59.79/32",
+    "101.126.59.80/32",
+    "49.7.49.5/32",
   ]
 }
 
 resource "alicloud_alb_acl_entry_attachment" "whitelist" {
   for_each = toset(local.whitelist_cidrs)
 
-  acl_id      = "acl-0vcyku5jmg7b7r3l0q"
+  acl_id      = alicloud_alb_acl.multica.id
   entry       = each.value
   description = "lilith-whitelist"
+}
+
+output "acl_id" {
+  value       = alicloud_alb_acl.multica.id
+  description = "Set this as alb.ingress.kubernetes.io/acl-id on the ingress."
 }

@@ -32,6 +32,14 @@ spec:
     - port: 443
       protocol: HTTPS
       # Certificate supplied via Ingress.spec.tls[].secretName below.
+      # IP whitelist — bind the OpenTofu-managed ACL (acl_id output from
+      # deploy/tofu/alb_acl.tf). Changes to entries flow through tofu;
+      # AlbConfig only references the ACL by id so ACK doesn't try to
+      # manage entries (it would clobber our list otherwise).
+      aclConfig:
+        aclType: White
+        aclRelations:
+          - aclId: acl-ry04o6lyky6tmscnfu
 ---
 # Our own IngressClass that points at the AlbConfig above. Separate from the
 # default "alb" IngressClass the controller registers at install time, so
