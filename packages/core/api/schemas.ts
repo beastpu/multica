@@ -332,3 +332,23 @@ export const EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE: CreateAgentFromTemplateR
   imported_skill_ids: [],
   reused_skill_ids: [],
 };
+
+const OAuthProviderPublicConfigSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  client_id: z.string(),
+  authorization_url: z.string(),
+  scope: z.string().optional(),
+  pkce: z.boolean().optional(),
+  extra_auth_params: z.record(z.string(), z.string()).optional(),
+}).loose();
+
+export const AppConfigSchema = z.object({
+  cdn_domain: z.string().default(""),
+  allow_signup: z.boolean().default(true),
+  google_client_id: z.string().optional(),
+  oauth_providers: z.array(OAuthProviderPublicConfigSchema).optional(),
+  posthog_key: z.string().optional(),
+  posthog_host: z.string().optional(),
+  analytics_environment: z.string().optional(),
+}).loose();
