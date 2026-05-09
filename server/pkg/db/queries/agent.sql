@@ -224,18 +224,24 @@ RETURNING *;
 
 -- name: GetLastTaskSession :one
 -- Returns the session_id and work_dir from the most recent task for a given
--- (agent_id, issue_id) pair, used for session resumption. We accept both
--- 'completed' and 'failed' tasks: a failed task may have established a real
--- agent session before crashing (orphaned by a daemon restart, runtime offline,
--- or sweeper timeout), and the daemon pins the resume pointer mid-flight via
--- UpdateAgentTaskSession. Without this, an auto-retry / manual rerun of a
--- mid-run failure would silently start a fresh conversation and lose the
--- in-flight context — exactly what MUL-1128's B branch is meant to fix.
+-- (agent_id, issue_id) pair, used for session resumption on the auto-retry
+-- path. We accept both 'completed' and 'failed' tasks: a failed task may
+-- have established a real agent session before crashing (orphaned by a
+-- daemon restart, runtime offline, or sweeper timeout), and the daemon pins
+-- the resume pointer mid-flight via UpdateAgentTaskSession. Without this,
+-- an auto-retry of a mid-run failure would silently start a fresh
+-- conversation and lose the in-flight context — exactly what MUL-1128's B
+-- branch is meant to fix.
 --
--- Tasks that ended in a known "poisoned" terminal state are excluded so
--- a rerun does not inherit the bad session. The daemon classifies these
--- failures (iteration_limit, agent_fallback_message) when it detects the
--- agent emitted a fallback marker instead of a real result.
+-- Manual rerun (TaskService.RerunIssue) does NOT take this path: it sets
+-- force_fresh_session=true on the new task, and the daemon claim handler
+-- skips this lookup entirely. The user already judged the prior output bad;
+-- resuming the same conversation would replay a poisoned state.
+--
+-- Tasks that ended in a known "poisoned" terminal state are also excluded
+-- here so even auto-retry does not inherit the bad session. The daemon
+-- classifies these failures (iteration_limit, agent_fallback_message) when
+-- it detects the agent emitted a fallback marker instead of a real result.
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
   AND (
