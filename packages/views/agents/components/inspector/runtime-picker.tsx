@@ -54,11 +54,17 @@ export function RuntimePicker({
 
   // Compute filtered list unconditionally — the early `!canEdit` return
   // below would otherwise re-order this hook across renders.
+  // "all" stays unfiltered (admin only). For "mine", a missing currentUserId
+  // returns [] rather than the full list — a transient null userId during
+  // auth hydration must not briefly expose other users' runtimes to a
+  // non-admin.
   const filtered = useMemo(() => {
     const list =
-      effectiveFilter === "mine" && currentUserId
-        ? runtimes.filter((r) => r.owner_id === currentUserId)
-        : runtimes;
+      effectiveFilter === "all"
+        ? runtimes
+        : currentUserId
+          ? runtimes.filter((r) => r.owner_id === currentUserId)
+          : [];
     return [...list].sort((a, b) => {
       if (a.owner_id === currentUserId && b.owner_id !== currentUserId)
         return -1;

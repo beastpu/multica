@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import type { RuntimeDevice, MemberWithUser } from "@multica/core/types";
+import type { Agent, RuntimeDevice, MemberWithUser } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enAgents from "../../locales/en/agents.json";
@@ -77,19 +77,52 @@ const members: MemberWithUser[] = [
 function renderDialog(props: {
   isWorkspaceAdmin?: boolean;
   runtimes: RuntimeDevice[];
+  currentUserId?: string | null;
+  template?: Agent | null;
 }) {
   return render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <CreateAgentDialog
         runtimes={props.runtimes}
         members={members}
-        currentUserId="user-self"
+        currentUserId={
+          props.currentUserId === undefined ? "user-self" : props.currentUserId
+        }
         isWorkspaceAdmin={props.isWorkspaceAdmin ?? false}
+        template={props.template ?? null}
         onClose={vi.fn()}
         onCreate={vi.fn()}
       />
     </I18nProvider>,
   );
+}
+
+function makeAgent(over: Partial<Agent>): Agent {
+  return {
+    id: "agent-template",
+    workspace_id: "ws-1",
+    runtime_id: "rt-self",
+    name: "Template",
+    description: "",
+    instructions: "",
+    avatar_url: null,
+    runtime_mode: "local",
+    runtime_config: {},
+    custom_env: {},
+    custom_args: [],
+    custom_env_redacted: false,
+    visibility: "workspace",
+    status: "idle",
+    max_concurrent_tasks: 1,
+    model: "",
+    owner_id: "user-self",
+    skills: [],
+    created_at: "2026-04-01T00:00:00Z",
+    updated_at: "2026-04-01T00:00:00Z",
+    archived_at: null,
+    archived_by: null,
+    ...over,
+  };
 }
 
 describe("CreateAgentDialog runtime picker — admin gate", () => {
@@ -122,5 +155,38 @@ describe("CreateAgentDialog runtime picker — admin gate", () => {
     fireEvent.click(trigger);
     // The popover is now open. The other-owner runtime must not be visible.
     expect(screen.queryByText(/Other runtime/)).toBeNull();
+  });
+
+  it("non-admin with null currentUserId: shows no runtimes (no leak during auth hydration)", () => {
+    renderDialog({
+      isWorkspaceAdmin: false,
+      currentUserId: null,
+      runtimes,
+    });
+    // The trigger label falls back to runtime_none when nothing is selectable.
+    expect(screen.queryByText(/Self runtime/)).toBeNull();
+    expect(screen.queryByText(/Other runtime/)).toBeNull();
+    // The Create button must be disabled — no selectable runtime means no
+    // valid form state.
+    const create = screen.getByRole("button", { name: /^Create$/i });
+    expect(create).toBeDisabled();
+  });
+
+  it("non-admin duplicating an agent bound to someone else's runtime: silently rebinds to own runtime", () => {
+    const template = makeAgent({
+      runtime_id: "rt-other",
+      owner_id: "user-other",
+    });
+    renderDialog({
+      isWorkspaceAdmin: false,
+      runtimes,
+      template,
+    });
+    // The trigger should show the user's own runtime, not the template's.
+    expect(screen.getByText(/Self runtime/)).toBeInTheDocument();
+    expect(screen.queryByText(/Other runtime/)).toBeNull();
+    // Create must be enabled because a valid runtime is selected.
+    const create = screen.getByRole("button", { name: /^Create$/i });
+    expect(create).not.toBeDisabled();
   });
 });

@@ -98,9 +98,18 @@ export function CreateAgentDialog({
   const showFilterTabs = isWorkspaceAdmin && hasOtherRuntimes;
 
   const filteredRuntimes = useMemo(() => {
-    const filtered = effectiveFilter === "mine" && currentUserId
-      ? runtimes.filter((r) => r.owner_id === currentUserId)
-      : runtimes;
+    // "all" stays unfiltered (admin only — non-admins are pinned to "mine"
+    // by effectiveFilter above). For "mine", missing currentUserId means we
+    // cannot identify the caller's runtimes — return empty rather than
+    // falling back to the full list, otherwise a transient null userId
+    // (auth not yet hydrated) would briefly expose other users' runtimes
+    // to a non-admin.
+    const filtered =
+      effectiveFilter === "all"
+        ? runtimes
+        : currentUserId
+          ? runtimes.filter((r) => r.owner_id === currentUserId)
+          : [];
     return [...filtered].sort((a, b) => {
       if (a.owner_id === currentUserId && b.owner_id !== currentUserId) return -1;
       if (a.owner_id !== currentUserId && b.owner_id === currentUserId) return 1;
@@ -108,19 +117,37 @@ export function CreateAgentDialog({
     });
   }, [runtimes, effectiveFilter, currentUserId]);
 
-  // When duplicating, default to the template's runtime so the clone
-  // lands on the same machine — caller can still switch in the picker.
-  const [selectedRuntimeId, setSelectedRuntimeId] = useState(
-    template?.runtime_id ?? filteredRuntimes[0]?.id ?? "",
-  );
+  // When duplicating, seed the picker with the template's runtime — but
+  // only if it's actually in `filteredRuntimes` (i.e. the user is allowed
+  // to bind to it). The reconcile effect below corrects stale selections
+  // either way, so the seed is just for the first render to avoid a flash
+  // of "no selection" in the happy path.
+  const [selectedRuntimeId, setSelectedRuntimeId] = useState(() => {
+    const seed = template?.runtime_id ?? filteredRuntimes[0]?.id ?? "";
+    if (seed && filteredRuntimes.some((r) => r.id === seed)) return seed;
+    return filteredRuntimes[0]?.id ?? "";
+  });
 
+  // Keep selection inside the visible filtered set. Two cases this guards:
+  // 1) duplicating an agent whose runtime is owned by someone else (template
+  //    seeds an unbindable id; we drop it back to the user's first own
+  //    runtime instead of letting the form submit a 403),
+  // 2) admin flipping the Mine/All tab, leaving a previously-selected
+  //    cross-owner runtime no longer in scope.
   useEffect(() => {
-    if (!selectedRuntimeId && filteredRuntimes[0]) {
-      setSelectedRuntimeId(filteredRuntimes[0].id);
+    const stillVisible = filteredRuntimes.some((r) => r.id === selectedRuntimeId);
+    if (!stillVisible) {
+      setSelectedRuntimeId(filteredRuntimes[0]?.id ?? "");
     }
   }, [filteredRuntimes, selectedRuntimeId]);
 
-  const selectedRuntime = runtimes.find((d) => d.id === selectedRuntimeId) ?? null;
+  // Look up the selected runtime *inside the filtered set* so the trigger
+  // label, model picker, and submit button can never reference a runtime
+  // the user can't bind to. Belt-and-suspenders alongside the reconcile
+  // effect: if React batches/delays the effect, this still keeps the form
+  // in a coherent, submittable state.
+  const selectedRuntime =
+    filteredRuntimes.find((d) => d.id === selectedRuntimeId) ?? null;
 
   const handleSubmit = async () => {
     if (!name.trim() || !selectedRuntime) return;
