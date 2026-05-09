@@ -44,6 +44,7 @@ export function CreateAgentDialog({
   runtimesLoading,
   members,
   currentUserId,
+  isWorkspaceAdmin = false,
   template,
   onClose,
   onCreate,
@@ -52,6 +53,11 @@ export function CreateAgentDialog({
   runtimesLoading?: boolean;
   members: MemberWithUser[];
   currentUserId: string | null;
+  // Workspace owners/admins can bind agents to anyone's runtime; regular
+  // members can only bind to their own. When false the "All" tab is
+  // hidden and the runtime list is force-filtered to runtimes the user
+  // owns. Mirrors the server check in canBindAgentToRuntime.
+  isWorkspaceAdmin?: boolean;
   // When provided, the dialog opens in "Duplicate" mode: the visible
   // fields (name / description / runtime / visibility / model) are
   // pre-populated from this agent, and the hidden fields
@@ -83,9 +89,16 @@ export function CreateAgentDialog({
   };
 
   const hasOtherRuntimes = runtimes.some((r) => r.owner_id !== currentUserId);
+  // Non-admins can only bind to their own runtimes (the server enforces this).
+  // Force "mine" so a stale runtimeFilter from a previous admin session, or
+  // an attempt to render the "all" view, can't surface someone else's runtime
+  // and produce a 403 on submit.
+  const effectiveFilter: RuntimeFilter =
+    isWorkspaceAdmin ? runtimeFilter : "mine";
+  const showFilterTabs = isWorkspaceAdmin && hasOtherRuntimes;
 
   const filteredRuntimes = useMemo(() => {
-    const filtered = runtimeFilter === "mine" && currentUserId
+    const filtered = effectiveFilter === "mine" && currentUserId
       ? runtimes.filter((r) => r.owner_id === currentUserId)
       : runtimes;
     return [...filtered].sort((a, b) => {
@@ -93,7 +106,7 @@ export function CreateAgentDialog({
       if (a.owner_id !== currentUserId && b.owner_id === currentUserId) return 1;
       return 0;
     });
-  }, [runtimes, runtimeFilter, currentUserId]);
+  }, [runtimes, effectiveFilter, currentUserId]);
 
   // When duplicating, default to the template's runtime so the clone
   // lands on the same machine — caller can still switch in the picker.
@@ -237,7 +250,7 @@ export function CreateAgentDialog({
           <div className="min-w-0">
             <div className="flex items-center justify-between">
               <Label className="text-xs text-muted-foreground">{t(($) => $.create_dialog.runtime_label)}</Label>
-              {hasOtherRuntimes && (
+              {showFilterTabs && (
                 <div className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">
                   <button
                     type="button"
