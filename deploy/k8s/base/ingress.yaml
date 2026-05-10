@@ -7,6 +7,12 @@
 #   /api/*, /auth/*, /ws, /uploads/*   → multica-server:8080
 #   /                                  → multica-web:3000  (catch-all)
 #
+# Hosts: ship.lilithgames.com (canonical) + multica.lilithgames.com (transition
+# alias — both serve the same content during the rename). Path rules are
+# defined once via the &paths YAML anchor and reused in both rule entries so
+# they stay in sync. TLS uses the wildcard *.lilithgames.com cert in the
+# multica-tls Secret, which already covers both names.
+#
 # WebSocket note: ACK ALB supports WS natively; no extra annotation needed.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -27,10 +33,11 @@ spec:
   tls:
     - hosts:
         - ship.lilithgames.com
+        - multica.lilithgames.com
       secretName: multica-tls
   rules:
     - host: ship.lilithgames.com
-      http:
+      http: &paths
         paths:
           # OAuth callback pages are Next.js routes in apps/web — match them
           # first so they reach the web Deployment, not the backend (which
@@ -93,3 +100,9 @@ spec:
                 name: multica-web
                 port:
                   number: 3000
+    # multica.lilithgames.com — transition alias serving the same paths as
+    # ship.lilithgames.com via the &paths anchor above. When the cutover
+    # flips canonical to multica (PR 2), ship will instead get a 301 to
+    # multica via a separate Ingress that points at a redirect-only backend.
+    - host: multica.lilithgames.com
+      http: *paths
