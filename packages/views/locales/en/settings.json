@@ -167,14 +167,9 @@
     "connect_disabled_tooltip": "GitHub App is not configured on this server",
     "not_configured": "GitHub integration is not configured for this deployment. Operators must set",
     "not_configured_and": "and",
-    "loading": "Loading…",
-    "empty": "No GitHub accounts connected yet.",
-    "connected_at": "{{type}} · connected {{date}}",
     "manage_hint": "Only admins and owners can manage integrations.",
     "toast_not_configured": "GitHub integration is not configured for this deployment",
-    "toast_open_failed": "Failed to open GitHub install",
-    "toast_disconnected": "Disconnected GitHub account",
-    "toast_disconnect_failed": "Failed to disconnect"
+    "toast_open_failed": "Failed to open GitHub install"
   },
   "repositories": {
     "section_title": "Repositories",

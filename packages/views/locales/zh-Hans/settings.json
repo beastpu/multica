@@ -167,14 +167,9 @@
     "connect_disabled_tooltip": "服务端未配置 GitHub App",
     "not_configured": "当前部署没有配置 GitHub 集成。运维需要设置",
     "not_configured_and": "和",
-    "loading": "加载中…",
-    "empty": "还没有连接 GitHub 账户。",
-    "connected_at": "{{type}} · {{date}} 连接",
     "manage_hint": "只有管理员和所有者可以管理集成。",
     "toast_not_configured": "当前部署未配置 GitHub 集成",
-    "toast_open_failed": "打开 GitHub 安装页失败",
-    "toast_disconnected": "已断开 GitHub 账户",
-    "toast_disconnect_failed": "断开连接失败"
+    "toast_open_failed": "打开 GitHub 安装页失败"
   },
   "repositories": {
     "section_title": "代码仓库",
