@@ -1826,12 +1826,16 @@ func issueToMap(issue db.Issue, issuePrefix string) map[string]any {
 	}
 }
 
-// parseQuickCreateContext returns the quick-create payload if the task's
+// ParseQuickCreateContext returns the quick-create payload if the task's
 // context JSONB contains type == "quick_create"; otherwise the bool is
 // false so callers can short-circuit. Tasks linked to an issue / chat /
 // autopilot are never quick-create even if they happen to carry a
 // context blob, so those are filtered up front.
-func (s *TaskService) parseQuickCreateContext(task db.AgentTaskQueue) (QuickCreateContext, bool) {
+//
+// Exposed as a package-level function so handlers outside the service
+// package (e.g. the user-facing cancel endpoint) can share the same shape
+// detection logic instead of inlining the JSON unmarshal.
+func ParseQuickCreateContext(task db.AgentTaskQueue) (QuickCreateContext, bool) {
 	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid {
 		return QuickCreateContext{}, false
 	}
@@ -1846,6 +1850,10 @@ func (s *TaskService) parseQuickCreateContext(task db.AgentTaskQueue) (QuickCrea
 		return QuickCreateContext{}, false
 	}
 	return qc, true
+}
+
+func (s *TaskService) parseQuickCreateContext(task db.AgentTaskQueue) (QuickCreateContext, bool) {
+	return ParseQuickCreateContext(task)
 }
 
 // notifyQuickCreateCompleted writes a success inbox notification to the

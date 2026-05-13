@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -702,7 +703,17 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify ownership: for chat tasks, check workspace + creator;
-	// for issue tasks, verify the issue belongs to the current workspace.
+	// for issue tasks, verify the issue belongs to the current workspace;
+	// for quick-create tasks (no chat / issue / autopilot link), pull the
+	// workspace and requester out of the context JSONB.
+	//
+	// The quick-create branch was missing before, so the cancel button on a
+	// stuck quick-create row always returned 404. Combined with the per-agent
+	// quick-create serialization in ClaimAgentTask (idx_one_pending_task_per
+	// _issue_agent applies only to issue-bound tasks; quick-creates serialize
+	// in the SQL claim NOT EXISTS clause), a single wedged dispatched/running
+	// quick-create can lock the whole channel for everyone in the workspace
+	// because nobody can mark it cancelled from the UI.
 	if task.ChatSessionID.Valid {
 		cs, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
 			ID:          task.ChatSessionID,
@@ -720,6 +731,15 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		issue, err := h.Queries.GetIssue(r.Context(), task.IssueID)
 		if err != nil || uuidToString(issue.WorkspaceID) != workspaceID {
 			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+	} else if qc, ok := service.ParseQuickCreateContext(task); ok {
+		if qc.WorkspaceID != workspaceID {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		if qc.RequesterID != userID {
+			writeError(w, http.StatusForbidden, "not your task")
 			return
 		}
 	} else {
