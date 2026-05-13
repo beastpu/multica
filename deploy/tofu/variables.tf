@@ -35,23 +35,33 @@ EOT
 
 variable "rds_instance_class" {
   description = <<EOT
-Aliyun RDS PostgreSQL instance class. Defaults to pg.n4.large.2c (4c/32g HA)
-sized for ~500 concurrent users. Downsize to pg.n2.small.2c for POC/dev.
+Aliyun RDS PostgreSQL instance class. Default pg.n4.4c.2m (4c/8g HA) matches
+prod's current state after a manual console scale-up from pg.n2.2c.2m on
+~2026-05-13. The originally-imported value was pg.n2.2c.2m, then prod hit a
+load spike during the multi-replica + Redis relay rollout and was bumped.
+Keep this var in sync with `aliyun rds DescribeDBInstanceAttribute` for
+prod, or the next `tofu apply` will silently propose a downgrade.
 EOT
   type        = string
-  default     = "pg.n4.large.2c"
+  default     = "pg.n4.4c.2m"
 }
 
 variable "rds_storage_gb" {
-  description = "RDS data disk size in GB. 500GB covers ~6-12 months of task_message growth for 500 users."
+  description = <<EOT
+RDS data disk size in GB. 200GB matches prod's current state after a manual
+console expansion from 100GB on ~2026-05-13. Aliyun does not allow online
+storage shrink — letting tofu propose 100GB here would yield an apply error,
+not a silent revert, so this is a guard variable rather than a load-bearing
+default. Bump in tfvars when prod is expanded again.
+EOT
   type        = number
-  default     = 500
+  default     = 200
 }
 
 variable "rds_engine_version" {
-  description = "PostgreSQL major version. Multica's migrations target 17; pg_bigm and pgvector are both preinstalled."
+  description = "PostgreSQL major version. Prod runs 18.0; pg_bigm and pgvector are both preinstalled. Migrations target 17+."
   type        = string
-  default     = "17.0"
+  default     = "18.0"
 }
 
 variable "rds_database_name" {
@@ -81,6 +91,19 @@ variable "rds_period_months" {
   description = "Subscription length in months. 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 24, 36, 60 are the valid Aliyun values."
   type        = number
   default     = 1
+}
+
+variable "redis_password" {
+  description = <<EOT
+Auth password shared between the test and prod Tair instances. Aliyun
+requires 8-32 chars with at least 3 of {upper, lower, digit, special}.
+Override via TF_VAR_redis_password or terraform.tfvars; the default below
+is convenient for bootstrapping but anyone with VPC access can read it from
+test's Secret.
+EOT
+  type        = string
+  sensitive   = true
+  default     = "Lilith@123"
 }
 
 variable "rds_auto_renew" {

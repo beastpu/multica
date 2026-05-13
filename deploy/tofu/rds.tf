@@ -14,6 +14,7 @@ resource "alicloud_db_instance" "multica" {
   engine_version   = var.rds_engine_version
   instance_type    = var.rds_instance_class
   instance_storage = var.rds_storage_gb
+  category         = "HighAvailability"
 
   instance_charge_type = "Prepaid"
   period               = var.rds_period_months
@@ -23,13 +24,19 @@ resource "alicloud_db_instance" "multica" {
   instance_name            = "multica-${var.env}"
   db_instance_storage_type = "cloud_essd"
 
-  vswitch_id = local.vswitches[0].id
-  # The instance gets a private endpoint reachable from any vSwitch in the VPC;
-  # we only need to pick one here. The IP whitelist below controls access.
+  # Auto minor-version upgrades (matches cloud setting). Aliyun rolls patch
+  # releases during the maintenance window; opt-in by default.
+  auto_upgrade_minor_version = "Auto"
 
-  # Client connections come from pods on ACK worker nodes. Add every vSwitch
-  # CIDR in the VPC — Aliyun accepts IPs or CIDRs.
-  security_ips = [for vsw in local.vswitches : vsw.cidr_block]
+  # Pinned to cn-shanghai-n where the existing instance was provisioned.
+  # vswitch_id is ForceNew — using `local.vswitches[0]` would re-order on a
+  # data-source refresh and tofu would propose to recreate prod.
+  vswitch_id = "vsw-uf6cmsr8x8tx31pvst0qd"
+
+  # Whole pod CIDR in one entry — matches the cloud-side default group that
+  # was set when the instance was provisioned. Listing per-vSwitch CIDRs
+  # would be more granular but every vSwitch in this VPC sits inside /16.
+  security_ips = ["10.159.0.0/16"]
 
   tags = local.common_tags
 
@@ -38,6 +45,11 @@ resource "alicloud_db_instance" "multica" {
       # Aliyun console sometimes mutates these after creation (maintenance
       # window etc.). Leave alone unless explicitly changed here.
       parameters,
+      # Prepaid period is set at create time; Aliyun returns the *remaining*
+      # subscription length on subsequent reads, which trips tofu into
+      # wanting to "renew" every plan. Ignore once imported.
+      period,
+      auto_renew_period,
     ]
   }
 }
@@ -47,6 +59,14 @@ resource "alicloud_db_account" "app" {
   account_name     = var.rds_account_name
   account_password = var.rds_account_password
   account_type     = "Super" # PostgreSQL on Aliyun RDS uses Super for the primary app user.
+
+  lifecycle {
+    # The live password was set manually before this resource was imported
+    # and may not match var.rds_account_password (the default "Lilith@123").
+    # Ignore here so plan doesn't silently propose a password reset on every
+    # apply — rotate via ResetAccountPassword + a manual update of the var.
+    ignore_changes = [account_password]
+  }
 }
 
 resource "alicloud_db_database" "multica" {
