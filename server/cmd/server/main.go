@@ -254,6 +254,9 @@ func main() {
 	// so subscribers must be written first within the same synchronous event dispatch.
 	registerSubscriberListeners(bus, queries)
 	registerActivityListeners(bus, queries)
+	if feishuNotifier := service.NewFeishuNotifierFromEnv(); feishuNotifier != nil {
+		registerExternalNotificationListeners(bus, queries, feishuNotifier)
+	}
 	registerNotificationListeners(bus, queries)
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
