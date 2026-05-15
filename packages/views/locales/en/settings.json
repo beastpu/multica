@@ -66,11 +66,17 @@
         "description": "When an agent task completes or fails"
       }
     },
-    "system": {
-      "title": "System Notifications",
-      "description": "Control native OS notification banners shown when Multica is in the background.",
-      "label": "Show system notifications",
-      "hint": "Show a banner from your operating system for new inbox items when the app isn't focused."
+    "channels": {
+      "title": "Notification Channels",
+      "description": "Choose where new inbox notifications are delivered. Event toggles above still decide what can notify you.",
+      "system": {
+        "label": "System notifications",
+        "hint": "Show a banner from your operating system for new inbox items when the app isn't focused."
+      },
+      "feishu": {
+        "label": "Feishu notifications",
+        "hint": "Send the same inbox notifications to Feishu when your account is connected."
+      }
     }
   },
   "tokens": {

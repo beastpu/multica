@@ -129,6 +129,18 @@ The daemon runs on the user's local machine, and its config is read from local e
 
 For a full explanation of how each parameter affects daemon behavior, see [Daemon and runtimes](/daemon-runtimes).
 
+## Feishu notifications
+
+These variables are server-side only. Put them in your deployment secret or ConfigMap, not in frontend environment.
+
+| Variable | Default | Description |
+|---|---|---|
+| `FEISHU_NOTIFICATIONS_ENABLED` | `false` | Set `true` to send enabled users' inbox notifications through the Feishu bot |
+| `FEISHU_NOTIFICATIONS_APP_ID` | empty | Feishu notification bot app ID |
+| `FEISHU_NOTIFICATIONS_APP_SECRET` | empty | Feishu notification bot app secret |
+| `FEISHU_MESSAGE_RECEIVE_ID_TYPE` | `email` | Recipient identifier type for the Feishu message API |
+| `FEISHU_API_BASE_URL` | `https://open.feishu.cn` | Override only for tests or a dedicated Feishu gateway |
+
 ## Frontend access control
 
 | Variable | Default | Description |

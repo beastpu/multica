@@ -12,6 +12,8 @@ export type {
   RuntimeDevice,
   CreateAgentRequest,
   UpdateAgentRequest,
+  AgentFeishuBotConfig,
+  UpdateAgentFeishuBotConfigRequest,
   Skill,
   SkillSummary,
   AgentSkillSummary,
