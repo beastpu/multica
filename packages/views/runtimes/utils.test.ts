@@ -89,6 +89,20 @@ describe("estimateCost", () => {
     expect(cost).toBeCloseTo(1, 5);
   });
 
+  it("prices the full provider+dotted+dated form (anthropic/claude-opus-4.7-20251001)", () => {
+    // All three normalization steps must compose: strip `anthropic/`,
+    // dot→dash on the Claude ID, and trim the date stamp. Pins the
+    // combined path so a future change to candidate ordering can't
+    // silently drop one tolerance.
+    const cost = estimateCost({
+      ...zeroUsage,
+      model: "anthropic/claude-opus-4.7-20251001",
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+    });
+    expect(cost).toBeCloseTo(5 + 25, 5);
+  });
+
   it("prices each dotted Codex catalog SKU at its own tier, not gpt-5", () => {
     // Every dotted minor version is priced independently. The resolver does
     // exact-match-after-date-strip (no startsWith fallback), so each row
