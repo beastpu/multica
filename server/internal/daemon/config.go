@@ -28,6 +28,7 @@ const (
 	DefaultGCTTL                          = 24 * time.Hour // 1 day — AI-coding issues rarely stay open long
 	DefaultGCOrphanTTL                    = 72 * time.Hour // 3 days — orphans with no meta (crashes, pre-GC leftovers)
 	DefaultGCArtifactTTL                  = 12 * time.Hour // 12h — drop regenerable artifacts on completed but still-open issues
+	DefaultAutoUpdateCheckInterval        = 6 * time.Hour  // how often the daemon polls GitHub for a newer CLI release
 )
 
 // DefaultGCArtifactPatterns lists basename matches that the GC loop treats as
@@ -59,6 +60,8 @@ type Config struct {
 	GCOrphanTTL                    time.Duration         // clean orphan dirs with no meta, or dirs whose issue gc-check returns 404, once they exceed this age (default: 72h). The 404 path uses the same TTL — a scoped-down token can't instantly wipe live workspaces.
 	GCArtifactTTL                  time.Duration         // when a task has been completed for at least this long but its issue is still open, drop regenerable artifacts (default: 12h, set 0 to disable)
 	GCArtifactPatterns             []string              // basename patterns whose subtrees are removed during artifact cleanup (default: node_modules, .next, .turbo)
+	AutoUpdateEnabled              bool                  // periodically check for a newer CLI release and self-update when idle (default: true)
+	AutoUpdateCheckInterval        time.Duration         // how often the auto-update loop polls for a new release (default: 6h)
 	PollInterval                   time.Duration
 	HeartbeatInterval              time.Duration
 	AgentTimeout                   time.Duration
@@ -82,6 +85,11 @@ type Overrides struct {
 	RuntimeName                    string
 	Profile                        string // profile name (empty = default)
 	HealthPort                     int    // health check port (0 = use default)
+	// DisableAutoUpdate, when true, forces the auto-update poller off. There
+	// is no symmetric "force on" override because the env/default already
+	// resolves to enabled; the flag exists so users can opt out from the CLI.
+	DisableAutoUpdate       bool
+	AutoUpdateCheckInterval time.Duration // 0 = use env/default
 }
 
 // LoadConfig builds the daemon configuration from environment variables
@@ -326,6 +334,22 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	}
 	gcArtifactPatterns := patternsFromEnv("MULTICA_GC_ARTIFACT_PATTERNS", DefaultGCArtifactPatterns)
 
+	// Auto-update config: env > defaults > CLI override.
+	autoUpdateEnabled := true
+	if v := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_AUTO_UPDATE")); v == "false" || v == "0" {
+		autoUpdateEnabled = false
+	}
+	if overrides.DisableAutoUpdate {
+		autoUpdateEnabled = false
+	}
+	autoUpdateInterval, err := durationFromEnv("MULTICA_DAEMON_AUTO_UPDATE_INTERVAL", DefaultAutoUpdateCheckInterval)
+	if err != nil {
+		return Config{}, err
+	}
+	if overrides.AutoUpdateCheckInterval > 0 {
+		autoUpdateInterval = overrides.AutoUpdateCheckInterval
+	}
+
 	return Config{
 		ServerBaseURL:                  serverBaseURL,
 		DaemonID:                       daemonID,
@@ -342,6 +366,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		GCOrphanTTL:                    gcOrphanTTL,
 		GCArtifactTTL:                  gcArtifactTTL,
 		GCArtifactPatterns:             gcArtifactPatterns,
+		AutoUpdateEnabled:              autoUpdateEnabled,
+		AutoUpdateCheckInterval:        autoUpdateInterval,
 		HealthPort:                     healthPort,
 		MaxConcurrentTasks:             maxConcurrentTasks,
 		PollInterval:                   pollInterval,
