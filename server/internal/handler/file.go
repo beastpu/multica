@@ -29,6 +29,12 @@ var extContentTypes = map[string]string{
 
 const maxUploadSize = 100 << 20 // 100 MB
 
+// maxPreviewTextSize caps the body the preview proxy will load into memory
+// for text-based types. Anything larger returns 413 and the UI falls back
+// to "please download". Sized so a typical README/source-file fits but a
+// 100 MB log dump can't blow up the renderer.
+const maxPreviewTextSize = 2 << 20 // 2 MB
+
 // ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------
@@ -368,10 +374,15 @@ func (h *Handler) GetAttachmentByID(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
-// ServeAttachmentContent — GET /api/attachments/{id}/content
+// GetAttachmentContent — GET /api/attachments/{id}/content
+//
+// Streams private attachment objects through the app so clients do not need
+// public bucket ACLs. Text-previewable files keep the preview proxy's safety
+// behavior: cap at 2 MB and force text/plain with nosniff. Other file types
+// are streamed with their original content type for image/PDF/file rendering.
 // ---------------------------------------------------------------------------
 
-func (h *Handler) ServeAttachmentContent(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetAttachmentContent(w http.ResponseWriter, r *http.Request) {
 	if h.Storage == nil {
 		writeError(w, http.StatusServiceUnavailable, "file storage not configured")
 		return
@@ -406,18 +417,46 @@ func (h *Handler) ServeAttachmentContent(w http.ResponseWriter, r *http.Request)
 	}
 
 	key := h.Storage.KeyFromURL(att.Url)
-	body, err := h.Storage.Open(r.Context(), key)
+	reader, err := h.Storage.GetReader(r.Context(), key)
 	if err != nil {
 		slog.Error("failed to open attachment content", "attachment_id", attachmentID, "key", key, "error", err)
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
-	defer body.Close()
+	defer reader.Close()
 
 	contentType := att.ContentType
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+
+	if isTextPreviewable(contentType, att.Filename) {
+		// LimitReader to maxPreviewTextSize+1 so we can detect "exactly at the
+		// limit" vs "exceeds the limit" by checking the returned length.
+		body, err := io.ReadAll(io.LimitReader(reader, maxPreviewTextSize+1))
+		if err != nil {
+			slog.Error("failed to read attachment body for preview", "id", attachmentID, "error", err)
+			writeError(w, http.StatusBadGateway, "failed to read attachment body")
+			return
+		}
+		if len(body) > maxPreviewTextSize {
+			writeError(w, http.StatusRequestEntityTooLarge, "file too large for inline preview")
+			return
+		}
+		// Always reply as text/plain so a hostile HTML payload can't be
+		// re-interpreted as a document by the browser. The original MIME is
+		// surfaced via X-Original-Content-Type for the client-side dispatcher.
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("X-Original-Content-Type", contentType)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		if _, err := w.Write(body); err != nil {
+			slog.Error("failed to write attachment preview body", "id", attachmentID, "error", err)
+		}
+		return
+	}
+
 	disposition := "attachment"
 	if isInlineAttachmentContentType(contentType) {
 		disposition = "inline"
@@ -425,7 +464,7 @@ func (h *Handler) ServeAttachmentContent(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`%s; filename="%s"`, disposition, sanitizeAttachmentFilename(att.Filename)))
 	w.Header().Set("Cache-Control", "private, max-age=300")
-	if _, err := io.Copy(w, body); err != nil {
+	if _, err := io.Copy(w, reader); err != nil {
 		slog.Error("failed to stream attachment content", "attachment_id", attachmentID, "error", err)
 	}
 }
@@ -448,6 +487,73 @@ func isInlineAttachmentContentType(ct string) bool {
 		strings.HasPrefix(ct, "video/") ||
 		strings.HasPrefix(ct, "audio/") ||
 		ct == "application/pdf"
+}
+
+// isTextPreviewable is the whitelist for the text preview proxy.
+//
+// IMPORTANT — KEEP IN SYNC with the client-side mirror in
+// packages/views/editor/utils/preview.ts (TEXT_EXTENSIONS / TEXT_CONTENT_TYPES
+// / TEXT_BASENAMES + extensionToLanguage). If a type is allowed here but not
+// mapped client-side the user sees raw unhighlighted text; if mapped client-side
+// but rejected here the user sees a 415 fallback.
+//
+// TODO(follow-up): extract this list to a JSON single-source-of-truth and
+// generate the TS side, mirroring the reserved-slugs pattern (see
+// server/internal/handler/reserved_slugs.json + scripts/generate-reserved-slugs.mjs).
+// Drift severity here is low (worst case: Eye button visible but proxy 415s,
+// modal shows the unsupported fallback — still functional, just confusing),
+// so it ships as manual hand-sync for v1.
+//
+// We check both content_type and extension because http.DetectContentType
+// regularly returns "text/plain" for Markdown / source code, so a pure
+// content-type check would 415 those.
+func isTextPreviewable(contentType, filename string) bool {
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	// Strip params (e.g. "text/plain; charset=utf-8")
+	if idx := strings.Index(ct, ";"); idx >= 0 {
+		ct = strings.TrimSpace(ct[:idx])
+	}
+	if strings.HasPrefix(ct, "text/") {
+		return true
+	}
+	switch ct {
+	case "application/json",
+		"application/javascript",
+		"application/xml",
+		"application/x-yaml",
+		"application/yaml",
+		"application/toml",
+		"application/x-sh",
+		"application/x-httpd-php":
+		return true
+	}
+
+	ext := strings.ToLower(path.Ext(filename))
+	switch ext {
+	case ".md", ".markdown",
+		".txt", ".log",
+		".csv", ".tsv",
+		".html", ".htm",
+		".json", ".xml",
+		".yml", ".yaml", ".toml", ".ini", ".conf",
+		".sh", ".bash", ".zsh",
+		".py", ".rb", ".go", ".rs",
+		".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+		".css", ".scss", ".sass", ".less",
+		".sql",
+		".java", ".kt", ".swift",
+		".c", ".cc", ".cpp", ".h", ".hpp",
+		".cs", ".php", ".lua", ".vim",
+		".dockerfile", ".makefile", ".gitignore":
+		return true
+	}
+	// Filenames without extension that match well-known build files.
+	base := strings.ToLower(path.Base(filename))
+	switch base {
+	case "dockerfile", "makefile", ".env":
+		return true
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
