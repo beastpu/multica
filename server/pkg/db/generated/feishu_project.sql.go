@@ -17,7 +17,7 @@ INSERT INTO feishu_project_sync_run (
 ) VALUES (
     $1, $2, $3, $4
 )
-RETURNING id, integration_id, workspace_id, status, trigger, created_count, updated_count, skipped_count, error_count, error, started_at, finished_at
+RETURNING id, integration_id, workspace_id, status, trigger, created_count, updated_count, skipped_count, error_count, error, started_at, finished_at, total_count, processed_count, current_page, current_type
 `
 
 type CreateFeishuProjectSyncRunParams struct {
@@ -48,6 +48,10 @@ func (q *Queries) CreateFeishuProjectSyncRun(ctx context.Context, arg CreateFeis
 		&i.Error,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.TotalCount,
+		&i.ProcessedCount,
+		&i.CurrentPage,
+		&i.CurrentType,
 	)
 	return i, err
 }
@@ -74,6 +78,7 @@ SET status = $2,
     updated_count = $4,
     skipped_count = $5,
     error_count = $6,
+    processed_count = $3::integer + $4::integer + $5::integer + $6::integer,
     error = $7,
     finished_at = now()
 WHERE id = $1
@@ -229,6 +234,68 @@ func (q *Queries) GetFeishuProjectIssueBindingByIssue(ctx context.Context, arg G
 	return i, err
 }
 
+const getLatestFeishuProjectManualSyncRun = `-- name: GetLatestFeishuProjectManualSyncRun :one
+SELECT id, integration_id, workspace_id, status, trigger, created_count, updated_count, skipped_count, error_count, error, started_at, finished_at, total_count, processed_count, current_page, current_type FROM feishu_project_sync_run
+WHERE integration_id = $1 AND trigger = 'manual'
+ORDER BY started_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestFeishuProjectManualSyncRun(ctx context.Context, integrationID pgtype.UUID) (FeishuProjectSyncRun, error) {
+	row := q.db.QueryRow(ctx, getLatestFeishuProjectManualSyncRun, integrationID)
+	var i FeishuProjectSyncRun
+	err := row.Scan(
+		&i.ID,
+		&i.IntegrationID,
+		&i.WorkspaceID,
+		&i.Status,
+		&i.Trigger,
+		&i.CreatedCount,
+		&i.UpdatedCount,
+		&i.SkippedCount,
+		&i.ErrorCount,
+		&i.Error,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.TotalCount,
+		&i.ProcessedCount,
+		&i.CurrentPage,
+		&i.CurrentType,
+	)
+	return i, err
+}
+
+const getLatestFeishuProjectSyncRun = `-- name: GetLatestFeishuProjectSyncRun :one
+SELECT id, integration_id, workspace_id, status, trigger, created_count, updated_count, skipped_count, error_count, error, started_at, finished_at, total_count, processed_count, current_page, current_type FROM feishu_project_sync_run
+WHERE integration_id = $1
+ORDER BY started_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestFeishuProjectSyncRun(ctx context.Context, integrationID pgtype.UUID) (FeishuProjectSyncRun, error) {
+	row := q.db.QueryRow(ctx, getLatestFeishuProjectSyncRun, integrationID)
+	var i FeishuProjectSyncRun
+	err := row.Scan(
+		&i.ID,
+		&i.IntegrationID,
+		&i.WorkspaceID,
+		&i.Status,
+		&i.Trigger,
+		&i.CreatedCount,
+		&i.UpdatedCount,
+		&i.SkippedCount,
+		&i.ErrorCount,
+		&i.Error,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.TotalCount,
+		&i.ProcessedCount,
+		&i.CurrentPage,
+		&i.CurrentType,
+	)
+	return i, err
+}
+
 const listEnabledFeishuProjectIntegrations = `-- name: ListEnabledFeishuProjectIntegrations :many
 SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at FROM feishu_project_integration
 WHERE enabled = true
@@ -274,7 +341,7 @@ func (q *Queries) ListEnabledFeishuProjectIntegrations(ctx context.Context) ([]F
 }
 
 const listFeishuProjectSyncRuns = `-- name: ListFeishuProjectSyncRuns :many
-SELECT id, integration_id, workspace_id, status, trigger, created_count, updated_count, skipped_count, error_count, error, started_at, finished_at FROM feishu_project_sync_run
+SELECT id, integration_id, workspace_id, status, trigger, created_count, updated_count, skipped_count, error_count, error, started_at, finished_at, total_count, processed_count, current_page, current_type FROM feishu_project_sync_run
 WHERE integration_id = $1
 ORDER BY started_at DESC
 LIMIT $2
@@ -307,6 +374,10 @@ func (q *Queries) ListFeishuProjectSyncRuns(ctx context.Context, arg ListFeishuP
 			&i.Error,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.TotalCount,
+			&i.ProcessedCount,
+			&i.CurrentPage,
+			&i.CurrentType,
 		); err != nil {
 			return nil, err
 		}
@@ -413,6 +484,44 @@ func (q *Queries) UpdateFeishuProjectIntegrationByID(ctx context.Context, arg Up
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const updateFeishuProjectSyncRunProgress = `-- name: UpdateFeishuProjectSyncRunProgress :exec
+UPDATE feishu_project_sync_run
+SET created_count = $2,
+    updated_count = $3,
+    skipped_count = $4,
+    error_count = $5,
+    processed_count = $2::integer + $3::integer + $4::integer + $5::integer,
+    total_count = GREATEST(total_count, $6),
+    current_page = $7,
+    current_type = $8
+WHERE id = $1
+`
+
+type UpdateFeishuProjectSyncRunProgressParams struct {
+	ID           pgtype.UUID `json:"id"`
+	CreatedCount int32       `json:"created_count"`
+	UpdatedCount int32       `json:"updated_count"`
+	SkippedCount int32       `json:"skipped_count"`
+	ErrorCount   int32       `json:"error_count"`
+	TotalCount   int32       `json:"total_count"`
+	CurrentPage  int32       `json:"current_page"`
+	CurrentType  string      `json:"current_type"`
+}
+
+func (q *Queries) UpdateFeishuProjectSyncRunProgress(ctx context.Context, arg UpdateFeishuProjectSyncRunProgressParams) error {
+	_, err := q.db.Exec(ctx, updateFeishuProjectSyncRunProgress,
+		arg.ID,
+		arg.CreatedCount,
+		arg.UpdatedCount,
+		arg.SkippedCount,
+		arg.ErrorCount,
+		arg.TotalCount,
+		arg.CurrentPage,
+		arg.CurrentType,
+	)
+	return err
 }
 
 const upsertFeishuProjectIntegration = `-- name: UpsertFeishuProjectIntegration :one

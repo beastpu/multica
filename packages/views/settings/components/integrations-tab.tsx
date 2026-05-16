@@ -22,6 +22,7 @@ import {
   feishuProjectIntegrationOptions,
   feishuProjectIssueStatusesOptions,
   feishuProjectKeys,
+  feishuProjectSyncOptions,
 } from "@multica/core/feishu-project/queries";
 import { api } from "@multica/core/api";
 import { useT } from "../../i18n";
@@ -57,11 +58,14 @@ export function IntegrationsTab() {
   const [connecting, setConnecting] = useState(false);
   const [savingFeishu, setSavingFeishu] = useState(false);
   const [syncingFeishu, setSyncingFeishu] = useState(false);
+  const [activeSyncRunId, setActiveSyncRunId] = useState<string | null>(null);
+  const [lastNotifiedSyncRunId, setLastNotifiedSyncRunId] = useState<string | null>(null);
   const [feishuEnabled, setFeishuEnabled] = useState(false);
   const [projectKey, setProjectKey] = useState("");
   const [pluginId, setPluginId] = useState("");
   const [pluginSecret, setPluginSecret] = useState("");
   const [actorUserKey, setActorUserKey] = useState("");
+  const [syncWorkItemId, setSyncWorkItemId] = useState("");
   const [statusMapping, setStatusMapping] = useState<Record<string, string>>({});
   const [reverseStatusMapping, setReverseStatusMapping] = useState<Record<string, string>>({});
 
@@ -87,7 +91,16 @@ export function IntegrationsTab() {
   } = useQuery({
     ...feishuProjectIssueStatusesOptions(wsId, canManage && !!projectKey.trim() && !!pluginId.trim()),
   });
+  const { data: feishuSync } = useQuery({
+    ...feishuProjectSyncOptions(wsId, canManage && !!feishuProject?.id),
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 2000 : false),
+  });
   const issueStatuses = issueStatusesData?.statuses ?? [];
+  const syncRun = feishuSync?.run ?? null;
+  const syncRunning = syncingFeishu || feishuSync?.status === "running";
+  const syncProcessed = syncRun?.processed ?? 0;
+  const syncTotal = syncRun?.total ?? 0;
+  const syncProgress = syncTotal > 0 ? Math.min(100, Math.max(8, Math.round((syncProcessed / syncTotal) * 100))) : 50;
   const issueStatusKeys = useMemo(
     () => new Set(issueStatuses.map((status) => status.key)),
     [issueStatuses],
@@ -103,6 +116,34 @@ export function IntegrationsTab() {
     setStatusMapping(feishuProject.status_mapping);
     setReverseStatusMapping(feishuProject.reverse_status_mapping);
   }, [feishuProject]);
+
+  useEffect(() => {
+    if (syncRun?.status === "running" && !activeSyncRunId) {
+      setActiveSyncRunId(syncRun.id);
+      return;
+    }
+    if (
+      !syncRun ||
+      syncRun.status === "running" ||
+      syncRun.id !== activeSyncRunId ||
+      syncRun.id === lastNotifiedSyncRunId
+    ) {
+      return;
+    }
+    setLastNotifiedSyncRunId(syncRun.id);
+    setActiveSyncRunId(null);
+    queryClient.invalidateQueries({ queryKey: feishuProjectKeys.integration(wsId) });
+    if (syncRun.status === "failed") {
+      toast.error(syncRun.error ?? t(($) => $.integrations.feishu_project_sync_failed));
+      return;
+    }
+    toast.success(
+      t(($) => $.integrations.feishu_project_sync_done, {
+        created: syncRun.created,
+        updated: syncRun.updated,
+      }),
+    );
+  }, [activeSyncRunId, lastNotifiedSyncRunId, queryClient, syncRun, t, wsId]);
 
   useEffect(() => {
     if (issueStatuses.length === 0) return;
@@ -165,18 +206,16 @@ export function IntegrationsTab() {
   async function handleSyncFeishuProject() {
     setSyncingFeishu(true);
     try {
-      const resp = await api.syncFeishuProjectIntegration(wsId);
-      await queryClient.invalidateQueries({ queryKey: feishuProjectKeys.integration(wsId) });
+      const resp = await api.syncFeishuProjectIntegration(wsId, {
+        work_item_id: syncWorkItemId.trim() || undefined,
+      });
+      queryClient.setQueryData(feishuProjectKeys.sync(wsId), resp);
+      setActiveSyncRunId(resp.run?.id ?? null);
+      await queryClient.invalidateQueries({ queryKey: feishuProjectKeys.sync(wsId) });
       if (resp.status === "failed") {
         toast.error(resp.error ?? t(($) => $.integrations.feishu_project_sync_failed));
         return;
       }
-      toast.success(
-        t(($) => $.integrations.feishu_project_sync_done, {
-          created: resp.summary.created,
-          updated: resp.summary.updated,
-        }),
-      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t(($) => $.integrations.feishu_project_sync_failed));
     } finally {
@@ -411,35 +450,50 @@ export function IntegrationsTab() {
                 <div className="flex flex-col gap-4 border-t border-border/70 pt-4 lg:flex-row lg:items-end lg:justify-between">
                   <div className="min-h-12 flex-1 space-y-2">
                     <p className="text-xs text-muted-foreground">
-                      {syncingFeishu
-                        ? t(($) => $.integrations.feishu_project_sync_progress)
+                      {syncRunning
+                        ? syncTotal > 0
+                          ? t(($) => $.integrations.feishu_project_sync_progress_count, { processed: syncProcessed, total: syncTotal })
+                          : t(($) => $.integrations.feishu_project_sync_progress)
                         : feishuProject?.last_error
                           ? feishuProject.last_error
                           : feishuProject?.last_synced_at
                             ? t(($) => $.integrations.feishu_project_last_synced, { time: feishuProject.last_synced_at })
                             : t(($) => $.integrations.feishu_project_never_synced)}
                     </p>
-                    {syncingFeishu && (
+                    <p className="text-xs text-muted-foreground">
+                      {t(($) => $.integrations.feishu_project_auto_sync_hint)}
+                    </p>
+                    {syncRunning && (
                       <div className="h-1.5 max-w-xl overflow-hidden rounded-full bg-muted">
-                        <div className="h-full w-1/2 animate-pulse rounded-full bg-primary" />
+                        <div
+                          className="h-full rounded-full bg-primary transition-[width] duration-300"
+                          style={{ width: `${syncProgress}%` }}
+                        />
                       </div>
                     )}
                   </div>
                   <div className="flex shrink-0 items-center justify-end gap-2">
+                    <Input
+                      value={syncWorkItemId}
+                      onChange={(event) => setSyncWorkItemId(event.target.value)}
+                      placeholder={t(($) => $.integrations.feishu_project_sync_id_placeholder)}
+                      className="h-9 w-44"
+                      disabled={syncRunning}
+                    />
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={handleSyncFeishuProject}
-                      disabled={syncingFeishu || !feishuProject?.id}
+                      disabled={syncRunning || !feishuProject?.id}
                     >
-                      {syncingFeishu ? (
+                      {syncRunning ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
                         <RefreshCw className="h-3.5 w-3.5" />
                       )}
-                      {syncingFeishu ? t(($) => $.integrations.feishu_project_syncing) : t(($) => $.integrations.feishu_project_sync_now)}
+                      {syncRunning ? t(($) => $.integrations.feishu_project_syncing) : t(($) => $.integrations.feishu_project_sync_now)}
                     </Button>
-                    <Button size="sm" onClick={handleSaveFeishuProject} disabled={savingFeishu || syncingFeishu}>
+                    <Button size="sm" onClick={handleSaveFeishuProject} disabled={savingFeishu || syncRunning}>
                       {savingFeishu ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (

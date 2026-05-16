@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -43,6 +45,34 @@ type UpdateFeishuProjectIntegrationRequest struct {
 	MQLFilter            string            `json:"mql_filter"`
 	StatusMapping        map[string]string `json:"status_mapping"`
 	ReverseStatusMapping map[string]string `json:"reverse_status_mapping"`
+}
+
+type FeishuProjectSyncRunResponse struct {
+	ID          string  `json:"id"`
+	Status      string  `json:"status"`
+	Trigger     string  `json:"trigger"`
+	Created     int32   `json:"created"`
+	Updated     int32   `json:"updated"`
+	Skipped     int32   `json:"skipped"`
+	Errors      int32   `json:"errors"`
+	Processed   int32   `json:"processed"`
+	Total       int32   `json:"total"`
+	CurrentPage int32   `json:"current_page"`
+	CurrentType string  `json:"current_type"`
+	Error       *string `json:"error"`
+	StartedAt   *string `json:"started_at"`
+	FinishedAt  *string `json:"finished_at"`
+}
+
+type FeishuProjectSyncResponse struct {
+	Status  string                           `json:"status"`
+	Run     *FeishuProjectSyncRunResponse    `json:"run,omitempty"`
+	Summary service.FeishuProjectSyncSummary `json:"summary"`
+	Error   string                           `json:"error,omitempty"`
+}
+
+type SyncFeishuProjectIntegrationRequest struct {
+	WorkItemID string `json:"work_item_id"`
 }
 
 func (h *Handler) GetFeishuProjectIntegration(w http.ResponseWriter, r *http.Request) {
@@ -171,13 +201,61 @@ func (h *Handler) SyncFeishuProjectIntegration(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusNotFound, "Feishu Project integration not found")
 		return
 	}
-	svc := &service.FeishuProjectSyncService{Queries: h.Queries, Tx: h.TxStarter, Client: service.NewFeishuProjectClient()}
-	summary, err := svc.Sync(r.Context(), cfg, "manual")
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "failed", "summary": summary, "error": err.Error()})
+	var req SyncFeishuProjectIntegrationRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	req.WorkItemID = strings.TrimSpace(req.WorkItemID)
+	if latest, err := h.Queries.GetLatestFeishuProjectManualSyncRun(r.Context(), cfg.ID); err == nil && latest.Status == "running" {
+		writeJSON(w, http.StatusAccepted, FeishuProjectSyncResponse{Status: "running", Run: feishuProjectSyncRunToResponse(latest)})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "succeeded", "summary": summary})
+	run, err := h.Queries.CreateFeishuProjectSyncRun(r.Context(), db.CreateFeishuProjectSyncRunParams{
+		IntegrationID: cfg.ID,
+		WorkspaceID:   cfg.WorkspaceID,
+		Status:        "running",
+		Trigger:       "manual",
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start Feishu Project sync")
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		svc := &service.FeishuProjectSyncService{Queries: h.Queries, Tx: h.TxStarter, Client: service.NewFeishuProjectClient(), Storage: h.Storage}
+		if _, err := svc.SyncWithRunAndOptions(ctx, cfg, "manual", run, service.FeishuProjectSyncOptions{WorkItemID: req.WorkItemID}); err != nil {
+			slog.Warn("Feishu Project manual sync failed", "workspace_id", workspaceID, "integration_id", uuidToString(cfg.ID), "run_id", uuidToString(run.ID), "error", err)
+		}
+	}()
+	writeJSON(w, http.StatusAccepted, FeishuProjectSyncResponse{Status: "running", Run: feishuProjectSyncRunToResponse(run)})
+}
+
+func (h *Handler) GetFeishuProjectSyncRun(w http.ResponseWriter, r *http.Request) {
+	workspaceID := workspaceIDFromURL(r, "id")
+	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+		return
+	}
+	cfg, err := h.Queries.GetFeishuProjectIntegration(r.Context(), parseUUID(workspaceID))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Feishu Project integration not found")
+		return
+	}
+	run, err := h.Queries.GetLatestFeishuProjectSyncRun(r.Context(), cfg.ID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeJSON(w, http.StatusOK, FeishuProjectSyncResponse{Status: "idle"})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get Feishu Project sync")
+		return
+	}
+	writeJSON(w, http.StatusOK, FeishuProjectSyncResponse{Status: run.Status, Run: feishuProjectSyncRunToResponse(run), Summary: service.FeishuProjectSyncSummary{
+		Created: int(run.CreatedCount),
+		Updated: int(run.UpdatedCount),
+		Skipped: int(run.SkippedCount),
+		Errors:  int(run.ErrorCount),
+	}})
 }
 
 func (h *Handler) GetFeishuProjectIssueStatuses(w http.ResponseWriter, r *http.Request) {
@@ -216,6 +294,25 @@ func feishuProjectIntegrationToResponse(cfg db.FeishuProjectIntegration) FeishuP
 		LastError:            textToPtr(cfg.LastError),
 		CreatedAt:            timestampToString(cfg.CreatedAt),
 		UpdatedAt:            timestampToString(cfg.UpdatedAt),
+	}
+}
+
+func feishuProjectSyncRunToResponse(run db.FeishuProjectSyncRun) *FeishuProjectSyncRunResponse {
+	return &FeishuProjectSyncRunResponse{
+		ID:          uuidToString(run.ID),
+		Status:      run.Status,
+		Trigger:     run.Trigger,
+		Created:     run.CreatedCount,
+		Updated:     run.UpdatedCount,
+		Skipped:     run.SkippedCount,
+		Errors:      run.ErrorCount,
+		Processed:   run.ProcessedCount,
+		Total:       run.TotalCount,
+		CurrentPage: run.CurrentPage,
+		CurrentType: run.CurrentType,
+		Error:       textToPtr(run.Error),
+		StartedAt:   timestampToPtr(run.StartedAt),
+		FinishedAt:  timestampToPtr(run.FinishedAt),
 	}
 }
 

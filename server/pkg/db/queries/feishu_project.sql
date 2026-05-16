@@ -108,9 +108,34 @@ SET status = $2,
     updated_count = $4,
     skipped_count = $5,
     error_count = $6,
+    processed_count = $3::integer + $4::integer + $5::integer + $6::integer,
     error = sqlc.narg('error'),
     finished_at = now()
 WHERE id = $1;
+
+-- name: UpdateFeishuProjectSyncRunProgress :exec
+UPDATE feishu_project_sync_run
+SET created_count = $2,
+    updated_count = $3,
+    skipped_count = $4,
+    error_count = $5,
+    processed_count = $2::integer + $3::integer + $4::integer + $5::integer,
+    total_count = GREATEST(total_count, $6),
+    current_page = $7,
+    current_type = $8
+WHERE id = $1;
+
+-- name: GetLatestFeishuProjectSyncRun :one
+SELECT * FROM feishu_project_sync_run
+WHERE integration_id = $1
+ORDER BY started_at DESC
+LIMIT 1;
+
+-- name: GetLatestFeishuProjectManualSyncRun :one
+SELECT * FROM feishu_project_sync_run
+WHERE integration_id = $1 AND trigger = 'manual'
+ORDER BY started_at DESC
+LIMIT 1;
 
 -- name: ListFeishuProjectSyncRuns :many
 SELECT * FROM feishu_project_sync_run

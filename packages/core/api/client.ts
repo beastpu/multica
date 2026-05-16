@@ -89,6 +89,7 @@ import type {
   FeishuProjectIntegration,
   FeishuProjectStatusOptionsResponse,
   UpdateFeishuProjectIntegrationRequest,
+  FeishuProjectSyncRequest,
   FeishuProjectSyncResponse,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
@@ -1391,10 +1392,23 @@ export class ApiClient {
     await this.fetch(`/api/workspaces/${workspaceId}/feishu-project`, { method: "DELETE" });
   }
 
-  async syncFeishuProjectIntegration(workspaceId: string): Promise<FeishuProjectSyncResponse> {
-    const raw = await this.fetch(`/api/workspaces/${workspaceId}/feishu-project/sync`, { method: "POST" });
+  async syncFeishuProjectIntegration(
+    workspaceId: string,
+    data?: FeishuProjectSyncRequest,
+  ): Promise<FeishuProjectSyncResponse> {
+    const raw = await this.fetch(`/api/workspaces/${workspaceId}/feishu-project/sync`, {
+      method: "POST",
+      body: data ? JSON.stringify(data) : undefined,
+    });
     return parseWithFallback(raw, FeishuProjectSyncResponseSchema, EMPTY_FEISHU_PROJECT_SYNC_RESPONSE, {
       endpoint: "POST /api/workspaces/:id/feishu-project/sync",
+    });
+  }
+
+  async getFeishuProjectSync(workspaceId: string): Promise<FeishuProjectSyncResponse> {
+    const raw = await this.fetch(`/api/workspaces/${workspaceId}/feishu-project/sync`);
+    return parseWithFallback(raw, FeishuProjectSyncResponseSchema, EMPTY_FEISHU_PROJECT_SYNC_RESPONSE, {
+      endpoint: "GET /api/workspaces/:id/feishu-project/sync",
     });
   }
 

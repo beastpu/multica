@@ -82,6 +82,8 @@ export type {
   FeishuProjectStatusOptionsResponse,
   UpdateFeishuProjectIntegrationRequest,
   FeishuProjectSyncResponse,
+  FeishuProjectSyncRequest,
+  FeishuProjectSyncRun,
 } from "./feishu-project";
 export type {
   Autopilot,

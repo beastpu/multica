@@ -31,7 +31,8 @@ export interface UpdateFeishuProjectIntegrationRequest {
 }
 
 export interface FeishuProjectSyncResponse {
-  status: "succeeded" | "failed";
+  status: "idle" | "running" | "succeeded" | "failed";
+  run?: FeishuProjectSyncRun | null;
   summary: {
     created: number;
     updated: number;
@@ -39,6 +40,27 @@ export interface FeishuProjectSyncResponse {
     errors: number;
   };
   error?: string;
+}
+
+export interface FeishuProjectSyncRequest {
+  work_item_id?: string;
+}
+
+export interface FeishuProjectSyncRun {
+  id: string;
+  status: "running" | "succeeded" | "failed";
+  trigger: string;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+  processed: number;
+  total: number;
+  current_page: number;
+  current_type: string;
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
 }
 
 export interface FeishuProjectStatusOption {

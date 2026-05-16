@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,7 +155,7 @@ func TestFeishuProjectQueryWorkItemsRequiresMappedStatusScope(t *testing.T) {
 		PluginID:      "plugin-id",
 		PluginSecret:  "plugin-secret",
 		StatusMapping: []byte(`{}`),
-	}, "issue")
+	}, "issue", false)
 	if !errors.Is(err, ErrFeishuProjectSyncScopeRequired) {
 		t.Fatalf("err = %v, want ErrFeishuProjectSyncScopeRequired", err)
 	}
@@ -212,7 +213,7 @@ func TestFeishuProjectQueryWorkItemsBuildsBoundedFilterAndPaginatesByTotal(t *te
 			"IN PROGRESS": "in_progress"
 		}`),
 		LastSyncedAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 16, 4, 7, 12, 0, time.UTC), Valid: true},
-	}, "issue")
+	}, "issue", false)
 	if err != nil {
 		t.Fatalf("QueryWorkItems: %v", err)
 	}
@@ -238,6 +239,189 @@ func TestFeishuProjectQueryWorkItemsBuildsBoundedFilterAndPaginatesByTotal(t *te
 	}
 	if requests[1]["page_num"] != float64(2) {
 		t.Fatalf("second page_num = %#v, want 2", requests[1]["page_num"])
+	}
+}
+
+func TestFeishuProjectManualQueryWorkItemsUsesThirtyDayUpdatedAtFilter(t *testing.T) {
+	var request map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/filter":
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode filter request: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":[],"pagination":{"page_num":1,"page_size":100,"total":0}}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{
+		HTTPClient: server.Client(),
+		BaseURL:    server.URL,
+	}
+	_, err := client.QueryWorkItems(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+		StatusMapping: []byte(`{
+			"OPEN": "todo"
+		}`),
+		LastSyncedAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 16, 4, 7, 12, 0, time.UTC), Valid: true},
+	}, "issue", true)
+	if err != nil {
+		t.Fatalf("QueryWorkItems: %v", err)
+	}
+	updatedAt, _ := request["updated_at"].(map[string]any)
+	start, _ := updatedAt["start"].(float64)
+	if start == 0 {
+		t.Fatalf("manual sync missing updated_at.start: %#v", request["updated_at"])
+	}
+	got := time.UnixMilli(int64(start))
+	want := time.Now().Add(-feishuProjectManualLookback)
+	if got.Before(want.Add(-time.Minute)) || got.After(want.Add(time.Minute)) {
+		t.Fatalf("manual sync updated_at.start = %s, want around %s", got, want)
+	}
+}
+
+func TestFeishuProjectExternalIssueIdentityUsesBugID(t *testing.T) {
+	item := FeishuProjectWorkItem{
+		ID:          "6991773150",
+		Type:        "issue",
+		Title:       "【1.0.0】【邮件】GMT发送批量多语言邮件后，使用撤回功能，没有把发出的邮件进行撤回",
+		Description: "details",
+		URL:         "https://project.feishu.cn/project-key/issue/detail/6991773150",
+	}
+
+	if got := externalIdentifier(item); got != "BUG-6991773150" {
+		t.Fatalf("externalIdentifier = %q, want BUG-6991773150", got)
+	}
+	if got := externalTitle(item); got != "[BUG-6991773150] 【1.0.0】【邮件】GMT发送批量多语言邮件后，使用撤回功能，没有把发出的邮件进行撤回" {
+		t.Fatalf("externalTitle = %q", got)
+	}
+	desc := externalDescription(item, "")
+	if want := "External-Id: BUG-6991773150"; !strings.Contains(desc, want) {
+		t.Fatalf("externalDescription missing %q: %q", want, desc)
+	}
+}
+
+func TestFeishuProjectExternalTitleDoesNotDuplicateBugID(t *testing.T) {
+	cases := []string{
+		"[BUG-6991773150] title",
+		"BUG-6991773150 title",
+		"BUG-6991773150: title",
+	}
+	for _, title := range cases {
+		item := FeishuProjectWorkItem{ID: "6991773150", Type: "issue", Title: title}
+		if got := externalTitle(item); got != "[BUG-6991773150] title" {
+			t.Fatalf("externalTitle(%q) = %q", title, got)
+		}
+	}
+}
+
+func TestFeishuProjectOpenAPIFieldAttachments(t *testing.T) {
+	field := map[string]any{
+		"field_key": "attachment",
+		"field_value": []any{
+			map[string]any{
+				"uuid":       "file-uuid",
+				"name":       "screenshot.png",
+				"type":       "image/png",
+				"size":       float64(1234),
+				"tmp_url":    "https://example.com/tmp/screenshot.png",
+				"irrelevant": "ignored",
+			},
+			map[string]any{
+				"id":      "user-1",
+				"name_cn": "Not Attachment",
+			},
+		},
+	}
+	attachments := feishuProjectOpenAPIFieldAttachments(field)
+	if len(attachments) != 1 {
+		t.Fatalf("len(attachments) = %d, want 1: %#v", len(attachments), attachments)
+	}
+	got := attachments[0]
+	if got.ID != "file-uuid" || got.Name != "screenshot.png" || got.ContentType != "image/png" || got.URL != "https://example.com/tmp/screenshot.png" || got.SizeBytes != 1234 {
+		t.Fatalf("attachment = %#v", got)
+	}
+}
+
+func TestFeishuProjectOpenAPIFieldAttachmentsExtractsMultiFileUID(t *testing.T) {
+	field := map[string]any{
+		"field_key":      "multi_attachment",
+		"field_type_key": "multi_file",
+		"field_value": []any{
+			map[string]any{
+				"uid":  "file-uid",
+				"name": "20260511-182223.mp4",
+				"type": "video/mp4",
+				"size": "2.3MB",
+				"url":  "https://project.feishu.cn/goapi/v5/platform/file/stream/download/file-uid",
+			},
+		},
+	}
+
+	attachments := feishuProjectOpenAPIFieldAttachments(field)
+	if len(attachments) != 1 {
+		t.Fatalf("len(attachments) = %d, want 1: %#v", len(attachments), attachments)
+	}
+	got := attachments[0]
+	if got.ID != "file-uid" || got.Name != "20260511-182223.mp4" || got.ContentType != "video/mp4" || got.URL == "" {
+		t.Fatalf("attachment = %#v", got)
+	}
+}
+
+func TestFeishuProjectExternalDescriptionIncludesAttachmentMarkdown(t *testing.T) {
+	item := FeishuProjectWorkItem{ID: "6991773150", Type: "issue", Title: "title", Description: "body"}
+	desc := externalDescription(item, "![screenshot.png](/uploads/screenshot.png)")
+	if !strings.Contains(desc, "body\n\n![screenshot.png](/uploads/screenshot.png)\n\nExternal-Id: BUG-6991773150") {
+		t.Fatalf("externalDescription = %q", desc)
+	}
+}
+
+func TestNormalizeFeishuProjectDescriptionExtractsProtectedImages(t *testing.T) {
+	raw := "before\n\n![](https://project.feishu.cn/goapi/v5/platform/file/stream/download/token-a)<!-- 1D7DB00E-509C-4AD5-9F10-F59C6B6C1272 -->\n\n![](https://example.com/public.png)\n\nafter"
+	desc, attachments := normalizeFeishuProjectDescription(raw)
+	if desc != "before\n\n![](https://example.com/public.png)\n\nafter" {
+		t.Fatalf("desc = %q", desc)
+	}
+	if len(attachments) != 1 {
+		t.Fatalf("len(attachments) = %d, want 1: %#v", len(attachments), attachments)
+	}
+	got := attachments[0]
+	if got.ID != "1D7DB00E-509C-4AD5-9F10-F59C6B6C1272" || got.Name != got.ID || got.URL != "https://project.feishu.cn/goapi/v5/platform/file/stream/download/token-a" || got.ContentType != "image/*" {
+		t.Fatalf("attachment = %#v", got)
+	}
+}
+
+func TestFeishuProjectOpenAPIFieldAttachmentsExtractsRichTextImages(t *testing.T) {
+	field := map[string]any{
+		"field_key": "description",
+		"field_value": map[string]any{
+			"doc_text": "body\n[图片]\n",
+			"doc":      `{"0":{"ops":[{"attributes":{"image":"true","uuid":"IMG-1","src":"https://project.feishu.cn/goapi/v5/platform/file/stream/download/token"},"insert":" "}],"zoneId":"0"}}`,
+			"doc_html": `<img id="IMG-1" src="https://project.feishu.cn/goapi/v5/platform/file/stream/download/token" data-name="shot.jpg" data-size="1234">`,
+		},
+	}
+
+	attachments := feishuProjectOpenAPIFieldAttachments(field)
+	if len(attachments) != 1 {
+		t.Fatalf("len(attachments) = %d, want 1: %#v", len(attachments), attachments)
+	}
+	if attachments[0].ID != "IMG-1" || attachments[0].URL == "" || attachments[0].ContentType != "image/*" {
+		t.Fatalf("attachment = %#v", attachments[0])
+	}
+
+	desc, _ := normalizeFeishuProjectDescription("body\n[图片]\n")
+	if strings.Contains(desc, "[图片]") {
+		t.Fatalf("description should remove image placeholders: %q", desc)
 	}
 }
 

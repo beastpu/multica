@@ -6,14 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
+	"log/slog"
+	"mime"
 	"net/http"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -26,8 +31,10 @@ const (
 
 	feishuProjectSyncPageSize      = 100
 	feishuProjectInitialLookback   = 24 * time.Hour
+	feishuProjectManualLookback    = 30 * 24 * time.Hour
 	feishuProjectIncrementalReplay = 10 * time.Minute
 	feishuProjectSyncMaxPages      = 1000
+	feishuProjectAttachmentMaxSize = 100 << 20
 )
 
 var ErrFeishuProjectSyncScopeRequired = errors.New("Feishu Project sync requires a bounded sync scope before searching work items")
@@ -40,6 +47,11 @@ type FeishuProjectSyncService struct {
 	Queries *db.Queries
 	Tx      FeishuProjectTxStarter
 	Client  *FeishuProjectClient
+	Storage FeishuProjectStorage
+}
+
+type FeishuProjectStorage interface {
+	Upload(ctx context.Context, key string, data []byte, contentType string, filename string) (string, error)
 }
 
 type FeishuProjectSyncSummary struct {
@@ -47,6 +59,16 @@ type FeishuProjectSyncSummary struct {
 	Updated int `json:"updated"`
 	Skipped int `json:"skipped"`
 	Errors  int `json:"errors"`
+}
+
+type FeishuProjectSyncOptions struct {
+	WorkItemID string
+}
+
+type FeishuProjectWorkItemPage struct {
+	Items   []FeishuProjectWorkItem
+	PageNum int
+	Total   int
 }
 
 type FeishuProjectClient struct {
@@ -64,6 +86,15 @@ type FeishuProjectWorkItem struct {
 	OwnerEmail  string
 	UpdatedAt   time.Time
 	URL         string
+	Attachments []FeishuProjectAttachment
+}
+
+type FeishuProjectAttachment struct {
+	ID          string
+	Name        string
+	URL         string
+	ContentType string
+	SizeBytes   int64
 }
 
 type FeishuProjectStatusOption struct {
@@ -80,6 +111,10 @@ func NewFeishuProjectClient() *FeishuProjectClient {
 }
 
 func (s *FeishuProjectSyncService) Sync(ctx context.Context, cfg db.FeishuProjectIntegration, trigger string) (FeishuProjectSyncSummary, error) {
+	return s.SyncWithOptions(ctx, cfg, trigger, FeishuProjectSyncOptions{})
+}
+
+func (s *FeishuProjectSyncService) SyncWithOptions(ctx context.Context, cfg db.FeishuProjectIntegration, trigger string, opts FeishuProjectSyncOptions) (FeishuProjectSyncSummary, error) {
 	if s.Client == nil {
 		s.Client = NewFeishuProjectClient()
 	}
@@ -89,32 +124,55 @@ func (s *FeishuProjectSyncService) Sync(ctx context.Context, cfg db.FeishuProjec
 		Status:        "running",
 		Trigger:       trigger,
 	})
+	if !run.ID.Valid {
+		slog.Warn("Feishu Project sync run creation failed", "integration_id", UUIDString(cfg.ID), "project_key", cfg.ProjectKey, "trigger", trigger)
+	}
+	return s.SyncWithRunAndOptions(ctx, cfg, trigger, run, opts)
+}
 
+func (s *FeishuProjectSyncService) SyncWithRun(ctx context.Context, cfg db.FeishuProjectIntegration, trigger string, run db.FeishuProjectSyncRun) (FeishuProjectSyncSummary, error) {
+	return s.SyncWithRunAndOptions(ctx, cfg, trigger, run, FeishuProjectSyncOptions{})
+}
+
+func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cfg db.FeishuProjectIntegration, trigger string, run db.FeishuProjectSyncRun, opts FeishuProjectSyncOptions) (FeishuProjectSyncSummary, error) {
+	if s.Client == nil {
+		s.Client = NewFeishuProjectClient()
+	}
 	summary := FeishuProjectSyncSummary{}
 	var syncErr error
+	fullSync := trigger == "manual"
+	totalCount := 0
 	for _, typ := range enabledFeishuProjectTypes(cfg) {
-		items, err := s.Client.QueryWorkItems(ctx, cfg, typ)
+		err := s.Client.QueryWorkItemPagesWithOptions(ctx, cfg, typ, fullSync, opts, func(page FeishuProjectWorkItemPage) error {
+			if page.Total > totalCount {
+				totalCount = page.Total
+			}
+			s.updateRunProgress(ctx, run.ID, summary, totalCount, page.PageNum, typ)
+			for _, item := range page.Items {
+				item.Type = typ
+				result, err := s.syncWorkItem(ctx, cfg, item)
+				if err != nil {
+					summary.Errors++
+					syncErr = err
+					s.updateRunProgress(ctx, run.ID, summary, totalCount, page.PageNum, typ)
+					continue
+				}
+				switch result {
+				case "created":
+					summary.Created++
+				case "updated":
+					summary.Updated++
+				default:
+					summary.Skipped++
+				}
+				s.updateRunProgress(ctx, run.ID, summary, totalCount, page.PageNum, typ)
+			}
+			return nil
+		})
 		if err != nil {
 			summary.Errors++
 			syncErr = err
 			continue
-		}
-		for _, item := range items {
-			item.Type = typ
-			result, err := s.syncWorkItem(ctx, cfg, item)
-			if err != nil {
-				summary.Errors++
-				syncErr = err
-				continue
-			}
-			switch result {
-			case "created":
-				summary.Created++
-			case "updated":
-				summary.Updated++
-			default:
-				summary.Skipped++
-			}
 		}
 	}
 
@@ -131,7 +189,7 @@ func (s *FeishuProjectSyncService) Sync(ctx context.Context, cfg db.FeishuProjec
 		_ = s.Queries.MarkFeishuProjectIntegrationSynced(ctx, cfg.ID)
 	}
 	if run.ID.Valid {
-		_ = s.Queries.FinishFeishuProjectSyncRun(ctx, db.FinishFeishuProjectSyncRunParams{
+		if err := s.Queries.FinishFeishuProjectSyncRun(ctx, db.FinishFeishuProjectSyncRunParams{
 			ID:           run.ID,
 			Status:       status,
 			CreatedCount: int32(summary.Created),
@@ -139,9 +197,27 @@ func (s *FeishuProjectSyncService) Sync(ctx context.Context, cfg db.FeishuProjec
 			SkippedCount: int32(summary.Skipped),
 			ErrorCount:   int32(summary.Errors),
 			Error:        errText,
-		})
+		}); err != nil {
+			slog.Warn("Feishu Project sync run finish failed", "integration_id", UUIDString(cfg.ID), "project_key", cfg.ProjectKey, "run_id", UUIDString(run.ID), "trigger", trigger, "error", err)
+		}
 	}
 	return summary, syncErr
+}
+
+func (s *FeishuProjectSyncService) updateRunProgress(ctx context.Context, runID pgtype.UUID, summary FeishuProjectSyncSummary, totalCount, pageNum int, typ string) {
+	if !runID.Valid {
+		return
+	}
+	_ = s.Queries.UpdateFeishuProjectSyncRunProgress(ctx, db.UpdateFeishuProjectSyncRunProgressParams{
+		ID:           runID,
+		CreatedCount: int32(summary.Created),
+		UpdatedCount: int32(summary.Updated),
+		SkippedCount: int32(summary.Skipped),
+		ErrorCount:   int32(summary.Errors),
+		TotalCount:   int32(totalCount),
+		CurrentPage:  int32(pageNum),
+		CurrentType:  typ,
+	})
 }
 
 func enabledFeishuProjectTypes(cfg db.FeishuProjectIntegration) []string {
@@ -172,13 +248,18 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		if err != nil {
 			return "skipped", nil
 		}
-		nextDesc := externalDescription(item)
-		if issue.Title == item.Title && issue.Description.String == nextDesc && issue.Status == status {
+		attachmentMarkdown, attachErr := s.syncExternalAttachments(ctx, cfg, issue.ID, item)
+		if attachErr != nil {
+			return "skipped", attachErr
+		}
+		nextDesc := externalDescription(item, attachmentMarkdown)
+		nextTitle := externalTitle(item)
+		if issue.Title == nextTitle && issue.Description.String == nextDesc && issue.Status == status {
 			return "skipped", nil
 		}
 		_, err = s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
 			ID:            issue.ID,
-			Title:         pgtype.Text{String: item.Title, Valid: true},
+			Title:         pgtype.Text{String: nextTitle, Valid: true},
 			Description:   pgtype.Text{String: nextDesc, Valid: true},
 			Status:        pgtype.Text{String: status, Valid: true},
 			Priority:      pgtype.Text{String: issue.Priority, Valid: true},
@@ -210,8 +291,8 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	}
 	issue, err := qtx.CreateIssue(ctx, db.CreateIssueParams{
 		WorkspaceID:  cfg.WorkspaceID,
-		Title:        item.Title,
-		Description:  pgtype.Text{String: externalDescription(item), Valid: true},
+		Title:        externalTitle(item),
+		Description:  pgtype.Text{String: externalDescription(item, ""), Valid: true},
 		Status:       status,
 		Priority:     "none",
 		AssigneeType: assigneeType,
@@ -229,6 +310,27 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "skipped", err
+	}
+	attachmentMarkdown, err := s.syncExternalAttachments(ctx, cfg, issue.ID, item)
+	if err != nil {
+		return "created", err
+	}
+	if attachmentMarkdown != "" {
+		_, err = s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
+			ID:            issue.ID,
+			Title:         pgtype.Text{String: externalTitle(item), Valid: true},
+			Description:   pgtype.Text{String: externalDescription(item, attachmentMarkdown), Valid: true},
+			Status:        pgtype.Text{String: status, Valid: true},
+			Priority:      pgtype.Text{String: issue.Priority, Valid: true},
+			AssigneeType:  assigneeType,
+			AssigneeID:    assigneeID,
+			DueDate:       issue.DueDate,
+			ParentIssueID: issue.ParentIssueID,
+			ProjectID:     issue.ProjectID,
+		})
+		if err != nil {
+			return "created", err
+		}
 	}
 	return "created", nil
 }
@@ -255,7 +357,7 @@ func bindingParams(cfg db.FeishuProjectIntegration, issueID pgtype.UUID, item Fe
 		ProjectKey:         cfg.ProjectKey,
 		WorkItemType:       item.Type,
 		WorkItemID:         item.ID,
-		ExternalIdentifier: "MEEGO_" + item.ID,
+		ExternalIdentifier: externalIdentifier(item),
 		ExternalUrl:        pgtype.Text{String: item.URL, Valid: item.URL != ""},
 		ExternalStatusLabel: pgtype.Text{
 			String: item.Status,
@@ -265,19 +367,222 @@ func bindingParams(cfg db.FeishuProjectIntegration, issueID pgtype.UUID, item Fe
 	}
 }
 
-func externalDescription(item FeishuProjectWorkItem) string {
+func externalIdentifier(item FeishuProjectWorkItem) string {
+	id := strings.TrimSpace(item.ID)
+	if id == "" {
+		return ""
+	}
+	prefix := "MEEGO"
+	switch strings.ToLower(strings.TrimSpace(item.Type)) {
+	case "issue", "bug", "缺陷":
+		prefix = "BUG"
+	case "story", "需求":
+		prefix = "STORY"
+	case "task", "任务":
+		prefix = "TASK"
+	}
+	return prefix + "-" + id
+}
+
+func externalTitle(item FeishuProjectWorkItem) string {
+	identifier := externalIdentifier(item)
+	title := strings.TrimSpace(item.Title)
+	if identifier == "" {
+		return title
+	}
+	if title == "" {
+		return "[" + identifier + "]"
+	}
+	title = stripExternalTitlePrefix(title, identifier)
+	if title == "" {
+		return "[" + identifier + "]"
+	}
+	return "[" + identifier + "] " + title
+}
+
+func stripExternalTitlePrefix(title, identifier string) string {
+	pattern := `^\s*(?:\[` + regexp.QuoteMeta(identifier) + `\]|` + regexp.QuoteMeta(identifier) + `)\s*[:：\-]?\s*`
+	return strings.TrimSpace(regexp.MustCompile(pattern).ReplaceAllString(title, ""))
+}
+
+func externalDescription(item FeishuProjectWorkItem, attachmentMarkdown string) string {
+	identifier := externalIdentifier(item)
 	var b strings.Builder
 	if strings.TrimSpace(item.Description) != "" {
 		b.WriteString(strings.TrimSpace(item.Description))
 		b.WriteString("\n\n")
 	}
-	b.WriteString("External-Id: MEEGO_")
-	b.WriteString(item.ID)
+	if strings.TrimSpace(attachmentMarkdown) != "" {
+		b.WriteString(strings.TrimSpace(attachmentMarkdown))
+		b.WriteString("\n\n")
+	}
+	b.WriteString("External-Id: ")
+	b.WriteString(identifier)
 	if item.URL != "" {
 		b.WriteString("\nExternal-Url: ")
 		b.WriteString(item.URL)
 	}
 	return b.String()
+}
+
+func normalizeFeishuProjectDescription(raw string) (string, []FeishuProjectAttachment) {
+	var attachments []FeishuProjectAttachment
+	imageIndex := 0
+	re := regexp.MustCompile(`!\[[^\]]*\]\((https?://[^)\s]+)\)\s*(?:<!--\s*([A-Za-z0-9._-]+)\s*-->)?`)
+	cleaned := re.ReplaceAllStringFunc(raw, func(match string) string {
+		parts := re.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+		rawURL := strings.TrimSpace(parts[1])
+		if rawURL == "" || !looksLikeFeishuProjectFileURL(rawURL) {
+			return match
+		}
+		imageIndex++
+		id := ""
+		if len(parts) > 2 {
+			id = strings.TrimSpace(parts[2])
+		}
+		name := id
+		if name == "" {
+			name = fmt.Sprintf("image-%d", imageIndex)
+		}
+		attachments = append(attachments, FeishuProjectAttachment{
+			ID:          id,
+			Name:        name,
+			URL:         rawURL,
+			ContentType: "image/*",
+		})
+		return ""
+	})
+	cleaned = stripFeishuProjectImagePlaceholders(cleaned)
+	return strings.TrimSpace(collapseExcessBlankLines(cleaned)), dedupeFeishuProjectAttachments(attachments)
+}
+
+func stripFeishuProjectImagePlaceholders(raw string) string {
+	lines := strings.Split(raw, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "[图片]" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func looksLikeFeishuProjectFileURL(rawURL string) bool {
+	return strings.Contains(rawURL, "project.feishu.cn/") || strings.Contains(rawURL, "/goapi/v5/platform/file/")
+}
+
+func collapseExcessBlankLines(s string) string {
+	re := regexp.MustCompile(`\n{3,}`)
+	return re.ReplaceAllString(s, "\n\n")
+}
+
+func (s *FeishuProjectSyncService) syncExternalAttachments(ctx context.Context, cfg db.FeishuProjectIntegration, issueID pgtype.UUID, item FeishuProjectWorkItem) (string, error) {
+	if s.Storage == nil || len(item.Attachments) == 0 || !cfg.CreatedByID.Valid {
+		return "", nil
+	}
+	existing, _ := s.Queries.ListAttachmentsByIssue(ctx, db.ListAttachmentsByIssueParams{
+		IssueID:     issueID,
+		WorkspaceID: cfg.WorkspaceID,
+	})
+	byName := make(map[string]db.Attachment, len(existing))
+	for _, att := range existing {
+		byName[att.Filename] = att
+	}
+
+	lines := make([]string, 0, len(item.Attachments))
+	for _, ext := range item.Attachments {
+		ext.Name = firstNonEmpty(strings.TrimSpace(ext.Name), strings.TrimSpace(ext.ID), "attachment")
+		if ext.Name == "" {
+			continue
+		}
+		if att, ok := byName[ext.Name]; ok {
+			lines = append(lines, attachmentMarkdown(att.Filename, feishuProjectAttachmentContentURL(att), att.ContentType))
+			continue
+		}
+		data, filename, contentType, err := s.Client.DownloadAttachment(ctx, cfg, item, ext)
+		if err != nil {
+			return "", err
+		}
+		if len(data) == 0 || len(data) > feishuProjectAttachmentMaxSize {
+			continue
+		}
+		filename = firstNonEmpty(filename, ext.Name)
+		contentType = firstNonEmpty(contentType, ext.ContentType, http.DetectContentType(data))
+		id, err := uuid.NewV7()
+		if err != nil {
+			return "", err
+		}
+		key := feishuProjectAttachmentKey(cfg, item, ext, id.String(), filename)
+		link, err := s.Storage.Upload(ctx, key, data, contentType, filename)
+		if err != nil {
+			return "", err
+		}
+		att, err := s.Queries.CreateAttachment(ctx, db.CreateAttachmentParams{
+			ID:           pgtype.UUID{Bytes: id, Valid: true},
+			WorkspaceID:  cfg.WorkspaceID,
+			IssueID:      issueID,
+			UploaderType: "member",
+			UploaderID:   cfg.CreatedByID,
+			Filename:     filename,
+			Url:          link,
+			ContentType:  contentType,
+			SizeBytes:    int64(len(data)),
+		})
+		if err != nil {
+			return "", err
+		}
+		byName[att.Filename] = att
+		lines = append(lines, attachmentMarkdown(att.Filename, feishuProjectAttachmentContentURL(att), att.ContentType))
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func feishuProjectAttachmentKey(cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, ext FeishuProjectAttachment, fallbackID, filename string) string {
+	id := firstNonEmpty(ext.ID, fallbackID)
+	id = feishuProjectSafePathSegment(id)
+	extension := path.Ext(filename)
+	if extension == "" {
+		if exts, _ := mime.ExtensionsByType(ext.ContentType); len(exts) > 0 {
+			extension = exts[0]
+		}
+	}
+	return "workspaces/" + UUIDString(cfg.WorkspaceID) + "/feishu-project/" +
+		feishuProjectSafePathSegment(UUIDString(cfg.ID)) + "/" +
+		feishuProjectSafePathSegment(item.Type) + "/" +
+		feishuProjectSafePathSegment(item.ID) + "/" + id + extension
+}
+
+func feishuProjectSafePathSegment(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "unknown"
+	}
+	return regexp.MustCompile(`[^A-Za-z0-9._-]+`).ReplaceAllString(s, "_")
+}
+
+func attachmentMarkdown(filename, url, contentType string) string {
+	alt := strings.ReplaceAll(filename, "]", "\\]")
+	if strings.HasPrefix(contentType, "image/") || isImageFilename(filename) {
+		return "![" + alt + "](" + url + ")"
+	}
+	return "!file[" + alt + "](" + url + ")"
+}
+
+func feishuProjectAttachmentContentURL(att db.Attachment) string {
+	return "/api/attachments/" + UUIDString(att.ID) + "/content?workspace_id=" + UUIDString(att.WorkspaceID)
+}
+
+func isImageFilename(filename string) bool {
+	switch strings.ToLower(path.Ext(filename)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg":
+		return true
+	default:
+		return false
+	}
 }
 
 func mapFeishuStatus(raw []byte, typ, external string) string {
@@ -355,6 +660,10 @@ func feishuProjectSyncSinceUnixMilli(cfg db.FeishuProjectIntegration, now time.T
 	return feishuProjectSyncSince(cfg, now).UnixMilli()
 }
 
+func feishuProjectManualSyncSinceUnixMilli(now time.Time) int64 {
+	return now.Add(-feishuProjectManualLookback).UnixMilli()
+}
+
 func feishuProjectSyncSince(cfg db.FeishuProjectIntegration, now time.Time) time.Time {
 	since := now.Add(-feishuProjectInitialLookback)
 	if cfg.LastSyncedAt.Valid {
@@ -406,46 +715,77 @@ func quoteMQLString(value string) string {
 	return "'" + strings.ReplaceAll(strings.TrimSpace(value), "'", "''") + "'"
 }
 
-func (c *FeishuProjectClient) QueryWorkItems(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType string) ([]FeishuProjectWorkItem, error) {
+func (c *FeishuProjectClient) QueryWorkItems(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType string, fullSync bool) ([]FeishuProjectWorkItem, error) {
+	var out []FeishuProjectWorkItem
+	err := c.QueryWorkItemPagesWithOptions(ctx, cfg, workItemType, fullSync, FeishuProjectSyncOptions{}, func(page FeishuProjectWorkItemPage) error {
+		out = append(out, page.Items...)
+		return nil
+	})
+	return out, err
+}
+
+func (c *FeishuProjectClient) QueryWorkItemPages(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType string, fullSync bool, handle func(FeishuProjectWorkItemPage) error) error {
+	return c.QueryWorkItemPagesWithOptions(ctx, cfg, workItemType, fullSync, FeishuProjectSyncOptions{}, handle)
+}
+
+func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType string, fullSync bool, opts FeishuProjectSyncOptions, handle func(FeishuProjectWorkItemPage) error) error {
 	statuses := mappedFeishuProjectStatuses(cfg.StatusMapping, workItemType)
 	if len(statuses) == 0 {
-		return nil, ErrFeishuProjectSyncScopeRequired
+		return ErrFeishuProjectSyncScopeRequired
 	}
-	var out []FeishuProjectWorkItem
 	pageNum := 1
 	for page := 0; page < feishuProjectSyncMaxPages; page++ {
-		payload, err := c.openAPI(ctx, cfg, http.MethodPost, fmt.Sprintf("/open_api/%s/work_item/filter", cfg.ProjectKey), map[string]any{
+		req := map[string]any{
 			"work_item_type_keys": []string{workItemType},
 			"work_item_status":    feishuProjectWorkItemStatusFilter(statuses),
-			"updated_at": map[string]any{
-				"start": feishuProjectSyncSinceUnixMilli(cfg, time.Now()),
-			},
-			"page_num":  pageNum,
-			"page_size": feishuProjectSyncPageSize,
+			"page_num":            pageNum,
+			"page_size":           feishuProjectSyncPageSize,
 			"expand": map[string]any{
 				"need_multi_text":  true,
 				"need_user_detail": true,
 			},
-		})
+		}
+		if strings.TrimSpace(opts.WorkItemID) != "" {
+			req["work_item_ids"] = []string{strings.TrimSpace(opts.WorkItemID)}
+		}
+		now := time.Now()
+		updatedAtStart := feishuProjectSyncSinceUnixMilli(cfg, now)
+		if fullSync {
+			updatedAtStart = feishuProjectManualSyncSinceUnixMilli(now)
+		}
+		req["updated_at"] = map[string]any{
+			"start": updatedAtStart,
+		}
+		payload, err := c.openAPI(ctx, cfg, http.MethodPost, fmt.Sprintf("/open_api/%s/work_item/filter", cfg.ProjectKey), req)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		items := parseFeishuProjectSearch(payload, workItemType, cfg.ProjectKey)
-		out = append(out, items...)
 		total, hasTotal := feishuProjectOpenAPITotal(payload)
+		if !hasTotal {
+			total = 0
+		}
+		if handle != nil {
+			if err := handle(FeishuProjectWorkItemPage{Items: items, PageNum: pageNum, Total: total}); err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(opts.WorkItemID) != "" {
+			return nil
+		}
 		if hasTotal {
 			if pageNum*feishuProjectSyncPageSize >= total {
-				return out, nil
+				return nil
 			}
 			pageNum++
 			continue
 		}
 		if len(items) < feishuProjectSyncPageSize {
-			return out, nil
+			return nil
 		}
 		pageNum++
 	}
-	return out, fmt.Errorf("Feishu Project sync stopped after %d pages; narrow the sync scope", feishuProjectSyncMaxPages)
+	return fmt.Errorf("Feishu Project sync stopped after %d pages; narrow the sync scope", feishuProjectSyncMaxPages)
 }
 
 func feishuProjectWorkItemStatusFilter(statuses []string) []map[string]any {
@@ -666,6 +1006,88 @@ func (c *FeishuProjectClient) callTool(ctx context.Context, cfg db.FeishuProject
 	return map[string]any{}, nil
 }
 
+func (c *FeishuProjectClient) DownloadAttachment(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, att FeishuProjectAttachment) ([]byte, string, string, error) {
+	if att.ID != "" {
+		payload := map[string]any{"uuid": att.ID}
+		token, err := c.pluginToken(ctx, cfg.PluginID, cfg.PluginSecret)
+		if err != nil {
+			return nil, "", "", err
+		}
+		raw, filename, contentType, err := c.downloadAttachmentRequest(ctx, cfg, item, token, payload)
+		if err == nil {
+			return raw, firstNonEmpty(filename, att.Name), firstNonEmpty(contentType, att.ContentType), nil
+		}
+		if strings.TrimSpace(att.URL) == "" {
+			return nil, "", "", err
+		}
+	}
+	if strings.TrimSpace(att.URL) == "" {
+		return nil, "", "", fmt.Errorf("Feishu Project attachment %q has no downloadable url or uuid", att.Name)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, att.URL, nil)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if token, tokenErr := c.pluginToken(ctx, cfg.PluginID, cfg.PluginSecret); tokenErr == nil {
+		req.Header.Set("X-PLUGIN-TOKEN", token)
+		if cfg.ActorUserKey.Valid {
+			req.Header.Set("X-USER-KEY", cfg.ActorUserKey.String)
+		}
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, "", "", err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, feishuProjectAttachmentMaxSize+1))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", "", fmt.Errorf("Feishu Project attachment download http %d: %s", resp.StatusCode, string(raw))
+	}
+	return raw, firstNonEmpty(filenameFromContentDisposition(resp.Header.Get("Content-Disposition")), att.Name), firstNonEmpty(resp.Header.Get("Content-Type"), att.ContentType), nil
+}
+
+func (c *FeishuProjectClient) downloadAttachmentRequest(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, token string, body any) ([]byte, string, string, error) {
+	rawBody, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+fmt.Sprintf("/open_api/%s/work_item/%s/%s/file/download", cfg.ProjectKey, item.Type, item.ID), bytes.NewReader(rawBody))
+	if err != nil {
+		return nil, "", "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-PLUGIN-TOKEN", token)
+	if cfg.ActorUserKey.Valid {
+		req.Header.Set("X-USER-KEY", cfg.ActorUserKey.String)
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, "", "", err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, feishuProjectAttachmentMaxSize+1))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", "", fmt.Errorf("Feishu Project attachment download http %d: %s", resp.StatusCode, string(raw))
+	}
+	if strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
+		var payload map[string]any
+		if err := json.Unmarshal(raw, &payload); err == nil {
+			if msg := feishuProjectAPIError(payload); msg != "" {
+				return nil, "", "", fmt.Errorf("Feishu Project attachment download failed: %s", msg)
+			}
+		}
+	}
+	return raw, filenameFromContentDisposition(resp.Header.Get("Content-Disposition")), resp.Header.Get("Content-Type"), nil
+}
+
+func filenameFromContentDisposition(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	_, params, err := mime.ParseMediaType(raw)
+	if err != nil {
+		return ""
+	}
+	return params["filename"]
+}
+
 func (c *FeishuProjectClient) pluginToken(ctx context.Context, pluginID, pluginSecret string) (string, error) {
 	body, _ := json.Marshal(map[string]string{"plugin_id": pluginID, "plugin_secret": pluginSecret})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/open_api/authen/plugin_token", bytes.NewReader(body))
@@ -733,20 +1155,24 @@ func parseFeishuProjectMQL(payload map[string]any, typ, projectKey string) []Fei
 			if id == "" {
 				continue
 			}
+			attachments := feishuProjectMQLAttachments(row)
 			status := record["work_item_status"]
 			if status == "" {
 				status = record["status"]
 			}
+			description, descriptionAttachments := normalizeFeishuProjectDescription(record["description"])
+			attachments = append(attachments, descriptionAttachments...)
 			updatedAt := feishuProjectTime(record["updated_at"])
 			out = append(out, FeishuProjectWorkItem{
 				ID:          id,
 				Type:        typ,
 				Title:       firstNonEmpty(record["name"], record["title"]),
-				Description: record["description"],
+				Description: description,
 				Status:      status,
 				OwnerEmail:  extractEmail(firstNonEmpty(record["current_status_operator"], record["owner"], record["operator"])),
 				UpdatedAt:   updatedAt,
 				URL:         fmt.Sprintf("https://project.feishu.cn/%s/%s/detail/%s", projectKey, typ, id),
+				Attachments: dedupeFeishuProjectAttachments(attachments),
 			})
 		}
 	}
@@ -815,12 +1241,14 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey string) []
 			record["updated_at"] = ts.Format(time.RFC3339Nano)
 		}
 		fields, _ := row["fields"].([]any)
+		var attachments []FeishuProjectAttachment
 		for _, fieldAny := range fields {
 			field, _ := fieldAny.(map[string]any)
 			key := firstNonEmpty(fmt.Sprint(field["field_key"]), fmt.Sprint(field["field_alias"]))
 			if key == "" {
 				continue
 			}
+			attachments = append(attachments, feishuProjectOpenAPIFieldAttachments(field)...)
 			if value := feishuProjectOpenAPIFieldValue(field); value != "" {
 				record[key] = value
 			}
@@ -832,20 +1260,24 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey string) []
 			if key == "" {
 				continue
 			}
+			attachments = append(attachments, feishuProjectOpenAPIFieldAttachments(field)...)
 			if value := feishuProjectOpenAPIFieldValue(field); value != "" {
 				record[key] = value
 			}
 		}
+		description, descriptionAttachments := normalizeFeishuProjectDescription(record["description"])
+		attachments = append(attachments, descriptionAttachments...)
 		updatedAt, _ := time.Parse(time.RFC3339Nano, record["updated_at"])
 		out = append(out, FeishuProjectWorkItem{
 			ID:          id,
 			Type:        typ,
 			Title:       firstNonEmpty(record["name"], record["title"]),
-			Description: record["description"],
+			Description: description,
 			Status:      firstNonEmpty(record["work_item_status"], record["sub_stage"], record["status"]),
 			OwnerEmail:  extractEmail(firstNonEmpty(record["current_status_operator"], record["owner"], record["operator"])),
 			UpdatedAt:   updatedAt,
 			URL:         fmt.Sprintf("https://project.feishu.cn/%s/%s/detail/%s", projectKey, typ, id),
+			Attachments: dedupeFeishuProjectAttachments(attachments),
 		})
 	}
 	return out
@@ -1023,6 +1455,237 @@ func feishuProjectOpenAPIFieldValue(field map[string]any) string {
 	default:
 		return fmt.Sprint(v)
 	}
+}
+
+func feishuProjectMQLAttachments(row map[string]any) []FeishuProjectAttachment {
+	var out []FeishuProjectAttachment
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case []any:
+			for _, child := range x {
+				walk(child)
+			}
+		case map[string]any:
+			if att, ok := feishuProjectAttachmentFromMap(x); ok {
+				out = append(out, att)
+			}
+			for _, child := range x {
+				walk(child)
+			}
+		}
+	}
+	walk(row)
+	return dedupeFeishuProjectAttachments(out)
+}
+
+func feishuProjectOpenAPIFieldAttachments(field map[string]any) []FeishuProjectAttachment {
+	var out []FeishuProjectAttachment
+	out = append(out, feishuProjectRichTextAttachments(field["field_value"])...)
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case []any:
+			for _, child := range x {
+				walk(child)
+			}
+		case map[string]any:
+			if att, ok := feishuProjectAttachmentFromMap(x); ok {
+				out = append(out, att)
+			}
+			for _, child := range x {
+				walk(child)
+			}
+		}
+	}
+	walk(field["field_value"])
+	return dedupeFeishuProjectAttachments(out)
+}
+
+func feishuProjectRichTextAttachments(value any) []FeishuProjectAttachment {
+	m, _ := value.(map[string]any)
+	if len(m) == 0 {
+		return nil
+	}
+	var out []FeishuProjectAttachment
+	if rawDoc, _ := m["doc"].(string); strings.TrimSpace(rawDoc) != "" {
+		var doc any
+		if err := json.Unmarshal([]byte(rawDoc), &doc); err == nil {
+			var walk func(any)
+			walk = func(v any) {
+				switch x := v.(type) {
+				case map[string]any:
+					attrs, _ := x["attributes"].(map[string]any)
+					if att, ok := feishuProjectRichTextImageFromAttrs(attrs); ok {
+						out = append(out, att)
+					}
+					for _, child := range x {
+						walk(child)
+					}
+				case []any:
+					for _, child := range x {
+						walk(child)
+					}
+				}
+			}
+			walk(doc)
+		}
+	}
+	if rawHTML, _ := m["doc_html"].(string); strings.TrimSpace(rawHTML) != "" {
+		out = append(out, feishuProjectRichTextImagesFromHTML(rawHTML)...)
+	}
+	return dedupeFeishuProjectAttachments(out)
+}
+
+func feishuProjectRichTextImageFromAttrs(attrs map[string]any) (FeishuProjectAttachment, bool) {
+	if len(attrs) == 0 {
+		return FeishuProjectAttachment{}, false
+	}
+	if fmt.Sprint(attrs["image"]) != "true" {
+		return FeishuProjectAttachment{}, false
+	}
+	id := feishuProjectStringValue(attrs["uuid"])
+	rawURL := feishuProjectStringValue(attrs["src"])
+	if id == "" && rawURL == "" {
+		return FeishuProjectAttachment{}, false
+	}
+	return FeishuProjectAttachment{
+		ID:          id,
+		Name:        firstNonEmpty(id, "image"),
+		URL:         rawURL,
+		ContentType: "image/*",
+	}, true
+}
+
+func feishuProjectRichTextImagesFromHTML(rawHTML string) []FeishuProjectAttachment {
+	re := regexp.MustCompile(`(?is)<img\b[^>]*>`)
+	srcRe := regexp.MustCompile(`(?is)\s(src|id|data-name|data-size)=["']([^"']*)["']`)
+	var out []FeishuProjectAttachment
+	for _, tag := range re.FindAllString(rawHTML, -1) {
+		attrs := map[string]string{}
+		for _, match := range srcRe.FindAllStringSubmatch(tag, -1) {
+			if len(match) == 3 {
+				attrs[strings.ToLower(match[1])] = html.UnescapeString(match[2])
+			}
+		}
+		rawURL := strings.TrimSpace(attrs["src"])
+		if rawURL == "" || !looksLikeFeishuProjectFileURL(rawURL) {
+			continue
+		}
+		name := firstNonEmpty(attrs["data-name"], attrs["id"], "image")
+		out = append(out, FeishuProjectAttachment{
+			ID:          attrs["id"],
+			Name:        name,
+			URL:         rawURL,
+			ContentType: "image/*",
+			SizeBytes:   feishuProjectInt64Value(attrs["data-size"]),
+		})
+	}
+	return dedupeFeishuProjectAttachments(out)
+}
+
+func feishuProjectAttachmentFromMap(m map[string]any) (FeishuProjectAttachment, bool) {
+	id := firstNonEmpty(
+		feishuProjectStringValue(m["uuid"]),
+		feishuProjectStringValue(m["file_token"]),
+		feishuProjectStringValue(m["token"]),
+		feishuProjectStringValue(m["uid"]),
+		feishuProjectStringValue(m["id"]),
+	)
+	name := firstNonEmpty(
+		feishuProjectStringValue(m["name"]),
+		feishuProjectStringValue(m["filename"]),
+		feishuProjectStringValue(m["file_name"]),
+	)
+	rawURL := firstNonEmpty(
+		feishuProjectStringValue(m["tmp_url"]),
+		feishuProjectStringValue(m["url"]),
+		feishuProjectStringValue(m["download_url"]),
+	)
+	contentType := firstNonEmpty(
+		feishuProjectStringValue(m["type"]),
+		feishuProjectStringValue(m["mime_type"]),
+		feishuProjectStringValue(m["content_type"]),
+	)
+	if !looksLikeAttachmentMap(m) {
+		return FeishuProjectAttachment{}, false
+	}
+	if id == "" && rawURL == "" {
+		return FeishuProjectAttachment{}, false
+	}
+	return FeishuProjectAttachment{
+		ID:          id,
+		Name:        firstNonEmpty(name, id, "attachment"),
+		URL:         rawURL,
+		ContentType: contentType,
+		SizeBytes:   feishuProjectInt64Value(m["size"], m["size_bytes"]),
+	}, true
+}
+
+func looksLikeAttachmentMap(m map[string]any) bool {
+	for _, key := range []string{"uuid", "file_token", "uid", "tmp_url", "download_url", "mime_type", "content_type", "size_bytes"} {
+		if m[key] != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func dedupeFeishuProjectAttachments(items []FeishuProjectAttachment) []FeishuProjectAttachment {
+	seen := map[string]bool{}
+	out := make([]FeishuProjectAttachment, 0, len(items))
+	for _, item := range items {
+		key := firstNonEmpty(item.ID, item.URL, item.Name)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, item)
+	}
+	return out
+}
+
+func feishuProjectStringValue(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(x)
+	case float64:
+		return strconv.FormatInt(int64(x), 10)
+	case int64:
+		return strconv.FormatInt(x, 10)
+	case int:
+		return strconv.Itoa(x)
+	case json.Number:
+		return x.String()
+	default:
+		s := fmt.Sprint(x)
+		if s == "<nil>" {
+			return ""
+		}
+		return strings.TrimSpace(s)
+	}
+}
+
+func feishuProjectInt64Value(values ...any) int64 {
+	for _, v := range values {
+		switch x := v.(type) {
+		case float64:
+			return int64(x)
+		case int64:
+			return x
+		case int:
+			return int64(x)
+		case json.Number:
+			n, _ := strconv.ParseInt(x.String(), 10, 64)
+			return n
+		case string:
+			n, _ := strconv.ParseInt(strings.TrimSpace(x), 10, 64)
+			return n
+		}
+	}
+	return 0
 }
 
 func feishuProjectStatusValue(v any) string {

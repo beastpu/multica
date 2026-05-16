@@ -87,17 +87,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		daemonHub = daemonws.NewHub()
 	}
 
-	// Initialize storage with S3 as primary, fallback to local
-	var store storage.Storage
-	s3 := storage.NewS3StorageFromEnv()
-	if s3 != nil {
-		store = s3
-	} else {
-		local := storage.NewLocalStorageFromEnv()
-		if local != nil {
-			store = local
-		}
-	}
+	store := newStorageFromEnv()
 
 	cfSigner := auth.NewCloudFrontSignerFromEnv()
 
@@ -311,6 +301,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/feishu-project", h.UpdateFeishuProjectIntegration)
 					r.Delete("/feishu-project", h.DeleteFeishuProjectIntegration)
 					r.Get("/feishu-project/issue-statuses", h.GetFeishuProjectIssueStatuses)
+					r.Get("/feishu-project/sync", h.GetFeishuProjectSyncRun)
 					r.Post("/feishu-project/sync", h.SyncFeishuProjectIntegration)
 				})
 			})
@@ -427,6 +418,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Attachments
 			r.Get("/api/attachments/{id}", h.GetAttachmentByID)
+			r.Get("/api/attachments/{id}/content", h.ServeAttachmentContent)
 			r.Delete("/api/attachments/{id}", h.DeleteAttachment)
 
 			// Comments
@@ -617,6 +609,14 @@ func optionalUUID(s string) pgtype.UUID {
 		return pgtype.UUID{}
 	}
 	return util.MustParseUUID(s)
+}
+
+func newStorageFromEnv() storage.Storage {
+	s3 := storage.NewS3StorageFromEnv()
+	if s3 != nil {
+		return s3
+	}
+	return storage.NewLocalStorageFromEnv()
 }
 
 func splitAndTrim(s string) []string {

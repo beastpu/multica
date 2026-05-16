@@ -315,18 +315,22 @@ type FeishuProjectIssueBinding struct {
 }
 
 type FeishuProjectSyncRun struct {
-	ID            pgtype.UUID        `json:"id"`
-	IntegrationID pgtype.UUID        `json:"integration_id"`
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	Status        string             `json:"status"`
-	Trigger       string             `json:"trigger"`
-	CreatedCount  int32              `json:"created_count"`
-	UpdatedCount  int32              `json:"updated_count"`
-	SkippedCount  int32              `json:"skipped_count"`
-	ErrorCount    int32              `json:"error_count"`
-	Error         pgtype.Text        `json:"error"`
-	StartedAt     pgtype.Timestamptz `json:"started_at"`
-	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+	ID             pgtype.UUID        `json:"id"`
+	IntegrationID  pgtype.UUID        `json:"integration_id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	Status         string             `json:"status"`
+	Trigger        string             `json:"trigger"`
+	CreatedCount   int32              `json:"created_count"`
+	UpdatedCount   int32              `json:"updated_count"`
+	SkippedCount   int32              `json:"skipped_count"`
+	ErrorCount     int32              `json:"error_count"`
+	Error          pgtype.Text        `json:"error"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
+	TotalCount     int32              `json:"total_count"`
+	ProcessedCount int32              `json:"processed_count"`
+	CurrentPage    int32              `json:"current_page"`
+	CurrentType    string             `json:"current_type"`
 }
 
 type GithubInstallation struct {

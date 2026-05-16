@@ -61,6 +61,7 @@ export const AttachmentResponseSchema = z.object({
   id: z.string(),
   url: z.string(),
   download_url: z.string(),
+  content_url: z.string().optional().default(""),
   filename: z.string(),
   chat_session_id: z.string().nullable().optional(),
   chat_message_id: z.string().nullable().optional(),
@@ -78,6 +79,7 @@ export const EMPTY_ATTACHMENT: Attachment = {
   filename: "",
   url: "",
   download_url: "",
+  content_url: "",
   content_type: "",
   size_bytes: 0,
   created_at: "",
@@ -211,8 +213,26 @@ export const EMPTY_FEISHU_PROJECT_INTEGRATION: FeishuProjectIntegration = {
   last_error: null,
 };
 
+const FeishuProjectSyncRunSchema = z.object({
+  id: z.string(),
+  status: z.enum(["running", "succeeded", "failed"]),
+  trigger: z.string().default("manual"),
+  created: z.number().default(0),
+  updated: z.number().default(0),
+  skipped: z.number().default(0),
+  errors: z.number().default(0),
+  processed: z.number().default(0),
+  total: z.number().default(0),
+  current_page: z.number().default(0),
+  current_type: z.string().default(""),
+  error: z.string().nullable().default(null),
+  started_at: z.string().nullable().default(null),
+  finished_at: z.string().nullable().default(null),
+}).loose();
+
 export const FeishuProjectSyncResponseSchema = z.object({
-  status: z.string().default("failed"),
+  status: z.enum(["idle", "running", "succeeded", "failed"]).default("failed"),
+  run: FeishuProjectSyncRunSchema.nullish(),
   summary: z.object({
     created: z.number().default(0),
     updated: z.number().default(0),
@@ -228,7 +248,8 @@ export const FeishuProjectSyncResponseSchema = z.object({
 }).loose();
 
 export const EMPTY_FEISHU_PROJECT_SYNC_RESPONSE: FeishuProjectSyncResponse = {
-  status: "failed",
+  status: "idle",
+  run: null,
   summary: {
     created: 0,
     updated: 0,
