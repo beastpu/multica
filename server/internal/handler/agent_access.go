@@ -72,3 +72,4 @@ func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType
 	}
 	return allowed, true
 }
+

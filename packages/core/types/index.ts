@@ -18,8 +18,6 @@ export type {
   CreateAgentFromTemplateResponse,
   CreateAgentFromTemplateFailure,
   UpdateAgentRequest,
-  AgentFeishuBotConfig,
-  UpdateAgentFeishuBotConfigRequest,
   Skill,
   SkillSummary,
   AgentSkillSummary,

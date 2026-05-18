@@ -254,10 +254,6 @@ func main() {
 	// so subscribers must be written first within the same synchronous event dispatch.
 	registerSubscriberListeners(bus, queries)
 	registerActivityListeners(bus, queries)
-	if feishuNotifier := service.NewFeishuNotifierFromEnv(); feishuNotifier != nil {
-		registerExternalNotificationListeners(bus, queries, feishuNotifier)
-	}
-	registerFeishuAgentBotListeners(bus, queries)
 	registerFeishuProjectListeners(bus, queries)
 	registerNotificationListeners(bus, queries)
 
@@ -303,7 +299,6 @@ func main() {
 	// Start background workers.
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	autopilotCtx, autopilotCancel := context.WithCancel(context.Background())
-	feishuBotCtx, feishuBotCancel := context.WithCancel(context.Background())
 	feishuProjectCtx, feishuProjectCancel := context.WithCancel(context.Background())
 	taskSvc := service.NewTaskService(queries, pool, hub, bus, daemonWakeup)
 	taskSvc.Analytics = analyticsClient
@@ -326,10 +321,6 @@ func main() {
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	go runFeishuProjectSyncWorker(feishuProjectCtx, queries, pool)
 	go runDBStatsLogger(sweepCtx, pool)
-	feishuBotHandler := handler.New(queries, pool, hub, bus, service.NewEmailService(), nil, nil, analyticsClient, handler.Config{}, daemonHub)
-	feishuBotHandler.TaskService.Wakeup = daemonWakeup
-	feishuBotHandler.TaskService.EmptyClaim = service.NewEmptyClaimCache(storeRedis)
-	go newFeishuAgentBotWSRunner(pool, queries, feishuBotHandler).Run(feishuBotCtx)
 
 	if metricsServer != nil {
 		go func() {
@@ -354,7 +345,6 @@ func main() {
 
 	slog.Info("shutting down server")
 	autopilotCancel()
-	feishuBotCancel()
 	feishuProjectCancel()
 
 	// Order matters: drain in-flight HTTP first so any heartbeat handlers
