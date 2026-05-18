@@ -359,7 +359,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		nextDesc := externalDescription(item, attachmentMarkdown)
 		nextTitle := externalTitle(item)
 		if issue.Title == nextTitle && issue.Description.String == nextDesc && issue.Status == status && sameIssueAssignee(issue, assigneeType, assigneeID) {
-			s.enqueueSyncedIssueIfNeeded(ctx, issue)
+			s.reconcileSyncedIssueTasks(ctx, issue, issue)
 			return "skipped", nil
 		}
 		phaseStarted = time.Now()
@@ -382,7 +382,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		phaseStarted = time.Now()
 		_, _ = s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
 		timing.bindingUpsert += time.Since(phaseStarted)
-		s.enqueueSyncedIssueIfNeeded(ctx, updatedIssue)
+		s.reconcileSyncedIssueTasks(ctx, issue, updatedIssue)
 		return "updated", nil
 	}
 
@@ -449,14 +449,30 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		}
 		issue = updatedIssue
 	}
-	s.enqueueSyncedIssueIfNeeded(ctx, issue)
+	s.reconcileSyncedIssueTasks(ctx, issue, issue)
 	return "created", nil
 }
 
-func (s *FeishuProjectSyncService) enqueueSyncedIssueIfNeeded(ctx context.Context, issue db.Issue) {
+func (s *FeishuProjectSyncService) reconcileSyncedIssueTasks(ctx context.Context, prevIssue, issue db.Issue) {
 	if s.TaskService == nil {
 		return
 	}
+	if issue.Status == "cancelled" || issue.Status == "done" {
+		if err := s.TaskService.CancelTasksForIssue(ctx, issue.ID); err != nil {
+			slog.Warn("Feishu Project sync task cancel failed", "issue_id", UUIDString(issue.ID), "status", issue.Status, "error", err)
+		}
+		return
+	}
+	if !sameIssueAssignee(prevIssue, issue.AssigneeType, issue.AssigneeID) {
+		if err := s.TaskService.CancelTasksForIssue(ctx, issue.ID); err != nil {
+			slog.Warn("Feishu Project sync previous assignee task cancel failed", "issue_id", UUIDString(issue.ID), "error", err)
+			return
+		}
+	}
+	s.enqueueSyncedIssueIfNeeded(ctx, issue)
+}
+
+func (s *FeishuProjectSyncService) enqueueSyncedIssueIfNeeded(ctx context.Context, issue db.Issue) {
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
 		return
 	}
