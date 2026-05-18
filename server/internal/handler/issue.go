@@ -2122,7 +2122,13 @@ func (h *Handler) transitionFeishuProjectStatusBeforeLocalUpdate(ctx context.Con
 
 	targetFeishuStatus := service.MapMulticaStatusToFeishu(cfg.ReverseStatusMapping, binding.WorkItemType, targetStatus)
 	if targetFeishuStatus == "" {
-		return false, fmt.Errorf("飞书项目状态映射缺失：请在集成设置里配置 Multica 状态 %q 对应的飞书状态", targetStatus)
+		slog.Info("Feishu Project status transition skipped: missing reverse mapping",
+			"issue_id", uuidToString(issue.ID),
+			"work_item_id", binding.WorkItemID,
+			"work_item_type", binding.WorkItemType,
+			"target_status", targetStatus,
+		)
+		return false, nil
 	}
 
 	if err := service.NewFeishuProjectClient().TransitionStatus(ctx, cfg, binding.WorkItemID, binding.WorkItemType, targetFeishuStatus); err != nil {
