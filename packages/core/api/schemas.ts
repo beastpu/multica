@@ -186,6 +186,7 @@ export const ChildIssuesResponseSchema = z.object({
 export const FeishuProjectIntegrationSchema = z.object({
   id: z.string().optional(),
   workspace_id: z.string().optional(),
+  project_name: z.string().default(""),
   project_key: z.string().default(""),
   plugin_id: z.string().default(""),
   has_plugin_secret: z.boolean().default(false),
@@ -203,6 +204,7 @@ export const FeishuProjectIntegrationSchema = z.object({
 }).loose();
 
 export const EMPTY_FEISHU_PROJECT_INTEGRATION: FeishuProjectIntegration = {
+  project_name: "",
   project_key: "",
   plugin_id: "",
   has_plugin_secret: false,

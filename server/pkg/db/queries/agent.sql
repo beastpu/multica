@@ -16,6 +16,12 @@ WHERE id = $1;
 SELECT * FROM agent
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: GetAgentByOwnerInWorkspace :one
+SELECT * FROM agent
+WHERE workspace_id = $1 AND owner_id = $2 AND archived_at IS NULL
+ORDER BY updated_at DESC, created_at DESC
+LIMIT 1;
+
 -- name: CreateAgent :one
 INSERT INTO agent (
     workspace_id, name, description, avatar_url, runtime_mode,
@@ -404,6 +410,11 @@ WHERE issue_id = $1 AND status IN ('queued', 'dispatched');
 -- for the given issue. Used by @mention trigger dedup.
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched');
+
+-- name: HasTaskForIssueAndAgent :one
+-- Returns true if a specific agent has ever had a task for the given issue.
+SELECT count(*) > 0 AS has_task FROM agent_task_queue
+WHERE issue_id = $1 AND agent_id = $2;
 
 -- name: GetLatestTaskIsLeaderForIssueAndAgent :one
 -- Returns the is_leader_task flag of the agent's most recent task on this

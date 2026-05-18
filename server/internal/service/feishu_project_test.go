@@ -187,6 +187,49 @@ func TestFeishuProjectIssueStatusOptionsFallsBackToFieldMetadata(t *testing.T) {
 	}
 }
 
+func TestFeishuProjectIssueStatusOptionsUsesConfiguredProjectNameInPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/space_name/template_list/issue":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":[]}`))
+		case "/open_api/space_name/work_item/issue/meta":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": {
+					"fields": [{
+						"field_type": "_work_item_status",
+						"options": [{"value": "OPEN", "label": "新建"}]
+					}]
+				}
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{
+		HTTPClient: server.Client(),
+		BaseURL:    server.URL,
+	}
+	statuses, err := client.IssueStatusOptions(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "space_name",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+	})
+	if err != nil {
+		t.Fatalf("IssueStatusOptions: %v", err)
+	}
+	if len(statuses) != 1 || statuses[0].Key != "OPEN" {
+		t.Fatalf("statuses = %#v", statuses)
+	}
+}
+
 func TestFeishuProjectQueryWorkItemsRequiresMappedStatusScope(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("QueryWorkItems must not call remote search without mapped statuses: %s", r.URL.Path)
@@ -205,6 +248,38 @@ func TestFeishuProjectQueryWorkItemsRequiresMappedStatusScope(t *testing.T) {
 	}, "issue", false)
 	if !errors.Is(err, ErrFeishuProjectSyncScopeRequired) {
 		t.Fatalf("err = %v, want ErrFeishuProjectSyncScopeRequired", err)
+	}
+}
+
+func TestFeishuProjectQueryWorkItemsUsesConfiguredProjectNameInPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/space_name/work_item/filter":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":[],"pagination":{"page_num":1,"page_size":100,"total":0}}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{
+		HTTPClient: server.Client(),
+		BaseURL:    server.URL,
+	}
+	_, err := client.QueryWorkItems(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "space_name",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+		StatusMapping: []byte(`{
+			"OPEN": "todo"
+		}`),
+	}, "issue", false)
+	if err != nil {
+		t.Fatalf("QueryWorkItems: %v", err)
 	}
 }
 

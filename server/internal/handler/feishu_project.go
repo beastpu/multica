@@ -18,6 +18,7 @@ import (
 type FeishuProjectIntegrationResponse struct {
 	ID                   string            `json:"id,omitempty"`
 	WorkspaceID          string            `json:"workspace_id,omitempty"`
+	ProjectName          string            `json:"project_name"`
 	ProjectKey           string            `json:"project_key"`
 	PluginID             string            `json:"plugin_id"`
 	HasPluginSecret      bool              `json:"has_plugin_secret"`
@@ -35,6 +36,7 @@ type FeishuProjectIntegrationResponse struct {
 }
 
 type UpdateFeishuProjectIntegrationRequest struct {
+	ProjectName          string            `json:"project_name"`
 	ProjectKey           string            `json:"project_key"`
 	PluginID             string            `json:"plugin_id"`
 	PluginSecret         *string           `json:"plugin_secret"`
@@ -110,10 +112,10 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	projectKey := strings.TrimSpace(req.ProjectKey)
+	projectKey := feishuProjectNameFromRequest(req)
 	pluginID := strings.TrimSpace(req.PluginID)
 	if projectKey == "" || pluginID == "" {
-		writeError(w, http.StatusBadRequest, "project_key and plugin_id are required")
+		writeError(w, http.StatusBadRequest, "project_name and plugin_id are required")
 		return
 	}
 	pluginSecret := ""
@@ -235,7 +237,7 @@ func (h *Handler) SyncFeishuProjectIntegration(w http.ResponseWriter, r *http.Re
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 		defer cancel()
-		svc := &service.FeishuProjectSyncService{Queries: h.Queries, Tx: h.TxStarter, Client: service.NewFeishuProjectClient(), Storage: h.Storage}
+		svc := &service.FeishuProjectSyncService{Queries: h.Queries, Tx: h.TxStarter, Client: service.NewFeishuProjectClient(), Storage: h.Storage, TaskService: h.TaskService}
 		if _, err := svc.SyncWithRunAndOptions(ctx, cfg, "manual", run, service.FeishuProjectSyncOptions{WorkItemID: req.WorkItemID}); err != nil {
 			slog.Warn("Feishu Project manual sync failed", "workspace_id", workspaceID, "integration_id", uuidToString(cfg.ID), "run_id", uuidToString(run.ID), "error", err)
 		}
@@ -292,6 +294,7 @@ func feishuProjectIntegrationToResponse(cfg db.FeishuProjectIntegration) FeishuP
 	return FeishuProjectIntegrationResponse{
 		ID:                   uuidToString(cfg.ID),
 		WorkspaceID:          uuidToString(cfg.WorkspaceID),
+		ProjectName:          cfg.ProjectKey,
 		ProjectKey:           cfg.ProjectKey,
 		PluginID:             cfg.PluginID,
 		HasPluginSecret:      cfg.PluginSecret != "",
@@ -307,6 +310,14 @@ func feishuProjectIntegrationToResponse(cfg db.FeishuProjectIntegration) FeishuP
 		CreatedAt:            timestampToString(cfg.CreatedAt),
 		UpdatedAt:            timestampToString(cfg.UpdatedAt),
 	}
+}
+
+func feishuProjectNameFromRequest(req UpdateFeishuProjectIntegrationRequest) string {
+	projectName := strings.TrimSpace(req.ProjectName)
+	if projectName != "" {
+		return projectName
+	}
+	return strings.TrimSpace(req.ProjectKey)
 }
 
 func feishuProjectSyncRunToResponse(run db.FeishuProjectSyncRun) *FeishuProjectSyncRunResponse {

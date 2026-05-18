@@ -1124,6 +1124,47 @@ func (q *Queries) GetAgent(ctx context.Context, id pgtype.UUID) (Agent, error) {
 	return i, err
 }
 
+const getAgentByOwnerInWorkspace = `-- name: GetAgentByOwnerInWorkspace :one
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model FROM agent
+WHERE workspace_id = $1 AND owner_id = $2 AND archived_at IS NULL
+ORDER BY updated_at DESC, created_at DESC
+LIMIT 1
+`
+
+type GetAgentByOwnerInWorkspaceParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	OwnerID     pgtype.UUID `json:"owner_id"`
+}
+
+func (q *Queries) GetAgentByOwnerInWorkspace(ctx context.Context, arg GetAgentByOwnerInWorkspaceParams) (Agent, error) {
+	row := q.db.QueryRow(ctx, getAgentByOwnerInWorkspace, arg.WorkspaceID, arg.OwnerID)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.RuntimeMode,
+		&i.RuntimeConfig,
+		&i.Visibility,
+		&i.Status,
+		&i.MaxConcurrentTasks,
+		&i.OwnerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Description,
+		&i.RuntimeID,
+		&i.Instructions,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+		&i.CustomEnv,
+		&i.CustomArgs,
+		&i.McpConfig,
+		&i.Model,
+	)
+	return i, err
+}
+
 const getAgentInWorkspace = `-- name: GetAgentInWorkspace :one
 SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model FROM agent
 WHERE id = $1 AND workspace_id = $2
@@ -1437,6 +1478,24 @@ func (q *Queries) HasPendingTaskForIssueAndAgent(ctx context.Context, arg HasPen
 	var has_pending bool
 	err := row.Scan(&has_pending)
 	return has_pending, err
+}
+
+const hasTaskForIssueAndAgent = `-- name: HasTaskForIssueAndAgent :one
+SELECT count(*) > 0 AS has_task FROM agent_task_queue
+WHERE issue_id = $1 AND agent_id = $2
+`
+
+type HasTaskForIssueAndAgentParams struct {
+	IssueID pgtype.UUID `json:"issue_id"`
+	AgentID pgtype.UUID `json:"agent_id"`
+}
+
+// Returns true if a specific agent has ever had a task for the given issue.
+func (q *Queries) HasTaskForIssueAndAgent(ctx context.Context, arg HasTaskForIssueAndAgentParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasTaskForIssueAndAgent, arg.IssueID, arg.AgentID)
+	var has_task bool
+	err := row.Scan(&has_task)
+	return has_task, err
 }
 
 const linkTaskToIssue = `-- name: LinkTaskToIssue :exec

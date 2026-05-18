@@ -47,10 +47,11 @@ type FeishuProjectTxStarter interface {
 }
 
 type FeishuProjectSyncService struct {
-	Queries *db.Queries
-	Tx      FeishuProjectTxStarter
-	Client  *FeishuProjectClient
-	Storage FeishuProjectStorage
+	Queries     *db.Queries
+	Tx          FeishuProjectTxStarter
+	Client      *FeishuProjectClient
+	Storage     FeishuProjectStorage
+	TaskService *TaskService
 }
 
 type FeishuProjectStorage interface {
@@ -329,7 +330,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		status = "todo"
 	}
 	phaseStarted := time.Now()
-	assigneeType, assigneeID := s.resolveOwner(ctx, cfg.WorkspaceID, item.OwnerEmail)
+	assigneeType, assigneeID := s.resolveOwner(ctx, cfg.WorkspaceID, item.OwnerEmail, status)
 	timing.ownerLookup += time.Since(phaseStarted)
 
 	phaseStarted = time.Now()
@@ -357,11 +358,12 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		}
 		nextDesc := externalDescription(item, attachmentMarkdown)
 		nextTitle := externalTitle(item)
-		if issue.Title == nextTitle && issue.Description.String == nextDesc && issue.Status == status {
+		if issue.Title == nextTitle && issue.Description.String == nextDesc && issue.Status == status && sameIssueAssignee(issue, assigneeType, assigneeID) {
+			s.enqueueSyncedIssueIfNeeded(ctx, issue)
 			return "skipped", nil
 		}
 		phaseStarted = time.Now()
-		_, err = s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
+		updatedIssue, err := s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
 			ID:            issue.ID,
 			Title:         pgtype.Text{String: nextTitle, Valid: true},
 			Description:   pgtype.Text{String: nextDesc, Valid: true},
@@ -380,6 +382,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		phaseStarted = time.Now()
 		_, _ = s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
 		timing.bindingUpsert += time.Since(phaseStarted)
+		s.enqueueSyncedIssueIfNeeded(ctx, updatedIssue)
 		return "updated", nil
 	}
 
@@ -428,7 +431,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	}
 	if attachmentMarkdown != "" {
 		phaseStarted = time.Now()
-		_, err = s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
+		updatedIssue, err := s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
 			ID:            issue.ID,
 			Title:         pgtype.Text{String: externalTitle(item), Valid: true},
 			Description:   pgtype.Text{String: externalDescription(item, attachmentMarkdown), Valid: true},
@@ -444,11 +447,40 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		if err != nil {
 			return "created", err
 		}
+		issue = updatedIssue
 	}
+	s.enqueueSyncedIssueIfNeeded(ctx, issue)
 	return "created", nil
 }
 
-func (s *FeishuProjectSyncService) resolveOwner(ctx context.Context, workspaceID pgtype.UUID, email string) (pgtype.Text, pgtype.UUID) {
+func (s *FeishuProjectSyncService) enqueueSyncedIssueIfNeeded(ctx context.Context, issue db.Issue) {
+	if s.TaskService == nil {
+		return
+	}
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
+		return
+	}
+	hasTask, err := s.Queries.HasTaskForIssueAndAgent(ctx, db.HasTaskForIssueAndAgentParams{
+		IssueID: issue.ID,
+		AgentID: issue.AssigneeID,
+	})
+	if err != nil {
+		slog.Warn("Feishu Project sync task dedup check failed", "issue_id", UUIDString(issue.ID), "agent_id", UUIDString(issue.AssigneeID), "error", err)
+		return
+	}
+	if hasTask {
+		return
+	}
+	if _, err := s.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
+		slog.Warn("Feishu Project sync task enqueue failed", "issue_id", UUIDString(issue.ID), "agent_id", UUIDString(issue.AssigneeID), "error", err)
+	}
+}
+
+func sameIssueAssignee(issue db.Issue, assigneeType pgtype.Text, assigneeID pgtype.UUID) bool {
+	return issue.AssigneeType == assigneeType && issue.AssigneeID == assigneeID
+}
+
+func (s *FeishuProjectSyncService) resolveOwner(ctx context.Context, workspaceID pgtype.UUID, email, status string) (pgtype.Text, pgtype.UUID) {
 	if strings.TrimSpace(email) == "" {
 		return pgtype.Text{}, pgtype.UUID{}
 	}
@@ -458,6 +490,15 @@ func (s *FeishuProjectSyncService) resolveOwner(ctx context.Context, workspaceID
 	}
 	if _, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: user.ID, WorkspaceID: workspaceID}); err != nil {
 		return pgtype.Text{}, pgtype.UUID{}
+	}
+	if status == "todo" {
+		agent, err := s.Queries.GetAgentByOwnerInWorkspace(ctx, db.GetAgentByOwnerInWorkspaceParams{
+			WorkspaceID: workspaceID,
+			OwnerID:     user.ID,
+		})
+		if err == nil {
+			return pgtype.Text{String: "agent", Valid: true}, agent.ID
+		}
 	}
 	return pgtype.Text{String: "member", Valid: true}, user.ID
 }
