@@ -1605,19 +1605,57 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey string) []
 		description, descriptionAttachments := normalizeFeishuProjectDescription(record["description"])
 		attachments = append(attachments, descriptionAttachments...)
 		updatedAt, _ := time.Parse(time.RFC3339Nano, record["updated_at"])
+		ownerEmail := feishuProjectOwnerEmail(record, feishuProjectUserEmails(row))
 		out = append(out, FeishuProjectWorkItem{
 			ID:          id,
 			Type:        typ,
 			Title:       firstNonEmpty(record["name"], record["title"]),
 			Description: description,
 			Status:      firstNonEmpty(record["work_item_status"], record["sub_stage"], record["status"]),
-			OwnerEmail:  extractEmail(firstNonEmpty(record["current_status_operator"], record["owner"], record["operator"])),
+			OwnerEmail:  ownerEmail,
 			UpdatedAt:   updatedAt,
 			URL:         fmt.Sprintf("https://project.feishu.cn/%s/%s/detail/%s", projectKey, typ, id),
 			Attachments: dedupeFeishuProjectAttachments(attachments),
 		})
 	}
 	return out
+}
+
+func feishuProjectUserEmails(row map[string]any) map[string]string {
+	rows, _ := row["user_details"].([]any)
+	out := make(map[string]string, len(rows))
+	for _, rowAny := range rows {
+		user, _ := rowAny.(map[string]any)
+		email := extractEmail(fmt.Sprint(user["email"]))
+		if email == "" {
+			continue
+		}
+		for _, key := range []string{
+			fmt.Sprint(user["user_key"]),
+			fmt.Sprint(user["key"]),
+			fmt.Sprint(user["username"]),
+		} {
+			key = strings.TrimSpace(key)
+			if key != "" && key != "<nil>" {
+				out[key] = email
+			}
+		}
+	}
+	return out
+}
+
+func feishuProjectOwnerEmail(record map[string]string, userEmails map[string]string) string {
+	for _, raw := range []string{record["current_status_operator"], record["owner"], record["operator"]} {
+		if email := extractEmail(raw); email != "" {
+			return email
+		}
+		for _, token := range strings.Split(raw, ",") {
+			if email := userEmails[strings.TrimSpace(token)]; email != "" {
+				return email
+			}
+		}
+	}
+	return ""
 }
 
 func parseFeishuProjectStatusOptions(payload map[string]any) []FeishuProjectStatusOption {

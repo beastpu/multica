@@ -306,7 +306,6 @@ export function IntegrationsTab() {
                   {t(($) => $.integrations.feishu_project_description)}
                 </p>
               </div>
-              {canManage && <Switch checked={feishuEnabled} onCheckedChange={setFeishuEnabled} />}
             </div>
 
             {canManage ? (
@@ -423,9 +422,21 @@ export function IntegrationsTab() {
                       </div>
 
                       <div className="space-y-2">
-                        <p className="text-xs font-medium">
-                          {t(($) => $.integrations.feishu_project_reverse_mapping)}
-                        </p>
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="space-y-1">
+                            <p className="text-xs font-medium">
+                              {t(($) => $.integrations.feishu_project_reverse_mapping)}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {t(($) => $.integrations.feishu_project_status_writeback_hint)}
+                            </p>
+                          </div>
+                          <Switch
+                            checked={feishuEnabled}
+                            onCheckedChange={setFeishuEnabled}
+                            aria-label={t(($) => $.integrations.feishu_project_status_writeback)}
+                          />
+                        </div>
                         <div className="overflow-hidden rounded-md border border-border/70">
                           {MULTICA_STATUS_OPTIONS.map((status) => {
                             const current = reverseStatusMapping[status];
@@ -465,8 +476,8 @@ export function IntegrationsTab() {
                 </div>
 
                 <div className="flex flex-col gap-4 border-t border-border/70 pt-4 lg:flex-row lg:items-end lg:justify-between">
-                  <div className="min-h-12 flex-1 space-y-2">
-                    <p className="text-xs text-muted-foreground">
+                  <div className="min-h-12 min-w-0 flex-1 space-y-2">
+                    <p className="break-words text-xs text-muted-foreground">
                       {syncRunning
                         ? syncTotal > 0
                           ? t(($) => $.integrations.feishu_project_sync_progress_count, { processed: syncProcessed, total: syncTotal })

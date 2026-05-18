@@ -13,9 +13,9 @@ commonAnnotations:
 #     lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web=...:${GIT_SHA}
 images:
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server
-    newTag: 0.0.4
+    newTag: prod-f96d3aaa-feishu-owner-email-amd64-20260518162237
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web
-    newTag: 0.0.4
+    newTag: prod-f96d3aaa-feishu-login-env-amd64-20260518173620
 
 replicas:
   - name: multica-server

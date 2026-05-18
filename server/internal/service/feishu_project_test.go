@@ -337,6 +337,62 @@ func TestFeishuProjectManualQueryWorkItemsUsesThirtyDayUpdatedAtFilter(t *testin
 	}
 }
 
+func TestFeishuProjectQueryWorkItemsResolvesOwnerEmailFromUserDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/filter":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": [{
+					"id": 6994401497,
+					"name": "test-wenxue",
+					"work_item_status": {"state_key": "OPEN", "name": "新建"},
+					"fields": [
+						{"field_key": "current_status_operator", "field_alias": "current_status_operator", "field_value": ["7052496113189830658"]},
+						{"field_key": "owner", "field_alias": "owner", "field_value": "7052496113189830658"}
+					],
+					"user_details": [{
+						"user_key": "7052496113189830658",
+						"username": "7052496113189830658",
+						"email": "beastpu@lilith.com",
+						"name_cn": "朴文学"
+					}]
+				}],
+				"pagination": {"page_num": 1, "page_size": 100, "total": 1}
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{
+		HTTPClient: server.Client(),
+		BaseURL:    server.URL,
+	}
+	items, err := client.QueryWorkItems(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+		StatusMapping: []byte(`{
+			"OPEN": "todo"
+		}`),
+	}, "issue", false)
+	if err != nil {
+		t.Fatalf("QueryWorkItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	if items[0].OwnerEmail != "beastpu@lilith.com" {
+		t.Fatalf("OwnerEmail = %q, want beastpu@lilith.com", items[0].OwnerEmail)
+	}
+}
+
 func TestFeishuProjectExternalIssueIdentityUsesBugID(t *testing.T) {
 	item := FeishuProjectWorkItem{
 		ID:          "6991773150",
