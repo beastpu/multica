@@ -66,17 +66,11 @@
         "description": "智能体 task 完成或失败时"
       }
     },
-    "channels": {
-      "title": "通知渠道",
-      "description": "选择新的收件箱通知投递到哪里。上方事件开关仍然决定哪些事件会通知你。",
-      "system": {
-        "label": "系统通知",
-        "hint": "App 未获得焦点时，新的收件箱条目通过操作系统弹出通知横幅。"
-      },
-      "feishu": {
-        "label": "飞书通知",
-        "hint": "账号已连接飞书时，将相同的收件箱通知同步发送到飞书。"
-      }
+    "system": {
+      "title": "系统通知",
+      "description": "控制 Multica 在后台时是否显示操作系统的原生通知横幅。",
+      "label": "显示系统通知",
+      "hint": "App 未获得焦点时，新的收件箱条目通过操作系统弹出通知横幅。"
     }
   },
   "tokens": {
@@ -175,16 +169,56 @@
     "not_configured_and": "和",
     "manage_hint": "只有管理员和所有者可以管理集成。",
     "toast_not_configured": "当前部署未配置 GitHub 集成",
-    "toast_open_failed": "打开 GitHub 安装页失败"
+    "toast_open_failed": "打开 GitHub 安装页失败",
+    "feishu_project_title": "飞书项目",
+    "feishu_project_description": "同步飞书项目缺陷到 Multica，并在 Multica 状态变化时按飞书项目状态机回写。",
+    "feishu_project_basic_section": "基础配置",
+    "feishu_project_scope_section": "同步范围",
+    "feishu_project_mapping_section": "状态映射",
+    "feishu_project_project_key": "空间 Key",
+    "feishu_project_plugin_id": "插件 ID",
+    "feishu_project_plugin_secret": "插件 Secret",
+    "feishu_project_actor_user_key": "操作人 User Key",
+    "feishu_project_mql_filter": "MQL 过滤条件",
+    "feishu_project_status_mapping": "飞书状态 -> Multica 状态",
+    "feishu_project_reverse_mapping": "Multica 状态 -> 飞书状态",
+    "feishu_project_refresh_statuses": "刷新状态",
+    "feishu_project_statuses_empty": "保存基础配置后刷新状态，系统会读取该空间缺陷类型的可用状态。",
+    "feishu_project_statuses_refresh_failed": "刷新飞书项目状态失败",
+    "feishu_project_statuses_refresh_empty": "没有读取到可用状态，请检查空间 Key、插件配置和权限。",
+    "feishu_project_statuses_refreshed": "已刷新 {{count}} 个状态",
+    "feishu_project_no_mapping": "不映射",
+    "secret_placeholder_set": "留空则保留当前 secret",
+    "feishu_project_save": "保存",
+    "feishu_project_saving": "保存中...",
+    "feishu_project_saved": "已保存飞书项目集成",
+    "feishu_project_save_failed": "保存飞书项目集成失败",
+    "feishu_project_sync_now": "立即同步",
+    "feishu_project_syncing": "同步中...",
+    "feishu_project_sync_progress": "正在同步飞书项目，完成后会刷新同步结果。",
+    "feishu_project_sync_progress_count": "正在同步飞书项目：已处理 {{processed}} / {{total}}。",
+    "feishu_project_auto_sync_hint": "系统每 5 分钟会自动同步一次。",
+    "feishu_project_sync_id_placeholder": "工作项 ID",
+    "feishu_project_sync_done": "同步完成：新建 {{created}}，更新 {{updated}}",
+    "feishu_project_sync_failed": "飞书项目同步失败",
+    "feishu_project_mapping_invalid": "状态映射格式错误，请使用 每行 key=value",
+    "feishu_project_last_synced": "上次同步：{{time}}",
+    "feishu_project_never_synced": "尚未同步"
   },
   "repositories": {
     "section_title": "代码仓库",
     "description": "与该工作区关联的 Git 仓库。智能体会从这里 clone 代码并完成工作。",
-    "url_placeholder": "https://git.example.com/org/repo.git",
+    "url_placeholder": "https://git.example.com/org/repo.git 或 git@git.example.com:org/repo.git",
+    "url_empty": "（空 URL）",
     "description_placeholder": "描述（例如：Go 后端 + Next.js 前端）",
     "add": "添加仓库",
     "save": "保存",
     "saving": "保存中...",
+    "saved_hint": "所有改动已保存",
+    "empty": "暂无仓库。",
+    "edit_aria": "编辑仓库",
+    "cancel_aria": "取消编辑",
+    "delete_aria": "删除仓库",
     "manage_hint": "只有管理员和所有者可以管理代码仓库。",
     "toast_saved": "已保存代码仓库",
     "toast_save_failed": "保存代码仓库失败"

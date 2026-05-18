@@ -8,7 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
-	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -19,6 +18,7 @@ type mention struct {
 	Type string // "member", "agent", "issue", or "all"
 	ID   string // user_id, agent_id, issue_id, or "all"
 }
+
 
 // statusLabels maps DB status values to human-readable labels for notifications.
 var statusLabels = map[string]string{
@@ -56,10 +56,6 @@ func priorityLabel(p string) string {
 
 var emptyDetails = []byte("{}")
 
-type externalInboxNotifier interface {
-	SendInboxNotification(context.Context, service.FeishuInboxNotification) error
-}
-
 // parseMentions extracts mentions from markdown content.
 // Delegates to the shared util.ParseMentions and converts to the local type.
 func parseMentions(content string) []mention {
@@ -82,18 +78,18 @@ var parentBubbleNotifTypes = map[string]bool{
 // notifTypeToGroup maps each InboxItemType to a user-configurable preference
 // group. Types not in this map are always delivered (not configurable).
 var notifTypeToGroup = map[string]string{
-	"issue_assigned":   "assignments",
-	"unassigned":       "assignments",
+	"issue_assigned":  "assignments",
+	"unassigned":      "assignments",
 	"assignee_changed": "assignments",
-	"status_changed":   "status_changes",
-	"new_comment":      "comments",
-	"mentioned":        "comments",
+	"status_changed":  "status_changes",
+	"new_comment":     "comments",
+	"mentioned":       "comments",
 	"priority_changed": "updates",
 	"due_date_changed": "updates",
-	"task_completed":   "agent_activity",
-	"task_failed":      "agent_activity",
-	"agent_blocked":    "agent_activity",
-	"agent_completed":  "agent_activity",
+	"task_completed":  "agent_activity",
+	"task_failed":     "agent_activity",
+	"agent_blocked":   "agent_activity",
+	"agent_completed": "agent_activity",
 }
 
 // isNotifMuted returns true if the given notification type is muted for a user
@@ -222,7 +218,6 @@ func notifySubscribers(
 	ctx context.Context,
 	queries *db.Queries,
 	bus *events.Bus,
-	externalNotifiers []externalInboxNotifier,
 	issueID string,
 	issueStatus string,
 	workspaceID string,
@@ -235,7 +230,7 @@ func notifySubscribers(
 	details []byte,
 ) {
 	notified := notifyIssueSubscribers(ctx, queries, bus,
-		externalNotifiers, issueID, issueID, issueStatus, workspaceID, e, exclude,
+		issueID, issueID, issueStatus, workspaceID, e, exclude,
 		notifType, severity, title, body, details)
 
 	// Only a small allowlist of event types bubbles to parent subscribers.
@@ -267,7 +262,7 @@ func notifySubscribers(
 	// points to the sub-issue so the user navigates to the actual change.
 	parentID := util.UUIDToString(issue.ParentIssueID)
 	notifyIssueSubscribers(ctx, queries, bus,
-		externalNotifiers, parentID, issueID, issueStatus, workspaceID, e, parentExclude,
+		parentID, issueID, issueStatus, workspaceID, e, parentExclude,
 		notifType, severity, title, body, details)
 }
 
@@ -280,7 +275,6 @@ func notifyIssueSubscribers(
 	ctx context.Context,
 	queries *db.Queries,
 	bus *events.Bus,
-	externalNotifiers []externalInboxNotifier,
 	subscriberIssueID string,
 	targetIssueID string,
 	issueStatus string,
@@ -363,7 +357,6 @@ func notifyIssueSubscribers(
 			ActorID:     e.ActorID,
 			Payload:     map[string]any{"item": resp},
 		})
-		dispatchExternalInboxNotification(queries, externalNotifiers, item)
 	}
 
 	return notified
@@ -375,7 +368,6 @@ func notifyDirect(
 	ctx context.Context,
 	queries *db.Queries,
 	bus *events.Bus,
-	externalNotifiers []externalInboxNotifier,
 	recipientType string,
 	recipientID string,
 	workspaceID string,
@@ -429,7 +421,6 @@ func notifyDirect(
 		ActorID:     e.ActorID,
 		Payload:     map[string]any{"item": resp},
 	})
-	dispatchExternalInboxNotification(queries, externalNotifiers, item)
 }
 
 // notifyMentionedMembers creates inbox items for each @mentioned member,
@@ -438,7 +429,6 @@ func notifyDirect(
 func notifyMentionedMembers(
 	bus *events.Bus,
 	queries *db.Queries,
-	externalNotifiers []externalInboxNotifier,
 	e events.Event,
 	mentions []mention,
 	issueID string,
@@ -452,6 +442,7 @@ func notifyMentionedMembers(
 	recipientIDs := map[string]bool{}
 
 	hasAll := false
+	var squadIDs []string
 	for _, m := range mentions {
 		if m.Type == "all" {
 			hasAll = true
@@ -459,6 +450,29 @@ func notifyMentionedMembers(
 		}
 		if m.Type == "member" {
 			recipientIDs[m.ID] = true
+		}
+		if m.Type == "squad" {
+			squadIDs = append(squadIDs, m.ID)
+		}
+	}
+
+	// Expand each @squad mention to its human members. Agent members of a
+	// squad are reached via comment-trigger / assignment paths, not the
+	// mention-inbox path, so we only seed member-typed recipients here.
+	for _, sid := range squadIDs {
+		squadUUID, err := util.ParseUUID(sid)
+		if err != nil {
+			continue
+		}
+		members, err := queries.ListSquadMembers(context.Background(), squadUUID)
+		if err != nil {
+			slog.Error("failed to list squad members for @squad mention", "squad_id", sid, "error", err)
+			continue
+		}
+		for _, sm := range members {
+			if sm.MemberType == "member" {
+				recipientIDs[util.UUIDToString(sm.MemberID)] = true
+			}
 		}
 	}
 
@@ -516,7 +530,6 @@ func notifyMentionedMembers(
 			ActorID:     e.ActorID,
 			Payload:     map[string]any{"item": resp},
 		})
-		dispatchExternalInboxNotification(queries, externalNotifiers, item)
 	}
 }
 
@@ -527,7 +540,7 @@ func notifyMentionedMembers(
 // NOTE: uses context.Background() because the event bus dispatches synchronously
 // within the HTTP request goroutine. Adding per-handler timeouts is a bus-level
 // concern — see events.Bus for future improvements.
-func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externalNotifiers ...externalInboxNotifier) {
+func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 	ctx := context.Background()
 
 	// issue:created — Direct notification to assignee if assignee != actor
@@ -548,7 +561,6 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 		if issue.AssigneeType != nil && issue.AssigneeID != nil {
 			skip[*issue.AssigneeID] = true
 			notifyDirect(ctx, queries, bus,
-				externalNotifiers,
 				*issue.AssigneeType, *issue.AssigneeID,
 				issue.WorkspaceID, e, issue.ID, issue.Status,
 				"issue_assigned", "action_required",
@@ -561,7 +573,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 		// Notify @mentions in description
 		if issue.Description != nil && *issue.Description != "" {
 			mentions := parseMentions(*issue.Description)
-			notifyMentionedMembers(bus, queries, externalNotifiers, e, mentions, issue.ID, issue.Title, issue.Status,
+			notifyMentionedMembers(bus, queries, e, mentions, issue.ID, issue.Title, issue.Status,
 				issue.Title, skip, emptyDetails)
 		}
 	})
@@ -603,7 +615,6 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 			// Direct: notify new assignee about assignment
 			if issue.AssigneeType != nil && issue.AssigneeID != nil {
 				notifyDirect(ctx, queries, bus,
-					externalNotifiers,
 					*issue.AssigneeType, *issue.AssigneeID,
 					e.WorkspaceID, e, issue.ID, issue.Status,
 					"issue_assigned", "action_required",
@@ -616,7 +627,6 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 			// Direct: notify old assignee about unassignment
 			if prevAssigneeType != nil && prevAssigneeID != nil && *prevAssigneeType == "member" {
 				notifyDirect(ctx, queries, bus,
-					externalNotifiers,
 					"member", *prevAssigneeID,
 					e.WorkspaceID, e, issue.ID, issue.Status,
 					"unassigned", "info",
@@ -635,8 +645,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 			if issue.AssigneeID != nil {
 				exclude[*issue.AssigneeID] = true
 			}
-			notifySubscribers(ctx, queries, bus, externalNotifiers,
-				issue.ID, issue.Status, e.WorkspaceID, e,
+			notifySubscribers(ctx, queries, bus, issue.ID, issue.Status, e.WorkspaceID, e,
 				exclude, "assignee_changed", "info",
 				issue.Title, "",
 				assigneeDetails)
@@ -648,8 +657,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 				"from": prevStatus,
 				"to":   issue.Status,
 			})
-			notifySubscribers(ctx, queries, bus, externalNotifiers,
-				issue.ID, issue.Status, e.WorkspaceID, e,
+			notifySubscribers(ctx, queries, bus, issue.ID, issue.Status, e.WorkspaceID, e,
 				nil, "status_changed", "info",
 				issue.Title, "",
 				statusDetails)
@@ -669,8 +677,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 				"from": prevPriority,
 				"to":   issue.Priority,
 			})
-			notifySubscribers(ctx, queries, bus, externalNotifiers,
-				issue.ID, issue.Status, e.WorkspaceID, e,
+			notifySubscribers(ctx, queries, bus, issue.ID, issue.Status, e.WorkspaceID, e,
 				nil, "priority_changed", "info",
 				issue.Title, "",
 				priorityDetails)
@@ -689,8 +696,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 				"from": prevDueDateStr,
 				"to":   newDueDateStr,
 			})
-			notifySubscribers(ctx, queries, bus, externalNotifiers,
-				issue.ID, issue.Status, e.WorkspaceID, e,
+			notifySubscribers(ctx, queries, bus, issue.ID, issue.Status, e.WorkspaceID, e,
 				nil, "due_date_changed", "info",
 				issue.Title, "",
 				dueDateDetails)
@@ -713,7 +719,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 					}
 				}
 				skip := map[string]bool{e.ActorID: true}
-				notifyMentionedMembers(bus, queries, externalNotifiers, e, added, issue.ID, issue.Title, issue.Status,
+				notifyMentionedMembers(bus, queries, e, added, issue.ID, issue.Title, issue.Status,
 					issue.Title, skip, emptyDetails)
 			}
 		}
@@ -753,8 +759,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 			})
 		}
 
-		notifySubscribers(ctx, queries, bus, externalNotifiers,
-			issueID, issueStatus, e.WorkspaceID, e,
+		notifySubscribers(ctx, queries, bus, issueID, issueStatus, e.WorkspaceID, e,
 			nil, "new_comment", "info",
 			issueTitle, commentContent,
 			commentDetails)
@@ -763,7 +768,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 		mentions := parseMentions(commentContent)
 		if len(mentions) > 0 {
 			skip := map[string]bool{e.ActorID: true}
-			notifyMentionedMembers(bus, queries, externalNotifiers, e, mentions, issueID, issueTitle, issueStatus,
+			notifyMentionedMembers(bus, queries, e, mentions, issueID, issueTitle, issueStatus,
 				issueTitle, skip, commentDetails)
 		}
 	})
@@ -795,7 +800,6 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 		})
 
 		notifyDirect(ctx, queries, bus,
-			externalNotifiers,
 			creatorType, creatorID,
 			e.WorkspaceID, e, issueID, issueStatus,
 			"reaction_added", "info",
@@ -836,7 +840,6 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 		details, _ := json.Marshal(detailsMap)
 
 		notifyDirect(ctx, queries, bus,
-			externalNotifiers,
 			commentAuthorType, commentAuthorID,
 			e.WorkspaceID, e, issueID, issueStatus,
 			"reaction_added", "info",
@@ -870,8 +873,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, externa
 			exclude[agentID] = true
 		}
 
-		notifySubscribers(ctx, queries, bus, externalNotifiers,
-			issueID, issue.Status, e.WorkspaceID,
+		notifySubscribers(ctx, queries, bus, issueID, issue.Status, e.WorkspaceID,
 			events.Event{
 				Type:        e.Type,
 				WorkspaceID: e.WorkspaceID,

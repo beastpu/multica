@@ -24,12 +24,24 @@ import type { ChildProgress } from "./list-row";
 import { IssueActionsContextMenu } from "../actions";
 import { LabelChip } from "../../labels/label-chip";
 import { useT } from "../../i18n";
+import { mutationErrorMessage } from "../utils/errors";
 
 function formatDate(date: string): string {
   return new Date(date).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
   });
+}
+
+function descriptionPreview(markdown: string): string {
+  return markdown
+    .replace(/!file\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[*_`~]+/g, "")
+    .replace(/^[\s>#]+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** Stops event from bubbling to Link/drag handlers */
@@ -70,7 +82,7 @@ export const BoardCardContent = memo(function BoardCardContent({
     (updates: Partial<UpdateIssueRequest>) => {
       updateIssueMutation.mutate(
         { id: issue.id, ...updates },
-        { onError: () => toast.error(t(($) => $.card.update_failed)) },
+        { onError: (err) => toast.error(mutationErrorMessage(err, t(($) => $.card.update_failed))) },
       );
     },
     [issue.id, updateIssueMutation, t],
@@ -117,12 +129,15 @@ export const BoardCardContent = memo(function BoardCardContent({
         </div>
       )}
 
-      {/* Description */}
-      {showDescription && (
-        <p className="mt-1 text-xs text-muted-foreground line-clamp-1">
-          {issue.description}
-        </p>
-      )}
+      {showDescription && (() => {
+        const preview = descriptionPreview(issue.description!);
+        if (!preview) return null;
+        return (
+          <p className="mt-1 text-xs text-muted-foreground line-clamp-1">
+            {preview}
+          </p>
+        );
+      })()}
 
       {/* Row 3: Assignee, priority badge, due date */}
       {(showAssignee || showPriority || showDueDate) && (

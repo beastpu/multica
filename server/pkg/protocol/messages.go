@@ -40,15 +40,14 @@ type TaskCompletedPayload struct {
 
 // TaskMessagePayload represents a single agent execution message (tool call, text, etc.)
 type TaskMessagePayload struct {
-	TaskID        string         `json:"task_id"`
-	IssueID       string         `json:"issue_id,omitempty"`
-	ChatSessionID string         `json:"chat_session_id,omitempty"`
-	Seq           int            `json:"seq"`
-	Type          string         `json:"type"`              // "text", "tool_use", "tool_result", "error"
-	Tool          string         `json:"tool,omitempty"`    // tool name for tool_use/tool_result
-	Content       string         `json:"content,omitempty"` // text content
-	Input         map[string]any `json:"input,omitempty"`   // tool input (tool_use only)
-	Output        string         `json:"output,omitempty"`  // tool output (tool_result only)
+	TaskID  string         `json:"task_id"`
+	IssueID string         `json:"issue_id,omitempty"`
+	Seq     int            `json:"seq"`
+	Type    string         `json:"type"`              // "text", "tool_use", "tool_result", "error"
+	Tool    string         `json:"tool,omitempty"`    // tool name for tool_use/tool_result
+	Content string         `json:"content,omitempty"` // text content
+	Input   map[string]any `json:"input,omitempty"`   // tool input (tool_use only)
+	Output  string         `json:"output,omitempty"`  // tool output (tool_result only)
 }
 
 // DaemonRegisterPayload is sent from daemon to server on connection.
@@ -75,11 +74,18 @@ type ChatMessagePayload struct {
 	CreatedAt     string `json:"created_at"`
 }
 
-// ChatDonePayload is broadcast when an agent finishes responding to a chat message.
+// ChatDonePayload is broadcast when an agent finishes responding to a chat
+// message. Carries the freshly-persisted assistant ChatMessage so the client
+// can write it into the messages cache inline — avoids a refetch round-trip
+// during the live-timeline → AssistantMessage handoff that previously caused
+// a visible flicker (#2123).
 type ChatDonePayload struct {
 	ChatSessionID string `json:"chat_session_id"`
 	TaskID        string `json:"task_id"`
-	Content       string `json:"content"`
+	MessageID     string `json:"message_id,omitempty"`
+	Content       string `json:"content,omitempty"`
+	ElapsedMs     int64  `json:"elapsed_ms,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
 }
 
 // ChatSessionReadPayload is broadcast when the creator marks a session as read.
@@ -93,6 +99,16 @@ type ChatSessionReadPayload struct {
 // pointer if it referenced the deleted session.
 type ChatSessionDeletedPayload struct {
 	ChatSessionID string `json:"chat_session_id"`
+}
+
+// ChatSessionUpdatedPayload is broadcast when a user-editable field on a
+// chat session changes (today: title via inline rename). Other tabs/devices
+// patch the session row in their cached list so the dropdown stays in sync
+// without a full refetch.
+type ChatSessionUpdatedPayload struct {
+	ChatSessionID string `json:"chat_session_id"`
+	Title         string `json:"title"`
+	UpdatedAt     string `json:"updated_at"`
 }
 
 // DaemonHeartbeatRequestPayload is sent from daemon to server over WebSocket

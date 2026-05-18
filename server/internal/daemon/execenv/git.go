@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
 )
 
 // detectGitRepo checks if dir is inside a git repository (regular or bare).
@@ -110,7 +111,7 @@ func removeGitWorktree(gitRoot, worktreePath, branchName string, logger *slog.Lo
 	// Delete the branch (best-effort).
 	if branchName != "" {
 		cmd = exec.Command("git", "-C", gitRoot, "branch", "-D", branchName)
-
+	
 		if out, err := cmd.CombinedOutput(); err != nil {
 			logger.Warn("execenv: git branch delete failed", "branch", branchName, "output", strings.TrimSpace(string(out)), "error", err)
 		}

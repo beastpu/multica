@@ -4,8 +4,7 @@ export type NotificationGroupKey =
   | "comments"
   | "updates"
   | "agent_activity"
-  | "system_notifications"
-  | "feishu_notifications";
+  | "system_notifications";
 
 export type NotificationGroupValue = "all" | "muted";
 

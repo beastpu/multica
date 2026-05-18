@@ -1,5 +1,16 @@
 import { z } from "zod";
-import type { Attachment, ListIssuesResponse, TimelineEntry } from "../types";
+import type {
+  Agent,
+  AgentTemplate,
+  AgentTemplateSummary,
+  Attachment,
+  CreateAgentFromTemplateResponse,
+  FeishuProjectIntegration,
+  FeishuProjectStatusOptionsResponse,
+  FeishuProjectSyncResponse,
+  ListIssuesResponse,
+  TimelineEntry,
+} from "../types";
 
 // ---------------------------------------------------------------------------
 // Schemas for the highest-risk API endpoints — those whose responses drive
@@ -54,6 +65,7 @@ export const AttachmentResponseSchema = z.object({
   id: z.string(),
   url: z.string(),
   download_url: z.string(),
+  content_url: z.string().optional().default(""),
   filename: z.string(),
   chat_session_id: z.string().nullable().optional(),
   chat_message_id: z.string().nullable().optional(),
@@ -71,6 +83,7 @@ export const EMPTY_ATTACHMENT: Attachment = {
   filename: "",
   url: "",
   download_url: "",
+  content_url: "",
   content_type: "",
   size_bytes: 0,
   created_at: "",
@@ -169,3 +182,222 @@ export const SubscribersListSchema = z.array(SubscriberSchema);
 export const ChildIssuesResponseSchema = z.object({
   issues: z.array(IssueSchema).default([]),
 }).loose();
+
+export const FeishuProjectIntegrationSchema = z.object({
+  id: z.string().optional(),
+  workspace_id: z.string().optional(),
+  project_key: z.string().default(""),
+  plugin_id: z.string().default(""),
+  has_plugin_secret: z.boolean().default(false),
+  actor_user_key: z.string().nullable().default(null),
+  enabled: z.boolean().default(false),
+  sync_story: z.boolean().default(false),
+  sync_issue: z.boolean().default(true),
+  mql_filter: z.string().default(""),
+  status_mapping: z.record(z.string(), z.string()).default({}),
+  reverse_status_mapping: z.record(z.string(), z.string()).default({}),
+  last_synced_at: z.string().nullable().default(null),
+  last_error: z.string().nullable().default(null),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+}).loose();
+
+export const EMPTY_FEISHU_PROJECT_INTEGRATION: FeishuProjectIntegration = {
+  project_key: "",
+  plugin_id: "",
+  has_plugin_secret: false,
+  actor_user_key: null,
+  enabled: false,
+  sync_story: false,
+  sync_issue: true,
+  mql_filter: "",
+  status_mapping: {},
+  reverse_status_mapping: {},
+  last_synced_at: null,
+  last_error: null,
+};
+
+const FeishuProjectSyncRunSchema = z.object({
+  id: z.string(),
+  status: z.enum(["running", "succeeded", "failed"]),
+  trigger: z.string().default("manual"),
+  created: z.number().default(0),
+  updated: z.number().default(0),
+  skipped: z.number().default(0),
+  errors: z.number().default(0),
+  processed: z.number().default(0),
+  total: z.number().default(0),
+  current_page: z.number().default(0),
+  current_type: z.string().default(""),
+  error: z.string().nullable().default(null),
+  started_at: z.string().nullable().default(null),
+  finished_at: z.string().nullable().default(null),
+}).loose();
+
+export const FeishuProjectSyncResponseSchema = z.object({
+  status: z.enum(["idle", "running", "succeeded", "failed"]).default("failed"),
+  run: FeishuProjectSyncRunSchema.nullish(),
+  summary: z.object({
+    created: z.number().default(0),
+    updated: z.number().default(0),
+    skipped: z.number().default(0),
+    errors: z.number().default(0),
+  }).default({
+    created: 0,
+    updated: 0,
+    skipped: 0,
+    errors: 0,
+  }),
+  error: z.string().optional(),
+}).loose();
+
+export const EMPTY_FEISHU_PROJECT_SYNC_RESPONSE: FeishuProjectSyncResponse = {
+  status: "idle",
+  run: null,
+  summary: {
+    created: 0,
+    updated: 0,
+    skipped: 0,
+    errors: 0,
+  },
+};
+
+export const FeishuProjectStatusOptionsResponseSchema = z.object({
+  statuses: z.array(z.object({
+    key: z.string(),
+    name: z.string(),
+  }).loose()).default([]),
+}).loose();
+
+export const EMPTY_FEISHU_PROJECT_STATUS_OPTIONS_RESPONSE: FeishuProjectStatusOptionsResponse = {
+  statuses: [],
+};
+
+// ---------------------------------------------------------------------------
+// Workspace dashboard schemas
+//
+// The dashboard hits three independent rollup endpoints. Each returns a flat
+// array, and every field is consumed by chart / KPI math — a missing number
+// silently degrades to NaN downstream, so we coerce missing numbers to 0.
+// String fields stay lenient (no enum narrowing) to survive future model /
+// agent ID drift.
+// ---------------------------------------------------------------------------
+
+const DashboardUsageDailySchema = z.object({
+  date: z.string(),
+  model: z.string(),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  task_count: z.number().default(0),
+}).loose();
+
+export const DashboardUsageDailyListSchema = z.array(DashboardUsageDailySchema);
+
+const DashboardUsageByAgentSchema = z.object({
+  agent_id: z.string(),
+  model: z.string(),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  task_count: z.number().default(0),
+}).loose();
+
+export const DashboardUsageByAgentListSchema = z.array(DashboardUsageByAgentSchema);
+
+const DashboardAgentRunTimeSchema = z.object({
+  agent_id: z.string(),
+  total_seconds: z.number().default(0),
+  task_count: z.number().default(0),
+  failed_count: z.number().default(0),
+}).loose();
+
+export const DashboardAgentRunTimeListSchema = z.array(DashboardAgentRunTimeSchema);
+
+// ---------------------------------------------------------------------------
+// Agent template catalog — `/api/agent-templates*` and the
+// create-from-template response. The desktop app's create-agent picker
+// reaches these endpoints, and a future server change to the template shape
+// would white-screen older installed builds (#2192 pattern) without these
+// parsers. Lenient by the same rules as IssueSchema above: arrays default to
+// `[]`, optional fields stay optional, `.loose()` lets unknown fields pass
+// through unchanged.
+// ---------------------------------------------------------------------------
+
+const AgentTemplateSkillRefSchema = z.object({
+  source_url: z.string(),
+  cached_name: z.string().default(""),
+  cached_description: z.string().default(""),
+}).loose();
+
+const AgentTemplateSummarySchemaBase = z.object({
+  slug: z.string(),
+  name: z.string(),
+  description: z.string().default(""),
+  category: z.string().optional(),
+  icon: z.string().optional(),
+  accent: z.string().optional(),
+  // skills MUST default to [] — picker code reads `template.skills.length`
+  // and `.map(...)`, both of which crash on `undefined`. The most common
+  // future drift (field renamed / wrapped) lands here.
+  skills: z.array(AgentTemplateSkillRefSchema).default([]),
+}).loose();
+
+export const AgentTemplateSummarySchema = AgentTemplateSummarySchemaBase;
+
+// List endpoint historically returns a bare array. Server could legitimately
+// migrate to `{templates: [...]}` later — we accept either shape so an old
+// desktop survives the upgrade.
+export const AgentTemplateSummaryListSchema = z.union([
+  z.array(AgentTemplateSummarySchemaBase),
+  z.object({ templates: z.array(AgentTemplateSummarySchemaBase).default([]) })
+    .loose()
+    .transform((v) => v.templates),
+]);
+
+export const EMPTY_AGENT_TEMPLATE_SUMMARY_LIST: AgentTemplateSummary[] = [];
+
+export const AgentTemplateSchema = AgentTemplateSummarySchemaBase.extend({
+  // Detail-only field. Default "" so a malformed detail still renders the
+  // header + skill list; the user just sees an empty Instructions block.
+  instructions: z.string().default(""),
+}).loose();
+
+// Used as the parse fallback for `GET /api/agent-templates/:slug`. Slug comes
+// from the URL, so we round-trip the requested one back into the fallback
+// at the call site (see `getAgentTemplate` in client.ts).
+export const EMPTY_AGENT_TEMPLATE_DETAIL: AgentTemplate = {
+  slug: "",
+  name: "",
+  description: "",
+  skills: [],
+  instructions: "",
+};
+
+// `agent` is a full Agent record — schematising every field would duplicate
+// a 50-field interface and bit-rot fast. We keep it loose and require only
+// `id`, the one field the create-from-template flow consumes (used to
+// navigate to the new agent's detail page). Downstream code already
+// optional-chains the rest.
+const MinimalAgentSchema = z.object({
+  id: z.string(),
+}).loose();
+
+export const CreateAgentFromTemplateResponseSchema = z.object({
+  agent: MinimalAgentSchema,
+  imported_skill_ids: z.array(z.string()).default([]),
+  reused_skill_ids: z.array(z.string()).default([]),
+}).loose();
+
+// Fallback when the success response fails to parse. The agent server-side
+// has likely been created already, so we can't pretend nothing happened —
+// the caller (`create-agent-dialog.tsx`) is responsible for noticing
+// `agent.id === ""` and skipping navigation while keeping the list
+// invalidation, so the user finds their new agent in the list.
+export const EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE: CreateAgentFromTemplateResponse = {
+  agent: { id: "" } as Agent,
+  imported_skill_ids: [],
+  reused_skill_ids: [],
+};

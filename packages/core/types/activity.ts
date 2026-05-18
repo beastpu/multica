@@ -6,6 +6,7 @@ export interface AssigneeFrequencyEntry {
   assignee_id: string;
   frequency: number;
 }
+
 export interface TimelineEntry {
   type: "activity" | "comment";
   id: string;
@@ -28,3 +29,4 @@ export interface TimelineEntry {
   /** Set by frontend coalescing when consecutive identical activities are merged. */
   coalesced_count?: number;
 }
+

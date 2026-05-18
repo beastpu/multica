@@ -43,17 +43,6 @@ type Agent struct {
 	Model              pgtype.Text        `json:"model"`
 }
 
-type AgentFeishuBotConfig struct {
-	AgentID           pgtype.UUID        `json:"agent_id"`
-	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
-	AppID             string             `json:"app_id"`
-	AppSecret         string             `json:"app_secret"`
-	VerificationToken pgtype.Text        `json:"verification_token"`
-	Enabled           bool               `json:"enabled"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
-}
-
 type AgentRuntime struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
@@ -69,9 +58,9 @@ type AgentRuntime struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 	OwnerID        pgtype.UUID        `json:"owner_id"`
 	LegacyDaemonID pgtype.Text        `json:"legacy_daemon_id"`
-	Visibility     string             `json:"visibility"`
 	// IANA timezone (e.g. 'Asia/Shanghai'). Bucket boundary for per-day and per-hour token usage aggregation. Defaults to UTC for runtimes that existed before MUL-1950; the daemon registration / web UI overwrites this with an operator-detected value going forward.
-	Timezone string `json:"timezone"`
+	Timezone   string `json:"timezone"`
+	Visibility string `json:"visibility"`
 }
 
 type AgentSkill struct {
@@ -105,6 +94,7 @@ type AgentTaskQueue struct {
 	FailureReason     pgtype.Text        `json:"failure_reason"`
 	TriggerSummary    pgtype.Text        `json:"trigger_summary"`
 	ForceFreshSession bool               `json:"force_fresh_session"`
+	IsLeaderTask      bool               `json:"is_leader_task"`
 }
 
 type Attachment struct {
@@ -251,30 +241,60 @@ type Feedback struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
-type FeishuAgentChatBinding struct {
-	ID             pgtype.UUID        `json:"id"`
-	AppID          string             `json:"app_id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	AgentID        pgtype.UUID        `json:"agent_id"`
-	UserID         pgtype.UUID        `json:"user_id"`
-	FeishuChatID   string             `json:"feishu_chat_id"`
-	FeishuSenderID string             `json:"feishu_sender_id"`
-	ChatSessionID  pgtype.UUID        `json:"chat_session_id"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+type FeishuProjectIntegration struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	ProjectKey           string             `json:"project_key"`
+	PluginID             string             `json:"plugin_id"`
+	PluginSecret         string             `json:"plugin_secret"`
+	ActorUserKey         pgtype.Text        `json:"actor_user_key"`
+	Enabled              bool               `json:"enabled"`
+	SyncStory            bool               `json:"sync_story"`
+	SyncIssue            bool               `json:"sync_issue"`
+	MqlFilter            string             `json:"mql_filter"`
+	StatusMapping        []byte             `json:"status_mapping"`
+	ReverseStatusMapping []byte             `json:"reverse_status_mapping"`
+	CreatedByID          pgtype.UUID        `json:"created_by_id"`
+	LastSyncedAt         pgtype.Timestamptz `json:"last_synced_at"`
+	LastError            pgtype.Text        `json:"last_error"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
-type FeishuIssueThread struct {
+type FeishuProjectIssueBinding struct {
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	IntegrationID         pgtype.UUID        `json:"integration_id"`
+	IssueID               pgtype.UUID        `json:"issue_id"`
+	ProjectKey            string             `json:"project_key"`
+	WorkItemType          string             `json:"work_item_type"`
+	WorkItemID            string             `json:"work_item_id"`
+	ExternalIdentifier    string             `json:"external_identifier"`
+	ExternalUrl           pgtype.Text        `json:"external_url"`
+	ExternalStatusLabel   pgtype.Text        `json:"external_status_label"`
+	LastExternalUpdatedAt pgtype.Timestamptz `json:"last_external_updated_at"`
+	LastSyncedAt          pgtype.Timestamptz `json:"last_synced_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type FeishuProjectSyncRun struct {
 	ID             pgtype.UUID        `json:"id"`
-	AppID          string             `json:"app_id"`
+	IntegrationID  pgtype.UUID        `json:"integration_id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	IssueID        pgtype.UUID        `json:"issue_id"`
-	AgentID        pgtype.UUID        `json:"agent_id"`
-	UserID         pgtype.UUID        `json:"user_id"`
-	FeishuChatID   string             `json:"feishu_chat_id"`
-	FeishuThreadID string             `json:"feishu_thread_id"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	Status         string             `json:"status"`
+	Trigger        string             `json:"trigger"`
+	CreatedCount   int32              `json:"created_count"`
+	UpdatedCount   int32              `json:"updated_count"`
+	SkippedCount   int32              `json:"skipped_count"`
+	ErrorCount     int32              `json:"error_count"`
+	Error          pgtype.Text        `json:"error"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
+	TotalCount     int32              `json:"total_count"`
+	ProcessedCount int32              `json:"processed_count"`
+	CurrentPage    int32              `json:"current_page"`
+	CurrentType    string             `json:"current_type"`
 }
 
 type GithubInstallation struct {
@@ -485,6 +505,30 @@ type SkillFile struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Squad struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	Name         string             `json:"name"`
+	Description  string             `json:"description"`
+	LeaderID     pgtype.UUID        `json:"leader_id"`
+	CreatorID    pgtype.UUID        `json:"creator_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ArchivedAt   pgtype.Timestamptz `json:"archived_at"`
+	ArchivedBy   pgtype.UUID        `json:"archived_by"`
+	AvatarUrl    pgtype.Text        `json:"avatar_url"`
+	Instructions string             `json:"instructions"`
+}
+
+type SquadMember struct {
+	ID         pgtype.UUID        `json:"id"`
+	SquadID    pgtype.UUID        `json:"squad_id"`
+	MemberType string             `json:"member_type"`
+	MemberID   pgtype.UUID        `json:"member_id"`
+	Role       string             `json:"role"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
 type TaskMessage struct {
 	ID        pgtype.UUID        `json:"id"`
 	TaskID    pgtype.UUID        `json:"task_id"`
@@ -531,6 +575,39 @@ type TaskUsageDailyDirty struct {
 	Provider    string             `json:"provider"`
 	Model       string             `json:"model"`
 	EnqueuedAt  pgtype.Timestamptz `json:"enqueued_at"`
+}
+
+type TaskUsageDashboardDaily struct {
+	BucketDate       pgtype.Date        `json:"bucket_date"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	Model            string             `json:"model"`
+	InputTokens      int64              `json:"input_tokens"`
+	OutputTokens     int64              `json:"output_tokens"`
+	CacheReadTokens  int64              `json:"cache_read_tokens"`
+	CacheWriteTokens int64              `json:"cache_write_tokens"`
+	TaskCount        int64              `json:"task_count"`
+	EventCount       int64              `json:"event_count"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TaskUsageDashboardDirty struct {
+	BucketDate  pgtype.Date        `json:"bucket_date"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	Model       string             `json:"model"`
+	EnqueuedAt  pgtype.Timestamptz `json:"enqueued_at"`
+}
+
+type TaskUsageDashboardRollupState struct {
+	ID                int16              `json:"id"`
+	WatermarkAt       pgtype.Timestamptz `json:"watermark_at"`
+	LastRunStartedAt  pgtype.Timestamptz `json:"last_run_started_at"`
+	LastRunFinishedAt pgtype.Timestamptz `json:"last_run_finished_at"`
+	LastRunRows       int64              `json:"last_run_rows"`
+	LastError         pgtype.Text        `json:"last_error"`
 }
 
 type TaskUsageRollupState struct {

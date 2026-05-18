@@ -11,9 +11,13 @@ export type {
   AgentRuntime,
   RuntimeDevice,
   CreateAgentRequest,
+  AgentTemplate,
+  AgentTemplateSummary,
+  AgentTemplateSkillRef,
+  CreateAgentFromTemplateRequest,
+  CreateAgentFromTemplateResponse,
+  CreateAgentFromTemplateFailure,
   UpdateAgentRequest,
-  AgentFeishuBotConfig,
-  UpdateAgentFeishuBotConfigRequest,
   Skill,
   SkillSummary,
   AgentSkillSummary,
@@ -25,6 +29,9 @@ export type {
   RuntimeHourlyActivity,
   RuntimeUsageByAgent,
   RuntimeUsageByHour,
+  DashboardUsageDaily,
+  DashboardUsageByAgent,
+  DashboardAgentRunTime,
   RuntimeUpdate,
   RuntimeUpdateStatus,
   RuntimeModel,
@@ -77,6 +84,15 @@ export type {
   GitHubConnectResponse,
 } from "./github";
 export type {
+  FeishuProjectIntegration,
+  FeishuProjectStatusOption,
+  FeishuProjectStatusOptionsResponse,
+  UpdateFeishuProjectIntegrationRequest,
+  FeishuProjectSyncResponse,
+  FeishuProjectSyncRequest,
+  FeishuProjectSyncRun,
+} from "./feishu-project";
+export type {
   Autopilot,
   AutopilotStatus,
   AutopilotExecutionMode,
@@ -93,3 +109,16 @@ export type {
   GetAutopilotResponse,
   ListAutopilotRunsResponse,
 } from "./autopilot";
+export type {
+  Squad,
+  SquadMember,
+  SquadMemberType,
+  SquadActivityLog,
+  SquadActivityOutcome,
+  CreateSquadRequest,
+  UpdateSquadRequest,
+  AddSquadMemberRequest,
+  RemoveSquadMemberRequest,
+  UpdateSquadMemberRoleRequest,
+  CreateSquadActivityLogRequest,
+} from "./squad";
