@@ -182,7 +182,13 @@ func TestGetDownloadFile_RejectsPathTraversal(t *testing.T) {
 		"file\x00.dmg",
 		"中文.dmg",
 	} {
-		req := chiRequest(http.MethodGet, "/api/downloads/"+bad, bad)
+		// The URL path is irrelevant — GetDownloadFile reads the
+		// filename via chi.URLParam, not r.URL — so use a safe
+		// placeholder here. Embedding `bad` in the path would panic
+		// inside httptest.NewRequest's URL parser for control chars
+		// (\x00) and reject non-ASCII before our IsSafeDownloadFilename
+		// guard ever runs.
+		req := chiRequest(http.MethodGet, "/api/downloads/_", bad)
 		w := httptest.NewRecorder()
 		h.GetDownloadFile(w, req)
 		if w.Code != http.StatusBadRequest {
