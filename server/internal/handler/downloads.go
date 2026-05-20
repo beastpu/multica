@@ -2,15 +2,12 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -27,21 +24,18 @@ import (
 // uses for attachment storage; we share the SDK but use independent
 // configuration (separate bucket / prefix / optional credentials).
 //
-//   GET /api/downloads             →  s3://<bucket>/<prefix>/version.json
 //   GET /api/downloads/<filename>  →  s3://<bucket>/<prefix>/<filename>
 //
-// Manifest cache is last-known-good: if OSS hiccups, we keep serving the
-// previous manifest rather than 502ing every polling client. Binary
-// downloads are streamed unbuffered — installer files are 100MB+ and
-// must not transit through `io.ReadAll`.
+// The desktop client (electron-updater, generic provider) polls
+// `latest-mac.yml` / `latest.yml` / `latest-arm64.yml` / `latest-linux.yml`
+// through this route to discover new versions, then downloads the
+// installer the YML references. Binary downloads are streamed unbuffered —
+// installer files are 100MB+ and must not transit through `io.ReadAll`.
 //
 // Why proxy through the Go server instead of pre-signed URLs to OSS:
 //   - One host (multica.lilithgames.com) keeps everything same-origin
 //     with the rest of the API. No CORS preflight, no extra DNS hop on
 //     hourly polls.
-//   - The manifest cache absorbs the polling fan-out — N installed
-//     desktops × 1 poll/hour collapses to at most `60s / TTL × replicas`
-//     OSS GETs per hour.
 //   - Auth / IP-filtering / observability hooks all attach here cleanly.
 
 // s3GetObjectAPI matches the minimum surface of *s3.Client we need;
@@ -50,24 +44,19 @@ type s3GetObjectAPI interface {
 	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 }
 
-type DownloadsCache struct {
+type DownloadsProxy struct {
 	client s3GetObjectAPI
 	bucket string
 	prefix string
-	ttl    time.Duration
 	logger *slog.Logger
-
-	mu      sync.RWMutex
-	body    []byte
-	fetched time.Time
 }
 
-// DownloadsCacheConfig captures the knobs read from env. The endpoint
+// DownloadsProxyConfig captures the knobs read from env. The endpoint
 // + region + credentials are all optional — when empty they fall back
 // to the AWS SDK default chain (so a deployment that already sets
 // `AWS_*` envs for attachment storage gets the same credentials here
 // for free; just set the bucket).
-type DownloadsCacheConfig struct {
+type DownloadsProxyConfig struct {
 	// Endpoint is the S3-compatible base URL. For Aliyun OSS this is
 	// e.g. `https://oss-cn-shanghai.aliyuncs.com`; leave empty for
 	// real AWS S3.
@@ -78,28 +67,16 @@ type DownloadsCacheConfig struct {
 	Region string
 	// Bucket is required.
 	Bucket string
-	// Prefix is the directory within the bucket where the manifest +
-	// binaries live. Trimmed of slashes. Default `downloads`.
+	// Prefix is the directory within the bucket where the binaries
+	// live. Trimmed of slashes. Default `downloads`.
 	Prefix string
 	// AccessKey / SecretKey are optional. Empty → default credential chain.
 	AccessKey string
 	SecretKey string
-	// TTL is the manifest cache lifetime; default DefaultDownloadsTTL.
-	TTL    time.Duration
-	Logger *slog.Logger
+	Logger    *slog.Logger
 }
 
-// MaxManifestBytes guards the manifest read. A real manifest is well
-// under 4 KB; cap at 256 KB so a misconfigured bucket pointing at the
-// wrong object cannot OOM the server.
-const MaxManifestBytes = 256 * 1024
-
-// DefaultDownloadsTTL is the cache lifetime for the manifest. Tuned
-// so a fresh publish is visible globally within ~1 minute even in the
-// worst case where every replica's cache just refreshed.
-const DefaultDownloadsTTL = 60 * time.Second
-
-func NewDownloadsCache(cfg DownloadsCacheConfig) (*DownloadsCache, error) {
+func NewDownloadsProxy(cfg DownloadsProxyConfig) (*DownloadsProxy, error) {
 	if cfg.Bucket == "" {
 		return nil, errors.New("downloads: bucket not configured")
 	}
@@ -157,111 +134,28 @@ func NewDownloadsCache(cfg DownloadsCacheConfig) (*DownloadsCache, error) {
 		prefix = "downloads"
 	}
 
-	ttl := cfg.TTL
-	if ttl <= 0 {
-		ttl = DefaultDownloadsTTL
-	}
-
-	return &DownloadsCache{
+	return &DownloadsProxy{
 		client: s3.NewFromConfig(awsCfg, s3Opts...),
 		bucket: cfg.Bucket,
 		prefix: prefix,
-		ttl:    ttl,
 		logger: logger,
 	}, nil
 }
 
 // Bucket / Prefix accessors are exposed for log lines and tests.
-func (c *DownloadsCache) Bucket() string { return c.bucket }
-func (c *DownloadsCache) Prefix() string { return c.prefix }
+func (p *DownloadsProxy) Bucket() string { return p.bucket }
+func (p *DownloadsProxy) Prefix() string { return p.prefix }
 
-func (c *DownloadsCache) manifestKey() string {
-	return c.prefix + "/version.json"
-}
-
-func (c *DownloadsCache) binaryKey(filename string) string {
-	return c.prefix + "/" + filename
-}
-
-// Get returns the cached manifest bytes, refreshing from upstream when
-// the cached value is older than the TTL. Safe for concurrent use.
-func (c *DownloadsCache) Get(ctx context.Context) ([]byte, error) {
-	c.mu.RLock()
-	cached := c.body
-	fresh := time.Since(c.fetched) < c.ttl
-	c.mu.RUnlock()
-
-	if cached != nil && fresh {
-		return cached, nil
-	}
-	return c.refresh(ctx)
-}
-
-func (c *DownloadsCache) refresh(ctx context.Context) ([]byte, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Double-check after acquiring the write lock — concurrent waiters
-	// blocked here all share the single refresh that already finished.
-	if c.body != nil && time.Since(c.fetched) < c.ttl {
-		return c.body, nil
-	}
-
-	body, err := c.fetchManifest(ctx)
-	if err != nil {
-		c.logger.WarnContext(ctx, "downloads: manifest fetch failed",
-			"err", err, "bucket", c.bucket, "key", c.manifestKey(),
-			"have_cached", c.body != nil)
-		if c.body != nil {
-			// Last-known-good — but leave `fetched` alone so the next
-			// caller (after this in-flight unlocks) will re-attempt
-			// upstream rather than serving stale forever.
-			return c.body, nil
-		}
-		return nil, err
-	}
-
-	c.body = body
-	c.fetched = time.Now()
-	return body, nil
-}
-
-func (c *DownloadsCache) fetchManifest(ctx context.Context) ([]byte, error) {
-	out, err := c.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(c.bucket),
-		Key:    aws.String(c.manifestKey()),
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer out.Body.Close()
-	// LimitReader at cap+1 so we can detect overflow (the over-cap byte
-	// shows up in the read count) without leaking bytes past the cap.
-	body, err := io.ReadAll(io.LimitReader(out.Body, MaxManifestBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(body) > MaxManifestBytes {
-		return nil, fmt.Errorf("downloads: manifest exceeds %d bytes", MaxManifestBytes)
-	}
-	// Sanity-check parseability. We don't enforce a schema — the
-	// manifest is a contract between desktop client and the OSS object
-	// the operator publishes; this server is a caching proxy. Catching
-	// non-JSON early prevents shipping a partial upload or an error
-	// page from OSS to clients.
-	var probe map[string]any
-	if err := json.Unmarshal(body, &probe); err != nil {
-		return nil, fmt.Errorf("downloads manifest is not valid JSON: %w", err)
-	}
-	return body, nil
+func (p *DownloadsProxy) binaryKey(filename string) string {
+	return p.prefix + "/" + filename
 }
 
 // GetBinary opens an authenticated GET on the binary object. Caller is
 // responsible for closing the returned Body.
-func (c *DownloadsCache) GetBinary(ctx context.Context, filename string) (*s3.GetObjectOutput, error) {
-	return c.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(c.bucket),
-		Key:    aws.String(c.binaryKey(filename)),
+func (p *DownloadsProxy) GetBinary(ctx context.Context, filename string) (*s3.GetObjectOutput, error) {
+	return p.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(p.bucket),
+		Key:    aws.String(p.binaryKey(filename)),
 	})
 }
 
@@ -272,33 +166,11 @@ func isAliyunOSSEndpoint(endpointURL string) bool {
 	return strings.Contains(endpoint, ".aliyuncs.com") && strings.Contains(endpoint, "oss-")
 }
 
-// GetDownloads serves the desktop release manifest. Mounted on the
-// public (unauthenticated) route group — same trust profile as the
-// /download page and `install.sh`.
-func (h *Handler) GetDownloads(w http.ResponseWriter, r *http.Request) {
-	if h.Downloads == nil {
-		writeError(w, http.StatusServiceUnavailable, "downloads endpoint not configured")
-		return
-	}
-	body, err := h.Downloads.Get(r.Context())
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "downloads upstream unavailable")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	// Edge / browser cache lifetime. Independent of (and shorter than)
-	// the server-side TTL so a publish propagates fast even when an
-	// intermediate cache exists.
-	w.Header().Set("Cache-Control", "public, max-age=60")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
-}
-
 // IsSafeDownloadFilename guards the binary proxy route param against
 // path traversal and other shenanigans. The route param is interpolated
-// into an OSS object key, so a filename of `../version.json` would
-// resolve to a different object. Accept only ASCII filename characters,
-// no separators, no leading dot.
+// into an OSS object key, so a filename of `../something` would resolve
+// to a different object. Accept only ASCII filename characters, no
+// separators, no leading dot.
 func IsSafeDownloadFilename(name string) bool {
 	if name == "" || len(name) > 255 {
 		return false
@@ -310,8 +182,9 @@ func IsSafeDownloadFilename(name string) bool {
 		return false
 	}
 	// Reject control chars + non-ASCII. Real installer filenames produced
-	// by `apps/desktop/scripts/package.mjs` are bare ASCII; if that ever
-	// changes the regex here is the single point to extend.
+	// by `apps/desktop/scripts/package.mjs` (and the latest-*.yml metadata
+	// files electron-builder emits) are bare ASCII; if that ever changes
+	// the regex here is the single point to extend.
 	for _, r := range name {
 		if r < 0x20 || r > 0x7E {
 			return false
@@ -320,9 +193,10 @@ func IsSafeDownloadFilename(name string) bool {
 	return true
 }
 
-// GetDownloadFile streams a single binary from OSS through to the
-// client. Mounted under the same public route as GetDownloads, on the
-// `/{filename}` sub-path.
+// GetDownloadFile streams a single artifact from OSS through to the
+// client. Mounted at `/api/downloads/{filename}`. Serves both the
+// installer binaries and the `latest-*.yml` metadata files that
+// electron-updater polls.
 //
 // Unbuffered streaming is load-bearing here: a dmg can be 200 MB, and
 // holding even one of those in memory per concurrent download would
@@ -375,12 +249,20 @@ func (h *Handler) GetDownloadFile(w http.ResponseWriter, r *http.Request) {
 	if out.ETag != nil {
 		w.Header().Set("ETag", *out.ETag)
 	}
-	// Versioned binary filenames are immutable by contract — `vX.Y.Z`
-	// uniquely identifies the artifact. One year is the standard
-	// long-cache value; combined with the version-in-filename scheme,
-	// clients re-launching the same release reuse the cached dmg
-	// without re-fetching.
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	// Cache lifetime depends on the artifact class:
+	//   - latest-*.yml is the electron-updater poll target; clients need
+	//     a fresh-enough copy that a republish becomes visible quickly.
+	//     Short TTL (60s) here matches what the upload step in
+	//     .github/workflows/lilith-desktop-release.yml sets on the OSS
+	//     object metadata.
+	//   - Versioned installer filenames are immutable by contract — the
+	//     version-in-filename scheme means a re-launched same-release
+	//     desktop can reuse its cached dmg indefinitely.
+	if strings.HasPrefix(filename, "latest") && strings.HasSuffix(filename, ".yml") {
+		w.Header().Set("Cache-Control", "public, max-age=60")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, out.Body); err != nil {
 		// Connection cut mid-stream — log but can't recover the

@@ -1,9 +1,7 @@
 package handler
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,7 +11,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -21,9 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-const sampleManifest = `{"version":"v0.2.32","desktop":{"darwin/arm64":"/api/downloads/multica-desktop-v0.2.32-darwin-arm64.dmg","windows/x64":"/api/downloads/multica-desktop-v0.2.32-windows-x64.exe"}}`
-
-// stubS3 implements the s3GetObjectAPI interface used by DownloadsCache.
+// stubS3 implements the s3GetObjectAPI interface used by DownloadsProxy.
 // Tests register per-key handlers via Set(); a missing key returns the
 // SDK's typed NoSuchKey error (matches how Aliyun OSS S3-compat responds
 // to GetObject for an absent key).
@@ -56,218 +51,21 @@ func (s *stubS3) GetObject(_ context.Context, params *s3.GetObjectInput, _ ...fu
 
 func (s *stubS3) Hits() int64 { return s.hits.Load() }
 
-// newCacheWithStub builds a DownloadsCache wired to an in-process stub,
-// bypassing NewDownloadsCache so we don't need real AWS credentials in
-// unit tests. Real production wiring goes through NewDownloadsCache; the
+// newProxyWithStub builds a DownloadsProxy wired to an in-process stub,
+// bypassing NewDownloadsProxy so we don't need real AWS credentials in
+// unit tests. Real production wiring goes through NewDownloadsProxy; the
 // router_test would exercise that.
-func newCacheWithStub(t *testing.T, stub *stubS3, ttl time.Duration) *DownloadsCache {
+func newProxyWithStub(t *testing.T, stub *stubS3) *DownloadsProxy {
 	t.Helper()
-	return &DownloadsCache{
+	return &DownloadsProxy{
 		client: stub,
 		bucket: "test-bucket",
 		prefix: "downloads",
-		ttl:    ttl,
 		logger: slog.Default(),
 	}
 }
 
-// jsonObject builds a GetObjectOutput that wraps a JSON body. Mimics what
-// the real S3 SDK returns from GetObject on a JSON object.
-func jsonObject(body string) (*s3.GetObjectOutput, error) {
-	return &s3.GetObjectOutput{
-		Body:          io.NopCloser(strings.NewReader(body)),
-		ContentLength: aws.Int64(int64(len(body))),
-		ContentType:   aws.String("application/json"),
-	}, nil
-}
-
-// ─── DownloadsCache (manifest path) ────────────────────────────────────
-
-func TestDownloadsCache_ServesManifestFromUpstream(t *testing.T) {
-	stub := newStubS3()
-	stub.Set("downloads/version.json", func() (*s3.GetObjectOutput, error) {
-		return jsonObject(sampleManifest)
-	})
-	cache := newCacheWithStub(t, stub, time.Minute)
-
-	got, err := cache.Get(context.Background())
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if string(got) != sampleManifest {
-		t.Fatalf("body mismatch: got %q want %q", got, sampleManifest)
-	}
-	if h := stub.Hits(); h != 1 {
-		t.Fatalf("upstream hits: got %d want 1", h)
-	}
-}
-
-func TestDownloadsCache_HitWhileFresh(t *testing.T) {
-	stub := newStubS3()
-	stub.Set("downloads/version.json", func() (*s3.GetObjectOutput, error) {
-		return jsonObject(sampleManifest)
-	})
-	cache := newCacheWithStub(t, stub, time.Minute)
-
-	// Three calls in quick succession should fold into a single upstream
-	// fetch — this is the protection against polling fan-out.
-	for range 3 {
-		if _, err := cache.Get(context.Background()); err != nil {
-			t.Fatalf("Get: %v", err)
-		}
-	}
-	if h := stub.Hits(); h != 1 {
-		t.Fatalf("upstream hits: got %d want 1", h)
-	}
-}
-
-func TestDownloadsCache_RefetchAfterTTL(t *testing.T) {
-	stub := newStubS3()
-	stub.Set("downloads/version.json", func() (*s3.GetObjectOutput, error) {
-		return jsonObject(sampleManifest)
-	})
-	// 1 ns TTL → effectively always stale, so we assert each Get
-	// triggers a refetch without time.Sleep flakiness.
-	cache := newCacheWithStub(t, stub, time.Nanosecond)
-
-	for range 3 {
-		if _, err := cache.Get(context.Background()); err != nil {
-			t.Fatalf("Get: %v", err)
-		}
-	}
-	if h := stub.Hits(); h != 3 {
-		t.Fatalf("upstream hits: got %d want 3", h)
-	}
-}
-
-func TestDownloadsCache_ServesStaleOnUpstreamError(t *testing.T) {
-	stub := newStubS3()
-	stub.Set("downloads/version.json", func() (*s3.GetObjectOutput, error) {
-		return jsonObject(sampleManifest)
-	})
-	cache := newCacheWithStub(t, stub, time.Nanosecond) // always stale
-
-	// Prime with a good fetch.
-	good, err := cache.Get(context.Background())
-	if err != nil {
-		t.Fatalf("warmup Get: %v", err)
-	}
-
-	// Flip the upstream to error and confirm we still get the old body.
-	stub.Set("downloads/version.json", func() (*s3.GetObjectOutput, error) {
-		return nil, errors.New("OSS unreachable")
-	})
-	stale, err := cache.Get(context.Background())
-	if err != nil {
-		t.Fatalf("Get during outage should serve stale, got err: %v", err)
-	}
-	if string(stale) != string(good) {
-		t.Fatalf("expected stale body to equal primed body, got %q", stale)
-	}
-	if h := stub.Hits(); h < 2 {
-		t.Fatalf("expected upstream re-attempt during outage, got %d hits", h)
-	}
-}
-
-func TestDownloadsCache_BubblesErrorWhenNoCacheYet(t *testing.T) {
-	stub := newStubS3()
-	stub.Set("downloads/version.json", func() (*s3.GetObjectOutput, error) {
-		return nil, errors.New("OSS down")
-	})
-	cache := newCacheWithStub(t, stub, time.Minute)
-
-	if _, err := cache.Get(context.Background()); err == nil {
-		t.Fatal("expected error when no cache primed and upstream fails")
-	}
-}
-
-func TestDownloadsCache_RejectsNonJSON(t *testing.T) {
-	stub := newStubS3()
-	stub.Set("downloads/version.json", func() (*s3.GetObjectOutput, error) {
-		body := "<html>oops not the right object</html>"
-		return &s3.GetObjectOutput{
-			Body:          io.NopCloser(strings.NewReader(body)),
-			ContentLength: aws.Int64(int64(len(body))),
-			ContentType:   aws.String("text/html"),
-		}, nil
-	})
-	cache := newCacheWithStub(t, stub, time.Minute)
-
-	if _, err := cache.Get(context.Background()); err == nil {
-		t.Fatal("expected error for non-JSON upstream payload")
-	}
-}
-
-func TestDownloadsCache_EnforcesSizeCap(t *testing.T) {
-	stub := newStubS3()
-	stub.Set("downloads/version.json", func() (*s3.GetObjectOutput, error) {
-		var body bytes.Buffer
-		body.WriteString(`{"version":"v0.2.32","junk":"`)
-		body.WriteString(strings.Repeat("A", MaxManifestBytes+10))
-		body.WriteString(`"}`)
-		return &s3.GetObjectOutput{
-			Body:          io.NopCloser(&body),
-			ContentLength: aws.Int64(int64(body.Len())),
-			ContentType:   aws.String("application/json"),
-		}, nil
-	})
-	cache := newCacheWithStub(t, stub, time.Minute)
-
-	if _, err := cache.Get(context.Background()); err == nil {
-		t.Fatal("expected error when upstream exceeds size cap")
-	}
-}
-
-// ─── GetDownloads handler (manifest endpoint) ──────────────────────────
-
-func TestGetDownloads_UnconfiguredReturns503(t *testing.T) {
-	h := &Handler{} // Downloads explicitly nil
-	req := httptest.NewRequest(http.MethodGet, "/api/downloads", nil)
-	w := httptest.NewRecorder()
-	h.GetDownloads(w, req)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 when DownloadsCache unconfigured, got %d", w.Code)
-	}
-}
-
-func TestGetDownloads_ServesManifestBody(t *testing.T) {
-	stub := newStubS3()
-	stub.Set("downloads/version.json", func() (*s3.GetObjectOutput, error) {
-		return jsonObject(sampleManifest)
-	})
-	h := &Handler{Downloads: newCacheWithStub(t, stub, time.Minute)}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/downloads", nil)
-	w := httptest.NewRecorder()
-	h.GetDownloads(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if got := w.Body.String(); got != sampleManifest {
-		t.Fatalf("body mismatch: got %q want %q", got, sampleManifest)
-	}
-	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Fatalf("expected JSON content-type, got %q", ct)
-	}
-}
-
-func TestGetDownloads_502OnUpstreamFailureWithNoCache(t *testing.T) {
-	stub := newStubS3()
-	stub.Set("downloads/version.json", func() (*s3.GetObjectOutput, error) {
-		return nil, errors.New("OSS down")
-	})
-	h := &Handler{Downloads: newCacheWithStub(t, stub, time.Minute)}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/downloads", nil)
-	w := httptest.NewRecorder()
-	h.GetDownloads(w, req)
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d", w.Code)
-	}
-}
-
-// ─── GetDownloadFile handler (binary streaming) ────────────────────────
+// ─── GetDownloadFile handler (binary + metadata streaming) ─────────────
 
 // chiRequest wraps a request with the chi route context so URLParam
 // works in unit tests without booting a full router.
@@ -281,19 +79,19 @@ func chiRequest(method, path, filenameParam string) *http.Request {
 func TestGetDownloadFile_StreamsBinary(t *testing.T) {
 	binaryBody := strings.Repeat("X", 8*1024) // 8 KB stand-in for a dmg
 	stub := newStubS3()
-	stub.Set("downloads/multica-desktop-v0.2.32-darwin-arm64.dmg", func() (*s3.GetObjectOutput, error) {
+	stub.Set("downloads/multica-desktop-v0.2.32-mac-arm64.dmg", func() (*s3.GetObjectOutput, error) {
 		return &s3.GetObjectOutput{
 			Body:               io.NopCloser(strings.NewReader(binaryBody)),
 			ContentLength:      aws.Int64(int64(len(binaryBody))),
 			ContentType:        aws.String("application/x-apple-diskimage"),
-			ContentDisposition: aws.String(`attachment; filename="multica-desktop-v0.2.32-darwin-arm64.dmg"`),
+			ContentDisposition: aws.String(`attachment; filename="multica-desktop-v0.2.32-mac-arm64.dmg"`),
 		}, nil
 	})
-	h := &Handler{Downloads: newCacheWithStub(t, stub, time.Minute)}
+	h := &Handler{Downloads: newProxyWithStub(t, stub)}
 
 	req := chiRequest(http.MethodGet,
-		"/api/downloads/multica-desktop-v0.2.32-darwin-arm64.dmg",
-		"multica-desktop-v0.2.32-darwin-arm64.dmg")
+		"/api/downloads/multica-desktop-v0.2.32-mac-arm64.dmg",
+		"multica-desktop-v0.2.32-mac-arm64.dmg")
 	w := httptest.NewRecorder()
 	h.GetDownloadFile(w, req)
 
@@ -306,7 +104,7 @@ func TestGetDownloadFile_StreamsBinary(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct != "application/x-apple-diskimage" {
 		t.Fatalf("expected upstream Content-Type passthrough, got %q", ct)
 	}
-	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "multica-desktop-v0.2.32-darwin-arm64.dmg") {
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "multica-desktop-v0.2.32-mac-arm64.dmg") {
 		t.Fatalf("expected Content-Disposition passthrough, got %q", cd)
 	}
 	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
@@ -314,9 +112,37 @@ func TestGetDownloadFile_StreamsBinary(t *testing.T) {
 	}
 }
 
+func TestGetDownloadFile_LatestYmlGetsShortCache(t *testing.T) {
+	// electron-updater poll target. A short cache is load-bearing — a
+	// long one would mean a republished version is invisible to clients
+	// for up to a year. Encode that contract.
+	ymlBody := "version: 0.2.39\nfiles: []\n"
+	stub := newStubS3()
+	stub.Set("downloads/latest-mac.yml", func() (*s3.GetObjectOutput, error) {
+		return &s3.GetObjectOutput{
+			Body:          io.NopCloser(strings.NewReader(ymlBody)),
+			ContentLength: aws.Int64(int64(len(ymlBody))),
+			ContentType:   aws.String("application/x-yaml"),
+		}, nil
+	})
+	h := &Handler{Downloads: newProxyWithStub(t, stub)}
+
+	req := chiRequest(http.MethodGet, "/api/downloads/latest-mac.yml", "latest-mac.yml")
+	w := httptest.NewRecorder()
+	h.GetDownloadFile(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	cc := w.Header().Get("Cache-Control")
+	if !strings.Contains(cc, "max-age=60") || strings.Contains(cc, "immutable") {
+		t.Fatalf("expected short-cache header for latest-*.yml, got %q", cc)
+	}
+}
+
 func TestGetDownloadFile_NoSuchKeyIs404(t *testing.T) {
 	stub := newStubS3() // no handlers → default NoSuchKey
-	h := &Handler{Downloads: newCacheWithStub(t, stub, time.Minute)}
+	h := &Handler{Downloads: newProxyWithStub(t, stub)}
 
 	req := chiRequest(http.MethodGet, "/api/downloads/does-not-exist.dmg", "does-not-exist.dmg")
 	w := httptest.NewRecorder()
@@ -333,7 +159,7 @@ func TestGetDownloadFile_TransportErrorIs502(t *testing.T) {
 		// (DNS, TCP reset, signature mismatch). Should funnel to 502.
 		return nil, fmt.Errorf("connection reset")
 	})
-	h := &Handler{Downloads: newCacheWithStub(t, stub, time.Minute)}
+	h := &Handler{Downloads: newProxyWithStub(t, stub)}
 
 	req := chiRequest(http.MethodGet, "/api/downloads/whatever.dmg", "whatever.dmg")
 	w := httptest.NewRecorder()
@@ -345,10 +171,10 @@ func TestGetDownloadFile_TransportErrorIs502(t *testing.T) {
 
 func TestGetDownloadFile_RejectsPathTraversal(t *testing.T) {
 	stub := newStubS3()
-	h := &Handler{Downloads: newCacheWithStub(t, stub, time.Minute)}
+	h := &Handler{Downloads: newProxyWithStub(t, stub)}
 
 	for _, bad := range []string{
-		"../version.json",
+		"../latest-mac.yml",
 		"foo/bar.dmg",
 		"foo\\bar.dmg",
 		"",
@@ -388,13 +214,16 @@ func TestIsSafeDownloadFilename(t *testing.T) {
 		name string
 		want bool
 	}{
-		// Real filenames produced by the packaging script.
-		{"multica-desktop-v0.2.32-darwin-arm64.dmg", true},
+		// Real filenames produced by the packaging script + electron-builder.
+		{"multica-desktop-v0.2.32-mac-arm64.dmg", true},
 		{"multica-desktop-v0.2.32-windows-x64.exe", true},
 		{"multica-desktop-v0.2.32-linux-x64.AppImage", true},
-		{"multica-desktop-v0.2.32-mac-arm64.dmg.blockmap", true},
+		{"latest-mac.yml", true},
+		{"latest.yml", true},
+		{"latest-arm64.yml", true},
+		{"latest-linux.yml", true},
 		// Path traversal attempts.
-		{"../version.json", false},
+		{"../latest-mac.yml", false},
 		{"..", false},
 		{"/etc/passwd", false},
 		{"foo/bar.dmg", false},
@@ -415,10 +244,10 @@ func TestIsSafeDownloadFilename(t *testing.T) {
 	}
 }
 
-// ─── NewDownloadsCache constructor validation ──────────────────────────
+// ─── NewDownloadsProxy constructor validation ──────────────────────────
 
-func TestNewDownloadsCache_RequiresBucket(t *testing.T) {
-	_, err := NewDownloadsCache(DownloadsCacheConfig{})
+func TestNewDownloadsProxy_RequiresBucket(t *testing.T) {
+	_, err := NewDownloadsProxy(DownloadsProxyConfig{})
 	if err == nil {
 		t.Fatal("expected error when Bucket is empty")
 	}

@@ -407,12 +407,18 @@ follows the same release tag and isn't published separately.
    GitHub. The job authenticates via `GITHUB_MIRROR_DEPLOY_KEY` (see
    the one-time setup below).
 4. GitHub Actions fires `.github/workflows/lilith-desktop-release.yml`:
-   matrix build on macOS / Windows / Linux runners → upload installer
-   binaries to OSS → `ossutil ls`-verify each landed → generate
-   `download-multica.json` from confirmed-uploaded files → atomic-swap
-   `oss://<bucket>/downloads/version.json` last:
-   - Binaries → `oss://<bucket>/downloads/<filename>`
-   - Manifest → `oss://<bucket>/downloads/version.json`
+   matrix build on macOS / Windows / Linux runners → upload installers
+   + `latest-*.yml` (electron-updater metadata) to OSS → `ossutil ls`-
+   verify each landed:
+   - Installers → `oss://<bucket>/downloads/multica-desktop-<version>-<platform>-<arch>.<ext>`
+   - Metadata  → `oss://<bucket>/downloads/latest-mac.yml`
+                 `oss://<bucket>/downloads/latest.yml`
+                 `oss://<bucket>/downloads/latest-arm64.yml`
+                 `oss://<bucket>/downloads/latest-linux.yml`
+   electron-builder generates the YML files locally during `package`;
+   we just upload them. They contain `version`, per-file `sha512`, and
+   the installer URL — the running desktop client reads them via
+   electron-updater and decides whether to update.
 5. GitLab CI's `notify-release` job (`.gitlab-ci.yml`) posts a Feishu
    card. (Runs after `mirror-to-github` succeeds so a Feishu card
    never claims a release that failed to mirror.)
@@ -446,13 +452,16 @@ both shapes.
 
 ### Server-side proxy
 
-The Go server exposes two routes (see
+The Go server exposes one route (see
 `server/internal/handler/downloads.go`):
 
 | Route | Upstream | Behavior |
 | --- | --- | --- |
-| `GET /api/downloads` | `s3://<bucket>/<prefix>/version.json` | JSON manifest. 60s in-process cache; last-known-good served on upstream failure. |
-| `GET /api/downloads/<file>` | `s3://<bucket>/<prefix>/<file>` | Installer binary, streamed unbuffered (no `io.ReadAll` — installers are 100MB+). Filename validated against path-traversal. Long Cache-Control on response (versioned filenames are immutable). |
+| `GET /api/downloads/<file>` | `s3://<bucket>/<prefix>/<file>` | Streamed unbuffered (no `io.ReadAll` — installers are 100MB+). Filename validated against path-traversal. Cache-Control depends on the file: `latest-*.yml` gets `max-age=60` so a republish is visible quickly; versioned installers get `immutable, max-age=31536000`. |
+
+`<file>` is either an electron-updater metadata file (`latest-mac.yml`,
+`latest.yml`, `latest-arm64.yml`, `latest-linux.yml`) or one of the
+versioned installer binaries those YML files reference.
 
 The bucket is **private** — the handler authenticates every request
 via the AWS S3 SDK pointed at Aliyun OSS's S3-compatible endpoint
@@ -464,29 +473,31 @@ attachments). Public-read on the bucket is not required and should
 
 | Var | Default | Notes |
 | --- | --- | --- |
-| `DOWNLOADS_OSS_BUCKET` | _(unset → routes return 503)_ | Bucket name only, no host. |
+| `DOWNLOADS_OSS_BUCKET` | _(unset → route returns 503)_ | Bucket name only, no host. |
 | `DOWNLOADS_OSS_ENDPOINT` | falls back to `AWS_ENDPOINT_URL` | Full S3-compat URL, e.g. `https://oss-cn-shanghai.aliyuncs.com`. |
 | `DOWNLOADS_OSS_REGION` | falls back to `S3_REGION`, then `oss-cn-shanghai` | |
 | `DOWNLOADS_OSS_PREFIX` | `downloads` | Directory inside the bucket. |
 | `DOWNLOADS_OSS_ACCESS_KEY_ID` | falls back to `AWS_ACCESS_KEY_ID` | Read-only RAM user recommended. |
 | `DOWNLOADS_OSS_ACCESS_KEY_SECRET` | falls back to `AWS_SECRET_ACCESS_KEY` | |
-| `DOWNLOADS_MANIFEST_TTL_SECONDS` | `60` | Server-side manifest cache lifetime. |
 
 Most deployments only need `DOWNLOADS_OSS_BUCKET` since the AWS SDK
 config + credentials are already set up for attachment storage.
 
-To re-publish without a new build: replace
-`oss://<bucket>/downloads/version.json` directly via `ossutil cp` —
-clients pick up the change at next poll (≤ cache TTL + client poll
-interval).
+To re-publish without a new build: overwrite
+`oss://<bucket>/downloads/latest-*.yml` directly via `ossutil cp` —
+clients pick up the change at next poll (≤ the YML's `max-age=60`
+header + electron-updater's 1-hour poll interval).
 
 Bump the patch version by default (`v0.1.12 → v0.1.13`) unless the
 user specifies otherwise.
 
-The client-side auto-update flow (how installed desktop clients
-discover the manifest and consume it) is **not yet implemented** —
-this section will be extended once the renderer hooks up to the
-manifest. For now this pipeline only stages the artifacts.
+The installed desktop client checks for updates via electron-updater
+configured with `provider: generic` pointing at
+`https://multica.lilithgames.com/api/downloads`
+(see `apps/desktop/electron-builder.yml`). It polls the
+platform-specific `latest-*.yml`, downloads the installer referenced
+there, verifies sha512, and prompts the user to install on next quit.
+Wiring lives in `apps/desktop/src/main/updater.ts`.
 
 ## Multi-tenancy
 
