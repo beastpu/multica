@@ -45,6 +45,14 @@ on:
 permissions:
   contents: read
 
+# Opt into Node 24 for any JavaScript-based actions still pinned at Node 20
+# (actions/checkout@v4, setup-node@v4, upload-artifact@v4, etc.). Node 20 is
+# being removed from GitHub runners on 2026-09-16; this avoids the deprecation
+# warning today and shakes out any Node 24 compatibility issues before the
+# forced switchover on 2026-06-02.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   guard:
     runs-on: ubuntu-latest
