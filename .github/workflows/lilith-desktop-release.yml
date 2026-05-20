@@ -138,8 +138,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.label }}
+          # electron-builder also emits `*.blockmap` siblings next to
+          # each .dmg/.zip/.exe — these power its differential auto-
+          # update flow, which we don't use (the client polls
+          # `download-multica.json` and re-downloads the full installer).
+          # Skip them: saves ~MBs per matrix leg crossing job boundaries
+          # and keeps OSS / the manifest from carrying dead weight.
           path: |
             apps/desktop/dist/**/multica-desktop-*
+            !apps/desktop/dist/**/*.blockmap
           if-no-files-found: error
           retention-days: 7
 
