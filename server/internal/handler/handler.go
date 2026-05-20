@@ -91,10 +91,12 @@ type Handler struct {
 	Analytics             analytics.Client
 	PATCache              *auth.PATCache
 	DaemonTokenCache      *auth.DaemonTokenCache
-	// Downloads, when set, fronts the desktop release manifest on OSS.
-	// Server entrypoint wires this from env (DOWNLOADS_MANIFEST_URL).
-	// Nil → the /api/downloads route replies 503 (configuration error).
-	Downloads             *DownloadsCache
+	// Downloads, when set, streams desktop release artifacts (the
+	// electron-updater latest-*.yml metadata files and the installer
+	// binaries those files reference) from OSS to the client. Server
+	// entrypoint wires this from env (DOWNLOADS_OSS_BUCKET + friends —
+	// see cmd/server/router.go). Nil → /api/downloads/<file> replies 503.
+	Downloads             *DownloadsProxy
 	cfg                   Config
 }
 

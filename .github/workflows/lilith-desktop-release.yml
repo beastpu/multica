@@ -138,14 +138,23 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.label }}
-          # electron-builder also emits `*.blockmap` siblings next to
-          # each .dmg/.zip/.exe — these power its differential auto-
-          # update flow, which we don't use (the client polls
-          # `download-multica.json` and re-downloads the full installer).
-          # Skip them: saves ~MBs per matrix leg crossing job boundaries
-          # and keeps OSS / the manifest from carrying dead weight.
+          # Three categories cross the job boundary:
+          #   - multica-desktop-* : the installers themselves
+          #   - latest*.yml       : electron-updater's per-platform
+          #                         metadata (latest-mac.yml, latest.yml,
+          #                         latest-arm64.yml, latest-linux.yml) —
+          #                         the desktop client polls these via the
+          #                         generic provider in
+          #                         apps/desktop/electron-builder.yml.
+          # And one category gets dropped:
+          #   - *.blockmap        : electron-builder's differential-update
+          #                         deltas. We don't use differential
+          #                         updates and the blockmaps make the
+          #                         inter-job hop + OSS bucket pointlessly
+          #                         heavier.
           path: |
             apps/desktop/dist/**/multica-desktop-*
+            apps/desktop/dist/**/latest*.yml
             !apps/desktop/dist/**/*.blockmap
           if-no-files-found: error
           retention-days: 7
@@ -188,40 +197,58 @@ jobs:
       # OSS layout (single `downloads/` prefix, mirrors what the Go
       # server's DOWNLOADS_OSS_PREFIX env points at):
       #
-      #   oss://<bucket>/downloads/version.json                    ← manifest
+      #   oss://<bucket>/downloads/latest-mac.yml                  ← electron-updater metadata (macOS)
+      #   oss://<bucket>/downloads/latest.yml                      ← electron-updater metadata (Windows x64)
+      #   oss://<bucket>/downloads/latest-arm64.yml                ← electron-updater metadata (Windows arm64)
+      #   oss://<bucket>/downloads/latest-linux.yml                ← electron-updater metadata (Linux)
       #   oss://<bucket>/downloads/multica-desktop-v…dmg           ← installers
       #   oss://<bucket>/downloads/multica-desktop-v…exe
       #   oss://<bucket>/downloads/multica-desktop-v…AppImage
       #   …
       #
-      # Atomic publish order (the manifest is the swap point):
-      #   1. Upload every binary to its versioned URL (idempotent — the
-      #      same tag re-pushed overwrites with identical bytes).
-      #   2. Confirm each binary actually landed via `ossutil ls`.
-      #   3. Generate the manifest ONLY NOW, so it can never reference a
-      #      binary that failed to upload. The manifest is the "this
-      #      release is ready" pointer; building it from a half-uploaded
-      #      dist/ would let a partial release leak to clients.
-      #   4. ONLY THEN overwrite `downloads/version.json`. The window
-      #      during which a client could fetch the new manifest and 404
-      #      on a new binary is zero.
-      # The Go server's DownloadsCache has a 60s TTL on top, so a fresh
-      # publish takes at most ~60s to surface through `/api/downloads`.
+      # The desktop client (electron-updater, generic provider in
+      # apps/desktop/electron-builder.yml) polls the latest-*.yml file
+      # for its platform every hour, parses version + sha512 + file list,
+      # and on a newer version downloads the installer the YML references.
+      # latest-*.yml IS the per-platform manifest — there is no separate
+      # JSON manifest to publish.
+      #
+      # Atomic publish ordering matters because each latest-*.yml
+      # references an installer it expects to find at a sibling path:
+      #   1. Upload installers + latest-*.yml in the same step. Each
+      #      object overwrite is itself atomic on OSS; the brief window
+      #      between a YML overwrite and its installer overwrite (or
+      #      vice-versa) is bounded by one `ossutil cp` call.
+      #   2. Verify every uploaded artifact via `ossutil ls`. If any
+      #      object is missing, fail the job before any client can be
+      #      pointed at a 404.
+      # latest-*.yml is uploaded with a short `max-age=60` cache so a
+      # republish is visible to clients within ~1 minute.
       # ─────────────────────────────────────────────────────────────────
 
-      - name: Upload installer binaries to OSS
+      - name: Upload installers + electron-updater metadata to OSS
         run: |
-          for file in apps/desktop/dist/multica-desktop-*; do
+          for file in apps/desktop/dist/multica-desktop-* apps/desktop/dist/latest*.yml; do
             [ -f "$file" ] || continue
             name=$(basename "$file")
             echo "::group::Uploading $name"
+            # `latest*.yml` is the electron-updater poll target; give it a
+            # short cache lifetime (60s) so a republish becomes visible
+            # quickly. Installer binaries have versioned filenames and
+            # never change once written, so they're long-cache immutable.
+            case "$name" in
+              latest*.yml)
+                cache="Cache-Control:max-age=60" ;;
+              *)
+                cache="Cache-Control:max-age=31536000, immutable" ;;
+            esac
             ./ossutil --config-file ./ossutilconfig cp -f "$file" \
               "oss://${{ vars.OSS_BUCKET }}/downloads/$name" \
-              --meta "Cache-Control:max-age=31536000, immutable"
+              --meta "$cache"
             echo "::endgroup::"
           done
 
-      - name: Verify each uploaded binary exists on OSS
+      - name: Verify each uploaded artifact exists on OSS
         # Iterate the local dist/ contents and confirm each file landed
         # in the bucket. Decoupled from the manifest on purpose — we
         # haven't generated the manifest yet at this point, and the
@@ -238,7 +265,7 @@ jobs:
         # match against the path we asked for.
         run: |
           set -e
-          for file in apps/desktop/dist/multica-desktop-*; do
+          for file in apps/desktop/dist/multica-desktop-* apps/desktop/dist/latest*.yml; do
             [ -f "$file" ] || continue
             name=$(basename "$file")
             ossPath="oss://${{ vars.OSS_BUCKET }}/downloads/$name"
@@ -252,88 +279,19 @@ jobs:
             echo "  ✓ $name"
           done
 
-      - name: Generate download manifest from uploaded binaries
-        # `scripts/build-download-manifest.mjs` scans the local dist/
-        # which — at this point — is byte-equal to what's on OSS (the
-        # previous step proved every file landed). The manifest is
-        # therefore a description of OSS state, not of "things we hoped
-        # to upload". If a binary upload had failed silently, the
-        # previous step would have aborted before we generate this.
-        run: node scripts/build-download-manifest.mjs
-        env:
-          # Strict mode: a missing expected platform key fails the job
-          # rather than shipping a half-empty manifest. Adjust
-          # EXPECTED_KEYS in the script when the build matrix changes.
-          STRICT: "1"
-
-      - name: Show manifest (debug)
-        run: cat download-multica.json
-
-      - name: Validate local manifest before upload
-        # `build-download-manifest.mjs` uses JSON.stringify so the file
-        # is well-formed by construction, but this is a one-line
-        # belt-and-suspenders against a future refactor that switches
-        # to a templated/hand-written variant. Without it, a malformed
-        # manifest sneaks onto OSS and every desktop client's poll
-        # returns 502 (the server's JSON sanity check rejects it).
-        run: |
-          node -e "JSON.parse(require('fs').readFileSync('download-multica.json','utf8'))"
-          echo "✅ Local manifest is valid JSON"
-
-      - name: Archive previous manifest for rollback
-        # Best-effort copy of the live manifest to a dated archive
-        # before we overwrite it. If there isn't one yet (very first
-        # release), the cp fails and we move on.
-        continue-on-error: true
-        run: |
-          stamp=$(date -u +%Y%m%dT%H%M%SZ)
-          ./ossutil --config-file ./ossutilconfig cp -f \
-            "oss://${{ vars.OSS_BUCKET }}/downloads/version.json" \
-            "oss://${{ vars.OSS_BUCKET }}/downloads/version-archive/${stamp}.json" \
-            || true
-
-      - name: Publish manifest (atomic swap)
-        # LAST step that mutates user-visible state. Up until this line,
-        # the live manifest still points at the previous release. The
-        # OSS object key here MUST match what the Go server reads —
-        # the server's DOWNLOADS_OSS_PREFIX env value joined with
-        # `/version.json`. See server/internal/handler/downloads.go.
-        #
-        # `#` between meta headers, not `,`: ossutil's --meta uses `#`
-        # as the entry separator (`key:value#key:value`), and a comma
-        # ends up parsed as part of the preceding value. With `, `,
-        # the previous version of this workflow accidentally produced
-        # `Cache-Control: max-age=60, Content-Type:application/json`
-        # as a single Cache-Control header and never set Content-Type
-        # at all.
-        run: |
-          ./ossutil --config-file ./ossutilconfig cp -f \
-            download-multica.json \
-            "oss://${{ vars.OSS_BUCKET }}/downloads/version.json" \
-            --meta "Cache-Control:max-age=60#Content-Type:application/json"
-
-      - name: Verify uploaded manifest round-trip
-        # Pull the manifest back from OSS and diff it byte-for-byte
-        # against the local file. Catches: ossutil cp truncation,
-        # OSS-side mutation, a wrong content-encoding step somewhere
-        # adding a BOM, etc. Also re-parses it to guard against the
-        # specific failure mode we hit in development (a hand-edited
-        # version.json with raw newlines inside string literals — Go's
-        # encoding/json rejects it, every client poll then 502s).
-        run: |
-          ./ossutil --config-file ./ossutilconfig cp -f \
-            "oss://${{ vars.OSS_BUCKET }}/downloads/version.json" \
-            ./version.json.readback
-          diff -u download-multica.json ./version.json.readback
-          node -e "JSON.parse(require('fs').readFileSync('./version.json.readback','utf8'))"
-          echo "✅ Uploaded manifest is byte-identical and parses cleanly"
-
       - name: Summary
+        # latest-*.yml IS the manifest in this architecture — the desktop
+        # client (electron-updater, generic provider) polls it, parses
+        # version + sha512 + file list, and decides whether to download.
+        # No separate JSON manifest publish step is needed; the YML files
+        # uploaded above are the atomic swap point.
         run: |
-          echo "### Release ${{ needs.guard.outputs.tag }} published" >> "$GITHUB_STEP_SUMMARY"
+          tag="${{ needs.guard.outputs.tag }}"
+          echo "### Release ${tag} published" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Manifest now live at \`<domain>/api/downloads\`:" >> "$GITHUB_STEP_SUMMARY"
+          echo "Clients will pick up the new version on their next poll of:" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat download-multica.json >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          for yml in apps/desktop/dist/latest*.yml; do
+            [ -f "$yml" ] || continue
+            echo "- \`<api>/api/downloads/$(basename "$yml")\`" >> "$GITHUB_STEP_SUMMARY"
+          done
