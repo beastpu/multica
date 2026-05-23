@@ -64,8 +64,12 @@ export function BatchActionToolbar({
       await batchDelete.mutateAsync(ids);
       clear();
       toast.success(t(($) => $.batch.delete_success, { count }));
-    } catch {
-      toast.error(t(($) => $.batch.delete_failed));
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : t(($) => $.batch.delete_failed),
+      );
     } finally {
       setDeleteOpen(false);
     }
