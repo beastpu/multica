@@ -1218,5 +1218,121 @@ export function createEnDict(allowSignup: boolean): LandingDict {
       versionUnavailable: "Version unavailable — check GitHub",
     },
   },
+  contactSales: {
+    pageTitle: "Contact Sales",
+    pageDescription:
+      "Talk to the Multica team about rolling out human + agent workflows at your company.",
+    eyebrow: "Contact Sales",
+    title: "Let’s understand your needs",
+    subtitle:
+      "Help us tailor the best solution for you before we connect.",
+    notice: {
+      badge: "Our system only recognizes business email domains.",
+      body: "Requests from personal emails (e.g., @gmail.com, @outlook.com) will not be detected or processed.",
+    },
+    fields: {
+      firstName: "First name",
+      lastName: "Last name",
+      businessEmail: "Business email",
+      businessEmailHint:
+        "Company email required. Please use a valid company domain so we can follow up with you.",
+      companyName: "Company name",
+      companySize: "Company size",
+      countryRegion: "Country / Region",
+      useCase: "How do you plan to use or collaborate with Multica?",
+      goals: "Your goals or challenges",
+      goalsHint:
+        "Tell us what you’d like to achieve with Multica or the challenges you’re facing. The more details you provide, the better we can support you.",
+      selectPlaceholder: "Please select",
+      submit: "Submit",
+      submitting: "Submitting…",
+    },
+    companySizes: [
+      { value: "1-10", label: "1 – 10 employees" },
+      { value: "11-50", label: "11 – 50 employees" },
+      { value: "51-200", label: "51 – 200 employees" },
+      { value: "201-500", label: "201 – 500 employees" },
+      { value: "501-1000", label: "501 – 1,000 employees" },
+      { value: "1000+", label: "1,000+ employees" },
+    ],
+    useCases: [
+      { value: "evaluate", label: "Evaluating Multica for my team" },
+      { value: "adopt_team", label: "Rolling out Multica to a team or company" },
+      { value: "self_host", label: "Self-hosting on our own infrastructure" },
+      { value: "integrate", label: "Integrating Multica with existing tools" },
+      { value: "partner", label: "Partnership or reseller inquiry" },
+      { value: "other", label: "Something else" },
+    ],
+    countries: [
+      "United States",
+      "Canada",
+      "United Kingdom",
+      "Germany",
+      "France",
+      "Netherlands",
+      "Sweden",
+      "Switzerland",
+      "Spain",
+      "Italy",
+      "Ireland",
+      "Norway",
+      "Denmark",
+      "Finland",
+      "Belgium",
+      "Portugal",
+      "Australia",
+      "New Zealand",
+      "Japan",
+      "South Korea",
+      "Singapore",
+      "Hong Kong SAR",
+      "Taiwan",
+      "China (Mainland)",
+      "India",
+      "Indonesia",
+      "Thailand",
+      "Vietnam",
+      "Philippines",
+      "Malaysia",
+      "United Arab Emirates",
+      "Saudi Arabia",
+      "Israel",
+      "Turkey",
+      "South Africa",
+      "Brazil",
+      "Mexico",
+      "Argentina",
+      "Chile",
+      "Other",
+    ],
+    consent: {
+      intro:
+        "Multica, Inc. respects your privacy. We’ll use your personal information only to manage your account and deliver the products or services you’ve requested. Occasionally, we’d love to share product updates, best practices, and insights that may be relevant to you. Please let us know below if you’d like to hear from us.",
+      outreach:
+        "I’d like to receive one-to-one communication from Multica, Inc., including service updates, support inquiries, and business-related follow-ups.",
+      updates:
+        "I’d like to receive product updates, insights, and event invitations from Multica.",
+      unsubscribe:
+        "You can unsubscribe from our communications at any time. For more details on how we handle your data and privacy rights, please review our",
+      submitConsent:
+        "By clicking “Submit,” you consent to allow Multica, Inc. to store and process your information for the purpose of delivering the requested content.",
+      privacyLinkLabel: "Privacy Policy.",
+      privacyLinkHref: "/about",
+    },
+    success: {
+      title: "Thanks — we got it.",
+      message:
+        "A member of the Multica team will respond within three business days. In the meantime, feel free to explore the docs or star us on GitHub.",
+      cta: "Back to multica.ai",
+    },
+    errors: {
+      generic: "Something went wrong — please try again in a moment.",
+      rateLimit:
+        "We’ve received a few inquiries from this address recently. Please try again in a little while.",
+      freeEmail:
+        "Please use a business email address — free providers (gmail, outlook, etc.) are not accepted.",
+      invalidEmail: "That doesn’t look like a valid email address.",
+    },
+  },
   };
 }
