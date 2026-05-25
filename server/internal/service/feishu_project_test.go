@@ -580,3 +580,141 @@ func jsonEqual(a, b any) bool {
 	rb, _ := json.Marshal(b)
 	return string(ra) == string(rb)
 }
+
+func TestFeishuProjectDownloadAttachmentRetriesOn30019(t *testing.T) {
+	t.Parallel()
+	var downloadCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/issue/123/file/download":
+			n := downloadCalls.Add(1)
+			if n == 1 {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"err_code":30019,"err_msg":"internal error"}`))
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("Content-Disposition", `attachment; filename="shot.png"`)
+			_, _ = w.Write([]byte("PNGDATA"))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{
+		HTTPClient: server.Client(),
+		BaseURL:    server.URL,
+	}
+	prevDelay := feishuProjectDownloadRetryInitialDelay
+	feishuProjectDownloadRetryInitialDelay = time.Millisecond
+	defer func() { feishuProjectDownloadRetryInitialDelay = prevDelay }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	data, filename, contentType, err := client.DownloadAttachment(
+		ctx,
+		db.FeishuProjectIntegration{ProjectKey: "project-key", PluginID: "id", PluginSecret: "secret"},
+		FeishuProjectWorkItem{ID: "123", Type: "issue"},
+		FeishuProjectAttachment{ID: "uuid-1", Name: "shot.png"},
+	)
+	if err != nil {
+		t.Fatalf("DownloadAttachment: %v", err)
+	}
+	if string(data) != "PNGDATA" {
+		t.Fatalf("data = %q", data)
+	}
+	if filename != "shot.png" || contentType != "image/png" {
+		t.Fatalf("filename = %q contentType = %q", filename, contentType)
+	}
+	if got := downloadCalls.Load(); got != 2 {
+		t.Fatalf("downloadCalls = %d, want 2 (1 transient + 1 success)", got)
+	}
+}
+
+func TestFeishuProjectDownloadAttachmentDoesNotRetry4xx(t *testing.T) {
+	t.Parallel()
+	var downloadCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/issue/123/file/download":
+			downloadCalls.Add(1)
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`forbidden`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	_, _, _, err := client.DownloadAttachment(
+		context.Background(),
+		db.FeishuProjectIntegration{ProjectKey: "project-key", PluginID: "id", PluginSecret: "secret"},
+		FeishuProjectWorkItem{ID: "123", Type: "issue"},
+		FeishuProjectAttachment{ID: "uuid-1", Name: "shot.png"},
+	)
+	if err == nil {
+		t.Fatal("expected error for 403")
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Fatalf("error should mention 403, got: %v", err)
+	}
+	if got := downloadCalls.Load(); got != 1 {
+		t.Fatalf("downloadCalls = %d, want 1 (no retry for 4xx)", got)
+	}
+}
+
+func TestFeishuProjectDownloadAttachmentSkipsGoapiFallback(t *testing.T) {
+	t.Parallel()
+	var downloadCalls, fallbackCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case r.URL.Path == "/open_api/project-key/work_item/issue/123/file/download":
+			downloadCalls.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`not found`))
+		case strings.HasPrefix(r.URL.Path, "/goapi/v5/platform/file/stream/download/"):
+			// Without a session cookie this would return 401, masking the real 404.
+			// The fallback must skip goapi URLs so we should never get here.
+			fallbackCalls.Add(1)
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	_, _, _, err := client.DownloadAttachment(
+		context.Background(),
+		db.FeishuProjectIntegration{ProjectKey: "project-key", PluginID: "id", PluginSecret: "secret"},
+		FeishuProjectWorkItem{ID: "123", Type: "issue"},
+		FeishuProjectAttachment{
+			ID:   "uuid-1",
+			Name: "shot.png",
+			URL:  server.URL + "/goapi/v5/platform/file/stream/download/token",
+		},
+	)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Fatalf("error should surface the original 404, got: %v", err)
+	}
+	if got := fallbackCalls.Load(); got != 0 {
+		t.Fatalf("fallback should be skipped for goapi URLs, got %d calls", got)
+	}
+	if got := downloadCalls.Load(); got != 1 {
+		t.Fatalf("downloadCalls = %d, want 1 (no retry for 404)", got)
+	}
+}

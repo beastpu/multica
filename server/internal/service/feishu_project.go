@@ -35,11 +35,16 @@ const (
 	feishuProjectManualLookback    = 30 * 24 * time.Hour
 	feishuProjectIncrementalReplay = 10 * time.Minute
 	feishuProjectSyncMaxPages      = 1000
-	feishuProjectAttachmentMaxSize = 5 << 20
-	feishuProjectSyncWorkers       = 20
-	feishuProjectSlowItemLogAfter  = 500 * time.Millisecond
-	feishuProjectAPIRetryAttempts  = 4
+	feishuProjectAttachmentMaxSize     = 5 << 20
+	feishuProjectSyncWorkers           = 20
+	feishuProjectSlowItemLogAfter      = 500 * time.Millisecond
+	feishuProjectAPIRetryAttempts      = 4
+	feishuProjectDownloadRetryAttempts = 3
 )
+
+// Initial backoff for attachment-download retries. Subsequent attempts use exponential backoff.
+// Declared as a var so tests can shrink it.
+var feishuProjectDownloadRetryInitialDelay = 300 * time.Millisecond
 
 var ErrFeishuProjectSyncScopeRequired = errors.New("Feishu Project sync requires a bounded sync scope before searching work items")
 
@@ -60,10 +65,11 @@ type FeishuProjectStorage interface {
 }
 
 type FeishuProjectSyncSummary struct {
-	Created int `json:"created"`
-	Updated int `json:"updated"`
-	Skipped int `json:"skipped"`
-	Errors  int `json:"errors"`
+	Created          int `json:"created"`
+	Updated          int `json:"updated"`
+	Skipped          int `json:"skipped"`
+	Errors           int `json:"errors"`
+	AttachmentErrors int `json:"attachment_errors"`
 }
 
 type FeishuProjectSyncOptions struct {
@@ -194,7 +200,7 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 						if ctx.Err() != nil {
 							continue
 						}
-						result, err := s.syncWorkItem(ctx, cfg, item, skipExisting)
+						result, attachErrs, err := s.syncWorkItem(ctx, cfg, item, skipExisting)
 						summaryMu.Lock()
 						if err != nil {
 							summary.Errors++
@@ -209,6 +215,7 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 								summary.Skipped++
 							}
 						}
+						summary.AttachmentErrors += attachErrs
 						currentSummary := summary
 						summaryMu.Unlock()
 						s.updateRunProgress(ctx, run.ID, currentSummary, totalCount, page.PageNum, typ)
@@ -240,15 +247,30 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 	var errText pgtype.Text
 	finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	attachmentHint := ""
+	if summary.AttachmentErrors > 0 {
+		attachmentHint = fmt.Sprintf("%d attachments failed to download (see logs)", summary.AttachmentErrors)
+	}
 	if syncErr != nil {
 		status = "failed"
-		errText = pgtype.Text{String: syncErr.Error(), Valid: true}
+		combined := syncErr.Error()
+		if attachmentHint != "" {
+			combined = combined + "; " + attachmentHint
+		}
+		errText = pgtype.Text{String: combined, Valid: true}
 		_ = s.Queries.MarkFeishuProjectIntegrationError(finishCtx, db.MarkFeishuProjectIntegrationErrorParams{
 			ID:        cfg.ID,
-			LastError: pgtype.Text{String: syncErr.Error(), Valid: true},
+			LastError: pgtype.Text{String: combined, Valid: true},
 		})
 	} else {
 		_ = s.Queries.MarkFeishuProjectIntegrationSynced(finishCtx, cfg.ID)
+		if attachmentHint != "" {
+			errText = pgtype.Text{String: attachmentHint, Valid: true}
+			_ = s.Queries.MarkFeishuProjectIntegrationError(finishCtx, db.MarkFeishuProjectIntegrationErrorParams{
+				ID:        cfg.ID,
+				LastError: pgtype.Text{String: attachmentHint, Valid: true},
+			})
+		}
 	}
 	if run.ID.Valid {
 		if err := s.Queries.FinishFeishuProjectSyncRun(finishCtx, db.FinishFeishuProjectSyncRunParams{
@@ -290,10 +312,11 @@ func enabledFeishuProjectTypes(cfg db.FeishuProjectIntegration) []string {
 	return out
 }
 
-func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, skipExisting bool) (result string, retErr error) {
+func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, skipExisting bool) (result string, attachErrs int, retErr error) {
 	started := time.Now()
 	timing := &feishuProjectSyncTiming{}
 	defer func() {
+		attachErrs = timing.attachmentsSkippedError
 		elapsed := time.Since(started)
 		if elapsed < feishuProjectSlowItemLogAfter && retErr == nil {
 			return
@@ -325,7 +348,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		)
 	}()
 	if item.ID == "" || item.Title == "" {
-		return "skipped", nil
+		return "skipped", 0, nil
 	}
 	mappedStatus := mapFeishuStatus(cfg.StatusMapping, item.Type, item.Status)
 	status := mappedStatus
@@ -342,13 +365,13 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	timing.bindingLookup += time.Since(phaseStarted)
 	if err == nil {
 		if skipExisting {
-			return "skipped", nil
+			return "skipped", 0, nil
 		}
 		phaseStarted = time.Now()
 		issue, err := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: binding.IssueID, WorkspaceID: cfg.WorkspaceID})
 		timing.issueLookup += time.Since(phaseStarted)
 		if err != nil {
-			return "skipped", nil
+			return "skipped", 0, nil
 		}
 		phaseStarted = time.Now()
 		assigneeType, assigneeID := s.resolveAssignee(ctx, cfg, item, mappedStatus, issue.AssigneeType, issue.AssigneeID)
@@ -357,14 +380,14 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		attachmentMarkdown, attachErr := s.syncExternalAttachments(ctx, cfg, issue.ID, item, timing)
 		timing.attachments += time.Since(phaseStarted)
 		if attachErr != nil {
-			return "skipped", attachErr
+			return "skipped", 0, attachErr
 		}
 		nextDesc := externalDescription(item, attachmentMarkdown)
 		nextTitle := externalTitle(item)
 		if issue.Title == nextTitle && issue.Description.String == nextDesc && issue.Status == status &&
 			sameNullableText(issue.AssigneeType, assigneeType) && sameNullableUUID(issue.AssigneeID, assigneeID) {
 			s.reconcileSyncedIssueTasks(ctx, issue, issue)
-			return "skipped", nil
+			return "skipped", 0, nil
 		}
 		phaseStarted = time.Now()
 		updatedIssue, err := s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
@@ -381,17 +404,17 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		})
 		timing.issueUpdate += time.Since(phaseStarted)
 		if err != nil {
-			return "skipped", err
+			return "skipped", 0, err
 		}
 		phaseStarted = time.Now()
 		_, _ = s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
 		timing.bindingUpsert += time.Since(phaseStarted)
 		s.reconcileSyncedIssueTasks(ctx, issue, updatedIssue)
-		return "updated", nil
+		return "updated", 0, nil
 	}
 
 	if !cfg.CreatedByID.Valid {
-		return "skipped", fmt.Errorf("feishu project integration has no creator")
+		return "skipped", 0, fmt.Errorf("feishu project integration has no creator")
 	}
 	phaseStarted = time.Now()
 	assigneeType, assigneeID := s.resolveAssignee(ctx, cfg, item, mappedStatus, pgtype.Text{}, pgtype.UUID{})
@@ -399,13 +422,13 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	phaseStarted = time.Now()
 	tx, err := s.Tx.Begin(ctx)
 	if err != nil {
-		return "skipped", err
+		return "skipped", 0, err
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
 	number, err := qtx.IncrementIssueCounter(ctx, cfg.WorkspaceID)
 	if err != nil {
-		return "skipped", err
+		return "skipped", 0, err
 	}
 	issue, err := qtx.CreateIssue(ctx, db.CreateIssueParams{
 		WorkspaceID:  cfg.WorkspaceID,
@@ -421,20 +444,20 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		Number:       number,
 	})
 	if err != nil {
-		return "skipped", err
+		return "skipped", 0, err
 	}
 	if _, err := qtx.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item)); err != nil {
-		return "skipped", err
+		return "skipped", 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return "skipped", err
+		return "skipped", 0, err
 	}
 	timing.issueCreate += time.Since(phaseStarted)
 	phaseStarted = time.Now()
 	attachmentMarkdown, err := s.syncExternalAttachments(ctx, cfg, issue.ID, item, timing)
 	timing.attachments += time.Since(phaseStarted)
 	if err != nil {
-		return "created", err
+		return "created", 0, err
 	}
 	if attachmentMarkdown != "" {
 		phaseStarted = time.Now()
@@ -452,12 +475,12 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		})
 		timing.issueUpdate += time.Since(phaseStarted)
 		if err != nil {
-			return "created", err
+			return "created", 0, err
 		}
 		issue = updatedIssue
 	}
 	s.reconcileSyncedIssueTasks(ctx, issue, issue)
-	return "created", nil
+	return "created", 0, nil
 }
 
 func (s *FeishuProjectSyncService) reconcileSyncedIssueTasks(ctx context.Context, prevIssue, issue db.Issue) {
@@ -1360,21 +1383,46 @@ func (c *FeishuProjectClient) callTool(ctx context.Context, cfg db.FeishuProject
 
 func (c *FeishuProjectClient) DownloadAttachment(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, att FeishuProjectAttachment) ([]byte, string, string, error) {
 	if att.ID != "" {
-		payload := map[string]any{"uuid": att.ID}
 		token, err := c.pluginToken(ctx, cfg.PluginID, cfg.PluginSecret)
 		if err != nil {
 			return nil, "", "", err
 		}
-		raw, filename, contentType, err := c.downloadAttachmentRequest(ctx, cfg, item, token, payload)
-		if err == nil {
-			return raw, firstNonEmpty(filename, att.Name), firstNonEmpty(contentType, att.ContentType), nil
+		payload := map[string]any{"uuid": att.ID}
+		var lastErr error
+		for attempt := 1; attempt <= feishuProjectDownloadRetryAttempts; attempt++ {
+			raw, filename, contentType, retryable, reqErr := c.downloadAttachmentRequest(ctx, cfg, item, token, payload)
+			if reqErr == nil {
+				return raw, firstNonEmpty(filename, att.Name), firstNonEmpty(contentType, att.ContentType), nil
+			}
+			lastErr = reqErr
+			if !retryable || attempt == feishuProjectDownloadRetryAttempts {
+				break
+			}
+			slog.Warn("Feishu Project attachment download retrying",
+				"workspace_id", UUIDString(cfg.WorkspaceID),
+				"project_key", cfg.ProjectKey,
+				"work_item_type", item.Type,
+				"work_item_id", item.ID,
+				"attachment_id", att.ID,
+				"attempt", attempt,
+				"max_attempts", feishuProjectDownloadRetryAttempts,
+				"error", reqErr,
+			)
+			if !feishuProjectDownloadBackoff(ctx, attempt) {
+				return nil, "", "", ctx.Err()
+			}
 		}
-		if strings.TrimSpace(att.URL) == "" {
-			return nil, "", "", err
+		// goapi/project.feishu.cn URLs require a session cookie, so the GET fallback below cannot
+		// succeed with the plugin token — only surface the POST error.
+		if strings.TrimSpace(att.URL) == "" || looksLikeFeishuProjectFileURL(att.URL) {
+			return nil, "", "", lastErr
 		}
 	}
 	if strings.TrimSpace(att.URL) == "" {
 		return nil, "", "", fmt.Errorf("Feishu Project attachment %q has no downloadable url or uuid", att.Name)
+	}
+	if looksLikeFeishuProjectFileURL(att.URL) {
+		return nil, "", "", fmt.Errorf("Feishu Project attachment %q has no downloadable uuid (goapi URL requires session cookie)", att.Name)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, att.URL, nil)
 	if err != nil {
@@ -1398,11 +1446,11 @@ func (c *FeishuProjectClient) DownloadAttachment(ctx context.Context, cfg db.Fei
 	return raw, firstNonEmpty(filenameFromContentDisposition(resp.Header.Get("Content-Disposition")), att.Name), firstNonEmpty(resp.Header.Get("Content-Type"), att.ContentType), nil
 }
 
-func (c *FeishuProjectClient) downloadAttachmentRequest(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, token string, body any) ([]byte, string, string, error) {
+func (c *FeishuProjectClient) downloadAttachmentRequest(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, token string, body any) (raw []byte, filename, contentType string, retryable bool, err error) {
 	rawBody, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+fmt.Sprintf("/open_api/%s/work_item/%s/%s/file/download", cfg.ProjectKey, item.Type, item.ID), bytes.NewReader(rawBody))
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-PLUGIN-TOKEN", token)
@@ -1411,22 +1459,71 @@ func (c *FeishuProjectClient) downloadAttachmentRequest(ctx context.Context, cfg
 	}
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, "", "", err
+		// Network-level failures (timeouts, resets) are almost always transient.
+		return nil, "", "", true, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, feishuProjectAttachmentMaxSize+1))
+	raw, _ = io.ReadAll(io.LimitReader(resp.Body, feishuProjectAttachmentMaxSize+1))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", "", fmt.Errorf("Feishu Project attachment download http %d: %s", resp.StatusCode, string(raw))
+		return nil, "", "", feishuProjectAttachmentRetryableHTTPStatus(resp.StatusCode),
+			fmt.Errorf("Feishu Project attachment download http %d: %s", resp.StatusCode, string(raw))
 	}
 	if strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
 		var payload map[string]any
 		if err := json.Unmarshal(raw, &payload); err == nil {
 			if msg := feishuProjectAPIError(payload); msg != "" {
-				return nil, "", "", fmt.Errorf("Feishu Project attachment download failed: %s", msg)
+				return nil, "", "", feishuProjectAttachmentRetryableAPIError(payload),
+					fmt.Errorf("Feishu Project attachment download failed: %s", msg)
 			}
 		}
 	}
-	return raw, filenameFromContentDisposition(resp.Header.Get("Content-Disposition")), resp.Header.Get("Content-Type"), nil
+	return raw, filenameFromContentDisposition(resp.Header.Get("Content-Disposition")), resp.Header.Get("Content-Type"), false, nil
+}
+
+func feishuProjectDownloadBackoff(ctx context.Context, attempt int) bool {
+	delay := feishuProjectDownloadRetryInitialDelay * time.Duration(1<<(attempt-1))
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func feishuProjectAttachmentRetryableHTTPStatus(status int) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+// feishuProjectAttachmentRetryableAPIError treats a small set of Feishu Project error codes as
+// transient on the attachment download endpoint:
+//   - 30019: internal error observed mid-sync, succeeds on retry within hundreds of ms.
+//   - 50007: upstream gateway timeout.
+//
+// Anything else (including 4xx-mapped business errors) is permanent.
+func feishuProjectAttachmentRetryableAPIError(payload map[string]any) bool {
+	code := 0
+	if raw, ok := payload["err_code"]; ok {
+		code, _ = strconv.Atoi(strings.TrimSpace(fmt.Sprint(raw)))
+	}
+	if code == 0 {
+		if errMap, _ := payload["err"].(map[string]any); errMap != nil {
+			if raw, ok := errMap["code"]; ok {
+				code, _ = strconv.Atoi(strings.TrimSpace(fmt.Sprint(raw)))
+			}
+		}
+	}
+	if code == 30019 || code == 50007 {
+		return true
+	}
+	msg := strings.ToLower(strings.TrimSpace(fmt.Sprint(payload["err_msg"]) + " " + fmt.Sprint(payload["msg"])))
+	return strings.Contains(msg, "gateway timeout") || strings.Contains(msg, "try again later")
 }
 
 func filenameFromContentDisposition(raw string) string {
