@@ -12,6 +12,8 @@ export interface FeishuProjectIntegration {
   mql_filter: string;
   status_mapping: Record<string, string>;
   reverse_status_mapping: Record<string, string>;
+  business_line_field_key: string;
+  business_line_field_name: string;
   last_synced_at: string | null;
   last_error: string | null;
   created_at?: string;
@@ -30,6 +32,8 @@ export interface UpdateFeishuProjectIntegrationRequest {
   mql_filter: string;
   status_mapping: Record<string, string>;
   reverse_status_mapping: Record<string, string>;
+  business_line_field_key?: string;
+  business_line_field_name?: string;
 }
 
 export interface FeishuProjectSyncResponse {
@@ -72,4 +76,53 @@ export interface FeishuProjectStatusOption {
 
 export interface FeishuProjectStatusOptionsResponse {
   statuses: FeishuProjectStatusOption[];
+}
+
+export interface FeishuProjectFieldMeta {
+  key: string;
+  name: string;
+  type: string;
+}
+
+export interface FeishuProjectFieldsResponse {
+  fields: FeishuProjectFieldMeta[];
+}
+
+export interface FeishuProjectBusinessLineNode {
+  id: string;
+  name: string;
+  parent_id?: string;
+  parent_name?: string;
+  children?: FeishuProjectBusinessLineNode[];
+}
+
+export interface FeishuProjectBusinessLinesResponse {
+  business_lines: FeishuProjectBusinessLineNode[];
+}
+
+export interface FeishuProjectRoute {
+  id: string;
+  project_id: string;
+  business_line_id: string;
+  business_line_name: string;
+  parent_business_line_id?: string;
+  parent_business_line_name?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface FeishuProjectRoutesResponse {
+  routes: FeishuProjectRoute[];
+}
+
+export interface FeishuProjectRouteInput {
+  project_id: string;
+  business_line_id: string;
+  business_line_name: string;
+  parent_business_line_id?: string;
+  parent_business_line_name?: string;
+}
+
+export interface ReplaceFeishuProjectRoutesRequest {
+  routes: FeishuProjectRouteInput[];
 }
