@@ -17,10 +17,12 @@ ORDER BY updated_at ASC;
 INSERT INTO feishu_project_integration (
     workspace_id, project_key, plugin_id, plugin_secret, actor_user_key,
     enabled, sync_story, sync_issue, mql_filter, status_mapping,
-    reverse_status_mapping, created_by_id
+    reverse_status_mapping, created_by_id,
+    business_line_field_key, business_line_field_name
 ) VALUES (
     $1, $2, $3, $4, sqlc.narg('actor_user_key'),
-    $5, $6, $7, $8, $9, $10, sqlc.narg('created_by_id')
+    $5, $6, $7, $8, $9, $10, sqlc.narg('created_by_id'),
+    $11, $12
 )
 ON CONFLICT (workspace_id) DO UPDATE SET
     project_key = EXCLUDED.project_key,
@@ -33,6 +35,8 @@ ON CONFLICT (workspace_id) DO UPDATE SET
     mql_filter = EXCLUDED.mql_filter,
     status_mapping = EXCLUDED.status_mapping,
     reverse_status_mapping = EXCLUDED.reverse_status_mapping,
+    business_line_field_key = EXCLUDED.business_line_field_key,
+    business_line_field_name = EXCLUDED.business_line_field_name,
     updated_at = now()
 RETURNING *;
 
@@ -48,6 +52,8 @@ SET project_key = $3,
     mql_filter = $9,
     status_mapping = $10,
     reverse_status_mapping = $11,
+    business_line_field_key = $12,
+    business_line_field_name = $13,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
 RETURNING *;
@@ -142,3 +148,32 @@ SELECT * FROM feishu_project_sync_run
 WHERE integration_id = $1
 ORDER BY started_at DESC
 LIMIT $2;
+
+-- name: ListFeishuProjectBusinessLineRoutes :many
+SELECT * FROM feishu_project_business_line_route
+WHERE integration_id = $1
+ORDER BY business_line_name ASC, business_line_id ASC;
+
+-- name: UpsertFeishuProjectBusinessLineRoute :one
+INSERT INTO feishu_project_business_line_route (
+    integration_id, workspace_id, project_id,
+    business_line_id, business_line_name,
+    parent_business_line_id, parent_business_line_name
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7
+)
+ON CONFLICT (integration_id, business_line_id) DO UPDATE SET
+    project_id = EXCLUDED.project_id,
+    business_line_name = EXCLUDED.business_line_name,
+    parent_business_line_id = EXCLUDED.parent_business_line_id,
+    parent_business_line_name = EXCLUDED.parent_business_line_name,
+    updated_at = now()
+RETURNING *;
+
+-- name: DeleteFeishuProjectBusinessLineRoutesByIntegration :exec
+DELETE FROM feishu_project_business_line_route
+WHERE integration_id = $1;
+
+-- name: DeleteFeishuProjectBusinessLineRoute :exec
+DELETE FROM feishu_project_business_line_route
+WHERE integration_id = $1 AND business_line_id = $2;

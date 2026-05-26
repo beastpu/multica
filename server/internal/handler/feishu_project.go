@@ -16,37 +16,41 @@ import (
 )
 
 type FeishuProjectIntegrationResponse struct {
-	ID                   string            `json:"id,omitempty"`
-	WorkspaceID          string            `json:"workspace_id,omitempty"`
-	ProjectName          string            `json:"project_name"`
-	ProjectKey           string            `json:"project_key"`
-	PluginID             string            `json:"plugin_id"`
-	HasPluginSecret      bool              `json:"has_plugin_secret"`
-	ActorUserKey         *string           `json:"actor_user_key"`
-	Enabled              bool              `json:"enabled"`
-	SyncStory            bool              `json:"sync_story"`
-	SyncIssue            bool              `json:"sync_issue"`
-	MQLFilter            string            `json:"mql_filter"`
-	StatusMapping        map[string]string `json:"status_mapping"`
-	ReverseStatusMapping map[string]string `json:"reverse_status_mapping"`
-	LastSyncedAt         *string           `json:"last_synced_at"`
-	LastError            *string           `json:"last_error"`
-	CreatedAt            string            `json:"created_at,omitempty"`
-	UpdatedAt            string            `json:"updated_at,omitempty"`
+	ID                    string            `json:"id,omitempty"`
+	WorkspaceID           string            `json:"workspace_id,omitempty"`
+	ProjectName           string            `json:"project_name"`
+	ProjectKey            string            `json:"project_key"`
+	PluginID              string            `json:"plugin_id"`
+	HasPluginSecret       bool              `json:"has_plugin_secret"`
+	ActorUserKey          *string           `json:"actor_user_key"`
+	Enabled               bool              `json:"enabled"`
+	SyncStory             bool              `json:"sync_story"`
+	SyncIssue             bool              `json:"sync_issue"`
+	MQLFilter             string            `json:"mql_filter"`
+	StatusMapping         map[string]string `json:"status_mapping"`
+	ReverseStatusMapping  map[string]string `json:"reverse_status_mapping"`
+	BusinessLineFieldKey  string            `json:"business_line_field_key"`
+	BusinessLineFieldName string            `json:"business_line_field_name"`
+	LastSyncedAt          *string           `json:"last_synced_at"`
+	LastError             *string           `json:"last_error"`
+	CreatedAt             string            `json:"created_at,omitempty"`
+	UpdatedAt             string            `json:"updated_at,omitempty"`
 }
 
 type UpdateFeishuProjectIntegrationRequest struct {
-	ProjectName          string            `json:"project_name"`
-	ProjectKey           string            `json:"project_key"`
-	PluginID             string            `json:"plugin_id"`
-	PluginSecret         *string           `json:"plugin_secret"`
-	ActorUserKey         *string           `json:"actor_user_key"`
-	Enabled              bool              `json:"enabled"`
-	SyncStory            bool              `json:"sync_story"`
-	SyncIssue            bool              `json:"sync_issue"`
-	MQLFilter            string            `json:"mql_filter"`
-	StatusMapping        map[string]string `json:"status_mapping"`
-	ReverseStatusMapping map[string]string `json:"reverse_status_mapping"`
+	ProjectName           string            `json:"project_name"`
+	ProjectKey            string            `json:"project_key"`
+	PluginID              string            `json:"plugin_id"`
+	PluginSecret          *string           `json:"plugin_secret"`
+	ActorUserKey          *string           `json:"actor_user_key"`
+	Enabled               bool              `json:"enabled"`
+	SyncStory             bool              `json:"sync_story"`
+	SyncIssue             bool              `json:"sync_issue"`
+	MQLFilter             string            `json:"mql_filter"`
+	StatusMapping         map[string]string `json:"status_mapping"`
+	ReverseStatusMapping  map[string]string `json:"reverse_status_mapping"`
+	BusinessLineFieldKey  string            `json:"business_line_field_key"`
+	BusinessLineFieldName string            `json:"business_line_field_name"`
 }
 
 type FeishuProjectSyncRunResponse struct {
@@ -154,35 +158,41 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 	}
 	var cfg db.FeishuProjectIntegration
 	var err error
+	bizLineKey := strings.TrimSpace(req.BusinessLineFieldKey)
+	bizLineName := strings.TrimSpace(req.BusinessLineFieldName)
 	if existingErr == nil {
 		cfg, err = h.Queries.UpdateFeishuProjectIntegrationByID(r.Context(), db.UpdateFeishuProjectIntegrationByIDParams{
-			ID:                   existing.ID,
-			WorkspaceID:          wsUUID,
-			ProjectKey:           projectKey,
-			PluginID:             pluginID,
-			PluginSecret:         pluginSecret,
-			ActorUserKey:         actor,
-			Enabled:              req.Enabled,
-			SyncStory:            req.SyncStory,
-			SyncIssue:            req.SyncIssue,
-			MqlFilter:            mqlFilter,
-			StatusMapping:        statusJSON,
-			ReverseStatusMapping: reverseJSON,
+			ID:                    existing.ID,
+			WorkspaceID:           wsUUID,
+			ProjectKey:            projectKey,
+			PluginID:              pluginID,
+			PluginSecret:          pluginSecret,
+			ActorUserKey:          actor,
+			Enabled:               req.Enabled,
+			SyncStory:             req.SyncStory,
+			SyncIssue:             req.SyncIssue,
+			MqlFilter:             mqlFilter,
+			StatusMapping:         statusJSON,
+			ReverseStatusMapping:  reverseJSON,
+			BusinessLineFieldKey:  bizLineKey,
+			BusinessLineFieldName: bizLineName,
 		})
 	} else {
 		cfg, err = h.Queries.UpsertFeishuProjectIntegration(r.Context(), db.UpsertFeishuProjectIntegrationParams{
-			WorkspaceID:          wsUUID,
-			ProjectKey:           projectKey,
-			PluginID:             pluginID,
-			PluginSecret:         pluginSecret,
-			ActorUserKey:         actor,
-			Enabled:              req.Enabled,
-			SyncStory:            req.SyncStory,
-			SyncIssue:            req.SyncIssue,
-			MqlFilter:            mqlFilter,
-			StatusMapping:        statusJSON,
-			ReverseStatusMapping: reverseJSON,
-			CreatedByID:          member.UserID,
+			WorkspaceID:           wsUUID,
+			ProjectKey:            projectKey,
+			PluginID:              pluginID,
+			PluginSecret:          pluginSecret,
+			ActorUserKey:          actor,
+			Enabled:               req.Enabled,
+			SyncStory:             req.SyncStory,
+			SyncIssue:             req.SyncIssue,
+			MqlFilter:             mqlFilter,
+			StatusMapping:         statusJSON,
+			ReverseStatusMapping:  reverseJSON,
+			CreatedByID:           member.UserID,
+			BusinessLineFieldKey:  bizLineKey,
+			BusinessLineFieldName: bizLineName,
 		})
 	}
 	if err != nil {
@@ -292,23 +302,25 @@ func (h *Handler) GetFeishuProjectIssueStatuses(w http.ResponseWriter, r *http.R
 
 func feishuProjectIntegrationToResponse(cfg db.FeishuProjectIntegration) FeishuProjectIntegrationResponse {
 	return FeishuProjectIntegrationResponse{
-		ID:                   uuidToString(cfg.ID),
-		WorkspaceID:          uuidToString(cfg.WorkspaceID),
-		ProjectName:          cfg.ProjectKey,
-		ProjectKey:           cfg.ProjectKey,
-		PluginID:             cfg.PluginID,
-		HasPluginSecret:      cfg.PluginSecret != "",
-		ActorUserKey:         textToPtr(cfg.ActorUserKey),
-		Enabled:              cfg.Enabled,
-		SyncStory:            cfg.SyncStory,
-		SyncIssue:            cfg.SyncIssue,
-		MQLFilter:            cfg.MqlFilter,
-		StatusMapping:        decodeFlatStringMap(cfg.StatusMapping),
-		ReverseStatusMapping: decodeFlatStringMap(cfg.ReverseStatusMapping),
-		LastSyncedAt:         timestampToPtr(cfg.LastSyncedAt),
-		LastError:            textToPtr(cfg.LastError),
-		CreatedAt:            timestampToString(cfg.CreatedAt),
-		UpdatedAt:            timestampToString(cfg.UpdatedAt),
+		ID:                    uuidToString(cfg.ID),
+		WorkspaceID:           uuidToString(cfg.WorkspaceID),
+		ProjectName:           cfg.ProjectKey,
+		ProjectKey:            cfg.ProjectKey,
+		PluginID:              cfg.PluginID,
+		HasPluginSecret:       cfg.PluginSecret != "",
+		ActorUserKey:          textToPtr(cfg.ActorUserKey),
+		Enabled:               cfg.Enabled,
+		SyncStory:             cfg.SyncStory,
+		SyncIssue:             cfg.SyncIssue,
+		MQLFilter:             cfg.MqlFilter,
+		StatusMapping:         decodeFlatStringMap(cfg.StatusMapping),
+		ReverseStatusMapping:  decodeFlatStringMap(cfg.ReverseStatusMapping),
+		BusinessLineFieldKey:  cfg.BusinessLineFieldKey,
+		BusinessLineFieldName: cfg.BusinessLineFieldName,
+		LastSyncedAt:          timestampToPtr(cfg.LastSyncedAt),
+		LastError:             textToPtr(cfg.LastError),
+		CreatedAt:             timestampToString(cfg.CreatedAt),
+		UpdatedAt:             timestampToString(cfg.UpdatedAt),
 	}
 }
 

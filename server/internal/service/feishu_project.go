@@ -92,15 +92,42 @@ type FeishuProjectClient struct {
 }
 
 type FeishuProjectWorkItem struct {
-	ID          string
-	Type        string
-	Title       string
-	Description string
-	Status      string
-	OwnerEmail  string
-	UpdatedAt   time.Time
-	URL         string
-	Attachments []FeishuProjectAttachment
+	ID                 string
+	Type               string
+	Title              string
+	Description        string
+	Status             string
+	OwnerEmail         string
+	UpdatedAt          time.Time
+	URL                string
+	Attachments        []FeishuProjectAttachment
+	BusinessLineTokens []FeishuBusinessLineToken
+}
+
+// FeishuBusinessLineToken represents one biz-line value attached to a work item,
+// extracted from the field designated by FeishuProjectIntegration.BusinessLineFieldKey.
+// Either ID or Name may be empty depending on what Meego returned.
+type FeishuBusinessLineToken struct {
+	ID         string
+	Name       string
+	ParentID   string
+	ParentName string
+}
+
+// FeishuProjectFieldOption is one selectable option (used for biz-line nodes).
+type FeishuProjectFieldOption struct {
+	ID         string                     `json:"id"`
+	Name       string                     `json:"name"`
+	ParentID   string                     `json:"parent_id,omitempty"`
+	ParentName string                     `json:"parent_name,omitempty"`
+	Children   []FeishuProjectFieldOption `json:"children,omitempty"`
+}
+
+// FeishuProjectFieldMeta is one field on a work-item type.
+type FeishuProjectFieldMeta struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+	Type string `json:"type"`
 }
 
 type FeishuProjectAttachment struct {
@@ -348,6 +375,13 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	if item.ID == "" || item.Title == "" {
 		return "skipped", 0, nil
 	}
+	projectID, routed, routeErr := s.routeWorkItemProject(ctx, cfg, item)
+	if routeErr != nil {
+		return "skipped", 0, routeErr
+	}
+	if !routed {
+		return "skipped", 0, nil
+	}
 	status := mapFeishuStatus(cfg.StatusMapping, item.Type, item.Status)
 	if status == "" {
 		status = "todo"
@@ -381,7 +415,11 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		}
 		nextDesc := externalDescription(item, attachmentMarkdown)
 		nextTitle := externalTitle(item)
-		if issue.Title == nextTitle && issue.Description.String == nextDesc && issue.Status == status && sameIssueAssignee(issue, assigneeType, assigneeID) {
+		nextProjectID := issue.ProjectID
+		if projectID.Valid {
+			nextProjectID = projectID
+		}
+		if issue.Title == nextTitle && issue.Description.String == nextDesc && issue.Status == status && sameIssueAssignee(issue, assigneeType, assigneeID) && issue.ProjectID == nextProjectID {
 			s.reconcileSyncedIssueTasks(ctx, issue, issue)
 			return "skipped", 0, nil
 		}
@@ -396,7 +434,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 			AssigneeID:    assigneeID,
 			DueDate:       issue.DueDate,
 			ParentIssueID: issue.ParentIssueID,
-			ProjectID:     issue.ProjectID,
+			ProjectID:     nextProjectID,
 		})
 		timing.issueUpdate += time.Since(phaseStarted)
 		if err != nil {
@@ -435,6 +473,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		CreatorID:    cfg.CreatedByID,
 		Position:     0,
 		Number:       number,
+		ProjectID:    projectID,
 	})
 	if err != nil {
 		return "skipped", 0, err
@@ -517,6 +556,103 @@ func (s *FeishuProjectSyncService) enqueueSyncedIssueIfNeeded(ctx context.Contex
 
 func sameIssueAssignee(issue db.Issue, assigneeType pgtype.Text, assigneeID pgtype.UUID) bool {
 	return issue.AssigneeType == assigneeType && issue.AssigneeID == assigneeID
+}
+
+// routeWorkItemProject decides which Multica project (inside the integration's workspace) a
+// Meego work item belongs to, based on the configured business-line field and the routes
+// stored in feishu_project_business_line_route.
+//
+// Returns:
+//   - projectID: the target project (invalid pgtype.UUID if no routing configured)
+//   - routed=true: the item should be synced (either no routing rules apply, or a route matched)
+//   - routed=false, err=nil: routing is configured but no rule matched → item is intentionally
+//     skipped (operators see this as "no route configured for this biz line")
+//   - err != nil: transient lookup failure; caller should bubble up
+//
+// When the integration has BusinessLineFieldKey == "" (legacy / 1:1 setup), routing is
+// disabled and every item is synced into the workspace without a project — matching the
+// pre-routing behavior so this change is backward-compatible.
+func (s *FeishuProjectSyncService) routeWorkItemProject(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem) (pgtype.UUID, bool, error) {
+	if strings.TrimSpace(cfg.BusinessLineFieldKey) == "" {
+		return pgtype.UUID{}, true, nil
+	}
+	routes, err := s.Queries.ListFeishuProjectBusinessLineRoutes(ctx, cfg.ID)
+	if err != nil {
+		return pgtype.UUID{}, false, fmt.Errorf("list biz-line routes: %w", err)
+	}
+	if len(routes) == 0 {
+		slog.Warn("Feishu Project sync skipped: routing enabled but no routes configured",
+			"integration_id", UUIDString(cfg.ID),
+			"project_key", cfg.ProjectKey,
+			"work_item_id", item.ID,
+		)
+		return pgtype.UUID{}, false, nil
+	}
+	matched := matchBusinessLineRoute(routes, item.BusinessLineTokens)
+	if matched == nil {
+		slog.Warn("Feishu Project sync skipped: work item business-line value has no matching route",
+			"integration_id", UUIDString(cfg.ID),
+			"project_key", cfg.ProjectKey,
+			"work_item_id", item.ID,
+			"work_item_tokens", formatBusinessLineTokens(item.BusinessLineTokens),
+		)
+		return pgtype.UUID{}, false, nil
+	}
+	return matched.ProjectID, true, nil
+}
+
+// matchBusinessLineRoute applies the precedence rules from the design:
+//  1. exact leaf-id match (route.business_line_id == any item leaf id)
+//  2. exact leaf-name match
+//  3. parent-id match (route.business_line_id == any item parent id) — covers parent-level routes
+//  4. parent-name match
+//
+// First-wins by route order. Multiple ties at the same precedence layer log a warning at
+// call sites; here we return deterministically the first.
+func matchBusinessLineRoute(routes []db.FeishuProjectBusinessLineRoute, tokens []FeishuBusinessLineToken) *db.FeishuProjectBusinessLineRoute {
+	if len(routes) == 0 || len(tokens) == 0 {
+		return nil
+	}
+	leafIDs := map[string]bool{}
+	leafNames := map[string]bool{}
+	parentIDs := map[string]bool{}
+	parentNames := map[string]bool{}
+	for _, tok := range tokens {
+		if id := strings.TrimSpace(tok.ID); id != "" {
+			leafIDs[id] = true
+		}
+		if name := strings.TrimSpace(tok.Name); name != "" {
+			leafNames[name] = true
+		}
+		if pid := strings.TrimSpace(tok.ParentID); pid != "" {
+			parentIDs[pid] = true
+		}
+		if pname := strings.TrimSpace(tok.ParentName); pname != "" {
+			parentNames[pname] = true
+		}
+	}
+	matchers := []func(db.FeishuProjectBusinessLineRoute) bool{
+		func(r db.FeishuProjectBusinessLineRoute) bool { return leafIDs[strings.TrimSpace(r.BusinessLineID)] },
+		func(r db.FeishuProjectBusinessLineRoute) bool { return leafNames[strings.TrimSpace(r.BusinessLineName)] },
+		func(r db.FeishuProjectBusinessLineRoute) bool { return parentIDs[strings.TrimSpace(r.BusinessLineID)] },
+		func(r db.FeishuProjectBusinessLineRoute) bool { return parentNames[strings.TrimSpace(r.BusinessLineName)] },
+	}
+	for _, m := range matchers {
+		for i := range routes {
+			if m(routes[i]) {
+				return &routes[i]
+			}
+		}
+	}
+	return nil
+}
+
+func formatBusinessLineTokens(tokens []FeishuBusinessLineToken) string {
+	parts := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		parts = append(parts, fmt.Sprintf("%s/%s(%s/%s)", t.ID, t.Name, t.ParentID, t.ParentName))
+	}
+	return strings.Join(parts, ",")
 }
 
 func (s *FeishuProjectSyncService) resolveOwner(ctx context.Context, workspaceID pgtype.UUID, email, status string) (pgtype.Text, pgtype.UUID) {
@@ -1021,7 +1157,7 @@ func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context,
 		if err != nil {
 			return err
 		}
-		items := parseFeishuProjectSearch(payload, workItemType, cfg.ProjectKey)
+		items := parseFeishuProjectSearch(payload, workItemType, cfg.ProjectKey, strings.TrimSpace(cfg.BusinessLineFieldKey))
 		total, hasTotal := feishuProjectOpenAPITotal(payload)
 		if !hasTotal {
 			total = 0
@@ -1133,6 +1269,31 @@ func (c *FeishuProjectClient) IssueStatusOptions(ctx context.Context, cfg db.Fei
 		return nil, fmt.Errorf("Feishu Project issue status metadata is empty")
 	}
 	return statuses, nil
+}
+
+// ListWorkItemFields returns the field definitions of a work-item type so the user
+// can pick which one is the "business line" field. Backed by
+// GET /open_api/{project_key}/work_item/{type}/meta — the same endpoint we already use
+// for status options, just parsed for the full field list.
+func (c *FeishuProjectClient) ListWorkItemFields(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType string) ([]FeishuProjectFieldMeta, error) {
+	if workItemType == "" {
+		workItemType = "issue"
+	}
+	payload, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/work_item/%s/meta", cfg.ProjectKey, workItemType), nil)
+	if err != nil {
+		return nil, err
+	}
+	return parseFeishuProjectFieldMetas(payload), nil
+}
+
+// ListBusinessLines returns the 2-level business-line tree for the configured space.
+// Backed by GET /open_api/{project_key}/business/all.
+func (c *FeishuProjectClient) ListBusinessLines(ctx context.Context, cfg db.FeishuProjectIntegration) ([]FeishuProjectFieldOption, error) {
+	payload, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/business/all", cfg.ProjectKey), nil)
+	if err != nil {
+		return nil, err
+	}
+	return parseFeishuProjectBusinessLineTree(payload), nil
 }
 
 func (c *FeishuProjectClient) TransitionStatus(ctx context.Context, cfg db.FeishuProjectIntegration, workItemID, workItemType, targetStatus string) error {
@@ -1569,7 +1730,7 @@ func feishuProjectOpenAPITotal(payload map[string]any) (int, bool) {
 	}
 }
 
-func parseFeishuProjectSearch(payload map[string]any, typ, projectKey string) []FeishuProjectWorkItem {
+func parseFeishuProjectSearch(payload map[string]any, typ, projectKey, businessLineFieldKey string) []FeishuProjectWorkItem {
 	var out []FeishuProjectWorkItem
 	rows, _ := payload["data"].([]any)
 	for _, rowAny := range rows {
@@ -1588,6 +1749,7 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey string) []
 		if ts := feishuProjectTime(row["updated_at"]); !ts.IsZero() {
 			record["updated_at"] = ts.Format(time.RFC3339Nano)
 		}
+		var businessLineTokens []FeishuBusinessLineToken
 		fields, _ := row["fields"].([]any)
 		var attachments []FeishuProjectAttachment
 		for _, fieldAny := range fields {
@@ -1599,6 +1761,9 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey string) []
 			attachments = append(attachments, feishuProjectOpenAPIFieldAttachments(field)...)
 			if value := feishuProjectOpenAPIFieldValue(field); value != "" {
 				record[key] = value
+			}
+			if businessLineFieldKey != "" && key == businessLineFieldKey {
+				businessLineTokens = extractBusinessLineTokens(field["field_value"])
 			}
 		}
 		multiTexts, _ := row["multi_texts"].([]any)
@@ -1612,23 +1777,184 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey string) []
 			if value := feishuProjectOpenAPIFieldValue(field); value != "" {
 				record[key] = value
 			}
+			if businessLineFieldKey != "" && len(businessLineTokens) == 0 && key == businessLineFieldKey {
+				businessLineTokens = extractBusinessLineTokens(field["field_value"])
+			}
 		}
 		description, descriptionAttachments := normalizeFeishuProjectDescription(record["description"])
 		attachments = append(attachments, descriptionAttachments...)
 		updatedAt, _ := time.Parse(time.RFC3339Nano, record["updated_at"])
 		out = append(out, FeishuProjectWorkItem{
-			ID:          id,
-			Type:        typ,
-			Title:       firstNonEmpty(record["name"], record["title"]),
-			Description: description,
-			Status:      firstNonEmpty(record["work_item_status"], record["sub_stage"], record["status"]),
-			OwnerEmail:  extractEmail(firstNonEmpty(record["current_status_operator"], record["owner"], record["operator"])),
-			UpdatedAt:   updatedAt,
-			URL:         fmt.Sprintf("https://project.feishu.cn/%s/%s/detail/%s", projectKey, typ, id),
-			Attachments: dedupeFeishuProjectAttachments(attachments),
+			ID:                 id,
+			Type:               typ,
+			Title:              firstNonEmpty(record["name"], record["title"]),
+			Description:        description,
+			Status:             firstNonEmpty(record["work_item_status"], record["sub_stage"], record["status"]),
+			OwnerEmail:         extractEmail(firstNonEmpty(record["current_status_operator"], record["owner"], record["operator"])),
+			UpdatedAt:          updatedAt,
+			URL:                fmt.Sprintf("https://project.feishu.cn/%s/%s/detail/%s", projectKey, typ, id),
+			Attachments:        dedupeFeishuProjectAttachments(attachments),
+			BusinessLineTokens: businessLineTokens,
 		})
 	}
 	return out
+}
+
+// extractBusinessLineTokens pulls leaf + parent ID/Name pairs out of a Meego biz-line field
+// value. The Meego API surfaces the value as either:
+//   - a single object {option_id, option_name, parent_option_id, parent_option_name, ...},
+//   - an array of such objects (multi-select), or
+//   - a primitive id string (rare; we degrade gracefully to a token with just ID set).
+//
+// We accept any of the common key spellings (id/option_id/key, name/option_name/label) so
+// the routing logic doesn't care which Meego shape arrived.
+func extractBusinessLineTokens(value any) []FeishuBusinessLineToken {
+	if value == nil {
+		return nil
+	}
+	var out []FeishuBusinessLineToken
+	pick := func(m map[string]any, keys ...string) string {
+		for _, k := range keys {
+			if v, ok := m[k]; ok && v != nil {
+				s := strings.TrimSpace(fmt.Sprint(v))
+				if s != "" && s != "<nil>" {
+					return s
+				}
+			}
+		}
+		return ""
+	}
+	visit := func(m map[string]any) {
+		tok := FeishuBusinessLineToken{
+			ID:         pick(m, "option_id", "id", "key", "value"),
+			Name:       pick(m, "option_name", "name", "label", "text"),
+			ParentID:   pick(m, "parent_option_id", "parent_id", "parent_key"),
+			ParentName: pick(m, "parent_option_name", "parent_name", "parent_label"),
+		}
+		if tok.ID == "" && tok.Name == "" {
+			return
+		}
+		out = append(out, tok)
+	}
+	switch v := value.(type) {
+	case map[string]any:
+		visit(v)
+	case []any:
+		for _, itemAny := range v {
+			switch item := itemAny.(type) {
+			case map[string]any:
+				visit(item)
+			case string:
+				s := strings.TrimSpace(item)
+				if s != "" {
+					out = append(out, FeishuBusinessLineToken{ID: s})
+				}
+			}
+		}
+	case string:
+		s := strings.TrimSpace(v)
+		if s != "" {
+			out = append(out, FeishuBusinessLineToken{ID: s})
+		}
+	}
+	return out
+}
+
+// parseFeishuProjectFieldMetas walks the /work_item/{type}/meta response and surfaces
+// every (field_key, field_name, field_type) triple. Reused by ListWorkItemFields so the
+// settings UI can show a dropdown of fields to designate as the business-line field.
+//
+// The meta document is loosely typed in Meego — fields can appear under "fields", under
+// nested "tab"/"field_list" containers, or as top-level entries. We walk recursively and
+// dedupe by field_key.
+func parseFeishuProjectFieldMetas(payload map[string]any) []FeishuProjectFieldMeta {
+	seen := map[string]bool{}
+	var out []FeishuProjectFieldMeta
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if key := strings.TrimSpace(firstNonEmpty(fmt.Sprint(x["field_key"]), fmt.Sprint(x["field_alias"]))); key != "" && key != "<nil>" && !seen[key] {
+				typeStr := firstNonEmpty(fmt.Sprint(x["field_type_key"]), fmt.Sprint(x["field_type"]))
+				if _, isOption := x["option"]; !isOption {
+					_, isOption = x["options"]
+					_ = isOption
+				}
+				out = append(out, FeishuProjectFieldMeta{
+					Key:  key,
+					Name: firstNonEmpty(fmt.Sprint(x["name"]), fmt.Sprint(x["field_name"]), key),
+					Type: typeStr,
+				})
+				seen[key] = true
+			}
+			for _, child := range x {
+				walk(child)
+			}
+		case []any:
+			for _, child := range x {
+				walk(child)
+			}
+		}
+	}
+	walk(payload)
+	return out
+}
+
+// parseFeishuProjectBusinessLineTree converts the /business/all response into a 2-level
+// FeishuProjectFieldOption tree. The Meego response shape varies — top-level "data" can be
+// either an array of nodes or an object containing "list"/"items" — so we walk and pick out
+// nodes that look like {id, name, children?}.
+func parseFeishuProjectBusinessLineTree(payload map[string]any) []FeishuProjectFieldOption {
+	pickStr := func(m map[string]any, keys ...string) string {
+		for _, k := range keys {
+			if v, ok := m[k]; ok && v != nil {
+				s := strings.TrimSpace(fmt.Sprint(v))
+				if s != "" && s != "<nil>" {
+					return s
+				}
+			}
+		}
+		return ""
+	}
+	var toNodes func(any, string, string) []FeishuProjectFieldOption
+	toNodes = func(v any, parentID, parentName string) []FeishuProjectFieldOption {
+		var nodes []FeishuProjectFieldOption
+		switch x := v.(type) {
+		case []any:
+			for _, child := range x {
+				nodes = append(nodes, toNodes(child, parentID, parentName)...)
+			}
+		case map[string]any:
+			id := pickStr(x, "id", "business_id", "option_id", "key")
+			name := pickStr(x, "name", "business_name", "option_name", "label")
+			if id != "" || name != "" {
+				node := FeishuProjectFieldOption{
+					ID:         id,
+					Name:       name,
+					ParentID:   parentID,
+					ParentName: parentName,
+				}
+				if children, ok := x["children"]; ok {
+					node.Children = toNodes(children, id, name)
+				} else if subItems, ok := x["sub_items"]; ok {
+					node.Children = toNodes(subItems, id, name)
+				}
+				nodes = append(nodes, node)
+				return nodes
+			}
+			// container — recurse looking for a list inside
+			for _, key := range []string{"data", "list", "items", "businesses", "business_list"} {
+				if inner, ok := x[key]; ok {
+					nodes = append(nodes, toNodes(inner, parentID, parentName)...)
+				}
+			}
+		}
+		return nodes
+	}
+	if data, ok := payload["data"]; ok {
+		return toNodes(data, "", "")
+	}
+	return toNodes(payload, "", "")
 }
 
 func parseFeishuProjectStatusOptions(payload map[string]any) []FeishuProjectStatusOption {
