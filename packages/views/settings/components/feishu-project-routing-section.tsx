@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Loader2, RefreshCw, Save, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -15,32 +14,36 @@ import {
   feishuProjectBusinessLinesOptions,
   feishuProjectFieldsOptions,
   feishuProjectKeys,
-  feishuProjectRoutesOptions,
-  useReplaceFeishuProjectRoutes,
 } from "@multica/core/feishu-project/queries";
 import { projectListOptions } from "@multica/core/projects";
 import type {
   FeishuProjectBusinessLineNode,
   FeishuProjectIntegration,
-  FeishuProjectRouteInput,
 } from "@multica/core/types";
 import { useT } from "../../i18n";
-
-interface Props {
-  workspaceId: string;
-  integration: FeishuProjectIntegration | null;
-  onFieldChanged: (fieldKey: string, fieldName: string) => void;
-}
 
 // Each user-edited row in the routes table. business_line_id is the lookup key; we keep
 // the parent denormalized so we can save it back to the server without re-fetching the
 // tree at save time.
-interface RouteRow {
+export interface RouteRow {
   businessLineId: string;
   businessLineName: string;
   parentBusinessLineId: string;
   parentBusinessLineName: string;
   projectId: string;
+}
+
+interface Props {
+  workspaceId: string;
+  integration: FeishuProjectIntegration | null;
+  // Lifted state — parent owns these so the parent's unified Save button can persist
+  // the route table together with the integration's business-line field choice.
+  fieldKey: string;
+  onFieldChanged: (fieldKey: string, fieldName: string) => void;
+  rows: RouteRow[];
+  setRows: (updater: (prev: RouteRow[]) => RouteRow[]) => void;
+  expanded: Record<string, boolean>;
+  setExpanded: (updater: (prev: Record<string, boolean>) => Record<string, boolean>) => void;
 }
 
 const NO_PROJECT = "__none__";
@@ -49,26 +52,29 @@ const NO_PROJECT = "__none__";
  * Business-line → project routing UI for a Feishu Project integration.
  *
  * Flow:
- *  1. User picks the "business-line field" (Meego field name varies per space, so we
- *     fetch the field list and let them pick).
- *  2. Once a field is chosen, we fetch the 2-level biz-line tree from Meego and render
- *     it as a checkbox tree.
- *  3. For each selected biz-line node, the user picks a workspace-local project from a
- *     dropdown.
- *  4. Save writes the full route table atomically (PUT replaces).
- *
- * Save here only commits routes — the field-key choice is part of the parent
- * integration form (so it flushes with the rest of the integration on its own Save).
+ *  1. User picks the "business-line field" (Meego field name varies per space).
+ *  2. Once a field is chosen, fetch the 2-level biz-line tree and render as a checkbox tree.
+ *  3. For each picked biz-line, pick a workspace-local project.
+ *  4. The parent component's unified Save button persists both the field choice (via
+ *     updateFeishuProjectIntegration) and the routes (via replaceFeishuProjectRoutes).
  */
-export function FeishuProjectRoutingSection({ workspaceId, integration, onFieldChanged }: Props) {
+export function FeishuProjectRoutingSection({
+  workspaceId,
+  integration,
+  fieldKey,
+  onFieldChanged,
+  rows,
+  setRows,
+  expanded,
+  setExpanded,
+}: Props) {
   const { t } = useT("settings");
   const queryClient = useQueryClient();
 
   const integrationReady = Boolean(integration?.id && integration.has_plugin_secret);
-  const fieldKey = integration?.business_line_field_key ?? "";
   const hasFieldKey = fieldKey.trim() !== "";
 
-  const { data: fieldsData, isFetching: fieldsLoading, refetch: refetchFields } = useQuery({
+  const { data: fieldsData, isFetching: fieldsLoading } = useQuery({
     ...feishuProjectFieldsOptions(workspaceId, "issue", integrationReady),
   });
   const fields = fieldsData?.fields ?? [];
@@ -78,44 +84,22 @@ export function FeishuProjectRoutingSection({ workspaceId, integration, onFieldC
   });
   const businessLines = businessLinesData?.business_lines ?? [];
 
-  const { data: routesData } = useQuery({
-    ...feishuProjectRoutesOptions(workspaceId, integrationReady),
-  });
-  const savedRoutes = routesData?.routes ?? [];
-
   const { data: projects = [] } = useQuery(projectListOptions(workspaceId));
 
-  // Local draft state. Seeded from saved routes; user edits stay local until Save.
-  const [rows, setRows] = useState<RouteRow[]>([]);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    setRows(
-      savedRoutes.map((r) => ({
-        businessLineId: r.business_line_id,
-        businessLineName: r.business_line_name,
-        parentBusinessLineId: r.parent_business_line_id ?? "",
-        parentBusinessLineName: r.parent_business_line_name ?? "",
-        projectId: r.project_id,
-      })),
-    );
-    // Auto-expand any parent whose child is currently routed, so the user can see the
-    // existing selection without manually clicking the disclosure.
-    const auto: Record<string, boolean> = {};
-    for (const r of savedRoutes) {
-      const parentId = r.parent_business_line_id ?? "";
-      if (parentId) auto[parentId] = true;
-    }
-    setExpanded(auto);
-  }, [savedRoutes]);
-
-  const rowsByBizLineId = useMemo(() => {
-    const map = new Map<string, RouteRow>();
-    for (const r of rows) map.set(r.businessLineId, r);
-    return map;
-  }, [rows]);
-
-  const replaceRoutes = useReplaceFeishuProjectRoutes(workspaceId);
+  // Display-name resolution: prefer the live Meego field list, then the saved name on
+  // the integration row (covers the "Meego dropped the field from its response since
+  // last save" edge case the user reported — was previously rendering the raw key like
+  // `field_b27ba6`), then the raw key as last resort.
+  const savedFieldName = integration?.business_line_field_name?.trim() ?? "";
+  const liveField = fields.find((f) => f.key === fieldKey);
+  const fieldDisplayName = liveField?.name || savedFieldName || fieldKey;
+  // Synthesize a SelectItem for the saved key when Meego's field list omits it, so the
+  // user can still see + reselect their current choice (otherwise the trigger label looks
+  // orphaned vs the dropdown options).
+  const syntheticSavedField =
+    hasFieldKey && !liveField
+      ? { key: fieldKey, name: savedFieldName || fieldKey, type: "(saved)" }
+      : null;
 
   function toggleNode(node: FeishuProjectBusinessLineNode, parent: FeishuProjectBusinessLineNode | null) {
     setRows((prev) => {
@@ -147,46 +131,6 @@ export function FeishuProjectRoutingSection({ workspaceId, integration, onFieldC
     setRows((prev) => prev.filter((r) => r.businessLineId !== bizLineId));
   }
 
-  async function handleSave() {
-    // Validate: every row must have a project chosen. Validate here (not on the
-    // backend's 400 response) so the user sees the bad row inline instead of a toast.
-    const missing = rows.find((r) => !r.projectId);
-    if (missing) {
-      toast.error(
-        t(($) => $.integrations.feishu_project_routes_missing_project, {
-          name: missing.businessLineName || missing.businessLineId,
-        }),
-      );
-      return;
-    }
-    const payload: FeishuProjectRouteInput[] = rows.map((r) => ({
-      project_id: r.projectId,
-      business_line_id: r.businessLineId,
-      business_line_name: r.businessLineName,
-      parent_business_line_id: r.parentBusinessLineId || undefined,
-      parent_business_line_name: r.parentBusinessLineName || undefined,
-    }));
-    try {
-      await replaceRoutes.mutateAsync({ routes: payload });
-      toast.success(t(($) => $.integrations.feishu_project_routes_saved));
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.integrations.feishu_project_routes_save_failed));
-    }
-  }
-
-  async function handleRefreshFields() {
-    try {
-      const r = await refetchFields();
-      if (r.error) {
-        toast.error(r.error instanceof Error ? r.error.message : t(($) => $.integrations.feishu_project_fields_refresh_failed));
-        return;
-      }
-      toast.success(t(($) => $.integrations.feishu_project_fields_refreshed, { count: r.data?.fields.length ?? 0 }));
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.integrations.feishu_project_fields_refresh_failed));
-    }
-  }
-
   async function handleRefreshBusinessLines() {
     try {
       // Invalidate to bypass staleTime: Infinity, otherwise refetch is a no-op.
@@ -203,12 +147,15 @@ export function FeishuProjectRoutingSection({ workspaceId, integration, onFieldC
 
   function handlePickField(value: string | null) {
     if (!value) return;
-    const chosen = fields.find((f) => f.key === value);
-    onFieldChanged(value, chosen?.name ?? "");
-    // Clear routes whose parent context no longer matches — when the field changes the
-    // entire biz-line tree may differ. The user has to re-pick.
-    setRows([]);
-    setExpanded({});
+    if (syntheticSavedField && value === syntheticSavedField.key) {
+      onFieldChanged(value, syntheticSavedField.name);
+    } else {
+      const chosen = fields.find((f) => f.key === value);
+      onFieldChanged(value, chosen?.name ?? "");
+    }
+    // Drop existing routes when the field changes — the biz-line tree may differ.
+    setRows(() => []);
+    setExpanded(() => ({}));
   }
 
   if (!integrationReady) {
@@ -219,41 +166,43 @@ export function FeishuProjectRoutingSection({ workspaceId, integration, onFieldC
     );
   }
 
+  const rowsByBizLineId = new Map(rows.map((r) => [r.businessLineId, r] as const));
+
   return (
     <div className="space-y-4">
       {/* Field picker row */}
-      <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
-        <label className="space-y-1.5 text-xs font-medium">
-          {t(($) => $.integrations.feishu_project_business_line_field)}
-          <Select value={fieldKey || ""} onValueChange={handlePickField}>
-            <SelectTrigger className="w-full" disabled={fieldsLoading}>
-              <span className="flex-1 truncate text-left">
-                {fieldKey
-                  ? (fields.find((f) => f.key === fieldKey)?.name ?? fieldKey)
-                  : t(($) => $.integrations.feishu_project_business_line_field_placeholder)}
-              </span>
-            </SelectTrigger>
-            <SelectContent align="start">
-              {fields.length === 0 && (
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                  {fieldsLoading
-                    ? t(($) => $.integrations.feishu_project_fields_loading)
-                    : t(($) => $.integrations.feishu_project_fields_empty)}
-                </div>
-              )}
-              {fields.map((f) => (
-                <SelectItem key={f.key} value={f.key}>
-                  {f.name} <span className="text-muted-foreground">({f.key})</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </label>
-        <Button type="button" size="sm" variant="outline" onClick={handleRefreshFields} disabled={fieldsLoading}>
-          {fieldsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          {t(($) => $.integrations.feishu_project_refresh_fields)}
-        </Button>
-      </div>
+      <label className="block space-y-1.5 text-xs font-medium">
+        {t(($) => $.integrations.feishu_project_business_line_field)}
+        <Select value={fieldKey || ""} onValueChange={handlePickField}>
+          <SelectTrigger className="w-full" disabled={fieldsLoading && !syntheticSavedField}>
+            <span className="flex-1 truncate text-left">
+              {hasFieldKey
+                ? fieldDisplayName
+                : t(($) => $.integrations.feishu_project_business_line_field_placeholder)}
+            </span>
+          </SelectTrigger>
+          <SelectContent align="start">
+            {fields.length === 0 && !syntheticSavedField && (
+              <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                {fieldsLoading
+                  ? t(($) => $.integrations.feishu_project_fields_loading)
+                  : t(($) => $.integrations.feishu_project_fields_empty)}
+              </div>
+            )}
+            {syntheticSavedField && (
+              <SelectItem key={syntheticSavedField.key} value={syntheticSavedField.key}>
+                {syntheticSavedField.name}{" "}
+                <span className="text-muted-foreground">({syntheticSavedField.key})</span>
+              </SelectItem>
+            )}
+            {fields.map((f) => (
+              <SelectItem key={f.key} value={f.key}>
+                {f.name} <span className="text-muted-foreground">({f.key})</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </label>
 
       {hasFieldKey && (
         <>
@@ -358,16 +307,6 @@ export function FeishuProjectRoutingSection({ workspaceId, integration, onFieldC
                     </div>
                   );
                 })}
-              </div>
-              <div className="flex justify-end">
-                <Button size="sm" onClick={handleSave} disabled={replaceRoutes.isPending}>
-                  {replaceRoutes.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Save className="h-3.5 w-3.5" />
-                  )}
-                  {t(($) => $.integrations.feishu_project_routes_save)}
-                </Button>
               </div>
             </div>
           )}
