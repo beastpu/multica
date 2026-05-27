@@ -1864,8 +1864,15 @@ export class ApiClient {
     });
   }
 
-  async listFeishuProjectBusinessLines(workspaceId: string): Promise<FeishuProjectBusinessLinesResponse> {
-    const raw = await this.fetch(`/api/workspaces/${workspaceId}/feishu-project/business-lines`);
+  async listFeishuProjectBusinessLines(
+    workspaceId: string,
+    fieldKey: string,
+    workItemType = "issue",
+  ): Promise<FeishuProjectBusinessLinesResponse> {
+    const params = new URLSearchParams({ field_key: fieldKey, work_item_type: workItemType });
+    const raw = await this.fetch(
+      `/api/workspaces/${workspaceId}/feishu-project/business-lines?${params.toString()}`,
+    );
     return parseWithFallback(raw, FeishuProjectBusinessLinesResponseSchema, EMPTY_FEISHU_PROJECT_BUSINESS_LINES_RESPONSE, {
       endpoint: "GET /api/workspaces/:id/feishu-project/business-lines",
     });

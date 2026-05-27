@@ -82,12 +82,24 @@ func (h *Handler) ListFeishuProjectWorkItemFields(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, FeishuProjectFieldsResponse{Fields: fields})
 }
 
+// ListFeishuProjectBusinessLines returns the option tree of the work-item field selected
+// as the business-line field. Required query params: field_key. Optional: work_item_type
+// (defaults to "issue").
 func (h *Handler) ListFeishuProjectBusinessLines(w http.ResponseWriter, r *http.Request) {
 	cfg, ok := h.loadFeishuProjectIntegration(w, r)
 	if !ok {
 		return
 	}
-	lines, err := service.NewFeishuProjectClient().ListBusinessLines(r.Context(), cfg)
+	fieldKey := strings.TrimSpace(r.URL.Query().Get("field_key"))
+	if fieldKey == "" {
+		writeError(w, http.StatusBadRequest, "field_key query param is required")
+		return
+	}
+	workItemType := strings.TrimSpace(r.URL.Query().Get("work_item_type"))
+	if workItemType == "" {
+		workItemType = "issue"
+	}
+	lines, err := service.NewFeishuProjectClient().ListFieldOptions(r.Context(), cfg, workItemType, fieldKey)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

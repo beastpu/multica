@@ -85,7 +85,7 @@ export function FeishuProjectRoutingSection({
   const fields = fieldsData?.fields ?? [];
 
   const { data: businessLinesData, isFetching: bizLinesLoading, refetch: refetchBusinessLines } = useQuery({
-    ...feishuProjectBusinessLinesOptions(workspaceId, integrationReady && hasFieldKey),
+    ...feishuProjectBusinessLinesOptions(workspaceId, fieldKey, "issue", integrationReady && hasFieldKey),
   });
   const businessLines = businessLinesData?.business_lines ?? [];
 
@@ -148,7 +148,7 @@ export function FeishuProjectRoutingSection({
   async function handleRefreshBusinessLines() {
     try {
       // Invalidate to bypass staleTime: Infinity, otherwise refetch is a no-op.
-      await queryClient.invalidateQueries({ queryKey: feishuProjectKeys.businessLines(workspaceId) });
+      await queryClient.invalidateQueries({ queryKey: feishuProjectKeys.businessLines(workspaceId, fieldKey, "issue") });
       const r = await refetchBusinessLines();
       if (r.error) {
         toast.error(r.error instanceof Error ? r.error.message : t(($) => $.integrations.feishu_project_business_lines_refresh_failed));

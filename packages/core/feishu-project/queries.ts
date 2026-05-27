@@ -9,7 +9,10 @@ export const feishuProjectKeys = {
   sync: (wsId: string) => [...feishuProjectKeys.all(wsId), "sync"] as const,
   fields: (wsId: string, workItemType: string) =>
     [...feishuProjectKeys.all(wsId), "fields", workItemType] as const,
-  businessLines: (wsId: string) => [...feishuProjectKeys.all(wsId), "business-lines"] as const,
+  // Keyed by fieldKey + workItemType — switching the business-line field forces a refetch
+  // of the option tree (since the tree IS that field's options, not space-wide biz lines).
+  businessLines: (wsId: string, fieldKey: string, workItemType: string) =>
+    [...feishuProjectKeys.all(wsId), "business-lines", workItemType, fieldKey] as const,
   routes: (wsId: string) => [...feishuProjectKeys.all(wsId), "routes"] as const,
 };
 
@@ -44,14 +47,20 @@ export const feishuProjectFieldsOptions = (wsId: string, workItemType = "issue",
     enabled: !!wsId && enabled,
   });
 
-// Same gating concern as feishuProjectFieldsOptions — only enable when the user has
-// already chosen a business-line field. `staleTime: Infinity` because the biz-line tree
-// changes rarely; explicit refetch via queryClient.invalidateQueries on save.
-export const feishuProjectBusinessLinesOptions = (wsId: string, enabled = true) =>
+// Tree comes from the selected field's options (NOT the space-wide /business/all),
+// keyed on fieldKey so a different field choice refetches automatically. staleTime is
+// Infinity because field options rarely change in a Meego space; invalidate explicitly
+// (via queryClient) when the user clicks "refresh".
+export const feishuProjectBusinessLinesOptions = (
+  wsId: string,
+  fieldKey: string,
+  workItemType = "issue",
+  enabled = true,
+) =>
   queryOptions({
-    queryKey: feishuProjectKeys.businessLines(wsId),
-    queryFn: () => api.listFeishuProjectBusinessLines(wsId),
-    enabled: !!wsId && enabled,
+    queryKey: feishuProjectKeys.businessLines(wsId, fieldKey, workItemType),
+    queryFn: () => api.listFeishuProjectBusinessLines(wsId, fieldKey, workItemType),
+    enabled: !!wsId && !!fieldKey && enabled,
     staleTime: Infinity,
   });
 

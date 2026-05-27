@@ -1409,14 +1409,74 @@ func (c *FeishuProjectClient) ListWorkItemFields(ctx context.Context, cfg db.Fei
 	return parseFeishuProjectFieldMetas(payload), nil
 }
 
-// ListBusinessLines returns the 2-level business-line tree for the configured space.
-// Backed by GET /open_api/{project_key}/business/all.
-func (c *FeishuProjectClient) ListBusinessLines(ctx context.Context, cfg db.FeishuProjectIntegration) ([]FeishuProjectFieldOption, error) {
-	payload, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/business/all", cfg.ProjectKey), nil)
+// ListFieldOptions returns the option tree of a specific work-item field. Used by the
+// routing UI: when the operator picks the "business line" field, we show the option
+// list of THAT field rather than the space-wide /business/all tree. This makes routing
+// general — any select field (custom or stock) becomes a valid routing source — and
+// avoids the surprising "tree never changes when I switch field" UX bug.
+//
+// Returns nil if the field isn't found OR has no options (e.g. user picked a text
+// field by mistake); caller distinguishes by checking length and showing the right
+// empty-state message.
+func (c *FeishuProjectClient) ListFieldOptions(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType, fieldKey string) ([]FeishuProjectFieldOption, error) {
+	if workItemType == "" {
+		workItemType = "issue"
+	}
+	if strings.TrimSpace(fieldKey) == "" {
+		return nil, fmt.Errorf("field_key is required")
+	}
+	payload, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/work_item/%s/meta", cfg.ProjectKey, workItemType), nil)
 	if err != nil {
 		return nil, err
 	}
-	return parseFeishuProjectBusinessLineTree(payload), nil
+	field := findFeishuProjectFieldByKey(payload, fieldKey)
+	if field == nil {
+		return nil, nil
+	}
+	return extractFeishuProjectFieldOptionTree(field), nil
+}
+
+// findFeishuProjectFieldByKey walks a meta payload looking for a field entry whose
+// field_key (or field_alias) matches. Meego's meta document nests fields under
+// "fields"/"field_list"/tab containers, so we recurse.
+func findFeishuProjectFieldByKey(payload map[string]any, fieldKey string) map[string]any {
+	var found map[string]any
+	var walk func(any)
+	walk = func(v any) {
+		if found != nil {
+			return
+		}
+		switch x := v.(type) {
+		case map[string]any:
+			k := strings.TrimSpace(firstNonEmpty(fmt.Sprint(x["field_key"]), fmt.Sprint(x["field_alias"])))
+			if k == fieldKey {
+				found = x
+				return
+			}
+			for _, child := range x {
+				walk(child)
+			}
+		case []any:
+			for _, child := range x {
+				walk(child)
+			}
+		}
+	}
+	walk(payload)
+	return found
+}
+
+// extractFeishuProjectFieldOptionTree pulls the option tree out of a single field node.
+// Meego stores it under any of `option` / `options` / sometimes nested inside
+// `field_value`. We try those and feed the result to the existing biz-line tree parser
+// which already knows how to handle nested children with id/option_id/key shapes.
+func extractFeishuProjectFieldOptionTree(field map[string]any) []FeishuProjectFieldOption {
+	for _, k := range []string{"option", "options"} {
+		if v, ok := field[k]; ok {
+			return parseFeishuProjectBusinessLineTree(map[string]any{"data": v})
+		}
+	}
+	return nil
 }
 
 func (c *FeishuProjectClient) TransitionStatus(ctx context.Context, cfg db.FeishuProjectIntegration, workItemID, workItemType, targetStatus string) error {

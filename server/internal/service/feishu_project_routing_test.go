@@ -352,3 +352,64 @@ func TestResolveAssigneePreservesCurrentForNonAssignableStatus(t *testing.T) {
 		t.Fatalf("expected current preserved, got %v / %v", gotType, gotID)
 	}
 }
+
+func TestFindFeishuProjectFieldByKey(t *testing.T) {
+	payload := map[string]any{
+		"data": []any{
+			map[string]any{"field_key": "owner", "name": "Owner"},
+			map[string]any{
+				"tab": "details",
+				"fields": []any{
+					map[string]any{"field_key": "business", "name": "业务线"},
+				},
+			},
+		},
+	}
+	got := findFeishuProjectFieldByKey(payload, "business")
+	if got == nil {
+		t.Fatalf("expected to find nested 'business' field, got nil")
+	}
+	if got["name"] != "业务线" {
+		t.Fatalf("unexpected node: %#v", got)
+	}
+	if findFeishuProjectFieldByKey(payload, "nonexistent") != nil {
+		t.Fatalf("expected nil for unknown key")
+	}
+}
+
+func TestExtractFeishuProjectFieldOptionTree(t *testing.T) {
+	// option with children — the typical 2-level select for biz-line type fields.
+	field := map[string]any{
+		"field_key": "business",
+		"option": []any{
+			map[string]any{
+				"id": "parent-1", "name": "玩家服务组",
+				"children": []any{
+					map[string]any{"id": "leaf-a", "name": "网页"},
+				},
+			},
+		},
+	}
+	tree := extractFeishuProjectFieldOptionTree(field)
+	if len(tree) != 1 || tree[0].ID != "parent-1" || len(tree[0].Children) != 1 {
+		t.Fatalf("unexpected tree: %#v", tree)
+	}
+
+	// `options` plural also accepted (some fields use this).
+	field2 := map[string]any{
+		"field_key": "module",
+		"options": []any{
+			map[string]any{"option_id": "m1", "option_name": "Module A"},
+		},
+	}
+	tree2 := extractFeishuProjectFieldOptionTree(field2)
+	if len(tree2) != 1 || tree2[0].ID != "m1" || tree2[0].Name != "Module A" {
+		t.Fatalf("unexpected tree2: %#v", tree2)
+	}
+
+	// Field without options (text field, etc.) — return nil so caller can show empty state.
+	field3 := map[string]any{"field_key": "title", "field_type_key": "_text"}
+	if tree3 := extractFeishuProjectFieldOptionTree(field3); tree3 != nil {
+		t.Fatalf("expected nil for text field, got %#v", tree3)
+	}
+}
