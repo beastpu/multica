@@ -56,6 +56,31 @@ func (q *Queries) CreateFeishuProjectSyncRun(ctx context.Context, arg CreateFeis
 	return i, err
 }
 
+const deleteFeishuProjectBusinessLineRoute = `-- name: DeleteFeishuProjectBusinessLineRoute :exec
+DELETE FROM feishu_project_business_line_route
+WHERE integration_id = $1 AND business_line_id = $2
+`
+
+type DeleteFeishuProjectBusinessLineRouteParams struct {
+	IntegrationID  pgtype.UUID `json:"integration_id"`
+	BusinessLineID string      `json:"business_line_id"`
+}
+
+func (q *Queries) DeleteFeishuProjectBusinessLineRoute(ctx context.Context, arg DeleteFeishuProjectBusinessLineRouteParams) error {
+	_, err := q.db.Exec(ctx, deleteFeishuProjectBusinessLineRoute, arg.IntegrationID, arg.BusinessLineID)
+	return err
+}
+
+const deleteFeishuProjectBusinessLineRoutesByIntegration = `-- name: DeleteFeishuProjectBusinessLineRoutesByIntegration :exec
+DELETE FROM feishu_project_business_line_route
+WHERE integration_id = $1
+`
+
+func (q *Queries) DeleteFeishuProjectBusinessLineRoutesByIntegration(ctx context.Context, integrationID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteFeishuProjectBusinessLineRoutesByIntegration, integrationID)
+	return err
+}
+
 const deleteFeishuProjectIntegration = `-- name: DeleteFeishuProjectIntegration :exec
 DELETE FROM feishu_project_integration
 WHERE id = $1 AND workspace_id = $2
@@ -108,7 +133,7 @@ func (q *Queries) FinishFeishuProjectSyncRun(ctx context.Context, arg FinishFeis
 }
 
 const getFeishuProjectIntegration = `-- name: GetFeishuProjectIntegration :one
-SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent FROM feishu_project_integration
+SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name FROM feishu_project_integration
 WHERE workspace_id = $1
 ORDER BY updated_at DESC, created_at DESC
 LIMIT 1
@@ -136,12 +161,14 @@ func (q *Queries) GetFeishuProjectIntegration(ctx context.Context, workspaceID p
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AssignOpenItemsToOwnerAgent,
+		&i.BusinessLineFieldKey,
+		&i.BusinessLineFieldName,
 	)
 	return i, err
 }
 
 const getFeishuProjectIntegrationByID = `-- name: GetFeishuProjectIntegrationByID :one
-SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent FROM feishu_project_integration
+SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name FROM feishu_project_integration
 WHERE id = $1
 `
 
@@ -167,6 +194,8 @@ func (q *Queries) GetFeishuProjectIntegrationByID(ctx context.Context, id pgtype
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AssignOpenItemsToOwnerAgent,
+		&i.BusinessLineFieldKey,
+		&i.BusinessLineFieldName,
 	)
 	return i, err
 }
@@ -299,7 +328,7 @@ func (q *Queries) GetLatestFeishuProjectSyncRun(ctx context.Context, integration
 }
 
 const listEnabledFeishuProjectIntegrations = `-- name: ListEnabledFeishuProjectIntegrations :many
-SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent FROM feishu_project_integration
+SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name FROM feishu_project_integration
 WHERE enabled = true
 ORDER BY updated_at ASC
 `
@@ -332,6 +361,45 @@ func (q *Queries) ListEnabledFeishuProjectIntegrations(ctx context.Context) ([]F
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AssignOpenItemsToOwnerAgent,
+			&i.BusinessLineFieldKey,
+			&i.BusinessLineFieldName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFeishuProjectBusinessLineRoutes = `-- name: ListFeishuProjectBusinessLineRoutes :many
+SELECT id, integration_id, workspace_id, project_id, business_line_id, business_line_name, parent_business_line_id, parent_business_line_name, created_at, updated_at FROM feishu_project_business_line_route
+WHERE integration_id = $1
+ORDER BY business_line_name ASC, business_line_id ASC
+`
+
+func (q *Queries) ListFeishuProjectBusinessLineRoutes(ctx context.Context, integrationID pgtype.UUID) ([]FeishuProjectBusinessLineRoute, error) {
+	rows, err := q.db.Query(ctx, listFeishuProjectBusinessLineRoutes, integrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FeishuProjectBusinessLineRoute{}
+	for rows.Next() {
+		var i FeishuProjectBusinessLineRoute
+		if err := rows.Scan(
+			&i.ID,
+			&i.IntegrationID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.BusinessLineID,
+			&i.BusinessLineName,
+			&i.ParentBusinessLineID,
+			&i.ParentBusinessLineName,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -424,7 +492,7 @@ UPDATE feishu_project_integration
 SET project_key = $3,
     plugin_id = $4,
     plugin_secret = $5,
-    actor_user_key = $13,
+    actor_user_key = $15,
     enabled = $6,
     sync_story = $7,
     sync_issue = $8,
@@ -432,9 +500,11 @@ SET project_key = $3,
     status_mapping = $10,
     reverse_status_mapping = $11,
     assign_open_items_to_owner_agent = $12,
+    business_line_field_key = $13,
+    business_line_field_name = $14,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent
+RETURNING id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name
 `
 
 type UpdateFeishuProjectIntegrationByIDParams struct {
@@ -450,6 +520,8 @@ type UpdateFeishuProjectIntegrationByIDParams struct {
 	StatusMapping               []byte      `json:"status_mapping"`
 	ReverseStatusMapping        []byte      `json:"reverse_status_mapping"`
 	AssignOpenItemsToOwnerAgent bool        `json:"assign_open_items_to_owner_agent"`
+	BusinessLineFieldKey        string      `json:"business_line_field_key"`
+	BusinessLineFieldName       string      `json:"business_line_field_name"`
 	ActorUserKey                pgtype.Text `json:"actor_user_key"`
 }
 
@@ -467,6 +539,8 @@ func (q *Queries) UpdateFeishuProjectIntegrationByID(ctx context.Context, arg Up
 		arg.StatusMapping,
 		arg.ReverseStatusMapping,
 		arg.AssignOpenItemsToOwnerAgent,
+		arg.BusinessLineFieldKey,
+		arg.BusinessLineFieldName,
 		arg.ActorUserKey,
 	)
 	var i FeishuProjectIntegration
@@ -489,6 +563,8 @@ func (q *Queries) UpdateFeishuProjectIntegrationByID(ctx context.Context, arg Up
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AssignOpenItemsToOwnerAgent,
+		&i.BusinessLineFieldKey,
+		&i.BusinessLineFieldName,
 	)
 	return i, err
 }
@@ -531,14 +607,69 @@ func (q *Queries) UpdateFeishuProjectSyncRunProgress(ctx context.Context, arg Up
 	return err
 }
 
+const upsertFeishuProjectBusinessLineRoute = `-- name: UpsertFeishuProjectBusinessLineRoute :one
+INSERT INTO feishu_project_business_line_route (
+    integration_id, workspace_id, project_id,
+    business_line_id, business_line_name,
+    parent_business_line_id, parent_business_line_name
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7
+)
+ON CONFLICT (integration_id, business_line_id) DO UPDATE SET
+    project_id = EXCLUDED.project_id,
+    business_line_name = EXCLUDED.business_line_name,
+    parent_business_line_id = EXCLUDED.parent_business_line_id,
+    parent_business_line_name = EXCLUDED.parent_business_line_name,
+    updated_at = now()
+RETURNING id, integration_id, workspace_id, project_id, business_line_id, business_line_name, parent_business_line_id, parent_business_line_name, created_at, updated_at
+`
+
+type UpsertFeishuProjectBusinessLineRouteParams struct {
+	IntegrationID          pgtype.UUID `json:"integration_id"`
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
+	ProjectID              pgtype.UUID `json:"project_id"`
+	BusinessLineID         string      `json:"business_line_id"`
+	BusinessLineName       string      `json:"business_line_name"`
+	ParentBusinessLineID   string      `json:"parent_business_line_id"`
+	ParentBusinessLineName string      `json:"parent_business_line_name"`
+}
+
+func (q *Queries) UpsertFeishuProjectBusinessLineRoute(ctx context.Context, arg UpsertFeishuProjectBusinessLineRouteParams) (FeishuProjectBusinessLineRoute, error) {
+	row := q.db.QueryRow(ctx, upsertFeishuProjectBusinessLineRoute,
+		arg.IntegrationID,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.BusinessLineID,
+		arg.BusinessLineName,
+		arg.ParentBusinessLineID,
+		arg.ParentBusinessLineName,
+	)
+	var i FeishuProjectBusinessLineRoute
+	err := row.Scan(
+		&i.ID,
+		&i.IntegrationID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.BusinessLineID,
+		&i.BusinessLineName,
+		&i.ParentBusinessLineID,
+		&i.ParentBusinessLineName,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const upsertFeishuProjectIntegration = `-- name: UpsertFeishuProjectIntegration :one
 INSERT INTO feishu_project_integration (
     workspace_id, project_key, plugin_id, plugin_secret, actor_user_key,
     enabled, sync_story, sync_issue, mql_filter, status_mapping,
-    reverse_status_mapping, assign_open_items_to_owner_agent, created_by_id
+    reverse_status_mapping, assign_open_items_to_owner_agent, created_by_id,
+    business_line_field_key, business_line_field_name
 ) VALUES (
-    $1, $2, $3, $4, $12,
-    $5, $6, $7, $8, $9, $10, $11, $13
+    $1, $2, $3, $4, $14,
+    $5, $6, $7, $8, $9, $10, $11, $15,
+    $12, $13
 )
 ON CONFLICT (workspace_id) DO UPDATE SET
     project_key = EXCLUDED.project_key,
@@ -552,8 +683,10 @@ ON CONFLICT (workspace_id) DO UPDATE SET
     status_mapping = EXCLUDED.status_mapping,
     reverse_status_mapping = EXCLUDED.reverse_status_mapping,
     assign_open_items_to_owner_agent = EXCLUDED.assign_open_items_to_owner_agent,
+    business_line_field_key = EXCLUDED.business_line_field_key,
+    business_line_field_name = EXCLUDED.business_line_field_name,
     updated_at = now()
-RETURNING id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent
+RETURNING id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name
 `
 
 type UpsertFeishuProjectIntegrationParams struct {
@@ -568,6 +701,8 @@ type UpsertFeishuProjectIntegrationParams struct {
 	StatusMapping               []byte      `json:"status_mapping"`
 	ReverseStatusMapping        []byte      `json:"reverse_status_mapping"`
 	AssignOpenItemsToOwnerAgent bool        `json:"assign_open_items_to_owner_agent"`
+	BusinessLineFieldKey        string      `json:"business_line_field_key"`
+	BusinessLineFieldName       string      `json:"business_line_field_name"`
 	ActorUserKey                pgtype.Text `json:"actor_user_key"`
 	CreatedByID                 pgtype.UUID `json:"created_by_id"`
 }
@@ -585,6 +720,8 @@ func (q *Queries) UpsertFeishuProjectIntegration(ctx context.Context, arg Upsert
 		arg.StatusMapping,
 		arg.ReverseStatusMapping,
 		arg.AssignOpenItemsToOwnerAgent,
+		arg.BusinessLineFieldKey,
+		arg.BusinessLineFieldName,
 		arg.ActorUserKey,
 		arg.CreatedByID,
 	)
@@ -608,6 +745,8 @@ func (q *Queries) UpsertFeishuProjectIntegration(ctx context.Context, arg Upsert
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AssignOpenItemsToOwnerAgent,
+		&i.BusinessLineFieldKey,
+		&i.BusinessLineFieldName,
 	)
 	return i, err
 }

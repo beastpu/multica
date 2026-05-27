@@ -264,6 +264,19 @@ type Feedback struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type FeishuProjectBusinessLineRoute struct {
+	ID                     pgtype.UUID        `json:"id"`
+	IntegrationID          pgtype.UUID        `json:"integration_id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	BusinessLineID         string             `json:"business_line_id"`
+	BusinessLineName       string             `json:"business_line_name"`
+	ParentBusinessLineID   string             `json:"parent_business_line_id"`
+	ParentBusinessLineName string             `json:"parent_business_line_name"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
 type FeishuProjectIntegration struct {
 	ID                          pgtype.UUID        `json:"id"`
 	WorkspaceID                 pgtype.UUID        `json:"workspace_id"`
@@ -283,6 +296,8 @@ type FeishuProjectIntegration struct {
 	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
 	AssignOpenItemsToOwnerAgent bool               `json:"assign_open_items_to_owner_agent"`
+	BusinessLineFieldKey        string             `json:"business_line_field_key"`
+	BusinessLineFieldName       string             `json:"business_line_field_name"`
 }
 
 type FeishuProjectIssueBinding struct {

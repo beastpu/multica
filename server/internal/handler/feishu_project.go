@@ -30,6 +30,8 @@ type FeishuProjectIntegrationResponse struct {
 	StatusMapping               map[string]string `json:"status_mapping"`
 	ReverseStatusMapping        map[string]string `json:"reverse_status_mapping"`
 	AssignOpenItemsToOwnerAgent bool              `json:"assign_open_items_to_owner_agent"`
+	BusinessLineFieldKey        string            `json:"business_line_field_key"`
+	BusinessLineFieldName       string            `json:"business_line_field_name"`
 	LastSyncedAt                *string           `json:"last_synced_at"`
 	LastError                   *string           `json:"last_error"`
 	CreatedAt                   string            `json:"created_at,omitempty"`
@@ -49,6 +51,8 @@ type UpdateFeishuProjectIntegrationRequest struct {
 	StatusMapping               map[string]string `json:"status_mapping"`
 	ReverseStatusMapping        map[string]string `json:"reverse_status_mapping"`
 	AssignOpenItemsToOwnerAgent bool              `json:"assign_open_items_to_owner_agent"`
+	BusinessLineFieldKey        string            `json:"business_line_field_key"`
+	BusinessLineFieldName       string            `json:"business_line_field_name"`
 }
 
 type FeishuProjectSyncRunResponse struct {
@@ -157,6 +161,8 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 	}
 	var cfg db.FeishuProjectIntegration
 	var err error
+	bizLineKey := strings.TrimSpace(req.BusinessLineFieldKey)
+	bizLineName := strings.TrimSpace(req.BusinessLineFieldName)
 	if existingErr == nil {
 		cfg, err = h.Queries.UpdateFeishuProjectIntegrationByID(r.Context(), db.UpdateFeishuProjectIntegrationByIDParams{
 			ID:                          existing.ID,
@@ -172,6 +178,8 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 			StatusMapping:               statusJSON,
 			ReverseStatusMapping:        reverseJSON,
 			AssignOpenItemsToOwnerAgent: req.AssignOpenItemsToOwnerAgent,
+			BusinessLineFieldKey:        bizLineKey,
+			BusinessLineFieldName:       bizLineName,
 		})
 	} else {
 		cfg, err = h.Queries.UpsertFeishuProjectIntegration(r.Context(), db.UpsertFeishuProjectIntegrationParams{
@@ -188,6 +196,8 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 			ReverseStatusMapping:        reverseJSON,
 			AssignOpenItemsToOwnerAgent: req.AssignOpenItemsToOwnerAgent,
 			CreatedByID:                 member.UserID,
+			BusinessLineFieldKey:        bizLineKey,
+			BusinessLineFieldName:       bizLineName,
 		})
 	}
 	if err != nil {
@@ -311,6 +321,8 @@ func feishuProjectIntegrationToResponse(cfg db.FeishuProjectIntegration) FeishuP
 		StatusMapping:               decodeFlatStringMap(cfg.StatusMapping),
 		ReverseStatusMapping:        decodeFlatStringMap(cfg.ReverseStatusMapping),
 		AssignOpenItemsToOwnerAgent: cfg.AssignOpenItemsToOwnerAgent,
+		BusinessLineFieldKey:        cfg.BusinessLineFieldKey,
+		BusinessLineFieldName:       cfg.BusinessLineFieldName,
 		LastSyncedAt:                timestampToPtr(cfg.LastSyncedAt),
 		LastError:                   textToPtr(cfg.LastError),
 		CreatedAt:                   timestampToString(cfg.CreatedAt),

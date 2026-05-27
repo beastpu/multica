@@ -25,6 +25,7 @@ import {
 } from "@multica/core/feishu-project/queries";
 import { api } from "@multica/core/api";
 import { useT } from "../../i18n";
+import { FeishuProjectRoutingSection } from "./feishu-project-routing-section";
 
 const MULTICA_STATUS_OPTIONS = [
   "backlog",
@@ -60,6 +61,9 @@ export function IntegrationsTab() {
   const [syncWorkItemId, setSyncWorkItemId] = useState("");
   const [statusMapping, setStatusMapping] = useState<Record<string, string>>({});
   const [reverseStatusMapping, setReverseStatusMapping] = useState<Record<string, string>>({});
+  // Business-line field config — local while the user is editing, persisted on Save.
+  const [businessLineFieldKey, setBusinessLineFieldKey] = useState("");
+  const [businessLineFieldName, setBusinessLineFieldName] = useState("");
 
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
   const canManage = currentMember?.role === "owner" || currentMember?.role === "admin";
@@ -100,6 +104,8 @@ export function IntegrationsTab() {
     setAssignOpenItemsToOwnerAgent(feishuProject.assign_open_items_to_owner_agent);
     setStatusMapping(feishuProject.status_mapping);
     setReverseStatusMapping(feishuProject.reverse_status_mapping);
+    setBusinessLineFieldKey(feishuProject.business_line_field_key);
+    setBusinessLineFieldName(feishuProject.business_line_field_name);
   }, [feishuProject]);
 
   useEffect(() => {
@@ -162,6 +168,8 @@ export function IntegrationsTab() {
         status_mapping: compactMapping(statusMapping),
         reverse_status_mapping: compactMapping(reverseStatusMapping),
         assign_open_items_to_owner_agent: assignOpenItemsToOwnerAgent,
+        business_line_field_key: businessLineFieldKey.trim(),
+        business_line_field_name: businessLineFieldName.trim(),
       });
       await queryClient.invalidateQueries({ queryKey: feishuProjectKeys.integration(wsId) });
       await queryClient.invalidateQueries({ queryKey: feishuProjectKeys.issueStatuses(wsId) });
@@ -384,6 +392,25 @@ export function IntegrationsTab() {
                       </div>
                     </div>
                   )}
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3 border-b border-border/70 pb-2">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {t(($) => $.integrations.feishu_project_routing_section)}
+                    </p>
+                  </div>
+                  <FeishuProjectRoutingSection
+                    workspaceId={wsId}
+                    integration={feishuProject ?? null}
+                    onFieldChanged={(key, name) => {
+                      setBusinessLineFieldKey(key);
+                      setBusinessLineFieldName(name);
+                    }}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    {t(($) => $.integrations.feishu_project_routing_save_hint)}
+                  </p>
                 </div>
 
                 <div className="flex flex-col gap-4 border-t border-border/70 pt-4 lg:flex-row lg:items-end lg:justify-between">
