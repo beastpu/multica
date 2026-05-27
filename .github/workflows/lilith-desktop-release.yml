@@ -1,7 +1,8 @@
 name: Lilith desktop release
 
-# Build the desktop installers on tag push, generate the release
-# `version.json` manifest, and atomically publish both to Aliyun OSS.
+# Build the desktop installers on tag push and publish each platform's
+# installers + electron-updater metadata straight to Aliyun OSS from the
+# runner that built them.
 #
 # This workflow is the build half of the Lilith CI loop:
 #   Lilith GitLab  ──push-mirror──▶  GitHub (CopilotDemo/multica)
@@ -21,10 +22,24 @@ name: Lilith desktop release
 #                                  desktop client poll
 #
 # The pact with this workflow is: every successful tag push results in
-# (a) installer binaries at versioned URLs under `<bucket>/api/downloads/`
-# and (b) a JSON manifest at `<bucket>/version.json` that names them.
-# The Go server proxies `version.json` through `<apiUrl>/api/downloads`;
-# publishing is therefore just `ossutil cp` on the JSON file.
+# (a) installer binaries at versioned URLs under `<bucket>/downloads/`
+# and (b) the per-platform `latest-*.yml` manifests electron-updater
+# polls, naming those installers.
+#
+# Why each build job uploads to OSS directly (no GitHub artifacts):
+# GitHub Actions artifact storage has a small quota (1-2 GB) and frees
+# deleted artifacts only on a 6-12h recalc, so it cannot be swept clean
+# between back-to-back releases of 100MB+ Electron installers — uploads
+# eventually fail with "Artifact storage quota has been hit". Pushing
+# from each build runner to OSS removes GitHub artifact storage from the
+# pipeline entirely, so the quota can never be the failure mode.
+
+# Guard at the workflow level so a fork (other than the Lilith mirror)
+# can't accidentally fire this when someone pushes a vX.Y.Z tag. The
+# upstream `multica-ai` repo already has its own release.yml; this one
+# is for the `CopilotDemo` mirror only.
+permissions:
+  contents: read
 
 on:
   push:
@@ -38,18 +53,11 @@ on:
       # they shouldn't be on origin in the first place but defend anyway.
       - "!*-dirty*"
 
-# Guard at the workflow level so a fork (other than the Lilith mirror)
-# can't accidentally fire this when someone pushes a vX.Y.Z tag. The
-# upstream `multica-ai` repo already has its own release.yml; this one
-# is for the `CopilotDemo` mirror only.
-permissions:
-  contents: read
-
 # Opt into Node 24 for any JavaScript-based actions still pinned at Node 20
-# (actions/checkout@v4, setup-node@v4, upload-artifact@v4, etc.). Node 20 is
-# being removed from GitHub runners on 2026-09-16; this avoids the deprecation
-# warning today and shakes out any Node 24 compatibility issues before the
-# forced switchover on 2026-06-02.
+# (actions/checkout@v4, setup-node@v4, etc.). Node 20 is being removed from
+# GitHub runners on 2026-09-16; this avoids the deprecation warning today and
+# shakes out any Node 24 compatibility issues before the forced switchover on
+# 2026-06-02.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -80,48 +88,17 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-  # Wipe historical artifacts before this release builds anything.
-  # Reason: the GitHub Actions artifact storage quota is small (1-2 GB on
-  # most plans) and Electron installers are 100MB+ per platform per
-  # release. Hitting the quota fails uploads silently with
-  # "Artifact storage quota has been hit", which breaks publish.
-  # `retention-days: 7` on the upload step keeps things tidy going
-  # forward; this job sweeps anything that accumulated before that.
-  cleanup-artifacts:
-    needs: guard
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - name: Delete previous artifacts
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -u
-          ids=$(gh api "repos/$REPO/actions/artifacts" --paginate --jq '.artifacts[].id')
-          if [ -z "$ids" ]; then
-            echo "No artifacts to delete."
-            exit 0
-          fi
-          deleted=0
-          failed=0
-          for id in $ids; do
-            if gh api -X DELETE "repos/$REPO/actions/artifacts/$id" >/dev/null 2>&1; then
-              deleted=$((deleted+1))
-            else
-              failed=$((failed+1))
-            fi
-          done
-          echo "Deleted: $deleted, Failed: $failed"
-
   build:
-    needs: [guard, cleanup-artifacts]
+    needs: guard
     strategy:
-      # One platform failing means the manifest would point at a build
-      # that doesn't exist on OSS, which is worse than not releasing at
-      # all. Stop fast and let a human re-trigger.
-      fail-fast: true
+      # fail-fast: false on purpose. Each `latest-*.yml` is per-platform
+      # and references only its own installer, and each build job uploads
+      # its installer BEFORE its YML — so a platform that fails never
+      # leaves a dangling reference, and the healthy platforms should
+      # still ship rather than be cancelled. A failed platform simply
+      # keeps its previous version until the next release; the others
+      # update independently.
+      fail-fast: false
       matrix:
         include:
           - { os: macos-latest,   target: mac,   arch: arm64, label: darwin-arm64 }
@@ -142,6 +119,23 @@ jobs:
       # Intentionally do NOT set APPLE_TEAM_ID / APPLE_ID — the package
       # script's `disableMacNotarize` branch keys off APPLE_TEAM_ID, so
       # omitting it skips the notarize call.
+
+      # ── OSS upload credentials (S3-compatible) ────────────────────────
+      # The AWS CLI is pre-installed on every GitHub runner, so it is the
+      # uniform cross-platform uploader; ossutil ships no Windows .exe nor
+      # a native mac-arm64 binary at the pinned version. OSS speaks S3 over
+      # the same RAM keys the Go server already uses for attachments +
+      # downloads (server/internal/storage/s3.go, handler/downloads.go).
+      AWS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+      # Region must match the endpoint for OSS; the Go server defaults to
+      # `oss-cn-shanghai` when unset, so mirror that here.
+      AWS_DEFAULT_REGION: ${{ vars.OSS_REGION || 'oss-cn-shanghai' }}
+      # aws-cli v2 (>= 2.23) defaults to attaching CRC32 request checksums,
+      # which OSS's S3 gateway rejects. Only send/verify checksums when the
+      # operation actually requires them.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
 
     steps:
       - name: Checkout
@@ -177,164 +171,128 @@ jobs:
         run: ls -la apps/desktop/dist/
         shell: bash
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-${{ matrix.label }}
-          # Three categories cross the job boundary:
-          #   - multica-desktop-* : the installers themselves
-          #   - latest*.yml       : electron-updater's per-platform
-          #                         metadata (latest-mac.yml, latest.yml,
-          #                         latest-arm64.yml, latest-linux.yml) —
-          #                         the desktop client polls these via the
-          #                         generic provider in
-          #                         apps/desktop/electron-builder.yml.
-          # And one category gets dropped:
-          #   - *.blockmap        : electron-builder's differential-update
-          #                         deltas. We don't use differential
-          #                         updates and the blockmaps make the
-          #                         inter-job hop + OSS bucket pointlessly
-          #                         heavier.
-          path: |
-            apps/desktop/dist/**/multica-desktop-*
-            apps/desktop/dist/**/latest*.yml
-            !apps/desktop/dist/**/*.blockmap
-          if-no-files-found: error
-          retention-days: 7
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: apps/desktop/dist
-          merge-multiple: true
-
-      - name: List collected dist
-        run: ls -la apps/desktop/dist/
-
-      - name: Install ossutil
-        run: |
-          curl -sL https://gosspublic.alicdn.com/ossutil/1.7.18/ossutil64 -o ossutil
-          chmod +x ossutil
-          ./ossutil --version
-
-      - name: Configure ossutil
-        env:
-          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
-          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
-          OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
-        run: |
-          ./ossutil config \
-            -e "$OSS_ENDPOINT" \
-            -i "$OSS_ACCESS_KEY_ID" \
-            -k "$OSS_ACCESS_KEY_SECRET" \
-            --config-file ./ossutilconfig
-
       # ─────────────────────────────────────────────────────────────────
       # OSS layout (single `downloads/` prefix, mirrors what the Go
       # server's DOWNLOADS_OSS_PREFIX env points at):
       #
-      #   oss://<bucket>/downloads/latest-mac.yml                  ← electron-updater metadata (macOS)
-      #   oss://<bucket>/downloads/latest.yml                      ← electron-updater metadata (Windows x64)
-      #   oss://<bucket>/downloads/latest-arm64.yml                ← electron-updater metadata (Windows arm64)
-      #   oss://<bucket>/downloads/latest-linux.yml                ← electron-updater metadata (Linux)
-      #   oss://<bucket>/downloads/multica-desktop-v…dmg           ← installers
-      #   oss://<bucket>/downloads/multica-desktop-v…exe
-      #   oss://<bucket>/downloads/multica-desktop-v…AppImage
-      #   …
+      #   oss://<bucket>/downloads/latest-mac.yml      ← electron-updater metadata (macOS)
+      #   oss://<bucket>/downloads/latest.yml          ← electron-updater metadata (Windows x64)
+      #   oss://<bucket>/downloads/latest-linux.yml    ← electron-updater metadata (Linux)
+      #   oss://<bucket>/downloads/multica-desktop-v…dmg / .zip / .exe / .AppImage / .deb / .rpm
       #
       # The desktop client (electron-updater, generic provider in
       # apps/desktop/electron-builder.yml) polls the latest-*.yml file
-      # for its platform every hour, parses version + sha512 + file list,
-      # and on a newer version downloads the installer the YML references.
+      # for its platform, parses version + sha512 + file list, and on a
+      # newer version downloads the installer the YML references.
       # latest-*.yml IS the per-platform manifest — there is no separate
       # JSON manifest to publish.
       #
-      # Atomic publish ordering matters because each latest-*.yml
-      # references an installer it expects to find at a sibling path:
-      #   1. Upload installers + latest-*.yml in the same step. Each
-      #      object overwrite is itself atomic on OSS; the brief window
-      #      between a YML overwrite and its installer overwrite (or
-      #      vice-versa) is bounded by one `ossutil cp` call.
-      #   2. Verify every uploaded artifact via `ossutil ls`. If any
-      #      object is missing, fail the job before any client can be
-      #      pointed at a 404.
-      # latest-*.yml is uploaded with a short `max-age=60` cache so a
-      # republish is visible to clients within ~1 minute.
+      # Per-platform atomicity: each object overwrite is atomic on OSS,
+      # and we upload this platform's installers BEFORE its latest-*.yml,
+      # so a client never polls a YML pointing at an installer that isn't
+      # up yet. *.blockmap deltas are skipped — we don't do differential
+      # updates and they're dead weight in the bucket.
       # ─────────────────────────────────────────────────────────────────
 
+      - name: Force virtual-hosted addressing for OSS
+        # OSS is virtual-hosted (`<bucket>.oss-<region>.aliyuncs.com`); the
+        # Go server sets UsePathStyle=false for `oss-…aliyuncs.com`. Pin the
+        # same here so the CLI never falls back to path-style.
+        shell: bash
+        run: aws configure set default.s3.addressing_style virtual
+
       - name: Upload installers + electron-updater metadata to OSS
+        env:
+          BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
+        shell: bash
         run: |
+          set -euo pipefail
+          # ossutil took a bare host; the S3 client wants a scheme.
+          ep="$OSS_ENDPOINT"
+          case "$ep" in
+            http://*|https://*) ;;
+            *) ep="https://$ep" ;;
+          esac
+          shopt -s nullglob
           for file in apps/desktop/dist/multica-desktop-* apps/desktop/dist/latest*.yml; do
             [ -f "$file" ] || continue
             name=$(basename "$file")
-            echo "::group::Uploading $name"
-            # `latest*.yml` is the electron-updater poll target; give it a
-            # short cache lifetime (60s) so a republish becomes visible
-            # quickly. Installer binaries have versioned filenames and
-            # never change once written, so they're long-cache immutable.
             case "$name" in
-              latest*.yml)
-                cache="Cache-Control:max-age=60" ;;
-              *)
-                cache="Cache-Control:max-age=31536000, immutable" ;;
+              *.blockmap) continue ;;
             esac
-            ./ossutil --config-file ./ossutilconfig cp -f "$file" \
-              "oss://${{ vars.OSS_BUCKET }}/downloads/$name" \
-              --meta "$cache"
+            # latest*.yml is the poll target: short cache so a republish is
+            # visible within ~1 min. Versioned installers never change once
+            # written -> long immutable cache.
+            case "$name" in
+              latest*.yml) cache="max-age=60" ;;
+              *)           cache="max-age=31536000, immutable" ;;
+            esac
+            echo "::group::Uploading $name"
+            aws s3 cp "$file" "s3://$BUCKET/downloads/$name" \
+              --endpoint-url "$ep" \
+              --cache-control "$cache" \
+              --only-show-errors
             echo "::endgroup::"
           done
 
       - name: Verify each uploaded artifact exists on OSS
-        # Iterate the local dist/ contents and confirm each file landed
-        # in the bucket. Decoupled from the manifest on purpose — we
-        # haven't generated the manifest yet at this point, and the
-        # check should be "did everything in dist/ make it to OSS?",
-        # not "does my pre-baked manifest agree with OSS?".
-        #
-        # We use `ls` (ListObjects) rather than `stat` (HeadObject)
-        # because the upload-side RAM user typically has GetObject /
-        # ListObjects but NOT HeadObject under principle-of-least-
-        # privilege. `ls` does a *prefix* match, so listing
-        # `…/foo.dmg` also returns `…/foo.dmg.blockmap` — we can't rely
-        # on "Object Number is: 1" as the success signal. Instead pull
-        # out the ObjectName column ($NF) and require an exact line
-        # match against the path we asked for.
+        # Confirm every file we just pushed actually landed. Use
+        # ListObjectsV2 (s3:ListBucket) rather than HeadObject — the
+        # upload RAM user is provisioned read/list under least-privilege
+        # and typically lacks HeadObject. A server-side JMESPath equality
+        # filter pins an *exact* key match, so a sibling prefix can't
+        # masquerade as a hit.
+        env:
+          BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
+          ep="$OSS_ENDPOINT"
+          case "$ep" in
+            http://*|https://*) ;;
+            *) ep="https://$ep" ;;
+          esac
+          shopt -s nullglob
           for file in apps/desktop/dist/multica-desktop-* apps/desktop/dist/latest*.yml; do
             [ -f "$file" ] || continue
             name=$(basename "$file")
-            ossPath="oss://${{ vars.OSS_BUCKET }}/downloads/$name"
-            if ! ./ossutil --config-file ./ossutilconfig ls "$ossPath" \
-                 | awk '{print $NF}' \
-                 | grep -Fxq "$ossPath"; then
-              echo "::error::MISSING on OSS: $ossPath"
-              ./ossutil --config-file ./ossutilconfig ls "$ossPath" || true
+            case "$name" in
+              *.blockmap) continue ;;
+            esac
+            key="downloads/$name"
+            found=$(aws s3api list-objects-v2 \
+              --bucket "$BUCKET" \
+              --prefix "$key" \
+              --endpoint-url "$ep" \
+              --query "Contents[?Key=='$key'].Key | [0]" \
+              --output text)
+            if [ "$found" != "$key" ]; then
+              echo "::error::MISSING on OSS: s3://$BUCKET/$key"
               exit 1
             fi
             echo "  ✓ $name"
           done
 
+  summary:
+    needs: [guard, build]
+    runs-on: ubuntu-latest
+    steps:
       - name: Summary
         # latest-*.yml IS the manifest in this architecture — the desktop
         # client (electron-updater, generic provider) polls it, parses
         # version + sha512 + file list, and decides whether to download.
-        # No separate JSON manifest publish step is needed; the YML files
-        # uploaded above are the atomic swap point.
+        # The YMLs the build matrix uploaded are the per-platform swap
+        # points; the names track the matrix above.
         run: |
           tag="${{ needs.guard.outputs.tag }}"
-          echo "### Release ${tag} published" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Clients will pick up the new version on their next poll of:" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          for yml in apps/desktop/dist/latest*.yml; do
-            [ -f "$yml" ] || continue
-            echo "- \`<api>/api/downloads/$(basename "$yml")\`" >> "$GITHUB_STEP_SUMMARY"
-          done
+          {
+            echo "### Release ${tag} published"
+            echo ""
+            echo "Clients pick up the new version on their next poll of:"
+            echo ""
+            echo "- \`<api>/api/downloads/latest-mac.yml\` (macOS)"
+            echo "- \`<api>/api/downloads/latest.yml\` (Windows x64)"
+            echo "- \`<api>/api/downloads/latest-linux.yml\` (Linux)"
+          } >> "$GITHUB_STEP_SUMMARY"
