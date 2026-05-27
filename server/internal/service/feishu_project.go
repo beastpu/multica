@@ -377,12 +377,18 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	if item.ID == "" || item.Title == "" {
 		return "skipped", 0, nil
 	}
-	projectID, routed, routeErr := s.routeWorkItemProject(ctx, cfg, item)
+	matchedRoute, routed, routeErr := s.routeWorkItemProject(ctx, cfg, item)
 	if routeErr != nil {
 		return "skipped", 0, routeErr
 	}
 	if !routed {
 		return "skipped", 0, nil
+	}
+	var projectID pgtype.UUID
+	var fallbackAgentID pgtype.UUID
+	if matchedRoute != nil {
+		projectID = matchedRoute.ProjectID
+		fallbackAgentID = matchedRoute.FallbackAgentID
 	}
 	mappedStatus := mapFeishuStatus(cfg.StatusMapping, item.Type, item.Status)
 	status := mappedStatus
@@ -405,7 +411,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 			return "skipped", 0, nil
 		}
 		phaseStarted = time.Now()
-		assigneeType, assigneeID := s.resolveAssignee(ctx, cfg, item, mappedStatus, issue.AssigneeType, issue.AssigneeID)
+		assigneeType, assigneeID := s.resolveAssignee(ctx, cfg, item, mappedStatus, issue.AssigneeType, issue.AssigneeID, fallbackAgentID)
 		timing.ownerLookup += time.Since(phaseStarted)
 		nextProjectID := issue.ProjectID
 		if projectID.Valid {
@@ -498,7 +504,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		return "skipped", 0, fmt.Errorf("feishu project integration has no creator")
 	}
 	phaseStarted = time.Now()
-	assigneeType, assigneeID := s.resolveAssignee(ctx, cfg, item, mappedStatus, pgtype.Text{}, pgtype.UUID{})
+	assigneeType, assigneeID := s.resolveAssignee(ctx, cfg, item, mappedStatus, pgtype.Text{}, pgtype.UUID{}, fallbackAgentID)
 	timing.ownerLookup += time.Since(phaseStarted)
 	phaseStarted = time.Now()
 	tx, err := s.Tx.Begin(ctx)
@@ -604,14 +610,38 @@ func (s *FeishuProjectSyncService) enqueueSyncedIssueIfNeeded(ctx context.Contex
 	}
 }
 
-func (s *FeishuProjectSyncService) resolveAssignee(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, localStatus string, currentType pgtype.Text, currentID pgtype.UUID) (pgtype.Text, pgtype.UUID) {
-	if cfg.AssignOpenItemsToOwnerAgent {
-		if !isFeishuProjectOwnerAgentAssignableStatus(item.Status, localStatus) {
-			return currentType, currentID
-		}
-		return s.resolveOwnerAgent(ctx, cfg.WorkspaceID, item.OwnerEmail)
+// resolveAssignee picks the issue assignee for a synced work item. The chain is:
+//
+//  1. Owner's agent — only if cfg.AssignOpenItemsToOwnerAgent is on AND the local status
+//     is in an "assignable" state (currently "todo"). For non-assignable states (e.g.
+//     in_progress, done) we preserve currentType/currentID so we don't fight with a
+//     manual reassignment that happened in Multica.
+//  2. Owner as workspace member — the normal case when the Meego owner exists in
+//     Multica as a workspace member.
+//  3. Route's fallback agent — last resort when the owner can't be resolved at all
+//     (left Meego / never joined Multica / typo'd email). Per-route so different
+//     business lines can have different triage handlers.
+//  4. Empty — nothing matched.
+//
+// The fallback is intentionally below member resolution: 兜底 means "use when nothing
+// else fits", so if the human owner is in the workspace they should still own the item
+// (otherwise the fallback would silently steal items that have a valid owner).
+func (s *FeishuProjectSyncService) resolveAssignee(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, localStatus string, currentType pgtype.Text, currentID pgtype.UUID, fallbackAgentID pgtype.UUID) (pgtype.Text, pgtype.UUID) {
+	if cfg.AssignOpenItemsToOwnerAgent && !isFeishuProjectOwnerAgentAssignableStatus(item.Status, localStatus) {
+		return currentType, currentID
 	}
-	return s.resolveOwnerMember(ctx, cfg.WorkspaceID, item.OwnerEmail)
+	if cfg.AssignOpenItemsToOwnerAgent {
+		if t, id := s.resolveOwnerAgent(ctx, cfg.WorkspaceID, item.OwnerEmail); id.Valid {
+			return t, id
+		}
+	}
+	if t, id := s.resolveOwnerMember(ctx, cfg.WorkspaceID, item.OwnerEmail); id.Valid {
+		return t, id
+	}
+	if fallbackAgentID.Valid {
+		return pgtype.Text{String: "agent", Valid: true}, fallbackAgentID
+	}
+	return pgtype.Text{}, pgtype.UUID{}
 }
 
 // routeWorkItemProject decides which Multica project (inside the integration's workspace) a
@@ -619,7 +649,8 @@ func (s *FeishuProjectSyncService) resolveAssignee(ctx context.Context, cfg db.F
 // stored in feishu_project_business_line_route.
 //
 // Returns:
-//   - projectID: the target project (invalid pgtype.UUID if no routing configured)
+//   - matched: pointer to the matched route row (nil when routing is disabled). Callers
+//     read both ProjectID and FallbackAgentID off it.
 //   - routed=true: the item should be synced (either no routing rules apply, or a route matched)
 //   - routed=false, err=nil: routing is configured but no rule matched → item is intentionally
 //     skipped (operators see this as "no route configured for this biz line")
@@ -627,14 +658,14 @@ func (s *FeishuProjectSyncService) resolveAssignee(ctx context.Context, cfg db.F
 //
 // When the integration has BusinessLineFieldKey == "" (legacy / 1:1 setup), routing is
 // disabled and every item is synced into the workspace without a project — matching the
-// pre-routing behavior so this change is backward-compatible.
-func (s *FeishuProjectSyncService) routeWorkItemProject(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem) (pgtype.UUID, bool, error) {
+// pre-routing behavior so this change is backward-compatible. In that case matched=nil.
+func (s *FeishuProjectSyncService) routeWorkItemProject(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem) (*db.FeishuProjectBusinessLineRoute, bool, error) {
 	if strings.TrimSpace(cfg.BusinessLineFieldKey) == "" {
-		return pgtype.UUID{}, true, nil
+		return nil, true, nil
 	}
 	routes, err := s.Queries.ListFeishuProjectBusinessLineRoutes(ctx, cfg.ID)
 	if err != nil {
-		return pgtype.UUID{}, false, fmt.Errorf("list biz-line routes: %w", err)
+		return nil, false, fmt.Errorf("list biz-line routes: %w", err)
 	}
 	if len(routes) == 0 {
 		slog.Warn("Feishu Project sync skipped: routing enabled but no routes configured",
@@ -642,7 +673,7 @@ func (s *FeishuProjectSyncService) routeWorkItemProject(ctx context.Context, cfg
 			"project_key", cfg.ProjectKey,
 			"work_item_id", item.ID,
 		)
-		return pgtype.UUID{}, false, nil
+		return nil, false, nil
 	}
 	matched := matchBusinessLineRoute(routes, item.BusinessLineTokens)
 	if matched == nil {
@@ -652,9 +683,9 @@ func (s *FeishuProjectSyncService) routeWorkItemProject(ctx context.Context, cfg
 			"work_item_id", item.ID,
 			"work_item_tokens", formatBusinessLineTokens(item.BusinessLineTokens),
 		)
-		return pgtype.UUID{}, false, nil
+		return nil, false, nil
 	}
-	return matched.ProjectID, true, nil
+	return matched, true, nil
 }
 
 // matchBusinessLineRoute applies the precedence rules from the design:

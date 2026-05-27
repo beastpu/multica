@@ -16,6 +16,7 @@ import {
   feishuProjectKeys,
 } from "@multica/core/feishu-project/queries";
 import { projectListOptions } from "@multica/core/projects";
+import { agentListOptions } from "@multica/core/workspace/queries";
 import type {
   FeishuProjectBusinessLineNode,
   FeishuProjectIntegration,
@@ -31,6 +32,9 @@ export interface RouteRow {
   parentBusinessLineId: string;
   parentBusinessLineName: string;
   projectId: string;
+  // Empty string = no fallback. Stored as string so the Select component (which can't
+  // hold null) plays well; serialization converts "" → undefined when writing the API.
+  fallbackAgentId: string;
 }
 
 interface Props {
@@ -47,6 +51,7 @@ interface Props {
 }
 
 const NO_PROJECT = "__none__";
+const NO_AGENT = "__none__";
 
 /**
  * Business-line → project routing UI for a Feishu Project integration.
@@ -85,6 +90,7 @@ export function FeishuProjectRoutingSection({
   const businessLines = businessLinesData?.business_lines ?? [];
 
   const { data: projects = [] } = useQuery(projectListOptions(workspaceId));
+  const { data: agents = [] } = useQuery(agentListOptions(workspaceId));
 
   // Display-name resolution: prefer the live Meego field list, then the saved name on
   // the integration row (covers the "Meego dropped the field from its response since
@@ -115,6 +121,7 @@ export function FeishuProjectRoutingSection({
           parentBusinessLineId: parent?.id ?? node.parent_id ?? "",
           parentBusinessLineName: parent?.name ?? node.parent_name ?? "",
           projectId: "",
+          fallbackAgentId: "",
         },
       ];
     });
@@ -124,6 +131,13 @@ export function FeishuProjectRoutingSection({
     const next = projectId && projectId !== NO_PROJECT ? projectId : "";
     setRows((prev) =>
       prev.map((r) => (r.businessLineId === bizLineId ? { ...r, projectId: next } : r)),
+    );
+  }
+
+  function setRowFallbackAgent(bizLineId: string, agentId: string | null) {
+    const next = agentId && agentId !== NO_AGENT ? agentId : "";
+    setRows((prev) =>
+      prev.map((r) => (r.businessLineId === bizLineId ? { ...r, fallbackAgentId: next } : r)),
     );
   }
 
@@ -256,10 +270,11 @@ export function FeishuProjectRoutingSection({
               <div className="overflow-hidden rounded-md border border-border/70">
                 {rows.map((row) => {
                   const projectChoices = projects.map((p) => ({ id: p.id, title: p.title }));
+                  const agentChoices = agents.map((a) => ({ id: a.id, name: a.name }));
                   return (
                     <div
                       key={row.businessLineId}
-                      className="grid grid-cols-[1fr_260px_auto] items-center gap-3 border-b border-border/70 px-3 py-2 last:border-b-0"
+                      className="grid grid-cols-[1fr_220px_220px_auto] items-center gap-3 border-b border-border/70 px-3 py-2 last:border-b-0"
                     >
                       <div className="min-w-0">
                         <p className="truncate text-xs font-medium">
@@ -291,6 +306,33 @@ export function FeishuProjectRoutingSection({
                           {projectChoices.map((p) => (
                             <SelectItem key={p.id} value={p.id}>
                               {p.title}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={row.fallbackAgentId || NO_AGENT}
+                        onValueChange={(v) => setRowFallbackAgent(row.businessLineId, v)}
+                      >
+                        <SelectTrigger size="sm" className="w-full">
+                          <span className="flex-1 truncate text-left">
+                            {row.fallbackAgentId
+                              ? (agentChoices.find((a) => a.id === row.fallbackAgentId)?.name ?? row.fallbackAgentId)
+                              : t(($) => $.integrations.feishu_project_routes_fallback_agent_placeholder)}
+                          </span>
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          <SelectItem value={NO_AGENT}>
+                            {t(($) => $.integrations.feishu_project_routes_fallback_agent_none)}
+                          </SelectItem>
+                          {agentChoices.length === 0 && (
+                            <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                              {t(($) => $.integrations.feishu_project_routes_no_agents)}
+                            </div>
+                          )}
+                          {agentChoices.map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              {a.name}
                             </SelectItem>
                           ))}
                         </SelectContent>

@@ -221,7 +221,10 @@
     "feishu_project_routes_pick_project": "选择一个 Multica 项目",
     "feishu_project_routes_no_projects": "当前 workspace 还没有项目，请先在「项目」页面创建。",
     "feishu_project_routes_remove": "删除该路由",
-    "feishu_project_routes_missing_project": "请为以下业务线选择 Multica 项目：{{name}}"
+    "feishu_project_routes_missing_project": "请为以下业务线选择 Multica 项目：{{name}}",
+    "feishu_project_routes_fallback_agent_placeholder": "兜底 agent（可选）",
+    "feishu_project_routes_fallback_agent_none": "无兜底",
+    "feishu_project_routes_no_agents": "当前 workspace 还没有 agent。"
   },
   "github": {
     "page_description": "连接 GitHub App、控制 Pull Request 如何出现在 Multica 中，并决定智能体在 commit 记录里留下哪些痕迹。",

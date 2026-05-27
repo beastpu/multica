@@ -375,7 +375,7 @@ func (q *Queries) ListEnabledFeishuProjectIntegrations(ctx context.Context) ([]F
 }
 
 const listFeishuProjectBusinessLineRoutes = `-- name: ListFeishuProjectBusinessLineRoutes :many
-SELECT id, integration_id, workspace_id, project_id, business_line_id, business_line_name, parent_business_line_id, parent_business_line_name, created_at, updated_at FROM feishu_project_business_line_route
+SELECT id, integration_id, workspace_id, project_id, business_line_id, business_line_name, parent_business_line_id, parent_business_line_name, created_at, updated_at, fallback_agent_id FROM feishu_project_business_line_route
 WHERE integration_id = $1
 ORDER BY business_line_name ASC, business_line_id ASC
 `
@@ -400,6 +400,7 @@ func (q *Queries) ListFeishuProjectBusinessLineRoutes(ctx context.Context, integ
 			&i.ParentBusinessLineName,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.FallbackAgentID,
 		); err != nil {
 			return nil, err
 		}
@@ -611,17 +612,19 @@ const upsertFeishuProjectBusinessLineRoute = `-- name: UpsertFeishuProjectBusine
 INSERT INTO feishu_project_business_line_route (
     integration_id, workspace_id, project_id,
     business_line_id, business_line_name,
-    parent_business_line_id, parent_business_line_name
+    parent_business_line_id, parent_business_line_name,
+    fallback_agent_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
 ON CONFLICT (integration_id, business_line_id) DO UPDATE SET
     project_id = EXCLUDED.project_id,
     business_line_name = EXCLUDED.business_line_name,
     parent_business_line_id = EXCLUDED.parent_business_line_id,
     parent_business_line_name = EXCLUDED.parent_business_line_name,
+    fallback_agent_id = EXCLUDED.fallback_agent_id,
     updated_at = now()
-RETURNING id, integration_id, workspace_id, project_id, business_line_id, business_line_name, parent_business_line_id, parent_business_line_name, created_at, updated_at
+RETURNING id, integration_id, workspace_id, project_id, business_line_id, business_line_name, parent_business_line_id, parent_business_line_name, created_at, updated_at, fallback_agent_id
 `
 
 type UpsertFeishuProjectBusinessLineRouteParams struct {
@@ -632,6 +635,7 @@ type UpsertFeishuProjectBusinessLineRouteParams struct {
 	BusinessLineName       string      `json:"business_line_name"`
 	ParentBusinessLineID   string      `json:"parent_business_line_id"`
 	ParentBusinessLineName string      `json:"parent_business_line_name"`
+	FallbackAgentID        pgtype.UUID `json:"fallback_agent_id"`
 }
 
 func (q *Queries) UpsertFeishuProjectBusinessLineRoute(ctx context.Context, arg UpsertFeishuProjectBusinessLineRouteParams) (FeishuProjectBusinessLineRoute, error) {
@@ -643,6 +647,7 @@ func (q *Queries) UpsertFeishuProjectBusinessLineRoute(ctx context.Context, arg 
 		arg.BusinessLineName,
 		arg.ParentBusinessLineID,
 		arg.ParentBusinessLineName,
+		arg.FallbackAgentID,
 	)
 	var i FeishuProjectBusinessLineRoute
 	err := row.Scan(
@@ -656,6 +661,7 @@ func (q *Queries) UpsertFeishuProjectBusinessLineRoute(ctx context.Context, arg 
 		&i.ParentBusinessLineName,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FallbackAgentID,
 	)
 	return i, err
 }

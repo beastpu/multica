@@ -35,22 +35,26 @@ type FeishuProjectBusinessLinesResponse struct {
 }
 
 type FeishuProjectRouteRequest struct {
-	ProjectID              string `json:"project_id"`
-	BusinessLineID         string `json:"business_line_id"`
-	BusinessLineName       string `json:"business_line_name"`
-	ParentBusinessLineID   string `json:"parent_business_line_id,omitempty"`
-	ParentBusinessLineName string `json:"parent_business_line_name,omitempty"`
+	ProjectID              string  `json:"project_id"`
+	BusinessLineID         string  `json:"business_line_id"`
+	BusinessLineName       string  `json:"business_line_name"`
+	ParentBusinessLineID   string  `json:"parent_business_line_id,omitempty"`
+	ParentBusinessLineName string  `json:"parent_business_line_name,omitempty"`
+	// Optional. When set, work items routed here whose Meego owner does NOT resolve to
+	// any workspace member get assigned to this agent. Empty string / null = no fallback.
+	FallbackAgentID *string `json:"fallback_agent_id,omitempty"`
 }
 
 type FeishuProjectRouteResponse struct {
-	ID                     string `json:"id"`
-	ProjectID              string `json:"project_id"`
-	BusinessLineID         string `json:"business_line_id"`
-	BusinessLineName       string `json:"business_line_name"`
-	ParentBusinessLineID   string `json:"parent_business_line_id,omitempty"`
-	ParentBusinessLineName string `json:"parent_business_line_name,omitempty"`
-	CreatedAt              string `json:"created_at,omitempty"`
-	UpdatedAt              string `json:"updated_at,omitempty"`
+	ID                     string  `json:"id"`
+	ProjectID              string  `json:"project_id"`
+	BusinessLineID         string  `json:"business_line_id"`
+	BusinessLineName       string  `json:"business_line_name"`
+	ParentBusinessLineID   string  `json:"parent_business_line_id,omitempty"`
+	ParentBusinessLineName string  `json:"parent_business_line_name,omitempty"`
+	FallbackAgentID        *string `json:"fallback_agent_id,omitempty"`
+	CreatedAt              string  `json:"created_at,omitempty"`
+	UpdatedAt              string  `json:"updated_at,omitempty"`
 }
 
 type ReplaceFeishuProjectRoutesRequest struct {
@@ -129,6 +133,7 @@ func (h *Handler) ReplaceFeishuProjectRoutes(w http.ResponseWriter, r *http.Requ
 		BusinessLineName       string
 		ParentBusinessLineID   string
 		ParentBusinessLineName string
+		FallbackAgentID        pgtype.UUID // invalid → no fallback
 	}
 	validated := make([]validRoute, 0, len(req.Routes))
 	seen := map[string]bool{}
@@ -156,12 +161,34 @@ func (h *Handler) ReplaceFeishuProjectRoutes(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusBadRequest, "routes["+strconv.Itoa(i)+"].project_id does not belong to this workspace")
 			return
 		}
+		// Fallback agent is optional. Accept nil pointer OR empty string as "no fallback".
+		// When provided, the agent must exist AND belong to this workspace (cross-workspace
+		// agent reference would let an attacker bind cross-tenant assignees).
+		var fallbackAgentID pgtype.UUID
+		if in.FallbackAgentID != nil {
+			s := strings.TrimSpace(*in.FallbackAgentID)
+			if s != "" {
+				agentUUID, valid := parseUUIDOrBadRequest(w, s, "routes["+strconv.Itoa(i)+"].fallback_agent_id")
+				if !valid {
+					return
+				}
+				if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+					ID:          agentUUID,
+					WorkspaceID: cfg.WorkspaceID,
+				}); err != nil {
+					writeError(w, http.StatusBadRequest, "routes["+strconv.Itoa(i)+"].fallback_agent_id not found in this workspace")
+					return
+				}
+				fallbackAgentID = agentUUID
+			}
+		}
 		validated = append(validated, validRoute{
 			ProjectID:              projUUID,
 			BusinessLineID:         bizID,
 			BusinessLineName:       strings.TrimSpace(in.BusinessLineName),
 			ParentBusinessLineID:   strings.TrimSpace(in.ParentBusinessLineID),
 			ParentBusinessLineName: strings.TrimSpace(in.ParentBusinessLineName),
+			FallbackAgentID:        fallbackAgentID,
 		})
 	}
 
@@ -186,6 +213,7 @@ func (h *Handler) ReplaceFeishuProjectRoutes(w http.ResponseWriter, r *http.Requ
 			BusinessLineName:       vr.BusinessLineName,
 			ParentBusinessLineID:   vr.ParentBusinessLineID,
 			ParentBusinessLineName: vr.ParentBusinessLineName,
+			FallbackAgentID:        vr.FallbackAgentID,
 		})
 		if err != nil {
 			slog.Warn("Feishu Project route upsert failed",
@@ -228,6 +256,11 @@ func (h *Handler) loadFeishuProjectIntegration(w http.ResponseWriter, r *http.Re
 func feishuProjectRoutesToResponse(in []db.FeishuProjectBusinessLineRoute) []FeishuProjectRouteResponse {
 	out := make([]FeishuProjectRouteResponse, 0, len(in))
 	for _, r := range in {
+		var fallbackAgentID *string
+		if r.FallbackAgentID.Valid {
+			s := uuidToString(r.FallbackAgentID)
+			fallbackAgentID = &s
+		}
 		out = append(out, FeishuProjectRouteResponse{
 			ID:                     uuidToString(r.ID),
 			ProjectID:              uuidToString(r.ProjectID),
@@ -235,6 +268,7 @@ func feishuProjectRoutesToResponse(in []db.FeishuProjectBusinessLineRoute) []Fei
 			BusinessLineName:       r.BusinessLineName,
 			ParentBusinessLineID:   r.ParentBusinessLineID,
 			ParentBusinessLineName: r.ParentBusinessLineName,
+			FallbackAgentID:        fallbackAgentID,
 			CreatedAt:              timestampToString(r.CreatedAt),
 			UpdatedAt:              timestampToString(r.UpdatedAt),
 		})

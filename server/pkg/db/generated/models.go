@@ -275,6 +275,7 @@ type FeishuProjectBusinessLineRoute struct {
 	ParentBusinessLineName string             `json:"parent_business_line_name"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	FallbackAgentID        pgtype.UUID        `json:"fallback_agent_id"`
 }
 
 type FeishuProjectIntegration struct {

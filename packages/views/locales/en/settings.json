@@ -221,7 +221,10 @@
     "feishu_project_routes_pick_project": "Choose a Multica project",
     "feishu_project_routes_no_projects": "This workspace has no projects yet. Create one in the Projects view first.",
     "feishu_project_routes_remove": "Remove this route",
-    "feishu_project_routes_missing_project": "Pick a Multica project for: {{name}}"
+    "feishu_project_routes_missing_project": "Pick a Multica project for: {{name}}",
+    "feishu_project_routes_fallback_agent_placeholder": "Fallback agent (optional)",
+    "feishu_project_routes_fallback_agent_none": "No fallback",
+    "feishu_project_routes_no_agents": "This workspace has no agents yet."
   },
   "github": {
     "page_description": "Connect a GitHub App, control how Pull Requests show up inside Multica, and decide what your agents leave behind in commit history.",

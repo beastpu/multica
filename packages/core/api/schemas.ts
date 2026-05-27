@@ -353,6 +353,7 @@ const FeishuProjectRouteSchema = z.object({
   business_line_name: z.string().default(""),
   parent_business_line_id: z.string().optional(),
   parent_business_line_name: z.string().optional(),
+  fallback_agent_id: z.string().nullable().optional(),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 }).loose();

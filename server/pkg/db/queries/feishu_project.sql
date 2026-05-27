@@ -160,15 +160,17 @@ ORDER BY business_line_name ASC, business_line_id ASC;
 INSERT INTO feishu_project_business_line_route (
     integration_id, workspace_id, project_id,
     business_line_id, business_line_name,
-    parent_business_line_id, parent_business_line_name
+    parent_business_line_id, parent_business_line_name,
+    fallback_agent_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6, $7, sqlc.narg('fallback_agent_id')
 )
 ON CONFLICT (integration_id, business_line_id) DO UPDATE SET
     project_id = EXCLUDED.project_id,
     business_line_name = EXCLUDED.business_line_name,
     parent_business_line_id = EXCLUDED.parent_business_line_id,
     parent_business_line_name = EXCLUDED.parent_business_line_name,
+    fallback_agent_id = EXCLUDED.fallback_agent_id,
     updated_at = now()
 RETURNING *;
 

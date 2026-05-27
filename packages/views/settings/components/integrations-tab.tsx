@@ -128,6 +128,7 @@ export function IntegrationsTab() {
         parentBusinessLineId: r.parent_business_line_id ?? "",
         parentBusinessLineName: r.parent_business_line_name ?? "",
         projectId: r.project_id,
+        fallbackAgentId: r.fallback_agent_id ?? "",
       })),
     );
     const auto: Record<string, boolean> = {};
@@ -228,6 +229,7 @@ export function IntegrationsTab() {
             business_line_name: r.businessLineName,
             parent_business_line_id: r.parentBusinessLineId || undefined,
             parent_business_line_name: r.parentBusinessLineName || undefined,
+            fallback_agent_id: r.fallbackAgentId || null,
           }))
         : [];
       await api.replaceFeishuProjectRoutes(wsId, { routes: routePayload });

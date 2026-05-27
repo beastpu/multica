@@ -109,6 +109,7 @@ export interface FeishuProjectRoute {
   business_line_name: string;
   parent_business_line_id?: string;
   parent_business_line_name?: string;
+  fallback_agent_id?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -123,6 +124,7 @@ export interface FeishuProjectRouteInput {
   business_line_name: string;
   parent_business_line_id?: string;
   parent_business_line_name?: string;
+  fallback_agent_id?: string | null;
 }
 
 export interface ReplaceFeishuProjectRoutesRequest {

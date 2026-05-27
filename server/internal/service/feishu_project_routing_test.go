@@ -306,3 +306,49 @@ func TestFeishuProjectOwnerEmailChineseNameFallback(t *testing.T) {
 		t.Fatalf("expected current_status_operator to win, got %q", got)
 	}
 }
+
+// resolveAssignee priority chain — owner agent → owner member → fallback agent → empty.
+// Hitting these branches end-to-end needs a DB; here we cover the deterministic shape
+// (return values for valid/invalid inputs) without exercising the DB-dependent owner
+// lookup methods. The "owner found as member" / "owner found as agent" branches are
+// covered by the integration test that pre-existed in feishu_project_test.go.
+
+func TestResolveAssigneeFallbackUsedWhenOwnerHasNoMatch(t *testing.T) {
+	svc := &FeishuProjectSyncService{Queries: nil} // Queries unused on the fallback path
+	fallbackAgent := uuidLike(20)
+
+	// Empty OwnerEmail → resolveOwnerAgent / resolveOwnerMember short-circuit to empty
+	// without touching Queries, so we fall through to fallback.
+	cfg := db.FeishuProjectIntegration{AssignOpenItemsToOwnerAgent: false}
+	item := FeishuProjectWorkItem{OwnerEmail: ""}
+	gotType, gotID := svc.resolveAssignee(t.Context(), cfg, item, "todo", pgtype.Text{}, pgtype.UUID{}, fallbackAgent)
+	if gotType.String != "agent" || gotID != fallbackAgent {
+		t.Fatalf("expected fallback agent, got %v / %v", gotType, gotID)
+	}
+}
+
+func TestResolveAssigneeNoFallbackReturnsEmpty(t *testing.T) {
+	svc := &FeishuProjectSyncService{Queries: nil}
+	cfg := db.FeishuProjectIntegration{AssignOpenItemsToOwnerAgent: false}
+	item := FeishuProjectWorkItem{OwnerEmail: ""}
+	gotType, gotID := svc.resolveAssignee(t.Context(), cfg, item, "todo", pgtype.Text{}, pgtype.UUID{}, pgtype.UUID{})
+	if gotType.Valid || gotID.Valid {
+		t.Fatalf("expected empty, got %v / %v", gotType, gotID)
+	}
+}
+
+func TestResolveAssigneePreservesCurrentForNonAssignableStatus(t *testing.T) {
+	// AssignOpenItemsToOwnerAgent ON + status NOT "todo" → preserve current assignee,
+	// don't even look at fallback. This protects manual mid-workflow reassignments.
+	svc := &FeishuProjectSyncService{Queries: nil}
+	cfg := db.FeishuProjectIntegration{AssignOpenItemsToOwnerAgent: true}
+	item := FeishuProjectWorkItem{OwnerEmail: "alice@example.com"}
+	currentType := pgtype.Text{String: "member", Valid: true}
+	currentID := uuidLike(99)
+	fallbackAgent := uuidLike(20)
+
+	gotType, gotID := svc.resolveAssignee(t.Context(), cfg, item, "in_progress", currentType, currentID, fallbackAgent)
+	if gotType != currentType || gotID != currentID {
+		t.Fatalf("expected current preserved, got %v / %v", gotType, gotID)
+	}
+}
