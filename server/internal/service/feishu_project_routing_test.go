@@ -212,3 +212,97 @@ func TestParseFeishuProjectFieldMetasDedupes(t *testing.T) {
 		t.Fatalf("unexpected fields: %#v", seen)
 	}
 }
+
+func TestFeishuFieldDisplayNameAcceptsBothShapes(t *testing.T) {
+	// Filter response uses `name`; meta response uses `field_name`. Same helper.
+	if got := feishuFieldDisplayName(map[string]any{"name": "经办人"}); got != "经办人" {
+		t.Fatalf("name → %q", got)
+	}
+	if got := feishuFieldDisplayName(map[string]any{"field_name": "处理人"}); got != "处理人" {
+		t.Fatalf("field_name → %q", got)
+	}
+	if got := feishuFieldDisplayName(map[string]any{"name": ""}); got != "" {
+		t.Fatalf("empty → %q", got)
+	}
+	if got := feishuFieldDisplayName(map[string]any{"name": nil}); got != "" {
+		t.Fatalf("nil → %q (was %v, expected empty)", got, "<nil>")
+	}
+}
+
+func TestParseFeishuProjectSearchIndexesByDisplayName(t *testing.T) {
+	// Two work items: one with the standard `owner` field_key, one with a custom
+	// `field_xxx` field_key but a "经办人" display name. The owner-email extractor
+	// should resolve both.
+	payload := map[string]any{
+		"data": []any{
+			map[string]any{
+				"id":   1,
+				"name": "standard-owner-item",
+				"fields": []any{
+					map[string]any{
+						"field_key":   "owner",
+						"name":        "Owner",
+						"field_value": "user-1",
+					},
+				},
+				"user_details": []any{
+					map[string]any{"user_key": "user-1", "email": "alice@example.com"},
+				},
+			},
+			map[string]any{
+				"id":   2,
+				"name": "custom-field-item",
+				"fields": []any{
+					map[string]any{
+						"field_key":   "field_abc123",
+						"name":        "经办人",
+						"field_value": "user-2",
+					},
+				},
+				"user_details": []any{
+					map[string]any{"user_key": "user-2", "email": "bob@example.com"},
+				},
+			},
+		},
+	}
+	items := parseFeishuProjectSearch(payload, "issue", "proj", "")
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	if items[0].OwnerEmail != "alice@example.com" {
+		t.Fatalf("standard owner: got %q", items[0].OwnerEmail)
+	}
+	if items[1].OwnerEmail != "bob@example.com" {
+		t.Fatalf("custom field via display name 经办人: got %q", items[1].OwnerEmail)
+	}
+}
+
+func TestFeishuProjectOwnerEmailChineseNameFallback(t *testing.T) {
+	// Owner field_keys are absent; the assignee is stored under a Chinese display
+	// name like 处理人. We treat the email pattern in the value as ground truth.
+	record := map[string]string{
+		"处理人": "Carol <carol@example.com>",
+	}
+	if got := feishuProjectOwnerEmail(record, nil); got != "carol@example.com" {
+		t.Fatalf("处理人 fallback: got %q", got)
+	}
+
+	// Same but value is just a user_key — resolve via userEmails.
+	record2 := map[string]string{
+		"经办人": "user-99",
+	}
+	userEmails := map[string]string{"user-99": "dave@example.com"}
+	if got := feishuProjectOwnerEmail(record2, userEmails); got != "dave@example.com" {
+		t.Fatalf("经办人 + user_keys: got %q", got)
+	}
+
+	// Standard field_key still wins when both present (current_status_operator is
+	// the most specific signal — see feishuProjectOwnerEmail comment).
+	record3 := map[string]string{
+		"current_status_operator": "eve@example.com",
+		"处理人":                     "frank@example.com",
+	}
+	if got := feishuProjectOwnerEmail(record3, nil); got != "eve@example.com" {
+		t.Fatalf("expected current_status_operator to win, got %q", got)
+	}
+}

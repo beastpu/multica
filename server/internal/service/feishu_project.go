@@ -202,7 +202,7 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 	var summaryMu sync.Mutex
 	var syncErr error
 	fullSync := trigger == "manual"
-	skipExisting := fullSync && strings.TrimSpace(opts.WorkItemID) == ""
+	lightUpdateExisting := fullSync && strings.TrimSpace(opts.WorkItemID) == ""
 	totalCount := 0
 	for _, typ := range enabledFeishuProjectTypes(cfg) {
 		err := s.Client.QueryWorkItemPagesWithOptions(ctx, cfg, typ, fullSync, opts, func(page FeishuProjectWorkItemPage) error {
@@ -227,7 +227,7 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 						if ctx.Err() != nil {
 							continue
 						}
-						result, attachErrs, err := s.syncWorkItem(ctx, cfg, item, skipExisting)
+						result, attachErrs, err := s.syncWorkItem(ctx, cfg, item, lightUpdateExisting)
 						summaryMu.Lock()
 						if err != nil {
 							summary.Errors++
@@ -339,7 +339,7 @@ func enabledFeishuProjectTypes(cfg db.FeishuProjectIntegration) []string {
 	return out
 }
 
-func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, skipExisting bool) (result string, attachErrs int, retErr error) {
+func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, lightUpdateExisting bool) (result string, attachErrs int, retErr error) {
 	started := time.Now()
 	timing := &feishuProjectSyncTiming{}
 	defer func() {
@@ -398,9 +398,6 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	})
 	timing.bindingLookup += time.Since(phaseStarted)
 	if err == nil {
-		if skipExisting {
-			return "skipped", 0, nil
-		}
 		phaseStarted = time.Now()
 		issue, err := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: binding.IssueID, WorkspaceID: cfg.WorkspaceID})
 		timing.issueLookup += time.Since(phaseStarted)
@@ -410,6 +407,55 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		phaseStarted = time.Now()
 		assigneeType, assigneeID := s.resolveAssignee(ctx, cfg, item, mappedStatus, issue.AssigneeType, issue.AssigneeID)
 		timing.ownerLookup += time.Since(phaseStarted)
+		nextProjectID := issue.ProjectID
+		if projectID.Valid {
+			nextProjectID = projectID
+		}
+
+		if lightUpdateExisting {
+			// Light-update path for manual full-sync: refresh status / assignee /
+			// project only. Skip syncExternalAttachments (~200-500ms per item with
+			// any attachment) and preserve the existing title + description so the
+			// already-synced attachment markdown block doesn't get clobbered. Per
+			// item this collapses to ~25-30ms, so a 1k-item manual sync runs in ~30s
+			// instead of multiple minutes. New attachments added in Meego after the
+			// first sync are still picked up by the next scheduled (incremental)
+			// sync, which keeps its full path.
+			if issue.Status == status &&
+				sameNullableText(issue.AssigneeType, assigneeType) &&
+				sameNullableUUID(issue.AssigneeID, assigneeID) &&
+				issue.ProjectID == nextProjectID {
+				s.reconcileSyncedIssueTasks(ctx, issue, issue)
+				return "skipped", 0, nil
+			}
+			phaseStarted = time.Now()
+			updatedIssue, err := s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
+				ID: issue.ID,
+				// Pass invalid pgtype.Text for title/description → COALESCE in
+				// queries/issue.sql keeps the current values, so the embedded
+				// attachment markdown survives.
+				Title:         pgtype.Text{},
+				Description:   pgtype.Text{},
+				Status:        pgtype.Text{String: status, Valid: true},
+				Priority:      pgtype.Text{String: issue.Priority, Valid: true},
+				AssigneeType:  assigneeType,
+				AssigneeID:    assigneeID,
+				DueDate:       issue.DueDate,
+				ParentIssueID: issue.ParentIssueID,
+				ProjectID:     nextProjectID,
+			})
+			timing.issueUpdate += time.Since(phaseStarted)
+			if err != nil {
+				return "skipped", 0, err
+			}
+			phaseStarted = time.Now()
+			_, _ = s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
+			timing.bindingUpsert += time.Since(phaseStarted)
+			s.reconcileSyncedIssueTasks(ctx, issue, updatedIssue)
+			return "updated", 0, nil
+		}
+
+		// Full update path — scheduled (incremental) sync. Includes attachment refetch.
 		phaseStarted = time.Now()
 		attachmentMarkdown, attachErr := s.syncExternalAttachments(ctx, cfg, issue.ID, item, timing)
 		timing.attachments += time.Since(phaseStarted)
@@ -418,10 +464,6 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		}
 		nextDesc := externalDescription(item, attachmentMarkdown)
 		nextTitle := externalTitle(item)
-		nextProjectID := issue.ProjectID
-		if projectID.Valid {
-			nextProjectID = projectID
-		}
 		if issue.Title == nextTitle && issue.Description.String == nextDesc && issue.Status == status &&
 			sameNullableText(issue.AssigneeType, assigneeType) && sameNullableUUID(issue.AssigneeID, assigneeID) &&
 			issue.ProjectID == nextProjectID {
@@ -1871,6 +1913,10 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey, businessL
 		var businessLineTokens []FeishuBusinessLineToken
 		fields, _ := row["fields"].([]any)
 		var attachments []FeishuProjectAttachment
+		// Index each field by both its field_key and its Chinese display name. Two spaces
+		// can give the same logical field different names (经办人 vs 处理人 vs 负责人)
+		// — sometimes even custom field_keys like `field_xxx` — so downstream lookups
+		// (notably owner-email extraction) need to try by display name too.
 		for _, fieldAny := range fields {
 			field, _ := fieldAny.(map[string]any)
 			key := firstNonEmpty(fmt.Sprint(field["field_key"]), fmt.Sprint(field["field_alias"]))
@@ -1878,8 +1924,12 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey, businessL
 				continue
 			}
 			attachments = append(attachments, feishuProjectOpenAPIFieldAttachments(field)...)
-			if value := feishuProjectOpenAPIFieldValue(field); value != "" {
+			value := feishuProjectOpenAPIFieldValue(field)
+			if value != "" {
 				record[key] = value
+				if displayName := feishuFieldDisplayName(field); displayName != "" {
+					record[displayName] = value
+				}
 			}
 			if businessLineFieldKey != "" && key == businessLineFieldKey {
 				businessLineTokens = extractBusinessLineTokens(field["field_value"])
@@ -1893,8 +1943,12 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey, businessL
 				continue
 			}
 			attachments = append(attachments, feishuProjectOpenAPIFieldAttachments(field)...)
-			if value := feishuProjectOpenAPIFieldValue(field); value != "" {
+			value := feishuProjectOpenAPIFieldValue(field)
+			if value != "" {
 				record[key] = value
+				if displayName := feishuFieldDisplayName(field); displayName != "" {
+					record[displayName] = value
+				}
 			}
 			if businessLineFieldKey != "" && len(businessLineTokens) == 0 && key == businessLineFieldKey {
 				businessLineTokens = extractBusinessLineTokens(field["field_value"])
@@ -2003,8 +2057,43 @@ func extractBusinessLineTokens(value any) []FeishuBusinessLineToken {
 	return out
 }
 
+// feishuFieldDisplayName extracts the Chinese display name from a field entry in the
+// Meego /work_item/filter response (and the meta response — same key shape). Both
+// `name` (filter response) and `field_name` (meta response) are accepted so the same
+// helper works for either source. Returns "" when no usable name is present, so callers
+// can early-out without falling into the fmt.Sprint(nil) → "<nil>" trap.
+func feishuFieldDisplayName(field map[string]any) string {
+	for _, k := range []string{"name", "field_name"} {
+		if v, ok := field[k]; ok && v != nil {
+			s := strings.TrimSpace(fmt.Sprint(v))
+			if s != "" && s != "<nil>" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// feishuProjectOwnerEmail picks the email of the work-item's assignee/owner. It tries:
+//  1. Stable Meego field_keys (`current_status_operator`, `owner`, `operator`) — the
+//     common case.
+//  2. Custom fields indexed by their Chinese display name — different spaces name the
+//     assignee field differently (经办人 / 处理人 / 负责人 / etc.) and may use a
+//     custom field_key like `field_xxx` so a plain field_key match misses them.
+//
+// At each step the raw value is checked for an embedded email pattern first; if none is
+// found and Meego returned a user_details lookup, we treat the value as a user_key list
+// and resolve against that map.
 func feishuProjectOwnerEmail(record map[string]string, userEmails map[string]string) string {
-	for _, raw := range []string{record["current_status_operator"], record["owner"], record["operator"]} {
+	candidates := []string{
+		// Stable field_keys
+		record["current_status_operator"], record["owner"], record["operator"],
+		// Chinese display names (fall back when the field is custom and we matched it
+		// in parseFeishuProjectSearch via field["name"]). Order is intentional: the
+		// more-specific "current" variants first so they win when both exist.
+		record["当前处理人"], record["当前经办人"], record["处理人"], record["经办人"], record["负责人"],
+	}
+	for _, raw := range candidates {
 		if email := extractEmail(raw); email != "" {
 			return email
 		}
