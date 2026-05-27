@@ -270,7 +270,19 @@ export function FeishuProjectRoutingSection({
               <div className="overflow-hidden rounded-md border border-border/70">
                 {rows.map((row) => {
                   const projectChoices = projects.map((p) => ({ id: p.id, title: p.title }));
-                  const agentChoices = agents.map((a) => ({ id: a.id, name: a.name }));
+                  // Only offer active (non-archived) agents in the dropdown — the
+                  // workspace query asks the API for archived ones too because other
+                  // surfaces (agent management) want to show them, but here picking an
+                  // archived agent as a fallback assignee is silly. We still resolve the
+                  // trigger label from the full list so an already-saved fallback that
+                  // got archived after the fact still renders by name (rather than as
+                  // a bare UUID) until the operator re-picks.
+                  const agentChoices = agents
+                    .filter((a) => !a.archived_at)
+                    .map((a) => ({ id: a.id, name: a.name }));
+                  const fallbackName = row.fallbackAgentId
+                    ? (agents.find((a) => a.id === row.fallbackAgentId)?.name ?? row.fallbackAgentId)
+                    : "";
                   return (
                     <div
                       key={row.businessLineId}
@@ -317,7 +329,7 @@ export function FeishuProjectRoutingSection({
                         <SelectTrigger size="sm" className="w-full">
                           <span className="flex-1 truncate text-left">
                             {row.fallbackAgentId
-                              ? (agentChoices.find((a) => a.id === row.fallbackAgentId)?.name ?? row.fallbackAgentId)
+                              ? fallbackName
                               : t(($) => $.integrations.feishu_project_routes_fallback_agent_placeholder)}
                           </span>
                         </SelectTrigger>
