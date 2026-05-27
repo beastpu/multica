@@ -18,7 +18,7 @@ commonAnnotations:
 # tag (e.g. main-<sha>) once CI is wired and you can drop the Always patch.
 images:
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server
-    newTag: "0.2.45-fix-meeogo"
+    newTag: "0.2.45-fix-meeogo-lightupdate"
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web
     newTag: "0.2.45-fix-meeogo-ui"
 
