@@ -319,20 +319,6 @@ export function IntegrationsTab() {
                       <Input value={actorUserKey} onChange={(e) => setActorUserKey(e.target.value)} />
                     </label>
                   </div>
-                  <div className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-3">
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium">
-                        {t(($) => $.integrations.feishu_project_assign_owner_agent)}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">
-                        {t(($) => $.integrations.feishu_project_assign_owner_agent_hint)}
-                      </p>
-                    </div>
-                    <Switch
-                      checked={assignOpenItemsToOwnerAgent}
-                      onCheckedChange={setAssignOpenItemsToOwnerAgent}
-                    />
-                  </div>
                 </div>
 
                 <div className="space-y-3">
@@ -446,6 +432,24 @@ export function IntegrationsTab() {
                     expanded={routesExpanded}
                     setExpanded={setRoutesExpanded}
                   />
+                  {/* Assignment policy lives with routing: routing decides the
+                      project, this toggle decides who picks up the new issue.
+                      The per-route fallback agent (above) covers the case
+                      where this lookup misses. */}
+                  <div className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-3">
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium">
+                        {t(($) => $.integrations.feishu_project_assign_owner_agent)}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {t(($) => $.integrations.feishu_project_assign_owner_agent_hint)}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={assignOpenItemsToOwnerAgent}
+                      onCheckedChange={setAssignOpenItemsToOwnerAgent}
+                    />
+                  </div>
                 </div>
 
                 <div className="flex flex-col gap-4 border-t border-border/70 pt-4 lg:flex-row lg:items-end lg:justify-between">

@@ -184,6 +184,10 @@ export function FeishuProjectRoutingSection({
 
   return (
     <div className="space-y-4">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {t(($) => $.integrations.feishu_project_routing_explainer)}
+      </p>
+
       {/* Field picker row */}
       <label className="block space-y-1.5 text-xs font-medium">
         {t(($) => $.integrations.feishu_project_business_line_field)}
@@ -216,6 +220,9 @@ export function FeishuProjectRoutingSection({
             ))}
           </SelectContent>
         </Select>
+        <span className="block text-[11px] font-normal text-muted-foreground">
+          {t(($) => $.integrations.feishu_project_business_line_field_hint)}
+        </span>
       </label>
 
       {hasFieldKey && (
@@ -264,10 +271,25 @@ export function FeishuProjectRoutingSection({
 
           {rows.length > 0 && (
             <div className="space-y-2">
-              <p className="text-xs font-medium">
-                {t(($) => $.integrations.feishu_project_routes_table_title)}
-              </p>
+              <div className="space-y-0.5">
+                <p className="text-xs font-medium">
+                  {t(($) => $.integrations.feishu_project_routes_table_title)}
+                </p>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  {t(($) => $.integrations.feishu_project_routes_fallback_column_hint)}
+                </p>
+              </div>
               <div className="overflow-hidden rounded-md border border-border/70">
+                <div className="grid grid-cols-[1fr_220px_220px_auto] items-center gap-3 border-b border-border/70 bg-muted/30 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  <span className="truncate">
+                    {fieldDisplayName
+                      ? t(($) => $.integrations.feishu_project_routes_value_column, { field: fieldDisplayName })
+                      : t(($) => $.integrations.feishu_project_routes_value_column_generic)}
+                  </span>
+                  <span>{t(($) => $.integrations.feishu_project_routes_project_column)}</span>
+                  <span>{t(($) => $.integrations.feishu_project_routes_fallback_column)}</span>
+                  <span />
+                </div>
                 {rows.map((row) => {
                   const projectChoices = projects.map((p) => ({ id: p.id, title: p.title }));
                   // Only offer active (non-archived) agents in the dropdown — the
