@@ -181,3 +181,19 @@ WHERE integration_id = $1;
 -- name: DeleteFeishuProjectBusinessLineRoute :exec
 DELETE FROM feishu_project_business_line_route
 WHERE integration_id = $1 AND business_line_id = $2;
+
+-- name: ListFeishuProjectAttachmentBindingsByIssue :many
+SELECT * FROM feishu_project_attachment_binding
+WHERE integration_id = $1 AND issue_id = $2;
+
+-- name: CreateFeishuProjectAttachmentBinding :one
+INSERT INTO feishu_project_attachment_binding (
+    workspace_id, integration_id, issue_id, attachment_id,
+    external_attachment_id, external_filename
+) VALUES (
+    $1, $2, $3, $4, $5, $6
+)
+ON CONFLICT (integration_id, external_attachment_id) DO UPDATE SET
+    attachment_id = EXCLUDED.attachment_id,
+    external_filename = EXCLUDED.external_filename
+RETURNING *;

@@ -264,6 +264,17 @@ type Feedback struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type FeishuProjectAttachmentBinding struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	IntegrationID        pgtype.UUID        `json:"integration_id"`
+	IssueID              pgtype.UUID        `json:"issue_id"`
+	AttachmentID         pgtype.UUID        `json:"attachment_id"`
+	ExternalAttachmentID string             `json:"external_attachment_id"`
+	ExternalFilename     string             `json:"external_filename"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+}
+
 type FeishuProjectBusinessLineRoute struct {
 	ID                     pgtype.UUID        `json:"id"`
 	IntegrationID          pgtype.UUID        `json:"integration_id"`

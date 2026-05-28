@@ -285,18 +285,26 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 			combined = combined + "; " + attachmentHint
 		}
 		errText = pgtype.Text{String: combined, Valid: true}
-		_ = s.Queries.MarkFeishuProjectIntegrationError(finishCtx, db.MarkFeishuProjectIntegrationErrorParams{
+		if err := s.Queries.MarkFeishuProjectIntegrationError(finishCtx, db.MarkFeishuProjectIntegrationErrorParams{
 			ID:        cfg.ID,
 			LastError: pgtype.Text{String: combined, Valid: true},
-		})
+		}); err != nil {
+			slog.Warn("Feishu Project mark-error failed", "integration_id", UUIDString(cfg.ID), "error", err)
+		}
 	} else {
-		_ = s.Queries.MarkFeishuProjectIntegrationSynced(finishCtx, cfg.ID)
+		// If this write fails silently, last_synced_at never advances and the
+		// next incremental sync replays the full lookback window.
+		if err := s.Queries.MarkFeishuProjectIntegrationSynced(finishCtx, cfg.ID); err != nil {
+			slog.Warn("Feishu Project mark-synced failed; last_synced_at not advanced", "integration_id", UUIDString(cfg.ID), "error", err)
+		}
 		if attachmentHint != "" {
 			errText = pgtype.Text{String: attachmentHint, Valid: true}
-			_ = s.Queries.MarkFeishuProjectIntegrationError(finishCtx, db.MarkFeishuProjectIntegrationErrorParams{
+			if err := s.Queries.MarkFeishuProjectIntegrationError(finishCtx, db.MarkFeishuProjectIntegrationErrorParams{
 				ID:        cfg.ID,
 				LastError: pgtype.Text{String: attachmentHint, Valid: true},
-			})
+			}); err != nil {
+				slog.Warn("Feishu Project mark-error (attachment hint) failed", "integration_id", UUIDString(cfg.ID), "error", err)
+			}
 		}
 	}
 	if run.ID.Valid {
@@ -941,8 +949,26 @@ func (s *FeishuProjectSyncService) syncExternalAttachments(ctx context.Context, 
 		IssueID:     issueID,
 		WorkspaceID: cfg.WorkspaceID,
 	})
+	bindings, _ := s.Queries.ListFeishuProjectAttachmentBindingsByIssue(ctx, db.ListFeishuProjectAttachmentBindingsByIssueParams{
+		IntegrationID: cfg.ID,
+		IssueID:       issueID,
+	})
 	if timing != nil {
 		timing.attachmentList += time.Since(phaseStarted)
+	}
+	attachmentsByID := make(map[pgtype.UUID]db.Attachment, len(existing))
+	for _, att := range existing {
+		attachmentsByID[att.ID] = att
+	}
+	// Bindings are the primary dedup key (Feishu attachment ID → local
+	// attachment). Filename is kept as a fallback for legacy rows synced
+	// before bindings existed, or for the rare case where Feishu returns
+	// no attachment ID.
+	boundByExternalID := make(map[string]db.Attachment, len(bindings))
+	for _, b := range bindings {
+		if att, ok := attachmentsByID[b.AttachmentID]; ok {
+			boundByExternalID[b.ExternalAttachmentID] = att
+		}
 	}
 	byName := make(map[string]db.Attachment, len(existing))
 	for _, att := range existing {
@@ -955,7 +981,18 @@ func (s *FeishuProjectSyncService) syncExternalAttachments(ctx context.Context, 
 		if ext.Name == "" {
 			continue
 		}
-		if att, ok := byName[ext.Name]; ok {
+		externalID := strings.TrimSpace(ext.ID)
+		if externalID != "" {
+			if att, ok := boundByExternalID[externalID]; ok {
+				if timing != nil {
+					timing.attachmentsExisting++
+				}
+				lines = append(lines, attachmentMarkdown(att.Filename, feishuProjectAttachmentContentURL(att), att.ContentType))
+				continue
+			}
+		} else if att, ok := byName[ext.Name]; ok {
+			// No external ID — fall back to filename match. Lossy, but only
+			// hit when Feishu omits the attachment ID.
 			if timing != nil {
 				timing.attachmentsExisting++
 			}
@@ -1050,6 +1087,30 @@ func (s *FeishuProjectSyncService) syncExternalAttachments(ctx context.Context, 
 		}
 		if timing != nil {
 			timing.attachmentsUploaded++
+		}
+		// Record the external ID → local attachment binding so future syncs
+		// dedup on the Feishu attachment ID instead of filename. Failure
+		// here is logged and ignored: the attachment is already uploaded
+		// and visible to the user; we'll just re-download on the next sync.
+		if externalID != "" {
+			if _, err := s.Queries.CreateFeishuProjectAttachmentBinding(ctx, db.CreateFeishuProjectAttachmentBindingParams{
+				WorkspaceID:          cfg.WorkspaceID,
+				IntegrationID:        cfg.ID,
+				IssueID:              issueID,
+				AttachmentID:         att.ID,
+				ExternalAttachmentID: externalID,
+				ExternalFilename:     ext.Name,
+			}); err != nil {
+				slog.Warn("Feishu Project attachment binding create failed",
+					"workspace_id", UUIDString(cfg.WorkspaceID),
+					"integration_id", UUIDString(cfg.ID),
+					"issue_id", UUIDString(issueID),
+					"external_attachment_id", externalID,
+					"error", err,
+				)
+			} else {
+				boundByExternalID[externalID] = att
+			}
 		}
 		byName[att.Filename] = att
 		lines = append(lines, attachmentMarkdown(att.Filename, feishuProjectAttachmentContentURL(att), att.ContentType))

@@ -11,6 +11,51 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createFeishuProjectAttachmentBinding = `-- name: CreateFeishuProjectAttachmentBinding :one
+INSERT INTO feishu_project_attachment_binding (
+    workspace_id, integration_id, issue_id, attachment_id,
+    external_attachment_id, external_filename
+) VALUES (
+    $1, $2, $3, $4, $5, $6
+)
+ON CONFLICT (integration_id, external_attachment_id) DO UPDATE SET
+    attachment_id = EXCLUDED.attachment_id,
+    external_filename = EXCLUDED.external_filename
+RETURNING id, workspace_id, integration_id, issue_id, attachment_id, external_attachment_id, external_filename, created_at
+`
+
+type CreateFeishuProjectAttachmentBindingParams struct {
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	IntegrationID        pgtype.UUID `json:"integration_id"`
+	IssueID              pgtype.UUID `json:"issue_id"`
+	AttachmentID         pgtype.UUID `json:"attachment_id"`
+	ExternalAttachmentID string      `json:"external_attachment_id"`
+	ExternalFilename     string      `json:"external_filename"`
+}
+
+func (q *Queries) CreateFeishuProjectAttachmentBinding(ctx context.Context, arg CreateFeishuProjectAttachmentBindingParams) (FeishuProjectAttachmentBinding, error) {
+	row := q.db.QueryRow(ctx, createFeishuProjectAttachmentBinding,
+		arg.WorkspaceID,
+		arg.IntegrationID,
+		arg.IssueID,
+		arg.AttachmentID,
+		arg.ExternalAttachmentID,
+		arg.ExternalFilename,
+	)
+	var i FeishuProjectAttachmentBinding
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IntegrationID,
+		&i.IssueID,
+		&i.AttachmentID,
+		&i.ExternalAttachmentID,
+		&i.ExternalFilename,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createFeishuProjectSyncRun = `-- name: CreateFeishuProjectSyncRun :one
 INSERT INTO feishu_project_sync_run (
     integration_id, workspace_id, status, trigger
@@ -363,6 +408,45 @@ func (q *Queries) ListEnabledFeishuProjectIntegrations(ctx context.Context) ([]F
 			&i.AssignOpenItemsToOwnerAgent,
 			&i.BusinessLineFieldKey,
 			&i.BusinessLineFieldName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFeishuProjectAttachmentBindingsByIssue = `-- name: ListFeishuProjectAttachmentBindingsByIssue :many
+SELECT id, workspace_id, integration_id, issue_id, attachment_id, external_attachment_id, external_filename, created_at FROM feishu_project_attachment_binding
+WHERE integration_id = $1 AND issue_id = $2
+`
+
+type ListFeishuProjectAttachmentBindingsByIssueParams struct {
+	IntegrationID pgtype.UUID `json:"integration_id"`
+	IssueID       pgtype.UUID `json:"issue_id"`
+}
+
+func (q *Queries) ListFeishuProjectAttachmentBindingsByIssue(ctx context.Context, arg ListFeishuProjectAttachmentBindingsByIssueParams) ([]FeishuProjectAttachmentBinding, error) {
+	rows, err := q.db.Query(ctx, listFeishuProjectAttachmentBindingsByIssue, arg.IntegrationID, arg.IssueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FeishuProjectAttachmentBinding{}
+	for rows.Next() {
+		var i FeishuProjectAttachmentBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.IntegrationID,
+			&i.IssueID,
+			&i.AttachmentID,
+			&i.ExternalAttachmentID,
+			&i.ExternalFilename,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
