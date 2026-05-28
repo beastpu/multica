@@ -310,6 +310,8 @@ type FeishuProjectIntegration struct {
 	AssignOpenItemsToOwnerAgent bool               `json:"assign_open_items_to_owner_agent"`
 	BusinessLineFieldKey        string             `json:"business_line_field_key"`
 	BusinessLineFieldName       string             `json:"business_line_field_name"`
+	LastSeenUpdatedAtMs         pgtype.Int8        `json:"last_seen_updated_at_ms"`
+	LastReconciledAt            pgtype.Timestamptz `json:"last_reconciled_at"`
 }
 
 type FeishuProjectIssueBinding struct {

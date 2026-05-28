@@ -65,8 +65,27 @@ DELETE FROM feishu_project_integration
 WHERE id = $1 AND workspace_id = $2;
 
 -- name: MarkFeishuProjectIntegrationSynced :exec
+-- Advance the high-watermark to the larger of the previously-stored value and
+-- the run's observed max(updated_at), so a no-op run can't drag the watermark
+-- backwards. Caller passes the observed value as unix-millis; pass 0 (or
+-- existing) when the run touched zero items.
 UPDATE feishu_project_integration
-SET last_synced_at = now(), last_error = NULL, updated_at = now()
+SET last_synced_at = now(),
+    last_seen_updated_at_ms = GREATEST(
+        COALESCE(last_seen_updated_at_ms, 0),
+        sqlc.arg('observed_updated_at_ms')::BIGINT
+    ),
+    last_error = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg('id');
+
+-- name: MarkFeishuProjectIntegrationReconciled :exec
+-- Stamps a successful 6h reconcile run. The watermark advance runs through
+-- MarkFeishuProjectIntegrationSynced (called in the same code path); this
+-- query is purely the reconcile-cadence stamp.
+UPDATE feishu_project_integration
+SET last_reconciled_at = now(),
+    updated_at = now()
 WHERE id = $1;
 
 -- name: MarkFeishuProjectIntegrationError :exec

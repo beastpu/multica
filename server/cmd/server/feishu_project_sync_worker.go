@@ -35,6 +35,7 @@ func runFeishuProjectSyncOnce(ctx context.Context, queries *db.Queries, pool *pg
 		return
 	}
 	svc := &service.FeishuProjectSyncService{Queries: queries, Tx: pool, Client: service.NewFeishuProjectClient(), Storage: store, TaskService: taskSvc}
+	now := time.Now()
 	for _, cfg := range configs {
 		locked, unlock, err := service.TryAcquireFeishuProjectSyncLock(ctx, pool, cfg.ID)
 		if err != nil {
@@ -44,9 +45,22 @@ func runFeishuProjectSyncOnce(ctx context.Context, queries *db.Queries, pool *pg
 		if !locked {
 			continue
 		}
-		if _, err := svc.Sync(ctx, cfg, "scheduled"); err != nil {
-			slog.Warn("Feishu Project scheduled sync failed", "integration_id", service.UUIDString(cfg.ID), "project_key", cfg.ProjectKey, "error", err)
+		trigger := feishuProjectSyncTriggerFor(cfg, now)
+		if _, err := svc.Sync(ctx, cfg, trigger); err != nil {
+			slog.Warn("Feishu Project sync failed", "integration_id", service.UUIDString(cfg.ID), "project_key", cfg.ProjectKey, "trigger", trigger, "error", err)
 		}
 		unlock()
 	}
+}
+
+// feishuProjectSyncTriggerFor decides whether this tick should run the
+// cheap incremental path or the periodic 6h reconcile. A NULL
+// last_reconciled_at counts as "never reconciled" and forces an immediate
+// reconcile on first tick after the migration lands, so every integration
+// builds a fresh watermark within one tick of deploy.
+func feishuProjectSyncTriggerFor(cfg db.FeishuProjectIntegration, now time.Time) string {
+	if !cfg.LastReconciledAt.Valid || now.Sub(cfg.LastReconciledAt.Time) >= service.FeishuProjectReconcileInterval() {
+		return "reconcile"
+	}
+	return "scheduled"
 }

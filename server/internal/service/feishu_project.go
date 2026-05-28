@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,11 +36,28 @@ const (
 	feishuProjectManualLookback    = 30 * 24 * time.Hour
 	feishuProjectIncrementalReplay = 10 * time.Minute
 	feishuProjectSyncMaxPages      = 1000
-	feishuProjectAttachmentMaxSize     = 5 << 20
-	feishuProjectSyncWorkers           = 20
+
+	// How often a successful reconcile should run, and how far back its
+	// `updated_at` filter looks. Reconcile is the L3 defence that catches
+	// updates the incremental L1 missed (long worker stalls, clock skew,
+	// out-of-order events). The +30min safety margin overshoots the
+	// 6h interval so we always overlap the previous reconcile window.
+	feishuProjectReconcileInterval       = 6 * time.Hour
+	feishuProjectReconcileLookback       = 6 * time.Hour
+	feishuProjectReconcileLookbackSafety = 30 * time.Minute
+	feishuProjectAttachmentMaxSize = 5 << 20
+	// Feishu Project caps every (token, single interface) pair at 15 QPS
+	// (project.feishu.cn/b/helpcenter/1p8d7djs/4bsmoql6). The advisory lock keeps
+	// only one replica syncing a given integration, so worker fan-out is the only
+	// thing that can blow past 15 concurrent calls to the same endpoint. 10 leaves
+	// headroom for the bursty start of each page without crossing the cap.
+	feishuProjectSyncWorkers           = 10
 	feishuProjectSlowItemLogAfter      = 500 * time.Millisecond
 	feishuProjectAPIRetryAttempts      = 4
 	feishuProjectDownloadRetryAttempts = 3
+	// Cap on any per-attempt sleep we'll honor from Feishu's rate-limit reset
+	// header, so a misbehaving gateway response can't stall the worker for hours.
+	feishuProjectRateLimitMaxSleep = 60 * time.Second
 )
 
 // Initial backoff for attachment-download retries. Subsequent attempts use exponential backoff.
@@ -47,6 +65,17 @@ const (
 var feishuProjectDownloadRetryInitialDelay = 300 * time.Millisecond
 
 var ErrFeishuProjectSyncScopeRequired = errors.New("Feishu Project sync requires a bounded sync scope before searching work items")
+
+// FeishuProjectReconcileInterval is the cadence at which a successful
+// reconcile run is expected. Exposed for the cmd-level worker scheduler
+// to keep the constant in one place.
+func FeishuProjectReconcileInterval() time.Duration { return feishuProjectReconcileInterval }
+
+// ErrFeishuProjectQuotaExhausted is returned when the tenant has consumed its
+// monthly Feishu Open Platform quota (err_code 99991403, enforced since
+// 2024-12-03). Retries within the same calendar month are futile; the worker
+// should surface this rather than burn retry budget on calls that cannot succeed.
+var ErrFeishuProjectQuotaExhausted = errors.New("Feishu Project API monthly quota exhausted")
 
 type FeishuProjectTxStarter interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
@@ -74,6 +103,12 @@ type FeishuProjectSyncSummary struct {
 
 type FeishuProjectSyncOptions struct {
 	WorkItemID string
+
+	// SinceUnixMilli, if > 0, overrides the `updated_at >=` lookback start
+	// passed to Feishu's /work_item/filter call. Sync entry computes this
+	// from the trigger + cfg watermark and threads it through so the policy
+	// lives in one place. Zero means use the legacy per-cfg/fullSync default.
+	SinceUnixMilli int64
 }
 
 type FeishuProjectWorkItemPage struct {
@@ -201,8 +236,18 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 	summary := FeishuProjectSyncSummary{}
 	var summaryMu sync.Mutex
 	var syncErr error
-	fullSync := trigger == "manual"
+	// Manual triggers do a 30-day bootstrap; reconcile triggers do a 6h30m
+	// reconcile pass. Both share the larger-lookback + light-update-existing
+	// path so a no-cost attachment refetch isn't triggered for items whose
+	// external_id is already bound.
+	fullSync := trigger == "manual" || trigger == "reconcile"
 	lightUpdateExisting := fullSync && strings.TrimSpace(opts.WorkItemID) == ""
+	if opts.SinceUnixMilli == 0 {
+		opts.SinceUnixMilli = feishuProjectSinceUnixMilliForTrigger(cfg, trigger, time.Now())
+	}
+	// Tracks max(item.updated_at) across all goroutines so the watermark is
+	// pinned to Feishu's clock, not ours.
+	var maxObservedUpdatedAtMs atomic.Int64
 	totalCount := 0
 	for _, typ := range enabledFeishuProjectTypes(cfg) {
 		err := s.Client.QueryWorkItemPagesWithOptions(ctx, cfg, typ, fullSync, opts, func(page FeishuProjectWorkItemPage) error {
@@ -228,6 +273,15 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 							continue
 						}
 						result, attachErrs, err := s.syncWorkItem(ctx, cfg, item, lightUpdateExisting)
+						if err == nil && !item.UpdatedAt.IsZero() {
+							ms := item.UpdatedAt.UnixMilli()
+							for {
+								cur := maxObservedUpdatedAtMs.Load()
+								if ms <= cur || maxObservedUpdatedAtMs.CompareAndSwap(cur, ms) {
+									break
+								}
+							}
+						}
 						summaryMu.Lock()
 						if err != nil {
 							summary.Errors++
@@ -294,8 +348,16 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 	} else {
 		// If this write fails silently, last_synced_at never advances and the
 		// next incremental sync replays the full lookback window.
-		if err := s.Queries.MarkFeishuProjectIntegrationSynced(finishCtx, cfg.ID); err != nil {
+		if err := s.Queries.MarkFeishuProjectIntegrationSynced(finishCtx, db.MarkFeishuProjectIntegrationSyncedParams{
+			ID:                  cfg.ID,
+			ObservedUpdatedAtMs: maxObservedUpdatedAtMs.Load(),
+		}); err != nil {
 			slog.Warn("Feishu Project mark-synced failed; last_synced_at not advanced", "integration_id", UUIDString(cfg.ID), "error", err)
+		}
+		if trigger == "reconcile" {
+			if err := s.Queries.MarkFeishuProjectIntegrationReconciled(finishCtx, cfg.ID); err != nil {
+				slog.Warn("Feishu Project mark-reconciled failed; will re-attempt next tick", "integration_id", UUIDString(cfg.ID), "error", err)
+			}
 		}
 		if attachmentHint != "" {
 			errText = pgtype.Text{String: attachmentHint, Valid: true}
@@ -1245,12 +1307,44 @@ func feishuProjectManualSyncSinceUnixMilli(now time.Time) int64 {
 	return now.Add(-feishuProjectManualLookback).UnixMilli()
 }
 
+// feishuProjectSyncSince computes the legacy local-clock-based incremental
+// lookback. Kept as a fallback for integrations that haven't yet stored a
+// Feishu-side watermark (last_seen_updated_at_ms), and for tests that drive
+// QueryWorkItemPages directly without a Sync entry.
 func feishuProjectSyncSince(cfg db.FeishuProjectIntegration, now time.Time) time.Time {
 	since := now.Add(-feishuProjectInitialLookback)
 	if cfg.LastSyncedAt.Valid {
 		since = cfg.LastSyncedAt.Time.Add(-feishuProjectIncrementalReplay)
 	}
 	return since
+}
+
+// feishuProjectSinceUnixMilliForTrigger picks the `updated_at >=` lookback
+// for a sync run based on its trigger. The result is the single point of
+// policy for "how far back do we ask Feishu for changes".
+//
+//   - "manual"    → 30d (full bootstrap on user request)
+//   - "reconcile" → 6h30m (6h cadence + 30m safety overshoot)
+//   - default     → incremental: last_seen_updated_at_ms - 10m overlap,
+//     falling back to legacy local-clock lookback when the watermark
+//     hasn't been stored yet (first run after deploy of this change).
+//
+// Using Feishu's own updated_at value for the incremental watermark removes
+// the local-clock dependency in the previous design: a Multica server clock
+// that runs ahead of (or behind) Feishu's gateway no longer eats into the
+// 10-minute overlap window.
+func feishuProjectSinceUnixMilliForTrigger(cfg db.FeishuProjectIntegration, trigger string, now time.Time) int64 {
+	switch trigger {
+	case "manual":
+		return feishuProjectManualSyncSinceUnixMilli(now)
+	case "reconcile":
+		return now.Add(-feishuProjectReconcileLookback - feishuProjectReconcileLookbackSafety).UnixMilli()
+	default:
+		if cfg.LastSeenUpdatedAtMs.Valid && cfg.LastSeenUpdatedAtMs.Int64 > 0 {
+			return cfg.LastSeenUpdatedAtMs.Int64 - feishuProjectIncrementalReplay.Milliseconds()
+		}
+		return feishuProjectSyncSinceUnixMilli(cfg, now)
+	}
 }
 
 func buildFeishuProjectSyncMQL(projectKey, workItemType string, statuses []string, sinceDate, extraFilter string, offset, limit int) string {
@@ -1330,9 +1424,16 @@ func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context,
 			req["work_item_ids"] = []string{strings.TrimSpace(opts.WorkItemID)}
 		}
 		now := time.Now()
-		updatedAtStart := feishuProjectSyncSinceUnixMilli(cfg, now)
-		if fullSync {
-			updatedAtStart = feishuProjectManualSyncSinceUnixMilli(now)
+		// Sync entry computes the precise lookback per trigger and threads it
+		// through opts.SinceUnixMilli. Direct callers (tests, future ad-hoc
+		// uses) without that context fall back to the legacy fullSync-aware
+		// default.
+		updatedAtStart := opts.SinceUnixMilli
+		if updatedAtStart == 0 {
+			updatedAtStart = feishuProjectSyncSinceUnixMilli(cfg, now)
+			if fullSync {
+				updatedAtStart = feishuProjectManualSyncSinceUnixMilli(now)
+			}
 		}
 		req["updated_at"] = map[string]any{
 			"start": updatedAtStart,
@@ -1605,7 +1706,7 @@ func (c *FeishuProjectClient) openAPI(ctx context.Context, cfg db.FeishuProjectI
 		resp, err := c.httpClient().Do(req)
 		if err != nil {
 			lastErr = err
-			if attempt < feishuProjectAPIRetryAttempts && feishuProjectRetryDelay(ctx, attempt) {
+			if attempt < feishuProjectAPIRetryAttempts && feishuProjectSleep(ctx, feishuProjectRetryDelay(attempt)) {
 				continue
 			}
 			return nil, err
@@ -1614,45 +1715,78 @@ func (c *FeishuProjectClient) openAPI(ctx context.Context, cfg db.FeishuProjectI
 		_ = resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			lastErr = fmt.Errorf("Feishu Project API %s %s http %d: %s", method, path, resp.StatusCode, string(raw))
-			if attempt < feishuProjectAPIRetryAttempts && feishuProjectRetryableHTTPStatus(resp.StatusCode) && feishuProjectRetryDelay(ctx, attempt) {
-				slog.Warn("Feishu Project API retrying",
-					"method", method,
-					"path", path,
-					"status", resp.StatusCode,
-					"attempt", attempt,
-					"max_attempts", feishuProjectAPIRetryAttempts,
-					"body", string(raw),
-				)
-				continue
+			if !feishuProjectRetryableHTTPStatus(resp.StatusCode) || attempt >= feishuProjectAPIRetryAttempts {
+				return nil, lastErr
 			}
-			return nil, lastErr
+			delay := feishuProjectRetryDelay(attempt)
+			if resp.StatusCode == http.StatusTooManyRequests {
+				if d := feishuProjectRateLimitResetDelay(resp.Header); d > 0 {
+					delay = d
+				} else {
+					delay = feishuProjectRateLimitFallbackDelay(attempt)
+				}
+			}
+			slog.Warn("Feishu Project API retrying",
+				"method", method,
+				"path", path,
+				"status", resp.StatusCode,
+				"attempt", attempt,
+				"max_attempts", feishuProjectAPIRetryAttempts,
+				"delay", delay,
+				"body", string(raw),
+			)
+			if !feishuProjectSleep(ctx, delay) {
+				return nil, lastErr
+			}
+			continue
 		}
 		var out map[string]any
 		if err := json.Unmarshal(raw, &out); err != nil {
 			return nil, err
 		}
 		if msg := feishuProjectAPIError(out); msg != "" {
-			lastErr = fmt.Errorf("Feishu Project API %s %s failed: %s", method, path, msg)
-			if attempt < feishuProjectAPIRetryAttempts && feishuProjectRetryableAPIError(out) && feishuProjectRetryDelay(ctx, attempt) {
-				slog.Warn("Feishu Project API retrying",
-					"method", method,
-					"path", path,
-					"attempt", attempt,
-					"max_attempts", feishuProjectAPIRetryAttempts,
-					"error", msg,
-				)
-				continue
+			// Monthly tenant quota — refilled only on the 1st of next month, so
+			// no amount of retrying within this run will succeed.
+			if feishuProjectIsQuotaExhausted(out) {
+				return nil, fmt.Errorf("Feishu Project API %s %s: %s: %w", method, path, msg, ErrFeishuProjectQuotaExhausted)
 			}
-			return nil, lastErr
+			lastErr = fmt.Errorf("Feishu Project API %s %s failed: %s", method, path, msg)
+			if !feishuProjectRetryableAPIError(out) || attempt >= feishuProjectAPIRetryAttempts {
+				return nil, lastErr
+			}
+			delay := feishuProjectRetryDelay(attempt)
+			if feishuProjectIsRateLimited(out) {
+				if d := feishuProjectRateLimitResetDelay(resp.Header); d > 0 {
+					delay = d
+				} else {
+					delay = feishuProjectRateLimitFallbackDelay(attempt)
+				}
+			}
+			slog.Warn("Feishu Project API retrying",
+				"method", method,
+				"path", path,
+				"attempt", attempt,
+				"max_attempts", feishuProjectAPIRetryAttempts,
+				"delay", delay,
+				"error", msg,
+			)
+			if !feishuProjectSleep(ctx, delay) {
+				return nil, lastErr
+			}
+			continue
 		}
 		return out, nil
 	}
 	return nil, lastErr
 }
 
-func feishuProjectRetryDelay(ctx context.Context, attempt int) bool {
-	delay := time.Duration(attempt) * time.Second
-	timer := time.NewTimer(delay)
+// feishuProjectSleep blocks for d, returning false if the context is cancelled
+// before the timer fires. Non-positive d returns true immediately.
+func feishuProjectSleep(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
@@ -1660,6 +1794,47 @@ func feishuProjectRetryDelay(ctx context.Context, attempt int) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+// feishuProjectRetryDelay returns the linear-backoff duration we use for
+// transient errors that are *not* rate-limit-related (network blips, 5xx,
+// upstream gateway timeouts). Rate-limited responses use a separate, larger
+// delay computed from the gateway reset header.
+func feishuProjectRetryDelay(attempt int) time.Duration {
+	return time.Duration(attempt) * time.Second
+}
+
+// feishuProjectRateLimitResetDelay reads Feishu's gateway reset header. The
+// gateway emits the number of whole seconds until the per-token-per-interface
+// bucket recovers; capped at feishuProjectRateLimitMaxSleep so a malformed
+// response can't stall a worker indefinitely.
+func feishuProjectRateLimitResetDelay(h http.Header) time.Duration {
+	raw := strings.TrimSpace(h.Get("x-ogw-ratelimit-reset"))
+	if raw == "" {
+		return 0
+	}
+	secs, err := strconv.Atoi(raw)
+	if err != nil || secs <= 0 {
+		return 0
+	}
+	d := time.Duration(secs) * time.Second
+	if d > feishuProjectRateLimitMaxSleep {
+		d = feishuProjectRateLimitMaxSleep
+	}
+	return d
+}
+
+// feishuProjectRateLimitFallbackDelay is the exponential backoff used when the
+// gateway returns 429 / err_code 99991400 but no reset header — 2s, 4s, 8s, 16s.
+func feishuProjectRateLimitFallbackDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	d := time.Duration(1<<attempt) * time.Second
+	if d > feishuProjectRateLimitMaxSleep {
+		d = feishuProjectRateLimitMaxSleep
+	}
+	return d
 }
 
 func feishuProjectRetryableHTTPStatus(status int) bool {
@@ -1671,14 +1846,42 @@ func feishuProjectRetryableHTTPStatus(status int) bool {
 	}
 }
 
-func feishuProjectRetryableAPIError(payload map[string]any) bool {
+// feishuProjectErrCode pulls err_code from the response envelope, falling back
+// to nested err.code (used by a few legacy Feishu Project endpoints).
+func feishuProjectErrCode(payload map[string]any) int {
 	code, _ := feishuProjectInt(payload["err_code"])
 	if code == 0 {
 		if errMap, _ := payload["err"].(map[string]any); errMap != nil {
 			code, _ = feishuProjectInt(errMap["code"])
 		}
 	}
-	if code == 50007 {
+	return code
+}
+
+// feishuProjectIsRateLimited reports whether the response body indicates the
+// per-token-per-interface QPS limit was hit. err_code 99991400 with msg
+// "request trigger frequency limit" is the documented signal.
+func feishuProjectIsRateLimited(payload map[string]any) bool {
+	if feishuProjectErrCode(payload) == 99991400 {
+		return true
+	}
+	msg := strings.ToLower(strings.TrimSpace(fmt.Sprint(payload["err_msg"]) + " " + fmt.Sprint(payload["msg"])))
+	return strings.Contains(msg, "frequency limit") || strings.Contains(msg, "too many requests")
+}
+
+// feishuProjectIsQuotaExhausted reports whether the tenant's monthly Feishu
+// Open Platform quota has been consumed (err_code 99991403, enforced since
+// 2024-12-03). The bucket only refills on the 1st of the next natural month,
+// so retrying within the same run is futile.
+func feishuProjectIsQuotaExhausted(payload map[string]any) bool {
+	return feishuProjectErrCode(payload) == 99991403
+}
+
+func feishuProjectRetryableAPIError(payload map[string]any) bool {
+	if feishuProjectIsRateLimited(payload) {
+		return true
+	}
+	if feishuProjectErrCode(payload) == 50007 {
 		return true
 	}
 	msg := strings.ToLower(strings.TrimSpace(fmt.Sprint(payload["err_msg"]) + " " + fmt.Sprint(payload["msg"])))
@@ -1764,13 +1967,26 @@ func (c *FeishuProjectClient) DownloadAttachment(ctx context.Context, cfg db.Fei
 		payload := map[string]any{"uuid": att.ID}
 		var lastErr error
 		for attempt := 1; attempt <= feishuProjectDownloadRetryAttempts; attempt++ {
-			raw, filename, contentType, retryable, reqErr := c.downloadAttachmentRequest(ctx, cfg, item, token, payload)
+			outcome, reqErr := c.downloadAttachmentRequest(ctx, cfg, item, token, payload)
 			if reqErr == nil {
-				return raw, firstNonEmpty(filename, att.Name), firstNonEmpty(contentType, att.ContentType), nil
+				return outcome.raw, firstNonEmpty(outcome.filename, att.Name), firstNonEmpty(outcome.contentType, att.ContentType), nil
 			}
 			lastErr = reqErr
-			if !retryable || attempt == feishuProjectDownloadRetryAttempts {
+			// Quota exhaustion will not heal until the next natural month;
+			// caller should bail out instead of burning retry budget.
+			if errors.Is(reqErr, ErrFeishuProjectQuotaExhausted) {
+				return nil, "", "", reqErr
+			}
+			if !outcome.retryable || attempt == feishuProjectDownloadRetryAttempts {
 				break
+			}
+			delay := feishuProjectDownloadRetryInitialDelay * time.Duration(1<<(attempt-1))
+			if outcome.rateLimited {
+				if outcome.retryAfter > 0 {
+					delay = outcome.retryAfter
+				} else {
+					delay = feishuProjectRateLimitFallbackDelay(attempt)
+				}
 			}
 			slog.Warn("Feishu Project attachment download retrying",
 				"workspace_id", UUIDString(cfg.WorkspaceID),
@@ -1780,9 +1996,11 @@ func (c *FeishuProjectClient) DownloadAttachment(ctx context.Context, cfg db.Fei
 				"attachment_id", att.ID,
 				"attempt", attempt,
 				"max_attempts", feishuProjectDownloadRetryAttempts,
+				"delay", delay,
+				"rate_limited", outcome.rateLimited,
 				"error", reqErr,
 			)
-			if !feishuProjectDownloadBackoff(ctx, attempt) {
+			if !feishuProjectSleep(ctx, delay) {
 				return nil, "", "", ctx.Err()
 			}
 		}
@@ -1820,11 +2038,23 @@ func (c *FeishuProjectClient) DownloadAttachment(ctx context.Context, cfg db.Fei
 	return raw, firstNonEmpty(filenameFromContentDisposition(resp.Header.Get("Content-Disposition")), att.Name), firstNonEmpty(resp.Header.Get("Content-Type"), att.ContentType), nil
 }
 
-func (c *FeishuProjectClient) downloadAttachmentRequest(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, token string, body any) (raw []byte, filename, contentType string, retryable bool, err error) {
+// feishuProjectDownloadOutcome carries both the response body and the retry
+// hints derived from the response (status, body err_code, rate-limit headers).
+// Embedded inline rather than returned as a 7-tuple to keep call sites readable.
+type feishuProjectDownloadOutcome struct {
+	raw         []byte
+	filename    string
+	contentType string
+	retryable   bool
+	rateLimited bool
+	retryAfter  time.Duration
+}
+
+func (c *FeishuProjectClient) downloadAttachmentRequest(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, token string, body any) (feishuProjectDownloadOutcome, error) {
 	rawBody, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+fmt.Sprintf("/open_api/%s/work_item/%s/%s/file/download", cfg.ProjectKey, item.Type, item.ID), bytes.NewReader(rawBody))
 	if err != nil {
-		return nil, "", "", false, err
+		return feishuProjectDownloadOutcome{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-PLUGIN-TOKEN", token)
@@ -1834,36 +2064,43 @@ func (c *FeishuProjectClient) downloadAttachmentRequest(ctx context.Context, cfg
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		// Network-level failures (timeouts, resets) are almost always transient.
-		return nil, "", "", true, err
+		return feishuProjectDownloadOutcome{retryable: true}, err
 	}
 	defer resp.Body.Close()
-	raw, _ = io.ReadAll(io.LimitReader(resp.Body, feishuProjectAttachmentMaxSize+1))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, feishuProjectAttachmentMaxSize+1))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", "", feishuProjectAttachmentRetryableHTTPStatus(resp.StatusCode),
-			fmt.Errorf("Feishu Project attachment download http %d: %s", resp.StatusCode, string(raw))
+		outcome := feishuProjectDownloadOutcome{
+			retryable: feishuProjectAttachmentRetryableHTTPStatus(resp.StatusCode),
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			outcome.rateLimited = true
+			outcome.retryAfter = feishuProjectRateLimitResetDelay(resp.Header)
+		}
+		return outcome, fmt.Errorf("Feishu Project attachment download http %d: %s", resp.StatusCode, string(raw))
 	}
 	if strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
 		var payload map[string]any
 		if err := json.Unmarshal(raw, &payload); err == nil {
 			if msg := feishuProjectAPIError(payload); msg != "" {
-				return nil, "", "", feishuProjectAttachmentRetryableAPIError(payload),
-					fmt.Errorf("Feishu Project attachment download failed: %s", msg)
+				if feishuProjectIsQuotaExhausted(payload) {
+					return feishuProjectDownloadOutcome{}, fmt.Errorf("Feishu Project attachment download: %s: %w", msg, ErrFeishuProjectQuotaExhausted)
+				}
+				outcome := feishuProjectDownloadOutcome{
+					retryable: feishuProjectAttachmentRetryableAPIError(payload),
+				}
+				if feishuProjectIsRateLimited(payload) {
+					outcome.rateLimited = true
+					outcome.retryAfter = feishuProjectRateLimitResetDelay(resp.Header)
+				}
+				return outcome, fmt.Errorf("Feishu Project attachment download failed: %s", msg)
 			}
 		}
 	}
-	return raw, filenameFromContentDisposition(resp.Header.Get("Content-Disposition")), resp.Header.Get("Content-Type"), false, nil
-}
-
-func feishuProjectDownloadBackoff(ctx context.Context, attempt int) bool {
-	delay := feishuProjectDownloadRetryInitialDelay * time.Duration(1<<(attempt-1))
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
+	return feishuProjectDownloadOutcome{
+		raw:         raw,
+		filename:    filenameFromContentDisposition(resp.Header.Get("Content-Disposition")),
+		contentType: resp.Header.Get("Content-Type"),
+	}, nil
 }
 
 func feishuProjectAttachmentRetryableHTTPStatus(status int) bool {
@@ -1879,20 +2116,14 @@ func feishuProjectAttachmentRetryableHTTPStatus(status int) bool {
 // transient on the attachment download endpoint:
 //   - 30019: internal error observed mid-sync, succeeds on retry within hundreds of ms.
 //   - 50007: upstream gateway timeout.
+//   - 99991400: per-token-per-interface QPS limit hit; retry after gateway reset.
 //
 // Anything else (including 4xx-mapped business errors) is permanent.
 func feishuProjectAttachmentRetryableAPIError(payload map[string]any) bool {
-	code := 0
-	if raw, ok := payload["err_code"]; ok {
-		code, _ = strconv.Atoi(strings.TrimSpace(fmt.Sprint(raw)))
+	if feishuProjectIsRateLimited(payload) {
+		return true
 	}
-	if code == 0 {
-		if errMap, _ := payload["err"].(map[string]any); errMap != nil {
-			if raw, ok := errMap["code"]; ok {
-				code, _ = strconv.Atoi(strings.TrimSpace(fmt.Sprint(raw)))
-			}
-		}
-	}
+	code := feishuProjectErrCode(payload)
 	if code == 30019 || code == 50007 {
 		return true
 	}
