@@ -687,40 +687,23 @@ func (s *FeishuProjectSyncService) syncIssueLabels(ctx context.Context, cfg db.F
 	for _, binding := range bindings {
 		byRule[binding.RuleID] = binding
 	}
-	activeRuleIDs := map[string]bool{}
+	desiredRuleLabels := map[string]pgtype.UUID{}
+	desiredLabelIDs := map[pgtype.UUID]bool{}
 	changed := false
 	for _, rule := range rules {
 		if !rule.Enabled || strings.TrimSpace(rule.ID) == "" || strings.TrimSpace(rule.FieldKey) == "" || strings.TrimSpace(rule.Match) == "" || strings.TrimSpace(rule.LabelName) == "" {
 			continue
 		}
-		activeRuleIDs[rule.ID] = true
 		binding, hadBinding := byRule[rule.ID]
 		if !feishuProjectLabelRuleMatches(item, rule) {
-			if hadBinding {
-				if err := s.detachManagedLabel(ctx, cfg.WorkspaceID, issueID, binding.LabelID); err != nil {
-					return changed, err
-				}
-				if err := s.Queries.DeleteFeishuProjectLabelSyncBinding(ctx, db.DeleteFeishuProjectLabelSyncBindingParams{
-					IntegrationID: cfg.ID,
-					IssueID:       issueID,
-					RuleID:        rule.ID,
-				}); err != nil {
-					return changed, err
-				}
-				changed = true
-			}
 			continue
 		}
 		label, err := s.ensureIssueLabel(ctx, cfg.WorkspaceID, rule.LabelName)
 		if err != nil {
 			return changed, err
 		}
-		if hadBinding && binding.LabelID != label.ID {
-			if err := s.detachManagedLabel(ctx, cfg.WorkspaceID, issueID, binding.LabelID); err != nil {
-				return changed, err
-			}
-			hadBinding = false
-		}
+		desiredRuleLabels[rule.ID] = label.ID
+		desiredLabelIDs[label.ID] = true
 		if err := s.Queries.AttachLabelToIssue(ctx, db.AttachLabelToIssueParams{
 			IssueID:     issueID,
 			LabelID:     label.ID,
@@ -737,16 +720,19 @@ func (s *FeishuProjectSyncService) syncIssueLabels(ctx context.Context, cfg db.F
 		}); err != nil {
 			return changed, err
 		}
-		if !hadBinding {
+		if !hadBinding || binding.LabelID != label.ID {
 			changed = true
 		}
 	}
 	for _, binding := range bindings {
-		if activeRuleIDs[binding.RuleID] {
+		deleteBinding, detachLabel := feishuProjectLabelSyncCleanupAction(binding, desiredRuleLabels, desiredLabelIDs)
+		if !deleteBinding {
 			continue
 		}
-		if err := s.detachManagedLabel(ctx, cfg.WorkspaceID, issueID, binding.LabelID); err != nil {
-			return changed, err
+		if detachLabel {
+			if err := s.detachManagedLabel(ctx, cfg.WorkspaceID, issueID, binding.LabelID); err != nil {
+				return changed, err
+			}
 		}
 		if err := s.Queries.DeleteFeishuProjectLabelSyncBinding(ctx, db.DeleteFeishuProjectLabelSyncBindingParams{
 			IntegrationID: cfg.ID,
@@ -758,6 +744,13 @@ func (s *FeishuProjectSyncService) syncIssueLabels(ctx context.Context, cfg db.F
 		changed = true
 	}
 	return changed, nil
+}
+
+func feishuProjectLabelSyncCleanupAction(binding db.FeishuProjectLabelSyncBinding, desiredRuleLabels map[string]pgtype.UUID, desiredLabelIDs map[pgtype.UUID]bool) (deleteBinding bool, detachLabel bool) {
+	if labelID, ok := desiredRuleLabels[binding.RuleID]; ok && labelID == binding.LabelID {
+		return false, false
+	}
+	return true, !desiredLabelIDs[binding.LabelID]
 }
 
 func feishuProjectLabelSyncRules(cfg db.FeishuProjectIntegration) []FeishuProjectLabelSyncRule {

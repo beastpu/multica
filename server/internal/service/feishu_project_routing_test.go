@@ -244,6 +244,38 @@ func TestParseFeishuProjectMQLUsesOptionLabelForFieldValues(t *testing.T) {
 	}
 }
 
+func TestFeishuProjectLabelSyncCleanupKeepsSharedDesiredLabel(t *testing.T) {
+	labelID := uuidLike(41)
+	binding := db.FeishuProjectLabelSyncBinding{
+		RuleID:  "old-rule",
+		LabelID: labelID,
+	}
+	desiredRuleLabels := map[string]pgtype.UUID{
+		"active-rule": labelID,
+	}
+	desiredLabelIDs := map[pgtype.UUID]bool{
+		labelID: true,
+	}
+
+	deleteBinding, detachLabel := feishuProjectLabelSyncCleanupAction(binding, desiredRuleLabels, desiredLabelIDs)
+	if !deleteBinding || detachLabel {
+		t.Fatalf("expected stale binding deletion without shared label detach, got delete=%v detach=%v", deleteBinding, detachLabel)
+	}
+}
+
+func TestFeishuProjectLabelSyncCleanupDetachesUnusedLabel(t *testing.T) {
+	labelID := uuidLike(42)
+	binding := db.FeishuProjectLabelSyncBinding{
+		RuleID:  "old-rule",
+		LabelID: labelID,
+	}
+
+	deleteBinding, detachLabel := feishuProjectLabelSyncCleanupAction(binding, map[string]pgtype.UUID{}, map[pgtype.UUID]bool{})
+	if !deleteBinding || !detachLabel {
+		t.Fatalf("expected stale binding deletion with unused label detach, got delete=%v detach=%v", deleteBinding, detachLabel)
+	}
+}
+
 func TestParseFeishuProjectBusinessLineTree(t *testing.T) {
 	// Shape borrowed from the postman /business/all sample variants — nested children.
 	payload := map[string]any{
