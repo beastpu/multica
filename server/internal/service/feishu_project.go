@@ -45,7 +45,7 @@ const (
 	feishuProjectReconcileInterval       = 6 * time.Hour
 	feishuProjectReconcileLookback       = 6 * time.Hour
 	feishuProjectReconcileLookbackSafety = 30 * time.Minute
-	feishuProjectAttachmentMaxSize = 5 << 20
+	feishuProjectAttachmentMaxSize       = 5 << 20
 	// Feishu Project caps every (token, single interface) pair at 15 QPS
 	// (project.feishu.cn/b/helpcenter/1p8d7djs/4bsmoql6). The advisory lock keeps
 	// only one replica syncing a given integration, so worker fan-out is the only
@@ -790,9 +790,13 @@ func matchBusinessLineRoute(routes []db.FeishuProjectBusinessLineRoute, tokens [
 	}
 	matchers := []func(db.FeishuProjectBusinessLineRoute) bool{
 		func(r db.FeishuProjectBusinessLineRoute) bool { return leafIDs[strings.TrimSpace(r.BusinessLineID)] },
-		func(r db.FeishuProjectBusinessLineRoute) bool { return leafNames[strings.TrimSpace(r.BusinessLineName)] },
+		func(r db.FeishuProjectBusinessLineRoute) bool {
+			return leafNames[strings.TrimSpace(r.BusinessLineName)]
+		},
 		func(r db.FeishuProjectBusinessLineRoute) bool { return parentIDs[strings.TrimSpace(r.BusinessLineID)] },
-		func(r db.FeishuProjectBusinessLineRoute) bool { return parentNames[strings.TrimSpace(r.BusinessLineName)] },
+		func(r db.FeishuProjectBusinessLineRoute) bool {
+			return parentNames[strings.TrimSpace(r.BusinessLineName)]
+		},
 	}
 	for _, m := range matchers {
 		for i := range routes {
@@ -1356,7 +1360,7 @@ func buildFeishuProjectSyncMQL(projectKey, workItemType string, statuses []strin
 		conditions = append(conditions, "("+filter+")")
 	}
 	return fmt.Sprintf(
-		"SELECT `work_item_id`, `name`, `description`, `work_item_status`, `current_status_operator`, `updated_at` FROM `%s`.`%s` WHERE %s ORDER BY `updated_at` DESC LIMIT %d, %d",
+		"SELECT `work_item_id`, `name`, `description`, `work_item_status`, `updated_at` FROM `%s`.`%s` WHERE %s ORDER BY `updated_at` DESC LIMIT %d, %d",
 		escapeMQLIdent(projectKey),
 		escapeMQLIdent(workItemType),
 		strings.Join(conditions, " AND "),
@@ -2236,7 +2240,7 @@ func parseFeishuProjectMQL(payload map[string]any, typ, projectKey string) []Fei
 				Title:       firstNonEmpty(record["name"], record["title"]),
 				Description: description,
 				Status:      status,
-				OwnerEmail:  extractEmail(firstNonEmpty(record["current_status_operator"], record["owner"], record["operator"])),
+				OwnerEmail:  extractEmail(firstNonEmpty(record["owner"], record["operator"])),
 				UpdatedAt:   updatedAt,
 				URL:         fmt.Sprintf("https://project.feishu.cn/%s/%s/detail/%s", projectKey, typ, id),
 				Attachments: dedupeFeishuProjectAttachments(attachments),
@@ -2311,6 +2315,7 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey, businessL
 		if ts := feishuProjectTime(row["updated_at"]); !ts.IsZero() {
 			record["updated_at"] = ts.Format(time.RFC3339Nano)
 		}
+		userEmails := feishuProjectUserEmails(row)
 		var businessLineTokens []FeishuBusinessLineToken
 		fields, _ := row["fields"].([]any)
 		var attachments []FeishuProjectAttachment
@@ -2326,9 +2331,13 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey, businessL
 			}
 			attachments = append(attachments, feishuProjectOpenAPIFieldAttachments(field)...)
 			value := feishuProjectOpenAPIFieldValue(field)
+			displayName := feishuFieldDisplayName(field)
+			if feishuProjectIsOwnerField(key, displayName) {
+				value = firstNonEmpty(feishuProjectOpenAPIOwnerFieldValue(field["field_value"]), value)
+			}
 			if value != "" {
 				record[key] = value
-				if displayName := feishuFieldDisplayName(field); displayName != "" {
+				if displayName != "" {
 					record[displayName] = value
 				}
 			}
@@ -2345,9 +2354,13 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey, businessL
 			}
 			attachments = append(attachments, feishuProjectOpenAPIFieldAttachments(field)...)
 			value := feishuProjectOpenAPIFieldValue(field)
+			displayName := feishuFieldDisplayName(field)
+			if feishuProjectIsOwnerField(key, displayName) {
+				value = firstNonEmpty(feishuProjectOpenAPIOwnerFieldValue(field["field_value"]), value)
+			}
 			if value != "" {
 				record[key] = value
-				if displayName := feishuFieldDisplayName(field); displayName != "" {
+				if displayName != "" {
 					record[displayName] = value
 				}
 			}
@@ -2358,7 +2371,7 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey, businessL
 		description, descriptionAttachments := normalizeFeishuProjectDescription(record["description"])
 		attachments = append(attachments, descriptionAttachments...)
 		updatedAt, _ := time.Parse(time.RFC3339Nano, record["updated_at"])
-		ownerEmail := feishuProjectOwnerEmail(record, feishuProjectUserEmails(row))
+		ownerEmail := firstNonEmpty(feishuProjectOperatorRoleEmail(row, userEmails), feishuProjectOwnerEmail(record, userEmails))
 		out = append(out, FeishuProjectWorkItem{
 			ID:                 id,
 			Type:               typ,
@@ -2375,6 +2388,135 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey, businessL
 	return out
 }
 
+func feishuProjectOperatorRoleEmail(row map[string]any, userEmails map[string]string) string {
+	for _, rolesAny := range []any{row["role_members"], nestedMapValue(row, "work_item_attribute", "role_members")} {
+		roles, _ := rolesAny.([]any)
+		for _, roleAny := range roles {
+			role, _ := roleAny.(map[string]any)
+			if !feishuProjectIsOperatorRole(role) {
+				continue
+			}
+			members, _ := role["members"].([]any)
+			for _, memberAny := range members {
+				member, _ := memberAny.(map[string]any)
+				if email := extractEmail(fmt.Sprint(member["email"])); email != "" {
+					return email
+				}
+				for _, key := range []string{
+					fmt.Sprint(member["user_key"]),
+					fmt.Sprint(member["key"]),
+					fmt.Sprint(member["id"]),
+					fmt.Sprint(member["username"]),
+					fmt.Sprint(member["open_id"]),
+					fmt.Sprint(member["union_id"]),
+				} {
+					if email := userEmails[strings.TrimSpace(key)]; email != "" {
+						return email
+					}
+				}
+			}
+		}
+	}
+	for _, field := range feishuProjectAllFieldMaps(row) {
+		key := firstNonEmpty(fmt.Sprint(field["field_key"]), fmt.Sprint(field["field_alias"]))
+		fieldType := strings.TrimSpace(fmt.Sprint(field["field_type_key"]))
+		if key != "role_owners" && fieldType != "role_owners" {
+			continue
+		}
+		if email := feishuProjectRoleOwnersFieldEmail(field["field_value"], userEmails); email != "" {
+			return email
+		}
+	}
+	return ""
+}
+
+func feishuProjectAllFieldMaps(row map[string]any) []map[string]any {
+	var out []map[string]any
+	for _, listKey := range []string{"fields", "multi_texts", "work_item_fields"} {
+		fields, _ := row[listKey].([]any)
+		for _, fieldAny := range fields {
+			field, _ := fieldAny.(map[string]any)
+			if field != nil {
+				out = append(out, field)
+			}
+		}
+	}
+	return out
+}
+
+func feishuProjectIsOperatorRole(role map[string]any) bool {
+	for _, key := range []string{"key", "role_key", "role_id"} {
+		if strings.TrimSpace(fmt.Sprint(role[key])) == "operator" {
+			return true
+		}
+	}
+	switch strings.TrimSpace(fmt.Sprint(role["name"])) {
+	case "处理人", "经办人", "负责人":
+		return true
+	}
+	switch strings.TrimSpace(fmt.Sprint(role["role_name"])) {
+	case "处理人", "经办人", "负责人":
+		return true
+	}
+	return false
+}
+
+func feishuProjectRoleOwnersFieldEmail(value any, userEmails map[string]string) string {
+	roles, _ := value.([]any)
+	for _, roleAny := range roles {
+		role, _ := roleAny.(map[string]any)
+		if !feishuProjectRoleOwnersEntryIsOperator(role) {
+			continue
+		}
+		owners, _ := role["owners"].([]any)
+		for _, ownerAny := range owners {
+			switch owner := ownerAny.(type) {
+			case map[string]any:
+				if email := extractEmail(fmt.Sprint(owner["email"])); email != "" {
+					return email
+				}
+				for _, key := range []string{
+					fmt.Sprint(owner["user_key"]),
+					fmt.Sprint(owner["key"]),
+					fmt.Sprint(owner["id"]),
+					fmt.Sprint(owner["username"]),
+					fmt.Sprint(owner["open_id"]),
+					fmt.Sprint(owner["union_id"]),
+				} {
+					if email := userEmails[strings.TrimSpace(key)]; email != "" {
+						return email
+					}
+				}
+			default:
+				token := strings.TrimSpace(fmt.Sprint(owner))
+				if email := extractEmail(token); email != "" {
+					return email
+				}
+				if email := userEmails[token]; email != "" {
+					return email
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func feishuProjectRoleOwnersEntryIsOperator(role map[string]any) bool {
+	raw := strings.TrimSpace(fmt.Sprint(role["role"]))
+	if raw == "operator" || strings.HasSuffix(raw, "_operator") {
+		return true
+	}
+	return feishuProjectIsOperatorRole(role)
+}
+
+func nestedMapValue(row map[string]any, mapKey, valueKey string) any {
+	m, _ := row[mapKey].(map[string]any)
+	if m == nil {
+		return nil
+	}
+	return m[valueKey]
+}
+
 func feishuProjectUserEmails(row map[string]any) map[string]string {
 	rows, _ := row["user_details"].([]any)
 	out := make(map[string]string, len(rows))
@@ -2387,7 +2529,10 @@ func feishuProjectUserEmails(row map[string]any) map[string]string {
 		for _, key := range []string{
 			fmt.Sprint(user["user_key"]),
 			fmt.Sprint(user["key"]),
+			fmt.Sprint(user["id"]),
 			fmt.Sprint(user["username"]),
+			fmt.Sprint(user["open_id"]),
+			fmt.Sprint(user["union_id"]),
 		} {
 			key = strings.TrimSpace(key)
 			if key != "" && key != "<nil>" {
@@ -2475,9 +2620,22 @@ func feishuFieldDisplayName(field map[string]any) string {
 	return ""
 }
 
+func feishuProjectIsOwnerField(key, displayName string) bool {
+	key = strings.TrimSpace(key)
+	displayName = strings.TrimSpace(displayName)
+	switch key {
+	case "owner", "operator":
+		return true
+	}
+	switch displayName {
+	case "处理人", "经办人", "负责人":
+		return true
+	}
+	return false
+}
+
 // feishuProjectOwnerEmail picks the email of the work-item's assignee/owner. It tries:
-//  1. Stable Meego field_keys (`current_status_operator`, `owner`, `operator`) — the
-//     common case.
+//  1. Stable Meego field_keys (`owner`, `operator`) — the common case.
 //  2. Custom fields indexed by their Chinese display name — different spaces name the
 //     assignee field differently (经办人 / 处理人 / 负责人 / etc.) and may use a
 //     custom field_key like `field_xxx` so a plain field_key match misses them.
@@ -2488,11 +2646,10 @@ func feishuFieldDisplayName(field map[string]any) string {
 func feishuProjectOwnerEmail(record map[string]string, userEmails map[string]string) string {
 	candidates := []string{
 		// Stable field_keys
-		record["current_status_operator"], record["owner"], record["operator"],
+		record["owner"], record["operator"],
 		// Chinese display names (fall back when the field is custom and we matched it
-		// in parseFeishuProjectSearch via field["name"]). Order is intentional: the
-		// more-specific "current" variants first so they win when both exist.
-		record["当前处理人"], record["当前经办人"], record["处理人"], record["经办人"], record["负责人"],
+		// in parseFeishuProjectSearch via field["name"]).
+		record["处理人"], record["经办人"], record["负责人"],
 	}
 	for _, raw := range candidates {
 		if email := extractEmail(raw); email != "" {
@@ -2505,6 +2662,58 @@ func feishuProjectOwnerEmail(record map[string]string, userEmails map[string]str
 		}
 	}
 	return ""
+}
+
+func feishuProjectOpenAPIOwnerFieldValue(value any) string {
+	var values []string
+	add := func(v any) {
+		s := strings.TrimSpace(fmt.Sprint(v))
+		if s != "" && s != "<nil>" {
+			values = append(values, s)
+		}
+	}
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case nil:
+			return
+		case string:
+			add(x)
+		case float64:
+			add(int64(x))
+		case map[string]any:
+			if text, _ := x["doc_text"].(string); text != "" {
+				add(text)
+				return
+			}
+			for _, key := range []string{
+				"email",
+				"user_key",
+				"key",
+				"id",
+				"username",
+				"open_id",
+				"union_id",
+				"value",
+				"name_cn",
+				"name_en",
+				"name",
+				"label",
+			} {
+				if v, ok := x[key]; ok {
+					add(v)
+				}
+			}
+		case []any:
+			for _, item := range x {
+				walk(item)
+			}
+		default:
+			add(x)
+		}
+	}
+	walk(value)
+	return strings.Join(values, ", ")
 }
 
 // parseFeishuProjectFieldMetas walks the /work_item/{type}/meta response and surfaces
