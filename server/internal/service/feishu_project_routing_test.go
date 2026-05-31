@@ -164,6 +164,86 @@ func TestParseFeishuProjectSearchExtractsBusinessLine(t *testing.T) {
 	}
 }
 
+func TestParseFeishuProjectSearchIndexesFieldValuesForLabelSync(t *testing.T) {
+	payload := map[string]any{
+		"data": []any{
+			map[string]any{
+				"id":   123,
+				"name": "bug-helper-item",
+				"fields": []any{
+					map[string]any{
+						"field_key": "field_c1f194",
+						"name":      "BUG提单助手",
+						"field_value": map[string]any{
+							"key_label_value": map[string]any{
+								"key":   "govi_kagd",
+								"label": "是",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	items := parseFeishuProjectSearch(payload, "issue", "partopia", "")
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if !feishuProjectLabelRuleMatches(items[0], FeishuProjectLabelSyncRule{
+		Enabled:  true,
+		FieldKey: "field_c1f194",
+		Match:    "是",
+	}) {
+		t.Fatalf("expected field_key label rule to match, values=%#v", items[0].FieldValues)
+	}
+	if !feishuProjectLabelRuleMatches(items[0], FeishuProjectLabelSyncRule{
+		Enabled:  true,
+		FieldKey: "BUG提单助手",
+		Match:    "govi_kagd",
+	}) {
+		t.Fatalf("expected display-name label rule to match option key, values=%#v", items[0].FieldValues)
+	}
+}
+
+func TestParseFeishuProjectMQLUsesOptionLabelForFieldValues(t *testing.T) {
+	payload := map[string]any{
+		"data": map[string]any{
+			"issues": []any{
+				map[string]any{
+					"moql_field_list": []any{
+						map[string]any{
+							"key": "work_item_id",
+							"value": map[string]any{
+								"string_value": "7004582524",
+							},
+						},
+						map[string]any{
+							"key": "field_c1f194",
+							"value": map[string]any{
+								"key_label_value": map[string]any{
+									"key":   "govi_kagd",
+									"label": "是",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	items := parseFeishuProjectMQL(payload, "issue", "partopia")
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if !feishuProjectLabelRuleMatches(items[0], FeishuProjectLabelSyncRule{
+		Enabled:  true,
+		FieldKey: "field_c1f194",
+		Match:    "是",
+	}) {
+		t.Fatalf("expected MQL option label to match, values=%#v", items[0].FieldValues)
+	}
+}
+
 func TestParseFeishuProjectBusinessLineTree(t *testing.T) {
 	// Shape borrowed from the postman /business/all sample variants — nested children.
 	payload := map[string]any{
