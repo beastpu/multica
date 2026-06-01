@@ -248,11 +248,8 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 	var summaryMu sync.Mutex
 	var syncErr error
 	// Manual triggers do a 30-day bootstrap; reconcile triggers do a 6h30m
-	// reconcile pass. Both share the larger-lookback + light-update-existing
-	// path so a no-cost attachment refetch isn't triggered for items whose
-	// external_id is already bound.
+	// reconcile pass.
 	fullSync := trigger == "manual" || trigger == "reconcile"
-	lightUpdateExisting := fullSync && strings.TrimSpace(opts.WorkItemID) == ""
 	if opts.SinceUnixMilli == 0 {
 		opts.SinceUnixMilli = feishuProjectSinceUnixMilliForTrigger(cfg, trigger, time.Now())
 	}
@@ -283,7 +280,7 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 						if ctx.Err() != nil {
 							continue
 						}
-						result, attachErrs, err := s.syncWorkItem(ctx, cfg, item, lightUpdateExisting)
+						result, attachErrs, err := s.syncWorkItem(ctx, cfg, item)
 						if err == nil && !item.UpdatedAt.IsZero() {
 							ms := item.UpdatedAt.UnixMilli()
 							for {
@@ -420,7 +417,7 @@ func enabledFeishuProjectTypes(cfg db.FeishuProjectIntegration) []string {
 	return out
 }
 
-func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, lightUpdateExisting bool) (result string, attachErrs int, retErr error) {
+func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem) (result string, attachErrs int, retErr error) {
 	started := time.Now()
 	timing := &feishuProjectSyncTiming{}
 	defer func() {
@@ -479,19 +476,47 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	mappedPriority := mapFeishuPriority(item.Priority)
 
 	phaseStarted := time.Now()
-	binding, err := s.Queries.GetFeishuProjectIssueBindingByExternal(ctx, db.GetFeishuProjectIssueBindingByExternalParams{
+	binding, bindingErr := s.Queries.GetFeishuProjectIssueBindingByExternal(ctx, db.GetFeishuProjectIssueBindingByExternalParams{
 		IntegrationID: cfg.ID,
 		WorkItemType:  item.Type,
 		WorkItemID:    item.ID,
 	})
 	timing.bindingLookup += time.Since(phaseStarted)
-	if err == nil {
+	var issue db.Issue
+	issueFound := false
+	if bindingErr == nil {
 		phaseStarted = time.Now()
-		issue, err := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: binding.IssueID, WorkspaceID: cfg.WorkspaceID})
+		fetched, lookupErr := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: binding.IssueID, WorkspaceID: cfg.WorkspaceID})
 		timing.issueLookup += time.Since(phaseStarted)
-		if err != nil {
+		if lookupErr == nil {
+			issue = fetched
+			issueFound = true
+		} else {
+			// User deleted the Multica issue but the binding row hung around
+			// (e.g. the issue→binding FK was bypassed manually, or a future
+			// migration relaxes the cascade). Don't silently no-op — fall
+			// through to the create path so the issue is re-created and
+			// UpsertFeishuProjectIssueBinding's ON CONFLICT repoints this
+			// stale binding to the freshly-created issue_id.
+			slog.Info("Feishu Project binding refers to missing issue, re-creating",
+				"binding_id", UUIDString(binding.ID),
+				"stale_issue_id", UUIDString(binding.IssueID),
+				"work_item_id", item.ID,
+				"lookup_error", lookupErr)
+		}
+	}
+	if issueFound {
+		// Watermark short-circuit: if Meego hasn't touched the work item since
+		// the last sync, nothing downstream (fields, attachments, labels) can
+		// have changed either — skip the entire DB round-trip set. Cuts a 1k-
+		// item manual full-sync from minutes to ~30s when most items are quiet.
+		// The label-sync fields are derived from item.fields too, so they also
+		// bump item.UpdatedAt; safe to skip them here.
+		if !item.UpdatedAt.IsZero() && binding.LastExternalUpdatedAt.Valid &&
+			!item.UpdatedAt.After(binding.LastExternalUpdatedAt.Time) {
 			return "skipped", 0, nil
 		}
+
 		phaseStarted = time.Now()
 		assigneeType, assigneeID := s.resolveAssignee(ctx, cfg, item, mappedStatus, issue.AssigneeType, issue.AssigneeID, fallbackAgentID)
 		timing.ownerLookup += time.Since(phaseStarted)
@@ -503,71 +528,28 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		if mappedPriority != "" {
 			nextPriority = mappedPriority
 		}
+		nextTitle := externalTitle(item)
 
-		if lightUpdateExisting {
-			// Light-update path for manual full-sync: refresh status / assignee /
-			// project only. Skip syncExternalAttachments (~200-500ms per item with
-			// any attachment) and preserve the existing title + description so the
-			// already-synced attachment markdown block doesn't get clobbered. Per
-			// item this collapses to ~25-30ms, so a 1k-item manual sync runs in ~30s
-			// instead of multiple minutes. New attachments added in Meego after the
-			// first sync are still picked up by the next scheduled (incremental)
-			// sync, which keeps its full path.
-			if issue.Status == status &&
-				sameNullableText(issue.AssigneeType, assigneeType) &&
-				sameNullableUUID(issue.AssigneeID, assigneeID) &&
-				issue.Priority == nextPriority &&
-				issue.ProjectID == nextProjectID {
-				labelsChanged, err := s.syncIssueLabels(ctx, cfg, item, issue.ID)
-				if err != nil {
-					return "skipped", 0, err
-				}
-				s.reconcileSyncedIssueTasks(ctx, issue, issue)
-				if labelsChanged {
-					return "updated", 0, nil
-				}
-				return "skipped", 0, nil
-			}
-			phaseStarted = time.Now()
-			updatedIssue, err := s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
-				ID: issue.ID,
-				// Pass invalid pgtype.Text for title/description → COALESCE in
-				// queries/issue.sql keeps the current values, so the embedded
-				// attachment markdown survives.
-				Title:         pgtype.Text{},
-				Description:   pgtype.Text{},
-				Status:        pgtype.Text{String: status, Valid: true},
-				Priority:      pgtype.Text{String: nextPriority, Valid: true},
-				AssigneeType:  assigneeType,
-				AssigneeID:    assigneeID,
-				DueDate:       issue.DueDate,
-				ParentIssueID: issue.ParentIssueID,
-				ProjectID:     nextProjectID,
-			})
-			timing.issueUpdate += time.Since(phaseStarted)
-			if err != nil {
-				return "skipped", 0, err
-			}
-			phaseStarted = time.Now()
-			_, _ = s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
-			timing.bindingUpsert += time.Since(phaseStarted)
-			if _, err := s.syncIssueLabels(ctx, cfg, item, issue.ID); err != nil {
-				return "skipped", 0, err
-			}
-			s.reconcileSyncedIssueTasks(ctx, issue, updatedIssue)
-			return "updated", 0, nil
-		}
-
-		// Full update path — scheduled (incremental) sync. Includes attachment refetch.
+		// Run attachment dedup + ingest unconditionally. syncExternalAttachments
+		// is already external-id-keyed (commit 84fc2800d), so already-bound
+		// attachments are skipped without download/upload — just two cheap DB
+		// lookups. New Meego attachments land in the attachment table and get
+		// a binding row, but we deliberately ignore the returned markdown: the
+		// embedded-markdown-in-description design conflicts with letting users
+		// edit issue descriptions in Multica (the original reason for the now-
+		// removed lightUpdateExisting path). New attachments still surface in
+		// the issue's attachment panel.
 		phaseStarted = time.Now()
-		attachmentMarkdown, attachErr := s.syncExternalAttachments(ctx, cfg, issue.ID, item, timing)
+		_, attachErr := s.syncExternalAttachments(ctx, cfg, issue.ID, item, timing)
 		timing.attachments += time.Since(phaseStarted)
 		if attachErr != nil {
 			return "skipped", 0, attachErr
 		}
-		nextDesc := externalDescription(item, attachmentMarkdown)
-		nextTitle := externalTitle(item)
-		if issue.Title == nextTitle && issue.Description.String == nextDesc && issue.Status == status &&
+		// Field-level diff. description is NOT compared and NOT updated below
+		// — we COALESCE on the DB side to preserve whatever's currently stored,
+		// so any manual edits the user made in Multica survive. title is treated
+		// as Meego-authoritative because users rarely rename synced issues.
+		if issue.Title == nextTitle && issue.Status == status &&
 			issue.Priority == nextPriority &&
 			sameNullableText(issue.AssigneeType, assigneeType) && sameNullableUUID(issue.AssigneeID, assigneeID) &&
 			issue.ProjectID == nextProjectID {
@@ -576,6 +558,10 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 				return "skipped", 0, err
 			}
 			s.reconcileSyncedIssueTasks(ctx, issue, issue)
+			// Advance the binding watermark so the next sync's short-circuit fires.
+			phaseStarted = time.Now()
+			_, _ = s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
+			timing.bindingUpsert += time.Since(phaseStarted)
 			if labelsChanged {
 				return "updated", 0, nil
 			}
@@ -583,9 +569,11 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		}
 		phaseStarted = time.Now()
 		updatedIssue, err := s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
-			ID:            issue.ID,
+			ID: issue.ID,
+			// Description left as invalid pgtype.Text on purpose — see comment
+			// above. UpdateIssue's COALESCE preserves the current value.
 			Title:         pgtype.Text{String: nextTitle, Valid: true},
-			Description:   pgtype.Text{String: nextDesc, Valid: true},
+			Description:   pgtype.Text{},
 			Status:        pgtype.Text{String: status, Valid: true},
 			Priority:      pgtype.Text{String: nextPriority, Valid: true},
 			AssigneeType:  assigneeType,
@@ -625,7 +613,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	if err != nil {
 		return "skipped", 0, err
 	}
-	issue, err := qtx.CreateIssue(ctx, db.CreateIssueParams{
+	issue, err = qtx.CreateIssue(ctx, db.CreateIssueParams{
 		WorkspaceID:  cfg.WorkspaceID,
 		Title:        externalTitle(item),
 		Description:  pgtype.Text{String: externalDescription(item, ""), Valid: true},
@@ -1612,15 +1600,18 @@ func (c *FeishuProjectClient) QueryWorkItemPages(ctx context.Context, cfg db.Fei
 }
 
 func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType string, fullSync bool, opts FeishuProjectSyncOptions, handle func(FeishuProjectWorkItemPage) error) error {
+	explicitID := strings.TrimSpace(opts.WorkItemID)
 	statuses := mappedFeishuProjectStatuses(cfg.StatusMapping, workItemType)
-	if len(statuses) == 0 {
+	// A targeted (id-scoped) sync asks Meego for exactly that row regardless of
+	// state, so it doesn't need a status mapping. Only refuse here for the
+	// scheduled / full-sync path that would otherwise unbounded-scan.
+	if explicitID == "" && len(statuses) == 0 {
 		return ErrFeishuProjectSyncScopeRequired
 	}
 	pageNum := 1
 	for page := 0; page < feishuProjectSyncMaxPages; page++ {
 		req := map[string]any{
 			"work_item_type_keys": []string{workItemType},
-			"work_item_status":    feishuProjectWorkItemStatusFilter(statuses),
 			"page_num":            pageNum,
 			"page_size":           feishuProjectSyncPageSize,
 			"expand": map[string]any{
@@ -1628,23 +1619,30 @@ func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context,
 				"need_user_detail": true,
 			},
 		}
-		if strings.TrimSpace(opts.WorkItemID) != "" {
-			req["work_item_ids"] = []string{strings.TrimSpace(opts.WorkItemID)}
-		}
-		now := time.Now()
-		// Sync entry computes the precise lookback per trigger and threads it
-		// through opts.SinceUnixMilli. Direct callers (tests, future ad-hoc
-		// uses) without that context fall back to the legacy fullSync-aware
-		// default.
-		updatedAtStart := opts.SinceUnixMilli
-		if updatedAtStart == 0 {
-			updatedAtStart = feishuProjectSyncSinceUnixMilli(cfg, now)
-			if fullSync {
-				updatedAtStart = feishuProjectManualSyncSinceUnixMilli(now)
+		if explicitID != "" {
+			// User aimed a sync at this exact work item — bypass work_item_status
+			// AND updated_at. Meego applies those filters with AND semantics, so
+			// keeping them would silently drop the target whenever its state has
+			// moved off the mapped set or it hasn't been touched in 30 days.
+			// That was the original BUG-7004679644 incident: 4 manual syncs all
+			// returned 0 items because the work item's status had left the
+			// mapping. Targeted syncs trust the user's intent.
+			req["work_item_ids"] = []string{explicitID}
+		} else {
+			req["work_item_status"] = feishuProjectWorkItemStatusFilter(statuses)
+			// Sync entry computes the precise lookback per trigger and threads
+			// it through opts.SinceUnixMilli. Direct callers (tests, future
+			// ad-hoc uses) without that context fall back to the legacy
+			// fullSync-aware default.
+			updatedAtStart := opts.SinceUnixMilli
+			if updatedAtStart == 0 {
+				now := time.Now()
+				updatedAtStart = feishuProjectSyncSinceUnixMilli(cfg, now)
+				if fullSync {
+					updatedAtStart = feishuProjectManualSyncSinceUnixMilli(now)
+				}
 			}
-		}
-		req["updated_at"] = map[string]any{
-			"start": updatedAtStart,
+			req["updated_at"] = map[string]any{"start": updatedAtStart}
 		}
 		payload, err := c.openAPI(ctx, cfg, http.MethodPost, fmt.Sprintf("/open_api/%s/work_item/filter", cfg.ProjectKey), req)
 		if err != nil {
@@ -1660,7 +1658,7 @@ func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context,
 				return err
 			}
 		}
-		if strings.TrimSpace(opts.WorkItemID) != "" {
+		if explicitID != "" {
 			return nil
 		}
 		if hasTotal {

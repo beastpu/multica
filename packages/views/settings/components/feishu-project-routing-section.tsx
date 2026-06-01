@@ -63,6 +63,7 @@ interface Props {
 
 const NO_PROJECT = "__none__";
 const NO_AGENT = "__none__";
+const NO_FIELD = "__none__";
 
 /**
  * Business-line → project routing UI for a Feishu Project integration.
@@ -172,7 +173,12 @@ export function FeishuProjectRoutingSection({
 
   function handlePickField(value: string | null) {
     if (!value) return;
-    if (syntheticSavedField && value === syntheticSavedField.key) {
+    if (value === NO_FIELD) {
+      // Clear → disables routing. syncWorkItem treats empty BusinessLineFieldKey
+      // as "no routing" and falls back to syncing every item into the workspace
+      // without a project (the pre-routing 1:1 behavior).
+      onFieldChanged("", "");
+    } else if (syntheticSavedField && value === syntheticSavedField.key) {
       onFieldChanged(value, syntheticSavedField.name);
     } else {
       const chosen = fields.find((f) => f.key === value);
@@ -530,6 +536,21 @@ function FieldPicker({
                 {visibleFields.length === 0 && !syntheticSavedField && (
                   <CommandEmpty>{noResultsLabel}</CommandEmpty>
                 )}
+                {/* "Clear" entry — picking it sends "__none__" back to onPick, which
+                    handlePickField treats as "disable routing". Without this the
+                    operator has no way to undo a field choice (label-sync's picker
+                    has the same affordance). */}
+                <CommandGroup>
+                  <CommandItem
+                    value="__none__"
+                    onSelect={(value) => {
+                      onPick(value);
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="text-muted-foreground">{placeholder}</span>
+                  </CommandItem>
+                </CommandGroup>
                 {syntheticSavedField && (
                   <CommandGroup>
                     <CommandItem
