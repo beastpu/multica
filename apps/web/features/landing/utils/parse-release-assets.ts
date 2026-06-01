@@ -34,6 +34,13 @@ export interface DownloadAssets {
 const DESKTOP_ARTIFACT_RE =
   /^multica-desktop-[^-]+-(mac|windows|linux)-([a-z0-9_]+)\.(dmg|zip|exe|AppImage|deb|rpm)$/i;
 
+// Installer downloads are served by the Go backend's OSS proxy, not
+// GitHub. The asset name equals the OSS object filename (see
+// apps/desktop/electron-builder.yml + the downloads handler in
+// server/internal/handler/downloads.go), so we reconstruct the URL
+// from the name instead of using the GitHub `browser_download_url`.
+const DOWNLOAD_BASE_URL = "https://multica.lilithgames.com/api/downloads";
+
 function normalizeLinuxArch(arch: string): "amd64" | "arm64" | null {
   const a = arch.toLowerCase();
   if (a === "amd64" || a === "x86_64") return "amd64";
@@ -60,7 +67,7 @@ export function parseReleaseAssets(raw: GitHubAsset[]): DownloadAssets {
     if (!platform || !arch || !ext) continue;
     const archLower = arch.toLowerCase();
     const extLower = ext.toLowerCase();
-    const url = asset.browser_download_url;
+    const url = `${DOWNLOAD_BASE_URL}/${name}`;
 
     if (platform === "mac") {
       if (archLower !== "arm64") continue; // we only ship arm64 today

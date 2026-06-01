@@ -65,7 +65,9 @@ describe("fetchLatestRelease", () => {
 
     const result = await fetchLatestRelease();
     expect(result.version).toBe("v0.2.13");
-    expect(result.assets.macArm64Dmg).toBe(SAMPLE_PREV_ASSET.browser_download_url);
+    expect(result.assets.macArm64Dmg).toBe(
+      `https://multica.lilithgames.com/api/downloads/${SAMPLE_PREV_ASSET.name}`,
+    );
   });
 
   it("uses latest release once it is older than the fresh window", async () => {
@@ -84,7 +86,9 @@ describe("fetchLatestRelease", () => {
 
     const result = await fetchLatestRelease();
     expect(result.version).toBe("v0.2.14");
-    expect(result.assets.macArm64Dmg).toBe(SAMPLE_LATEST_ASSET.browser_download_url);
+    expect(result.assets.macArm64Dmg).toBe(
+      `https://multica.lilithgames.com/api/downloads/${SAMPLE_LATEST_ASSET.name}`,
+    );
   });
 
   it("falls back to latest when there is no previous release", async () => {
