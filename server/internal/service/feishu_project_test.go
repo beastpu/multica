@@ -1120,6 +1120,104 @@ func TestFeishuProjectQueryWorkItemsHonorsExplicitSinceFromOpts(t *testing.T) {
 	}
 }
 
+// Regression for the BUG-7004679644 incident: when a user types a work_item_id
+// in the "立即同步" box, Meego applies work_item_status and updated_at filters
+// with AND semantics, so keeping them drops any target whose status has moved
+// off the mapped set or that hasn't been updated in 30 days. Targeted syncs
+// must trust the user's intent and omit both filters.
+func TestFeishuProjectQueryWorkItemsTargetedIDBypassesStatusAndUpdatedAtFilters(t *testing.T) {
+	t.Parallel()
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/filter":
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":[],"pagination":{"page_num":1,"page_size":100,"total":0}}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	err := client.QueryWorkItemPagesWithOptions(
+		context.Background(),
+		db.FeishuProjectIntegration{
+			ProjectKey:    "project-key",
+			PluginID:      "id",
+			PluginSecret:  "secret",
+			StatusMapping: []byte(`{"OPEN":"todo"}`),
+		},
+		"issue",
+		true,
+		FeishuProjectSyncOptions{WorkItemID: "7004679644"},
+		func(FeishuProjectWorkItemPage) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("QueryWorkItemPagesWithOptions: %v", err)
+	}
+	ids, _ := captured["work_item_ids"].([]any)
+	if len(ids) != 1 || ids[0] != "7004679644" {
+		t.Fatalf("work_item_ids = %#v, want [\"7004679644\"]", captured["work_item_ids"])
+	}
+	if _, present := captured["work_item_status"]; present {
+		t.Fatalf("work_item_status must be omitted for targeted sync, got %#v", captured["work_item_status"])
+	}
+	if _, present := captured["updated_at"]; present {
+		t.Fatalf("updated_at must be omitted for targeted sync, got %#v", captured["updated_at"])
+	}
+}
+
+// A targeted (id-scoped) sync should not be blocked by an empty status_mapping —
+// the user is asking for that exact row, Meego doesn't need a state filter to
+// find it. Only the unscoped (scheduled / full) path keeps the ErrFeishuProjectSyncScopeRequired
+// guardrail so it doesn't unbounded-scan.
+func TestFeishuProjectQueryWorkItemsTargetedIDSkipsStatusMappingGuard(t *testing.T) {
+	t.Parallel()
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/filter":
+			hits++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":[],"pagination":{"page_num":1,"page_size":100,"total":0}}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	err := client.QueryWorkItemPagesWithOptions(
+		context.Background(),
+		db.FeishuProjectIntegration{
+			ProjectKey:    "project-key",
+			PluginID:      "id",
+			PluginSecret:  "secret",
+			StatusMapping: []byte(`{}`),
+		},
+		"issue",
+		true,
+		FeishuProjectSyncOptions{WorkItemID: "7004679644"},
+		func(FeishuProjectWorkItemPage) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("targeted sync should not require status mapping: %v", err)
+	}
+	if hits != 1 {
+		t.Fatalf("expected /work_item/filter to be called once, got %d", hits)
+	}
+}
+
 // Regression: a custom plugin/radio field like "BUG提单助手" (field_c1f194) is
 // silently dropped from /work_item/{type}/meta but appears in /field/all with its
 // inline options (是/否). Before the fix, the missing-from-/meta path fell through
