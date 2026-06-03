@@ -81,12 +81,11 @@ SET last_synced_at = now(),
     updated_at = now()
 WHERE id = sqlc.arg('id');
 
--- name: MarkFeishuProjectIntegrationReconciled :exec
--- Stamps a successful 6h reconcile run. The watermark advance runs through
--- MarkFeishuProjectIntegrationSynced (called in the same code path); this
--- query is purely the reconcile-cadence stamp.
+-- name: MarkFeishuProjectIntegrationOrphanReconciled :exec
+-- Stamps a successful orphan reconcile sweep so the worker can pace the next
+-- one off last_orphan_reconciled_at.
 UPDATE feishu_project_integration
-SET last_reconciled_at = now(),
+SET last_orphan_reconciled_at = now(),
     updated_at = now()
 WHERE id = $1;
 
@@ -121,6 +120,15 @@ ON CONFLICT (integration_id, work_item_type, work_item_id) DO UPDATE SET
     last_synced_at = now(),
     updated_at = now()
 RETURNING *;
+
+-- name: ListFeishuProjectIssueBindingsByIntegration :many
+-- Keyset-paginated over id so the orphan reconcile sweep can stream every
+-- binding for an integration without holding the whole set in one query.
+-- Pass the all-zero UUID as the cursor for the first page.
+SELECT * FROM feishu_project_issue_binding
+WHERE integration_id = $1 AND id > $2
+ORDER BY id ASC
+LIMIT $3;
 
 -- name: CreateFeishuProjectSyncRun :one
 INSERT INTO feishu_project_sync_run (

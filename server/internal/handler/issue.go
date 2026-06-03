@@ -2797,31 +2797,18 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
-	// Fail any linked autopilot runs before delete (ON DELETE SET NULL clears issue_id).
-	h.Queries.FailAutopilotRunsByIssue(r.Context(), issue.ID)
-
-	// Collect all attachment URLs (issue-level + comment-level) before CASCADE delete.
-	attachmentURLs, _ := h.Queries.ListAttachmentURLsByIssueOrComments(r.Context(), issue.ID)
-
-	err := h.Queries.DeleteIssue(r.Context(), db.DeleteIssueParams{
-		ID:          issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
+	// Always emit the resolved UUID — frontend caches key by UUID, so an
+	// identifier-style payload ("MUL-123") would leave stale entries on
+	// other clients after an identifier-path delete. HardDeleteIssue performs
+	// the full cascade (cancel tasks, fail autopilot runs, delete, S3 cleanup,
+	// publish issue:deleted) and is shared with the Feishu orphan reconcile.
+	userID := requestUserID(r)
+	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
+	if err := service.HardDeleteIssue(r.Context(), h.Queries, h.TaskService, h.Storage, h.Bus, issue, actorType, actorID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete issue")
 		return
 	}
-
-	h.deleteS3Objects(r.Context(), attachmentURLs)
-	userID := requestUserID(r)
-	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
-	// Always emit the resolved UUID — frontend caches key by UUID, so an
-	// identifier-style payload ("MUL-123") would leave stale entries on
-	// other clients after an identifier-path delete.
-	resolvedID := uuidToString(issue.ID)
-	h.publish(protocol.EventIssueDeleted, uuidToString(issue.WorkspaceID), actorType, actorID, map[string]any{"issue_id": resolvedID})
-	slog.Info("issue deleted", append(logger.RequestAttrs(r), "issue_id", resolvedID, "workspace_id", uuidToString(issue.WorkspaceID))...)
+	slog.Info("issue deleted", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "workspace_id", uuidToString(issue.WorkspaceID))...)
 	w.WriteHeader(http.StatusNoContent)
 }
 

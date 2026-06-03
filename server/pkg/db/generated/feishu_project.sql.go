@@ -194,7 +194,7 @@ func (q *Queries) FinishFeishuProjectSyncRun(ctx context.Context, arg FinishFeis
 }
 
 const getFeishuProjectIntegration = `-- name: GetFeishuProjectIntegration :one
-SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, last_reconciled_at, label_sync_rules FROM feishu_project_integration
+SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at FROM feishu_project_integration
 WHERE workspace_id = $1
 ORDER BY updated_at DESC, created_at DESC
 LIMIT 1
@@ -225,14 +225,14 @@ func (q *Queries) GetFeishuProjectIntegration(ctx context.Context, workspaceID p
 		&i.BusinessLineFieldKey,
 		&i.BusinessLineFieldName,
 		&i.LastSeenUpdatedAtMs,
-		&i.LastReconciledAt,
 		&i.LabelSyncRules,
+		&i.LastOrphanReconciledAt,
 	)
 	return i, err
 }
 
 const getFeishuProjectIntegrationByID = `-- name: GetFeishuProjectIntegrationByID :one
-SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, last_reconciled_at, label_sync_rules FROM feishu_project_integration
+SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at FROM feishu_project_integration
 WHERE id = $1
 `
 
@@ -261,8 +261,8 @@ func (q *Queries) GetFeishuProjectIntegrationByID(ctx context.Context, id pgtype
 		&i.BusinessLineFieldKey,
 		&i.BusinessLineFieldName,
 		&i.LastSeenUpdatedAtMs,
-		&i.LastReconciledAt,
 		&i.LabelSyncRules,
+		&i.LastOrphanReconciledAt,
 	)
 	return i, err
 }
@@ -395,7 +395,7 @@ func (q *Queries) GetLatestFeishuProjectSyncRun(ctx context.Context, integration
 }
 
 const listEnabledFeishuProjectIntegrations = `-- name: ListEnabledFeishuProjectIntegrations :many
-SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, last_reconciled_at, label_sync_rules FROM feishu_project_integration
+SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at FROM feishu_project_integration
 WHERE enabled = true
 ORDER BY updated_at ASC
 `
@@ -431,8 +431,8 @@ func (q *Queries) ListEnabledFeishuProjectIntegrations(ctx context.Context) ([]F
 			&i.BusinessLineFieldKey,
 			&i.BusinessLineFieldName,
 			&i.LastSeenUpdatedAtMs,
-			&i.LastReconciledAt,
 			&i.LabelSyncRules,
+			&i.LastOrphanReconciledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -510,6 +510,57 @@ func (q *Queries) ListFeishuProjectBusinessLineRoutes(ctx context.Context, integ
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FallbackAgentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFeishuProjectIssueBindingsByIntegration = `-- name: ListFeishuProjectIssueBindingsByIntegration :many
+SELECT id, workspace_id, integration_id, issue_id, project_key, work_item_type, work_item_id, external_identifier, external_url, external_status_label, last_external_updated_at, last_synced_at, created_at, updated_at FROM feishu_project_issue_binding
+WHERE integration_id = $1 AND id > $2
+ORDER BY id ASC
+LIMIT $3
+`
+
+type ListFeishuProjectIssueBindingsByIntegrationParams struct {
+	IntegrationID pgtype.UUID `json:"integration_id"`
+	ID            pgtype.UUID `json:"id"`
+	Limit         int32       `json:"limit"`
+}
+
+// Keyset-paginated over id so the orphan reconcile sweep can stream every
+// binding for an integration without holding the whole set in one query.
+// Pass the all-zero UUID as the cursor for the first page.
+func (q *Queries) ListFeishuProjectIssueBindingsByIntegration(ctx context.Context, arg ListFeishuProjectIssueBindingsByIntegrationParams) ([]FeishuProjectIssueBinding, error) {
+	rows, err := q.db.Query(ctx, listFeishuProjectIssueBindingsByIntegration, arg.IntegrationID, arg.ID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FeishuProjectIssueBinding{}
+	for rows.Next() {
+		var i FeishuProjectIssueBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.IntegrationID,
+			&i.IssueID,
+			&i.ProjectKey,
+			&i.WorkItemType,
+			&i.WorkItemID,
+			&i.ExternalIdentifier,
+			&i.ExternalUrl,
+			&i.ExternalStatusLabel,
+			&i.LastExternalUpdatedAt,
+			&i.LastSyncedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -625,18 +676,17 @@ func (q *Queries) MarkFeishuProjectIntegrationError(ctx context.Context, arg Mar
 	return err
 }
 
-const markFeishuProjectIntegrationReconciled = `-- name: MarkFeishuProjectIntegrationReconciled :exec
+const markFeishuProjectIntegrationOrphanReconciled = `-- name: MarkFeishuProjectIntegrationOrphanReconciled :exec
 UPDATE feishu_project_integration
-SET last_reconciled_at = now(),
+SET last_orphan_reconciled_at = now(),
     updated_at = now()
 WHERE id = $1
 `
 
-// Stamps a successful 6h reconcile run. The watermark advance runs through
-// MarkFeishuProjectIntegrationSynced (called in the same code path); this
-// query is purely the reconcile-cadence stamp.
-func (q *Queries) MarkFeishuProjectIntegrationReconciled(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, markFeishuProjectIntegrationReconciled, id)
+// Stamps a successful orphan reconcile sweep so the worker can pace the next
+// one off last_orphan_reconciled_at.
+func (q *Queries) MarkFeishuProjectIntegrationOrphanReconciled(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markFeishuProjectIntegrationOrphanReconciled, id)
 	return err
 }
 
@@ -684,7 +734,7 @@ SET project_key = $3,
     label_sync_rules = $15,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, last_reconciled_at, label_sync_rules
+RETURNING id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at
 `
 
 type UpdateFeishuProjectIntegrationByIDParams struct {
@@ -748,8 +798,8 @@ func (q *Queries) UpdateFeishuProjectIntegrationByID(ctx context.Context, arg Up
 		&i.BusinessLineFieldKey,
 		&i.BusinessLineFieldName,
 		&i.LastSeenUpdatedAtMs,
-		&i.LastReconciledAt,
 		&i.LabelSyncRules,
+		&i.LastOrphanReconciledAt,
 	)
 	return i, err
 }
@@ -877,7 +927,7 @@ ON CONFLICT (workspace_id) DO UPDATE SET
     business_line_field_name = EXCLUDED.business_line_field_name,
     label_sync_rules = EXCLUDED.label_sync_rules,
     updated_at = now()
-RETURNING id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, last_reconciled_at, label_sync_rules
+RETURNING id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at
 `
 
 type UpsertFeishuProjectIntegrationParams struct {
@@ -941,8 +991,8 @@ func (q *Queries) UpsertFeishuProjectIntegration(ctx context.Context, arg Upsert
 		&i.BusinessLineFieldKey,
 		&i.BusinessLineFieldName,
 		&i.LastSeenUpdatedAtMs,
-		&i.LastReconciledAt,
 		&i.LabelSyncRules,
+		&i.LastOrphanReconciledAt,
 	)
 	return i, err
 }
