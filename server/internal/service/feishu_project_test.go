@@ -1021,17 +1021,6 @@ func TestFeishuProjectSinceUnixMilliForTrigger(t *testing.T) {
 			},
 		},
 		{
-			name:    "reconcile picks 6h30m lookback regardless of watermark",
-			cfg:     withWatermark,
-			trigger: "reconcile",
-			check: func(t *testing.T, got int64) {
-				want := now.Add(-feishuProjectReconcileLookback - feishuProjectReconcileLookbackSafety).UnixMilli()
-				if got != want {
-					t.Fatalf("got %d want %d (reconcile 6h30m)", got, want)
-				}
-			},
-		},
-		{
 			name:    "scheduled uses watermark - 10min when set",
 			cfg:     withWatermark,
 			trigger: "scheduled",

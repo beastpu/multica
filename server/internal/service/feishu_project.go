@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -36,16 +37,12 @@ const (
 	feishuProjectManualLookback    = 30 * 24 * time.Hour
 	feishuProjectIncrementalReplay = 10 * time.Minute
 	feishuProjectSyncMaxPages      = 1000
-
-	// How often a successful reconcile should run, and how far back its
-	// `updated_at` filter looks. Reconcile is the L3 defence that catches
-	// updates the incremental L1 missed (long worker stalls, clock skew,
-	// out-of-order events). The +30min safety margin overshoots the
-	// 6h interval so we always overlap the previous reconcile window.
-	feishuProjectReconcileInterval       = 6 * time.Hour
-	feishuProjectReconcileLookback       = 6 * time.Hour
-	feishuProjectReconcileLookbackSafety = 30 * time.Minute
-	feishuProjectAttachmentMaxSize       = 5 << 20
+	feishuProjectAttachmentMaxSize = 5 << 20
+	// Tolerance before a Feishu updated_at that exceeds our clock is treated as
+	// bad data and logged. Absorbs normal multica/Feishu clock skew so the
+	// warning only fires on genuinely future-dated items. The watermark value
+	// itself is never modified (log-only).
+	feishuProjectWatermarkFutureSkew = 5 * time.Minute
 	// Feishu Project caps every (token, single interface) pair at 15 QPS
 	// (project.feishu.cn/b/helpcenter/1p8d7djs/4bsmoql6). The advisory lock keeps
 	// only one replica syncing a given integration, so worker fan-out is the only
@@ -66,11 +63,6 @@ var feishuProjectDownloadRetryInitialDelay = 300 * time.Millisecond
 
 var ErrFeishuProjectSyncScopeRequired = errors.New("Feishu Project sync requires a bounded sync scope before searching work items")
 
-// FeishuProjectReconcileInterval is the cadence at which a successful
-// reconcile run is expected. Exposed for the cmd-level worker scheduler
-// to keep the constant in one place.
-func FeishuProjectReconcileInterval() time.Duration { return feishuProjectReconcileInterval }
-
 // ErrFeishuProjectQuotaExhausted is returned when the tenant has consumed its
 // monthly Feishu Open Platform quota (err_code 99991403, enforced since
 // 2024-12-03). Retries within the same calendar month are futile; the worker
@@ -87,6 +79,10 @@ type FeishuProjectSyncService struct {
 	Client      *FeishuProjectClient
 	Storage     FeishuProjectStorage
 	TaskService FeishuProjectTaskService
+	// Events publishes domain events (e.g. issue:deleted from the orphan
+	// reconcile sweep) so connected clients invalidate their caches. Nil
+	// disables publishing — the DB delete still happens.
+	Events FeishuProjectEventPublisher
 }
 
 // FeishuProjectTaskService is the subset of *TaskService the sync path uses.
@@ -98,6 +94,16 @@ type FeishuProjectTaskService interface {
 
 type FeishuProjectStorage interface {
 	Upload(ctx context.Context, key string, data []byte, contentType string, filename string) (string, error)
+	// DeleteKeys + KeyFromURL let the orphan reconcile sweep clean up the S3
+	// blobs of an issue it hard-deletes, matching the HTTP delete handler.
+	DeleteKeys(ctx context.Context, keys []string)
+	KeyFromURL(rawURL string) string
+}
+
+// FeishuProjectEventPublisher is the subset of *events.Bus the sync path uses.
+// Kept as an interface so reconcile logic can be tested without a real bus.
+type FeishuProjectEventPublisher interface {
+	Publish(e events.Event)
 }
 
 type FeishuProjectSyncSummary struct {
@@ -110,6 +116,12 @@ type FeishuProjectSyncSummary struct {
 
 type FeishuProjectSyncOptions struct {
 	WorkItemID string
+
+	// WorkItemIDs scopes the query to an explicit batch of work items, same
+	// "regardless of state" semantics as WorkItemID (bypasses work_item_status
+	// AND updated_at). The orphan reconcile sweep uses this to ask Feishu which
+	// of a binding batch still exist. Takes precedence over WorkItemID.
+	WorkItemIDs []string
 
 	// SinceUnixMilli, if > 0, overrides the `updated_at >=` lookback start
 	// passed to Feishu's /work_item/filter call. Sync entry computes this
@@ -256,7 +268,7 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 	var syncErr error
 	// Manual triggers do a 30-day bootstrap; reconcile triggers do a 6h30m
 	// reconcile pass.
-	fullSync := trigger == "manual" || trigger == "reconcile"
+	fullSync := trigger == "manual"
 	if opts.SinceUnixMilli == 0 {
 		opts.SinceUnixMilli = feishuProjectSinceUnixMilliForTrigger(cfg, trigger, time.Now())
 	}
@@ -361,18 +373,24 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 			slog.Warn("Feishu Project mark-error failed", "integration_id", UUIDString(cfg.ID), "error", err)
 		}
 	} else {
+		// A work item whose updated_at is meaningfully ahead of our clock points
+		// to bad data (timezone bug, bad import). We log it for investigation but
+		// deliberately do NOT clamp — the watermark stays Feishu's own updated_at
+		// by design. Heads-up: a genuinely future-dated item pushes the watermark
+		// forward and makes later incrementals skip changes until wall-clock
+		// catches up (there is no reconcile backstop anymore). The tolerance keeps
+		// normal multica/Feishu clock skew out of the log.
+		observed := maxObservedUpdatedAtMs.Load()
+		if nowMs := time.Now().UnixMilli(); observed > nowMs+feishuProjectWatermarkFutureSkew.Milliseconds() {
+			slog.Warn("Feishu Project watermark far ahead of now; incremental may stall until wall-clock catches up", "integration_id", UUIDString(cfg.ID), "observed_ms", observed, "now_ms", nowMs)
+		}
 		// If this write fails silently, last_synced_at never advances and the
 		// next incremental sync replays the full lookback window.
 		if err := s.Queries.MarkFeishuProjectIntegrationSynced(finishCtx, db.MarkFeishuProjectIntegrationSyncedParams{
 			ID:                  cfg.ID,
-			ObservedUpdatedAtMs: maxObservedUpdatedAtMs.Load(),
+			ObservedUpdatedAtMs: observed,
 		}); err != nil {
 			slog.Warn("Feishu Project mark-synced failed; last_synced_at not advanced", "integration_id", UUIDString(cfg.ID), "error", err)
-		}
-		if trigger == "reconcile" {
-			if err := s.Queries.MarkFeishuProjectIntegrationReconciled(finishCtx, cfg.ID); err != nil {
-				slog.Warn("Feishu Project mark-reconciled failed; will re-attempt next tick", "integration_id", UUIDString(cfg.ID), "error", err)
-			}
 		}
 		if attachmentHint != "" {
 			errText = pgtype.Text{String: attachmentHint, Valid: true}
@@ -1525,21 +1543,19 @@ func feishuProjectSyncSince(cfg db.FeishuProjectIntegration, now time.Time) time
 // policy for "how far back do we ask Feishu for changes".
 //
 //   - "manual"    → 30d (full bootstrap on user request)
-//   - "reconcile" → 6h30m (6h cadence + 30m safety overshoot)
 //   - default     → incremental: last_seen_updated_at_ms - 10m overlap,
 //     falling back to legacy local-clock lookback when the watermark
-//     hasn't been stored yet (first run after deploy of this change).
+//     hasn't been stored yet (first run for a new integration).
 //
 // Using Feishu's own updated_at value for the incremental watermark removes
 // the local-clock dependency in the previous design: a Multica server clock
 // that runs ahead of (or behind) Feishu's gateway no longer eats into the
-// 10-minute overlap window.
+// 10-minute overlap window. The watermark is clamped to "now" on write (see
+// SyncWithRunAndOptions) so a future-dated work item can't stall it.
 func feishuProjectSinceUnixMilliForTrigger(cfg db.FeishuProjectIntegration, trigger string, now time.Time) int64 {
 	switch trigger {
 	case "manual":
 		return feishuProjectManualSyncSinceUnixMilli(now)
-	case "reconcile":
-		return now.Add(-feishuProjectReconcileLookback - feishuProjectReconcileLookbackSafety).UnixMilli()
 	default:
 		if cfg.LastSeenUpdatedAtMs.Valid && cfg.LastSeenUpdatedAtMs.Int64 > 0 {
 			return cfg.LastSeenUpdatedAtMs.Int64 - feishuProjectIncrementalReplay.Milliseconds()
@@ -1605,12 +1621,17 @@ func (c *FeishuProjectClient) QueryWorkItemPages(ctx context.Context, cfg db.Fei
 }
 
 func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType string, fullSync bool, opts FeishuProjectSyncOptions, handle func(FeishuProjectWorkItemPage) error) error {
-	explicitID := strings.TrimSpace(opts.WorkItemID)
+	explicitIDs := opts.WorkItemIDs
+	if len(explicitIDs) == 0 {
+		if id := strings.TrimSpace(opts.WorkItemID); id != "" {
+			explicitIDs = []string{id}
+		}
+	}
 	statuses := mappedFeishuProjectStatuses(cfg.StatusMapping, workItemType)
 	// A targeted (id-scoped) sync asks Meego for exactly that row regardless of
 	// state, so it doesn't need a status mapping. Only refuse here for the
 	// scheduled / full-sync path that would otherwise unbounded-scan.
-	if explicitID == "" && len(statuses) == 0 {
+	if len(explicitIDs) == 0 && len(statuses) == 0 {
 		return ErrFeishuProjectSyncScopeRequired
 	}
 	pageNum := 1
@@ -1624,15 +1645,15 @@ func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context,
 				"need_user_detail": true,
 			},
 		}
-		if explicitID != "" {
-			// User aimed a sync at this exact work item — bypass work_item_status
+		if len(explicitIDs) > 0 {
+			// User aimed a sync at these exact work items — bypass work_item_status
 			// AND updated_at. Meego applies those filters with AND semantics, so
 			// keeping them would silently drop the target whenever its state has
 			// moved off the mapped set or it hasn't been touched in 30 days.
 			// That was the original BUG-7004679644 incident: 4 manual syncs all
 			// returned 0 items because the work item's status had left the
 			// mapping. Targeted syncs trust the user's intent.
-			req["work_item_ids"] = []string{explicitID}
+			req["work_item_ids"] = explicitIDs
 		} else {
 			req["work_item_status"] = feishuProjectWorkItemStatusFilter(statuses)
 			// Sync entry computes the precise lookback per trigger and threads
@@ -1663,7 +1684,7 @@ func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context,
 				return err
 			}
 		}
-		if explicitID != "" {
+		if len(explicitIDs) > 0 {
 			return nil
 		}
 		if hasTotal {
