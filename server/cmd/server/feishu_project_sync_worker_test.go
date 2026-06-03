@@ -9,58 +9,51 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// The worker should run reconcile when last_reconciled_at is older than the
-// configured interval (or NULL — first tick after deploy) and otherwise run
-// the cheap incremental path.
-func TestFeishuProjectSyncTriggerFor(t *testing.T) {
+// The worker should run the orphan reconcile sweep when last_orphan_reconciled_at
+// is older than the configured interval (or NULL — first tick after deploy) and
+// otherwise skip it.
+func TestFeishuProjectOrphanReconcileDue(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
-	interval := service.FeishuProjectReconcileInterval()
+	interval := service.FeishuProjectOrphanReconcileInterval()
 
 	tests := []struct {
 		name string
 		cfg  db.FeishuProjectIntegration
-		want string
+		want bool
 	}{
 		{
-			name: "never reconciled → reconcile on first tick",
+			name: "never reconciled → due on first tick",
 			cfg:  db.FeishuProjectIntegration{},
-			want: "reconcile",
+			want: true,
 		},
 		{
-			name: "reconciled exactly at interval boundary → reconcile",
-			cfg: db.FeishuProjectIntegration{LastReconciledAt: pgtype.Timestamptz{
+			name: "exactly at interval boundary → due",
+			cfg: db.FeishuProjectIntegration{LastOrphanReconciledAt: pgtype.Timestamptz{
 				Time: now.Add(-interval), Valid: true,
 			}},
-			want: "reconcile",
+			want: true,
 		},
 		{
-			name: "reconciled slightly past interval → reconcile",
-			cfg: db.FeishuProjectIntegration{LastReconciledAt: pgtype.Timestamptz{
+			name: "slightly past interval → due",
+			cfg: db.FeishuProjectIntegration{LastOrphanReconciledAt: pgtype.Timestamptz{
 				Time: now.Add(-interval - time.Minute), Valid: true,
 			}},
-			want: "reconcile",
+			want: true,
 		},
 		{
-			name: "reconciled within interval → scheduled (incremental)",
-			cfg: db.FeishuProjectIntegration{LastReconciledAt: pgtype.Timestamptz{
+			name: "within interval → not due",
+			cfg: db.FeishuProjectIntegration{LastOrphanReconciledAt: pgtype.Timestamptz{
 				Time: now.Add(-interval + time.Minute), Valid: true,
 			}},
-			want: "scheduled",
-		},
-		{
-			name: "reconciled minutes ago → scheduled (incremental)",
-			cfg: db.FeishuProjectIntegration{LastReconciledAt: pgtype.Timestamptz{
-				Time: now.Add(-5 * time.Minute), Valid: true,
-			}},
-			want: "scheduled",
+			want: false,
 		},
 	}
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			if got := feishuProjectSyncTriggerFor(tc.cfg, now); got != tc.want {
-				t.Fatalf("got %q want %q", got, tc.want)
+			if got := feishuProjectOrphanReconcileDue(tc.cfg, now); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
 			}
 		})
 	}
