@@ -37,7 +37,7 @@ const (
 	feishuProjectManualLookback    = 30 * 24 * time.Hour
 	feishuProjectIncrementalReplay = 10 * time.Minute
 	feishuProjectSyncMaxPages      = 1000
-	feishuProjectAttachmentMaxSize = 5 << 20
+	feishuProjectAttachmentMaxSize = 20 << 20
 	// Tolerance before a Feishu updated_at that exceeds our clock is treated as
 	// bad data and logged. Absorbs normal multica/Feishu clock skew so the
 	// warning only fires on genuinely future-dated items. The watermark value
