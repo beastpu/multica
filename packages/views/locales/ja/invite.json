@@ -28,7 +28,9 @@
     "decline": "辞退",
     "declining": "辞退中...",
     "accept": "承認して参加",
-    "joining": "参加中..."
+    "joining": "参加中...",
+    "invited_shareable_admin": "You've been invited to join as an admin.",
+    "invited_shareable_member": "You've been invited to join as a member."
   },
   "errors": {
     "accept_failed": "招待を承認できませんでした",
@@ -48,6 +50,7 @@
     "row_workspace_fallback": "ワークスペース",
     "row_inviter_fallback": "誰か",
     "row_invited_admin": "{{inviter}}さんがあなたをadminとして招待しました",
-    "row_invited_member": "{{inviter}}さんがあなたをmemberとして招待しました"
+    "row_invited_member": "{{inviter}}さんがあなたをmemberとして招待しました",
+    "submit_join_one": "Join 1 workspace"
   }
 }

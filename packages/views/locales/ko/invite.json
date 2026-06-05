@@ -28,7 +28,9 @@
     "decline": "거절",
     "declining": "거절하는 중...",
     "accept": "수락하고 참가",
-    "joining": "참가하는 중..."
+    "joining": "참가하는 중...",
+    "invited_shareable_admin": "You've been invited to join as an admin.",
+    "invited_shareable_member": "You've been invited to join as a member."
   },
   "errors": {
     "accept_failed": "초대를 수락하지 못했습니다",
