@@ -36,7 +36,7 @@ export function isAllowedFileCardHref(href: string): boolean {
 
 /** New syntax: !file[name](url) — unambiguous, no hostname matching needed. */
 const NEW_FILE_CARD_RE = new RegExp(
-  `^!file\\[([^\\]]*)\\]\\((${FILE_CARD_URL_PATTERN.source})\\)$`,
+  `^!file\\[((?:\\\\.|[^\\]])*)\\]\\((${FILE_CARD_URL_PATTERN.source})\\)$`,
 )
 
 /** Legacy syntax: [name](cdnUrl) on its own line — matched by CDN hostname. */
@@ -48,6 +48,16 @@ function escapeAttr(s: string): string {
 
 function toFileCardHtml(filename: string, url: string): string {
   return `<div data-type="fileCard" data-href="${escapeAttr(url)}" data-filename="${escapeAttr(filename)}"></div>`
+}
+
+/**
+ * Wrap an HTML block with blank lines so the markdown HTML-block rule treats it
+ * as a standalone block. Without a trailing blank line the <div> swallows the
+ * following line (e.g. an adjacent `![img](…)`), which is exactly how synced
+ * Feishu descriptions like "!file[log]\n![shot.png]" lost the inline image.
+ */
+function blankSeparate(html: string): string {
+  return `\n${html}\n`
 }
 
 /**
@@ -95,7 +105,8 @@ export function preprocessFileCards(markdown: string, cdnDomain: string): string
       // New syntax: !file[name](url) — always a file card, no hostname check needed.
       const newMatch = trimmed.match(NEW_FILE_CARD_RE)
       if (newMatch) {
-        return toFileCardHtml(newMatch[1]!, newMatch[2]!)
+        const filename = newMatch[1]!.replace(/\\([[\]\\()])/g, '$1')
+        return blankSeparate(toFileCardHtml(filename, newMatch[2]!))
       }
 
       // Legacy: [name](cdnUrl) on its own line — CDN hostname matching.
@@ -104,7 +115,7 @@ export function preprocessFileCards(markdown: string, cdnDomain: string): string
       const filename = match[1]!
       const url = match[2]!
       if (!isFileCardUrl(url, cdnDomain)) return line
-      return toFileCardHtml(filename, url)
+      return blankSeparate(toFileCardHtml(filename, url))
     })
     .join('\n')
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/logger"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -183,7 +184,7 @@ func (h *Handler) FeishuLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isNew {
-		h.Analytics.Capture(analytics.Signup(uuidToString(user.ID), user.Email, "feishu"))
+		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.Signup(uuidToString(user.ID), user.Email, "feishu"))
 	}
 
 	// Backfill name and avatar from Feishu profile if the user was just
