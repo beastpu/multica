@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -26,10 +27,10 @@ import (
 // Project plugin iframe (projectplg.feishupkg.com), where the JSSDK gives
 // the page a short-lived `code`. The flow:
 //
-//	1. plugin_id + plugin_secret  →  plugin_token   (cached, ~2h TTL)
-//	2. plugin_token + code        →  user_plugin_token + user_key
-//	3. plugin_token + user_key    →  user info (email, name, avatar)
-//	4. find/create user by email, return ship JWT in JSON body
+//  1. plugin_id + plugin_secret  →  plugin_token   (cached, ~2h TTL)
+//  2. plugin_token + code        →  user_plugin_token + user_key
+//  3. plugin_token + user_key    →  user info (email, name, avatar)
+//  4. find/create user by email, return ship JWT in JSON body
 //
 // Bearer-token (not cookie) response shape: Safari's third-party cookie
 // policy drops Set-Cookie when the iframe and ship are on different sites.
@@ -41,11 +42,11 @@ import (
 //   - github.com/Roland0511/mcp-feishu-proj (archived; was prod-tested)
 //   - github.com/lyonDan/feishu-proj-cli
 const (
-	meegoBaseURL              = "https://project.feishu.cn"
-	meegoPluginTokenPath      = "/open_api/authen/plugin_token"
-	meegoUserPluginTokenPath  = "/open_api/authen/user_plugin_token"
-	meegoUserQueryPath        = "/open_api/user/query"
-	pluginTokenRefreshSkew    = 5 * time.Minute
+	meegoBaseURL             = "https://project.feishu.cn"
+	meegoPluginTokenPath     = "/open_api/authen/plugin_token"
+	meegoUserPluginTokenPath = "/open_api/authen/user_plugin_token"
+	meegoUserQueryPath       = "/open_api/user/query"
+	pluginTokenRefreshSkew   = 5 * time.Minute
 )
 
 // FeishuPluginLoginRequest matches the body the plugin frontend sends.
@@ -176,7 +177,7 @@ func (h *Handler) FeishuPluginLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isNew {
-		h.Analytics.Capture(analytics.Signup(uuidToString(user.ID), user.Email, "feishu_plugin"))
+		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.Signup(uuidToString(user.ID), user.Email, "feishu_plugin"))
 	}
 
 	// Backfill display name + avatar on first sign-in or when user has the

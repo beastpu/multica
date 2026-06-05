@@ -136,7 +136,7 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 		}
 		h.publish(protocol.EventInvitationCreated, workspaceID, "member", userID, eventPayload)
 
-		h.Analytics.Capture(analytics.TeamInviteSent(
+		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.TeamInviteSent(
 			uuidToString(requester.UserID),
 			workspaceID,
 			"", // shareable links have no recipient email
