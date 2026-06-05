@@ -1675,17 +1675,16 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 		}
 
 		if workspaceID != "" {
+			payload := taskEventPayload(t)
+			payload["status"] = "failed"
+			if failureReason != "" {
+				payload["failure_reason"] = failureReason
+			}
 			s.Bus.Publish(events.Event{
 				Type:        protocol.EventTaskFailed,
 				WorkspaceID: workspaceID,
 				ActorType:   "system",
-				Payload: map[string]any{
-					"task_id":        util.UUIDToString(t.ID),
-					"agent_id":       util.UUIDToString(t.AgentID),
-					"issue_id":       util.UUIDToString(t.IssueID),
-					"status":         "failed",
-					"failure_reason": failureReason,
-				},
+				Payload:     payload,
 			})
 		}
 
@@ -1907,6 +1906,16 @@ func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, 
 	if workspaceID == "" {
 		return
 	}
+	s.Bus.Publish(events.Event{
+		Type:        eventType,
+		WorkspaceID: workspaceID,
+		ActorType:   "system",
+		ActorID:     "",
+		Payload:     taskEventPayload(task),
+	})
+}
+
+func taskEventPayload(task db.AgentTaskQueue) map[string]any {
 	payload := map[string]any{
 		"task_id":  util.UUIDToString(task.ID),
 		"agent_id": util.UUIDToString(task.AgentID),
@@ -1916,13 +1925,15 @@ func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, 
 	if task.ChatSessionID.Valid {
 		payload["chat_session_id"] = util.UUIDToString(task.ChatSessionID)
 	}
-	s.Bus.Publish(events.Event{
-		Type:        eventType,
-		WorkspaceID: workspaceID,
-		ActorType:   "system",
-		ActorID:     "",
-		Payload:     payload,
-	})
+	if task.Error.Valid && task.Error.String != "" {
+		payload["error"] = redact.Text(task.Error.String)
+	}
+	if task.FailureReason.Valid && task.FailureReason.String != "" {
+		payload["failure_reason"] = task.FailureReason.String
+	} else if task.Status == "failed" {
+		payload["failure_reason"] = "agent_error"
+	}
+	return payload
 }
 
 // ResolveTaskWorkspaceID determines the workspace ID for a task.
