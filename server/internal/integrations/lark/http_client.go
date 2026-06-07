@@ -251,21 +251,35 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	if p.Text == "" {
 		return "", errors.New("lark http client: missing text")
 	}
-	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	return c.sendText(ctx, p.InstallationID, "chat_id", string(p.ChatID), p.Text)
+}
+
+func (c *httpAPIClient) SendDirectTextMessage(ctx context.Context, p SendDirectTextParams) (string, error) {
+	if p.OpenID == "" {
+		return "", errors.New("lark http client: missing open_id")
+	}
+	if p.Text == "" {
+		return "", errors.New("lark http client: missing text")
+	}
+	return c.sendText(ctx, p.InstallationID, "open_id", string(p.OpenID), p.Text)
+}
+
+func (c *httpAPIClient) sendText(ctx context.Context, creds InstallationCredentials, receiveIDType, receiveID, text string) (string, error) {
+	token, err := c.tenantAccessToken(ctx, creds)
 	if err != nil {
 		return "", err
 	}
 	// Lark's `text` msg_type expects content = JSON-encoded {"text": "..."}.
 	// json.Marshal handles the escape of newlines / quotes / unicode so
 	// the agent's reply round-trips intact.
-	contentBytes, err := json.Marshal(map[string]string{"text": p.Text})
+	contentBytes, err := json.Marshal(map[string]string{"text": text})
 	if err != nil {
 		return "", fmt.Errorf("lark http client: encode text content: %w", err)
 	}
 	q := url.Values{}
-	q.Set("receive_id_type", "chat_id")
+	q.Set("receive_id_type", receiveIDType)
 	body := map[string]string{
-		"receive_id": string(p.ChatID),
+		"receive_id": receiveID,
 		"msg_type":   "text",
 		"content":    string(contentBytes),
 	}
@@ -282,7 +296,7 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	}
 	if resp.Code != 0 || resp.Data.MessageID == "" {
 		if isTokenError(resp.Code) {
-			c.invalidateToken(p.InstallationID.AppID)
+			c.invalidateToken(creds.AppID)
 		}
 		return "", fmt.Errorf("lark http client: send text message: code=%d msg=%q", resp.Code, resp.Msg)
 	}
@@ -430,6 +444,39 @@ func (c *httpAPIClient) SendBindingPromptCard(ctx context.Context, p BindingProm
 			c.invalidateToken(p.InstallationID.AppID)
 		}
 		return fmt.Errorf("lark http client: send binding prompt: code=%d msg=%q", resp.Code, resp.Msg)
+	}
+	return nil
+}
+
+func (c *httpAPIClient) AddMessageReaction(ctx context.Context, p AddReactionParams) error {
+	if p.MessageID == "" {
+		return errors.New("lark http client: missing message_id")
+	}
+	if p.EmojiType == "" {
+		return errors.New("lark http client: missing emoji_type")
+	}
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{
+		"reaction_type": map[string]string{
+			"emoji_type": p.EmojiType,
+		},
+	}
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	path := "/open-apis/im/v1/messages/" + url.PathEscape(p.MessageID) + "/reactions"
+	if err := c.doJSON(ctx, http.MethodPost, path, token, body, &resp); err != nil {
+		return fmt.Errorf("lark http client: add message reaction: %w", err)
+	}
+	if resp.Code != 0 {
+		if isTokenError(resp.Code) {
+			c.invalidateToken(p.InstallationID.AppID)
+		}
+		return fmt.Errorf("lark http client: add message reaction: code=%d msg=%q", resp.Code, resp.Msg)
 	}
 	return nil
 }
