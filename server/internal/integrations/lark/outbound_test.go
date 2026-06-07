@@ -104,6 +104,9 @@ func (f *fakeAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	f.textSent = append(f.textSent, p)
 	return f.textSendReturn, f.textSendErr
 }
+func (f *fakeAPIClient) SendDirectTextMessage(ctx context.Context, p SendDirectTextParams) (string, error) {
+	return "", nil
+}
 func (f *fakeAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCardParams) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -114,6 +117,9 @@ func (f *fakeAPIClient) SendBindingPromptCard(ctx context.Context, p BindingProm
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.bindingSent = append(f.bindingSent, p)
+	return nil
+}
+func (f *fakeAPIClient) AddMessageReaction(ctx context.Context, p AddReactionParams) error {
 	return nil
 }
 func (f *fakeAPIClient) GetBotInfo(ctx context.Context, creds InstallationCredentials) (BotInfo, error) {

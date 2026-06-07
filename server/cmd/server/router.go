@@ -210,6 +210,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				h.LarkAPIClient = larkClient
 				patcher := lark.NewPatcher(queries, installSvc, larkClient, lark.PatcherConfig{})
 				patcher.Register(bus)
+				inboxNotifier := lark.NewInboxNotifier(queries, installSvc, larkClient, lark.InboxNotifierConfig{
+					Logger: slog.Default(),
+				})
+				inboxNotifier.Register(bus)
 
 				// Inbound pipeline: lark_inbound_audit logger,
 				// channel-aware ChatSessionService, and the
