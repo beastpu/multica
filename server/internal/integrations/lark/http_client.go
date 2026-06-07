@@ -251,21 +251,35 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	if p.Text == "" {
 		return "", errors.New("lark http client: missing text")
 	}
-	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	return c.sendText(ctx, p.InstallationID, "chat_id", string(p.ChatID), p.Text)
+}
+
+func (c *httpAPIClient) SendDirectTextMessage(ctx context.Context, p SendDirectTextParams) (string, error) {
+	if p.OpenID == "" {
+		return "", errors.New("lark http client: missing open_id")
+	}
+	if p.Text == "" {
+		return "", errors.New("lark http client: missing text")
+	}
+	return c.sendText(ctx, p.InstallationID, "open_id", string(p.OpenID), p.Text)
+}
+
+func (c *httpAPIClient) sendText(ctx context.Context, creds InstallationCredentials, receiveIDType, receiveID, text string) (string, error) {
+	token, err := c.tenantAccessToken(ctx, creds)
 	if err != nil {
 		return "", err
 	}
 	// Lark's `text` msg_type expects content = JSON-encoded {"text": "..."}.
 	// json.Marshal handles the escape of newlines / quotes / unicode so
 	// the agent's reply round-trips intact.
-	contentBytes, err := json.Marshal(map[string]string{"text": p.Text})
+	contentBytes, err := json.Marshal(map[string]string{"text": text})
 	if err != nil {
 		return "", fmt.Errorf("lark http client: encode text content: %w", err)
 	}
 	q := url.Values{}
-	q.Set("receive_id_type", "chat_id")
+	q.Set("receive_id_type", receiveIDType)
 	body := map[string]string{
-		"receive_id": string(p.ChatID),
+		"receive_id": receiveID,
 		"msg_type":   "text",
 		"content":    string(contentBytes),
 	}
@@ -282,7 +296,7 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	}
 	if resp.Code != 0 || resp.Data.MessageID == "" {
 		if isTokenError(resp.Code) {
-			c.invalidateToken(p.InstallationID.AppID)
+			c.invalidateToken(creds.AppID)
 		}
 		return "", fmt.Errorf("lark http client: send text message: code=%d msg=%q", resp.Code, resp.Msg)
 	}

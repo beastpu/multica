@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -554,6 +555,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		// bump item.UpdatedAt; safe to skip them here.
 		if !forceRefresh && !item.UpdatedAt.IsZero() && binding.LastExternalUpdatedAt.Valid &&
 			!item.UpdatedAt.After(binding.LastExternalUpdatedAt.Time) {
+			s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 			return "skipped", 0, nil
 		}
 
@@ -603,8 +605,10 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 			_, _ = s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
 			timing.bindingUpsert += time.Since(phaseStarted)
 			if labelsChanged {
+				s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 				return "updated", 0, nil
 			}
+			s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 			return "skipped", 0, nil
 		}
 		phaseStarted = time.Now()
@@ -632,6 +636,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		if _, err := s.syncIssueLabels(ctx, cfg, item, issue.ID); err != nil {
 			return "skipped", 0, err
 		}
+		s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 		s.reconcileSyncedIssueTasks(ctx, updatedIssue)
 		return "updated", 0, nil
 	}
@@ -676,6 +681,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	if err := tx.Commit(ctx); err != nil {
 		return "skipped", 0, err
 	}
+	s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 	timing.issueCreate += time.Since(phaseStarted)
 	phaseStarted = time.Now()
 	attachmentMarkdown, err := s.syncExternalAttachments(ctx, cfg, issue.ID, item, timing)
@@ -1091,6 +1097,62 @@ func (s *FeishuProjectSyncService) resolveOwnerMember(ctx context.Context, works
 		return pgtype.Text{}, pgtype.UUID{}
 	}
 	return pgtype.Text{String: "member", Valid: true}, user.ID
+}
+
+func (s *FeishuProjectSyncService) ensureExternalAssigneeSubscriber(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, issueID pgtype.UUID) {
+	if s.Queries == nil || !issueID.Valid {
+		return
+	}
+	userType, userID := s.resolveOwnerMember(ctx, cfg.WorkspaceID, item.OwnerEmail)
+	if !userID.Valid || !userType.Valid || userType.String != "member" {
+		return
+	}
+	subscribed, err := s.Queries.IsIssueSubscriber(ctx, db.IsIssueSubscriberParams{
+		IssueID:  issueID,
+		UserType: "member",
+		UserID:   userID,
+	})
+	if err != nil {
+		slog.Warn("Feishu Project sync subscriber check failed",
+			"workspace_id", UUIDString(cfg.WorkspaceID),
+			"issue_id", UUIDString(issueID),
+			"work_item_id", item.ID,
+			"owner_email", strings.ToLower(strings.TrimSpace(item.OwnerEmail)),
+			"error", err,
+		)
+		return
+	}
+	if subscribed {
+		return
+	}
+	if err := s.Queries.AddIssueSubscriber(ctx, db.AddIssueSubscriberParams{
+		IssueID:  issueID,
+		UserType: "member",
+		UserID:   userID,
+		Reason:   "external_assignee",
+	}); err != nil {
+		slog.Warn("Feishu Project sync subscriber add failed",
+			"workspace_id", UUIDString(cfg.WorkspaceID),
+			"issue_id", UUIDString(issueID),
+			"work_item_id", item.ID,
+			"owner_email", strings.ToLower(strings.TrimSpace(item.OwnerEmail)),
+			"error", err,
+		)
+		return
+	}
+	if s.Events != nil {
+		s.Events.Publish(events.Event{
+			Type:        protocol.EventSubscriberAdded,
+			WorkspaceID: UUIDString(cfg.WorkspaceID),
+			ActorType:   "system",
+			Payload: map[string]any{
+				"issue_id":  UUIDString(issueID),
+				"user_type": "member",
+				"user_id":   UUIDString(userID),
+				"reason":    "external_assignee",
+			},
+		})
+	}
 }
 
 func (s *FeishuProjectSyncService) resolveOwnerAgent(ctx context.Context, workspaceID pgtype.UUID, email string) (pgtype.Text, pgtype.UUID) {

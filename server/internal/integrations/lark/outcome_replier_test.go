@@ -23,6 +23,7 @@ type stubAPIClientWithRecorder struct {
 	bindingCalls   []BindingPromptParams
 	interactiveOut []SendCardParams
 	textOut        []SendTextParams
+	directTextOut  []SendDirectTextParams
 	reactions      []AddReactionParams
 	sendErr        error
 	textErr        error
@@ -54,6 +55,13 @@ func (s *stubAPIClientWithRecorder) SendTextMessage(ctx context.Context, p SendT
 	}
 	s.textOut = append(s.textOut, p)
 	return "lark-text-msg-id", nil
+}
+
+func (s *stubAPIClientWithRecorder) SendDirectTextMessage(ctx context.Context, p SendDirectTextParams) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.directTextOut = append(s.directTextOut, p)
+	return "lark-direct-text-msg-id", nil
 }
 
 func (s *stubAPIClientWithRecorder) SendMarkdownCard(ctx context.Context, p SendMarkdownCardParams) (string, error) {

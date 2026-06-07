@@ -44,6 +44,11 @@ type APIClient interface {
 	// chrome the user doesn't want.
 	SendTextMessage(ctx context.Context, p SendTextParams) (string, error)
 
+	// SendDirectTextMessage posts a plain text DM to a Lark user by
+	// open_id. Used for member-targeted notifications where there is
+	// no existing Lark chat_id yet.
+	SendDirectTextMessage(ctx context.Context, p SendDirectTextParams) (string, error)
+
 	// SendMarkdownCard posts the agent's reply as a Lark interactive
 	// card (schema 2.0) with a single `tag: "markdown"` body element.
 	// This is the path the chat-reply router takes when the body
@@ -168,6 +173,12 @@ type SendTextParams struct {
 	Text           string
 }
 
+type SendDirectTextParams struct {
+	InstallationID InstallationCredentials
+	OpenID         OpenID
+	Text           string
+}
+
 // SendMarkdownCardParams is the input shape for posting an agent
 // reply as a Lark interactive card with a markdown body element.
 // Markdown is forwarded to Lark verbatim; the client builds the
@@ -261,6 +272,11 @@ func (s *stubAPIClient) PatchInteractiveCard(ctx context.Context, p PatchCardPar
 
 func (s *stubAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (string, error) {
 	s.log.Warn("lark stub client: SendTextMessage called", "chat_id", string(p.ChatID))
+	return "", ErrAPIClientNotConfigured
+}
+
+func (s *stubAPIClient) SendDirectTextMessage(ctx context.Context, p SendDirectTextParams) (string, error) {
+	s.log.Warn("lark stub client: SendDirectTextMessage called", "open_id", string(p.OpenID))
 	return "", ErrAPIClientNotConfigured
 }
 

@@ -382,6 +382,49 @@ func TestHTTPClient_SendTextMessage_HappyPath(t *testing.T) {
 	}
 }
 
+func TestHTTPClient_SendDirectTextMessage_HappyPath(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok_direct_text", 7200)
+	fake.stubSend(
+		map[string]any{
+			"code": 0,
+			"msg":  "ok",
+			"data": map[string]string{"message_id": "om_direct_text_1"},
+		},
+		func(r *http.Request, body map[string]string) {
+			if got := r.URL.Query().Get("receive_id_type"); got != "open_id" {
+				t.Errorf("receive_id_type: got %q want open_id", got)
+			}
+			if body["receive_id"] != "ou_user_1" {
+				t.Errorf("receive_id: got %q want ou_user_1", body["receive_id"])
+			}
+			if body["msg_type"] != "text" {
+				t.Errorf("msg_type: got %q want text", body["msg_type"])
+			}
+			var inner map[string]string
+			if err := json.Unmarshal([]byte(body["content"]), &inner); err != nil {
+				t.Fatalf("content is not valid inner JSON: %v", err)
+			}
+			if inner["text"] != "Inbox: build failed" {
+				t.Errorf("inner content.text: got %q", inner["text"])
+			}
+		},
+	)
+
+	c := newTestClient(fake, time.Now)
+	msgID, err := c.SendDirectTextMessage(context.Background(), SendDirectTextParams{
+		InstallationID: testCreds(),
+		OpenID:         OpenID("ou_user_1"),
+		Text:           "Inbox: build failed",
+	})
+	if err != nil {
+		t.Fatalf("send direct text: %v", err)
+	}
+	if msgID != "om_direct_text_1" {
+		t.Errorf("message id: got %q want om_direct_text_1", msgID)
+	}
+}
+
 func TestHTTPClient_AddMessageReaction_HappyPath(t *testing.T) {
 	fake := newLarkFake(t)
 	fake.stubToken("tok_react", 7200)
