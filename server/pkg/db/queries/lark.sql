@@ -177,6 +177,18 @@ SELECT * FROM lark_user_binding
 WHERE installation_id = $1
 ORDER BY bound_at DESC;
 
+-- name: ListActiveLarkUserBindingsByMember :many
+-- Outbound notification path: find the recipient's bound Lark accounts in
+-- this workspace, with the active bot installation needed for credentials.
+SELECT sqlc.embed(lub), sqlc.embed(li)
+FROM lark_user_binding lub
+JOIN lark_installation li ON li.id = lub.installation_id
+WHERE lub.workspace_id = $1
+  AND lub.multica_user_id = $2
+  AND li.workspace_id = lub.workspace_id
+  AND li.status = 'active'
+ORDER BY lub.bound_at DESC;
+
 -- name: DeleteLarkUserBinding :exec
 DELETE FROM lark_user_binding WHERE id = $1;
 

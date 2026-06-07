@@ -27,6 +27,7 @@ type larkFakeServer struct {
 	sendN   atomic.Int32
 	patchN  atomic.Int32
 	bindN   atomic.Int32
+	reactN  atomic.Int32
 	authObs atomic.Value // last Authorization header seen across all paths
 }
 
@@ -125,6 +126,31 @@ func (f *larkFakeServer) stubPatch(resp map[string]any, verify func(r *http.Requ
 		}
 		if verify != nil {
 			verify(r, id, body)
+		}
+		writeJSON(w, resp)
+	})
+}
+
+func (f *larkFakeServer) stubReaction(resp map[string]any, verify func(r *http.Request, id string, body map[string]any)) {
+	const suffix = "/reactions"
+	f.mux.HandleFunc("/open-apis/im/v1/messages/", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, suffix) {
+			f.t.Errorf("reaction: unexpected path %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			f.t.Errorf("reaction: want POST, got %s", r.Method)
+		}
+		f.reactN.Add(1)
+		rawID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/open-apis/im/v1/messages/"), suffix)
+		if rawID == "" {
+			f.t.Errorf("reaction: missing message id")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			f.t.Errorf("reaction: decode body: %v", err)
+		}
+		if verify != nil {
+			verify(r, rawID, body)
 		}
 		writeJSON(w, resp)
 	})
@@ -353,6 +379,81 @@ func TestHTTPClient_SendTextMessage_HappyPath(t *testing.T) {
 	}
 	if got := fake.lastAuth(); got != "Bearer tok_text" {
 		t.Errorf("Authorization header: got %q want Bearer tok_text", got)
+	}
+}
+
+func TestHTTPClient_SendDirectTextMessage_HappyPath(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok_direct_text", 7200)
+	fake.stubSend(
+		map[string]any{
+			"code": 0,
+			"msg":  "ok",
+			"data": map[string]string{"message_id": "om_direct_text_1"},
+		},
+		func(r *http.Request, body map[string]string) {
+			if got := r.URL.Query().Get("receive_id_type"); got != "open_id" {
+				t.Errorf("receive_id_type: got %q want open_id", got)
+			}
+			if body["receive_id"] != "ou_user_1" {
+				t.Errorf("receive_id: got %q want ou_user_1", body["receive_id"])
+			}
+			if body["msg_type"] != "text" {
+				t.Errorf("msg_type: got %q want text", body["msg_type"])
+			}
+			var inner map[string]string
+			if err := json.Unmarshal([]byte(body["content"]), &inner); err != nil {
+				t.Fatalf("content is not valid inner JSON: %v", err)
+			}
+			if inner["text"] != "Inbox: build failed" {
+				t.Errorf("inner content.text: got %q", inner["text"])
+			}
+		},
+	)
+
+	c := newTestClient(fake, time.Now)
+	msgID, err := c.SendDirectTextMessage(context.Background(), SendDirectTextParams{
+		InstallationID: testCreds(),
+		OpenID:         OpenID("ou_user_1"),
+		Text:           "Inbox: build failed",
+	})
+	if err != nil {
+		t.Fatalf("send direct text: %v", err)
+	}
+	if msgID != "om_direct_text_1" {
+		t.Errorf("message id: got %q want om_direct_text_1", msgID)
+	}
+}
+
+func TestHTTPClient_AddMessageReaction_HappyPath(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok_react", 7200)
+	fake.stubReaction(map[string]any{"code": 0, "msg": "success"}, func(r *http.Request, id string, body map[string]any) {
+		if id != "om_user_msg_1" {
+			t.Errorf("message id: got %q want om_user_msg_1", id)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer tok_react" {
+			t.Errorf("Authorization=%q want Bearer tok_react", got)
+		}
+		reactionType, ok := body["reaction_type"].(map[string]any)
+		if !ok {
+			t.Fatalf("reaction_type missing or wrong shape: %v", body)
+		}
+		if got := reactionType["emoji_type"]; got != "OnIt" {
+			t.Errorf("emoji_type=%v want OnIt", got)
+		}
+	})
+
+	c := newTestClient(fake, time.Now)
+	if err := c.AddMessageReaction(context.Background(), AddReactionParams{
+		InstallationID: testCreds(),
+		MessageID:      "om_user_msg_1",
+		EmojiType:      "OnIt",
+	}); err != nil {
+		t.Fatalf("AddMessageReaction: %v", err)
+	}
+	if got := fake.reactN.Load(); got != 1 {
+		t.Fatalf("reaction endpoint calls=%d want 1", got)
 	}
 }
 
@@ -818,8 +919,8 @@ func TestHTTPClient_GetBotInfo_HappyPath(t *testing.T) {
 			"code": 0,
 			"msg":  "ok",
 			"bot": map[string]any{
-				"open_id":   "ou_bot_42",
-				"app_name":  "PersonalAgent",
+				"open_id":    "ou_bot_42",
+				"app_name":   "PersonalAgent",
 				"avatar_url": "https://example/avatar.png",
 			},
 		})

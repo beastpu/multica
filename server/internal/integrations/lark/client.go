@@ -44,6 +44,11 @@ type APIClient interface {
 	// chrome the user doesn't want.
 	SendTextMessage(ctx context.Context, p SendTextParams) (string, error)
 
+	// SendDirectTextMessage posts a plain text DM to a Lark user by
+	// open_id. Used for member-targeted notifications where there is
+	// no existing Lark chat_id yet.
+	SendDirectTextMessage(ctx context.Context, p SendDirectTextParams) (string, error)
+
 	// SendMarkdownCard posts the agent's reply as a Lark interactive
 	// card (schema 2.0) with a single `tag: "markdown"` body element.
 	// This is the path the chat-reply router takes when the body
@@ -59,6 +64,11 @@ type APIClient interface {
 	// changes — call sites in identity check don't have to know about
 	// Lark's card schema.
 	SendBindingPromptCard(ctx context.Context, p BindingPromptParams) error
+
+	// AddMessageReaction adds an emoji reaction to an existing Lark
+	// message. Used as a low-noise acknowledgement that the bot has
+	// received a user request and is working on it.
+	AddMessageReaction(ctx context.Context, p AddReactionParams) error
 
 	// GetBotInfo returns the Bot's per-installation `open_id` (the
 	// `bot_open_id` we persist on lark_installation). RegistrationService
@@ -163,6 +173,12 @@ type SendTextParams struct {
 	Text           string
 }
 
+type SendDirectTextParams struct {
+	InstallationID InstallationCredentials
+	OpenID         OpenID
+	Text           string
+}
+
 // SendMarkdownCardParams is the input shape for posting an agent
 // reply as a Lark interactive card with a markdown body element.
 // Markdown is forwarded to Lark verbatim; the client builds the
@@ -188,6 +204,12 @@ type BindingPromptParams struct {
 	// BindURL is the absolute URL the user clicks. The token is
 	// embedded in the URL by the caller; the client never sees it.
 	BindURL string
+}
+
+type AddReactionParams struct {
+	InstallationID InstallationCredentials
+	MessageID      string
+	EmojiType      string
 }
 
 // InstallationCredentials is the per-installation transport context the
@@ -253,6 +275,11 @@ func (s *stubAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	return "", ErrAPIClientNotConfigured
 }
 
+func (s *stubAPIClient) SendDirectTextMessage(ctx context.Context, p SendDirectTextParams) (string, error) {
+	s.log.Warn("lark stub client: SendDirectTextMessage called", "open_id", string(p.OpenID))
+	return "", ErrAPIClientNotConfigured
+}
+
 func (s *stubAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCardParams) (string, error) {
 	s.log.Warn("lark stub client: SendMarkdownCard called", "chat_id", string(p.ChatID))
 	return "", ErrAPIClientNotConfigured
@@ -260,6 +287,11 @@ func (s *stubAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCard
 
 func (s *stubAPIClient) SendBindingPromptCard(ctx context.Context, p BindingPromptParams) error {
 	s.log.Warn("lark stub client: SendBindingPromptCard called", "open_id", string(p.OpenID))
+	return ErrAPIClientNotConfigured
+}
+
+func (s *stubAPIClient) AddMessageReaction(ctx context.Context, p AddReactionParams) error {
+	s.log.Warn("lark stub client: AddMessageReaction called", "message_id", p.MessageID, "emoji_type", p.EmojiType)
 	return ErrAPIClientNotConfigured
 }
 

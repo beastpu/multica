@@ -703,6 +703,72 @@ func (q *Queries) ListActiveLarkInstallations(ctx context.Context) ([]LarkInstal
 	return items, nil
 }
 
+const listActiveLarkUserBindingsByMember = `-- name: ListActiveLarkUserBindingsByMember :many
+SELECT lub.id, lub.workspace_id, lub.multica_user_id, lub.installation_id, lub.lark_open_id, lub.union_id, lub.bound_at, li.id, li.workspace_id, li.agent_id, li.app_id, li.app_secret_encrypted, li.tenant_key, li.bot_open_id, li.installer_user_id, li.status, li.ws_lease_token, li.ws_lease_expires_at, li.installed_at, li.created_at, li.updated_at, li.bot_union_id
+FROM lark_user_binding lub
+JOIN lark_installation li ON li.id = lub.installation_id
+WHERE lub.workspace_id = $1
+  AND lub.multica_user_id = $2
+  AND li.workspace_id = lub.workspace_id
+  AND li.status = 'active'
+ORDER BY lub.bound_at DESC
+`
+
+type ListActiveLarkUserBindingsByMemberParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	MulticaUserID pgtype.UUID `json:"multica_user_id"`
+}
+
+type ListActiveLarkUserBindingsByMemberRow struct {
+	LarkUserBinding  LarkUserBinding  `json:"lark_user_binding"`
+	LarkInstallation LarkInstallation `json:"lark_installation"`
+}
+
+// Outbound notification path: find the recipient's bound Lark accounts in
+// this workspace, with the active bot installation needed for credentials.
+func (q *Queries) ListActiveLarkUserBindingsByMember(ctx context.Context, arg ListActiveLarkUserBindingsByMemberParams) ([]ListActiveLarkUserBindingsByMemberRow, error) {
+	rows, err := q.db.Query(ctx, listActiveLarkUserBindingsByMember, arg.WorkspaceID, arg.MulticaUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListActiveLarkUserBindingsByMemberRow{}
+	for rows.Next() {
+		var i ListActiveLarkUserBindingsByMemberRow
+		if err := rows.Scan(
+			&i.LarkUserBinding.ID,
+			&i.LarkUserBinding.WorkspaceID,
+			&i.LarkUserBinding.MulticaUserID,
+			&i.LarkUserBinding.InstallationID,
+			&i.LarkUserBinding.LarkOpenID,
+			&i.LarkUserBinding.UnionID,
+			&i.LarkUserBinding.BoundAt,
+			&i.LarkInstallation.ID,
+			&i.LarkInstallation.WorkspaceID,
+			&i.LarkInstallation.AgentID,
+			&i.LarkInstallation.AppID,
+			&i.LarkInstallation.AppSecretEncrypted,
+			&i.LarkInstallation.TenantKey,
+			&i.LarkInstallation.BotOpenID,
+			&i.LarkInstallation.InstallerUserID,
+			&i.LarkInstallation.Status,
+			&i.LarkInstallation.WsLeaseToken,
+			&i.LarkInstallation.WsLeaseExpiresAt,
+			&i.LarkInstallation.InstalledAt,
+			&i.LarkInstallation.CreatedAt,
+			&i.LarkInstallation.UpdatedAt,
+			&i.LarkInstallation.BotUnionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLarkInboundAuditByInstallation = `-- name: ListLarkInboundAuditByInstallation :many
 SELECT id, installation_id, lark_chat_id, event_type, lark_event_id, lark_message_id, drop_reason, received_at FROM lark_inbound_audit
 WHERE installation_id = $1
