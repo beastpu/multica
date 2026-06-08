@@ -226,6 +226,22 @@ WHERE chat_session_id = $1;
 DELETE FROM lark_chat_session_binding
 WHERE chat_session_id = $1;
 
+-- name: ClaimLarkInboxNotificationDelivery :one
+-- Claims one outbound Lark inbox notification delivery. This is intentionally
+-- keyed by the durable inbox_item row plus the concrete bot installation and
+-- recipient open_id so repeated inbox:new events, duplicate bus subscribers,
+-- or multi-replica handling cannot send duplicate DMs.
+WITH ins AS (
+    INSERT INTO lark_inbox_notification_delivery (
+        inbox_item_id,
+        installation_id,
+        lark_open_id
+    ) VALUES ($1, $2, $3)
+    ON CONFLICT DO NOTHING
+    RETURNING true AS claimed
+)
+SELECT COALESCE((SELECT claimed FROM ins), false)::boolean AS claimed;
+
 -- =====================
 -- lark_inbound_message_dedup
 -- =====================
