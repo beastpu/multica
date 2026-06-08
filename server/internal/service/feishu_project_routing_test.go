@@ -122,6 +122,25 @@ func TestMatchBusinessLineRouteEmptyInputs(t *testing.T) {
 	}
 }
 
+func TestIsW3ClientLegacyWorkspace(t *testing.T) {
+	tests := []struct {
+		name string
+		ws   db.Workspace
+		want bool
+	}{
+		{name: "slug", ws: db.Workspace{Slug: w3ClientWorkspaceSlug, Name: "renamed"}, want: true},
+		{name: "name", ws: db.Workspace{Slug: "different", Name: w3ClientWorkspaceName}, want: true},
+		{name: "other", ws: db.Workspace{Slug: "w3-server", Name: "W3-Server"}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isW3ClientLegacyWorkspace(tt.ws); got != tt.want {
+				t.Fatalf("isW3ClientLegacyWorkspace() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseFeishuProjectSearchExtractsBusinessLine(t *testing.T) {
 	// Meego search response embeds the biz-line value inside `fields[i].field_value`,
 	// keyed by `field_key`. Verify that with a configured field key we pull it out;
