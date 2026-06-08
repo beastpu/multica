@@ -1129,7 +1129,7 @@ func (s *FeishuProjectSyncService) ensureExternalAssigneeSubscriber(ctx context.
 		IssueID:  issueID,
 		UserType: "member",
 		UserID:   userID,
-		Reason:   "external_assignee",
+		Reason:   "assignee",
 	}); err != nil {
 		slog.Warn("Feishu Project sync subscriber add failed",
 			"workspace_id", UUIDString(cfg.WorkspaceID),
@@ -1149,7 +1149,7 @@ func (s *FeishuProjectSyncService) ensureExternalAssigneeSubscriber(ctx context.
 				"issue_id":  UUIDString(issueID),
 				"user_type": "member",
 				"user_id":   UUIDString(userID),
-				"reason":    "external_assignee",
+				"reason":    "assignee",
 			},
 		})
 	}

@@ -8,6 +8,79 @@ SELECT * FROM agent
 WHERE workspace_id = $1
 ORDER BY created_at ASC;
 
+-- name: ListAgentIssueDailySummaries :many
+WITH task_stats AS (
+    SELECT
+        agent_id,
+        count(*) FILTER (
+            WHERE status = 'completed'
+              AND completed_at >= sqlc.arg('window_start')::timestamptz
+              AND completed_at < sqlc.arg('window_end')::timestamptz
+        )::int AS tasks_completed,
+        count(*) FILTER (
+            WHERE status = 'failed'
+              AND completed_at >= sqlc.arg('window_start')::timestamptz
+              AND completed_at < sqlc.arg('window_end')::timestamptz
+        )::int AS tasks_failed,
+        count(*) FILTER (
+            WHERE created_at >= sqlc.arg('window_start')::timestamptz
+              AND created_at < sqlc.arg('window_end')::timestamptz
+        )::int AS tasks_started
+    FROM agent_task_queue
+    WHERE created_at < sqlc.arg('window_end')::timestamptz
+      AND (
+          created_at >= sqlc.arg('window_start')::timestamptz
+          OR completed_at >= sqlc.arg('window_start')::timestamptz
+      )
+    GROUP BY agent_id
+),
+issue_stats AS (
+    SELECT
+        assignee_id AS agent_id,
+        count(*) FILTER (WHERE status = 'backlog')::int AS backlog_count,
+        count(*) FILTER (WHERE status = 'todo')::int AS todo_count,
+        count(*) FILTER (WHERE status = 'in_progress')::int AS in_progress_count,
+        count(*) FILTER (WHERE status = 'in_review')::int AS in_review_count,
+        count(*) FILTER (WHERE status = 'blocked')::int AS blocked_count,
+        count(*) FILTER (WHERE status NOT IN ('done', 'cancelled'))::int AS active_count,
+        count(*) FILTER (
+            WHERE status IN ('done', 'cancelled')
+              AND updated_at >= sqlc.arg('window_start')::timestamptz
+              AND updated_at < sqlc.arg('window_end')::timestamptz
+        )::int AS closed_in_window
+    FROM issue
+    WHERE assignee_type = 'agent'
+    GROUP BY assignee_id
+)
+SELECT
+    a.workspace_id,
+    a.id AS agent_id,
+    a.name AS agent_name,
+    a.owner_id,
+    COALESCE(i.backlog_count, 0)::int AS backlog_count,
+    COALESCE(i.todo_count, 0)::int AS todo_count,
+    COALESCE(i.in_progress_count, 0)::int AS in_progress_count,
+    COALESCE(i.in_review_count, 0)::int AS in_review_count,
+    COALESCE(i.blocked_count, 0)::int AS blocked_count,
+    COALESCE(i.active_count, 0)::int AS active_count,
+    COALESCE(i.closed_in_window, 0)::int AS closed_in_window,
+    COALESCE(t.tasks_started, 0)::int AS tasks_started,
+    COALESCE(t.tasks_completed, 0)::int AS tasks_completed,
+    COALESCE(t.tasks_failed, 0)::int AS tasks_failed
+FROM agent a
+LEFT JOIN issue_stats i ON i.agent_id = a.id
+LEFT JOIN task_stats t ON t.agent_id = a.id
+WHERE a.archived_at IS NULL
+  AND a.owner_id IS NOT NULL
+  AND (
+      COALESCE(i.active_count, 0) > 0
+      OR COALESCE(i.closed_in_window, 0) > 0
+      OR COALESCE(t.tasks_started, 0) > 0
+      OR COALESCE(t.tasks_completed, 0) > 0
+      OR COALESCE(t.tasks_failed, 0) > 0
+  )
+ORDER BY a.workspace_id, a.name ASC;
+
 -- name: GetAgent :one
 SELECT * FROM agent
 WHERE id = $1;

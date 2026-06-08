@@ -1907,6 +1907,137 @@ func (q *Queries) ListActiveTasksByIssue(ctx context.Context, issueID pgtype.UUI
 	return items, nil
 }
 
+const listAgentIssueDailySummaries = `-- name: ListAgentIssueDailySummaries :many
+WITH task_stats AS (
+    SELECT
+        agent_id,
+        count(*) FILTER (
+            WHERE status = 'completed'
+              AND completed_at >= $1::timestamptz
+              AND completed_at < $2::timestamptz
+        )::int AS tasks_completed,
+        count(*) FILTER (
+            WHERE status = 'failed'
+              AND completed_at >= $1::timestamptz
+              AND completed_at < $2::timestamptz
+        )::int AS tasks_failed,
+        count(*) FILTER (
+            WHERE created_at >= $1::timestamptz
+              AND created_at < $2::timestamptz
+        )::int AS tasks_started
+    FROM agent_task_queue
+    WHERE created_at < $2::timestamptz
+      AND (
+          created_at >= $1::timestamptz
+          OR completed_at >= $1::timestamptz
+      )
+    GROUP BY agent_id
+),
+issue_stats AS (
+    SELECT
+        assignee_id AS agent_id,
+        count(*) FILTER (WHERE status = 'backlog')::int AS backlog_count,
+        count(*) FILTER (WHERE status = 'todo')::int AS todo_count,
+        count(*) FILTER (WHERE status = 'in_progress')::int AS in_progress_count,
+        count(*) FILTER (WHERE status = 'in_review')::int AS in_review_count,
+        count(*) FILTER (WHERE status = 'blocked')::int AS blocked_count,
+        count(*) FILTER (WHERE status NOT IN ('done', 'cancelled'))::int AS active_count,
+        count(*) FILTER (
+            WHERE status IN ('done', 'cancelled')
+              AND updated_at >= $1::timestamptz
+              AND updated_at < $2::timestamptz
+        )::int AS closed_in_window
+    FROM issue
+    WHERE assignee_type = 'agent'
+    GROUP BY assignee_id
+)
+SELECT
+    a.workspace_id,
+    a.id AS agent_id,
+    a.name AS agent_name,
+    a.owner_id,
+    COALESCE(i.backlog_count, 0)::int AS backlog_count,
+    COALESCE(i.todo_count, 0)::int AS todo_count,
+    COALESCE(i.in_progress_count, 0)::int AS in_progress_count,
+    COALESCE(i.in_review_count, 0)::int AS in_review_count,
+    COALESCE(i.blocked_count, 0)::int AS blocked_count,
+    COALESCE(i.active_count, 0)::int AS active_count,
+    COALESCE(i.closed_in_window, 0)::int AS closed_in_window,
+    COALESCE(t.tasks_started, 0)::int AS tasks_started,
+    COALESCE(t.tasks_completed, 0)::int AS tasks_completed,
+    COALESCE(t.tasks_failed, 0)::int AS tasks_failed
+FROM agent a
+LEFT JOIN issue_stats i ON i.agent_id = a.id
+LEFT JOIN task_stats t ON t.agent_id = a.id
+WHERE a.archived_at IS NULL
+  AND a.owner_id IS NOT NULL
+  AND (
+      COALESCE(i.active_count, 0) > 0
+      OR COALESCE(i.closed_in_window, 0) > 0
+      OR COALESCE(t.tasks_started, 0) > 0
+      OR COALESCE(t.tasks_completed, 0) > 0
+      OR COALESCE(t.tasks_failed, 0) > 0
+  )
+ORDER BY a.workspace_id, a.name ASC
+`
+
+type ListAgentIssueDailySummariesParams struct {
+	WindowStart pgtype.Timestamptz `json:"window_start"`
+	WindowEnd   pgtype.Timestamptz `json:"window_end"`
+}
+
+type ListAgentIssueDailySummariesRow struct {
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	AgentID         pgtype.UUID `json:"agent_id"`
+	AgentName       string      `json:"agent_name"`
+	OwnerID         pgtype.UUID `json:"owner_id"`
+	BacklogCount    int32       `json:"backlog_count"`
+	TodoCount       int32       `json:"todo_count"`
+	InProgressCount int32       `json:"in_progress_count"`
+	InReviewCount   int32       `json:"in_review_count"`
+	BlockedCount    int32       `json:"blocked_count"`
+	ActiveCount     int32       `json:"active_count"`
+	ClosedInWindow  int32       `json:"closed_in_window"`
+	TasksStarted    int32       `json:"tasks_started"`
+	TasksCompleted  int32       `json:"tasks_completed"`
+	TasksFailed     int32       `json:"tasks_failed"`
+}
+
+func (q *Queries) ListAgentIssueDailySummaries(ctx context.Context, arg ListAgentIssueDailySummariesParams) ([]ListAgentIssueDailySummariesRow, error) {
+	rows, err := q.db.Query(ctx, listAgentIssueDailySummaries, arg.WindowStart, arg.WindowEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentIssueDailySummariesRow{}
+	for rows.Next() {
+		var i ListAgentIssueDailySummariesRow
+		if err := rows.Scan(
+			&i.WorkspaceID,
+			&i.AgentID,
+			&i.AgentName,
+			&i.OwnerID,
+			&i.BacklogCount,
+			&i.TodoCount,
+			&i.InProgressCount,
+			&i.InReviewCount,
+			&i.BlockedCount,
+			&i.ActiveCount,
+			&i.ClosedInWindow,
+			&i.TasksStarted,
+			&i.TasksCompleted,
+			&i.TasksFailed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgentTasks = `-- name: ListAgentTasks :many
 SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason FROM agent_task_queue
 WHERE agent_id = $1
