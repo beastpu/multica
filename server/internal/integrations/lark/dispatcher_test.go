@@ -209,13 +209,16 @@ type fakeChat struct {
 	ensureID         pgtype.UUID
 	ensureErr        error
 	appendResult     AppendResult
+	clearResult      ClearResult
 	appendErr        error
 	queries          *fakeQueries                  // when set, runs the in-tx Mark
 	beforeAppend     func(AppendUserMessageParams) // race-injection hook
 	calledEnsure     int
 	calledAppend     int
+	calledClear      int
 	lastAppendParams AppendUserMessageParams
 	lastEnsureParams EnsureChatSessionParams
+	lastClearParams  ClearSessionParams
 }
 
 func (f *fakeChat) EnsureChatSession(ctx context.Context, p EnsureChatSessionParams) (pgtype.UUID, error) {
@@ -254,6 +257,30 @@ func (f *fakeChat) AppendUserMessage(ctx context.Context, p AppendUserMessagePar
 	return res, nil
 }
 
+func (f *fakeChat) ClearSession(ctx context.Context, p ClearSessionParams) (ClearResult, error) {
+	f.calledClear++
+	f.lastClearParams = p
+	if f.appendErr != nil {
+		return ClearResult{}, f.appendErr
+	}
+	res := f.clearResult
+	if f.queries != nil && p.ClaimToken.Valid && p.LarkMessageID != "" {
+		rows, err := f.queries.MarkLarkInboundDedupProcessed(ctx, db.MarkLarkInboundDedupProcessedParams{
+			InstallationID: p.InstallationID,
+			MessageID:      p.LarkMessageID,
+			ClaimToken:     p.ClaimToken,
+		})
+		if err != nil {
+			return ClearResult{}, err
+		}
+		if rows == 0 {
+			return ClearResult{}, ErrClaimLost
+		}
+		res.DedupMarked = true
+	}
+	return res, nil
+}
+
 type fakeAudit struct {
 	drops []AuditDropParams
 }
@@ -277,14 +304,21 @@ func (f *fakeIssueCreator) Create(ctx context.Context, p service.IssueCreatePara
 }
 
 type fakeEnqueuer struct {
-	called int
-	task   db.AgentTaskQueue
-	err    error
+	called       int
+	broadcasts   int
+	cancelledOut []db.AgentTaskQueue
+	task         db.AgentTaskQueue
+	err          error
 }
 
 func (f *fakeEnqueuer) EnqueueChatTask(ctx context.Context, _ db.ChatSession) (db.AgentTaskQueue, error) {
 	f.called++
 	return f.task, f.err
+}
+
+func (f *fakeEnqueuer) BroadcastCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue) {
+	f.broadcasts++
+	f.cancelledOut = append([]db.AgentTaskQueue(nil), cancelled...)
 }
 
 // validUUID builds a deterministic Valid pgtype.UUID from the supplied
@@ -699,6 +733,65 @@ func TestDispatcher_IssueCommandCreatesIssue(t *testing.T) {
 	}
 	if res.IssueTitle != "ship it" {
 		t.Fatalf("issue title should be propagated; got %q", res.IssueTitle)
+	}
+}
+
+func TestDispatcher_ClearCommandArchivesSessionWithoutEnqueue(t *testing.T) {
+	sessionID := validUUID(0x66)
+	inst := activeInstallation()
+	queries := &fakeQueries{
+		installationByApp: inst,
+		userBinding:       boundUser(),
+		chatSession:       db.ChatSession{ID: sessionID, AgentID: inst.AgentID},
+	}
+	cancelledTask := db.AgentTaskQueue{ID: validUUID(0x99), AgentID: inst.AgentID}
+	chat := &fakeChat{
+		ensureID: sessionID,
+		queries:  queries,
+		clearResult: ClearResult{
+			CancelledTasks: []db.AgentTaskQueue{cancelledTask},
+		},
+	}
+	enq := &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}
+	d := &Dispatcher{
+		Queries:     queries,
+		Chat:        chat,
+		Audit:       &fakeAudit{},
+		TaskService: enq,
+	}
+
+	res, err := d.Handle(context.Background(), InboundMessage{
+		AppID:        "ok",
+		ChatType:     ChatTypeP2P,
+		SenderOpenID: "ou_user_a",
+		Body:         "/clear",
+		CommandBody:  "/clear",
+		MessageID:    "msg-clear",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Outcome != OutcomeChatCleared {
+		t.Fatalf("Outcome = %q want %q", res.Outcome, OutcomeChatCleared)
+	}
+	if chat.calledEnsure != 1 || chat.calledClear != 1 {
+		t.Fatalf("ensure/clear calls = %d/%d, want 1/1", chat.calledEnsure, chat.calledClear)
+	}
+	if chat.calledAppend != 0 {
+		t.Fatalf("/clear must not append a user message, got %d appends", chat.calledAppend)
+	}
+	if enq.called != 0 {
+		t.Fatalf("/clear must not enqueue an agent task, got %d enqueues", enq.called)
+	}
+	if enq.broadcasts != 1 || len(enq.cancelledOut) != 1 || enq.cancelledOut[0].ID != cancelledTask.ID {
+		t.Fatalf("/clear must broadcast cancelled tasks after clear, broadcasts=%d tasks=%+v", enq.broadcasts, enq.cancelledOut)
+	}
+	if chat.lastClearParams.ChatSessionID != sessionID || chat.lastClearParams.InstallationID != inst.ID ||
+		chat.lastClearParams.LarkMessageID != "msg-clear" || !chat.lastClearParams.ClaimToken.Valid {
+		t.Fatalf("unexpected clear params: %+v", chat.lastClearParams)
+	}
+	if queries.calledMark != 1 {
+		t.Fatalf("/clear must mark dedup processed in tx, calledMark=%d", queries.calledMark)
 	}
 }
 

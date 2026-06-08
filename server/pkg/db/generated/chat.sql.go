@@ -11,6 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveChatSession = `-- name: ArchiveChatSession :exec
+UPDATE chat_session
+SET status = 'archived',
+    updated_at = now()
+WHERE id = $1
+`
+
+// Soft-closes a chat session. Lark /clear uses this before deleting the
+// lark_chat_session_binding, so the old transcript remains visible while the
+// next Lark message creates a fresh chat_session.
+func (q *Queries) ArchiveChatSession(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, archiveChatSession, id)
+	return err
+}
+
 const createChatMessage = `-- name: CreateChatMessage :one
 INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms)
 VALUES ($1, $2, $3, $4, $5, $6)

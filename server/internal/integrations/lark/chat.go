@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // ChatSessionService is the channel-aware chat-session entry point for
@@ -42,6 +43,11 @@ type ChatSessionService interface {
 	// with `/issue`) returns the parsed command so the caller can
 	// dispatch through service.IssueService.Create.
 	AppendUserMessage(ctx context.Context, p AppendUserMessageParams) (AppendResult, error)
+
+	// ClearSession closes the current Lark-bound chat_session without
+	// deleting its transcript. The Lark binding is removed so the next
+	// inbound message for the same Lark chat creates a fresh session.
+	ClearSession(ctx context.Context, p ClearSessionParams) (ClearResult, error)
 }
 
 // EnsureChatSessionParams carries the inputs for ChatSessionService.EnsureChatSession.
@@ -86,6 +92,13 @@ type AppendUserMessageParams struct {
 	ClaimToken     pgtype.UUID
 }
 
+type ClearSessionParams struct {
+	ChatSessionID  pgtype.UUID
+	InstallationID pgtype.UUID
+	LarkMessageID  string
+	ClaimToken     pgtype.UUID
+}
+
 // AppendResult reports what AppendUserMessage decided.
 //
 // Dedup is enforced by the Dispatcher's top-level dedup gate before
@@ -103,6 +116,11 @@ type AppendResult struct {
 	// post-pipeline finalize, since the row is already in its
 	// terminal state.
 	DedupMarked bool
+}
+
+type ClearResult struct {
+	DedupMarked    bool
+	CancelledTasks []db.AgentTaskQueue
 }
 
 // IssueCommand is the parsed shape of a user-typed `/issue ...`

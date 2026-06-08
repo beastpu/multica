@@ -211,7 +211,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				patcher := lark.NewPatcher(queries, installSvc, larkClient, lark.PatcherConfig{})
 				patcher.Register(bus)
 				inboxNotifier := lark.NewInboxNotifier(queries, installSvc, larkClient, lark.InboxNotifierConfig{
-					Logger: slog.Default(),
+					Logger:    slog.Default(),
+					PublicURL: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
 				})
 				inboxNotifier.Register(bus)
 

@@ -71,6 +71,7 @@ func (f fakeCredentials) DecryptAppSecret(inst db.LarkInstallation) (string, err
 type fakeAPIClient struct {
 	mu             sync.Mutex
 	sent           []SendCardParams
+	directSent     []SendDirectCardParams
 	patched        []PatchCardParams
 	textSent       []SendTextParams
 	mdCardSent     []SendMarkdownCardParams
@@ -90,6 +91,12 @@ func (f *fakeAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParam
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, p)
+	return f.sendReturn, f.sendErr
+}
+func (f *fakeAPIClient) SendDirectInteractiveCard(ctx context.Context, p SendDirectCardParams) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.directSent = append(f.directSent, p)
 	return f.sendReturn, f.sendErr
 }
 func (f *fakeAPIClient) PatchInteractiveCard(ctx context.Context, p PatchCardParams) error {

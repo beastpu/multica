@@ -219,6 +219,29 @@ WHERE installation_id = $1 AND lark_chat_id = $2;
 SELECT * FROM lark_chat_session_binding
 WHERE chat_session_id = $1;
 
+-- name: DeleteLarkChatSessionBindingBySession :exec
+-- Removes the Lark chat -> Multica chat_session mapping while preserving the
+-- archived chat_session row. The next inbound Lark message for the same
+-- chat_id will create a new session and binding.
+DELETE FROM lark_chat_session_binding
+WHERE chat_session_id = $1;
+
+-- name: ClaimLarkInboxNotificationDelivery :one
+-- Claims one outbound Lark inbox notification delivery. This is intentionally
+-- keyed by the durable inbox_item row plus the concrete bot installation and
+-- recipient open_id so repeated inbox:new events, duplicate bus subscribers,
+-- or multi-replica handling cannot send duplicate DMs.
+WITH ins AS (
+    INSERT INTO lark_inbox_notification_delivery (
+        inbox_item_id,
+        installation_id,
+        lark_open_id
+    ) VALUES ($1, $2, $3)
+    ON CONFLICT DO NOTHING
+    RETURNING true AS claimed
+)
+SELECT COALESCE((SELECT claimed FROM ins), false)::boolean AS claimed;
+
 -- =====================
 -- lark_inbound_message_dedup
 -- =====================

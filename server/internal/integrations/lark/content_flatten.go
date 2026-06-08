@@ -44,7 +44,7 @@ func flattenContent(msgType, rawContent string) string {
 	case "sticker":
 		return "[Sticker]"
 	case "interactive":
-		return "[interactive card]"
+		return flattenInteractiveCardContent(rawContent)
 	case "share_chat":
 		return "[Shared Chat]"
 	case "share_user":
@@ -55,6 +55,68 @@ func flattenContent(msgType, rawContent string) string {
 		return "[forwarded messages]"
 	default:
 		return ""
+	}
+}
+
+func flattenInteractiveCardContent(raw string) string {
+	if raw == "" {
+		return "[interactive card]"
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return "[interactive card]"
+	}
+	lines := flattenCardTextLines(doc)
+	if len(lines) == 0 {
+		return "[interactive card]"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func flattenCardTextLines(v any) []string {
+	var lines []string
+	var walk func(any)
+	walk = func(node any) {
+		switch n := node.(type) {
+		case map[string]any:
+			tag, _ := n["tag"].(string)
+			switch tag {
+			case "action", "button", "img", "hr", "column_set", "column":
+				return
+			case "plain_text", "lark_md", "markdown":
+				if content, ok := n["content"].(string); ok {
+					appendCardLine(&lines, content)
+					return
+				}
+			}
+			for _, key := range []string{"header", "title", "text", "elements", "body", "content"} {
+				if child, ok := n[key]; ok {
+					walk(child)
+				}
+			}
+		case []any:
+			for _, child := range n {
+				walk(child)
+			}
+		case string:
+			appendCardLine(&lines, n)
+		}
+	}
+	walk(v)
+	return lines
+}
+
+func appendCardLine(lines *[]string, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	parts := strings.Split(text, "\n")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			*lines = append(*lines, part)
+		}
 	}
 }
 
