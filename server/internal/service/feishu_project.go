@@ -56,6 +56,10 @@ const (
 	// Cap on any per-attempt sleep we'll honor from Feishu's rate-limit reset
 	// header, so a misbehaving gateway response can't stall the worker for hours.
 	feishuProjectRateLimitMaxSleep = 60 * time.Second
+
+	w3ClientWorkspaceSlug       = "w3-client-ec8c"
+	w3ClientWorkspaceName       = "W3-Client"
+	w3ClientDefaultProjectTitle = "本地修复工作区"
 )
 
 // Initial backoff for attachment-download retries. Subsequent attempts use exponential backoff.
@@ -279,6 +283,15 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 		opts.SinceUnixMilli = feishuProjectSinceUnixMilliForTrigger(cfg, trigger, time.Now())
 	}
 	forceRefresh := opts.ForceRefresh || strings.TrimSpace(opts.WorkItemID) != "" || len(opts.WorkItemIDs) > 0
+	legacyDefaultProjectID, defaultProjectErr := s.legacyDefaultProjectID(ctx, cfg)
+	if defaultProjectErr != nil {
+		slog.Warn("Feishu Project legacy default project lookup failed",
+			"integration_id", UUIDString(cfg.ID),
+			"workspace_id", UUIDString(cfg.WorkspaceID),
+			"project_key", cfg.ProjectKey,
+			"error", defaultProjectErr,
+		)
+	}
 	// Tracks max(item.updated_at) across all goroutines so the watermark is
 	// pinned to Feishu's clock, not ours.
 	var maxObservedUpdatedAtMs atomic.Int64
@@ -306,7 +319,7 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 						if ctx.Err() != nil {
 							continue
 						}
-						result, attachErrs, err := s.syncWorkItem(ctx, cfg, item, forceRefresh)
+						result, attachErrs, err := s.syncWorkItem(ctx, cfg, item, forceRefresh, legacyDefaultProjectID)
 						if err == nil && !item.UpdatedAt.IsZero() {
 							ms := item.UpdatedAt.UnixMilli()
 							for {
@@ -458,7 +471,7 @@ func enabledFeishuProjectTypes(cfg db.FeishuProjectIntegration) []string {
 	return out
 }
 
-func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, forceRefresh bool) (result string, attachErrs int, retErr error) {
+func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, forceRefresh bool, legacyDefaultProjectID pgtype.UUID) (result string, attachErrs int, retErr error) {
 	started := time.Now()
 	timing := &feishuProjectSyncTiming{}
 	defer func() {
@@ -508,6 +521,8 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	if matchedRoute != nil {
 		projectID = matchedRoute.ProjectID
 		fallbackAgentID = matchedRoute.FallbackAgentID
+	} else if legacyDefaultProjectID.Valid {
+		projectID = legacyDefaultProjectID
 	}
 	mappedStatus := mapFeishuStatus(cfg.StatusMapping, item.Type, item.Status)
 	status := mappedStatus
@@ -547,13 +562,14 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		}
 	}
 	if issueFound {
+		needsDefaultProject := projectID.Valid && issue.ProjectID != projectID
 		// Watermark short-circuit: if Meego hasn't touched the work item since
 		// the last sync, nothing downstream (fields, attachments, labels) can
 		// have changed either — skip the entire DB round-trip set. Cuts a 1k-
 		// item manual full-sync from minutes to ~30s when most items are quiet.
 		// The label-sync fields are derived from item.fields too, so they also
 		// bump item.UpdatedAt; safe to skip them here.
-		if !forceRefresh && !item.UpdatedAt.IsZero() && binding.LastExternalUpdatedAt.Valid &&
+		if !needsDefaultProject && !forceRefresh && !item.UpdatedAt.IsZero() && binding.LastExternalUpdatedAt.Valid &&
 			!item.UpdatedAt.After(binding.LastExternalUpdatedAt.Time) {
 			s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 			return "skipped", 0, nil
@@ -565,6 +581,23 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		nextProjectID := issue.ProjectID
 		if projectID.Valid {
 			nextProjectID = projectID
+		}
+		if needsDefaultProject {
+			phaseStarted = time.Now()
+			updatedIssue, err := s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
+				ID:            issue.ID,
+				AssigneeType:  issue.AssigneeType,
+				AssigneeID:    issue.AssigneeID,
+				StartDate:     issue.StartDate,
+				DueDate:       issue.DueDate,
+				ParentIssueID: issue.ParentIssueID,
+				ProjectID:     nextProjectID,
+			})
+			timing.issueUpdate += time.Since(phaseStarted)
+			if err != nil {
+				return "skipped", 0, err
+			}
+			issue = updatedIssue
 		}
 		nextPriority := issue.Priority
 		if mappedPriority != "" {
@@ -1025,6 +1058,39 @@ func (s *FeishuProjectSyncService) routeWorkItemProject(ctx context.Context, cfg
 		return nil, false, nil
 	}
 	return matched, true, nil
+}
+
+func (s *FeishuProjectSyncService) legacyDefaultProjectID(ctx context.Context, cfg db.FeishuProjectIntegration) (pgtype.UUID, error) {
+	if strings.TrimSpace(cfg.BusinessLineFieldKey) != "" {
+		return pgtype.UUID{}, nil
+	}
+	ws, err := s.Queries.GetWorkspace(ctx, cfg.WorkspaceID)
+	if err != nil {
+		return pgtype.UUID{}, err
+	}
+	if !isW3ClientLegacyWorkspace(ws) {
+		return pgtype.UUID{}, nil
+	}
+	projects, err := s.Queries.ListProjects(ctx, db.ListProjectsParams{WorkspaceID: cfg.WorkspaceID})
+	if err != nil {
+		return pgtype.UUID{}, err
+	}
+	for _, project := range projects {
+		if project.Title == w3ClientDefaultProjectTitle {
+			return project.ID, nil
+		}
+	}
+	slog.Warn("Feishu Project W3-Client default project not found",
+		"integration_id", UUIDString(cfg.ID),
+		"workspace_id", UUIDString(cfg.WorkspaceID),
+		"project_key", cfg.ProjectKey,
+		"project_title", w3ClientDefaultProjectTitle,
+	)
+	return pgtype.UUID{}, nil
+}
+
+func isW3ClientLegacyWorkspace(ws db.Workspace) bool {
+	return ws.Slug == w3ClientWorkspaceSlug || ws.Name == w3ClientWorkspaceName
 }
 
 // matchBusinessLineRoute applies the precedence rules from the design:
