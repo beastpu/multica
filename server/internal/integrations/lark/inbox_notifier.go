@@ -75,6 +75,9 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 	if item.RecipientType != "member" {
 		return nil
 	}
+	if !shouldSendLarkInboxNotification(item) {
+		return nil
+	}
 	itemID, err := scanUUID(item.ID)
 	if err != nil {
 		return fmt.Errorf("parse inbox item id: %w", err)
@@ -199,6 +202,15 @@ func selectInboxNotificationBinding(ctx context.Context, queries InboxNotifierQu
 		}
 	}
 	return db.ListActiveLarkUserBindingsByMemberRow{}, false
+}
+
+func shouldSendLarkInboxNotification(item inboxNotificationItem) bool {
+	switch item.Type {
+	case "new_comment":
+		return false
+	default:
+		return true
+	}
 }
 
 func selectInboxNotificationBindingByAgent(rows []db.ListActiveLarkUserBindingsByMemberRow, agentID pgtype.UUID) (db.ListActiveLarkUserBindingsByMemberRow, bool) {

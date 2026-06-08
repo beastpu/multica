@@ -260,6 +260,38 @@ func TestInboxNotifierSkipsNonMemberRecipients(t *testing.T) {
 	}
 }
 
+func TestInboxNotifierSkipsNewCommentNotifications(t *testing.T) {
+	workspaceID := mustUUID("11111111-1111-1111-1111-111111111111")
+	userID := mustUUID("22222222-2222-2222-2222-222222222222")
+	q := &fakeInboxNotifierQueries{}
+	api := &stubAPIClientWithRecorder{configured: true}
+	notifier := NewInboxNotifier(q, stubCredentialsResolver{secret: "secret"}, api, InboxNotifierConfig{})
+
+	err := notifier.notify(context.Background(), map[string]any{
+		"item": map[string]any{
+			"id":             "55555555-5555-5555-5555-555555555555",
+			"workspace_id":   uuidString(workspaceID),
+			"recipient_type": "member",
+			"recipient_id":   uuidString(userID),
+			"type":           "new_comment",
+			"severity":       "info",
+			"title":          "Issue updated",
+			"body":           "long agent result should stay in the web inbox and issue timeline",
+		},
+	})
+	if err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+	if q.arg.WorkspaceID.Valid || q.claimCalls != 0 {
+		t.Fatalf("new_comment should skip before binding lookup/claim, arg=%+v claims=%d", q.arg, q.claimCalls)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.directCardsOut) != 0 {
+		t.Fatalf("expected no direct card send for new_comment, got %d", len(api.directCardsOut))
+	}
+}
+
 func TestInboxNotifierRejectsMissingInboxItemID(t *testing.T) {
 	workspaceID := mustUUID("11111111-1111-1111-1111-111111111111")
 	userID := mustUUID("22222222-2222-2222-2222-222222222222")
