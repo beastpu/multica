@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ const inboxNotifyTimeout = 10 * time.Second
 
 type InboxNotifierQueries interface {
 	GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error)
+	GetWorkspace(ctx context.Context, id pgtype.UUID) (db.Workspace, error)
 	ClaimLarkInboxNotificationDelivery(ctx context.Context, arg db.ClaimLarkInboxNotificationDeliveryParams) (bool, error)
 	ListActiveLarkUserBindingsByMember(ctx context.Context, arg db.ListActiveLarkUserBindingsByMemberParams) ([]db.ListActiveLarkUserBindingsByMemberRow, error)
 }
@@ -28,10 +30,12 @@ type InboxNotifier struct {
 	credentials CredentialsResolver
 	client      APIClient
 	log         *slog.Logger
+	publicURL   string
 }
 
 type InboxNotifierConfig struct {
-	Logger *slog.Logger
+	Logger    *slog.Logger
+	PublicURL string
 }
 
 func NewInboxNotifier(queries InboxNotifierQueries, credentials CredentialsResolver, client APIClient, cfg InboxNotifierConfig) *InboxNotifier {
@@ -44,6 +48,7 @@ func NewInboxNotifier(queries InboxNotifierQueries, credentials CredentialsResol
 		credentials: credentials,
 		client:      client,
 		log:         log,
+		publicURL:   strings.TrimRight(strings.TrimSpace(cfg.PublicURL), "/"),
 	}
 }
 
@@ -73,9 +78,6 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 		return errors.New("missing inbox item payload")
 	}
 	if item.RecipientType != "member" {
-		return nil
-	}
-	if !shouldSendLarkInboxNotification(item) {
 		return nil
 	}
 	itemID, err := scanUUID(item.ID)
@@ -119,7 +121,7 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 	if err != nil {
 		return err
 	}
-	cardJSON, err := renderNoticeCard("Inbox", inboxNotificationBody(item))
+	cardJSON, err := n.renderInboxNotificationCard(ctx, workspaceID, item)
 	if err != nil {
 		return fmt.Errorf("render inbox card: %w", err)
 	}
@@ -204,15 +206,6 @@ func selectInboxNotificationBinding(ctx context.Context, queries InboxNotifierQu
 	return db.ListActiveLarkUserBindingsByMemberRow{}, false
 }
 
-func shouldSendLarkInboxNotification(item inboxNotificationItem) bool {
-	switch item.Type {
-	case "new_comment":
-		return false
-	default:
-		return true
-	}
-}
-
 func selectInboxNotificationBindingByAgent(rows []db.ListActiveLarkUserBindingsByMemberRow, agentID pgtype.UUID) (db.ListActiveLarkUserBindingsByMemberRow, bool) {
 	for _, row := range rows {
 		if row.LarkInstallation.AgentID == agentID {
@@ -222,22 +215,198 @@ func selectInboxNotificationBindingByAgent(rows []db.ListActiveLarkUserBindingsB
 	return db.ListActiveLarkUserBindingsByMemberRow{}, false
 }
 
-func inboxNotificationBody(item inboxNotificationItem) string {
-	title := strings.TrimSpace(item.Title)
-	if title == "" {
-		title = "New inbox item"
+func (n *InboxNotifier) renderInboxNotificationCard(ctx context.Context, workspaceID pgtype.UUID, item inboxNotificationItem) (string, error) {
+	issue, workspace := n.inboxNotificationContext(ctx, workspaceID, item)
+	identifier := inboxIssueIdentifier(issue, workspace)
+	headerTitle := inboxNotificationHeaderTitle(identifier, item.Title)
+	bodyMD := inboxNotificationMarkdown(item)
+	if bodyMD == "" {
+		bodyMD = headerTitle
 	}
-	var b strings.Builder
-	b.WriteString(title)
-	if item.Body != nil {
-		body := strings.TrimSpace(*item.Body)
-		if body != "" {
-			b.WriteString("\n")
-			b.WriteString(body)
+	card := map[string]any{
+		"config": map[string]any{"wide_screen_mode": true},
+		"header": map[string]any{
+			"template": inboxNotificationTemplate(item),
+			"title": map[string]any{
+				"tag":     "plain_text",
+				"content": headerTitle,
+			},
+		},
+		"elements": []any{
+			map[string]any{
+				"tag": "div",
+				"text": map[string]any{
+					"tag":     "lark_md",
+					"content": bodyMD,
+				},
+			},
+		},
+	}
+	if issueURL := n.issueURL(workspace, item); issueURL != "" {
+		card["elements"] = append(card["elements"].([]any),
+			map[string]any{"tag": "hr"},
+			map[string]any{
+				"tag": "action",
+				"actions": []any{
+					map[string]any{
+						"tag":  "button",
+						"text": map[string]any{"tag": "plain_text", "content": "在 Multica 中查看"},
+						"url":  issueURL,
+						"type": "primary",
+					},
+				},
+			},
+		)
+	}
+	raw, err := json.Marshal(card)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (n *InboxNotifier) inboxNotificationContext(ctx context.Context, workspaceID pgtype.UUID, item inboxNotificationItem) (*db.Issue, *db.Workspace) {
+	var issue *db.Issue
+	if item.IssueID != nil {
+		if issueID, err := scanUUID(*item.IssueID); err == nil {
+			if row, err := n.queries.GetIssue(ctx, issueID); err == nil {
+				issue = &row
+			}
 		}
 	}
-	b.WriteString("\n\nReply here to continue with the agent.")
-	return truncateRunes(b.String(), 2000)
+	var workspace *db.Workspace
+	if row, err := n.queries.GetWorkspace(ctx, workspaceID); err == nil {
+		workspace = &row
+	}
+	return issue, workspace
+}
+
+func inboxIssueIdentifier(issue *db.Issue, workspace *db.Workspace) string {
+	if issue == nil || issue.Number == 0 {
+		return ""
+	}
+	if workspace != nil && strings.TrimSpace(workspace.IssuePrefix) != "" {
+		return fmt.Sprintf("%s-%d", strings.TrimSpace(workspace.IssuePrefix), issue.Number)
+	}
+	return fmt.Sprintf("#%d", issue.Number)
+}
+
+func inboxNotificationHeaderTitle(identifier, title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		title = "Inbox"
+	}
+	if identifier != "" {
+		title = fmt.Sprintf("[%s] %s", identifier, title)
+	}
+	return truncateRunes(title, 80)
+}
+
+func inboxNotificationMarkdown(item inboxNotificationItem) string {
+	body := ""
+	if item.Body != nil {
+		body = strings.TrimSpace(*item.Body)
+	}
+	switch item.Type {
+	case "new_comment":
+		if body == "" {
+			return ""
+		}
+		return fmt.Sprintf("**💬 %s 评论**\n\n%s", inboxActorLabel(item), truncateRunes(body, 700))
+	case "status_changed":
+		from, to := inboxStatusChange(item)
+		if from != "" || to != "" {
+			return fmt.Sprintf("**🔄 状态已变更**\n\n`%s` → `%s`", statusLabelForInbox(from), statusLabelForInbox(to))
+		}
+		return "**🔄 状态已变更**"
+	case "quick_create_failed", "task_failed":
+		if body != "" {
+			return fmt.Sprintf("**❌ 智能体任务失败**\n\n%s", truncateRunes(body, 700))
+		}
+		return "**❌ 智能体任务失败**"
+	case "quick_create_done":
+		return "**✅ Issue 已创建**"
+	default:
+		if body != "" {
+			return truncateRunes(body, 700)
+		}
+		return ""
+	}
+}
+
+func inboxNotificationTemplate(item inboxNotificationItem) string {
+	switch item.Type {
+	case "new_comment":
+		return "wathet"
+	case "quick_create_failed", "task_failed":
+		return "red"
+	case "quick_create_done":
+		return "green"
+	case "status_changed":
+		_, to := inboxStatusChange(item)
+		switch to {
+		case "done":
+			return "green"
+		case "blocked", "cancelled":
+			return "red"
+		case "in_review":
+			return "yellow"
+		case "in_progress":
+			return "blue"
+		}
+	}
+	return "blue"
+}
+
+func inboxActorLabel(item inboxNotificationItem) string {
+	if item.ActorType != nil && *item.ActorType == "agent" {
+		return "Agent"
+	}
+	return "有人"
+}
+
+func inboxStatusChange(item inboxNotificationItem) (string, string) {
+	var details struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if len(item.Details) == 0 {
+		return "", ""
+	}
+	if err := json.Unmarshal(item.Details, &details); err != nil {
+		return "", ""
+	}
+	return details.From, details.To
+}
+
+func statusLabelForInbox(s string) string {
+	switch s {
+	case "backlog":
+		return "待规划"
+	case "todo":
+		return "待办"
+	case "in_progress":
+		return "处理中"
+	case "in_review":
+		return "待 review"
+	case "blocked":
+		return "阻塞"
+	case "done":
+		return "完成"
+	case "cancelled":
+		return "已取消"
+	case "":
+		return "未知"
+	default:
+		return s
+	}
+}
+
+func (n *InboxNotifier) issueURL(workspace *db.Workspace, item inboxNotificationItem) string {
+	if n.publicURL == "" || workspace == nil || workspace.Slug == "" || item.IssueID == nil || *item.IssueID == "" {
+		return ""
+	}
+	return n.publicURL + "/" + url.PathEscape(workspace.Slug) + "/issues/" + url.PathEscape(*item.IssueID)
 }
 
 func scanUUID(s string) (pgtype.UUID, error) {

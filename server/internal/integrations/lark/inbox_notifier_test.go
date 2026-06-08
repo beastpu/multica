@@ -10,15 +10,18 @@ import (
 )
 
 type fakeInboxNotifierQueries struct {
-	rows       []db.ListActiveLarkUserBindingsByMemberRow
-	err        error
-	arg        db.ListActiveLarkUserBindingsByMemberParams
-	issue      db.Issue
-	issueErr   error
-	issueArg   pgtype.UUID
-	claims     map[string]bool
-	claimCalls int
-	claimArg   db.ClaimLarkInboxNotificationDeliveryParams
+	rows         []db.ListActiveLarkUserBindingsByMemberRow
+	err          error
+	arg          db.ListActiveLarkUserBindingsByMemberParams
+	issue        db.Issue
+	issueErr     error
+	issueArg     pgtype.UUID
+	workspace    db.Workspace
+	workspaceErr error
+	workspaceArg pgtype.UUID
+	claims       map[string]bool
+	claimCalls   int
+	claimArg     db.ClaimLarkInboxNotificationDeliveryParams
 }
 
 func (f *fakeInboxNotifierQueries) GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error) {
@@ -27,6 +30,14 @@ func (f *fakeInboxNotifierQueries) GetIssue(ctx context.Context, id pgtype.UUID)
 		return db.Issue{}, f.issueErr
 	}
 	return f.issue, nil
+}
+
+func (f *fakeInboxNotifierQueries) GetWorkspace(ctx context.Context, id pgtype.UUID) (db.Workspace, error) {
+	f.workspaceArg = id
+	if f.workspaceErr != nil {
+		return db.Workspace{}, f.workspaceErr
+	}
+	return f.workspace, nil
 }
 
 func (f *fakeInboxNotifierQueries) ListActiveLarkUserBindingsByMember(ctx context.Context, arg db.ListActiveLarkUserBindingsByMemberParams) ([]db.ListActiveLarkUserBindingsByMemberRow, error) {
@@ -100,9 +111,10 @@ func TestInboxNotifierSendsDMViaActorAgentBot(t *testing.T) {
 	if got.InstallationID.AppID != "cli_actor" {
 		t.Fatalf("AppID = %q, want cli_actor", got.InstallationID.AppID)
 	}
-	if !strings.Contains(got.CardJSON, `"title":{"content":"Inbox"`) ||
+	if !strings.Contains(got.CardJSON, `"title":{"content":"Quick create failed"`) ||
+		!strings.Contains(got.CardJSON, `"tag":"lark_md"`) ||
 		!strings.Contains(got.CardJSON, "Quick create failed") ||
-		!strings.Contains(got.CardJSON, "Reply here") {
+		!strings.Contains(got.CardJSON, "agent exited with code 1") {
 		t.Fatalf("unexpected notification card: %q", got.CardJSON)
 	}
 }
@@ -260,12 +272,20 @@ func TestInboxNotifierSkipsNonMemberRecipients(t *testing.T) {
 	}
 }
 
-func TestInboxNotifierSkipsNewCommentNotifications(t *testing.T) {
+func TestInboxNotifierSendsNewCommentAsMarkdownCard(t *testing.T) {
 	workspaceID := mustUUID("11111111-1111-1111-1111-111111111111")
 	userID := mustUUID("22222222-2222-2222-2222-222222222222")
-	q := &fakeInboxNotifierQueries{}
+	actorAgentID := mustUUID("44444444-4444-4444-4444-444444444444")
+	q := &fakeInboxNotifierQueries{
+		rows: []db.ListActiveLarkUserBindingsByMemberRow{
+			inboxBindingRow(workspaceID, userID, actorAgentID, "cli_actor", "ou_actor"),
+		},
+		workspace: db.Workspace{ID: workspaceID, Slug: "tide-server", IssuePrefix: "TID"},
+	}
 	api := &stubAPIClientWithRecorder{configured: true}
-	notifier := NewInboxNotifier(q, stubCredentialsResolver{secret: "secret"}, api, InboxNotifierConfig{})
+	notifier := NewInboxNotifier(q, stubCredentialsResolver{secret: "secret"}, api, InboxNotifierConfig{
+		PublicURL: "https://multica.lilithgames.com",
+	})
 
 	err := notifier.notify(context.Background(), map[string]any{
 		"item": map[string]any{
@@ -275,20 +295,26 @@ func TestInboxNotifierSkipsNewCommentNotifications(t *testing.T) {
 			"recipient_id":   uuidString(userID),
 			"type":           "new_comment",
 			"severity":       "info",
+			"issue_id":       "66666666-6666-6666-6666-666666666666",
 			"title":          "Issue updated",
-			"body":           "long agent result should stay in the web inbox and issue timeline",
+			"body":           "**结果**\n- 已清理\n- 保留 `tide`",
+			"actor_type":     "agent",
+			"actor_id":       uuidString(actorAgentID),
 		},
 	})
 	if err != nil {
 		t.Fatalf("notify: %v", err)
 	}
-	if q.arg.WorkspaceID.Valid || q.claimCalls != 0 {
-		t.Fatalf("new_comment should skip before binding lookup/claim, arg=%+v claims=%d", q.arg, q.claimCalls)
-	}
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	if len(api.directCardsOut) != 0 {
-		t.Fatalf("expected no direct card send for new_comment, got %d", len(api.directCardsOut))
+	if len(api.directCardsOut) != 1 {
+		t.Fatalf("expected one direct card send for new_comment, got %d", len(api.directCardsOut))
+	}
+	card := api.directCardsOut[0].CardJSON
+	for _, want := range []string{`"tag":"lark_md"`, "**💬 Agent 评论**", "**结果**", "在 Multica 中查看", "https://multica.lilithgames.com/tide-server/issues/66666666-6666-6666-6666-666666666666"} {
+		if !strings.Contains(card, want) {
+			t.Fatalf("new_comment card missing %q: %s", want, card)
+		}
 	}
 }
 
