@@ -423,6 +423,19 @@ func (q *Queries) CreateLarkUserBinding(ctx context.Context, arg CreateLarkUserB
 	return i, err
 }
 
+const deleteLarkChatSessionBindingBySession = `-- name: DeleteLarkChatSessionBindingBySession :exec
+DELETE FROM lark_chat_session_binding
+WHERE chat_session_id = $1
+`
+
+// Removes the Lark chat -> Multica chat_session mapping while preserving the
+// archived chat_session row. The next inbound Lark message for the same
+// chat_id will create a new session and binding.
+func (q *Queries) DeleteLarkChatSessionBindingBySession(ctx context.Context, chatSessionID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteLarkChatSessionBindingBySession, chatSessionID)
+	return err
+}
+
 const deleteLarkUserBinding = `-- name: DeleteLarkUserBinding :exec
 DELETE FROM lark_user_binding WHERE id = $1
 `

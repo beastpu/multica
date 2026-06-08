@@ -84,7 +84,7 @@ func TestFlattenContent_DispatchByType(t *testing.T) {
 		{"audio", "audio", `{"file_key":"f"}`, "[Audio]"},
 		{"media", "media", `{"file_key":"f"}`, "[Video]"},
 		{"sticker", "sticker", `{"file_key":"f"}`, "[Sticker]"},
-		{"interactive", "interactive", `{"title":"t"}`, "[interactive card]"},
+		{"interactive", "interactive", `{"header":{"title":{"tag":"plain_text","content":"Inbox"}},"elements":[{"tag":"div","text":{"tag":"plain_text","content":"Quick create failed\nagent exited"}}]}`, "Inbox\nQuick create failed\nagent exited"},
 		{"share_chat", "share_chat", `{"chat_id":"oc"}`, "[Shared Chat]"},
 		{"merge_forward", "merge_forward", `{"content":"Merged and Forwarded Message"}`, "[forwarded messages]"},
 		{"unknown", "totally_new_type", `{}`, ""},
@@ -97,5 +97,14 @@ func TestFlattenContent_DispatchByType(t *testing.T) {
 				t.Errorf("flattenContent(%q) = %q want %q", tc.msgType, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFlattenInteractiveCardContentFallback(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{"", "not-json", `{"config":{"wide_screen_mode":true}}`} {
+		if got := flattenContent("interactive", raw); got != "[interactive card]" {
+			t.Errorf("flattenContent(interactive, %q) = %q want placeholder", raw, got)
+		}
 	}
 }
