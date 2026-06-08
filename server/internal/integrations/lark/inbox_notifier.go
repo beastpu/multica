@@ -19,6 +19,7 @@ const inboxNotifyTimeout = 10 * time.Second
 
 type InboxNotifierQueries interface {
 	GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error)
+	ClaimLarkInboxNotificationDelivery(ctx context.Context, arg db.ClaimLarkInboxNotificationDeliveryParams) (bool, error)
 	ListActiveLarkUserBindingsByMember(ctx context.Context, arg db.ListActiveLarkUserBindingsByMemberParams) ([]db.ListActiveLarkUserBindingsByMemberRow, error)
 }
 
@@ -74,6 +75,10 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 	if item.RecipientType != "member" {
 		return nil
 	}
+	itemID, err := scanUUID(item.ID)
+	if err != nil {
+		return fmt.Errorf("parse inbox item id: %w", err)
+	}
 	workspaceID, err := scanUUID(item.WorkspaceID)
 	if err != nil {
 		return fmt.Errorf("parse workspace_id: %w", err)
@@ -94,6 +99,17 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 	}
 	row, ok := selectInboxNotificationBinding(ctx, n.queries, rows, item)
 	if !ok {
+		return nil
+	}
+	claimed, err := n.queries.ClaimLarkInboxNotificationDelivery(ctx, db.ClaimLarkInboxNotificationDeliveryParams{
+		InboxItemID:    itemID,
+		InstallationID: row.LarkInstallation.ID,
+		LarkOpenID:     row.LarkUserBinding.LarkOpenID,
+	})
+	if err != nil {
+		return fmt.Errorf("claim lark inbox notification delivery: %w", err)
+	}
+	if !claimed {
 		return nil
 	}
 	creds, err := n.installationCredentials(row.LarkInstallation)

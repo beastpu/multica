@@ -125,6 +125,36 @@ func (q *Queries) ClaimLarkInboundDedup(ctx context.Context, arg ClaimLarkInboun
 	return i, err
 }
 
+const claimLarkInboxNotificationDelivery = `-- name: ClaimLarkInboxNotificationDelivery :one
+WITH ins AS (
+    INSERT INTO lark_inbox_notification_delivery (
+        inbox_item_id,
+        installation_id,
+        lark_open_id
+    ) VALUES ($1, $2, $3)
+    ON CONFLICT DO NOTHING
+    RETURNING true AS claimed
+)
+SELECT COALESCE((SELECT claimed FROM ins), false)::boolean AS claimed
+`
+
+type ClaimLarkInboxNotificationDeliveryParams struct {
+	InboxItemID    pgtype.UUID `json:"inbox_item_id"`
+	InstallationID pgtype.UUID `json:"installation_id"`
+	LarkOpenID     string      `json:"lark_open_id"`
+}
+
+// Claims one outbound Lark inbox notification delivery. This is intentionally
+// keyed by the durable inbox_item row plus the concrete bot installation and
+// recipient open_id so repeated inbox:new events, duplicate bus subscribers,
+// or multi-replica handling cannot send duplicate DMs.
+func (q *Queries) ClaimLarkInboxNotificationDelivery(ctx context.Context, arg ClaimLarkInboxNotificationDeliveryParams) (bool, error) {
+	row := q.db.QueryRow(ctx, claimLarkInboxNotificationDelivery, arg.InboxItemID, arg.InstallationID, arg.LarkOpenID)
+	var claimed bool
+	err := row.Scan(&claimed)
+	return claimed, err
+}
+
 const consumeLarkBindingToken = `-- name: ConsumeLarkBindingToken :one
 UPDATE lark_binding_token
 SET consumed_at = now()
