@@ -268,6 +268,50 @@ func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUser
 	return AppendResult{IssueCommand: cmd, DedupMarked: markedInTx}, nil
 }
 
+func (s *chatSessionService) ClearSession(ctx context.Context, p ClearSessionParams) (ClearResult, error) {
+	tx, err := s.txStarter.Begin(ctx)
+	if err != nil {
+		return ClearResult{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.queries.WithTx(tx)
+
+	if _, err := qtx.LockChatSessionForDelete(ctx, p.ChatSessionID); err != nil {
+		return ClearResult{}, fmt.Errorf("lock chat session: %w", err)
+	}
+	cancelled, err := qtx.CancelAgentTasksByChatSession(ctx, p.ChatSessionID)
+	if err != nil {
+		return ClearResult{}, fmt.Errorf("cancel chat session tasks: %w", err)
+	}
+	if err := qtx.ArchiveChatSession(ctx, p.ChatSessionID); err != nil {
+		return ClearResult{}, fmt.Errorf("archive chat session: %w", err)
+	}
+	if err := qtx.DeleteLarkChatSessionBindingBySession(ctx, p.ChatSessionID); err != nil {
+		return ClearResult{}, fmt.Errorf("delete lark chat session binding: %w", err)
+	}
+
+	markedInTx := false
+	if p.ClaimToken.Valid && p.LarkMessageID != "" {
+		rows, err := qtx.MarkLarkInboundDedupProcessed(ctx, db.MarkLarkInboundDedupProcessedParams{
+			InstallationID: p.InstallationID,
+			MessageID:      p.LarkMessageID,
+			ClaimToken:     p.ClaimToken,
+		})
+		if err != nil {
+			return ClearResult{}, fmt.Errorf("mark dedup processed: %w", err)
+		}
+		if rows == 0 {
+			return ClearResult{}, ErrClaimLost
+		}
+		markedInTx = true
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return ClearResult{}, fmt.Errorf("commit: %w", err)
+	}
+	return ClearResult{DedupMarked: markedInTx, CancelledTasks: cancelled}, nil
+}
+
 // titleFromPreviousMessage extracts a sensible title from a prior
 // chat message. The spec says the previous "user message" is the
 // fallback; in practice the previous message itself might also be an

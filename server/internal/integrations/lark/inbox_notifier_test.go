@@ -70,18 +70,20 @@ func TestInboxNotifierSendsDMViaActorAgentBot(t *testing.T) {
 	}
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	if len(api.directTextOut) != 1 {
-		t.Fatalf("expected one direct text send, got %d", len(api.directTextOut))
+	if len(api.directCardsOut) != 1 {
+		t.Fatalf("expected one direct card send, got %d", len(api.directCardsOut))
 	}
-	got := api.directTextOut[0]
+	got := api.directCardsOut[0]
 	if got.OpenID != "ou_actor" {
 		t.Fatalf("OpenID = %q, want actor bot binding recipient ou_actor", got.OpenID)
 	}
 	if got.InstallationID.AppID != "cli_actor" {
 		t.Fatalf("AppID = %q, want cli_actor", got.InstallationID.AppID)
 	}
-	if !strings.Contains(got.Text, "Inbox: Quick create failed") || !strings.Contains(got.Text, "Reply here") {
-		t.Fatalf("unexpected notification text: %q", got.Text)
+	if !strings.Contains(got.CardJSON, `"title":{"content":"Inbox"`) ||
+		!strings.Contains(got.CardJSON, "Quick create failed") ||
+		!strings.Contains(got.CardJSON, "Reply here") {
+		t.Fatalf("unexpected notification card: %q", got.CardJSON)
 	}
 }
 
@@ -126,10 +128,10 @@ func TestInboxNotifierFallsBackToAssigneeAgentBot(t *testing.T) {
 	}
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	if len(api.directTextOut) != 1 {
-		t.Fatalf("expected one direct text send, got %d", len(api.directTextOut))
+	if len(api.directCardsOut) != 1 {
+		t.Fatalf("expected one direct card send, got %d", len(api.directCardsOut))
 	}
-	got := api.directTextOut[0]
+	got := api.directCardsOut[0]
 	if got.OpenID != "ou_assignee" {
 		t.Fatalf("OpenID = %q, want assignee bot binding recipient ou_assignee", got.OpenID)
 	}
@@ -169,8 +171,8 @@ func TestInboxNotifierSkipsWhenNoAgentBotMatches(t *testing.T) {
 	}
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	if len(api.directTextOut) != 0 {
-		t.Fatalf("expected no direct text send for unmatched agent bot, got %d", len(api.directTextOut))
+	if len(api.directCardsOut) != 0 {
+		t.Fatalf("expected no direct card send for unmatched agent bot, got %d", len(api.directCardsOut))
 	}
 }
 

@@ -100,10 +100,14 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 	if err != nil {
 		return err
 	}
-	if _, err := n.client.SendDirectTextMessage(ctx, SendDirectTextParams{
+	cardJSON, err := renderNoticeCard("Inbox", inboxNotificationBody(item))
+	if err != nil {
+		return fmt.Errorf("render inbox card: %w", err)
+	}
+	if _, err := n.client.SendDirectInteractiveCard(ctx, SendDirectCardParams{
 		InstallationID: creds,
 		OpenID:         OpenID(row.LarkUserBinding.LarkOpenID),
-		Text:           inboxNotificationText(item),
+		CardJSON:       cardJSON,
 	}); err != nil {
 		return fmt.Errorf("send inbox dm: %w", err)
 	}
@@ -190,13 +194,12 @@ func selectInboxNotificationBindingByAgent(rows []db.ListActiveLarkUserBindingsB
 	return db.ListActiveLarkUserBindingsByMemberRow{}, false
 }
 
-func inboxNotificationText(item inboxNotificationItem) string {
+func inboxNotificationBody(item inboxNotificationItem) string {
 	title := strings.TrimSpace(item.Title)
 	if title == "" {
 		title = "New inbox item"
 	}
 	var b strings.Builder
-	b.WriteString("Inbox: ")
 	b.WriteString(title)
 	if item.Body != nil {
 		body := strings.TrimSpace(*item.Body)

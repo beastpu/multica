@@ -84,6 +84,12 @@ const (
 	// issue's UUID).
 	OutcomeIngested Outcome = "ingested"
 
+	// OutcomeChatCleared — the current Lark chat binding was detached
+	// from its Multica chat_session. The old transcript remains archived;
+	// the next inbound message for the same Lark chat creates a fresh
+	// session.
+	OutcomeChatCleared Outcome = "chat_cleared"
+
 	// OutcomeAgentOffline — the message landed in chat_session, but
 	// the agent has no runtime bound at all (agent.runtime_id IS
 	// NULL). The adapter should reply with "agent offline, will run
@@ -146,6 +152,7 @@ type IssueCreator interface {
 // TaskService struct is gratuitous.
 type ChatTaskEnqueuer interface {
 	EnqueueChatTask(ctx context.Context, session db.ChatSession) (db.AgentTaskQueue, error)
+	BroadcastCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue)
 }
 
 // DispatcherQueries is the narrow subset of *db.Queries the Dispatcher
@@ -457,6 +464,38 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 		// in a single tx; an error here means the tx rolled back and
 		// nothing landed. Safe to release the dedup claim.
 		return DispatchResult{}, finalizeRelease, fmt.Errorf("ensure chat session: %w", err)
+	}
+
+	commandSource := msg.CommandBody
+	if commandSource == "" {
+		commandSource = msg.Body
+	}
+	if parseClearCommand(commandSource) {
+		clearRes, err := d.Chat.ClearSession(ctx, ClearSessionParams{
+			ChatSessionID:  sessionID,
+			InstallationID: inst.ID,
+			LarkMessageID:  msg.MessageID,
+			ClaimToken:     claimToken,
+		})
+		if err != nil {
+			if errors.Is(err, ErrClaimLost) {
+				return DispatchResult{}, finalizeNone, err
+			}
+			return DispatchResult{}, finalizeRelease, fmt.Errorf("clear chat session: %w", err)
+		}
+		finalize := finalizeNone
+		if !clearRes.DedupMarked {
+			finalize = finalizeMark
+		}
+		if d.TaskService != nil {
+			d.TaskService.BroadcastCancelledTasks(ctx, clearRes.CancelledTasks)
+		}
+		return DispatchResult{
+			Outcome:        OutcomeChatCleared,
+			InstallationID: inst.ID,
+			ChatSessionID:  sessionID,
+			SenderOpenID:   msg.SenderOpenID,
+		}, finalize, nil
 	}
 
 	// 6. Append message + in-tx dedup Mark — the durable transition

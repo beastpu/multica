@@ -207,16 +207,30 @@ func (c *httpAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParam
 	if p.CardJSON == "" {
 		return "", errors.New("lark http client: missing card json")
 	}
-	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	return c.sendInteractiveCard(ctx, p.InstallationID, "chat_id", string(p.ChatID), p.CardJSON)
+}
+
+func (c *httpAPIClient) SendDirectInteractiveCard(ctx context.Context, p SendDirectCardParams) (string, error) {
+	if p.OpenID == "" {
+		return "", errors.New("lark http client: missing open_id")
+	}
+	if p.CardJSON == "" {
+		return "", errors.New("lark http client: missing card json")
+	}
+	return c.sendInteractiveCard(ctx, p.InstallationID, "open_id", string(p.OpenID), p.CardJSON)
+}
+
+func (c *httpAPIClient) sendInteractiveCard(ctx context.Context, creds InstallationCredentials, receiveIDType, receiveID, cardJSON string) (string, error) {
+	token, err := c.tenantAccessToken(ctx, creds)
 	if err != nil {
 		return "", err
 	}
 	q := url.Values{}
-	q.Set("receive_id_type", "chat_id")
+	q.Set("receive_id_type", receiveIDType)
 	body := map[string]string{
-		"receive_id": string(p.ChatID),
+		"receive_id": receiveID,
 		"msg_type":   "interactive",
-		"content":    p.CardJSON,
+		"content":    cardJSON,
 	}
 	var resp struct {
 		Code int    `json:"code"`
@@ -231,7 +245,7 @@ func (c *httpAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParam
 	}
 	if resp.Code != 0 || resp.Data.MessageID == "" {
 		if isTokenError(resp.Code) {
-			c.invalidateToken(p.InstallationID.AppID)
+			c.invalidateToken(creds.AppID)
 		}
 		return "", fmt.Errorf("lark http client: send interactive card: code=%d msg=%q", resp.Code, resp.Msg)
 	}
