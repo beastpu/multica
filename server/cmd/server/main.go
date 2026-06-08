@@ -330,6 +330,7 @@ func main() {
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	autopilotCtx, autopilotCancel := context.WithCancel(context.Background())
 	feishuProjectCtx, feishuProjectCancel := context.WithCancel(context.Background())
+	agentIssueSummaryCtx, agentIssueSummaryCancel := context.WithCancel(context.Background())
 	taskSvc := service.NewTaskService(queries, pool, hub, bus, daemonWakeup)
 	taskSvc.Analytics = analyticsClient
 	taskSvc.Metrics = businessMetrics
@@ -351,6 +352,7 @@ func main() {
 	go runAutopilotScheduler(autopilotCtx, queries, autopilotSvc)
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	go runFeishuProjectSyncWorker(feishuProjectCtx, queries, pool, taskSvc, bus)
+	go runAgentIssueSummaryWorker(agentIssueSummaryCtx, queries, pool, bus, envAgentIssueSummaryConfig())
 	go runDBStatsLogger(sweepCtx, pool)
 
 	// Lark inbound supervisor: holds the §4.4 WS lease per installation
@@ -387,6 +389,7 @@ func main() {
 	slog.Info("shutting down server")
 	autopilotCancel()
 	feishuProjectCancel()
+	agentIssueSummaryCancel()
 
 	// Order matters: drain in-flight HTTP first so any heartbeat handlers
 	// finish calling Schedule() before we stop the scheduler. Otherwise a
