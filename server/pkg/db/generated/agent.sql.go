@@ -2225,6 +2225,113 @@ func (q *Queries) ListTasksByIssue(ctx context.Context, issueID pgtype.UUID) ([]
 	return items, nil
 }
 
+const listWorkspaceAgentFixes = `-- name: ListWorkspaceAgentFixes :many
+SELECT
+  latest.task_id,
+  latest.agent_id,
+  a.name AS agent_name,
+  i.id AS issue_id,
+  i.number AS issue_number,
+  i.title AS issue_title,
+  i.status AS issue_status,
+  latest.started_at,
+  latest.completed_at,
+  latest.created_at,
+  COALESCE(lc.content, '') AS last_comment,
+  COALESCE(lc.author_type, '') AS last_comment_author_type
+FROM (
+  SELECT DISTINCT ON (atq.issue_id)
+    atq.id AS task_id, atq.agent_id, atq.issue_id,
+    atq.started_at, atq.completed_at, atq.created_at
+  FROM agent_task_queue atq
+  JOIN agent ag ON ag.id = atq.agent_id
+  WHERE ag.workspace_id = $1
+    AND atq.issue_id IS NOT NULL
+  -- "Latest run" = most recent activity overall: completion if finished, else
+  -- start, else when it was queued. So a fresh queued/running attempt outranks
+  -- an older finished one. atq.id is a final deterministic tiebreaker.
+  ORDER BY atq.issue_id,
+    COALESCE(atq.completed_at, atq.started_at, atq.created_at) DESC, atq.id DESC
+) latest
+JOIN agent a ON a.id = latest.agent_id
+JOIN issue i ON i.id = latest.issue_id
+LEFT JOIN LATERAL (
+  SELECT c.content, c.author_type
+  FROM comment c
+  WHERE c.issue_id = i.id AND c.type = 'comment'
+  ORDER BY c.created_at DESC
+  LIMIT 1
+) lc ON true
+WHERE COALESCE(latest.completed_at, latest.started_at, latest.created_at) > now() - make_interval(days => $2::int)
+ORDER BY COALESCE(latest.completed_at, latest.started_at, latest.created_at) DESC
+LIMIT 500
+`
+
+type ListWorkspaceAgentFixesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Days        int32       `json:"days"`
+}
+
+type ListWorkspaceAgentFixesRow struct {
+	TaskID                pgtype.UUID        `json:"task_id"`
+	AgentID               pgtype.UUID        `json:"agent_id"`
+	AgentName             string             `json:"agent_name"`
+	IssueID               pgtype.UUID        `json:"issue_id"`
+	IssueNumber           int32              `json:"issue_number"`
+	IssueTitle            string             `json:"issue_title"`
+	IssueStatus           string             `json:"issue_status"`
+	StartedAt             pgtype.Timestamptz `json:"started_at"`
+	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	LastComment           string             `json:"last_comment"`
+	LastCommentAuthorType string             `json:"last_comment_author_type"`
+}
+
+// One row per issue that an agent has worked on, carrying ONLY the latest
+// agent run for that issue, for the Usage page's Operations tab. An issue may
+// have many runs (several agents, or one agent retried) — DISTINCT ON
+// (issue_id) keeps just the newest (by completion, then created_at). Columns:
+//   - agent_name  → who ran the latest attempt (the "智能体" column)
+//   - issue_*     → the linked issue + its workflow status (the "状态" column)
+//   - last_comment→ the most recent comment/reply on the issue (member OR
+//     agent), the "原因/描述" column; "" when none
+//
+// JOINs agent because agent_task_queue has no workspace_id; INNER JOIN issue so
+// only issue-linked runs count. The window filters on the latest run's recency.
+// Per-agent access filtering happens in the handler against accessibleAgentIDs.
+func (q *Queries) ListWorkspaceAgentFixes(ctx context.Context, arg ListWorkspaceAgentFixesParams) ([]ListWorkspaceAgentFixesRow, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceAgentFixes, arg.WorkspaceID, arg.Days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkspaceAgentFixesRow{}
+	for rows.Next() {
+		var i ListWorkspaceAgentFixesRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.AgentID,
+			&i.AgentName,
+			&i.IssueID,
+			&i.IssueNumber,
+			&i.IssueTitle,
+			&i.IssueStatus,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.LastComment,
+			&i.LastCommentAuthorType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkspaceAgentTaskSnapshot = `-- name: ListWorkspaceAgentTaskSnapshot :many
 SELECT atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatched_at, atq.started_at, atq.completed_at, atq.result, atq.error, atq.created_at, atq.context, atq.runtime_id, atq.session_id, atq.work_dir, atq.trigger_comment_id, atq.chat_session_id, atq.autopilot_run_id, atq.attempt, atq.max_attempts, atq.parent_task_id, atq.failure_reason, atq.trigger_summary, atq.force_fresh_session, atq.is_leader_task, atq.wait_reason FROM agent_task_queue atq
 JOIN agent a ON a.id = atq.agent_id

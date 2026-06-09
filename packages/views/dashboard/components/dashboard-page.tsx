@@ -36,6 +36,7 @@ import {
 } from "../../runtimes/components/charts";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { Segmented } from "./segmented";
 import {
   addDaysIso,
   aggregateByWeek,
@@ -102,38 +103,6 @@ const EMPTY_RUNTIME_DAILY: import("@multica/core/types").DashboardRunTimeDaily[]
 function fmtMoney(n: number): string {
   if (n >= 100) return `$${n.toFixed(0)}`;
   return `$${n.toFixed(2)}`;
-}
-
-// Local segmented control — same visual language the runtime usage section
-// uses for its period / tab toggles. shadcn's Tabs is wired for full tab
-// pages with ARIA semantics the compact toolbar pill doesn't need.
-function Segmented<T extends string | number>({
-  value,
-  onChange,
-  options,
-}: {
-  value: T;
-  onChange: (v: T) => void;
-  options: readonly { label: string; value: T }[];
-}) {
-  return (
-    <div className="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5">
-      {options.map((o) => (
-        <button
-          key={String(o.value)}
-          type="button"
-          onClick={() => onChange(o.value)}
-          className={`rounded-sm px-2.5 py-1 text-xs font-medium transition-colors ${
-            o.value === value
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
 }
 
 /**

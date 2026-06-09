@@ -673,6 +673,58 @@ SELECT t.* FROM (
   ORDER BY atq.agent_id, atq.completed_at DESC NULLS LAST
 ) t;
 
+-- name: ListWorkspaceAgentFixes :many
+-- One row per issue that an agent has worked on, carrying ONLY the latest
+-- agent run for that issue, for the Usage page's Operations tab. An issue may
+-- have many runs (several agents, or one agent retried) — DISTINCT ON
+-- (issue_id) keeps just the newest (by completion, then created_at). Columns:
+--   - agent_name  → who ran the latest attempt (the "智能体" column)
+--   - issue_*     → the linked issue + its workflow status (the "状态" column)
+--   - last_comment→ the most recent comment/reply on the issue (member OR
+--                   agent), the "原因/描述" column; "" when none
+-- JOINs agent because agent_task_queue has no workspace_id; INNER JOIN issue so
+-- only issue-linked runs count. The window filters on the latest run's recency.
+-- Per-agent access filtering happens in the handler against accessibleAgentIDs.
+SELECT
+  latest.task_id,
+  latest.agent_id,
+  a.name AS agent_name,
+  i.id AS issue_id,
+  i.number AS issue_number,
+  i.title AS issue_title,
+  i.status AS issue_status,
+  latest.started_at,
+  latest.completed_at,
+  latest.created_at,
+  COALESCE(lc.content, '') AS last_comment,
+  COALESCE(lc.author_type, '') AS last_comment_author_type
+FROM (
+  SELECT DISTINCT ON (atq.issue_id)
+    atq.id AS task_id, atq.agent_id, atq.issue_id,
+    atq.started_at, atq.completed_at, atq.created_at
+  FROM agent_task_queue atq
+  JOIN agent ag ON ag.id = atq.agent_id
+  WHERE ag.workspace_id = sqlc.arg('workspace_id')
+    AND atq.issue_id IS NOT NULL
+  -- "Latest run" = most recent activity overall: completion if finished, else
+  -- start, else when it was queued. So a fresh queued/running attempt outranks
+  -- an older finished one. atq.id is a final deterministic tiebreaker.
+  ORDER BY atq.issue_id,
+    COALESCE(atq.completed_at, atq.started_at, atq.created_at) DESC, atq.id DESC
+) latest
+JOIN agent a ON a.id = latest.agent_id
+JOIN issue i ON i.id = latest.issue_id
+LEFT JOIN LATERAL (
+  SELECT c.content, c.author_type
+  FROM comment c
+  WHERE c.issue_id = i.id AND c.type = 'comment'
+  ORDER BY c.created_at DESC
+  LIMIT 1
+) lc ON true
+WHERE COALESCE(latest.completed_at, latest.started_at, latest.created_at) > now() - make_interval(days => sqlc.arg('days')::int)
+ORDER BY COALESCE(latest.completed_at, latest.started_at, latest.created_at) DESC
+LIMIT 500;
+
 -- name: ListTasksByIssue :many
 SELECT * FROM agent_task_queue
 WHERE issue_id = $1
