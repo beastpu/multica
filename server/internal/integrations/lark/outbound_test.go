@@ -126,14 +126,23 @@ func (f *fakeAPIClient) SendBindingPromptCard(ctx context.Context, p BindingProm
 	f.bindingSent = append(f.bindingSent, p)
 	return nil
 }
-func (f *fakeAPIClient) AddMessageReaction(ctx context.Context, p AddReactionParams) error {
-	return nil
-}
 func (f *fakeAPIClient) GetBotInfo(ctx context.Context, creds InstallationCredentials) (BotInfo, error) {
 	return BotInfo{}, nil
 }
 func (f *fakeAPIClient) GetMessage(ctx context.Context, creds InstallationCredentials, messageID string) ([]LarkMessage, error) {
 	return nil, nil
+}
+func (f *fakeAPIClient) ListChatMessages(ctx context.Context, creds InstallationCredentials, p ListMessagesParams) ([]LarkMessage, error) {
+	return nil, nil
+}
+func (f *fakeAPIClient) BatchGetUsers(ctx context.Context, creds InstallationCredentials, openIDs []string) (map[string]string, error) {
+	return nil, nil
+}
+func (f *fakeAPIClient) AddMessageReaction(ctx context.Context, p AddReactionParams) (string, error) {
+	return "fake-reaction-id", nil
+}
+func (f *fakeAPIClient) DeleteMessageReaction(ctx context.Context, p DeleteReactionParams) error {
+	return nil
 }
 
 func newTestPatcher(t *testing.T) (*Patcher, *fakePatcherQueries, *fakeAPIClient) {

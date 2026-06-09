@@ -70,11 +70,6 @@ type APIClient interface {
 	// Lark's card schema.
 	SendBindingPromptCard(ctx context.Context, p BindingPromptParams) error
 
-	// AddMessageReaction adds an emoji reaction to an existing Lark
-	// message. Used as a low-noise acknowledgement that the bot has
-	// received a user request and is working on it.
-	AddMessageReaction(ctx context.Context, p AddReactionParams) error
-
 	// GetBotInfo returns the Bot's per-installation `open_id` (the
 	// `bot_open_id` we persist on lark_installation). RegistrationService
 	// is the only caller — after the device-flow registration returns
@@ -96,6 +91,59 @@ type APIClient interface {
 	// slice keeps this method a thin transport adapter — flattening and
 	// block assembly are the enricher's job.
 	GetMessage(ctx context.Context, creds InstallationCredentials, messageID string) ([]LarkMessage, error)
+
+	// ListChatMessages fetches the most recent messages in a single chat
+	// via GET /open-apis/im/v1/messages?container_id_type=chat. It powers
+	// the group-context prefetch: when a user @-mentions the Bot in a busy
+	// group, the enricher pulls a bounded window of surrounding messages
+	// so the agent sees the conversation, not just the one @-ed line.
+	//
+	// Results come back newest-first (sort_type=ByCreateTimeDesc), capped
+	// at p.PageSize (Lark hard-caps a page at 50); the caller orders and
+	// trims for rendering. Only a single page is fetched — pagination is
+	// deliberately not exposed so the inbound ACK path's HTTP fan-out
+	// stays a single round-trip. Like GetMessage, this is a thin transport
+	// adapter: flattening and block assembly are the enricher's job.
+	ListChatMessages(ctx context.Context, creds InstallationCredentials, p ListMessagesParams) ([]LarkMessage, error)
+
+	// BatchGetUsers resolves a set of user open_ids to their display names
+	// via GET /open-apis/contact/v3/users/batch. The enricher uses it to
+	// label recent-context / quoted / forwarded speakers (and the sender
+	// who @-mentioned the Bot) with real names instead of positional
+	// "User 1 / User 2". Returns an open_id -> name map; ids the API does
+	// not return (restricted contact scope, deactivated user, …) are
+	// simply absent from the map, and the caller falls back to a
+	// positional label. openIDs beyond Lark's 50-per-call cap are dropped
+	// by the client.
+	BatchGetUsers(ctx context.Context, creds InstallationCredentials, openIDs []string) (map[string]string, error)
+
+	// AddMessageReaction adds an emoji reaction to an existing message.
+	// The standard use-case is the "Typing" indicator that signals the
+	// Bot is processing the user's message. Returns the reaction_id Lark
+	// assigns so it can be removed later.
+	AddMessageReaction(ctx context.Context, p AddReactionParams) (string, error)
+
+	// DeleteMessageReaction removes a previously-added reaction from a
+	// message. This is the cleanup half of the typing-indicator lifecycle.
+	DeleteMessageReaction(ctx context.Context, p DeleteReactionParams) error
+}
+
+// ListMessagesParams selects a bounded, recent window of messages in a
+// single Lark chat for the group-context prefetch. Only the fields the
+// enricher needs today are exposed (ChatID, PageSize, EndTime);
+// start_time and page_token are intentionally omitted until a caller
+// needs them.
+type ListMessagesParams struct {
+	ChatID ChatID
+	// PageSize is how many of the most-recent messages to fetch. The
+	// client clamps it into Lark's valid 1..50 range.
+	PageSize int
+	// EndTime, when > 0, caps the window to messages created at or before
+	// this Unix timestamp in SECONDS (Lark's end_time is second-, not
+	// millisecond-, granularity). The enricher sets it to the trigger
+	// message's time so the prefetch is anchored to the @-mention moment
+	// rather than whatever is newest by the time the fetch runs.
+	EndTime int64
 }
 
 // LarkMessage is the normalized slice of an IM v1 message item the
@@ -218,10 +266,20 @@ type BindingPromptParams struct {
 	BindURL string
 }
 
+// AddReactionParams is the input shape for adding an emoji reaction to
+// a message.
 type AddReactionParams struct {
 	InstallationID InstallationCredentials
 	MessageID      string
 	EmojiType      string
+}
+
+// DeleteReactionParams is the input shape for removing a previously-added
+// reaction from a message.
+type DeleteReactionParams struct {
+	InstallationID InstallationCredentials
+	MessageID      string
+	ReactionID     string
 }
 
 // InstallationCredentials is the per-installation transport context the
@@ -236,6 +294,14 @@ type InstallationCredentials struct {
 	AppID     string
 	AppSecret string
 	TenantKey string
+	// Region selects the Lark open-platform host (Feishu mainland vs
+	// Lark international) for every call made with these credentials.
+	// Empty defaults to Feishu. Credential-build sites copy it from
+	// lark_installation.region; the device-flow installer sets it from
+	// the auto-detected tenant. This is what lets one deployment serve
+	// both clouds — see http_client.go resolveBaseURL and
+	// ws_endpoint.go Endpoint.
+	Region Region
 }
 
 // ErrAPIClientNotConfigured is returned by the stub client to signal
@@ -307,11 +373,6 @@ func (s *stubAPIClient) SendBindingPromptCard(ctx context.Context, p BindingProm
 	return ErrAPIClientNotConfigured
 }
 
-func (s *stubAPIClient) AddMessageReaction(ctx context.Context, p AddReactionParams) error {
-	s.log.Warn("lark stub client: AddMessageReaction called", "message_id", p.MessageID, "emoji_type", p.EmojiType)
-	return ErrAPIClientNotConfigured
-}
-
 func (s *stubAPIClient) GetBotInfo(ctx context.Context, creds InstallationCredentials) (BotInfo, error) {
 	s.log.Warn("lark stub client: GetBotInfo called", "app_id", creds.AppID)
 	return BotInfo{}, ErrAPIClientNotConfigured
@@ -320,4 +381,24 @@ func (s *stubAPIClient) GetBotInfo(ctx context.Context, creds InstallationCreden
 func (s *stubAPIClient) GetMessage(ctx context.Context, creds InstallationCredentials, messageID string) ([]LarkMessage, error) {
 	s.log.Warn("lark stub client: GetMessage called", "message_id", messageID)
 	return nil, ErrAPIClientNotConfigured
+}
+
+func (s *stubAPIClient) ListChatMessages(ctx context.Context, creds InstallationCredentials, p ListMessagesParams) ([]LarkMessage, error) {
+	s.log.Warn("lark stub client: ListChatMessages called", "chat_id", string(p.ChatID))
+	return nil, ErrAPIClientNotConfigured
+}
+
+func (s *stubAPIClient) BatchGetUsers(ctx context.Context, creds InstallationCredentials, openIDs []string) (map[string]string, error) {
+	s.log.Warn("lark stub client: BatchGetUsers called", "count", len(openIDs))
+	return nil, ErrAPIClientNotConfigured
+}
+
+func (s *stubAPIClient) AddMessageReaction(ctx context.Context, p AddReactionParams) (string, error) {
+	s.log.Warn("lark stub client: AddMessageReaction called", "message_id", p.MessageID, "emoji_type", p.EmojiType)
+	return "", ErrAPIClientNotConfigured
+}
+
+func (s *stubAPIClient) DeleteMessageReaction(ctx context.Context, p DeleteReactionParams) error {
+	s.log.Warn("lark stub client: DeleteMessageReaction called", "message_id", p.MessageID, "reaction_id", p.ReactionID)
+	return ErrAPIClientNotConfigured
 }

@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@multica/ui/lib/utils";
+import { copyText } from "@multica/ui/lib/clipboard";
 import type { Attachment as AttachmentRecord } from "@multica/core/types";
 import { useT } from "../i18n";
 import { useAttachmentDownloadResolver } from "./attachment-download-context";
@@ -61,6 +62,13 @@ export type AttachmentInput =
       /** Editor in-flight state. Renders a loader placeholder. */
       uploading?: boolean;
       /**
+       * Intrinsic pixel dimensions. Rendered as `<img width height>` so the
+       * browser reserves the box before the image decodes — prevents the
+       * layout shift that would otherwise push the caret out of view on paste.
+       */
+      width?: number;
+      height?: number;
+      /**
        * Structural hint from the call site: "this slot is definitionally an
        * image / file / ...". Bypasses `getPreviewKind` autodetect, which
        * needs a filename or content-type and falls back to the file-card
@@ -90,6 +98,8 @@ interface Normalized {
   attachmentId?: string;
   record?: AttachmentRecord;
   uploading: boolean;
+  width?: number;
+  height?: number;
 }
 
 function normalize(
@@ -100,7 +110,7 @@ function normalize(
     return {
       filename: input.attachment.filename,
       contentType: input.attachment.content_type,
-      url: input.attachment.content_url || input.attachment.download_url || input.attachment.url,
+      url: pickInlineMediaURL(input.attachment, input.attachment.url),
       attachmentId: input.attachment.id,
       record: input.attachment,
       uploading: false,
@@ -110,11 +120,66 @@ function normalize(
   return {
     filename: input.filename || record?.filename || "",
     contentType: input.contentType || record?.content_type || "",
-    url: record?.content_url || record?.download_url || input.url,
+    // When the markdown URL resolved to an attachment record, swap to
+    // the record's freshly-loadable URL. The persisted markdown URL
+    // (`/api/attachments/<id>/download` for new content; raw stored URL
+    // for legacy) is correct as a stable reference but doesn't
+    // necessarily load as a native <img>/<video> resource for every
+    // client — token-mode clients can't attach an Authorization header
+    // to bare /api/* fetches, and a CloudFront-signed `download_url`
+    // is the only working media src in that mode. `pickInlineMediaURL`
+    // picks the URL with embedded credentials when one exists and
+    // falls back to the input URL otherwise so legacy / unresolved
+    // markdown stays on its existing path. See MUL-3130 review.
+    url: record ? pickInlineMediaURL(record, input.url) : input.url,
     attachmentId: record?.id,
     record,
     uploading: !!input.uploading,
+    width: input.width,
+    height: input.height,
   };
+}
+
+// pickInlineMediaURL returns the URL most likely to load successfully
+// inside a native <img>/<video>/<iframe> resource fetch — i.e. without
+// the calling client attaching an Authorization header.
+//
+// The metadata response from the backend offers two URL fields per
+// attachment row:
+//
+//   - `record.url`         — for LocalStorage this is a freshly-signed
+//                             `/uploads/<key>?exp=<unix>&sig=<HMAC>`
+//                             URL whose query string IS the auth (works
+//                             for token-mode <img> loads). For S3/
+//                             CloudFront it's the raw stored URL with
+//                             no signature.
+//   - `record.download_url` — `/api/attachments/<id>/download` in the
+//                             default proxy/presign mode (requires
+//                             cookie or Authorization header — does
+//                             NOT work as a native resource load for
+//                             token-mode clients). In CloudFront mode
+//                             this is replaced server-side with a
+//                             CloudFront-signed URL that DOES work as
+//                             a native <img> src.
+//
+// Heuristic: when `download_url` is an absolute URL with a recognised
+// CDN signature query (`Signature` / `Expires` / `Key-Pair-Id` for
+// CloudFront, `X-Amz-Signature` / `X-Amz-Expires` for raw S3 presigns
+// that may surface here in future modes), use it. Otherwise use
+// `record.url`, which carries the LocalStorage `?exp&sig` token and is
+// the only inline-loadable URL in that backend. Falls back to the
+// input URL when neither is usable so legacy markdown links keep their
+// pre-fix behaviour.
+function pickInlineMediaURL(record: AttachmentRecord, fallback: string): string {
+  const dl = record.download_url ?? "";
+  if (
+    /^https?:\/\//i.test(dl) &&
+    /[?&](Signature|X-Amz-Signature|Key-Pair-Id|Expires|X-Amz-Expires)=/i.test(dl)
+  ) {
+    return dl;
+  }
+  if (record.url) return record.url;
+  return fallback;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +235,8 @@ export function Attachment({
           src={state.url}
           alt={state.filename}
           uploading={state.uploading}
+          width={state.width}
+          height={state.height}
           editable={editable}
           selected={selected}
           onView={openPreview}
@@ -228,6 +295,8 @@ interface ImageAttachmentViewProps {
   src: string;
   alt: string;
   uploading: boolean;
+  width?: number;
+  height?: number;
   editable?: boolean;
   selected?: boolean;
   onView: () => void;
@@ -240,6 +309,8 @@ function ImageAttachmentView({
   src,
   alt,
   uploading,
+  width,
+  height,
   editable,
   selected,
   onView,
@@ -250,10 +321,9 @@ function ImageAttachmentView({
   const { t } = useT("editor");
 
   const handleCopyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(src);
+    if (await copyText(src)) {
       toast.success(t(($) => $.image.link_copied));
-    } catch {
+    } else {
       toast.error(t(($) => $.image.copy_link_failed));
     }
   };
@@ -284,6 +354,8 @@ function ImageAttachmentView({
         <img
           src={src || undefined}
           alt={alt}
+          width={width}
+          height={height}
           className={cn("image-content", uploading && "image-uploading")}
           draggable={false}
         />
