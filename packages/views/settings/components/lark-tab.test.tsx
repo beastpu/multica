@@ -201,10 +201,27 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     expect(screen.getByRole("button", { name: /Bind to Lark/i })).toBeTruthy();
   });
 
-  it("hides the bind CTA for a non-admin agent owner (matches backend admin gate)", () => {
+  it("shows the bind CTA for a non-admin agent owner", () => {
+    membersRef.current = [{ user_id: "user-1", role: "member" }];
+    render(
+      <LarkAgentBindButton
+        agentId="agent-1"
+        agentName="Bot"
+        agentOwnerId="user-1"
+      />,
+      { wrapper: I18nWrapper },
+    );
+    expect(screen.getByRole("button", { name: /Bind to Lark/i })).toBeTruthy();
+  });
+
+  it("hides the bind CTA for a non-admin member who does not own the agent", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     const { container } = render(
-      <LarkAgentBindButton agentId="agent-1" agentName="Bot" />,
+      <LarkAgentBindButton
+        agentId="agent-1"
+        agentName="Bot"
+        agentOwnerId="user-2"
+      />,
       { wrapper: I18nWrapper },
     );
     expect(container.querySelector("button")).toBeNull();

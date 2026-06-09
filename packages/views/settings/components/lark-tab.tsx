@@ -43,8 +43,9 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 
 // LarkTab is the workspace settings panel for Lark Bot installations.
-// Listing is member-visible; the disconnect action is admin-only (the
-// backend enforces it; the UI hides the button for non-admins to match).
+// Listing is member-visible; the workspace-level disconnect action stays
+// owner/admin-only. Agent owners can manage their own bot from that agent's
+// detail Integrations tab, where the page has the agent ownership context.
 //
 // Adding a new installation flows through the Agent detail page: the
 // install path is per-agent (each Multica Agent gets exactly one Bot —
@@ -260,13 +261,9 @@ function InstallationRow({
 // button is the entry point.
 //
 // Visibility rules, in order:
-//   1. Non-owner/admin viewers see nothing — the backend gates
-//      `POST /lark/install/begin`, the status poll, AND disconnect on
-//      those roles (see server/cmd/server/router.go), and `canEditAgent`
-//      lets agent owners through even when they're not workspace admins,
-//      so the parent's `canEdit` gate alone would expose controls that
-//      are guaranteed to 403.
-//   2. If this agent ALREADY has an active installation, owner/admins see
+//   1. Users who cannot manage this agent see nothing. The backend uses
+//      the same rule: workspace owner/admin OR this agent's owner.
+//   2. If this agent ALREADY has an active installation, managers see
 //      the "Connected + Manage in Lark" badge — regardless of
 //      install_supported. install_supported governs only whether NEW
 //      scan-installs can complete; already-installed bots stay manageable
@@ -280,10 +277,12 @@ function InstallationRow({
 export function LarkAgentBindButton({
   agentId,
   agentName,
+  agentOwnerId,
   className,
 }: {
   agentId: string;
   agentName?: string;
+  agentOwnerId?: string | null;
   className?: string;
 }) {
   const { t } = useT("settings");
@@ -303,7 +302,9 @@ export function LarkAgentBindButton({
   });
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
   const canManage =
-    currentMember?.role === "owner" || currentMember?.role === "admin";
+    currentMember?.role === "owner" ||
+    currentMember?.role === "admin" ||
+    (!!agentOwnerId && agentOwnerId === user?.id);
 
   if (!canManage) return null;
 
@@ -358,6 +359,12 @@ export function LarkAgentBindButton({
 // a status pill), the Manage link opens the Bot's dev console page in
 // a new tab so the user can manage scopes / display name / additional
 // permissions without re-scanning the QR.
+//
+// Visibility rules carry over from the parent `LarkAgentBindButton`:
+// only users who can manage this agent ever reach this component, so the
+// unbind affordance is unconditionally shown — the backend gates DELETE on
+// the same rule and would 403 anyone else, which makes a redundant
+// `canManage` check here dead code.
 //
 // The dev console URL host follows the same default as the backend's
 // LARK_BASE_URL (open.feishu.cn for mainland Lark). Operators on the
