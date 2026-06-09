@@ -223,7 +223,11 @@ export function AgentDetailInspector({
             </span>
           </div>
           <div className="flex flex-wrap gap-2">
-            <LarkAgentBindButton agentId={agent.id} agentName={agent.name} />
+            <LarkAgentBindButton
+              agentId={agent.id}
+              agentName={agent.name}
+              agentOwnerId={agent.owner_id}
+            />
           </div>
         </div>
       )}
