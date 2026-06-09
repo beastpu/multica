@@ -43,6 +43,11 @@ import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import { useWorkspaceSlug } from "@multica/core/paths";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Attachment } from "@multica/core/types";
+import {
+  parseMarkdownChunked,
+  MARKDOWN_CHUNK_THRESHOLD,
+  type MarkdownManagerLike,
+} from "./utils/parse-markdown-chunked";
 import type { MentionItem } from "./extensions/mention-suggestion";
 import { createEditorExtensions } from "./extensions";
 import { uploadAndInsertFile } from "./extensions/file-upload";
@@ -100,8 +105,14 @@ interface ContentEditorProps {
   /** Chat can surface current/recent issue/project suggestions. Other editors use default mention behavior. */
   mentionMode?: "default" | "context";
   mentionContextItems?: MentionItem[];
-  /** Enable the chat-only `/` skill picker. Defaults false. */
+  /** Enable the `/` command picker. Defaults false. */
   enableSlashCommands?: boolean;
+  /**
+   * Which `/` menu to show when enableSlashCommands is true: "skill" (default)
+   * lists the active agent's skills (chat); "command" shows the fixed built-in
+   * command menu (issue comments), e.g. /note.
+   */
+  slashCommandMode?: "skill" | "command";
   /**
    * Attachments referenced by this content. The download buttons on file
    * cards and images inside the editor look up an attachment by `url` and
@@ -148,6 +159,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       mentionMode = "default",
       mentionContextItems,
       enableSlashCommands = false,
+      slashCommandMode = "skill",
       attachments,
     },
     ref,
@@ -176,16 +188,43 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
 
     const queryClient = useQueryClient();
 
+    const initialContent = defaultValue ? preprocessMarkdown(defaultValue) : "";
+    // Large markdown is parsed in chunks to dodge marked's O(n²) tokenizer (see
+    // parseMarkdownChunked). Small docs stay on the single-parse fast path.
+    const mountChunked = initialContent.length > MARKDOWN_CHUNK_THRESHOLD;
+
     const editor = useEditor({
       immediatelyRender: false,
       // Note: in v3.22.1 the default is already false/undefined (same behavior).
       // Explicit for clarity — the real perf win is useEditorState in BubbleMenu.
       shouldRerenderOnTransaction: false,
       onCreate: ({ editor: ed }) => {
+        // For large docs we mount empty (below) and parse in chunks here, so the
+        // O(n²) marked tokenizer never sees the whole document at once.
+        if (mountChunked) {
+          const manager = (
+            ed.storage as { markdown?: { manager?: MarkdownManagerLike } }
+          ).markdown?.manager;
+          if (manager) {
+            ed.commands.setContent(
+              parseMarkdownChunked(manager, initialContent),
+              { emitUpdate: false },
+            );
+          } else {
+            ed.commands.setContent(initialContent, {
+              emitUpdate: false,
+              contentType: "markdown",
+            });
+          }
+        }
         lastEmittedRef.current = stripBlobUrls(ed.getMarkdown()).trimEnd();
       },
-      content: defaultValue ? preprocessMarkdown(defaultValue) : "",
-      contentType: defaultValue ? "markdown" : undefined,
+      content: mountChunked ? "" : initialContent,
+      contentType: mountChunked
+        ? undefined
+        : defaultValue
+          ? "markdown"
+          : undefined,
       extensions: createEditorExtensions({
         placeholder: placeholderText,
         queryClient,
@@ -196,6 +235,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
         mentionMode,
         getMentionContextItems: () => mentionContextItemsRef.current,
         enableSlashCommands,
+        slashCommandMode,
       }),
       onUpdate: ({ editor: ed }) => {
         if (!onUpdateRef.current) return;
@@ -276,10 +316,22 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       // `emitUpdate: true`; without this we would re-trigger onUpdate →
       // server save → self-write loop.
       const { from, to } = editor.state.selection;
-      editor.commands.setContent(incoming, {
-        emitUpdate: false,
-        contentType: "markdown",
-      });
+      // Same chunked path on WS-driven re-parse of a large description.
+      const manager =
+        incoming.length > MARKDOWN_CHUNK_THRESHOLD
+          ? (editor.storage as { markdown?: { manager?: MarkdownManagerLike } })
+              .markdown?.manager
+          : undefined;
+      if (manager) {
+        editor.commands.setContent(parseMarkdownChunked(manager, incoming), {
+          emitUpdate: false,
+        });
+      } else {
+        editor.commands.setContent(incoming, {
+          emitUpdate: false,
+          contentType: "markdown",
+        });
+      }
 
       // Clamp prior selection to the new doc size so the caret doesn't snap
       // to position 0 after ProseMirror replaces the document.

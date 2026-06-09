@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -928,7 +930,35 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+// noteCommentPrefix marks a comment as a human-only note. A comment whose first
+// whitespace-delimited token is this prefix (case-insensitive) is stored like
+// any other comment but never triggers an agent — see triggerTasksForComment.
+const noteCommentPrefix = "/note"
+
+// isNoteComment reports whether content opts out of agent triggering via the
+// reserved /note prefix. The prefix must be the comment's first token, so
+// "/note check expiry", "  /NOTE", and "/note" all match, while "/notes",
+// "/ note", and "see foo/note" do not.
+func isNoteComment(content string) bool {
+	trimmed := strings.TrimLeft(content, " \t\r\n")
+	firstToken := trimmed
+	if i := strings.IndexFunc(trimmed, unicode.IsSpace); i >= 0 {
+		firstToken = trimmed[:i]
+	}
+	return strings.EqualFold(firstToken, noteCommentPrefix)
+}
+
 func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID string) {
+	// A comment opening with the reserved /note prefix is a human-only note: it
+	// is recorded like any other comment but must not wake ANY agent. This guard
+	// lives at the single chokepoint so it covers all three trigger paths below
+	// (assignee, squad leader, and @mentioned agents). Gating only
+	// shouldEnqueueOnComment would still let "/note @agent ..." reach an agent
+	// through the mention path.
+	if isNoteComment(comment.Content) {
+		return
+	}
+
 	if actorType == "member" && h.shouldEnqueueOnComment(ctx, issue, actorType, actorID) &&
 		!h.commentMentionsOthersButNotAssignee(comment.Content, issue) &&
 		!h.isReplyToMemberThread(ctx, parentComment, comment.Content, issue) {
@@ -1365,11 +1395,14 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// loadRootCommentForActor resolves a {commentId} URL param to a root comment in
-// the caller's workspace. Returns the comment, the workspace UUID, the actor
+// loadCommentForActor resolves a {commentId} URL param to a comment in the
+// caller's workspace. Returns the comment, the workspace UUID, the actor
 // identity, and ok. Resolve / unresolve handlers share this scaffolding so the
-// "must be a root comment" rule lives in one place.
-func (h *Handler) loadRootCommentForActor(w http.ResponseWriter, r *http.Request) (db.Comment, string, string, string, bool) {
+// workspace membership + tenant guard stay identical. Any comment (root or
+// reply) may be resolved: resolving a root collapses the whole thread; resolving
+// a reply marks it as the thread's resolution. Which one is the thread's
+// resolution is a pure frontend derivation, so the backend stays a plain setter.
+func (h *Handler) loadCommentForActor(w http.ResponseWriter, r *http.Request) (db.Comment, string, string, string, bool) {
 	commentId := chi.URLParam(r, "commentId")
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -1395,16 +1428,12 @@ func (h *Handler) loadRootCommentForActor(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "comment not found")
 		return db.Comment{}, "", "", "", false
 	}
-	if comment.ParentID.Valid {
-		writeError(w, http.StatusBadRequest, "only root comments can be resolved")
-		return db.Comment{}, "", "", "", false
-	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	return comment, workspaceID, actorType, actorID, true
 }
 
 func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
-	comment, workspaceID, actorType, actorID, ok := h.loadRootCommentForActor(w, r)
+	comment, workspaceID, actorType, actorID, ok := h.loadCommentForActor(w, r)
 	if !ok {
 		return
 	}
@@ -1441,7 +1470,7 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) UnresolveComment(w http.ResponseWriter, r *http.Request) {
-	comment, workspaceID, actorType, actorID, ok := h.loadRootCommentForActor(w, r)
+	comment, workspaceID, actorType, actorID, ok := h.loadCommentForActor(w, r)
 	if !ok {
 		return
 	}

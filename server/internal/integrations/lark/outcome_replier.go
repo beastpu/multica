@@ -222,11 +222,12 @@ func (r *LarkOutcomeReplier) addProcessingReaction(ctx context.Context, inst db.
 	if err != nil {
 		return err
 	}
-	return r.client.AddMessageReaction(ctx, AddReactionParams{
+	_, err = r.client.AddMessageReaction(ctx, AddReactionParams{
 		InstallationID: creds,
 		MessageID:      msg.MessageID,
 		EmojiType:      processingReactionEmoji,
 	})
+	return err
 }
 
 func (r *LarkOutcomeReplier) sendBindingPrompt(ctx context.Context, inst db.LarkInstallation, res DispatchResult) error {
@@ -336,6 +337,7 @@ func (r *LarkOutcomeReplier) installationCredentials(inst db.LarkInstallation) (
 	creds := InstallationCredentials{
 		AppID:     inst.AppID,
 		AppSecret: secret,
+		Region:    RegionOrDefault(inst.Region),
 	}
 	if inst.TenantKey.Valid {
 		creds.TenantKey = inst.TenantKey.String

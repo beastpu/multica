@@ -89,14 +89,14 @@ func (s *stubAPIClientWithRecorder) SendBindingPromptCard(ctx context.Context, p
 	return nil
 }
 
-func (s *stubAPIClientWithRecorder) AddMessageReaction(ctx context.Context, p AddReactionParams) error {
+func (s *stubAPIClientWithRecorder) AddMessageReaction(ctx context.Context, p AddReactionParams) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.reactionErr != nil {
-		return s.reactionErr
+		return "", s.reactionErr
 	}
 	s.reactions = append(s.reactions, p)
-	return nil
+	return "stub-reaction-id", nil
 }
 
 func (s *stubAPIClientWithRecorder) GetBotInfo(ctx context.Context, creds InstallationCredentials) (BotInfo, error) {
@@ -105,6 +105,15 @@ func (s *stubAPIClientWithRecorder) GetBotInfo(ctx context.Context, creds Instal
 
 func (s *stubAPIClientWithRecorder) GetMessage(ctx context.Context, creds InstallationCredentials, messageID string) ([]LarkMessage, error) {
 	return nil, nil
+}
+func (s *stubAPIClientWithRecorder) ListChatMessages(ctx context.Context, creds InstallationCredentials, p ListMessagesParams) ([]LarkMessage, error) {
+	return nil, nil
+}
+func (s *stubAPIClientWithRecorder) BatchGetUsers(ctx context.Context, creds InstallationCredentials, openIDs []string) (map[string]string, error) {
+	return nil, nil
+}
+func (s *stubAPIClientWithRecorder) DeleteMessageReaction(ctx context.Context, p DeleteReactionParams) error {
+	return nil
 }
 
 // stubCredentialsResolver returns a fixed plaintext secret.
