@@ -534,6 +534,28 @@ export interface DashboardRunTimeDaily {
   failed_count: number;
 }
 
+// One row of the Usage page's Operations tab: one issue an agent has worked
+// on, carrying only the LATEST agent run for that issue. `issue_status` is the
+// issue's workflow status (the "状态" column); `last_comment` is the issue's
+// most recent comment/reply (member or agent — the "原因/描述" column),
+// truncated to a short leading snippet. Backed by GET /api/operations/agent-fixes.
+export interface AgentFixRecord {
+  task_id: string;
+  agent_id: string;
+  agent_name: string;
+  issue_id: string;
+  issue_identifier: string;
+  issue_title: string;
+  // Issue workflow status: backlog/todo/in_progress/in_review/done/blocked/cancelled.
+  issue_status: string;
+  // Most recent comment on the issue (truncated). Empty/absent when none.
+  last_comment?: string;
+  last_comment_author_type?: string; // "member" | "agent"
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
 export type RuntimeUpdateStatus =
   | "pending"
   | "running"

@@ -48,7 +48,7 @@ type noopReplier struct {
 
 func (n *noopReplier) Reply(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, res DispatchResult) {
 	switch res.Outcome {
-	case OutcomeNeedsBinding, OutcomeAgentOffline, OutcomeAgentArchived:
+	case OutcomeNeedsBinding, OutcomeAgentOffline, OutcomeAgentArchived, OutcomeChatCleared:
 		n.log.Warn("lark outcome replier: outbound reply skipped (replier not wired)",
 			"outcome", string(res.Outcome),
 			"installation_id", uuidString(inst.ID),
@@ -173,6 +173,14 @@ func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst db.LarkInstallation
 				"err", err.Error(),
 			)
 		}
+	case OutcomeChatCleared:
+		if err := r.sendChatNotice(ctx, inst, msg, chatClearedCopy); err != nil {
+			r.log.Warn("lark outcome replier: clear notice failed",
+				"installation_id", uuidString(inst.ID),
+				"chat_id", string(msg.ChatID),
+				"err", err.Error(),
+			)
+		}
 	case OutcomeIngested:
 		if err := r.addProcessingReaction(ctx, inst, msg); err != nil {
 			r.log.Warn("lark outcome replier: processing reaction failed",
@@ -214,11 +222,12 @@ func (r *LarkOutcomeReplier) addProcessingReaction(ctx context.Context, inst db.
 	if err != nil {
 		return err
 	}
-	return r.client.AddMessageReaction(ctx, AddReactionParams{
+	_, err = r.client.AddMessageReaction(ctx, AddReactionParams{
 		InstallationID: creds,
 		MessageID:      msg.MessageID,
 		EmojiType:      processingReactionEmoji,
 	})
+	return err
 }
 
 func (r *LarkOutcomeReplier) sendBindingPrompt(ctx context.Context, inst db.LarkInstallation, res DispatchResult) error {
@@ -328,6 +337,7 @@ func (r *LarkOutcomeReplier) installationCredentials(inst db.LarkInstallation) (
 	creds := InstallationCredentials{
 		AppID:     inst.AppID,
 		AppSecret: secret,
+		Region:    RegionOrDefault(inst.Region),
 	}
 	if inst.TenantKey.Valid {
 		creds.TenantKey = inst.TenantKey.String
@@ -372,4 +382,5 @@ func renderNoticeCard(header, body string) (string, error) {
 const (
 	agentOfflineCopy  = "Agent 当前离线，消息已记录。下次 daemon 上线后会自动继续处理。"
 	agentArchivedCopy = "这个 Agent 已被归档，无法继续处理消息。请联系工作区管理员恢复或重新绑定。"
+	chatClearedCopy   = "已清除当前飞书对话上下文。下一条消息会开启新的 Multica 会话。"
 )

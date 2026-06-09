@@ -36,9 +36,9 @@ RETURNING *;
 -- lifecycle.
 INSERT INTO lark_installation (
     workspace_id, agent_id, app_id, app_secret_encrypted,
-    tenant_key, bot_open_id, bot_union_id, installer_user_id
+    tenant_key, bot_open_id, bot_union_id, installer_user_id, region
 ) VALUES (
-    $1, $2, $3, $4, sqlc.narg('tenant_key'), $5, sqlc.narg('bot_union_id'), $6
+    $1, $2, $3, $4, sqlc.narg('tenant_key'), $5, sqlc.narg('bot_union_id'), $6, sqlc.arg('region')
 )
 ON CONFLICT (workspace_id, agent_id) DO UPDATE SET
     app_id               = EXCLUDED.app_id,
@@ -47,10 +47,25 @@ ON CONFLICT (workspace_id, agent_id) DO UPDATE SET
     bot_open_id          = EXCLUDED.bot_open_id,
     bot_union_id         = EXCLUDED.bot_union_id,
     installer_user_id    = EXCLUDED.installer_user_id,
+    region               = EXCLUDED.region,
     status               = 'active',
     installed_at         = now(),
     updated_at           = now()
 RETURNING *;
+
+-- name: BackfillLarkInstallationRegionToLark :execrows
+-- Upgrade repair: flip every installation still carrying the migration-116
+-- default ('feishu') to 'lark'. Called ONLY by
+-- BackfillRegionFromLegacyOverride, and ONLY when the deployment's global
+-- base-URL override pointed at Lark international — on such a deployment the
+-- whole integration talked to open.larksuite.com, so every existing install
+-- is really Lark and the migration's mainland default mislabels it.
+-- Idempotent: once flipped there is nothing left at 'feishu' to update, and
+-- new installs already carry the device-flow-detected region.
+UPDATE lark_installation
+SET region     = 'lark',
+    updated_at = now()
+WHERE region = 'feishu';
 
 -- name: SetLarkInstallationBotUnionID :exec
 -- Operator-only backfill for installations created before the
@@ -218,6 +233,29 @@ WHERE installation_id = $1 AND lark_chat_id = $2;
 -- to PATCH when an agent emits a stream event for this session.
 SELECT * FROM lark_chat_session_binding
 WHERE chat_session_id = $1;
+
+-- name: DeleteLarkChatSessionBindingBySession :exec
+-- Removes the Lark chat -> Multica chat_session mapping while preserving the
+-- archived chat_session row. The next inbound Lark message for the same
+-- chat_id will create a new session and binding.
+DELETE FROM lark_chat_session_binding
+WHERE chat_session_id = $1;
+
+-- name: ClaimLarkInboxNotificationDelivery :one
+-- Claims one outbound Lark inbox notification delivery. This is intentionally
+-- keyed by the durable inbox_item row plus the concrete bot installation and
+-- recipient open_id so repeated inbox:new events, duplicate bus subscribers,
+-- or multi-replica handling cannot send duplicate DMs.
+WITH ins AS (
+    INSERT INTO lark_inbox_notification_delivery (
+        inbox_item_id,
+        installation_id,
+        lark_open_id
+    ) VALUES ($1, $2, $3)
+    ON CONFLICT DO NOTHING
+    RETURNING true AS claimed
+)
+SELECT COALESCE((SELECT claimed FROM ins), false)::boolean AS claimed;
 
 -- =====================
 -- lark_inbound_message_dedup

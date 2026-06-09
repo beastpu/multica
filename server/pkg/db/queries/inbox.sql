@@ -22,6 +22,17 @@ INSERT INTO inbox_item (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
+-- name: CountAgentIssueSummaryInbox :one
+SELECT count(*)::int
+FROM inbox_item
+WHERE workspace_id = $1
+  AND recipient_type = 'member'
+  AND recipient_id = $2
+  AND type = 'agent_issue_summary'
+  AND actor_type = 'agent'
+  AND actor_id = $3
+  AND details @> sqlc.arg('details_filter')::jsonb;
+
 -- name: MarkInboxRead :one
 UPDATE inbox_item SET read = true
 WHERE id = $1

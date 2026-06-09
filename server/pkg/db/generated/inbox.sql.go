@@ -157,6 +157,37 @@ func (q *Queries) ArchiveInboxItem(ctx context.Context, id pgtype.UUID) (InboxIt
 	return i, err
 }
 
+const countAgentIssueSummaryInbox = `-- name: CountAgentIssueSummaryInbox :one
+SELECT count(*)::int
+FROM inbox_item
+WHERE workspace_id = $1
+  AND recipient_type = 'member'
+  AND recipient_id = $2
+  AND type = 'agent_issue_summary'
+  AND actor_type = 'agent'
+  AND actor_id = $3
+  AND details @> $4::jsonb
+`
+
+type CountAgentIssueSummaryInboxParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	RecipientID   pgtype.UUID `json:"recipient_id"`
+	ActorID       pgtype.UUID `json:"actor_id"`
+	DetailsFilter []byte      `json:"details_filter"`
+}
+
+func (q *Queries) CountAgentIssueSummaryInbox(ctx context.Context, arg CountAgentIssueSummaryInboxParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countAgentIssueSummaryInbox,
+		arg.WorkspaceID,
+		arg.RecipientID,
+		arg.ActorID,
+		arg.DetailsFilter,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countUnreadInbox = `-- name: CountUnreadInbox :one
 SELECT count(*) FROM inbox_item
 WHERE workspace_id = $1 AND recipient_type = $2 AND recipient_id = $3 AND read = false AND archived = false

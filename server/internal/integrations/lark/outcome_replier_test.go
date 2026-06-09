@@ -22,6 +22,7 @@ type stubAPIClientWithRecorder struct {
 	configured     bool
 	bindingCalls   []BindingPromptParams
 	interactiveOut []SendCardParams
+	directCardsOut []SendDirectCardParams
 	textOut        []SendTextParams
 	directTextOut  []SendDirectTextParams
 	reactions      []AddReactionParams
@@ -41,6 +42,16 @@ func (s *stubAPIClientWithRecorder) SendInteractiveCard(ctx context.Context, p S
 	}
 	s.interactiveOut = append(s.interactiveOut, p)
 	return "lark-msg-id", nil
+}
+
+func (s *stubAPIClientWithRecorder) SendDirectInteractiveCard(ctx context.Context, p SendDirectCardParams) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sendErr != nil {
+		return "", s.sendErr
+	}
+	s.directCardsOut = append(s.directCardsOut, p)
+	return "lark-direct-card-msg-id", nil
 }
 
 func (s *stubAPIClientWithRecorder) PatchInteractiveCard(ctx context.Context, p PatchCardParams) error {
@@ -78,14 +89,14 @@ func (s *stubAPIClientWithRecorder) SendBindingPromptCard(ctx context.Context, p
 	return nil
 }
 
-func (s *stubAPIClientWithRecorder) AddMessageReaction(ctx context.Context, p AddReactionParams) error {
+func (s *stubAPIClientWithRecorder) AddMessageReaction(ctx context.Context, p AddReactionParams) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.reactionErr != nil {
-		return s.reactionErr
+		return "", s.reactionErr
 	}
 	s.reactions = append(s.reactions, p)
-	return nil
+	return "stub-reaction-id", nil
 }
 
 func (s *stubAPIClientWithRecorder) GetBotInfo(ctx context.Context, creds InstallationCredentials) (BotInfo, error) {
@@ -94,6 +105,15 @@ func (s *stubAPIClientWithRecorder) GetBotInfo(ctx context.Context, creds Instal
 
 func (s *stubAPIClientWithRecorder) GetMessage(ctx context.Context, creds InstallationCredentials, messageID string) ([]LarkMessage, error) {
 	return nil, nil
+}
+func (s *stubAPIClientWithRecorder) ListChatMessages(ctx context.Context, creds InstallationCredentials, p ListMessagesParams) ([]LarkMessage, error) {
+	return nil, nil
+}
+func (s *stubAPIClientWithRecorder) BatchGetUsers(ctx context.Context, creds InstallationCredentials, openIDs []string) (map[string]string, error) {
+	return nil, nil
+}
+func (s *stubAPIClientWithRecorder) DeleteMessageReaction(ctx context.Context, p DeleteReactionParams) error {
+	return nil
 }
 
 // stubCredentialsResolver returns a fixed plaintext secret.
@@ -236,6 +256,28 @@ func TestLarkOutcomeReplierAgentArchivedSendsCard(t *testing.T) {
 	}
 	if !contains(stub.interactiveOut[0].CardJSON, "归档") {
 		t.Errorf("CardJSON should embed archived copy: %s", stub.interactiveOut[0].CardJSON)
+	}
+}
+
+func TestLarkOutcomeReplierChatClearedSendsCard(t *testing.T) {
+	t.Parallel()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	stub := &stubAPIClientWithRecorder{configured: true}
+	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
+		APIClient:   stub,
+		BindingSvc:  &BindingTokenService{},
+		Credentials: stubCredentialsResolver{secret: "s"},
+		Queries:     stubReplierQueries{},
+		PublicURL:   "https://multica.test",
+		Logger:      log,
+	})
+	msg := InboundMessage{ChatID: "oc_chat_clear"}
+	rep.Reply(context.Background(), db.LarkInstallation{}, msg, DispatchResult{Outcome: OutcomeChatCleared})
+	if len(stub.interactiveOut) != 1 {
+		t.Fatalf("expected one SendInteractiveCard call, got %d", len(stub.interactiveOut))
+	}
+	if !contains(stub.interactiveOut[0].CardJSON, "已清除当前飞书对话上下文") {
+		t.Errorf("CardJSON should embed clear copy: %s", stub.interactiveOut[0].CardJSON)
 	}
 }
 

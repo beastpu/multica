@@ -28,6 +28,7 @@ type larkFakeServer struct {
 	patchN  atomic.Int32
 	bindN   atomic.Int32
 	reactN  atomic.Int32
+	delRN   atomic.Int32
 	authObs atomic.Value // last Authorization header seen across all paths
 }
 
@@ -131,11 +132,12 @@ func (f *larkFakeServer) stubPatch(resp map[string]any, verify func(r *http.Requ
 	})
 }
 
+// stubReaction installs the IM-reaction-create endpoint.
 func (f *larkFakeServer) stubReaction(resp map[string]any, verify func(r *http.Request, id string, body map[string]any)) {
 	const suffix = "/reactions"
 	f.mux.HandleFunc("/open-apis/im/v1/messages/", func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, suffix) {
-			f.t.Errorf("reaction: unexpected path %s", r.URL.Path)
+			return // let other handlers match
 		}
 		if r.Method != http.MethodPost {
 			f.t.Errorf("reaction: want POST, got %s", r.Method)
@@ -151,6 +153,32 @@ func (f *larkFakeServer) stubReaction(resp map[string]any, verify func(r *http.R
 		}
 		if verify != nil {
 			verify(r, rawID, body)
+		}
+		writeJSON(w, resp)
+	})
+}
+
+// stubReactionDelete installs the IM-reaction-delete endpoint.
+func (f *larkFakeServer) stubReactionDelete(resp map[string]any, verify func(r *http.Request, msgID string, reactionID string)) {
+	const prefix = "/open-apis/im/v1/messages/"
+	f.mux.HandleFunc(prefix, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			return // let other handlers match
+		}
+		rest := strings.TrimPrefix(r.URL.Path, prefix)
+		parts := strings.Split(rest, "/reactions/")
+		if len(parts) != 2 {
+			return // not a delete path
+		}
+		f.delRN.Add(1)
+		if parts[0] == "" {
+			f.t.Errorf("reaction delete: missing message id")
+		}
+		if parts[1] == "" {
+			f.t.Errorf("reaction delete: missing reaction id")
+		}
+		if verify != nil {
+			verify(r, parts[0], parts[1])
 		}
 		writeJSON(w, resp)
 	})
@@ -324,6 +352,48 @@ func TestHTTPClient_SendInteractiveCard_HappyPath(t *testing.T) {
 	}
 }
 
+func TestHTTPClient_SendDirectInteractiveCard_HappyPath(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok_direct_card", 7200)
+	fake.stubSend(
+		map[string]any{
+			"code": 0,
+			"msg":  "ok",
+			"data": map[string]string{"message_id": "om_direct_card_1"},
+		},
+		func(r *http.Request, body map[string]string) {
+			if got := r.URL.Query().Get("receive_id_type"); got != "open_id" {
+				t.Errorf("receive_id_type: got %q want open_id", got)
+			}
+			if body["receive_id"] != "ou_user_1" {
+				t.Errorf("receive_id: got %q", body["receive_id"])
+			}
+			if body["msg_type"] != "interactive" {
+				t.Errorf("msg_type: got %q want interactive", body["msg_type"])
+			}
+			if !strings.Contains(body["content"], "\"tag\"") {
+				t.Errorf("content not a card body: %q", body["content"])
+			}
+		},
+	)
+
+	c := newTestClient(fake, time.Now)
+	msgID, err := c.SendDirectInteractiveCard(context.Background(), SendDirectCardParams{
+		InstallationID: testCreds(),
+		OpenID:         OpenID("ou_user_1"),
+		CardJSON:       `{"tag":"div","text":"hi"}`,
+	})
+	if err != nil {
+		t.Fatalf("send direct card: %v", err)
+	}
+	if msgID != "om_direct_card_1" {
+		t.Errorf("message id: got %q want om_direct_card_1", msgID)
+	}
+	if got := fake.lastAuth(); got != "Bearer tok_direct_card" {
+		t.Errorf("Authorization header: got %q want Bearer tok_direct_card", got)
+	}
+}
+
 // TestHTTPClient_SendTextMessage_HappyPath pins the wire shape of the
 // plain text outbound used for chat replies + /issue confirmations.
 // Path, query, bearer auth, msg_type, and the double-JSON-encoded
@@ -422,38 +492,6 @@ func TestHTTPClient_SendDirectTextMessage_HappyPath(t *testing.T) {
 	}
 	if msgID != "om_direct_text_1" {
 		t.Errorf("message id: got %q want om_direct_text_1", msgID)
-	}
-}
-
-func TestHTTPClient_AddMessageReaction_HappyPath(t *testing.T) {
-	fake := newLarkFake(t)
-	fake.stubToken("tok_react", 7200)
-	fake.stubReaction(map[string]any{"code": 0, "msg": "success"}, func(r *http.Request, id string, body map[string]any) {
-		if id != "om_user_msg_1" {
-			t.Errorf("message id: got %q want om_user_msg_1", id)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer tok_react" {
-			t.Errorf("Authorization=%q want Bearer tok_react", got)
-		}
-		reactionType, ok := body["reaction_type"].(map[string]any)
-		if !ok {
-			t.Fatalf("reaction_type missing or wrong shape: %v", body)
-		}
-		if got := reactionType["emoji_type"]; got != "OnIt" {
-			t.Errorf("emoji_type=%v want OnIt", got)
-		}
-	})
-
-	c := newTestClient(fake, time.Now)
-	if err := c.AddMessageReaction(context.Background(), AddReactionParams{
-		InstallationID: testCreds(),
-		MessageID:      "om_user_msg_1",
-		EmojiType:      "OnIt",
-	}); err != nil {
-		t.Fatalf("AddMessageReaction: %v", err)
-	}
-	if got := fake.reactN.Load(); got != 1 {
-		t.Fatalf("reaction endpoint calls=%d want 1", got)
 	}
 }
 
@@ -820,6 +858,94 @@ func TestHTTPClient_TokenEndpointError(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "code=10003") {
 		t.Errorf("want code=10003 surfaced, got %v", err)
+	}
+}
+
+func TestHTTPClient_AddMessageReaction_HappyPath(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok_react", 7200)
+	fake.stubReaction(map[string]any{"code": 0, "msg": "ok", "data": map[string]string{"reaction_id": "re_42"}}, func(r *http.Request, id string, body map[string]any) {
+		if id != "om_user_msg_1" {
+			t.Errorf("message id: got %q want om_user_msg_1", id)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer tok_react" {
+			t.Errorf("Authorization=%q want Bearer tok_react", got)
+		}
+		reactionType, ok := body["reaction_type"].(map[string]any)
+		if !ok {
+			t.Fatalf("reaction_type missing or wrong shape: %v", body)
+		}
+		if got := reactionType["emoji_type"]; got != "Typing" {
+			t.Errorf("emoji_type=%v want Typing", got)
+		}
+	})
+
+	c := newTestClient(fake, time.Now)
+	reactionID, err := c.AddMessageReaction(context.Background(), AddReactionParams{
+		InstallationID: testCreds(),
+		MessageID:      "om_user_msg_1",
+		EmojiType:      "Typing",
+	})
+	if err != nil {
+		t.Fatalf("AddMessageReaction: %v", err)
+	}
+	if reactionID != "re_42" {
+		t.Errorf("reaction id: got %q want re_42", reactionID)
+	}
+	if got := fake.reactN.Load(); got != 1 {
+		t.Fatalf("reaction endpoint calls=%d want 1", got)
+	}
+}
+
+func TestHTTPClient_DeleteMessageReaction_HappyPath(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok_del", 7200)
+	fake.stubReactionDelete(map[string]any{"code": 0, "msg": "ok"}, func(r *http.Request, msgID string, reactionID string) {
+		if msgID != "om_user_msg_1" {
+			t.Errorf("message id: got %q want om_user_msg_1", msgID)
+		}
+		if reactionID != "re_42" {
+			t.Errorf("reaction id: got %q want re_42", reactionID)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer tok_del" {
+			t.Errorf("Authorization=%q want Bearer tok_del", got)
+		}
+	})
+
+	c := newTestClient(fake, time.Now)
+	if err := c.DeleteMessageReaction(context.Background(), DeleteReactionParams{
+		InstallationID: testCreds(),
+		MessageID:      "om_user_msg_1",
+		ReactionID:     "re_42",
+	}); err != nil {
+		t.Fatalf("DeleteMessageReaction: %v", err)
+	}
+	if got := fake.delRN.Load(); got != 1 {
+		t.Fatalf("reaction delete endpoint calls=%d want 1", got)
+	}
+}
+
+func TestHTTPClient_AddMessageReaction_Validation(t *testing.T) {
+	c := NewHTTPAPIClient(HTTPClientConfig{}).(*httpAPIClient)
+	_, err := c.AddMessageReaction(context.Background(), AddReactionParams{MessageID: "m"})
+	if err == nil || !strings.Contains(err.Error(), "missing emoji_type") {
+		t.Errorf("want missing emoji_type error, got %v", err)
+	}
+	_, err = c.AddMessageReaction(context.Background(), AddReactionParams{EmojiType: "Typing"})
+	if err == nil || !strings.Contains(err.Error(), "missing message_id") {
+		t.Errorf("want missing message_id error, got %v", err)
+	}
+}
+
+func TestHTTPClient_DeleteMessageReaction_Validation(t *testing.T) {
+	c := NewHTTPAPIClient(HTTPClientConfig{}).(*httpAPIClient)
+	err := c.DeleteMessageReaction(context.Background(), DeleteReactionParams{ReactionID: "re"})
+	if err == nil || !strings.Contains(err.Error(), "missing message_id") {
+		t.Errorf("want missing message_id error, got %v", err)
+	}
+	err = c.DeleteMessageReaction(context.Background(), DeleteReactionParams{MessageID: "m"})
+	if err == nil || !strings.Contains(err.Error(), "missing reaction_id") {
+		t.Errorf("want missing reaction_id error, got %v", err)
 	}
 }
 

@@ -54,5 +54,26 @@
   },
   "duration": {
     "less_than_minute": "1分未満"
+  },
+  "operations": {
+    "title": "運用",
+    "subtitle": "エージェントが対応した issue — 直近の実行、issue のステータス、最新のコメント。",
+    "filter": {
+      "all_agents": "すべてのエージェント",
+      "status_all": "すべてのステータス"
+    },
+    "table": {
+      "issue": "Issue",
+      "agent": "エージェント",
+      "time": "日付",
+      "status": "ステータス",
+      "reason": "理由 / 説明"
+    },
+    "no_reason": "—",
+    "caption": "{{count}} 件",
+    "empty": {
+      "title": "まだ修正はありません",
+      "body": "エージェントが issue に着手すると、ステータスと最新コメントとともにここに表示されます。"
+    }
   }
 }

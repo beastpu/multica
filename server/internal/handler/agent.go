@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -168,6 +169,7 @@ type AgentTaskResponse struct {
 	// regardless of issue / chat / autopilot / quick-create — sees the same
 	// shared context. Empty when the workspace owner hasn't set it.
 	WorkspaceContext string                `json:"workspace_context,omitempty"`
+	ThreadName       string                `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
 	Status           string                `json:"status"`
 	Priority         int32                 `json:"priority"`
 	DispatchedAt     *string               `json:"dispatched_at"`
@@ -229,7 +231,24 @@ type AgentTaskResponse struct {
 	// is empty.
 	RequestingUserName               string `json:"requesting_user_name,omitempty"`
 	RequestingUserProfileDescription string `json:"requesting_user_profile_description,omitempty"`
-	Kind                             string `json:"kind"` // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
+	// Initiator* identify the actor who triggered THIS task — the real
+	// requester behind the current comment/mention or chat message — as
+	// distinct from the runtime owner whose credentials the agent runs with.
+	// Resolved at claim time: comment-triggered tasks use the triggering
+	// comment's author; chat tasks use the chat session creator. Empty for
+	// task kinds with no attributable human initiator (on-assign, autopilot,
+	// quick-create). InitiatorEmail is set only for member initiators
+	// ("member"); agent initiators ("agent") carry a name but no email. The
+	// daemon emits these into the brief under `## Task Initiator` so a
+	// workspace-visible, multi-user agent can attribute the request and apply
+	// per-person privacy / access rules instead of seeing every requester as
+	// the owner. The agent's effective Multica credentials stay owner-scoped —
+	// this is an attested identity, not a credential. See MUL-2645.
+	InitiatorType  string `json:"initiator_type,omitempty"`  // "member" or "agent"
+	InitiatorID    string `json:"initiator_id,omitempty"`    // user UUID (member) or agent UUID
+	InitiatorName  string `json:"initiator_name,omitempty"`  // display name of the initiator
+	InitiatorEmail string `json:"initiator_email,omitempty"` // member email; empty for agent initiators
+	Kind           string `json:"kind"`                      // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -1416,6 +1435,104 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 			continue
 		}
 		resp = append(resp, taskToResponse(t, workspaceID))
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// AgentFixResponse is one row of the Usage page's Operations tab: one issue an
+// agent has worked on, carrying only the LATEST agent run for that issue. The
+// "状态" column is the issue's workflow status (IssueStatus); the "原因/描述"
+// column is the issue's most recent comment/reply (LastComment), truncated to a
+// short leading snippet. Backs GET /api/operations/agent-fixes.
+type AgentFixResponse struct {
+	TaskID          string `json:"task_id"`
+	AgentID         string `json:"agent_id"`
+	AgentName       string `json:"agent_name"`
+	IssueID         string `json:"issue_id"`
+	IssueIdentifier string `json:"issue_identifier"`
+	IssueTitle      string `json:"issue_title"`
+	IssueStatus     string `json:"issue_status"` // issue workflow status: backlog/todo/in_progress/in_review/done/blocked/cancelled
+	// LastComment is the most recent comment on the issue (member or agent),
+	// truncated to a short leading snippet. Empty when the issue has no comments.
+	LastComment           string  `json:"last_comment,omitempty"`
+	LastCommentAuthorType string  `json:"last_comment_author_type,omitempty"` // "member" | "agent"
+	StartedAt             *string `json:"started_at"`
+	CompletedAt           *string `json:"completed_at"`
+	CreatedAt             string  `json:"created_at"`
+}
+
+// commentSnippetMaxRunes bounds the "原因/描述" text so the table column stays a
+// short leading excerpt, not a full comment body. Rune-aware so multi-byte
+// (Chinese) content isn't cut mid-character.
+const commentSnippetMaxRunes = 120
+
+func commentSnippet(s string) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) <= commentSnippetMaxRunes {
+		return string(r)
+	}
+	return string(r[:commentSnippetMaxRunes]) + "…"
+}
+
+// ListWorkspaceAgentFixes returns the Operations-tab feed for the Usage page:
+// one row per issue an agent has worked on (the latest run only), within the
+// trailing `days` window (default 30, capped at 365), newest-first. Each row
+// carries the issue's workflow status and its most recent comment. Per-agent
+// visibility is enforced against accessibleAgentIDs, mirroring
+// ListWorkspaceAgentTaskSnapshot — a member only sees agents they may view.
+func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return
+	}
+
+	days := 30
+	if d := r.URL.Query().Get("days"); d != "" {
+		if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 && parsed <= 365 {
+			days = parsed
+		}
+	}
+
+	wsUUID := parseUUID(workspaceID)
+	rows, err := h.Queries.ListWorkspaceAgentFixes(r.Context(), db.ListWorkspaceAgentFixesParams{
+		WorkspaceID: wsUUID,
+		Days:        int32(days),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list agent fixes")
+		return
+	}
+
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		return
+	}
+
+	prefix := h.getIssuePrefix(r.Context(), wsUUID)
+	resp := make([]AgentFixResponse, 0, len(rows))
+	for _, row := range rows {
+		if _, ok := allowed[uuidToString(row.AgentID)]; !ok {
+			continue
+		}
+		fix := AgentFixResponse{
+			TaskID:                uuidToString(row.TaskID),
+			AgentID:               uuidToString(row.AgentID),
+			AgentName:             row.AgentName,
+			IssueID:               uuidToString(row.IssueID),
+			IssueIdentifier:       prefix + "-" + strconv.Itoa(int(row.IssueNumber)),
+			IssueTitle:            row.IssueTitle,
+			IssueStatus:           row.IssueStatus,
+			LastComment:           commentSnippet(row.LastComment),
+			LastCommentAuthorType: row.LastCommentAuthorType,
+			StartedAt:             timestampToPtr(row.StartedAt),
+			CompletedAt:           timestampToPtr(row.CompletedAt),
+			CreatedAt:             timestampToString(row.CreatedAt),
+		}
+		resp = append(resp, fix)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

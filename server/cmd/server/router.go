@@ -199,10 +199,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// real Lark traffic can point MULTICA_LARK_HTTP_BASE_URL
 				// at a mock server.
 				//
-				// MULTICA_LARK_HTTP_BASE_URL overrides the default
-				// open.feishu.cn host (set to https://open.larksuite.com
-				// for the Lark international tenant, or to a mock for
-				// integration tests).
+				// MULTICA_LARK_HTTP_BASE_URL is an OPTIONAL deployment-wide
+				// override. Normal operation leaves it empty: each call then
+				// resolves its open-platform host from the installation's
+				// region (open.feishu.cn vs open.larksuite.com), so one
+				// deployment serves both clouds. Set it only to force every
+				// installation onto one host — a proxy, a mock for tests, or
+				// a single-cloud staging setup.
 				larkClient := lark.NewHTTPAPIClient(lark.HTTPClientConfig{
 					BaseURL: strings.TrimSpace(os.Getenv("MULTICA_LARK_HTTP_BASE_URL")),
 					Logger:  slog.Default(),
@@ -211,9 +214,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				patcher := lark.NewPatcher(queries, installSvc, larkClient, lark.PatcherConfig{})
 				patcher.Register(bus)
 				inboxNotifier := lark.NewInboxNotifier(queries, installSvc, larkClient, lark.InboxNotifierConfig{
-					Logger: slog.Default(),
+					Logger:    slog.Default(),
+					PublicURL: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
 				})
 				inboxNotifier.Register(bus)
+
+				// Typing indicator: shows a "processing" reaction on the user's
+				// message while the agent is working, then removes it before the
+				// reply is sent. Best-effort; failures are logged only.
+				typingIndicator := lark.NewTypingIndicatorManager(larkClient, installSvc, queries, slog.Default())
+				patcher.SetTypingIndicatorManager(typingIndicator)
 
 				// Inbound pipeline: lark_inbound_audit logger,
 				// channel-aware ChatSessionService, and the
@@ -254,6 +264,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// "noop" so operators can spot it.
 				connectorFactory, connectorLabel := buildLarkConnectorFactory(installSvc, larkClient)
 				h.LarkHub = lark.NewHub(queries, connectorFactory, dispatcher, lark.HubConfig{})
+				h.LarkHub.SetTypingIndicatorManager(typingIndicator)
 
 				// OutcomeReplier wires the outbound side of the
 				// EventEmitter contract: NeedsBinding / AgentOffline /
@@ -288,6 +299,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// is bridge code — it will simply find no rows to update
 				// on a fresh deployment and exit. MUL-2671.
 				go lark.BackfillBotUnionIDs(context.Background(), queries, larkClient, installSvc, slog.Default())
+
+				// Upgrade repair for deployments that ran the whole
+				// integration against Lark international via the deployment-
+				// wide base-URL override before per-installation region
+				// existed: migration 116 backfilled their rows to 'feishu',
+				// so relabel them to 'lark' (their true cloud) before the
+				// operator clears the override. No-op on mainland / fresh
+				// deployments. Off the hot startup path like the union_id
+				// backfill. MUL-3083.
+				go lark.BackfillRegionFromLegacyOverride(context.Background(), queries,
+					strings.TrimSpace(os.Getenv("MULTICA_LARK_HTTP_BASE_URL")),
+					strings.TrimSpace(os.Getenv("MULTICA_LARK_CALLBACK_BASE_URL")),
+					slog.Default())
 
 				// Device-flow registration service: end-to-end install
 				// pipeline that talks to accounts.feishu.cn (RFC 8628)
@@ -412,6 +436,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Share allowed origins with WebSocket origin checker.
 	realtime.SetAllowedOrigins(origins)
+
+	// Share the same trusted-proxy CIDRs (MULTICA_TRUSTED_PROXIES) so the
+	// WebSocket origin check honors X-Forwarded-Host only from trusted proxies,
+	// using one config source instead of a parallel one.
+	realtime.SetTrustedProxies(signupConfig.TrustedProxies)
 
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   origins,
@@ -558,6 +587,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
+
+		// Attachment download — user-scoped (auth-only), NOT
+		// workspace-scoped. The handler self-resolves the workspace
+		// from the attachment row and enforces membership inside, so
+		// this route is callable as a native browser <img>/<video>
+		// src that cannot attach X-Workspace-Slug / X-Workspace-ID
+		// headers. Persisting `/api/attachments/<id>/download` into
+		// comment markdown depends on this — see MUL-3130. The
+		// metadata / delete endpoints below stay workspace-scoped
+		// because they are JSON-API consumers that always have
+		// workspace context.
+		r.Get("/api/attachments/{id}/download", h.DownloadAttachment)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
@@ -825,7 +866,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Attachments
 			r.Get("/api/attachments/{id}", h.GetAttachmentByID)
-			r.Get("/api/attachments/{id}/download", h.DownloadAttachment)
+			// /api/attachments/{id}/download is registered in the
+			// outer Auth-only group above so it can be loaded as a
+			// native <img>/<video> src without workspace headers
+			// (MUL-3130). The handler self-resolves the workspace
+			// from the attachment row.
 			r.Get("/api/attachments/{id}/content", h.GetAttachmentContent)
 			r.Delete("/api/attachments/{id}", h.DeleteAttachment)
 
@@ -960,6 +1005,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Workspace-wide 30-day run counts per agent for the Agents-list RUNS column.
 			r.Get("/api/agent-run-counts", h.GetWorkspaceAgentRunCounts)
 
+			// Per-agent "fix record" feed for the Usage page's Operations tab:
+			// every issue-linked agent task in the trailing window, with issue
+			// identifier/title/status, the task's execution status, and the
+			// failure reason / trigger context.
+			r.Get("/api/operations/agent-fixes", h.ListWorkspaceAgentFixes)
+
 			r.Route("/api/chat/sessions", func(r chi.Router) {
 				r.Post("/", h.CreateChatSession)
 				r.Get("/", h.ListChatSessions)
@@ -1033,17 +1084,22 @@ func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient l
 		creds := lark.InstallationCredentials{
 			AppID:     inst.AppID,
 			AppSecret: secret,
+			Region:    lark.RegionOrDefault(inst.Region),
 		}
 		if inst.TenantKey.Valid {
 			creds.TenantKey = inst.TenantKey.String
 		}
 		return creds, nil
 	})
-	// Inbound enricher: expands quoted replies / forwarded bundles into
-	// the agent's body via the IM API before dispatch. It shares the
+	// Inbound enricher: expands quoted replies / forwarded bundles AND
+	// prefetches a window of surrounding group history (MUL-3084) into the
+	// agent's body via the IM API before dispatch. It shares the
 	// connector's resolved credentials and runs under the connector's
 	// EnrichTimeout so it cannot overrun the Lark long-conn ACK budget.
-	enricher := lark.NewInboundEnricher(apiClient, lark.InboundEnricherConfig{Logger: slog.Default()})
+	enricher := lark.NewInboundEnricher(apiClient, lark.InboundEnricherConfig{
+		RecentContextSize: lark.DefaultRecentContextSize,
+		Logger:            slog.Default(),
+	})
 	conn, err := lark.NewWSLongConnConnector(lark.WSConnectorConfig{
 		Dialer:              dialer,
 		EndpointFetcher:     endpointFetcher,

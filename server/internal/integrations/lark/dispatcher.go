@@ -40,6 +40,13 @@ type InboundMessage struct {
 	// the dispatcher itself stays msg_type-agnostic and only reads Body.
 	MessageType string
 
+	// CreateTime is the trigger message's creation time (epoch
+	// milliseconds, as Lark sends it). The enricher uses it to anchor the
+	// group recent-context window to the moment of the @-mention — it
+	// fetches the conversation up to this time rather than whatever is
+	// newest when the (slightly later) prefetch HTTP call runs.
+	CreateTime string
+
 	// ParentID is the message_id of the message this one quote-replies
 	// to, taken verbatim from the receive event's `parent_id`. Empty
 	// when the message is not a reply. The enricher fetches it and
@@ -83,6 +90,12 @@ const (
 	// message; non-empty means /issue ran (see IssueID for the new
 	// issue's UUID).
 	OutcomeIngested Outcome = "ingested"
+
+	// OutcomeChatCleared — the current Lark chat binding was detached
+	// from its Multica chat_session. The old transcript remains archived;
+	// the next inbound message for the same Lark chat creates a fresh
+	// session.
+	OutcomeChatCleared Outcome = "chat_cleared"
 
 	// OutcomeAgentOffline — the message landed in chat_session, but
 	// the agent has no runtime bound at all (agent.runtime_id IS
@@ -145,7 +158,8 @@ type IssueCreator interface {
 // the Dispatcher is small enough that depending on the whole
 // TaskService struct is gratuitous.
 type ChatTaskEnqueuer interface {
-	EnqueueChatTask(ctx context.Context, session db.ChatSession) (db.AgentTaskQueue, error)
+	BroadcastCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue)
+	EnqueueChatTask(ctx context.Context, session db.ChatSession, initiatorUserID pgtype.UUID) (db.AgentTaskQueue, error)
 }
 
 // DispatcherQueries is the narrow subset of *db.Queries the Dispatcher
@@ -459,6 +473,38 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 		return DispatchResult{}, finalizeRelease, fmt.Errorf("ensure chat session: %w", err)
 	}
 
+	commandSource := msg.CommandBody
+	if commandSource == "" {
+		commandSource = msg.Body
+	}
+	if parseClearCommand(commandSource) {
+		clearRes, err := d.Chat.ClearSession(ctx, ClearSessionParams{
+			ChatSessionID:  sessionID,
+			InstallationID: inst.ID,
+			LarkMessageID:  msg.MessageID,
+			ClaimToken:     claimToken,
+		})
+		if err != nil {
+			if errors.Is(err, ErrClaimLost) {
+				return DispatchResult{}, finalizeNone, err
+			}
+			return DispatchResult{}, finalizeRelease, fmt.Errorf("clear chat session: %w", err)
+		}
+		finalize := finalizeNone
+		if !clearRes.DedupMarked {
+			finalize = finalizeMark
+		}
+		if d.TaskService != nil {
+			d.TaskService.BroadcastCancelledTasks(ctx, clearRes.CancelledTasks)
+		}
+		return DispatchResult{
+			Outcome:        OutcomeChatCleared,
+			InstallationID: inst.ID,
+			ChatSessionID:  sessionID,
+			SenderOpenID:   msg.SenderOpenID,
+		}, finalize, nil
+	}
+
 	// 6. Append message + in-tx dedup Mark — the durable transition
 	//    point. After this returns nil the chat_message AND the dedup
 	//    Mark have committed atomically; any subsequent failure path
@@ -545,7 +591,12 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	//    Note: a daemon that's merely disconnected is NOT an error. As
 	//    long as agent.runtime_id is set, the chat task is enqueued at
 	//    flush and waits for the daemon to claim it on next online.
-	d.scheduleRun(inst, msg, sessionID)
+	// binding.MulticaUserID is THIS message's sender — the task initiator. It is
+	// deliberately not the session creator (group sessions are creator=installer,
+	// see step 5). The debouncer keeps the latest scheduled flush per session, so
+	// in a multi-sender silence window the last sender wins, matching the
+	// "latest message in a window wins" rule above. See MUL-2645.
+	d.scheduleRun(inst, msg, sessionID, binding.MulticaUserID)
 	return res, postAppendFinalize, nil
 }
 
@@ -553,8 +604,8 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 // it inline when batching is disabled). The flush closure captures this
 // message's installation + InboundMessage so the offline/archived notice,
 // if any, targets the right chat; the latest message in a window wins.
-func (d *Dispatcher) scheduleRun(inst db.LarkInstallation, msg InboundMessage, sessionID pgtype.UUID) {
-	flush := func() { d.flushChatRun(inst, msg, sessionID) }
+func (d *Dispatcher) scheduleRun(inst db.LarkInstallation, msg InboundMessage, sessionID pgtype.UUID, initiatorUserID pgtype.UUID) {
+	flush := func() { d.flushChatRun(inst, msg, sessionID, initiatorUserID) }
 	if d.batcher == nil {
 		// Batching disabled (unit tests / degenerate config): trigger the
 		// run immediately. Production always installs a batcher via
@@ -574,7 +625,7 @@ func (d *Dispatcher) scheduleRun(inst db.LarkInstallation, msg InboundMessage, s
 // returned to a caller (the message is already ACKed and durable), so they
 // are logged: a failed enqueue leaves the message in the session to be
 // picked up by the next message's run.
-func (d *Dispatcher) flushChatRun(inst db.LarkInstallation, msg InboundMessage, sessionID pgtype.UUID) {
+func (d *Dispatcher) flushChatRun(inst db.LarkInstallation, msg InboundMessage, sessionID pgtype.UUID, initiatorUserID pgtype.UUID) {
 	ctx, cancel := context.WithTimeout(context.Background(), chatRunFlushTimeout)
 	defer cancel()
 
@@ -586,7 +637,7 @@ func (d *Dispatcher) flushChatRun(inst db.LarkInstallation, msg InboundMessage, 
 		)
 		return
 	}
-	if _, err := d.TaskService.EnqueueChatTask(ctx, session); err != nil {
+	if _, err := d.TaskService.EnqueueChatTask(ctx, session, initiatorUserID); err != nil {
 		switch {
 		case errors.Is(err, service.ErrChatTaskAgentNoRuntime):
 			d.emitFlushReply(ctx, inst, msg, sessionID, OutcomeAgentOffline)

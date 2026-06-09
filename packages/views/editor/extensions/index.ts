@@ -40,7 +40,7 @@ import { escapeMarkdownLabel } from "../utils/escape-markdown-label";
 import { BaseMentionExtension } from "./mention-extension";
 import { createMentionSuggestion, type MentionItem } from "./mention-suggestion";
 import { SlashCommandExtension } from "./slash-command-extension";
-import { createSlashCommandSuggestion } from "./slash-command-suggestion";
+import { createSlashCommandSuggestion, createBuiltinCommandSuggestion } from "./slash-command-suggestion";
 import { CodeBlockView } from "./code-block-view";
 import { PatchedListItem, PatchedTaskItem } from "./list-item";
 import { createMarkdownPasteExtension } from "./markdown-paste";
@@ -71,6 +71,30 @@ export const ImageExtension = Image.extend({
         renderHTML: (attrs: Record<string, unknown>) =>
           attrs.uploading ? { "data-uploading": "" } : {},
         parseHTML: (el: HTMLElement) => el.hasAttribute("data-uploading"),
+      },
+      // Intrinsic pixel dimensions, captured on upload (file-upload.ts). The
+      // browser uses width/height on <img> to compute aspect-ratio and reserve
+      // the box before the image decodes, so inserting an image causes no
+      // layout shift (and the post-insert scrollIntoView stays correct). Not
+      // serialized to markdown — `renderMarkdown` only emits src/alt/title — so
+      // round-trips stay clean.
+      width: {
+        default: null,
+        renderHTML: (attrs: Record<string, unknown>) =>
+          attrs.width ? { width: attrs.width as number } : {},
+        parseHTML: (el: HTMLElement) => {
+          const w = parseInt(el.getAttribute("width") || "", 10);
+          return Number.isFinite(w) ? w : null;
+        },
+      },
+      height: {
+        default: null,
+        renderHTML: (attrs: Record<string, unknown>) =>
+          attrs.height ? { height: attrs.height as number } : {},
+        parseHTML: (el: HTMLElement) => {
+          const h = parseInt(el.getAttribute("height") || "", 10);
+          return Number.isFinite(h) ? h : null;
+        },
       },
     };
   },
@@ -112,8 +136,14 @@ export interface EditorExtensionsOptions {
   /** Override @ behavior for chat context suggestions. */
   mentionMode?: "default" | "context";
   getMentionContextItems?: () => MentionItem[];
-  /** When true, attach the `/` skill picker. Default false. */
+  /** When true, attach the `/` picker. Default false. */
   enableSlashCommands?: boolean;
+  /**
+   * Which `/` menu to attach when enableSlashCommands is true:
+   * - "skill" (default) — the chat picker listing the active agent's skills.
+   * - "command" — the fixed built-in command menu (issue comments), e.g. /note.
+   */
+  slashCommandMode?: "skill" | "command";
 }
 
 export function createEditorExtensions(
@@ -173,10 +203,13 @@ export function createEditorExtensions(
     }),
     SlashCommandExtension.configure({
       HTMLAttributes: { class: "slash-command" },
-      suggestion:
-        options.enableSlashCommands && options.queryClient
-          ? createSlashCommandSuggestion(options.queryClient)
-          : { char: "/", allow: () => false },
+      suggestion: !options.enableSlashCommands
+        ? { char: "/", allow: () => false }
+        : options.slashCommandMode === "command"
+          ? createBuiltinCommandSuggestion()
+          : options.queryClient
+            ? createSlashCommandSuggestion(options.queryClient)
+            : { char: "/", allow: () => false },
     }),
     Typography,
     Placeholder.configure({ placeholder: placeholderText }),

@@ -16,6 +16,18 @@ type enricherFakeClient struct {
 	byID       map[string][]LarkMessage
 	errByID    map[string]error
 	calls      []string
+
+	// ListChatMessages canned results + recorder, keyed by chat id.
+	byChat     map[ChatID][]LarkMessage
+	errByChat  map[ChatID]error
+	listCalls  []ChatID
+	listParams []ListMessagesParams
+
+	// BatchGetUsers canned open_id -> name map + recorder. Empty by
+	// default, so speakers fall back to positional "User N".
+	userNames map[string]string
+	usersErr  error
+	userCalls [][]string
 }
 
 func newEnricherFake() *enricherFakeClient {
@@ -23,6 +35,8 @@ func newEnricherFake() *enricherFakeClient {
 		configured: true,
 		byID:       map[string][]LarkMessage{},
 		errByID:    map[string]error{},
+		byChat:     map[ChatID][]LarkMessage{},
+		errByChat:  map[ChatID]error{},
 	}
 }
 
@@ -34,9 +48,33 @@ func (f *enricherFakeClient) GetMessage(ctx context.Context, creds InstallationC
 	}
 	return f.byID[id], nil
 }
+func (f *enricherFakeClient) ListChatMessages(ctx context.Context, creds InstallationCredentials, p ListMessagesParams) ([]LarkMessage, error) {
+	f.listCalls = append(f.listCalls, p.ChatID)
+	f.listParams = append(f.listParams, p)
+	if e, ok := f.errByChat[p.ChatID]; ok {
+		return nil, e
+	}
+	return f.byChat[p.ChatID], nil
+}
+func (f *enricherFakeClient) BatchGetUsers(ctx context.Context, creds InstallationCredentials, openIDs []string) (map[string]string, error) {
+	f.userCalls = append(f.userCalls, openIDs)
+	if f.usersErr != nil {
+		return nil, f.usersErr
+	}
+	out := map[string]string{}
+	for _, id := range openIDs {
+		if name := f.userNames[id]; name != "" {
+			out[id] = name
+		}
+	}
+	return out, nil
+}
 
 // Unused-by-enricher methods — present only to satisfy APIClient.
 func (f *enricherFakeClient) SendInteractiveCard(context.Context, SendCardParams) (string, error) {
+	return "", nil
+}
+func (f *enricherFakeClient) SendDirectInteractiveCard(context.Context, SendDirectCardParams) (string, error) {
 	return "", nil
 }
 func (f *enricherFakeClient) PatchInteractiveCard(context.Context, PatchCardParams) error { return nil }
@@ -52,11 +90,14 @@ func (f *enricherFakeClient) SendMarkdownCard(context.Context, SendMarkdownCardP
 func (f *enricherFakeClient) SendBindingPromptCard(context.Context, BindingPromptParams) error {
 	return nil
 }
-func (f *enricherFakeClient) AddMessageReaction(context.Context, AddReactionParams) error {
-	return nil
-}
 func (f *enricherFakeClient) GetBotInfo(context.Context, InstallationCredentials) (BotInfo, error) {
 	return BotInfo{}, nil
+}
+func (f *enricherFakeClient) AddMessageReaction(context.Context, AddReactionParams) (string, error) {
+	return "", nil
+}
+func (f *enricherFakeClient) DeleteMessageReaction(context.Context, DeleteReactionParams) error {
+	return nil
 }
 
 func textMsg(id, sender, text, createTime string) LarkMessage {
@@ -99,6 +140,37 @@ func TestEnrichQuotedReply(t *testing.T) {
 	}
 	if len(fake.calls) != 1 || fake.calls[0] != "om_parent" {
 		t.Errorf("expected one GetMessage(om_parent), got %v", fake.calls)
+	}
+}
+
+func TestEnrichQuotedInteractiveCardIncludesCardText(t *testing.T) {
+	t.Parallel()
+	fake := newEnricherFake()
+	cardJSON, err := renderNoticeCard("Inbox", "Quick create failed\nagent exited with code 1\n\nReply here to continue with the agent.")
+	if err != nil {
+		t.Fatalf("render card: %v", err)
+	}
+	fake.byID["om_inbox_card"] = []LarkMessage{
+		{
+			MessageID:   "om_inbox_card",
+			MessageType: "interactive",
+			Content:     cardJSON,
+			SenderID:    "cli_agent",
+			SenderType:  "app",
+			CreateTime:  "1000",
+		},
+	}
+	in := InboundMessage{MessageType: "text", MessageID: "om_child", Body: "帮我处理一下", ParentID: "om_inbox_card"}
+
+	out := enrich(t, fake, in, InboundEnricherConfig{})
+
+	for _, want := range []string{"Inbox", "Quick create failed", "agent exited with code 1", "帮我处理一下"} {
+		if !strings.Contains(out.Body, want) {
+			t.Errorf("enriched body missing %q:\n%s", want, out.Body)
+		}
+	}
+	if strings.Contains(out.Body, "[interactive card]") {
+		t.Errorf("interactive card should flatten to useful text, got:\n%s", out.Body)
 	}
 }
 

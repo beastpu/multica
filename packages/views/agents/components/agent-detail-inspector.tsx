@@ -69,6 +69,12 @@ interface InspectorProps {
    */
   canEdit: boolean;
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
+  /**
+   * Focus the overview pane's Integrations tab. The inspector's Lark status
+   * row is read-only and deep-links here; Manage / Disconnect live in the
+   * tab so the destructive action exists in exactly one place.
+   */
+  onShowIntegrations: () => void;
 }
 
 /**
@@ -92,6 +98,7 @@ export function AgentDetailInspector({
   currentUserId,
   canEdit,
   onUpdate,
+  onShowIntegrations,
 }: InspectorProps) {
   const { t } = useT("agents");
   const timeAgo = useTimeAgo();
@@ -227,6 +234,7 @@ export function AgentDetailInspector({
               agentId={agent.id}
               agentName={agent.name}
               agentOwnerId={agent.owner_id}
+              onShowConnectedDetails={onShowIntegrations}
             />
           </div>
         </div>

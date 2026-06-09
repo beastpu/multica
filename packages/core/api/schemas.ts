@@ -517,6 +517,28 @@ const DashboardRunTimeDailySchema = z.object({
 
 export const DashboardRunTimeDailyListSchema = z.array(DashboardRunTimeDailySchema);
 
+// Operations-tab feed (GET /api/operations/agent-fixes). Same leniency rules
+// as the dashboard schemas: strings default to "" (no enum narrowing —
+// `issue_status` survives server-side enum drift and renders a generic
+// fallback downstream), nullable timestamps default to null, `.loose()` keeps
+// unknown fields. A single malformed row degrades that field, not the array.
+const AgentFixRecordSchema = z.object({
+  task_id: z.string().default(""),
+  agent_id: z.string().default(""),
+  agent_name: z.string().default(""),
+  issue_id: z.string().default(""),
+  issue_identifier: z.string().default(""),
+  issue_title: z.string().default(""),
+  issue_status: z.string().default(""),
+  last_comment: z.string().default(""),
+  last_comment_author_type: z.string().default(""),
+  started_at: z.string().nullable().default(null),
+  completed_at: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+}).loose();
+
+export const AgentFixRecordListSchema = z.array(AgentFixRecordSchema);
+
 // ---------------------------------------------------------------------------
 // Runtime usage schemas — the runtime-detail page's four usage endpoints
 // (`/api/runtimes/:id/usage*`). Same leniency rules as the dashboard

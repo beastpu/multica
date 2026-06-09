@@ -144,6 +144,148 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 	}
 }
 
+// TestListWorkspaceAgentFixes covers the Usage-page Operations-tab feed. Its
+// contract: ONE row per issue an agent has worked on, carrying the latest run,
+// the issue's workflow status, and the issue's most recent comment. The
+// fixtures exercise the branches the SQL/handler must get right:
+//   - an issue with two runs collapses to ONE row, using the LATEST run
+//   - the "status" column is the issue's workflow status (not the task status)
+//   - the "last_comment" column is the issue's most recent comment
+//   - a task with NO linked issue is excluded (INNER JOIN issue)
+func TestListWorkspaceAgentFixes(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	agentID := createHandlerTestAgent(t, "fixes-agent", []byte(`{}`))
+
+	// issue.number is UNIQUE (workspace_id, number); allocate MAX+1 per row
+	// so we don't collide with rows other tests left in the shared fixture
+	// workspace.
+	mkIssue := func(title, status string) string {
+		var id string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number)
+			VALUES ($1, $2, $3, 'medium', $4, 'member',
+				(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
+			RETURNING id
+		`, testWorkspaceID, title, status, testUserID).Scan(&id); err != nil {
+			t.Fatalf("insert issue %q: %v", title, err)
+		}
+		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, id) })
+		return id
+	}
+	doneIssue := mkIssue("Fix the login bug", "done")
+	reviewIssue := mkIssue("Refactor the parser", "in_review")
+
+	mkTask := func(query string, args ...any) string {
+		var id string
+		if err := testPool.QueryRow(ctx, query, args...).Scan(&id); err != nil {
+			t.Fatalf("insert task: %v", err)
+		}
+		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, id) })
+		return id
+	}
+
+	// doneIssue: an OLDER run plus a NEWER run — the feed must keep only the
+	// newer one (one row per issue).
+	mkTask(`
+		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, priority, completed_at)
+		VALUES ($1, $2, $3, 'failed', 0, now() - interval '3 hours')
+		RETURNING id
+	`, agentID, doneIssue, testRuntimeID)
+	newerDoneTaskID := mkTask(`
+		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, priority, completed_at)
+		VALUES ($1, $2, $3, 'completed', 0, now() - interval '1 hour')
+		RETURNING id
+	`, agentID, doneIssue, testRuntimeID)
+
+	mkTask(`
+		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, priority, completed_at)
+		VALUES ($1, $2, $3, 'completed', 0, now() - interval '30 minutes')
+		RETURNING id
+	`, agentID, reviewIssue, testRuntimeID)
+
+	// reviewIssue's most recent comment — the "原因/描述" column source.
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content, type)
+		VALUES ($1, $2, 'member', $3, 'looks good, ready for review', 'comment')
+	`, testWorkspaceID, reviewIssue, testUserID); err != nil {
+		t.Fatalf("insert comment: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, reviewIssue) })
+
+	// No issue_id — must be excluded by the INNER JOIN on issue.
+	issuelessTaskID := mkTask(`
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, completed_at)
+		VALUES ($1, $2, 'completed', 0, now())
+		RETURNING id
+	`, agentID, testRuntimeID)
+
+	w := httptest.NewRecorder()
+	testHandler.ListWorkspaceAgentFixes(w, newRequest(http.MethodGet, "/api/operations/agent-fixes", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListWorkspaceAgentFixes: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var fixes []AgentFixResponse
+	if err := json.NewDecoder(w.Body).Decode(&fixes); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	byIssue := map[string]AgentFixResponse{}
+	rowsForDoneIssue := 0
+	for _, f := range fixes {
+		byIssue[f.IssueID] = f
+		if f.IssueID == doneIssue {
+			rowsForDoneIssue++
+		}
+	}
+
+	done, ok := byIssue[doneIssue]
+	if !ok {
+		t.Fatalf("doneIssue fix not returned; got %d rows", len(fixes))
+	}
+	// One row per issue, using the LATEST run.
+	if rowsForDoneIssue != 1 {
+		t.Errorf("doneIssue should collapse to 1 row, got %d", rowsForDoneIssue)
+	}
+	if done.TaskID != newerDoneTaskID {
+		t.Errorf("doneIssue row should carry the latest run %s, got %s", newerDoneTaskID, done.TaskID)
+	}
+	if done.AgentName != "fixes-agent" {
+		t.Errorf("done.AgentName = %q, want fixes-agent", done.AgentName)
+	}
+	if done.IssueTitle != "Fix the login bug" {
+		t.Errorf("done.IssueTitle = %q", done.IssueTitle)
+	}
+	// "status" is the ISSUE workflow status, not the task status.
+	if done.IssueStatus != "done" {
+		t.Errorf("done.IssueStatus = %q, want done", done.IssueStatus)
+	}
+	if !strings.Contains(done.IssueIdentifier, "-") {
+		t.Errorf("done.IssueIdentifier = %q, want PREFIX-N form", done.IssueIdentifier)
+	}
+
+	review, ok := byIssue[reviewIssue]
+	if !ok {
+		t.Fatalf("reviewIssue fix not returned")
+	}
+	if review.IssueStatus != "in_review" {
+		t.Errorf("review.IssueStatus = %q, want in_review", review.IssueStatus)
+	}
+	if review.LastComment != "looks good, ready for review" {
+		t.Errorf("review.LastComment = %q, want the latest comment", review.LastComment)
+	}
+
+	for _, f := range fixes {
+		if f.TaskID == issuelessTaskID {
+			t.Errorf("task with no linked issue must be excluded from the fix feed")
+		}
+	}
+}
+
 func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

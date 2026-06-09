@@ -23,7 +23,7 @@ WHERE id = $3
         OR ws_lease_expires_at < now()
         OR ws_lease_token = $1
   )
-RETURNING id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id
+RETURNING id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region
 `
 
 type AcquireLarkWSLeaseParams struct {
@@ -56,8 +56,32 @@ func (q *Queries) AcquireLarkWSLease(ctx context.Context, arg AcquireLarkWSLease
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BotUnionID,
+		&i.Region,
 	)
 	return i, err
+}
+
+const backfillLarkInstallationRegionToLark = `-- name: BackfillLarkInstallationRegionToLark :execrows
+UPDATE lark_installation
+SET region     = 'lark',
+    updated_at = now()
+WHERE region = 'feishu'
+`
+
+// Upgrade repair: flip every installation still carrying the migration-116
+// default ('feishu') to 'lark'. Called ONLY by
+// BackfillRegionFromLegacyOverride, and ONLY when the deployment's global
+// base-URL override pointed at Lark international — on such a deployment the
+// whole integration talked to open.larksuite.com, so every existing install
+// is really Lark and the migration's mainland default mislabels it.
+// Idempotent: once flipped there is nothing left at 'feishu' to update, and
+// new installs already carry the device-flow-detected region.
+func (q *Queries) BackfillLarkInstallationRegionToLark(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, backfillLarkInstallationRegionToLark)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const claimLarkInboundDedup = `-- name: ClaimLarkInboundDedup :one
@@ -123,6 +147,36 @@ func (q *Queries) ClaimLarkInboundDedup(ctx context.Context, arg ClaimLarkInboun
 		&i.ClaimToken,
 	)
 	return i, err
+}
+
+const claimLarkInboxNotificationDelivery = `-- name: ClaimLarkInboxNotificationDelivery :one
+WITH ins AS (
+    INSERT INTO lark_inbox_notification_delivery (
+        inbox_item_id,
+        installation_id,
+        lark_open_id
+    ) VALUES ($1, $2, $3)
+    ON CONFLICT DO NOTHING
+    RETURNING true AS claimed
+)
+SELECT COALESCE((SELECT claimed FROM ins), false)::boolean AS claimed
+`
+
+type ClaimLarkInboxNotificationDeliveryParams struct {
+	InboxItemID    pgtype.UUID `json:"inbox_item_id"`
+	InstallationID pgtype.UUID `json:"installation_id"`
+	LarkOpenID     string      `json:"lark_open_id"`
+}
+
+// Claims one outbound Lark inbox notification delivery. This is intentionally
+// keyed by the durable inbox_item row plus the concrete bot installation and
+// recipient open_id so repeated inbox:new events, duplicate bus subscribers,
+// or multi-replica handling cannot send duplicate DMs.
+func (q *Queries) ClaimLarkInboxNotificationDelivery(ctx context.Context, arg ClaimLarkInboxNotificationDeliveryParams) (bool, error) {
+	row := q.db.QueryRow(ctx, claimLarkInboxNotificationDelivery, arg.InboxItemID, arg.InstallationID, arg.LarkOpenID)
+	var claimed bool
+	err := row.Scan(&claimed)
+	return claimed, err
 }
 
 const consumeLarkBindingToken = `-- name: ConsumeLarkBindingToken :one
@@ -250,7 +304,7 @@ INSERT INTO lark_installation (
 ) VALUES (
     $1, $2, $3, $4, $7, $5, $8, $6
 )
-RETURNING id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id
+RETURNING id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region
 `
 
 type CreateLarkInstallationParams struct {
@@ -310,6 +364,7 @@ func (q *Queries) CreateLarkInstallation(ctx context.Context, arg CreateLarkInst
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BotUnionID,
+		&i.Region,
 	)
 	return i, err
 }
@@ -423,6 +478,19 @@ func (q *Queries) CreateLarkUserBinding(ctx context.Context, arg CreateLarkUserB
 	return i, err
 }
 
+const deleteLarkChatSessionBindingBySession = `-- name: DeleteLarkChatSessionBindingBySession :exec
+DELETE FROM lark_chat_session_binding
+WHERE chat_session_id = $1
+`
+
+// Removes the Lark chat -> Multica chat_session mapping while preserving the
+// archived chat_session row. The next inbound Lark message for the same
+// chat_id will create a new session and binding.
+func (q *Queries) DeleteLarkChatSessionBindingBySession(ctx context.Context, chatSessionID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteLarkChatSessionBindingBySession, chatSessionID)
+	return err
+}
+
 const deleteLarkUserBinding = `-- name: DeleteLarkUserBinding :exec
 DELETE FROM lark_user_binding WHERE id = $1
 `
@@ -483,7 +551,7 @@ func (q *Queries) GetLarkChatSessionBindingBySession(ctx context.Context, chatSe
 }
 
 const getLarkInstallation = `-- name: GetLarkInstallation :one
-SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id FROM lark_installation WHERE id = $1
+SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region FROM lark_installation WHERE id = $1
 `
 
 func (q *Queries) GetLarkInstallation(ctx context.Context, id pgtype.UUID) (LarkInstallation, error) {
@@ -505,12 +573,13 @@ func (q *Queries) GetLarkInstallation(ctx context.Context, id pgtype.UUID) (Lark
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BotUnionID,
+		&i.Region,
 	)
 	return i, err
 }
 
 const getLarkInstallationByAgent = `-- name: GetLarkInstallationByAgent :one
-SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id FROM lark_installation
+SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region FROM lark_installation
 WHERE workspace_id = $1 AND agent_id = $2
 `
 
@@ -538,12 +607,13 @@ func (q *Queries) GetLarkInstallationByAgent(ctx context.Context, arg GetLarkIns
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BotUnionID,
+		&i.Region,
 	)
 	return i, err
 }
 
 const getLarkInstallationByAppID = `-- name: GetLarkInstallationByAppID :one
-SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id FROM lark_installation WHERE app_id = $1
+SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region FROM lark_installation WHERE app_id = $1
 `
 
 // Used by the OAuth callback to detect re-install vs first-install,
@@ -568,12 +638,13 @@ func (q *Queries) GetLarkInstallationByAppID(ctx context.Context, appID string) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BotUnionID,
+		&i.Region,
 	)
 	return i, err
 }
 
 const getLarkInstallationInWorkspace = `-- name: GetLarkInstallationInWorkspace :one
-SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id FROM lark_installation
+SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region FROM lark_installation
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -601,6 +672,7 @@ func (q *Queries) GetLarkInstallationInWorkspace(ctx context.Context, arg GetLar
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BotUnionID,
+		&i.Region,
 	)
 	return i, err
 }
@@ -659,7 +731,7 @@ func (q *Queries) GetLarkUserBindingByOpenID(ctx context.Context, arg GetLarkUse
 }
 
 const listActiveLarkInstallations = `-- name: ListActiveLarkInstallations :many
-SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id FROM lark_installation
+SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region FROM lark_installation
 WHERE status = 'active'
 ORDER BY created_at ASC
 `
@@ -692,6 +764,7 @@ func (q *Queries) ListActiveLarkInstallations(ctx context.Context) ([]LarkInstal
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.BotUnionID,
+			&i.Region,
 		); err != nil {
 			return nil, err
 		}
@@ -704,7 +777,7 @@ func (q *Queries) ListActiveLarkInstallations(ctx context.Context) ([]LarkInstal
 }
 
 const listActiveLarkUserBindingsByMember = `-- name: ListActiveLarkUserBindingsByMember :many
-SELECT lub.id, lub.workspace_id, lub.multica_user_id, lub.installation_id, lub.lark_open_id, lub.union_id, lub.bound_at, li.id, li.workspace_id, li.agent_id, li.app_id, li.app_secret_encrypted, li.tenant_key, li.bot_open_id, li.installer_user_id, li.status, li.ws_lease_token, li.ws_lease_expires_at, li.installed_at, li.created_at, li.updated_at, li.bot_union_id
+SELECT lub.id, lub.workspace_id, lub.multica_user_id, lub.installation_id, lub.lark_open_id, lub.union_id, lub.bound_at, li.id, li.workspace_id, li.agent_id, li.app_id, li.app_secret_encrypted, li.tenant_key, li.bot_open_id, li.installer_user_id, li.status, li.ws_lease_token, li.ws_lease_expires_at, li.installed_at, li.created_at, li.updated_at, li.bot_union_id, li.region
 FROM lark_user_binding lub
 JOIN lark_installation li ON li.id = lub.installation_id
 WHERE lub.workspace_id = $1
@@ -758,6 +831,7 @@ func (q *Queries) ListActiveLarkUserBindingsByMember(ctx context.Context, arg Li
 			&i.LarkInstallation.CreatedAt,
 			&i.LarkInstallation.UpdatedAt,
 			&i.LarkInstallation.BotUnionID,
+			&i.LarkInstallation.Region,
 		); err != nil {
 			return nil, err
 		}
@@ -813,7 +887,7 @@ func (q *Queries) ListLarkInboundAuditByInstallation(ctx context.Context, arg Li
 }
 
 const listLarkInstallationsByWorkspace = `-- name: ListLarkInstallationsByWorkspace :many
-SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id FROM lark_installation
+SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region FROM lark_installation
 WHERE workspace_id = $1
 ORDER BY created_at ASC
 `
@@ -843,6 +917,7 @@ func (q *Queries) ListLarkInstallationsByWorkspace(ctx context.Context, workspac
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.BotUnionID,
+			&i.Region,
 		); err != nil {
 			return nil, err
 		}
@@ -1108,9 +1183,9 @@ func (q *Queries) UpdateLarkOutboundCardStatus(ctx context.Context, arg UpdateLa
 const upsertLarkInstallation = `-- name: UpsertLarkInstallation :one
 INSERT INTO lark_installation (
     workspace_id, agent_id, app_id, app_secret_encrypted,
-    tenant_key, bot_open_id, bot_union_id, installer_user_id
+    tenant_key, bot_open_id, bot_union_id, installer_user_id, region
 ) VALUES (
-    $1, $2, $3, $4, $7, $5, $8, $6
+    $1, $2, $3, $4, $7, $5, $8, $6, $9
 )
 ON CONFLICT (workspace_id, agent_id) DO UPDATE SET
     app_id               = EXCLUDED.app_id,
@@ -1119,10 +1194,11 @@ ON CONFLICT (workspace_id, agent_id) DO UPDATE SET
     bot_open_id          = EXCLUDED.bot_open_id,
     bot_union_id         = EXCLUDED.bot_union_id,
     installer_user_id    = EXCLUDED.installer_user_id,
+    region               = EXCLUDED.region,
     status               = 'active',
     installed_at         = now(),
     updated_at           = now()
-RETURNING id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id
+RETURNING id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region
 `
 
 type UpsertLarkInstallationParams struct {
@@ -1134,6 +1210,7 @@ type UpsertLarkInstallationParams struct {
 	InstallerUserID    pgtype.UUID `json:"installer_user_id"`
 	TenantKey          pgtype.Text `json:"tenant_key"`
 	BotUnionID         pgtype.Text `json:"bot_union_id"`
+	Region             string      `json:"region"`
 }
 
 // Re-install path: a user who already bound this agent to Lark scans
@@ -1152,6 +1229,7 @@ func (q *Queries) UpsertLarkInstallation(ctx context.Context, arg UpsertLarkInst
 		arg.InstallerUserID,
 		arg.TenantKey,
 		arg.BotUnionID,
+		arg.Region,
 	)
 	var i LarkInstallation
 	err := row.Scan(
@@ -1170,6 +1248,7 @@ func (q *Queries) UpsertLarkInstallation(ctx context.Context, arg UpsertLarkInst
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BotUnionID,
+		&i.Region,
 	)
 	return i, err
 }

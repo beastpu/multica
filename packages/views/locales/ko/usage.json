@@ -54,5 +54,26 @@
   },
   "duration": {
     "less_than_minute": "1분 미만"
+  },
+  "operations": {
+    "title": "운영",
+    "subtitle": "에이전트가 처리한 issue — 최근 실행, issue 상태, 최신 댓글.",
+    "filter": {
+      "all_agents": "모든 에이전트",
+      "status_all": "모든 상태"
+    },
+    "table": {
+      "issue": "Issue",
+      "agent": "에이전트",
+      "time": "날짜",
+      "status": "상태",
+      "reason": "사유 / 설명"
+    },
+    "no_reason": "—",
+    "caption": "{{count}}개 기록",
+    "empty": {
+      "title": "아직 수정 내역이 없습니다",
+      "body": "에이전트가 issue를 처리하기 시작하면 상태 및 최신 댓글과 함께 여기에 표시됩니다."
+    }
   }
 }

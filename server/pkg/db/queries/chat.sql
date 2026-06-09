@@ -69,6 +69,15 @@ FOR UPDATE;
 -- DeleteIssue.
 DELETE FROM chat_session WHERE id = $1 AND workspace_id = $2;
 
+-- name: ArchiveChatSession :exec
+-- Soft-closes a chat session. Lark /clear uses this before deleting the
+-- lark_chat_session_binding, so the old transcript remains visible while the
+-- next Lark message creates a fresh chat_session.
+UPDATE chat_session
+SET status = 'archived',
+    updated_at = now()
+WHERE id = $1;
+
 -- name: TouchChatSession :exec
 UPDATE chat_session SET updated_at = now()
 WHERE id = $1;
@@ -98,8 +107,8 @@ SELECT * FROM chat_message
 WHERE id = $1;
 
 -- name: CreateChatTask :one
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, chat_session_id)
-VALUES ($1, $2, NULL, 'queued', $3, $4)
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, chat_session_id, initiator_user_id)
+VALUES ($1, $2, NULL, 'queued', $3, $4, $5)
 RETURNING *;
 
 -- name: GetLastChatTaskSession :one

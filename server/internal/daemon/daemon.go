@@ -81,6 +81,7 @@ type workspaceState struct {
 type repoCacheBackend interface {
 	Lookup(workspaceID, url string) string
 	Sync(workspaceID string, repos []repocache.RepoInfo) error
+	WithRepoLock(barePath string, fn func() error) error
 	CreateWorktree(params repocache.WorktreeParams) (*repocache.WorktreeResult, error)
 }
 
@@ -118,6 +119,7 @@ type Daemon struct {
 	restartBinary string             // non-empty after a successful update; path to the new binary
 	updating      atomic.Bool        // prevents concurrent update attempts
 	activeTasks   atomic.Int64       // number of tasks currently in handleTask; exposed via /health
+	ready         atomic.Bool        // false until preflight completes; gates /health status (starting -> running)
 
 	// claimMu guards pauseClaims and claimsInFlight. It is held only for the
 	// microseconds it takes to make a decision; ClaimTask itself runs without
@@ -626,6 +628,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Bind and serve the health port before the (potentially slow) preflight,
+	// so `daemon start` and the desktop see a live "starting" daemon instead
+	// of connection-refused while preflightAuth runs. preflightAuth's initial
+	// workspace sync detects every configured agent's version by exec'ing it,
+	// which on a cold cache with many agents takes ~20s. Liveness (port up) and
+	// readiness (status:"running") are reported separately: /health stays
+	// "starting" until d.ready is set after preflight, so a slow or *failing*
+	// preflight is never misreported as a started daemon. resolveAuth has
+	// already run, so a missing token still fails fast before we begin serving.
+	go d.serveHealth(ctx, healthLn, time.Now())
+
 	// Renew the PAT before the first API call, then do the initial
 	// workspace sync. Both steps live in preflightAuth so the ordering
 	// invariant (renew first) is enforced at one site instead of
@@ -647,8 +660,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
-	go d.serveHealth(ctx, healthLn, time.Now())
-	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, auto-update, token-renewal, health)")
+
+	// Preflight succeeded and the background loops are up: the daemon has
+	// registered its runtimes and can now claim and run tasks. Flip /health
+	// from "starting" to "running" — this is the signal `daemon start`'s
+	// readiness wait blocks on, so success is reported only after startup
+	// actually completed, not merely because the health port came up.
+	d.ready.Store(true)
+	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, auto-update, token-renewal); health now reporting ready")
 	err = d.pollLoop(ctx, taskWakeups)
 	d.logger.Debug("daemon main loop returning", "error", err)
 	return err
@@ -2119,10 +2138,17 @@ func newTaskSlotSemaphore(maxConcurrentTasks int) chan int {
 // trivially testable; the polling goroutine in watchTaskCancellation is just
 // I/O around it.
 //
-// Two cases trigger cancellation:
+// Two conditions trigger cancellation:
 //
-//  1. status == "cancelled" — the server moved the task to cancelled
-//     (issue reassigned, user cancel, ...).
+//  1. status is a terminal state — "completed", "failed", or "cancelled"
+//     (isAgentTaskTerminal). The server has already finalized the task: user
+//     cancel, issue reassignment, the runtime offline sweeper flipping
+//     running → failed during a disconnect, or a duplicate execution that
+//     already completed it. Letting the local agent run on is pure waste —
+//     CompleteAgentTask only accepts status == "running", so its eventual
+//     CompleteTask/FailTask callback is guaranteed to fail and just adds log
+//     noise. Reusing isAgentTaskTerminal keeps this set in lockstep with the
+//     GC's notion of a terminal task.
 //  2. err is a 404 with "task not found" — the task row was deleted while
 //     the agent was running. Without this we'd let the local agent keep
 //     emitting tool calls against a dead task for its full timeout window.
@@ -2134,7 +2160,7 @@ func shouldInterruptAgent(status string, err error) bool {
 	if err != nil {
 		return isTaskNotFoundError(err)
 	}
-	return status == "cancelled"
+	return isAgentTaskTerminal(status)
 }
 
 // watchTaskCancellation polls the server for the task's status on the given
@@ -2158,7 +2184,7 @@ func (d *Daemon) watchTaskCancellation(ctx context.Context, taskID string, pollI
 				if err != nil {
 					taskLog.Info("task gone server-side, interrupting agent", "error", err)
 				} else {
-					taskLog.Info("task cancelled by server, interrupting agent")
+					taskLog.Info("task reached terminal state server-side, interrupting agent", "status", status)
 				}
 				close(cancelled)
 				return
@@ -2230,8 +2256,9 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	_ = d.client.ReportProgress(ctx, task.ID, fmt.Sprintf("Launching %s", provider), 1, 2)
 
 	// Create a cancellable context so we can interrupt the running agent
-	// when the server signals the task should stop — either status moves
-	// to "cancelled" or the task row is deleted (404).
+	// when the server signals the task should stop — either the task reached
+	// a terminal state (completed/failed/cancelled) or the task row is
+	// deleted (404).
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 
@@ -2288,10 +2315,11 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	_ = d.client.ReportProgress(ctx, task.ID, "Finishing task", 2, 2)
 
-	// Final pre-completion check: if the server already moved the task to
-	// "cancelled" or deleted the row outright, skip reporting — the
-	// complete/fail callbacks would fail anyway. Reuse shouldInterruptAgent
-	// so this guard honors the same signals as the in-flight watcher.
+	// Final pre-completion check: if the server already moved the task to a
+	// terminal state (completed/failed/cancelled) or deleted the row
+	// outright, skip reporting — the complete/fail callbacks would fail
+	// anyway. Reuse shouldInterruptAgent so this guard honors the same
+	// signals as the in-flight watcher.
 	if status, err := d.client.GetTaskStatus(ctx, task.ID); shouldInterruptAgent(status, err) {
 		taskLog.Info("task cancelled during execution, discarding result", "status", status, "error", err)
 		return
@@ -2393,10 +2421,10 @@ func (d *Daemon) acquireLocalDirectoryLockIfNeeded(ctx context.Context, task Tas
 			taskLog.Warn("local_directory: mark waiting status failed", "error", waitErr)
 		}
 		// Start polling once we actually park. shouldInterruptAgent inside
-		// watchTaskCancellation already handles both server-side cancel
-		// (status=cancelled) and the row-deleted reassignment case (404),
-		// which is the full set of "this task shouldn't run anymore"
-		// signals we need to react to during the wait.
+		// watchTaskCancellation already handles both server-side terminal
+		// states (completed/failed/cancelled) and the row-deleted
+		// reassignment case (404), which is the full set of "this task
+		// shouldn't run anymore" signals we need to react to during the wait.
 		watcherOnce.Do(func() {
 			cancelledByPoll = d.watchTaskCancellation(waitCtx, task.ID, pollInterval, taskLog)
 			go func() {
@@ -2410,15 +2438,15 @@ func (d *Daemon) acquireLocalDirectoryLockIfNeeded(ctx context.Context, task Tas
 	}
 	release, err = d.localPathLocks.Acquire(waitCtx, assignment.RealPath, task.ID, onWait)
 	if err != nil {
-		// If the wait was cut short because the server cancelled the task
-		// (or deleted the row), the row is already in a terminal state —
-		// return silently the same way the run-phase poller does at
-		// lines ~2104. Issuing FailTask here would be a no-op at best
+		// If the wait was cut short because the server finalized the task
+		// (terminal state) or deleted the row, the row is already in a
+		// terminal state — return silently the same way the run-phase poller
+		// does at lines ~2104. Issuing FailTask here would be a no-op at best
 		// and a confusing redundant log line at worst.
 		if cancelledByPoll != nil {
 			select {
 			case <-cancelledByPoll:
-				taskLog.Info("local_directory: wait aborted by server-side cancel")
+				taskLog.Info("local_directory: wait aborted by server-side terminal state")
 				return nil, true
 			default:
 			}
@@ -2614,6 +2642,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		IsSquadLeader:                    strings.Contains(instructions, "## Squad Operating Protocol"),
 		RequestingUserName:               task.RequestingUserName,
 		RequestingUserProfileDescription: task.RequestingUserProfileDescription,
+		InitiatorType:                    task.InitiatorType,
+		InitiatorID:                      task.InitiatorID,
+		InitiatorName:                    task.InitiatorName,
+		InitiatorEmail:                   task.InitiatorEmail,
 		WorkspaceContext:                 task.WorkspaceContext,
 	}
 
@@ -2892,6 +2924,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	execOpts := agent.ExecOptions{
 		Cwd:                       env.WorkDir,
 		Model:                     model,
+		ThreadName:                deriveTaskThreadName(task),
 		Timeout:                   d.cfg.AgentTimeout,
 		SemanticInactivityTimeout: d.cfg.CodexSemanticInactivityTimeout,
 		ResumeSessionID:           task.PriorSessionID,
@@ -3158,15 +3191,21 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	}
 	taskLog.Debug("backend started, draining messages")
 
-	// Create an independent drain deadline so we don't block forever if the
-	// backend's internal timeout fails to produce a Result (e.g. scanner
-	// stuck on a hung stdout pipe). The extra 30 s gives the backend time
-	// to clean up after its own timeout fires.
-	drainTimeout := opts.Timeout + 30*time.Second
-	if opts.Timeout == 0 {
-		drainTimeout = 21 * time.Minute
+	// Bound the drain loop only when there is a wall-clock cap. With a positive
+	// opts.Timeout, give the drain a slightly longer deadline than the backend
+	// so it can still collect the backend's own timeout Result if the scanner
+	// is stuck on a hung stdout pipe (the extra 30 s covers cleanup after the
+	// backend's own deadline fires). With no cap (opts.Timeout <= 0) the
+	// inactivity watchdog is the only liveness net, so the drain must NOT
+	// impose its own deadline either — otherwise an actively streaming long run
+	// would be cut off here regardless of progress (MUL-3064).
+	var drainCtx context.Context
+	var drainCancel context.CancelFunc
+	if opts.Timeout > 0 {
+		drainCtx, drainCancel = context.WithTimeout(agentCtx, opts.Timeout+30*time.Second)
+	} else {
+		drainCtx, drainCancel = context.WithCancel(agentCtx)
 	}
-	drainCtx, drainCancel := context.WithTimeout(agentCtx, drainTimeout)
 	defer drainCancel()
 
 	var toolCount atomic.Int32
@@ -3181,12 +3220,18 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	// with a matching tool_result. A non-zero count means the agent is
 	// legitimately waiting on a tool (e.g. `npm install`, `docker build`)
 	// that may run far longer than the idle window without emitting any
-	// message — so the watchdog must not interpret that silence as a hang.
+	// message — so while a tool is in flight the watchdog applies the larger
+	// AgentToolWatchdog budget instead of treating that silence as a hang.
 	var inFlightTools atomic.Int32
 	var idleWatchdogFired atomic.Bool
+	// idleWatchdogThreshold records (as nanos) which silence budget actually
+	// tripped the watchdog — the idle window or the larger in-flight-tool
+	// window — so the failure message reports the real duration.
+	var idleWatchdogThreshold atomic.Int64
+	idleWatchdogThreshold.Store(int64(d.cfg.AgentIdleWatchdog))
 	idleWindow := d.cfg.AgentIdleWatchdog
 	if idleWindow > 0 {
-		go d.runIdleWatchdog(agentCtx, idleWindow, &lastActivityAt, &inFlightTools, &idleWatchdogFired, agentCancel, session.Messages, taskLog, taskID)
+		go d.runIdleWatchdog(agentCtx, idleWindow, d.cfg.AgentToolWatchdog, &lastActivityAt, &inFlightTools, &idleWatchdogFired, &idleWatchdogThreshold, agentCancel, session.Messages, taskLog, taskID)
 	}
 
 	go func() {
@@ -3373,7 +3418,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			// generic "agent_error" bucket the aborted path falls into.
 			result.Status = "idle_watchdog"
 			if result.Error == "" {
-				result.Error = idleWatchdogReason(idleWindow)
+				result.Error = idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load()))
 			}
 		}
 		return result, toolCount.Load(), nil
@@ -3385,7 +3430,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		if idleWatchdogFired.Load() {
 			return agent.Result{
 				Status: "idle_watchdog",
-				Error:  idleWatchdogReason(idleWindow),
+				Error:  idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load())),
 			}, toolCount.Load(), nil
 		}
 		// Distinguish external cancellation (e.g. server-initiated cancel
@@ -3414,24 +3459,28 @@ func idleWatchdogReason(window time.Duration) string {
 }
 
 // runIdleWatchdog ticks until either agentCtx is cancelled or the backend has
-// been silent for at least window with no in-flight tool call. On firing, it
-// sets fired and calls cancel, which propagates to the agent subprocess (via
-// the ctx passed to backend.Execute) and to drainCtx. The check requires:
+// been silent past the applicable budget. On firing, it records the tripped
+// threshold, sets fired, and calls cancel, which propagates to the agent
+// subprocess (via the ctx passed to backend.Execute) and to drainCtx. The
+// silence budget depends on whether a tool call is in flight:
 //
-//  1. inFlightTools == 0 — the backend has emitted a tool_use whose
-//     matching tool_result hasn't arrived yet, meaning a real tool (e.g.
-//     `npm install`, `docker build`) is legitimately running. Long tool
-//     calls produce no messages between use and result; killing here would
-//     yank the agent mid-build. AND
-//  2. time since lastActivityAt exceeds window — the drain loop is single
-//     reader, so a stale stamp means no message has actually arrived; AND
-//  3. session.Messages buffer is empty — defensive against a hypothetical
-//     drain stall where unprocessed messages would still imply progress.
+//  1. No tool in flight — a silent backend is a hang after `window`.
+//  2. A tool in flight (tool_use with no matching tool_result yet) — a real
+//     tool (e.g. `npm install`, `docker build`) legitimately runs silently for
+//     many minutes, so the larger `toolWindow` applies instead. toolWindow <= 0
+//     keeps the historical behavior of never force-stopping while a tool is in
+//     flight. Without this in-flight budget a backend that emits tool_use and
+//     never the matching tool_result would run forever now that there is no
+//     wall-clock cap (MUL-3064).
+//
+// In both cases the watchdog also requires the session.Messages buffer to be
+// empty — a buffered-but-undrained message means the drain loop is behind, not
+// the backend.
 //
 // Tick interval is window/2 (floored at 30 s in production, but the floor only
 // kicks in for windows >= 1 min so tests can pass tiny windows like 50 ms and
 // see the watchdog fire within a few ticks).
-func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window time.Duration, lastActivityAt *atomic.Int64, inFlightTools *atomic.Int32, fired *atomic.Bool, cancel context.CancelFunc, messages <-chan agent.Message, taskLog *slog.Logger, taskID string) {
+func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window, toolWindow time.Duration, lastActivityAt *atomic.Int64, inFlightTools *atomic.Int32, fired *atomic.Bool, firedThreshold *atomic.Int64, cancel context.CancelFunc, messages <-chan agent.Message, taskLog *slog.Logger, taskID string) {
 	interval := window / 2
 	if window >= time.Minute && interval < 30*time.Second {
 		interval = 30 * time.Second
@@ -3446,16 +3495,21 @@ func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window time.Duration,
 		case <-agentCtx.Done():
 			return
 		case <-ticker.C:
-			// In-flight tool call: the agent has emitted tool_use and
-			// the corresponding tool_result hasn't landed yet. A long
-			// build/install/test can sit here silently for many minutes
-			// — that is forward progress, not a hang.
-			if inFlightTools.Load() > 0 {
-				continue
+			// Pick the silence budget. A tool in flight is expected to be
+			// silent (a long build/install/test emits nothing between
+			// tool_use and tool_result), so it gets the larger toolWindow;
+			// toolWindow <= 0 disables the in-flight bound entirely.
+			threshold := window
+			toolInFlight := inFlightTools.Load() > 0
+			if toolInFlight {
+				if toolWindow <= 0 {
+					continue
+				}
+				threshold = toolWindow
 			}
 			last := time.Unix(0, lastActivityAt.Load())
 			idleFor := time.Since(last)
-			if idleFor < window {
+			if idleFor < threshold {
 				continue
 			}
 			// A buffered-but-undrained message means the drain loop is
@@ -3467,8 +3521,10 @@ func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window time.Duration,
 			taskLog.Warn("idle watchdog firing: no agent activity, force-stopping run",
 				"task", shortID(taskID),
 				"idle_for", idleFor.Round(time.Second).String(),
-				"threshold", window.String(),
+				"threshold", threshold.String(),
+				"tool_in_flight", toolInFlight,
 			)
+			firedThreshold.Store(int64(threshold))
 			fired.Store(true)
 			cancel()
 			return

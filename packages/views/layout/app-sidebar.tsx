@@ -31,6 +31,7 @@ import {
   CircleUser,
   FolderKanban,
   BarChart3,
+  Radar,
   X,
   Zap,
   Users,
@@ -113,6 +114,7 @@ type NavKey =
   | "agents"
   | "squads"
   | "usage"
+  | "operations"
   | "runtimes"
   | "skills"
   | "settings";
@@ -127,6 +129,7 @@ type NavLabelKey =
   | "agents"
   | "squads"
   | "usage"
+  | "operations"
   | "runtimes"
   | "skills"
   | "settings";
@@ -143,6 +146,7 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[]
   { key: "agents", labelKey: "agents", icon: Bot },
   { key: "squads", labelKey: "squads", icon: Users },
   { key: "usage", labelKey: "usage", icon: BarChart3 },
+  { key: "operations", labelKey: "operations", icon: Radar },
 ];
 
 const configureNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [

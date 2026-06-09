@@ -8,6 +8,79 @@ SELECT * FROM agent
 WHERE workspace_id = $1
 ORDER BY created_at ASC;
 
+-- name: ListAgentIssueDailySummaries :many
+WITH task_stats AS (
+    SELECT
+        agent_id,
+        count(*) FILTER (
+            WHERE status = 'completed'
+              AND completed_at >= sqlc.arg('window_start')::timestamptz
+              AND completed_at < sqlc.arg('window_end')::timestamptz
+        )::int AS tasks_completed,
+        count(*) FILTER (
+            WHERE status = 'failed'
+              AND completed_at >= sqlc.arg('window_start')::timestamptz
+              AND completed_at < sqlc.arg('window_end')::timestamptz
+        )::int AS tasks_failed,
+        count(*) FILTER (
+            WHERE created_at >= sqlc.arg('window_start')::timestamptz
+              AND created_at < sqlc.arg('window_end')::timestamptz
+        )::int AS tasks_started
+    FROM agent_task_queue
+    WHERE created_at < sqlc.arg('window_end')::timestamptz
+      AND (
+          created_at >= sqlc.arg('window_start')::timestamptz
+          OR completed_at >= sqlc.arg('window_start')::timestamptz
+      )
+    GROUP BY agent_id
+),
+issue_stats AS (
+    SELECT
+        assignee_id AS agent_id,
+        count(*) FILTER (WHERE status = 'backlog')::int AS backlog_count,
+        count(*) FILTER (WHERE status = 'todo')::int AS todo_count,
+        count(*) FILTER (WHERE status = 'in_progress')::int AS in_progress_count,
+        count(*) FILTER (WHERE status = 'in_review')::int AS in_review_count,
+        count(*) FILTER (WHERE status = 'blocked')::int AS blocked_count,
+        count(*) FILTER (WHERE status NOT IN ('done', 'cancelled'))::int AS active_count,
+        count(*) FILTER (
+            WHERE status IN ('done', 'cancelled')
+              AND updated_at >= sqlc.arg('window_start')::timestamptz
+              AND updated_at < sqlc.arg('window_end')::timestamptz
+        )::int AS closed_in_window
+    FROM issue
+    WHERE assignee_type = 'agent'
+    GROUP BY assignee_id
+)
+SELECT
+    a.workspace_id,
+    a.id AS agent_id,
+    a.name AS agent_name,
+    a.owner_id,
+    COALESCE(i.backlog_count, 0)::int AS backlog_count,
+    COALESCE(i.todo_count, 0)::int AS todo_count,
+    COALESCE(i.in_progress_count, 0)::int AS in_progress_count,
+    COALESCE(i.in_review_count, 0)::int AS in_review_count,
+    COALESCE(i.blocked_count, 0)::int AS blocked_count,
+    COALESCE(i.active_count, 0)::int AS active_count,
+    COALESCE(i.closed_in_window, 0)::int AS closed_in_window,
+    COALESCE(t.tasks_started, 0)::int AS tasks_started,
+    COALESCE(t.tasks_completed, 0)::int AS tasks_completed,
+    COALESCE(t.tasks_failed, 0)::int AS tasks_failed
+FROM agent a
+LEFT JOIN issue_stats i ON i.agent_id = a.id
+LEFT JOIN task_stats t ON t.agent_id = a.id
+WHERE a.archived_at IS NULL
+  AND a.owner_id IS NOT NULL
+  AND (
+      COALESCE(i.active_count, 0) > 0
+      OR COALESCE(i.closed_in_window, 0) > 0
+      OR COALESCE(t.tasks_started, 0) > 0
+      OR COALESCE(t.tasks_completed, 0) > 0
+      OR COALESCE(t.tasks_failed, 0) > 0
+  )
+ORDER BY a.workspace_id, a.name ASC;
+
 -- name: GetAgent :one
 SELECT * FROM agent
 WHERE id = $1;
@@ -672,6 +745,58 @@ SELECT t.* FROM (
     AND atq.status IN ('completed', 'failed')
   ORDER BY atq.agent_id, atq.completed_at DESC NULLS LAST
 ) t;
+
+-- name: ListWorkspaceAgentFixes :many
+-- One row per issue that an agent has worked on, carrying ONLY the latest
+-- agent run for that issue, for the Usage page's Operations tab. An issue may
+-- have many runs (several agents, or one agent retried) — DISTINCT ON
+-- (issue_id) keeps just the newest (by completion, then created_at). Columns:
+--   - agent_name  → who ran the latest attempt (the "智能体" column)
+--   - issue_*     → the linked issue + its workflow status (the "状态" column)
+--   - last_comment→ the most recent comment/reply on the issue (member OR
+--                   agent), the "原因/描述" column; "" when none
+-- JOINs agent because agent_task_queue has no workspace_id; INNER JOIN issue so
+-- only issue-linked runs count. The window filters on the latest run's recency.
+-- Per-agent access filtering happens in the handler against accessibleAgentIDs.
+SELECT
+  latest.task_id,
+  latest.agent_id,
+  a.name AS agent_name,
+  i.id AS issue_id,
+  i.number AS issue_number,
+  i.title AS issue_title,
+  i.status AS issue_status,
+  latest.started_at,
+  latest.completed_at,
+  latest.created_at,
+  COALESCE(lc.content, '') AS last_comment,
+  COALESCE(lc.author_type, '') AS last_comment_author_type
+FROM (
+  SELECT DISTINCT ON (atq.issue_id)
+    atq.id AS task_id, atq.agent_id, atq.issue_id,
+    atq.started_at, atq.completed_at, atq.created_at
+  FROM agent_task_queue atq
+  JOIN agent ag ON ag.id = atq.agent_id
+  WHERE ag.workspace_id = sqlc.arg('workspace_id')
+    AND atq.issue_id IS NOT NULL
+  -- "Latest run" = most recent activity overall: completion if finished, else
+  -- start, else when it was queued. So a fresh queued/running attempt outranks
+  -- an older finished one. atq.id is a final deterministic tiebreaker.
+  ORDER BY atq.issue_id,
+    COALESCE(atq.completed_at, atq.started_at, atq.created_at) DESC, atq.id DESC
+) latest
+JOIN agent a ON a.id = latest.agent_id
+JOIN issue i ON i.id = latest.issue_id
+LEFT JOIN LATERAL (
+  SELECT c.content, c.author_type
+  FROM comment c
+  WHERE c.issue_id = i.id AND c.type = 'comment'
+  ORDER BY c.created_at DESC
+  LIMIT 1
+) lc ON true
+WHERE COALESCE(latest.completed_at, latest.started_at, latest.created_at) > now() - make_interval(days => sqlc.arg('days')::int)
+ORDER BY COALESCE(latest.completed_at, latest.started_at, latest.created_at) DESC
+LIMIT 500;
 
 -- name: ListTasksByIssue :many
 SELECT * FROM agent_task_queue

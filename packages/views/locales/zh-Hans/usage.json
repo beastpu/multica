@@ -54,5 +54,26 @@
   },
   "duration": {
     "less_than_minute": "<1分钟"
+  },
+  "operations": {
+    "title": "运营",
+    "subtitle": "智能体处理过的 issue —— 最近一次运行、issue 当前状态，以及最新一条评论。",
+    "filter": {
+      "all_agents": "全部智能体",
+      "status_all": "全部状态"
+    },
+    "table": {
+      "issue": "关联 issue",
+      "agent": "智能体",
+      "time": "时间",
+      "status": "状态",
+      "reason": "原因 / 描述"
+    },
+    "no_reason": "—",
+    "caption": "{{count}} 条记录",
+    "empty": {
+      "title": "暂无修复记录",
+      "body": "当智能体开始处理 issue 后，它们会显示在这里，并附带工单状态与最新评论。"
+    }
   }
 }
