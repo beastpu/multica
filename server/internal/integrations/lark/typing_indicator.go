@@ -22,8 +22,11 @@ const typingIndicatorMaxAge = 2 * time.Minute
 
 // TypingIndicatorState holds the identifiers needed to remove a reaction.
 type TypingIndicatorState struct {
-	MessageID  string
-	ReactionID string
+	MessageID      string
+	ReactionID     string
+	ClearRequested bool
+	AddFailed      bool
+	DeleteFailed   bool
 }
 
 // TypingIndicatorQueries is the narrow DB surface the manager needs.
@@ -86,13 +89,20 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.LarkInstallati
 		)
 		return
 	}
+	key := uuidString(chatSessionID)
+	state := &TypingIndicatorState{MessageID: messageID}
+	m.mu.Lock()
+	m.states[key] = append(m.states[key], state)
+	m.mu.Unlock()
+
 	creds, err := m.resolveCredentials(inst)
 	if err != nil {
 		m.log.Warn("lark typing indicator: failed to resolve credentials",
-			"chat_session_id", uuidString(chatSessionID),
+			"chat_session_id", key,
 			"message_id", messageID,
 			"err", err,
 		)
+		m.markAddFailed(key, state)
 		return
 	}
 
@@ -103,20 +113,23 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.LarkInstallati
 	})
 	if err != nil {
 		m.log.Warn("lark typing indicator: add reaction failed",
-			"chat_session_id", uuidString(chatSessionID),
+			"chat_session_id", key,
 			"message_id", messageID,
 			"err", err,
 		)
+		m.markAddFailed(key, state)
 		return
 	}
 
-	key := uuidString(chatSessionID)
 	m.mu.Lock()
-	m.states[key] = append(m.states[key], &TypingIndicatorState{
-		MessageID:  messageID,
-		ReactionID: reactionID,
-	})
+	state.ReactionID = reactionID
+	clearRequested := state.ClearRequested
 	m.mu.Unlock()
+
+	if clearRequested {
+		m.deleteReaction(ctx, key, creds, state)
+		return
+	}
 
 	m.log.Debug("lark typing indicator: reaction added",
 		"chat_session_id", key,
@@ -133,7 +146,9 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype
 	key := uuidString(chatSessionID)
 	m.mu.Lock()
 	states := m.states[key]
-	delete(m.states, key)
+	for _, s := range states {
+		s.ClearRequested = true
+	}
 	m.mu.Unlock()
 
 	if len(states) == 0 {
@@ -171,25 +186,68 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype
 		if s.ReactionID == "" {
 			continue
 		}
-		if err := m.client.DeleteMessageReaction(ctx, DeleteReactionParams{
-			InstallationID: creds,
-			MessageID:      s.MessageID,
-			ReactionID:     s.ReactionID,
-		}); err != nil {
-			m.log.Warn("lark typing indicator: delete reaction failed",
-				"chat_session_id", key,
-				"message_id", s.MessageID,
-				"reaction_id", s.ReactionID,
-				"err", err,
-			)
+		m.deleteReaction(ctx, key, creds, s)
+	}
+}
+
+func (m *TypingIndicatorManager) markAddFailed(key string, state *TypingIndicatorState) {
+	m.mu.Lock()
+	state.AddFailed = true
+	m.removeCompletedLocked(key)
+	m.mu.Unlock()
+}
+
+func (m *TypingIndicatorManager) deleteReaction(ctx context.Context, key string, creds InstallationCredentials, state *TypingIndicatorState) {
+	if state.ReactionID == "" {
+		return
+	}
+	err := m.client.DeleteMessageReaction(ctx, DeleteReactionParams{
+		InstallationID: creds,
+		MessageID:      state.MessageID,
+		ReactionID:     state.ReactionID,
+	})
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err != nil {
+		state.DeleteFailed = true
+		m.log.Warn("lark typing indicator: delete reaction failed",
+			"chat_session_id", key,
+			"message_id", state.MessageID,
+			"reaction_id", state.ReactionID,
+			"err", err,
+		)
+		return
+	}
+	state.ReactionID = ""
+	state.DeleteFailed = false
+	m.removeCompletedLocked(key)
+	m.log.Debug("lark typing indicator: reaction removed",
+		"chat_session_id", key,
+		"message_id", state.MessageID,
+	)
+}
+
+func (m *TypingIndicatorManager) removeCompletedLocked(key string) {
+	states := m.states[key]
+	if len(states) == 0 {
+		return
+	}
+	kept := states[:0]
+	for _, s := range states {
+		if s.AddFailed {
 			continue
 		}
-		m.log.Debug("lark typing indicator: reaction removed",
-			"chat_session_id", key,
-			"message_id", s.MessageID,
-			"reaction_id", s.ReactionID,
-		)
+		if s.ClearRequested && s.ReactionID == "" && !s.DeleteFailed {
+			continue
+		}
+		kept = append(kept, s)
 	}
+	if len(kept) == 0 {
+		delete(m.states, key)
+		return
+	}
+	m.states[key] = kept
 }
 
 func isMessageTooOld(createTime string) bool {

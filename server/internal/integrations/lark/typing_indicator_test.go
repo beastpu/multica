@@ -18,6 +18,8 @@ type fakeTypingAPIClient struct {
 	addErr       error
 	deleteErr    error
 	addReturn    string
+	addStarted   chan struct{}
+	addRelease   chan struct{}
 }
 
 type addReactionCall struct {
@@ -68,6 +70,12 @@ func (f *fakeTypingAPIClient) BatchGetUsers(context.Context, InstallationCredent
 }
 func (f *fakeTypingAPIClient) AddMessageReaction(_ context.Context, p AddReactionParams) (string, error) {
 	f.addCalled = append(f.addCalled, addReactionCall{p.InstallationID, p.MessageID, p.EmojiType})
+	if f.addStarted != nil {
+		close(f.addStarted)
+	}
+	if f.addRelease != nil {
+		<-f.addRelease
+	}
 	return f.addReturn, f.addErr
 }
 func (f *fakeTypingAPIClient) DeleteMessageReaction(_ context.Context, p DeleteReactionParams) error {
@@ -256,6 +264,69 @@ func TestTypingIndicatorClearLogsOnDeleteError(t *testing.T) {
 
 	if len(api.deleteCalled) != 1 {
 		t.Fatalf("expected 1 delete call attempt, got %d", len(api.deleteCalled))
+	}
+	key := uuidString(session)
+	mgr.mu.RLock()
+	states := mgr.states[key]
+	mgr.mu.RUnlock()
+	if len(states) != 1 || !states[0].ClearRequested || !states[0].DeleteFailed {
+		t.Fatalf("expected failed delete state to be retained for retry, got %+v", states)
+	}
+	api.deleteErr = nil
+	mgr.Clear(context.Background(), session)
+	mgr.mu.RLock()
+	states = mgr.states[key]
+	mgr.mu.RUnlock()
+	if len(states) != 0 {
+		t.Fatalf("expected retry to clear retained state, got %+v", states)
+	}
+}
+
+func TestTypingIndicatorClearBeforeAddCompletesDeletesLateReaction(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	api := &fakeTypingAPIClient{
+		addReturn:  "reaction-late",
+		addStarted: started,
+		addRelease: release,
+	}
+	queries := &fakeTypingQueries{
+		binding: db.LarkChatSessionBinding{
+			InstallationID: pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
+		},
+		installation: db.LarkInstallation{
+			ID:     pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
+			AppID:  "cli_test",
+			Region: "feishu",
+		},
+	}
+	mgr := NewTypingIndicatorManager(api, fakeTypingCreds{secret: "shh"}, queries, newDiscardLogger())
+
+	inst := db.LarkInstallation{AppID: "cli_test", Region: "feishu"}
+	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4}, Valid: true}
+	done := make(chan struct{})
+	go func() {
+		mgr.Add(context.Background(), inst, session, "msg-late", "")
+		close(done)
+	}()
+
+	<-started
+	mgr.Clear(context.Background(), session)
+	close(release)
+	<-done
+
+	if len(api.deleteCalled) != 1 {
+		t.Fatalf("expected late reaction to be deleted once, got %d", len(api.deleteCalled))
+	}
+	if api.deleteCalled[0].messageID != "msg-late" || api.deleteCalled[0].reactionID != "reaction-late" {
+		t.Fatalf("unexpected delete params: %+v", api.deleteCalled[0])
+	}
+	key := uuidString(session)
+	mgr.mu.RLock()
+	states := mgr.states[key]
+	mgr.mu.RUnlock()
+	if len(states) != 0 {
+		t.Fatalf("expected no retained states after late add cleanup, got %+v", states)
 	}
 }
 
