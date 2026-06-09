@@ -219,7 +219,7 @@ func isMergeableLarkInboxNotification(item inboxNotificationItem) bool {
 		return false
 	}
 	switch item.Type {
-	case "quick_create_done", "status_changed", "new_comment":
+	case "quick_create_done", "status_changed":
 		return true
 	default:
 		return false
@@ -415,7 +415,7 @@ func (n *InboxNotifier) renderInboxNotificationCard(ctx context.Context, workspa
 }
 
 func mergeableLarkInboxNotificationTypes() []string {
-	return []string{"quick_create_done", "status_changed", "new_comment"}
+	return []string{"quick_create_done", "status_changed"}
 }
 
 func inboxNotificationItemFromInboxItem(row db.InboxItem) inboxNotificationItem {
