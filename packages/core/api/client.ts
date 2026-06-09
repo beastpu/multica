@@ -50,6 +50,7 @@ import type {
   DashboardUsageByAgent,
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
+  AgentFixRecord,
   RuntimeUpdate,
   RuntimeModelListRequest,
   RuntimeLocalSkillListRequest,
@@ -148,6 +149,7 @@ import {
   DashboardAgentRunTimeListSchema,
   DashboardRunTimeDailyListSchema,
   DashboardUsageByAgentListSchema,
+  AgentFixRecordListSchema,
   DashboardUsageDailyListSchema,
   EMPTY_AGENT_TEMPLATE_DETAIL,
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
@@ -1260,6 +1262,23 @@ export class ApiClient {
       DashboardRunTimeDailyListSchema,
       [],
       { endpoint: "GET /api/dashboard/runtime/daily" },
+    );
+  }
+
+  // Per-agent "fix record" feed for the Usage page's Operations tab. `days`
+  // bounds the trailing window (default applied server-side). Workspace is
+  // routed via the X-Workspace-ID header like every other workspace-scoped GET.
+  async getOperationsAgentFixes(
+    params: { days?: number } = {},
+  ): Promise<AgentFixRecord[]> {
+    const search = new URLSearchParams();
+    if (params.days) search.set("days", String(params.days));
+    const raw = await this.fetch<unknown>(`/api/operations/agent-fixes?${search}`);
+    return parseWithFallback<AgentFixRecord[]>(
+      raw,
+      AgentFixRecordListSchema,
+      [],
+      { endpoint: "GET /api/operations/agent-fixes" },
     );
   }
 

@@ -27,6 +27,8 @@ export const dashboardKeys = {
     projectId: string | null,
     tz: string,
   ) => [...dashboardKeys.all(wsId), "runtime-daily", days, projectId, tz] as const,
+  operationsFixes: (wsId: string, days: number) =>
+    [...dashboardKeys.all(wsId), "operations-fixes", days] as const,
 };
 
 // 5-min rollup cadence on the server, 60s background refetch on the client.
@@ -107,6 +109,18 @@ export function dashboardRunTimeDailyOptions(
         project_id: projectId ?? undefined,
         tz,
       }),
+    enabled: !!wsId,
+    staleTime: STALE_TIME,
+  });
+}
+
+// Per-agent "fix record" feed for the Usage page's Operations tab. No tz /
+// project axis — it's a flat list filtered client-side by agent. `days` keys
+// the cache so changing the window repoints it, same as the rollup queries.
+export function operationsFixesOptions(wsId: string, days: number) {
+  return queryOptions({
+    queryKey: dashboardKeys.operationsFixes(wsId, days),
+    queryFn: () => api.getOperationsAgentFixes({ days }),
     enabled: !!wsId,
     staleTime: STALE_TIME,
   });

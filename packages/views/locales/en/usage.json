@@ -54,5 +54,26 @@
   },
   "duration": {
     "less_than_minute": "<1m"
+  },
+  "operations": {
+    "title": "Operations",
+    "subtitle": "Issues your agents have worked on — the latest run, the issue's status, and its most recent comment.",
+    "filter": {
+      "all_agents": "All agents",
+      "status_all": "All statuses"
+    },
+    "table": {
+      "issue": "Issue",
+      "agent": "Agent",
+      "time": "Date",
+      "status": "Status",
+      "reason": "Reason / description"
+    },
+    "no_reason": "—",
+    "caption": "{{count}} records",
+    "empty": {
+      "title": "No fixes yet",
+      "body": "Once your agents start working issues, each one shows up here with its status and latest comment."
+    }
   }
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AgentFixRecordListSchema,
   DashboardAgentRunTimeListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
@@ -268,5 +269,60 @@ describe("dashboard + runtime usage schema drift", () => {
       { date: "2026-05-19", region: "us-east" },
     ]);
     expect((parsed[0] as Record<string, unknown>).region).toBe("us-east");
+  });
+});
+
+describe("AgentFixRecordListSchema drift (Operations tab)", () => {
+  it("fills missing fields with defaults so a sparse row still renders", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      { task_id: "t1", agent_id: "a1", issue_title: "Fix it", issue_status: "done" },
+    ]);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.agent_name).toBe("");
+    expect(parsed[0]?.issue_identifier).toBe("");
+    expect(parsed[0]?.last_comment).toBe("");
+    expect(parsed[0]?.last_comment_author_type).toBe("");
+    // Nullable timestamps default to null, never undefined, so downstream
+    // `=== null` checks behave.
+    expect(parsed[0]?.started_at).toBeNull();
+    expect(parsed[0]?.completed_at).toBeNull();
+  });
+
+  it("accepts an unknown issue_status string (enum drift downgrades, not crashes)", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      { task_id: "t1", issue_status: "triaged" },
+    ]);
+    expect(parsed[0]?.issue_status).toBe("triaged");
+  });
+
+  it("degrades to the fallback via parseWithFallback on a non-array body", () => {
+    expect(AgentFixRecordListSchema.safeParse(null).success).toBe(false);
+    const parsed = parseWithFallback(
+      { rows: [] },
+      AgentFixRecordListSchema,
+      [],
+      { endpoint: "GET /api/operations/agent-fixes (test)" },
+    );
+    expect(parsed).toEqual([]);
+  });
+
+  it("keeps the last_comment text and author type", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      { task_id: "t1", last_comment: "looks good", last_comment_author_type: "member" },
+    ]);
+    expect(parsed[0]?.last_comment).toBe("looks good");
+    expect(parsed[0]?.last_comment_author_type).toBe("member");
+  });
+
+  it("returns the fallback (never throws) when a field has the wrong type", () => {
+    // issue_status arriving as a number is a hard schema violation; the UI
+    // path must degrade to the fallback rather than throw a white-screen.
+    const parsed = parseWithFallback(
+      [{ task_id: "t1", issue_status: 123 }],
+      AgentFixRecordListSchema,
+      [],
+      { endpoint: "GET /api/operations/agent-fixes (test)" },
+    );
+    expect(parsed).toEqual([]);
   });
 });
