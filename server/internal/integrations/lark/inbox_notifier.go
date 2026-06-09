@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -22,7 +23,11 @@ type InboxNotifierQueries interface {
 	GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error)
 	GetWorkspace(ctx context.Context, id pgtype.UUID) (db.Workspace, error)
 	ClaimLarkInboxNotificationDelivery(ctx context.Context, arg db.ClaimLarkInboxNotificationDeliveryParams) (bool, error)
+	GetLarkInboxIssueCard(ctx context.Context, arg db.GetLarkInboxIssueCardParams) (db.LarkInboxIssueCard, error)
 	ListActiveLarkUserBindingsByMember(ctx context.Context, arg db.ListActiveLarkUserBindingsByMemberParams) ([]db.ListActiveLarkUserBindingsByMemberRow, error)
+	ListLarkInboxIssueCardItems(ctx context.Context, arg db.ListLarkInboxIssueCardItemsParams) ([]db.InboxItem, error)
+	TouchLarkInboxIssueCard(ctx context.Context, id pgtype.UUID) error
+	UpsertLarkInboxIssueCard(ctx context.Context, arg db.UpsertLarkInboxIssueCardParams) (db.LarkInboxIssueCard, error)
 }
 
 type InboxNotifier struct {
@@ -121,6 +126,9 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 	if err != nil {
 		return err
 	}
+	if isMergeableLarkInboxNotification(item) {
+		return n.sendOrPatchInboxIssueCard(ctx, creds, row, workspaceID, recipientID, item)
+	}
 	cardJSON, err := n.renderInboxNotificationCard(ctx, workspaceID, item)
 	if err != nil {
 		return fmt.Errorf("render inbox card: %w", err)
@@ -206,6 +214,18 @@ func selectInboxNotificationBinding(ctx context.Context, queries InboxNotifierQu
 	return db.ListActiveLarkUserBindingsByMemberRow{}, false
 }
 
+func isMergeableLarkInboxNotification(item inboxNotificationItem) bool {
+	if item.IssueID == nil || *item.IssueID == "" {
+		return false
+	}
+	switch item.Type {
+	case "quick_create_done", "status_changed", "new_comment":
+		return true
+	default:
+		return false
+	}
+}
+
 func selectInboxNotificationBindingByAgent(rows []db.ListActiveLarkUserBindingsByMemberRow, agentID pgtype.UUID) (db.ListActiveLarkUserBindingsByMemberRow, bool) {
 	for _, row := range rows {
 		if row.LarkInstallation.AgentID == agentID {
@@ -213,6 +233,135 @@ func selectInboxNotificationBindingByAgent(rows []db.ListActiveLarkUserBindingsB
 		}
 	}
 	return db.ListActiveLarkUserBindingsByMemberRow{}, false
+}
+
+func (n *InboxNotifier) sendOrPatchInboxIssueCard(
+	ctx context.Context,
+	creds InstallationCredentials,
+	row db.ListActiveLarkUserBindingsByMemberRow,
+	workspaceID pgtype.UUID,
+	recipientID pgtype.UUID,
+	item inboxNotificationItem,
+) error {
+	issueID, err := scanUUID(*item.IssueID)
+	if err != nil {
+		return fmt.Errorf("parse issue_id: %w", err)
+	}
+	cardJSON, err := n.renderInboxIssueCard(ctx, workspaceID, recipientID, issueID, item)
+	if err != nil {
+		return fmt.Errorf("render inbox issue card: %w", err)
+	}
+	card, err := n.queries.GetLarkInboxIssueCard(ctx, db.GetLarkInboxIssueCardParams{
+		WorkspaceID:    workspaceID,
+		RecipientID:    recipientID,
+		IssueID:        issueID,
+		InstallationID: row.LarkInstallation.ID,
+		LarkOpenID:     row.LarkUserBinding.LarkOpenID,
+	})
+	if err == nil && card.LarkCardMessageID != "" {
+		if err := n.client.PatchInteractiveCard(ctx, PatchCardParams{
+			InstallationID:    creds,
+			LarkCardMessageID: card.LarkCardMessageID,
+			CardJSON:          cardJSON,
+		}); err != nil {
+			return fmt.Errorf("patch inbox issue card: %w", err)
+		}
+		if err := n.queries.TouchLarkInboxIssueCard(ctx, card.ID); err != nil {
+			return fmt.Errorf("touch inbox issue card: %w", err)
+		}
+		return nil
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("lookup inbox issue card: %w", err)
+	}
+	messageID, err := n.client.SendDirectInteractiveCard(ctx, SendDirectCardParams{
+		InstallationID: creds,
+		OpenID:         OpenID(row.LarkUserBinding.LarkOpenID),
+		CardJSON:       cardJSON,
+	})
+	if err != nil {
+		return fmt.Errorf("send inbox issue card: %w", err)
+	}
+	if _, err := n.queries.UpsertLarkInboxIssueCard(ctx, db.UpsertLarkInboxIssueCardParams{
+		WorkspaceID:       workspaceID,
+		RecipientID:       recipientID,
+		IssueID:           issueID,
+		InstallationID:    row.LarkInstallation.ID,
+		LarkOpenID:        row.LarkUserBinding.LarkOpenID,
+		LarkCardMessageID: messageID,
+	}); err != nil {
+		return fmt.Errorf("record inbox issue card: %w", err)
+	}
+	return nil
+}
+
+func (n *InboxNotifier) renderInboxIssueCard(ctx context.Context, workspaceID, recipientID, issueID pgtype.UUID, current inboxNotificationItem) (string, error) {
+	rows, err := n.queries.ListLarkInboxIssueCardItems(ctx, db.ListLarkInboxIssueCardItemsParams{
+		WorkspaceID: workspaceID,
+		RecipientID: recipientID,
+		IssueID:     issueID,
+		Types:       mergeableLarkInboxNotificationTypes(),
+	})
+	if err != nil {
+		return "", err
+	}
+	items := make([]inboxNotificationItem, 0, len(rows)+1)
+	seen := map[string]bool{}
+	for _, row := range rows {
+		item := inboxNotificationItemFromInboxItem(row)
+		items = append(items, item)
+		seen[item.ID] = true
+	}
+	if !seen[current.ID] {
+		items = append(items, current)
+	}
+
+	issue, workspace := n.inboxNotificationContext(ctx, workspaceID, current)
+	identifier := inboxIssueIdentifier(issue, workspace)
+	title := inboxNotificationHeaderTitle(identifier, current.Title)
+	card := map[string]any{
+		"config": map[string]any{
+			"wide_screen_mode": true,
+			"update_multi":     true,
+		},
+		"header": map[string]any{
+			"template": inboxIssueCardTemplate(items),
+			"title": map[string]any{
+				"tag":     "plain_text",
+				"content": title,
+			},
+		},
+		"elements": []any{
+			map[string]any{
+				"tag": "div",
+				"text": map[string]any{
+					"tag":     "lark_md",
+					"content": inboxIssueCardMarkdown(items),
+				},
+			},
+		},
+	}
+	if issueURL := n.issueURL(workspace, current); issueURL != "" {
+		card["elements"] = append(card["elements"].([]any),
+			map[string]any{"tag": "hr"},
+			map[string]any{
+				"tag": "action",
+				"actions": []any{
+					map[string]any{
+						"tag":  "button",
+						"text": map[string]any{"tag": "plain_text", "content": "在 Multica 中查看"},
+						"url":  issueURL,
+						"type": "primary",
+					},
+				},
+			},
+		)
+	}
+	raw, err := json.Marshal(card)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 
 func (n *InboxNotifier) renderInboxNotificationCard(ctx context.Context, workspaceID pgtype.UUID, item inboxNotificationItem) (string, error) {
@@ -263,6 +412,102 @@ func (n *InboxNotifier) renderInboxNotificationCard(ctx context.Context, workspa
 		return "", err
 	}
 	return string(raw), nil
+}
+
+func mergeableLarkInboxNotificationTypes() []string {
+	return []string{"quick_create_done", "status_changed", "new_comment"}
+}
+
+func inboxNotificationItemFromInboxItem(row db.InboxItem) inboxNotificationItem {
+	item := inboxNotificationItem{
+		ID:            uuidString(row.ID),
+		WorkspaceID:   uuidString(row.WorkspaceID),
+		RecipientType: row.RecipientType,
+		RecipientID:   uuidString(row.RecipientID),
+		Type:          row.Type,
+		Severity:      row.Severity,
+		Title:         row.Title,
+		Details:       json.RawMessage(row.Details),
+	}
+	if row.IssueID.Valid {
+		issueID := uuidString(row.IssueID)
+		item.IssueID = &issueID
+	}
+	if row.Body.Valid {
+		body := row.Body.String
+		item.Body = &body
+	}
+	if row.ActorType.Valid {
+		actorType := row.ActorType.String
+		item.ActorType = &actorType
+	}
+	if row.ActorID.Valid {
+		actorID := uuidString(row.ActorID)
+		item.ActorID = &actorID
+	}
+	return item
+}
+
+func inboxIssueCardMarkdown(items []inboxNotificationItem) string {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		md := inboxIssueCardItemMarkdown(item)
+		if md != "" {
+			parts = append(parts, md)
+		}
+	}
+	if len(parts) == 0 {
+		return "Issue 有新动态"
+	}
+	return strings.Join(parts, "\n\n---\n\n")
+}
+
+func inboxIssueCardItemMarkdown(item inboxNotificationItem) string {
+	body := ""
+	if item.Body != nil {
+		body = strings.TrimSpace(*item.Body)
+	}
+	switch item.Type {
+	case "quick_create_done":
+		return "**✅ Issue 已创建**"
+	case "status_changed":
+		from, to := inboxStatusChange(item)
+		if from != "" || to != "" {
+			return fmt.Sprintf("**🔄 状态已变更**\n\n`%s` → `%s`", statusLabelForInbox(from), statusLabelForInbox(to))
+		}
+		return "**🔄 状态已变更**"
+	case "new_comment":
+		if body == "" {
+			return fmt.Sprintf("**💬 %s 评论**", inboxActorLabel(item))
+		}
+		return fmt.Sprintf("**💬 %s 评论**\n\n%s", inboxActorLabel(item), truncateRunes(body, 700))
+	default:
+		if body != "" {
+			return truncateRunes(body, 700)
+		}
+		return strings.TrimSpace(item.Title)
+	}
+}
+
+func inboxIssueCardTemplate(items []inboxNotificationItem) string {
+	template := "blue"
+	for _, item := range items {
+		switch inboxNotificationTemplate(item) {
+		case "red":
+			return "red"
+		case "yellow":
+			template = "yellow"
+		case "green":
+			if template == "blue" {
+				template = "green"
+			}
+		case "wathet":
+			if template == "blue" {
+				template = "wathet"
+			}
+		}
+	}
+	return template
 }
 
 func (n *InboxNotifier) inboxNotificationContext(ctx context.Context, workspaceID pgtype.UUID, item inboxNotificationItem) (*db.Issue, *db.Workspace) {

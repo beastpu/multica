@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -22,6 +23,13 @@ type fakeInboxNotifierQueries struct {
 	claims       map[string]bool
 	claimCalls   int
 	claimArg     db.ClaimLarkInboxNotificationDeliveryParams
+	issueCard    db.LarkInboxIssueCard
+	issueCardErr error
+	issueCardArg db.GetLarkInboxIssueCardParams
+	cardItems    []db.InboxItem
+	cardItemsArg db.ListLarkInboxIssueCardItemsParams
+	touchCardID  pgtype.UUID
+	upsertArg    db.UpsertLarkInboxIssueCardParams
 }
 
 func (f *fakeInboxNotifierQueries) GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error) {
@@ -60,6 +68,37 @@ func (f *fakeInboxNotifierQueries) ClaimLarkInboxNotificationDelivery(ctx contex
 	}
 	f.claims[key] = true
 	return true, nil
+}
+
+func (f *fakeInboxNotifierQueries) GetLarkInboxIssueCard(ctx context.Context, arg db.GetLarkInboxIssueCardParams) (db.LarkInboxIssueCard, error) {
+	f.issueCardArg = arg
+	if f.issueCardErr != nil {
+		return db.LarkInboxIssueCard{}, f.issueCardErr
+	}
+	return f.issueCard, nil
+}
+
+func (f *fakeInboxNotifierQueries) ListLarkInboxIssueCardItems(ctx context.Context, arg db.ListLarkInboxIssueCardItemsParams) ([]db.InboxItem, error) {
+	f.cardItemsArg = arg
+	return f.cardItems, nil
+}
+
+func (f *fakeInboxNotifierQueries) TouchLarkInboxIssueCard(ctx context.Context, id pgtype.UUID) error {
+	f.touchCardID = id
+	return nil
+}
+
+func (f *fakeInboxNotifierQueries) UpsertLarkInboxIssueCard(ctx context.Context, arg db.UpsertLarkInboxIssueCardParams) (db.LarkInboxIssueCard, error) {
+	f.upsertArg = arg
+	return db.LarkInboxIssueCard{
+		ID:                mustUUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		WorkspaceID:       arg.WorkspaceID,
+		RecipientID:       arg.RecipientID,
+		IssueID:           arg.IssueID,
+		InstallationID:    arg.InstallationID,
+		LarkOpenID:        arg.LarkOpenID,
+		LarkCardMessageID: arg.LarkCardMessageID,
+	}, nil
 }
 
 func TestInboxNotifierSendsDMViaActorAgentBot(t *testing.T) {
@@ -188,10 +227,11 @@ func TestInboxNotifierFallsBackToAssigneeAgentBot(t *testing.T) {
 			"workspace_id":   uuidString(workspaceID),
 			"recipient_type": "member",
 			"recipient_id":   uuidString(userID),
-			"type":           "status_changed",
+			"type":           "new_comment",
 			"severity":       "info",
 			"issue_id":       uuidString(issueID),
-			"title":          "Synced status changed",
+			"title":          "Issue updated",
+			"body":           "Agent finished the work",
 			"actor_type":     "system",
 		},
 	})
@@ -212,6 +252,150 @@ func TestInboxNotifierFallsBackToAssigneeAgentBot(t *testing.T) {
 	}
 	if got.InstallationID.AppID != "cli_assignee" {
 		t.Fatalf("AppID = %q, want cli_assignee", got.InstallationID.AppID)
+	}
+}
+
+func TestInboxNotifierSendsMergedIssueCardForFirstLifecycleItem(t *testing.T) {
+	workspaceID := mustUUID("11111111-1111-1111-1111-111111111111")
+	userID := mustUUID("22222222-2222-2222-2222-222222222222")
+	actorAgentID := mustUUID("44444444-4444-4444-4444-444444444444")
+	issueID := mustUUID("55555555-5555-5555-5555-555555555555")
+	q := &fakeInboxNotifierQueries{
+		rows: []db.ListActiveLarkUserBindingsByMemberRow{
+			inboxBindingRow(workspaceID, userID, actorAgentID, "cli_actor", "ou_actor"),
+		},
+		issue: db.Issue{ID: issueID, Number: 113, Title: "查询今天上海天气"},
+		workspace: db.Workspace{
+			ID:          workspaceID,
+			Slug:        "all",
+			IssuePrefix: "All",
+		},
+		issueCardErr: pgx.ErrNoRows,
+	}
+	api := &stubAPIClientWithRecorder{configured: true}
+	notifier := NewInboxNotifier(q, stubCredentialsResolver{secret: "secret"}, api, InboxNotifierConfig{
+		PublicURL: "https://multica.lilithgames.com",
+	})
+
+	err := notifier.notify(context.Background(), map[string]any{
+		"item": map[string]any{
+			"id":             "66666666-6666-6666-6666-666666666666",
+			"workspace_id":   uuidString(workspaceID),
+			"recipient_type": "member",
+			"recipient_id":   uuidString(userID),
+			"type":           "quick_create_done",
+			"severity":       "info",
+			"issue_id":       uuidString(issueID),
+			"title":          "查询今天上海天气",
+			"actor_type":     "agent",
+			"actor_id":       uuidString(actorAgentID),
+		},
+	})
+	if err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+	if q.cardItemsArg.WorkspaceID != workspaceID || q.cardItemsArg.RecipientID != userID || q.cardItemsArg.IssueID != issueID {
+		t.Fatalf("unexpected card items arg: %+v", q.cardItemsArg)
+	}
+	if got := strings.Join(q.cardItemsArg.Types, ","); got != "quick_create_done,status_changed,new_comment" {
+		t.Fatalf("card item types = %q", got)
+	}
+	if q.upsertArg.LarkCardMessageID != "lark-direct-card-msg-id" || q.upsertArg.IssueID != issueID || q.upsertArg.LarkOpenID != "ou_actor" {
+		t.Fatalf("unexpected issue card upsert arg: %+v", q.upsertArg)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.directCardsOut) != 1 {
+		t.Fatalf("expected one direct card send, got %d", len(api.directCardsOut))
+	}
+	card := api.directCardsOut[0].CardJSON
+	for _, want := range []string{`"update_multi":true`, "[All-113] 查询今天上海天气", "✅ Issue 已创建", "在 Multica 中查看"} {
+		if !strings.Contains(card, want) {
+			t.Fatalf("merged card missing %q: %s", want, card)
+		}
+	}
+}
+
+func TestInboxNotifierPatchesExistingMergedIssueCard(t *testing.T) {
+	workspaceID := mustUUID("11111111-1111-1111-1111-111111111111")
+	userID := mustUUID("22222222-2222-2222-2222-222222222222")
+	actorAgentID := mustUUID("44444444-4444-4444-4444-444444444444")
+	issueID := mustUUID("55555555-5555-5555-5555-555555555555")
+	cardID := mustUUID("77777777-7777-7777-7777-777777777777")
+	q := &fakeInboxNotifierQueries{
+		rows: []db.ListActiveLarkUserBindingsByMemberRow{
+			inboxBindingRow(workspaceID, userID, actorAgentID, "cli_actor", "ou_actor"),
+		},
+		issue: db.Issue{ID: issueID, Number: 113},
+		workspace: db.Workspace{
+			ID:          workspaceID,
+			Slug:        "all",
+			IssuePrefix: "All",
+		},
+		issueCard: db.LarkInboxIssueCard{
+			ID:                cardID,
+			WorkspaceID:       workspaceID,
+			RecipientID:       userID,
+			IssueID:           issueID,
+			InstallationID:    mustUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+			LarkOpenID:        "ou_actor",
+			LarkCardMessageID: "om_existing_card",
+		},
+		cardItems: []db.InboxItem{
+			{
+				ID:            mustUUID("66666666-6666-6666-6666-666666666666"),
+				WorkspaceID:   workspaceID,
+				RecipientType: "member",
+				RecipientID:   userID,
+				Type:          "quick_create_done",
+				Severity:      "info",
+				IssueID:       issueID,
+				Title:         "查询今天上海天气",
+			},
+		},
+	}
+	api := &stubAPIClientWithRecorder{configured: true}
+	notifier := NewInboxNotifier(q, stubCredentialsResolver{secret: "secret"}, api, InboxNotifierConfig{
+		PublicURL: "https://multica.lilithgames.com",
+	})
+
+	err := notifier.notify(context.Background(), map[string]any{
+		"item": map[string]any{
+			"id":             "88888888-8888-8888-8888-888888888888",
+			"workspace_id":   uuidString(workspaceID),
+			"recipient_type": "member",
+			"recipient_id":   uuidString(userID),
+			"type":           "new_comment",
+			"severity":       "info",
+			"issue_id":       uuidString(issueID),
+			"title":          "查询今天上海天气",
+			"body":           "今天上海天气：白天阵雨转多云。",
+			"actor_type":     "agent",
+			"actor_id":       uuidString(actorAgentID),
+		},
+	})
+	if err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+	if q.touchCardID != cardID {
+		t.Fatalf("TouchLarkInboxIssueCard id = %v, want %v", q.touchCardID, cardID)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.directCardsOut) != 0 {
+		t.Fatalf("existing card should be patched, not re-sent; got sends=%d", len(api.directCardsOut))
+	}
+	if len(api.patches) != 1 {
+		t.Fatalf("expected one card patch, got %d", len(api.patches))
+	}
+	patch := api.patches[0]
+	if patch.LarkCardMessageID != "om_existing_card" {
+		t.Fatalf("patch message id = %q", patch.LarkCardMessageID)
+	}
+	for _, want := range []string{"✅ Issue 已创建", "💬 Agent 评论", "今天上海天气：白天阵雨转多云。"} {
+		if !strings.Contains(patch.CardJSON, want) {
+			t.Fatalf("patched card missing %q: %s", want, patch.CardJSON)
+		}
 	}
 }
 
