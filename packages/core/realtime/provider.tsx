@@ -26,6 +26,10 @@ type EventHandler = (payload: unknown, actorId?: string, actorType?: string) => 
 interface WSContextValue {
   subscribe: (event: WSEventType, handler: EventHandler) => () => void;
   onReconnect: (callback: () => void) => () => void;
+  /** Probe the WS connection now (see WSClient.ensureAlive). Platform layers
+   *  call this on wake signals the shared provider can't observe, e.g. the
+   *  desktop app's power-resume IPC. */
+  ensureAlive: () => void;
 }
 
 const WSContext = createContext<WSContextValue | null>(null);
@@ -115,6 +119,29 @@ export function WSProvider({
     identityOS,
   ]);
 
+  // Wake signals: a socket that died silently (laptop sleep, network switch)
+  // still reports OPEN and never fires onclose. Probe it whenever the page
+  // becomes visible again or the browser regains connectivity — the two
+  // moments a zombie connection is most likely and a fresh UI matters most.
+  // A live connection answers the probe and nothing happens; a dead one is
+  // torn down and redialed, which re-runs the reconnect invalidation in
+  // useRealtimeSync.
+  useEffect(() => {
+    if (!wsClient || typeof window === "undefined") return;
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") wsClient.ensureAlive();
+    };
+    const onOnline = () => wsClient.ensureAlive();
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("online", onOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [wsClient]);
+
   const stores: RealtimeSyncStores = { authStore };
 
   // Centralized WS -> store sync (uses state so it re-subscribes when WS changes)
@@ -136,8 +163,14 @@ export function WSProvider({
     [wsClient],
   );
 
+  const ensureAlive = useCallback(() => {
+    wsClient?.ensureAlive();
+  }, [wsClient]);
+
   return (
-    <WSContext.Provider value={{ subscribe, onReconnect: onReconnectCb }}>
+    <WSContext.Provider
+      value={{ subscribe, onReconnect: onReconnectCb, ensureAlive }}
+    >
       {children}
     </WSContext.Provider>
   );

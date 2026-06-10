@@ -18,6 +18,7 @@ import { UpdateNotification } from "./components/update-notification";
 import { useTabStore } from "./stores/tab-store";
 import { useWindowOverlayStore } from "./stores/window-overlay-store";
 import { useDaemonIPCBridge } from "./platform/daemon-ipc-bridge";
+import { usePowerResumeWSProbe } from "./platform/power-resume";
 import { createDesktopLocaleAdapter } from "./platform/i18n-adapter";
 import { RESOURCES } from "@multica/views/locales";
 
@@ -131,6 +132,10 @@ function AppContent() {
     ? workspaces.find((w) => w.slug === activeWorkspaceSlug)?.id
     : undefined;
   useDaemonIPCBridge(activeWsId);
+
+  // OS resume / unlock → probe WS liveness so a connection that died during
+  // sleep is replaced immediately instead of serving stale caches forever.
+  usePowerResumeWSProbe();
 
   // Pre-workspace overlay routing for desktop. Mirrors the web layout
   // hard gate via overlays (desktop has no URL bar, so we open the
