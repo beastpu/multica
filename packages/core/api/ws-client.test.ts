@@ -1,34 +1,56 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WSClient } from "./ws-client";
 
-// Capture URL passed to WebSocket so we can assert the connect-time
-// query string.  We don't simulate the full WS lifecycle here — only the
-// upgrade URL construction, which is what carries client identity.
+// Minimal WebSocket double: records the upgrade URL, outbound frames, and
+// every constructed instance so tests can assert both connect-time query
+// strings and reconnect behavior (a forced reconnect creates a new instance).
 class FakeWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
   static lastUrl: string | null = null;
   static lastInstance: FakeWebSocket | null = null;
-  // Fields read by WSClient.connect()/disconnect(), all no-op here.
+  static instances: FakeWebSocket[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((ev: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
   readyState = 0;
+  sent: string[] = [];
   constructor(url: string) {
     FakeWebSocket.lastUrl = url;
     FakeWebSocket.lastInstance = this;
+    FakeWebSocket.instances.push(this);
   }
-  close() {}
-  send() {}
+  close() {
+    this.readyState = FakeWebSocket.CLOSED;
+  }
+  send(data: string) {
+    this.sent.push(data);
+  }
+}
+
+// Drives a freshly connect()ed client through token auth so the heartbeat
+// starts: onopen sends the auth frame, auth_ack marks it authenticated.
+function openAndAuthenticate(): FakeWebSocket {
+  const sock = FakeWebSocket.lastInstance!;
+  sock.readyState = FakeWebSocket.OPEN;
+  sock.onopen?.();
+  sock.onmessage?.({ data: '{"type":"auth_ack"}' });
+  return sock;
 }
 
 describe("WSClient", () => {
   beforeEach(() => {
     FakeWebSocket.lastUrl = null;
     FakeWebSocket.lastInstance = null;
+    FakeWebSocket.instances = [];
     vi.stubGlobal("WebSocket", FakeWebSocket as unknown as typeof WebSocket);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -151,5 +173,144 @@ describe("WSClient", () => {
       "user-123",
       "user",
     );
+  });
+
+  describe("heartbeat", () => {
+    it("sends an application-level ping on the heartbeat interval after auth", () => {
+      vi.useFakeTimers();
+      const ws = new WSClient("ws://example.test/ws");
+      ws.setAuth("tok", "acme");
+      ws.connect();
+      const sock = openAndAuthenticate();
+
+      expect(sock.sent).not.toContain('{"type":"ping"}');
+      vi.advanceTimersByTime(30_000);
+      expect(sock.sent).toContain('{"type":"ping"}');
+    });
+
+    it("force-reconnects when a heartbeat ping gets no reply", () => {
+      vi.useFakeTimers();
+      const ws = new WSClient("ws://example.test/ws");
+      ws.setAuth("tok", "acme");
+      ws.connect();
+      openAndAuthenticate();
+      expect(FakeWebSocket.instances).toHaveLength(1);
+
+      vi.advanceTimersByTime(30_000); // ping sent, reply timer armed
+      vi.advanceTimersByTime(10_000); // no traffic -> zombie detected
+
+      expect(FakeWebSocket.instances).toHaveLength(2);
+    });
+
+    it("keeps the connection when any frame arrives before the timeout", () => {
+      vi.useFakeTimers();
+      const ws = new WSClient("ws://example.test/ws");
+      ws.setAuth("tok", "acme");
+      ws.connect();
+      const sock = openAndAuthenticate();
+
+      vi.advanceTimersByTime(30_000);
+      sock.onmessage?.({ data: '{"type":"pong"}' });
+      vi.advanceTimersByTime(10_000);
+
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    it("re-runs reconnect callbacks after a forced reconnect re-authenticates", () => {
+      vi.useFakeTimers();
+      const ws = new WSClient("ws://example.test/ws");
+      ws.setAuth("tok", "acme");
+      ws.connect();
+      openAndAuthenticate();
+      const onReconnect = vi.fn();
+      ws.onReconnect(onReconnect);
+
+      vi.advanceTimersByTime(40_000); // zombie detected, new socket dialed
+      openAndAuthenticate(); // new instance authenticates
+
+      expect(onReconnect).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not dispatch pong frames to handlers", () => {
+      const ws = new WSClient("ws://example.test/ws");
+      ws.setAuth("tok", "acme");
+      ws.connect();
+      const sock = openAndAuthenticate();
+      const anyHandler = vi.fn();
+      ws.onAny(anyHandler);
+
+      sock.onmessage?.({ data: '{"type":"pong"}' });
+
+      expect(anyHandler).not.toHaveBeenCalled();
+    });
+
+    it("stops the heartbeat on disconnect", () => {
+      vi.useFakeTimers();
+      const ws = new WSClient("ws://example.test/ws");
+      ws.setAuth("tok", "acme");
+      ws.connect();
+      openAndAuthenticate();
+      ws.disconnect();
+
+      vi.advanceTimersByTime(120_000);
+
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+  });
+
+  describe("ensureAlive", () => {
+    it("probes an OPEN socket immediately and reconnects when nothing answers", () => {
+      vi.useFakeTimers();
+      const ws = new WSClient("ws://example.test/ws");
+      ws.setAuth("tok", "acme");
+      ws.connect();
+      const sock = openAndAuthenticate();
+
+      ws.ensureAlive();
+      expect(sock.sent).toContain('{"type":"ping"}');
+
+      vi.advanceTimersByTime(10_000); // no reply -> dead socket
+      expect(FakeWebSocket.instances).toHaveLength(2);
+    });
+
+    it("does nothing when the probe is answered", () => {
+      vi.useFakeTimers();
+      const ws = new WSClient("ws://example.test/ws");
+      ws.setAuth("tok", "acme");
+      ws.connect();
+      const sock = openAndAuthenticate();
+
+      ws.ensureAlive();
+      sock.onmessage?.({ data: '{"type":"pong"}' });
+      vi.advanceTimersByTime(10_000);
+
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    it("reconnects immediately when the socket is already closed", () => {
+      const ws = new WSClient("ws://example.test/ws");
+      ws.setAuth("tok", "acme");
+      ws.connect();
+      const sock = openAndAuthenticate();
+      sock.readyState = FakeWebSocket.CLOSED;
+
+      ws.ensureAlive();
+
+      expect(FakeWebSocket.instances).toHaveLength(2);
+    });
+
+    it("fires a pending reconnect timer immediately instead of waiting", () => {
+      vi.useFakeTimers();
+      const ws = new WSClient("ws://example.test/ws");
+      ws.setAuth("tok", "acme");
+      ws.connect();
+      const sock = openAndAuthenticate();
+      sock.onclose?.(); // schedules reconnect in 3s
+      expect(FakeWebSocket.instances).toHaveLength(1);
+
+      ws.ensureAlive();
+
+      expect(FakeWebSocket.instances).toHaveLength(2);
+    });
   });
 });

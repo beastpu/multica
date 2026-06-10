@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, powerMonitor } from "electron";
 import { homedir } from "os";
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
@@ -466,6 +466,17 @@ if (!gotTheLock) {
     setupAutoUpdater(() => mainWindow);
     setupDaemonManager(() => mainWindow);
     setupLocalDirectory(() => mainWindow);
+
+    // OS resumed from sleep / session unlocked: the renderer's WebSocket is
+    // very likely a zombie at this point (dead TCP link that still reports
+    // OPEN and never fires onclose), so tell it to probe liveness now.
+    // "unlock-screen" is macOS/Windows-only; on Linux the listener simply
+    // never fires, and the resume + heartbeat paths still cover recovery.
+    const probeRendererWS = () => {
+      mainWindow?.webContents.send("power:resume");
+    };
+    powerMonitor.on("resume", probeRendererWS);
+    powerMonitor.on("unlock-screen", probeRendererWS);
 
     // macOS: deep link arrives via open-url event
     app.on("open-url", (_event, url) => {
