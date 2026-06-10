@@ -8,6 +8,26 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func TestAgentIssueSummaryConfigDefaultDisabled(t *testing.T) {
+	t.Setenv("AGENT_ISSUE_SUMMARY_ENABLED", "")
+	t.Setenv("AGENT_ISSUE_SUMMARY_TIMEZONE", "")
+	t.Setenv("AGENT_ISSUE_SUMMARY_HOUR", "")
+
+	cfg := envAgentIssueSummaryConfig()
+	if cfg.Enabled {
+		t.Fatal("agent issue summary should be disabled by default")
+	}
+}
+
+func TestAgentIssueSummaryConfigCanBeEnabledByEnv(t *testing.T) {
+	t.Setenv("AGENT_ISSUE_SUMMARY_ENABLED", "true")
+
+	cfg := envAgentIssueSummaryConfig()
+	if !cfg.Enabled {
+		t.Fatal("agent issue summary should be enabled when env is true")
+	}
+}
+
 func TestAgentIssueSummaryRunDate(t *testing.T) {
 	loc := time.FixedZone("CST", 8*60*60)
 
