@@ -29,7 +29,7 @@ type agentIssueSummaryConfig struct {
 
 func defaultAgentIssueSummaryConfig() agentIssueSummaryConfig {
 	return agentIssueSummaryConfig{
-		Enabled:  true,
+		Enabled:  false,
 		Timezone: "Asia/Shanghai",
 		Hour:     9,
 		Interval: time.Hour,
