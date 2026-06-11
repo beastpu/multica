@@ -17,6 +17,7 @@ import type {
   FeishuProjectBusinessLinesResponse,
   FeishuProjectFieldsResponse,
   FeishuProjectIntegration,
+  FeishuProjectWorkItemTypesResponse,
   FeishuProjectRoutesResponse,
   FeishuProjectStatusOptionsResponse,
   FeishuProjectSyncResponse,
@@ -268,6 +269,16 @@ export const ChildIssuesResponseSchema = z.object({
   issues: z.array(IssueSchema).default([]),
 }).loose();
 
+const FeishuProjectWorkItemTypeConfigSchema = z.object({
+  type_key: z.string().default(""),
+  api_name: z.string().default(""),
+  name: z.string().default(""),
+  identifier_prefix: z.string().optional(),
+  project_id: z.string().optional(),
+  status_mapping: z.record(z.string(), z.string()).default({}),
+  reverse_status_mapping: z.record(z.string(), z.string()).default({}),
+}).loose();
+
 export const FeishuProjectIntegrationSchema = z.object({
   id: z.string().optional(),
   workspace_id: z.string().optional(),
@@ -275,6 +286,8 @@ export const FeishuProjectIntegrationSchema = z.object({
   project_key: z.string().default(""),
   plugin_id: z.string().default(""),
   has_plugin_secret: z.boolean().default(false),
+  default_plugin_available: z.boolean().default(false),
+  default_plugin_id: z.string().optional(),
   actor_user_key: z.string().nullable().default(null),
   enabled: z.boolean().default(false),
   sync_story: z.boolean().default(false),
@@ -282,6 +295,7 @@ export const FeishuProjectIntegrationSchema = z.object({
   mql_filter: z.string().default(""),
   status_mapping: z.record(z.string(), z.string()).default({}),
   reverse_status_mapping: z.record(z.string(), z.string()).default({}),
+  work_item_types: z.array(FeishuProjectWorkItemTypeConfigSchema).default([]),
   assign_open_items_to_owner_agent: z.boolean().default(false),
   label_sync_rules: z.array(z.object({
     id: z.string().default(""),
@@ -308,9 +322,11 @@ export const EMPTY_FEISHU_PROJECT_INTEGRATION: FeishuProjectIntegration = {
   enabled: false,
   sync_story: false,
   sync_issue: true,
+  default_plugin_available: false,
   mql_filter: "",
   status_mapping: {},
   reverse_status_mapping: {},
+  work_item_types: [],
   assign_open_items_to_owner_agent: false,
   label_sync_rules: [],
   business_line_field_key: "",
@@ -373,6 +389,18 @@ export const FeishuProjectStatusOptionsResponseSchema = z.object({
 
 export const EMPTY_FEISHU_PROJECT_STATUS_OPTIONS_RESPONSE: FeishuProjectStatusOptionsResponse = {
   statuses: [],
+};
+
+export const FeishuProjectWorkItemTypesResponseSchema = z.object({
+  work_item_types: z.array(z.object({
+    type_key: z.string().default(""),
+    api_name: z.string().default(""),
+    name: z.string().default(""),
+  }).loose()).default([]),
+}).loose();
+
+export const EMPTY_FEISHU_PROJECT_WORK_ITEM_TYPES_RESPONSE: FeishuProjectWorkItemTypesResponse = {
+  work_item_types: [],
 };
 
 export const FeishuProjectFieldsResponseSchema = z.object({

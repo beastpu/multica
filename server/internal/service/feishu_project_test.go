@@ -65,11 +65,11 @@ func TestFeishuProjectIssueStatusOptionsUsesTemplateStateFlow(t *testing.T) {
 		HTTPClient: server.Client(),
 		BaseURL:    server.URL,
 	}
-	statuses, err := client.IssueStatusOptions(context.Background(), db.FeishuProjectIntegration{
+	statuses, err := client.WorkItemStatusOptions(context.Background(), db.FeishuProjectIntegration{
 		ProjectKey:   "project-key",
 		PluginID:     "plugin-id",
 		PluginSecret: "plugin-secret",
-	})
+	}, "issue")
 	if err != nil {
 		t.Fatalf("IssueStatusOptions: %v", err)
 	}
@@ -171,11 +171,11 @@ func TestFeishuProjectIssueStatusOptionsFallsBackToFieldMetadata(t *testing.T) {
 		HTTPClient: server.Client(),
 		BaseURL:    server.URL,
 	}
-	statuses, err := client.IssueStatusOptions(context.Background(), db.FeishuProjectIntegration{
+	statuses, err := client.WorkItemStatusOptions(context.Background(), db.FeishuProjectIntegration{
 		ProjectKey:   "project-key",
 		PluginID:     "plugin-id",
 		PluginSecret: "plugin-secret",
-	})
+	}, "issue")
 	if err != nil {
 		t.Fatalf("IssueStatusOptions: %v", err)
 	}
@@ -255,9 +255,10 @@ func TestFeishuProjectQueryWorkItemsBuildsBoundedFilterAndPaginatesByTotal(t *te
 		ProjectKey:   "project-key",
 		PluginID:     "plugin-id",
 		PluginSecret: "plugin-secret",
-		StatusMapping: []byte(`{
+		WorkItemTypes: feishuTestIssueTypes(`{
 			"OPEN": "todo",
-			"IN PROGRESS": "in_progress"
+			"IN PROGRESS": "in_progress",
+			"Iw0fE6Yfa": ""
 		}`),
 		LastSyncedAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 16, 4, 7, 12, 0, time.UTC), Valid: true},
 	}, "issue", false)
@@ -277,6 +278,7 @@ func TestFeishuProjectQueryWorkItemsBuildsBoundedFilterAndPaginatesByTotal(t *te
 	if got := first["work_item_type_keys"]; !jsonEqual(got, []any{"issue"}) {
 		t.Fatalf("work_item_type_keys = %#v", got)
 	}
+	// Iw0fE6Yfa maps to "" ("No mapping") → excluded from the query scope.
 	if got := first["work_item_status"]; !jsonEqual(got, []any{map[string]any{"state_key": "IN PROGRESS"}, map[string]any{"state_key": "OPEN"}}) {
 		t.Fatalf("work_item_status = %#v", got)
 	}
@@ -317,7 +319,7 @@ func TestFeishuProjectManualQueryWorkItemsUsesThirtyDayUpdatedAtFilter(t *testin
 		ProjectKey:   "project-key",
 		PluginID:     "plugin-id",
 		PluginSecret: "plugin-secret",
-		StatusMapping: []byte(`{
+		WorkItemTypes: feishuTestIssueTypes(`{
 			"OPEN": "todo"
 		}`),
 		LastSyncedAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 16, 4, 7, 12, 0, time.UTC), Valid: true},
@@ -385,7 +387,7 @@ func TestFeishuProjectQueryWorkItemsResolvesOwnerEmailFromUserDetails(t *testing
 		ProjectKey:   "project-key",
 		PluginID:     "plugin-id",
 		PluginSecret: "plugin-secret",
-		StatusMapping: []byte(`{
+		WorkItemTypes: feishuTestIssueTypes(`{
 			"OPEN": "todo"
 		}`),
 	}, "issue", false)
@@ -445,7 +447,7 @@ func TestFeishuProjectQueryWorkItemsLeavesOwnerEmailEmptyWhenOperatorIsBlank(t *
 		ProjectKey:    "project-key",
 		PluginID:      "plugin-id",
 		PluginSecret:  "plugin-secret",
-		StatusMapping: []byte(`{"OPEN": "todo"}`),
+		WorkItemTypes: feishuTestIssueTypes(`{"OPEN": "todo"}`),
 	}, "issue", false)
 	if err != nil {
 		t.Fatalf("QueryWorkItems: %v", err)
@@ -476,6 +478,169 @@ func TestFeishuProjectExternalIssueIdentityUsesBugID(t *testing.T) {
 	desc := externalDescription(item, "")
 	if want := "External-Id: BUG-6991773150"; !strings.Contains(desc, want) {
 		t.Fatalf("externalDescription missing %q: %q", want, desc)
+	}
+}
+
+func TestFeishuProjectWorkItemTypeConfigs(t *testing.T) {
+	cfg := db.FeishuProjectIntegration{
+		WorkItemTypes: []byte(`[
+			{"type_key":"issue","api_name":"issue","name":"缺陷","identifier_prefix":"BUG",
+			 "status_mapping":{"OPEN":"todo"},"reverse_status_mapping":{"todo":"OPEN"}},
+			{"type_key":"637c83ce54b03d5198e2d1cb","api_name":"status_story","name":"工单","identifier_prefix":"TICKET",
+			 "project_id":"0198cbb4-31a0-7d33-9e2f-1b08b1f2a001",
+			 "status_mapping":{"待处理":"todo"},"reverse_status_mapping":{"todo":"待处理"}},
+			{"type_key":"issue","name":"duplicate ignored"},
+			{"type_key":"  ","name":"blank ignored"}
+		]`),
+	}
+
+	types := enabledFeishuProjectTypes(cfg)
+	if len(types) != 2 || types[0] != "issue" || types[1] != "637c83ce54b03d5198e2d1cb" {
+		t.Fatalf("enabledFeishuProjectTypes = %v", types)
+	}
+	if got := enabledFeishuProjectTypes(db.FeishuProjectIntegration{WorkItemTypes: []byte(`[]`)}); len(got) != 0 {
+		t.Fatalf("empty work_item_types should sync nothing, got %v", got)
+	}
+
+	if got := FeishuProjectStatusMappingFor(cfg, "637c83ce54b03d5198e2d1cb")["待处理"]; got != "todo" {
+		t.Fatalf("ticket forward mapping = %q, want todo", got)
+	}
+	if got := FeishuProjectStatusMappingFor(cfg, "issue")["OPEN"]; got != "todo" {
+		t.Fatalf("issue forward mapping = %q, want todo", got)
+	}
+	if got := FeishuProjectReverseStatusMappingFor(cfg, "637c83ce54b03d5198e2d1cb")["todo"]; got != "待处理" {
+		t.Fatalf("ticket reverse mapping = %q, want 待处理", got)
+	}
+	if got := FeishuProjectReverseStatusMappingFor(cfg, "issue")["todo"]; got != "OPEN" {
+		t.Fatalf("issue reverse mapping = %q, want OPEN", got)
+	}
+	if got := FeishuProjectStatusMappingFor(cfg, "unknown-type")["OPEN"]; got != "" {
+		t.Fatalf("unknown type mapping should be empty, got %q", got)
+	}
+
+	entry := feishuProjectTypeConfigFor(cfg, "637c83ce54b03d5198e2d1cb")
+	if entry == nil || entry.ProjectID != "0198cbb4-31a0-7d33-9e2f-1b08b1f2a001" || entry.APIName != "status_story" {
+		t.Fatalf("ticket entry = %+v", entry)
+	}
+
+	item := FeishuProjectWorkItem{ID: "7010031327", Type: "637c83ce54b03d5198e2d1cb", IdentifierPrefix: entry.IdentifierPrefix, Title: "title"}
+	if got := externalIdentifier(item); got != "TICKET-7010031327" {
+		t.Fatalf("externalIdentifier = %q, want TICKET-7010031327", got)
+	}
+	if got := externalTitle(item); got != "[TICKET-7010031327] title" {
+		t.Fatalf("externalTitle = %q", got)
+	}
+}
+
+func TestFeishuProjectTrackedStatusKeysExcludeUnmappedStatuses(t *testing.T) {
+	// A status mapped to "" means "don't sync this status" — it must NOT enter
+	// the Meego query scope, otherwise its items get pulled and created as todo.
+	// Equivalent to a status the operator never configured at all.
+	got := feishuProjectTrackedStatusKeys(map[string]string{
+		"OPEN":      "todo",
+		"DESIGNED":  "", // "No mapping" → excluded
+		"Iw0fE6Yfa": "  ",
+		"  ":        "done", // blank external key → excluded
+	})
+	want := []string{"OPEN"}
+	if len(got) != len(want) {
+		t.Fatalf("feishuProjectTrackedStatusKeys len = %d, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("feishuProjectTrackedStatusKeys[%d] = %q, want %q (all: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestFeishuProjectMappedLocalStatusRequiresNonEmptyMapping(t *testing.T) {
+	mapping := map[string]string{
+		"OPEN":      "todo",
+		"Iw0fE6Yfa": "",
+	}
+	if got, ok := feishuProjectMappedLocalStatus(mapping, "OPEN"); !ok || got != "todo" {
+		t.Fatalf("OPEN mapped local status = %q, %v; want todo, true", got, ok)
+	}
+	if got, ok := feishuProjectMappedLocalStatus(mapping, "Iw0fE6Yfa"); ok || got != "" {
+		t.Fatalf("empty mapping local status = %q, %v; want empty, false", got, ok)
+	}
+	if got, ok := feishuProjectMappedLocalStatus(mapping, "MISSING"); ok || got != "" {
+		t.Fatalf("missing mapping local status = %q, %v; want empty, false", got, ok)
+	}
+}
+
+func TestFeishuProjectStaticRoute(t *testing.T) {
+	projectID := "0198cbb4-31a0-7d33-9e2f-1b08b1f2a001"
+	cfg := db.FeishuProjectIntegration{
+		BusinessLineFieldKey: "business",
+		WorkItemTypes: []byte(`[
+			{"type_key":"637c83ce54b03d5198e2d1cb","project_id":"` + projectID + `"},
+			{"type_key":"bad","project_id":"not-a-uuid"}
+		]`),
+	}
+	s := &FeishuProjectSyncService{}
+
+	route, routed, err := s.routeWorkItemProject(context.Background(), cfg, FeishuProjectWorkItem{ID: "1", Type: "637c83ce54b03d5198e2d1cb"})
+	if err != nil || !routed || route == nil {
+		t.Fatalf("static route: route=%v routed=%v err=%v", route, routed, err)
+	}
+	if got := UUIDString(route.ProjectID); got != projectID {
+		t.Fatalf("static route project = %q, want %q", got, projectID)
+	}
+	if route.FallbackAgentID.Valid {
+		t.Fatalf("static route must not carry a fallback agent")
+	}
+
+	// Invalid stored project_id → skip, not crash and not workspace-root dump.
+	_, routed, err = s.routeWorkItemProject(context.Background(), cfg, FeishuProjectWorkItem{ID: "2", Type: "bad"})
+	if err != nil || routed {
+		t.Fatalf("invalid static route should skip: routed=%v err=%v", routed, err)
+	}
+}
+
+func TestFeishuProjectPluginCredentialDefaults(t *testing.T) {
+	t.Setenv("FEISHU_PROJECT_DEFAULT_PLUGIN_ID", "MII_DEFAULT")
+	t.Setenv("FEISHU_PROJECT_DEFAULT_PLUGIN_SECRET", "default-secret")
+
+	if !FeishuProjectHasDefaultPluginCredentials() {
+		t.Fatal("default plugin credentials should be detected")
+	}
+	// Empty stored credentials → default pair.
+	id, secret := feishuProjectPluginCredentials(db.FeishuProjectIntegration{})
+	if id != "MII_DEFAULT" || secret != "default-secret" {
+		t.Fatalf("default pair = %q/%q", id, secret)
+	}
+	// Custom plugin keeps its own pair — never mixes with the default secret.
+	id, secret = feishuProjectPluginCredentials(db.FeishuProjectIntegration{PluginID: "MII_CUSTOM", PluginSecret: "custom-secret"})
+	if id != "MII_CUSTOM" || secret != "custom-secret" {
+		t.Fatalf("custom pair = %q/%q", id, secret)
+	}
+	id, secret = feishuProjectPluginCredentials(db.FeishuProjectIntegration{PluginID: "MII_CUSTOM"})
+	if id != "MII_CUSTOM" || secret != "" {
+		t.Fatalf("custom id without secret must not borrow default secret, got %q/%q", id, secret)
+	}
+
+	t.Setenv("FEISHU_PROJECT_DEFAULT_PLUGIN_SECRET", "")
+	if FeishuProjectHasDefaultPluginCredentials() {
+		t.Fatal("half-configured default must not count as available")
+	}
+}
+
+func TestParseFeishuProjectWorkItemTypes(t *testing.T) {
+	payload := map[string]any{
+		"data": []any{
+			map[string]any{"type_key": "issue", "api_name": "issue", "name": "缺陷", "is_disable": float64(2)},
+			map[string]any{"type_key": "637c83ce54b03d5198e2d1cb", "api_name": "status_story", "name": "工单", "is_disable": float64(2)},
+			map[string]any{"type_key": "672381e7c5aacdffd2980d71", "api_name": "approve", "name": "审批", "is_disable": float64(1)},
+			map[string]any{"api_name": "broken", "name": "missing key"},
+		},
+	}
+	types := parseFeishuProjectWorkItemTypes(payload)
+	if len(types) != 2 {
+		t.Fatalf("parseFeishuProjectWorkItemTypes len = %d, want 2 (%v)", len(types), types)
+	}
+	if types[1].TypeKey != "637c83ce54b03d5198e2d1cb" || types[1].APIName != "status_story" || types[1].Name != "工单" {
+		t.Fatalf("ticket type = %+v", types[1])
 	}
 }
 
@@ -1092,7 +1257,7 @@ func TestFeishuProjectQueryWorkItemsHonorsExplicitSinceFromOpts(t *testing.T) {
 			ProjectKey:    "project-key",
 			PluginID:      "id",
 			PluginSecret:  "secret",
-			StatusMapping: []byte(`{"OPEN":"todo"}`),
+			WorkItemTypes: feishuTestIssueTypes(`{"OPEN":"todo"}`),
 		},
 		"issue",
 		false,
@@ -1513,4 +1678,10 @@ func TestFeishuProjectInlineImageUsesURLTokenAsExternalID(t *testing.T) {
 	if len(html) != 1 || html[0].ID != "HTML-TOKEN==" {
 		t.Fatalf("html images = %#v, want one with ID=HTML-TOKEN==", html)
 	}
+}
+
+// feishuTestIssueTypes builds a one-entry work_item_types payload for the
+// issue type with the given status mapping — the query tests' minimal config.
+func feishuTestIssueTypes(statusMappingJSON string) []byte {
+	return []byte(`[{"type_key":"issue","api_name":"issue","name":"缺陷","status_mapping":` + statusMappingJSON + `,"reverse_status_mapping":{}}]`)
 }

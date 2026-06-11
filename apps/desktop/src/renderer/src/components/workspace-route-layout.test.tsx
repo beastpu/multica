@@ -11,8 +11,8 @@ const state = vi.hoisted(() => ({
   listFetched: true,
   wsList: [] as { id: string; slug: string }[],
   workspaceSeen: true,
-  modalRenders: 0,
-  modalAriaLabel: "source-backfill-modal-marker",
+  welcomeRenders: 0,
+  welcomeAriaLabel: "welcome-after-onboarding-marker",
 }));
 
 vi.mock("@multica/core/auth", () => {
@@ -66,22 +66,14 @@ vi.mock("@multica/views/workspace/use-workspace-seen", () => ({
 }));
 
 vi.mock("@multica/views/workspace/welcome-after-onboarding", () => ({
-  WelcomeAfterOnboarding: () => null,
+  WelcomeAfterOnboarding: () => {
+    state.welcomeRenders += 1;
+    return <div data-testid={state.welcomeAriaLabel} />;
+  },
 }));
 
 vi.mock("@multica/views/layout", () => ({
   WorkspacePresencePrefetch: () => null,
-}));
-
-// The point of this whole test: assert the desktop layout mounts the
-// SourceBackfillModal. We stub the real component with a marker that
-// renders only when the layout actually rendered it (and not e.g.
-// suppressed by overlayActive).
-vi.mock("@multica/views/onboarding", () => ({
-  SourceBackfillModal: () => {
-    state.modalRenders += 1;
-    return <div data-testid={state.modalAriaLabel} />;
-  },
 }));
 
 vi.mock("@/stores/tab-store", () => ({
@@ -128,20 +120,20 @@ beforeEach(() => {
   state.listFetched = true;
   state.wsList = [{ id: "ws-1", slug: "acme" }];
   state.workspaceSeen = true;
-  state.modalRenders = 0;
+  state.welcomeRenders = 0;
 });
 
 describe("WorkspaceRouteLayout", () => {
-  it("mounts SourceBackfillModal when no WindowOverlay is active", () => {
+  it("mounts WelcomeAfterOnboarding when no WindowOverlay is active", () => {
     const { queryByTestId } = renderLayout();
-    expect(queryByTestId(state.modalAriaLabel)).not.toBeNull();
-    expect(state.modalRenders).toBeGreaterThan(0);
+    expect(queryByTestId(state.welcomeAriaLabel)).not.toBeNull();
+    expect(state.welcomeRenders).toBeGreaterThan(0);
   });
 
-  it("suppresses SourceBackfillModal while a WindowOverlay is active", () => {
+  it("suppresses WelcomeAfterOnboarding while a WindowOverlay is active", () => {
     state.overlay = { type: "new-workspace" };
     const { queryByTestId } = renderLayout();
-    expect(queryByTestId(state.modalAriaLabel)).toBeNull();
-    expect(state.modalRenders).toBe(0);
+    expect(queryByTestId(state.welcomeAriaLabel)).toBeNull();
+    expect(state.welcomeRenders).toBe(0);
   });
 });
