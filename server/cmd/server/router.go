@@ -643,6 +643,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/feishu-project", h.UpdateFeishuProjectIntegration)
 					r.Delete("/feishu-project", h.DeleteFeishuProjectIntegration)
 					r.Get("/feishu-project/issue-statuses", h.GetFeishuProjectIssueStatuses)
+					r.Get("/feishu-project/work-item-types", h.ListFeishuProjectWorkItemTypes)
 					r.Get("/feishu-project/sync", h.GetFeishuProjectSyncRun)
 					r.Post("/feishu-project/sync", h.SyncFeishuProjectIntegration)
 					r.Get("/feishu-project/fields", h.ListFeishuProjectWorkItemFields)

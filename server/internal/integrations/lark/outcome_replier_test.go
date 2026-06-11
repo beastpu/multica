@@ -23,10 +23,12 @@ type stubAPIClientWithRecorder struct {
 	bindingCalls   []BindingPromptParams
 	interactiveOut []SendCardParams
 	directCardsOut []SendDirectCardParams
+	patches        []PatchCardParams
 	textOut        []SendTextParams
 	directTextOut  []SendDirectTextParams
 	reactions      []AddReactionParams
 	sendErr        error
+	patchErr       error
 	textErr        error
 	bindingErr     error
 	reactionErr    error
@@ -55,6 +57,12 @@ func (s *stubAPIClientWithRecorder) SendDirectInteractiveCard(ctx context.Contex
 }
 
 func (s *stubAPIClientWithRecorder) PatchInteractiveCard(ctx context.Context, p PatchCardParams) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.patchErr != nil {
+		return s.patchErr
+	}
+	s.patches = append(s.patches, p)
 	return nil
 }
 
@@ -281,7 +289,7 @@ func TestLarkOutcomeReplierChatClearedSendsCard(t *testing.T) {
 	}
 }
 
-func TestLarkOutcomeReplierIngestedAddsProcessingReaction(t *testing.T) {
+func TestLarkOutcomeReplierIngestedDoesNotAddProcessingReaction(t *testing.T) {
 	t.Parallel()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{configured: true}
@@ -298,11 +306,8 @@ func TestLarkOutcomeReplierIngestedAddsProcessingReaction(t *testing.T) {
 	rep.Reply(context.Background(), db.LarkInstallation{}, msg, DispatchResult{Outcome: OutcomeDropped, DropReason: DropReasonDuplicate})
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
-	if len(stub.reactions) != 1 {
-		t.Fatalf("ingested message should get one processing reaction; got %d", len(stub.reactions))
-	}
-	if got := stub.reactions[0]; got.MessageID != "om_user_1" || got.EmojiType != processingReactionEmoji {
-		t.Fatalf("reaction = %+v, want message om_user_1 emoji %s", got, processingReactionEmoji)
+	if len(stub.reactions) != 0 {
+		t.Fatalf("OutcomeReplier must not add processing reactions; got %d", len(stub.reactions))
 	}
 	if len(stub.interactiveOut) != 0 || len(stub.bindingCalls) != 0 {
 		t.Errorf("Ingested/Dropped should not trigger card/binding calls; got interactive=%d binding=%d",
@@ -382,11 +387,8 @@ func TestLarkOutcomeReplierIssueCreatedSendsConfirmation(t *testing.T) {
 	if len(stub.textOut) != 1 {
 		t.Fatalf("expected one SendTextMessage call, got %d", len(stub.textOut))
 	}
-	if len(stub.reactions) != 1 {
-		t.Fatalf("expected one AddMessageReaction call, got %d", len(stub.reactions))
-	}
-	if got := stub.reactions[0]; got.MessageID != "om_issue_cmd" || got.EmojiType != processingReactionEmoji {
-		t.Fatalf("reaction = %+v, want message om_issue_cmd emoji %s", got, processingReactionEmoji)
+	if len(stub.reactions) != 0 {
+		t.Fatalf("issue-created confirmation should not add reactions from the replier; got %d", len(stub.reactions))
 	}
 	got := stub.textOut[0]
 	if got.ChatID != "oc_chat_42" {
@@ -409,9 +411,9 @@ func TestLarkOutcomeReplierIssueCreatedSendsConfirmation(t *testing.T) {
 }
 
 // TestLarkOutcomeReplierOutcomeIngestedWithoutIssueDoesNotSendMessage
-// pins the low-noise plain-chat behaviour: the bot acknowledges with a
-// reaction, while the actual answer is delivered later by the Patcher
-// on EventChatDone.
+// pins the low-noise plain-chat behaviour: the actual answer is
+// delivered later by the Patcher on EventChatDone. Processing reactions
+// are owned by TypingIndicatorManager so they can be cleared reliably.
 func TestLarkOutcomeReplierOutcomeIngestedWithoutIssueDoesNotSendMessage(t *testing.T) {
 	t.Parallel()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -434,12 +436,12 @@ func TestLarkOutcomeReplierOutcomeIngestedWithoutIssueDoesNotSendMessage(t *test
 		t.Errorf("plain chat ingest must not send messages at the replier; got text=%d cards=%d",
 			len(stub.textOut), len(stub.interactiveOut))
 	}
-	if len(stub.reactions) != 1 {
-		t.Fatalf("plain chat ingest should add a reaction; got %d", len(stub.reactions))
+	if len(stub.reactions) != 0 {
+		t.Fatalf("plain chat ingest should not add reactions from the replier; got %d", len(stub.reactions))
 	}
 }
 
-func TestLarkOutcomeReplierReactionFailureDoesNotBlockIssueConfirmation(t *testing.T) {
+func TestLarkOutcomeReplierIssueConfirmationDoesNotDependOnReactionScope(t *testing.T) {
 	t.Parallel()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{configured: true, reactionErr: errors.New("missing reaction scope")}

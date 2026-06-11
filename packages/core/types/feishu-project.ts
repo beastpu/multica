@@ -1,3 +1,16 @@
+// One synced work-item type with its own status mappings. project_id, when
+// set, statically routes all items of this type to that project (bypassing
+// business-line routing).
+export interface FeishuProjectWorkItemTypeConfig {
+  type_key: string;
+  api_name: string;
+  name: string;
+  identifier_prefix?: string;
+  project_id?: string;
+  status_mapping: Record<string, string>;
+  reverse_status_mapping: Record<string, string>;
+}
+
 export interface FeishuProjectIntegration {
   id?: string;
   workspace_id?: string;
@@ -5,13 +18,17 @@ export interface FeishuProjectIntegration {
   project_key: string;
   plugin_id: string;
   has_plugin_secret: boolean;
+  default_plugin_available: boolean;
+  default_plugin_id?: string;
   actor_user_key: string | null;
   enabled: boolean;
   sync_story: boolean;
+  // Legacy aliases of the work_item_types issue entry (older servers/clients).
   sync_issue: boolean;
   mql_filter: string;
   status_mapping: Record<string, string>;
   reverse_status_mapping: Record<string, string>;
+  work_item_types: FeishuProjectWorkItemTypeConfig[];
   assign_open_items_to_owner_agent: boolean;
   label_sync_rules: FeishuProjectLabelSyncRule[];
   business_line_field_key: string;
@@ -34,6 +51,7 @@ export interface FeishuProjectLabelSyncRule {
 export interface UpdateFeishuProjectIntegrationRequest {
   project_name: string;
   project_key?: string;
+  // Empty plugin_id = use the deployment-wide default Multica plugin.
   plugin_id: string;
   plugin_secret?: string;
   actor_user_key?: string | null;
@@ -43,6 +61,7 @@ export interface UpdateFeishuProjectIntegrationRequest {
   mql_filter: string;
   status_mapping: Record<string, string>;
   reverse_status_mapping: Record<string, string>;
+  work_item_types?: FeishuProjectWorkItemTypeConfig[];
   assign_open_items_to_owner_agent: boolean;
   label_sync_rules?: FeishuProjectLabelSyncRule[];
   business_line_field_key?: string;
@@ -89,6 +108,16 @@ export interface FeishuProjectStatusOption {
 
 export interface FeishuProjectStatusOptionsResponse {
   statuses: FeishuProjectStatusOption[];
+}
+
+export interface FeishuProjectWorkItemType {
+  type_key: string;
+  api_name: string;
+  name: string;
+}
+
+export interface FeishuProjectWorkItemTypesResponse {
+  work_item_types: FeishuProjectWorkItemType[];
 }
 
 export interface FeishuProjectFieldMeta {
