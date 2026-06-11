@@ -57,7 +57,9 @@
   },
   "operations": {
     "title": "运营",
-    "subtitle": "智能体处理过的 issue —— 最近一次运行、issue 当前状态，以及最新一条评论。",
+    "subtitle": "智能体处理过的 issue —— 最近一次运行、issue 当前状态，以及智能体最新一条评论。",
+    "search_placeholder": "搜索评论内容",
+    "search_clear": "清除搜索",
     "filter": {
       "all_agents": "全部智能体",
       "status_all": "全部状态"
@@ -73,7 +75,9 @@
     "caption": "{{count}} 条记录",
     "empty": {
       "title": "暂无修复记录",
-      "body": "当智能体开始处理 issue 后，它们会显示在这里，并附带工单状态与最新评论。"
+      "body": "当智能体开始处理 issue 后，它们会显示在这里，并附带工单状态与最新评论。",
+      "search_title": "没有匹配的评论",
+      "search_body": "该时间段内没有智能体评论包含「{{term}}」。换个关键词或扩大时间范围试试。"
     }
   }
 }

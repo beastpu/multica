@@ -2410,11 +2410,16 @@ JOIN issue i ON i.id = latest.issue_id
 LEFT JOIN LATERAL (
   SELECT c.content, c.author_type
   FROM comment c
-  WHERE c.issue_id = i.id AND c.type = 'comment'
+  WHERE c.issue_id = i.id AND c.type = 'comment' AND c.author_type = 'agent'
   ORDER BY c.created_at DESC
   LIMIT 1
 ) lc ON true
 WHERE COALESCE(latest.completed_at, latest.started_at, latest.created_at) > now() - make_interval(days => $2::int)
+  -- Literal case-insensitive substring on the agent comment (no LIKE wildcard
+  -- semantics, so a user-typed % or _ matches itself). NULL content (no agent
+  -- comment) yields NULL > 0 → excluded, which is the desired "drop unmatched".
+  AND ($3::text IS NULL
+       OR position(lower($3::text) IN lower(lc.content)) > 0)
 ORDER BY COALESCE(latest.completed_at, latest.started_at, latest.created_at) DESC
 LIMIT 500
 `
@@ -2422,6 +2427,7 @@ LIMIT 500
 type ListWorkspaceAgentFixesParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	Days        int32       `json:"days"`
+	Search      pgtype.Text `json:"search"`
 }
 
 type ListWorkspaceAgentFixesRow struct {
@@ -2445,14 +2451,21 @@ type ListWorkspaceAgentFixesRow struct {
 // (issue_id) keeps just the newest (by completion, then created_at). Columns:
 //   - agent_name  → who ran the latest attempt (the "智能体" column)
 //   - issue_*     → the linked issue + its workflow status (the "状态" column)
-//   - last_comment→ the most recent comment/reply on the issue (member OR
-//     agent), the "原因/描述" column; "" when none
+//   - last_comment→ the AGENT's most recent comment/reply on the issue, the
+//     "原因/描述" column; "" when the agent left none. Member
+//     replies are intentionally excluded — this column tracks
+//     the agent's own closing action (e.g. "Review", "Summit"),
+//     which a later "收到" from a human would otherwise mask.
 //
+// The optional `search` arg filters to issues whose agent comment contains the
+// term (case-insensitive substring). It runs BEFORE the 500-row cap, so search
+// covers the whole time window, not just the most recent 500 rows. A row with
+// no matching agent comment is dropped when `search` is set.
 // JOINs agent because agent_task_queue has no workspace_id; INNER JOIN issue so
 // only issue-linked runs count. The window filters on the latest run's recency.
 // Per-agent access filtering happens in the handler against accessibleAgentIDs.
 func (q *Queries) ListWorkspaceAgentFixes(ctx context.Context, arg ListWorkspaceAgentFixesParams) ([]ListWorkspaceAgentFixesRow, error) {
-	rows, err := q.db.Query(ctx, listWorkspaceAgentFixes, arg.WorkspaceID, arg.Days)
+	rows, err := q.db.Query(ctx, listWorkspaceAgentFixes, arg.WorkspaceID, arg.Days, arg.Search)
 	if err != nil {
 		return nil, err
 	}

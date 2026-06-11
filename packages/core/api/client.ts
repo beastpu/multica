@@ -1269,13 +1269,17 @@ export class ApiClient {
   }
 
   // Per-agent "fix record" feed for the Usage page's Operations tab. `days`
-  // bounds the trailing window (default applied server-side). Workspace is
+  // bounds the trailing window (default applied server-side). `search` filters
+  // server-side to issues whose agent comment contains the term (case-
+  // insensitive substring), applied before the row cap so it covers the whole
+  // window; the returned comment snippet is centered on the match. Workspace is
   // routed via the X-Workspace-ID header like every other workspace-scoped GET.
   async getOperationsAgentFixes(
-    params: { days?: number } = {},
+    params: { days?: number; search?: string } = {},
   ): Promise<AgentFixRecord[]> {
     const search = new URLSearchParams();
     if (params.days) search.set("days", String(params.days));
+    if (params.search) search.set("search", params.search);
     const raw = await this.fetch<unknown>(`/api/operations/agent-fixes?${search}`);
     return parseWithFallback<AgentFixRecord[]>(
       raw,
@@ -1795,6 +1799,53 @@ export class ApiClient {
       text: await res.text(),
       originalContentType: res.headers.get("X-Original-Content-Type") ?? "",
     };
+  }
+
+  // True when the client authenticates via a Bearer token — the Feishu
+  // Project plugin's `shipToken` or the Electron desktop app's stored token —
+  // rather than the browser session cookie. It matters for media: a native
+  // <img>/<video> resource load can't authenticate in this mode (the browser
+  // won't attach the Authorization header), so an auth-gated attachment URL
+  // has to be fetched through this client and handed to the element as a blob
+  // URL. See fetchInlineMediaObjectURL.
+  hasBearerToken(): boolean {
+    return Boolean(this.token);
+  }
+
+  // Fetches an auth-gated attachment URL (e.g. the
+  // `/api/attachments/{id}/content` links the Feishu-Project sync writes into
+  // issue / comment markdown) with the standard auth headers and returns an
+  // object URL usable as a native <img>/<video> src. Used only in Bearer-token
+  // mode (see hasBearerToken); cookie-mode clients load these URLs natively and
+  // never reach here.
+  //
+  // Deliberately does NOT route through fetchRaw: a transient image 401 must
+  // not trip handleUnauthorized() and tear down the whole session over one
+  // broken thumbnail. The caller owns the returned object URL and must revoke
+  // it (URL.revokeObjectURL) when the element unmounts or the src changes.
+  async fetchInlineMediaObjectURL(
+    src: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    let path = src;
+    if (/^https?:\/\//i.test(src)) {
+      const u = new URL(src);
+      path = `${u.pathname}${u.search}`;
+    }
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      headers: { ...this.authHeaders() },
+      credentials: "include",
+      signal,
+    });
+    if (!res.ok) {
+      throw new ApiError(
+        `inline media fetch failed: ${res.status}`,
+        res.status,
+        res.statusText,
+        undefined,
+      );
+    }
+    return URL.createObjectURL(await res.blob());
   }
 
   // Projects
