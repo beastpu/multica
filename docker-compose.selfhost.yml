@@ -118,6 +118,11 @@ services:
       # installs to region=lark on first boot, then you can clear them.
       # See docs/lark-bot-integration.
       MULTICA_LARK_SECRET_KEY: ${MULTICA_LARK_SECRET_KEY:-}
+      # Deployment-wide default Meego plugin for the Feishu Project
+      # integration. When both are set, workspaces can leave plugin
+      # credentials empty in settings and use the company plugin.
+      FEISHU_PROJECT_DEFAULT_PLUGIN_ID: ${FEISHU_PROJECT_DEFAULT_PLUGIN_ID:-}
+      FEISHU_PROJECT_DEFAULT_PLUGIN_SECRET: ${FEISHU_PROJECT_DEFAULT_PLUGIN_SECRET:-}
       MULTICA_LARK_HTTP_BASE_URL: ${MULTICA_LARK_HTTP_BASE_URL:-}
       MULTICA_LARK_CALLBACK_BASE_URL: ${MULTICA_LARK_CALLBACK_BASE_URL:-}
     restart: unless-stopped

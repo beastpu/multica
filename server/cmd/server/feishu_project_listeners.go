@@ -58,7 +58,7 @@ func syncFeishuProjectStatus(queries *db.Queries, workspaceID, issueID, status s
 	if err != nil || !cfg.Enabled {
 		return
 	}
-	target := service.MapMulticaStatusToFeishu(cfg.ReverseStatusMapping, binding.WorkItemType, status)
+	target := service.FeishuProjectReverseStatusMappingFor(cfg, binding.WorkItemType)[status]
 	if target == "" {
 		slog.Info("Feishu Project status sync skipped: missing reverse mapping", "issue_id", issueID, "status", status)
 		return

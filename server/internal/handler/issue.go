@@ -3047,7 +3047,7 @@ func (h *Handler) transitionFeishuProjectStatusBeforeLocalUpdate(ctx context.Con
 		return false, fmt.Errorf("failed to load Feishu Project integration: %w", err)
 	}
 
-	targetFeishuStatus := service.MapMulticaStatusToFeishu(cfg.ReverseStatusMapping, binding.WorkItemType, targetStatus)
+	targetFeishuStatus := service.FeishuProjectReverseStatusMappingFor(cfg, binding.WorkItemType)[targetStatus]
 	if targetFeishuStatus == "" {
 		slog.Info("Feishu Project status transition skipped: missing reverse mapping",
 			"issue_id", uuidToString(issue.ID),

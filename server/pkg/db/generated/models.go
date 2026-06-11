@@ -316,6 +316,7 @@ type FeishuProjectIntegration struct {
 	LastSeenUpdatedAtMs         pgtype.Int8        `json:"last_seen_updated_at_ms"`
 	LabelSyncRules              []byte             `json:"label_sync_rules"`
 	LastOrphanReconciledAt      pgtype.Timestamptz `json:"last_orphan_reconciled_at"`
+	WorkItemTypes               []byte             `json:"work_item_types"`
 }
 
 type FeishuProjectIssueBinding struct {

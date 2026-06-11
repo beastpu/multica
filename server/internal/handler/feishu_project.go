@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,45 +19,58 @@ import (
 )
 
 type FeishuProjectIntegrationResponse struct {
-	ID                          string                               `json:"id,omitempty"`
-	WorkspaceID                 string                               `json:"workspace_id,omitempty"`
-	ProjectName                 string                               `json:"project_name"`
-	ProjectKey                  string                               `json:"project_key"`
-	PluginID                    string                               `json:"plugin_id"`
-	HasPluginSecret             bool                                 `json:"has_plugin_secret"`
-	ActorUserKey                *string                              `json:"actor_user_key"`
-	Enabled                     bool                                 `json:"enabled"`
-	SyncStory                   bool                                 `json:"sync_story"`
-	SyncIssue                   bool                                 `json:"sync_issue"`
-	MQLFilter                   string                               `json:"mql_filter"`
-	StatusMapping               map[string]string                    `json:"status_mapping"`
-	ReverseStatusMapping        map[string]string                    `json:"reverse_status_mapping"`
-	AssignOpenItemsToOwnerAgent bool                                 `json:"assign_open_items_to_owner_agent"`
-	BusinessLineFieldKey        string                               `json:"business_line_field_key"`
-	BusinessLineFieldName       string                               `json:"business_line_field_name"`
-	LabelSyncRules              []service.FeishuProjectLabelSyncRule `json:"label_sync_rules"`
-	LastSyncedAt                *string                              `json:"last_synced_at"`
-	LastError                   *string                              `json:"last_error"`
-	CreatedAt                   string                               `json:"created_at,omitempty"`
-	UpdatedAt                   string                               `json:"updated_at,omitempty"`
+	ID              string `json:"id,omitempty"`
+	WorkspaceID     string `json:"workspace_id,omitempty"`
+	ProjectName     string `json:"project_name"`
+	ProjectKey      string `json:"project_key"`
+	PluginID        string `json:"plugin_id"`
+	HasPluginSecret bool   `json:"has_plugin_secret"`
+	// Deployment-wide company plugin credentials. When available, an
+	// integration with an empty plugin_id uses them automatically.
+	DefaultPluginAvailable bool    `json:"default_plugin_available"`
+	DefaultPluginID        string  `json:"default_plugin_id,omitempty"`
+	ActorUserKey           *string `json:"actor_user_key"`
+	Enabled                bool    `json:"enabled"`
+	SyncStory              bool    `json:"sync_story"`
+	// SyncIssue / StatusMapping / ReverseStatusMapping are legacy aliases of
+	// the work_item_types issue entry, kept for older desktop clients.
+	SyncIssue                   bool                                      `json:"sync_issue"`
+	MQLFilter                   string                                    `json:"mql_filter"`
+	StatusMapping               map[string]string                         `json:"status_mapping"`
+	ReverseStatusMapping        map[string]string                         `json:"reverse_status_mapping"`
+	WorkItemTypes               []service.FeishuProjectWorkItemTypeConfig `json:"work_item_types"`
+	AssignOpenItemsToOwnerAgent bool                                      `json:"assign_open_items_to_owner_agent"`
+	BusinessLineFieldKey        string                                    `json:"business_line_field_key"`
+	BusinessLineFieldName       string                                    `json:"business_line_field_name"`
+	LabelSyncRules              []service.FeishuProjectLabelSyncRule      `json:"label_sync_rules"`
+	LastSyncedAt                *string                                   `json:"last_synced_at"`
+	LastError                   *string                                   `json:"last_error"`
+	CreatedAt                   string                                    `json:"created_at,omitempty"`
+	UpdatedAt                   string                                    `json:"updated_at,omitempty"`
 }
 
 type UpdateFeishuProjectIntegrationRequest struct {
-	ProjectName                 string                                `json:"project_name"`
-	ProjectKey                  string                                `json:"project_key"`
-	PluginID                    string                                `json:"plugin_id"`
-	PluginSecret                *string                               `json:"plugin_secret"`
-	ActorUserKey                *string                               `json:"actor_user_key"`
-	Enabled                     bool                                  `json:"enabled"`
-	SyncStory                   bool                                  `json:"sync_story"`
-	SyncIssue                   bool                                  `json:"sync_issue"`
-	MQLFilter                   string                                `json:"mql_filter"`
-	StatusMapping               map[string]string                     `json:"status_mapping"`
-	ReverseStatusMapping        map[string]string                     `json:"reverse_status_mapping"`
-	AssignOpenItemsToOwnerAgent bool                                  `json:"assign_open_items_to_owner_agent"`
-	BusinessLineFieldKey        string                                `json:"business_line_field_key"`
-	BusinessLineFieldName       string                                `json:"business_line_field_name"`
-	LabelSyncRules              *[]service.FeishuProjectLabelSyncRule `json:"label_sync_rules"`
+	ProjectName  string  `json:"project_name"`
+	ProjectKey   string  `json:"project_key"`
+	PluginID     string  `json:"plugin_id"`
+	PluginSecret *string `json:"plugin_secret"`
+	ActorUserKey *string `json:"actor_user_key"`
+	Enabled      bool    `json:"enabled"`
+	SyncStory    bool    `json:"sync_story"`
+	SyncIssue    bool    `json:"sync_issue"`
+	MQLFilter    string  `json:"mql_filter"`
+	// Legacy flat mappings — older clients that don't know work_item_types
+	// still edit the issue mappings through these.
+	StatusMapping        map[string]string `json:"status_mapping"`
+	ReverseStatusMapping map[string]string `json:"reverse_status_mapping"`
+	// WorkItemTypes replaces per-type fields. nil (absent) preserves the
+	// stored list (modulo the legacy issue-mapping merge above); non-nil
+	// replaces it wholesale.
+	WorkItemTypes               *[]service.FeishuProjectWorkItemTypeConfig `json:"work_item_types"`
+	AssignOpenItemsToOwnerAgent bool                                       `json:"assign_open_items_to_owner_agent"`
+	BusinessLineFieldKey        string                                     `json:"business_line_field_key"`
+	BusinessLineFieldName       string                                     `json:"business_line_field_name"`
+	LabelSyncRules              *[]service.FeishuProjectLabelSyncRule      `json:"label_sync_rules"`
 }
 
 type FeishuProjectSyncRunResponse struct {
@@ -102,6 +116,9 @@ func (h *Handler) GetFeishuProjectIntegration(w http.ResponseWriter, r *http.Req
 				MQLFilter:                   "",
 				StatusMapping:               defaultFeishuProjectStatusMapping(),
 				ReverseStatusMapping:        defaultFeishuProjectReverseStatusMapping(),
+				WorkItemTypes:               []service.FeishuProjectWorkItemTypeConfig{defaultFeishuProjectIssueTypeConfig()},
+				DefaultPluginAvailable:      service.FeishuProjectHasDefaultPluginCredentials(),
+				DefaultPluginID:             service.FeishuProjectDefaultPluginID(),
 				AssignOpenItemsToOwnerAgent: false,
 				LabelSyncRules:              []service.FeishuProjectLabelSyncRule{},
 			})
@@ -125,11 +142,11 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 		return
 	}
 	projectKey := feishuProjectNameFromRequest(req)
-	pluginID := strings.TrimSpace(req.PluginID)
-	if projectKey == "" || pluginID == "" {
-		writeError(w, http.StatusBadRequest, "project_name and plugin_id are required")
+	if projectKey == "" {
+		writeError(w, http.StatusBadRequest, "project_name is required")
 		return
 	}
+	pluginID := strings.TrimSpace(req.PluginID)
 	pluginSecret := ""
 	if req.PluginSecret != nil {
 		pluginSecret = strings.TrimSpace(*req.PluginSecret)
@@ -140,22 +157,59 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to load existing Feishu Project integration")
 		return
 	}
-	if pluginSecret == "" {
-		if existingErr == nil && existing.PluginID == pluginID {
+	// Empty plugin_id means "use the deployment-wide company plugin"; both
+	// stored credential fields stay empty and the service resolves them from
+	// env at call time. A custom plugin still needs its own secret.
+	if pluginID == "" {
+		if !service.FeishuProjectHasDefaultPluginCredentials() {
+			writeError(w, http.StatusBadRequest, "plugin_id is required (no default plugin configured)")
+			return
+		}
+		pluginSecret = ""
+	} else {
+		if pluginSecret == "" && existingErr == nil && existing.PluginID == pluginID {
 			pluginSecret = existing.PluginSecret
 		}
+		if pluginSecret == "" {
+			writeError(w, http.StatusBadRequest, "plugin_secret is required")
+			return
+		}
 	}
-	if pluginSecret == "" {
-		writeError(w, http.StatusBadRequest, "plugin_secret is required")
-		return
+
+	// Resolve the synced type list: explicit list wins; otherwise keep the
+	// stored list and merge the legacy flat issue mappings into its issue
+	// entry so older clients editing only those fields stay effective.
+	var typeConfigs []service.FeishuProjectWorkItemTypeConfig
+	if req.WorkItemTypes != nil {
+		var ok bool
+		typeConfigs, ok = h.normalizeFeishuProjectWorkItemTypes(w, r, wsUUID, *req.WorkItemTypes)
+		if !ok {
+			return
+		}
+	} else {
+		if existingErr == nil {
+			typeConfigs = service.FeishuProjectWorkItemTypeConfigs(existing)
+		}
+		typeConfigs = mergeLegacyIssueMappings(typeConfigs, req)
 	}
-	statusMapping := req.StatusMapping
-	if statusMapping == nil {
-		statusMapping = defaultFeishuProjectStatusMapping()
-	}
-	reverseMapping := req.ReverseStatusMapping
-	if reverseMapping == nil {
-		reverseMapping = defaultFeishuProjectReverseStatusMapping()
+	workItemTypesJSON, _ := json.Marshal(typeConfigs)
+
+	// Legacy flat columns mirror the issue entry so old desktop clients keep
+	// seeing a coherent config.
+	syncIssue := false
+	statusMapping := map[string]string{}
+	reverseMapping := map[string]string{}
+	for _, entry := range typeConfigs {
+		if entry.TypeKey == "issue" {
+			syncIssue = true
+			if entry.StatusMapping != nil {
+				statusMapping = entry.StatusMapping
+			}
+			if entry.ReverseStatusMapping != nil {
+				reverseMapping = entry.ReverseStatusMapping
+			}
+			break
+		}
 	}
 	statusJSON, _ := json.Marshal(statusMapping)
 	reverseJSON, _ := json.Marshal(reverseMapping)
@@ -189,7 +243,7 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 			ActorUserKey:                actor,
 			Enabled:                     req.Enabled,
 			SyncStory:                   req.SyncStory,
-			SyncIssue:                   req.SyncIssue,
+			SyncIssue:                   syncIssue,
 			MqlFilter:                   mqlFilter,
 			StatusMapping:               statusJSON,
 			ReverseStatusMapping:        reverseJSON,
@@ -197,6 +251,7 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 			BusinessLineFieldKey:        bizLineKey,
 			BusinessLineFieldName:       bizLineName,
 			LabelSyncRules:              labelSyncRulesJSON,
+			WorkItemTypes:               workItemTypesJSON,
 		})
 	} else {
 		cfg, err = h.Queries.UpsertFeishuProjectIntegration(r.Context(), db.UpsertFeishuProjectIntegrationParams{
@@ -207,7 +262,7 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 			ActorUserKey:                actor,
 			Enabled:                     req.Enabled,
 			SyncStory:                   req.SyncStory,
-			SyncIssue:                   req.SyncIssue,
+			SyncIssue:                   syncIssue,
 			MqlFilter:                   mqlFilter,
 			StatusMapping:               statusJSON,
 			ReverseStatusMapping:        reverseJSON,
@@ -216,6 +271,7 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 			BusinessLineFieldKey:        bizLineKey,
 			BusinessLineFieldName:       bizLineName,
 			LabelSyncRules:              labelSyncRulesJSON,
+			WorkItemTypes:               workItemTypesJSON,
 		})
 	}
 	if err != nil {
@@ -224,6 +280,126 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 		return
 	}
 	writeJSON(w, http.StatusOK, feishuProjectIntegrationToResponse(cfg))
+}
+
+// defaultFeishuProjectIssueTypeConfig is the issue entry a fresh integration
+// starts with — mirrors the legacy issue-only default behavior.
+func defaultFeishuProjectIssueTypeConfig() service.FeishuProjectWorkItemTypeConfig {
+	return service.FeishuProjectWorkItemTypeConfig{
+		TypeKey:              "issue",
+		APIName:              "issue",
+		Name:                 "缺陷",
+		IdentifierPrefix:     "BUG",
+		StatusMapping:        defaultFeishuProjectStatusMapping(),
+		ReverseStatusMapping: defaultFeishuProjectReverseStatusMapping(),
+	}
+}
+
+var feishuProjectIdentifierPrefixRe = regexp.MustCompile(`^[A-Z0-9_]{1,16}$`)
+
+// feishuProjectTypeKeyRe bounds a Meego work-item type_key (hex id like
+// 637c83ce54b03d5198e2d1cb, or a snake name like "issue"/"sub_task"). Enforced
+// on write AND read so the value is safe to interpolate into Meego OpenAPI URL
+// paths — no '/' or '.' can reach fmt.Sprintf("/open_api/%s/.../%s", ...).
+var feishuProjectTypeKeyRe = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
+
+// validFeishuProjectWorkItemType normalizes and validates a work_item_type query
+// param. Empty → "issue" (legacy default). Returns ok=false for anything that
+// could escape the OpenAPI path; caller writes the 400.
+func validFeishuProjectWorkItemType(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "issue", true
+	}
+	if !feishuProjectTypeKeyRe.MatchString(raw) {
+		return "", false
+	}
+	return raw, true
+}
+
+// normalizeFeishuProjectWorkItemTypes validates and canonicalizes a client-sent
+// type list. Writes the HTTP error itself and returns ok=false on bad input.
+func (h *Handler) normalizeFeishuProjectWorkItemTypes(w http.ResponseWriter, r *http.Request, wsUUID pgtype.UUID, in []service.FeishuProjectWorkItemTypeConfig) ([]service.FeishuProjectWorkItemTypeConfig, bool) {
+	out := make([]service.FeishuProjectWorkItemTypeConfig, 0, len(in))
+	seen := map[string]bool{}
+	for i, entry := range in {
+		entry.TypeKey = strings.TrimSpace(entry.TypeKey)
+		if entry.TypeKey == "" {
+			writeError(w, http.StatusBadRequest, "work_item_types["+strconv.Itoa(i)+"].type_key is required")
+			return nil, false
+		}
+		if seen[entry.TypeKey] {
+			writeError(w, http.StatusBadRequest, "work_item_types["+strconv.Itoa(i)+"].type_key must be unique")
+			return nil, false
+		}
+		if !feishuProjectTypeKeyRe.MatchString(entry.TypeKey) {
+			writeError(w, http.StatusBadRequest, "work_item_types["+strconv.Itoa(i)+"].type_key must match [A-Za-z0-9_]{1,64}")
+			return nil, false
+		}
+		seen[entry.TypeKey] = true
+		entry.APIName = strings.TrimSpace(entry.APIName)
+		entry.Name = strings.TrimSpace(entry.Name)
+		entry.IdentifierPrefix = strings.ToUpper(strings.TrimSpace(entry.IdentifierPrefix))
+		if entry.IdentifierPrefix != "" && !feishuProjectIdentifierPrefixRe.MatchString(entry.IdentifierPrefix) {
+			writeError(w, http.StatusBadRequest, "work_item_types["+strconv.Itoa(i)+"].identifier_prefix must match [A-Z0-9_]{1,16}")
+			return nil, false
+		}
+		entry.ProjectID = strings.TrimSpace(entry.ProjectID)
+		if entry.ProjectID != "" {
+			projectID, ok := parseUUIDOrBadRequest(w, entry.ProjectID, "work_item_types["+strconv.Itoa(i)+"].project_id")
+			if !ok {
+				return nil, false
+			}
+			if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: wsUUID}); err != nil {
+				writeError(w, http.StatusBadRequest, "work_item_types["+strconv.Itoa(i)+"].project_id does not reference a project in this workspace")
+				return nil, false
+			}
+		}
+		if entry.StatusMapping == nil {
+			entry.StatusMapping = map[string]string{}
+		}
+		if entry.ReverseStatusMapping == nil {
+			entry.ReverseStatusMapping = map[string]string{}
+		}
+		out = append(out, entry)
+	}
+	return out, true
+}
+
+// mergeLegacyIssueMappings folds the legacy flat issue-mapping fields of an
+// old-client PUT into the stored type list, so pre-work_item_types desktop
+// builds editing the issue mappings still take effect.
+//
+// A mapping is applied ONLY when the request explicitly carries it (non-nil):
+// a partial PUT that omits status_mapping/reverse_status_mapping must preserve
+// the stored issue entry's mappings, never reset them to defaults. The canned
+// defaults are used solely when seeding a brand-new issue entry for a legacy
+// client that turned issue sync on without sending mappings.
+func mergeLegacyIssueMappings(configs []service.FeishuProjectWorkItemTypeConfig, req UpdateFeishuProjectIntegrationRequest) []service.FeishuProjectWorkItemTypeConfig {
+	for i := range configs {
+		if configs[i].TypeKey == "issue" {
+			if req.StatusMapping != nil {
+				configs[i].StatusMapping = req.StatusMapping
+			}
+			if req.ReverseStatusMapping != nil {
+				configs[i].ReverseStatusMapping = req.ReverseStatusMapping
+			}
+			return configs
+		}
+	}
+	if !req.SyncIssue {
+		return configs
+	}
+	// No issue entry yet, but a legacy client wants issue sync on — seed one,
+	// preferring the request's mappings and falling back to the defaults.
+	entry := defaultFeishuProjectIssueTypeConfig()
+	if req.StatusMapping != nil {
+		entry.StatusMapping = req.StatusMapping
+	}
+	if req.ReverseStatusMapping != nil {
+		entry.ReverseStatusMapping = req.ReverseStatusMapping
+	}
+	return append([]service.FeishuProjectWorkItemTypeConfig{entry}, configs...)
 }
 
 func normalizeFeishuProjectLabelSyncRules(w http.ResponseWriter, in []service.FeishuProjectLabelSyncRule) ([]service.FeishuProjectLabelSyncRule, bool) {
@@ -378,12 +554,42 @@ func (h *Handler) GetFeishuProjectIssueStatuses(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusNotFound, "Feishu Project integration not found")
 		return
 	}
-	statuses, err := service.NewFeishuProjectClient().IssueStatusOptions(r.Context(), cfg)
+	// Validate before it reaches the Meego OpenAPI URL path. Empty → "issue".
+	workItemType, ok := validFeishuProjectWorkItemType(r.URL.Query().Get("work_item_type"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid work_item_type")
+		return
+	}
+	statuses, err := service.NewFeishuProjectClient().WorkItemStatusOptions(r.Context(), cfg, workItemType)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"statuses": statuses})
+}
+
+// ListFeishuProjectWorkItemTypes returns the Meego space's work-item types so
+// the settings UI can offer a picker for the ticket (工单) type — custom type
+// keys are space-specific and cannot be hardcoded client-side.
+func (h *Handler) ListFeishuProjectWorkItemTypes(w http.ResponseWriter, r *http.Request) {
+	workspaceID := workspaceIDFromURL(r, "id")
+	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+		return
+	}
+	cfg, err := h.Queries.GetFeishuProjectIntegration(r.Context(), parseUUID(workspaceID))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Feishu Project integration not found")
+		return
+	}
+	types, err := service.NewFeishuProjectClient().ListWorkItemTypes(r.Context(), cfg)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if types == nil {
+		types = []service.FeishuProjectWorkItemType{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"work_item_types": types})
 }
 
 func feishuProjectIntegrationToResponse(cfg db.FeishuProjectIntegration) FeishuProjectIntegrationResponse {
@@ -401,6 +607,9 @@ func feishuProjectIntegrationToResponse(cfg db.FeishuProjectIntegration) FeishuP
 		MQLFilter:                   cfg.MqlFilter,
 		StatusMapping:               decodeFlatStringMap(cfg.StatusMapping),
 		ReverseStatusMapping:        decodeFlatStringMap(cfg.ReverseStatusMapping),
+		WorkItemTypes:               feishuProjectWorkItemTypesForResponse(cfg),
+		DefaultPluginAvailable:      service.FeishuProjectHasDefaultPluginCredentials(),
+		DefaultPluginID:             service.FeishuProjectDefaultPluginID(),
 		AssignOpenItemsToOwnerAgent: cfg.AssignOpenItemsToOwnerAgent,
 		BusinessLineFieldKey:        cfg.BusinessLineFieldKey,
 		BusinessLineFieldName:       cfg.BusinessLineFieldName,
@@ -410,6 +619,24 @@ func feishuProjectIntegrationToResponse(cfg db.FeishuProjectIntegration) FeishuP
 		CreatedAt:                   timestampToString(cfg.CreatedAt),
 		UpdatedAt:                   timestampToString(cfg.UpdatedAt),
 	}
+}
+
+// feishuProjectWorkItemTypesForResponse decodes the stored type list with
+// JSON-friendly defaults (non-nil slice and maps) for the config response.
+func feishuProjectWorkItemTypesForResponse(cfg db.FeishuProjectIntegration) []service.FeishuProjectWorkItemTypeConfig {
+	entries := service.FeishuProjectWorkItemTypeConfigs(cfg)
+	if entries == nil {
+		entries = []service.FeishuProjectWorkItemTypeConfig{}
+	}
+	for i := range entries {
+		if entries[i].StatusMapping == nil {
+			entries[i].StatusMapping = map[string]string{}
+		}
+		if entries[i].ReverseStatusMapping == nil {
+			entries[i].ReverseStatusMapping = map[string]string{}
+		}
+	}
+	return entries
 }
 
 func decodeFeishuProjectLabelSyncRules(raw []byte) []service.FeishuProjectLabelSyncRule {

@@ -106,6 +106,7 @@ import type {
   FeishuProjectIntegration,
   FeishuProjectRoutesResponse,
   FeishuProjectStatusOptionsResponse,
+  FeishuProjectWorkItemTypesResponse,
   ReplaceFeishuProjectRoutesRequest,
   UpdateFeishuProjectIntegrationRequest,
   FeishuProjectSyncRequest,
@@ -179,6 +180,8 @@ import {
   FeishuProjectRoutesResponseSchema,
   FeishuProjectStatusOptionsResponseSchema,
   FeishuProjectSyncResponseSchema,
+  FeishuProjectWorkItemTypesResponseSchema,
+  EMPTY_FEISHU_PROJECT_WORK_ITEM_TYPES_RESPONSE,
   AppConfigSchema,
   type AppConfigResponse,
   GroupedIssuesResponseSchema,
@@ -2184,10 +2187,22 @@ export class ApiClient {
     });
   }
 
-  async getFeishuProjectIssueStatuses(workspaceId: string): Promise<FeishuProjectStatusOptionsResponse> {
-    const raw = await this.fetch(`/api/workspaces/${workspaceId}/feishu-project/issue-statuses`);
+  async getFeishuProjectIssueStatuses(
+    workspaceId: string,
+    workItemType = "issue",
+  ): Promise<FeishuProjectStatusOptionsResponse> {
+    const raw = await this.fetch(
+      `/api/workspaces/${workspaceId}/feishu-project/issue-statuses?work_item_type=${encodeURIComponent(workItemType)}`,
+    );
     return parseWithFallback(raw, FeishuProjectStatusOptionsResponseSchema, EMPTY_FEISHU_PROJECT_STATUS_OPTIONS_RESPONSE, {
       endpoint: "GET /api/workspaces/:id/feishu-project/issue-statuses",
+    });
+  }
+
+  async listFeishuProjectWorkItemTypes(workspaceId: string): Promise<FeishuProjectWorkItemTypesResponse> {
+    const raw = await this.fetch(`/api/workspaces/${workspaceId}/feishu-project/work-item-types`);
+    return parseWithFallback(raw, FeishuProjectWorkItemTypesResponseSchema, EMPTY_FEISHU_PROJECT_WORK_ITEM_TYPES_RESPONSE, {
+      endpoint: "GET /api/workspaces/:id/feishu-project/work-item-types",
     });
   }
 
