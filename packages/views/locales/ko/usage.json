@@ -57,7 +57,9 @@
   },
   "operations": {
     "title": "운영",
-    "subtitle": "에이전트가 처리한 issue — 최근 실행, issue 상태, 최신 댓글.",
+    "subtitle": "에이전트가 처리한 issue — 최근 실행, issue 상태, 에이전트의 최신 댓글.",
+    "search_placeholder": "댓글 검색",
+    "search_clear": "검색 지우기",
     "filter": {
       "all_agents": "모든 에이전트",
       "status_all": "모든 상태"
@@ -73,7 +75,9 @@
     "caption": "{{count}}개 기록",
     "empty": {
       "title": "아직 수정 내역이 없습니다",
-      "body": "에이전트가 issue를 처리하기 시작하면 상태 및 최신 댓글과 함께 여기에 표시됩니다."
+      "body": "에이전트가 issue를 처리하기 시작하면 상태 및 최신 댓글과 함께 여기에 표시됩니다.",
+      "search_title": "일치하는 댓글이 없습니다",
+      "search_body": "이 기간에 \"{{term}}\"을(를) 포함하는 에이전트 댓글이 없습니다. 다른 키워드를 사용하거나 기간을 넓혀 보세요."
     }
   }
 }

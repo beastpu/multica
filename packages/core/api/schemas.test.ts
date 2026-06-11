@@ -307,11 +307,14 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
   });
 
   it("keeps the last_comment text and author type", () => {
+    // The endpoint now returns the agent's own latest comment (member replies
+    // are excluded server-side), but the schema stays lenient on author_type —
+    // a string, no enum narrowing — so a future value can't white-screen.
     const parsed = AgentFixRecordListSchema.parse([
-      { task_id: "t1", last_comment: "looks good", last_comment_author_type: "member" },
+      { task_id: "t1", last_comment: "looks good", last_comment_author_type: "agent" },
     ]);
     expect(parsed[0]?.last_comment).toBe("looks good");
-    expect(parsed[0]?.last_comment_author_type).toBe("member");
+    expect(parsed[0]?.last_comment_author_type).toBe("agent");
   });
 
   it("returns the fallback (never throws) when a field has the wrong type", () => {
