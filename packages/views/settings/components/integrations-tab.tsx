@@ -31,7 +31,6 @@ import {
   feishuProjectBusinessLinesOptions,
   feishuProjectFieldsOptions,
   feishuProjectIntegrationOptions,
-  feishuProjectIssueStatusesOptions,
   feishuProjectKeys,
   feishuProjectRoutesOptions,
   feishuProjectSyncOptions,
@@ -42,22 +41,13 @@ import type {
   FeishuProjectFieldMeta,
   FeishuProjectLabelSyncRule,
   FeishuProjectRouteInput,
+  FeishuProjectWorkItemTypeConfig,
 } from "@multica/core/types";
 import { LarkTab } from "./lark-tab";
 import { useT } from "../../i18n";
 import { FeishuProjectRoutingSection, type RouteRow } from "./feishu-project-routing-section";
+import { FeishuProjectWorkItemTypesSection } from "./feishu-project-work-item-types-section";
 
-const MULTICA_STATUS_OPTIONS = [
-  "backlog",
-  "todo",
-  "in_progress",
-  "in_review",
-  "blocked",
-  "done",
-  "cancelled",
-] as const;
-
-const NO_MAPPING = "__none__";
 const NO_FIELD = "__none__";
 const NO_MATCH = "__none__";
 
@@ -81,8 +71,12 @@ export function IntegrationsTab() {
   const [actorUserKey, setActorUserKey] = useState("");
   const [assignOpenItemsToOwnerAgent, setAssignOpenItemsToOwnerAgent] = useState(false);
   const [syncWorkItemId, setSyncWorkItemId] = useState("");
-  const [statusMapping, setStatusMapping] = useState<Record<string, string>>({});
-  const [reverseStatusMapping, setReverseStatusMapping] = useState<Record<string, string>>({});
+  // The synced type list (缺陷/工单/…), each entry with its own mappings and
+  // optional static project route. Draft state; persisted on Save.
+  const [workItemTypeConfigs, setWorkItemTypeConfigs] = useState<FeishuProjectWorkItemTypeConfig[]>([]);
+  // Plugin credentials: when the deployment provides a default company plugin,
+  // the operator can skip per-workspace credentials entirely.
+  const [useDefaultPlugin, setUseDefaultPlugin] = useState(false);
   const [labelSyncRules, setLabelSyncRules] = useState<FeishuProjectLabelSyncRule[]>([]);
   // Business-line field config — local while the user is editing, persisted on Save.
   const [businessLineFieldKey, setBusinessLineFieldKey] = useState("");
@@ -99,11 +93,13 @@ export function IntegrationsTab() {
     ...feishuProjectIntegrationOptions(wsId),
     enabled: !!wsId && canManage,
   });
-  const { data: issueStatusesData } = useQuery({
-    ...feishuProjectIssueStatusesOptions(wsId, canManage && !!projectKey.trim() && !!pluginId.trim()),
-  });
+  // Credentials are considered present when a custom plugin id is filled in or
+  // the deployment-wide default plugin is in use.
+  const credentialsReady =
+    !!projectKey.trim() &&
+    (useDefaultPlugin ? (feishuProject?.default_plugin_available ?? false) : !!pluginId.trim());
   const { data: fieldsData } = useQuery({
-    ...feishuProjectFieldsOptions(wsId, "issue", canManage && !!projectKey.trim() && !!pluginId.trim()),
+    ...feishuProjectFieldsOptions(wsId, "issue", canManage && credentialsReady),
   });
   // Subscribe to the route table so the Save handler can diff/replace it. Section
   // component reads the same query but only for the initial seed — edits flow through
@@ -116,17 +112,12 @@ export function IntegrationsTab() {
     ...feishuProjectSyncOptions(wsId, canManage && !!feishuProject?.id),
     refetchInterval: (query) => (query.state.data?.status === "running" ? 2000 : false),
   });
-  const issueStatuses = issueStatusesData?.statuses ?? [];
   const issueFields = fieldsData?.fields ?? [];
   const syncRun = feishuSync?.run ?? null;
   const syncRunning = syncingFeishu || feishuSync?.status === "running";
   const syncProcessed = syncRun?.processed ?? 0;
   const syncTotal = syncRun?.total ?? 0;
   const syncProgress = syncTotal > 0 ? Math.min(100, Math.max(8, Math.round((syncProcessed / syncTotal) * 100))) : 50;
-  const issueStatusKeys = useMemo(
-    () => new Set(issueStatuses.map((status) => status.key)),
-    [issueStatuses],
-  );
 
   useEffect(() => {
     if (!feishuProject) return;
@@ -134,10 +125,10 @@ export function IntegrationsTab() {
     setProjectKey(feishuProject.project_name || feishuProject.project_key);
     setPluginId(feishuProject.plugin_id);
     setPluginSecret("");
+    setUseDefaultPlugin(feishuProject.default_plugin_available && !feishuProject.plugin_id);
     setActorUserKey(feishuProject.actor_user_key ?? "");
     setAssignOpenItemsToOwnerAgent(feishuProject.assign_open_items_to_owner_agent);
-    setStatusMapping(feishuProject.status_mapping);
-    setReverseStatusMapping(feishuProject.reverse_status_mapping);
+    setWorkItemTypeConfigs(feishuProject.work_item_types ?? []);
     setLabelSyncRules(feishuProject.label_sync_rules ?? []);
     setBusinessLineFieldKey(feishuProject.business_line_field_key);
     setBusinessLineFieldName(feishuProject.business_line_field_name);
@@ -196,22 +187,6 @@ export function IntegrationsTab() {
     );
   }, [activeSyncRunId, lastNotifiedSyncRunId, queryClient, syncRun, t, wsId]);
 
-  useEffect(() => {
-    if (issueStatuses.length === 0) return;
-
-    setStatusMapping((prev) => {
-      const next = Object.fromEntries(
-        Object.entries(prev).filter(([key]) => issueStatusKeys.has(key)),
-      );
-      return shallowEqualRecord(prev, next) ? prev : next;
-    });
-    setReverseStatusMapping((prev) => {
-      const next = Object.fromEntries(
-        Object.entries(prev).filter(([, value]) => issueStatusKeys.has(value)),
-      );
-      return shallowEqualRecord(prev, next) ? prev : next;
-    });
-  }, [issueStatuses.length, issueStatusKeys]);
 
   async function handleSaveFeishuProject() {
     // Validate route rows upfront so a user clicking Save with a half-configured route
@@ -241,14 +216,22 @@ export function IntegrationsTab() {
       await api.updateFeishuProjectIntegration(wsId, {
         enabled: feishuEnabled,
         project_name: projectKey.trim(),
-        plugin_id: pluginId.trim(),
-        plugin_secret: pluginSecret.trim() || undefined,
+        // Empty plugin_id = use the deployment-wide default Multica plugin.
+        plugin_id: useDefaultPlugin ? "" : pluginId.trim(),
+        plugin_secret: useDefaultPlugin ? undefined : pluginSecret.trim() || undefined,
         actor_user_key: actorUserKey.trim() || null,
         sync_story: false,
-        sync_issue: true,
+        sync_issue: workItemTypeConfigs.some((entry) => entry.type_key === "issue"),
         mql_filter: "",
-        status_mapping: compactMapping(statusMapping),
-        reverse_status_mapping: compactMapping(reverseStatusMapping),
+        // Legacy flat fields are ignored by the server when work_item_types is
+        // present; per-type mappings live inside each entry.
+        status_mapping: {},
+        reverse_status_mapping: {},
+        work_item_types: workItemTypeConfigs.map((entry) => ({
+          ...entry,
+          identifier_prefix: entry.identifier_prefix?.trim() || undefined,
+          project_id: entry.project_id || undefined,
+        })),
         assign_open_items_to_owner_agent: assignOpenItemsToOwnerAgent,
         label_sync_rules: compactLabelSyncRules(labelSyncRules),
         business_line_field_key: bizLineKey,
@@ -270,13 +253,14 @@ export function IntegrationsTab() {
       await api.replaceFeishuProjectRoutes(wsId, { routes: routePayload });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: feishuProjectKeys.integration(wsId) }),
-        queryClient.invalidateQueries({ queryKey: feishuProjectKeys.issueStatuses(wsId) }),
+        queryClient.invalidateQueries({ queryKey: feishuProjectKeys.issueStatusesAll(wsId) }),
         queryClient.invalidateQueries({ queryKey: feishuProjectKeys.routes(wsId) }),
         // Space-keyed data (Meego field list + per-field option tree) lives under the
         // same wsId regardless of which project_key is configured, so swapping spaces
         // would otherwise serve stale entries from the prior space's cache.
         queryClient.invalidateQueries({ queryKey: feishuProjectKeys.fieldsAll(wsId) }),
         queryClient.invalidateQueries({ queryKey: feishuProjectKeys.businessLinesAll(wsId) }),
+        queryClient.invalidateQueries({ queryKey: feishuProjectKeys.workItemTypes(wsId) }),
       ]);
       toast.success(t(($) => $.integrations.feishu_project_saved));
     } catch (e) {
@@ -337,29 +321,56 @@ export function IntegrationsTab() {
                       <Input value={projectKey} onChange={(e) => setProjectKey(e.target.value)} placeholder="my_project" />
                     </label>
                     <label className="space-y-1.5 text-xs font-medium">
-                      {t(($) => $.integrations.feishu_project_plugin_id)}
-                      <Input value={pluginId} onChange={(e) => setPluginId(e.target.value)} placeholder="MII_xxx" />
-                    </label>
-                    <label className="space-y-1.5 text-xs font-medium">
-                      {t(($) => $.integrations.feishu_project_plugin_secret)}
-                      <Input
-                        type="password"
-                        value={pluginSecret}
-                        onChange={(e) => setPluginSecret(e.target.value)}
-                        placeholder={feishuProject?.has_plugin_secret ? "****" : ""}
-                      />
-                      {feishuProject?.has_plugin_secret && (
-                        <span className="text-[11px] font-normal text-muted-foreground">
-                          {t(($) => $.integrations.secret_placeholder_set)}
-                        </span>
-                      )}
-                    </label>
-                    <label className="space-y-1.5 text-xs font-medium">
                       {t(($) => $.integrations.feishu_project_actor_user_key)}
                       <Input value={actorUserKey} onChange={(e) => setActorUserKey(e.target.value)} />
                     </label>
                   </div>
+
+                  {feishuProject?.default_plugin_available && (
+                    <div className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-3">
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium">
+                          {t(($) => $.integrations.feishu_project_plugin_use_default)}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {t(($) => $.integrations.feishu_project_plugin_use_default_hint, {
+                            id: feishuProject.default_plugin_id ?? "",
+                          })}
+                        </p>
+                      </div>
+                      <Switch checked={useDefaultPlugin} onCheckedChange={setUseDefaultPlugin} />
+                    </div>
+                  )}
+                  {!useDefaultPlugin && (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <label className="space-y-1.5 text-xs font-medium">
+                        {t(($) => $.integrations.feishu_project_plugin_id)}
+                        <Input value={pluginId} onChange={(e) => setPluginId(e.target.value)} placeholder="MII_xxx" />
+                      </label>
+                      <label className="space-y-1.5 text-xs font-medium">
+                        {t(($) => $.integrations.feishu_project_plugin_secret)}
+                        <Input
+                          type="password"
+                          value={pluginSecret}
+                          onChange={(e) => setPluginSecret(e.target.value)}
+                          placeholder={feishuProject?.has_plugin_secret ? "****" : ""}
+                        />
+                        {feishuProject?.has_plugin_secret && (
+                          <span className="text-[11px] font-normal text-muted-foreground">
+                            {t(($) => $.integrations.secret_placeholder_set)}
+                          </span>
+                        )}
+                      </label>
+                    </div>
+                  )}
                 </div>
+
+                <FeishuProjectWorkItemTypesSection
+                  workspaceId={wsId}
+                  integrationReady={canManage && !!feishuProject?.id && credentialsReady}
+                  entries={workItemTypeConfigs}
+                  setEntries={setWorkItemTypeConfigs}
+                />
 
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-3 border-b border-border/70 pb-2">
@@ -405,7 +416,7 @@ export function IntegrationsTab() {
                           key={rule.id}
                           workspaceId={wsId}
                           fields={issueFields}
-                          integrationReady={canManage && !!projectKey.trim() && !!pluginId.trim()}
+                          integrationReady={canManage && credentialsReady}
                           rule={rule}
                           onChange={(next) =>
                             setLabelSyncRules((prev) => prev.map((item) => (item.id === rule.id ? next : item)))
@@ -415,98 +426,6 @@ export function IntegrationsTab() {
                           }
                         />
                       ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-3 border-b border-border/70 pb-2">
-                    <p className="text-xs font-medium text-muted-foreground">
-                      {t(($) => $.integrations.feishu_project_mapping_section)}
-                    </p>
-                  </div>
-
-                  {issueStatuses.length === 0 ? (
-                    <p className="rounded-md border border-border/70 px-3 py-3 text-xs text-muted-foreground">
-                      {t(($) => $.integrations.feishu_project_statuses_empty)}
-                    </p>
-                  ) : (
-                    <div className="grid gap-5 xl:grid-cols-2">
-                      <div className="space-y-2">
-                        <p className="text-xs font-medium">
-                          {t(($) => $.integrations.feishu_project_status_mapping)}
-                        </p>
-                        <div className="overflow-hidden rounded-md border border-border/70">
-                          {issueStatuses.map((status) => (
-                            <div key={status.key} className="grid grid-cols-[1fr_180px] items-center gap-3 border-b border-border/70 px-3 py-2 last:border-b-0">
-                              <div className="min-w-0">
-                                <p className="truncate text-xs font-medium">{status.name}</p>
-                                <p className="truncate font-mono text-[11px] text-muted-foreground">{status.key}</p>
-                              </div>
-                              <Select
-                                value={statusMapping[status.key] || NO_MAPPING}
-                                onValueChange={(value) => {
-                                  setStatusMapping((prev) => setMappingValue(prev, status.key, value || NO_MAPPING));
-                                }}
-                              >
-                                <SelectTrigger size="sm" className="w-full">
-                                  <span className="flex-1 truncate text-left">
-                                    {statusMapping[status.key] || t(($) => $.integrations.feishu_project_no_mapping)}
-                                  </span>
-                                </SelectTrigger>
-                                <SelectContent align="start">
-                                  <SelectItem value={NO_MAPPING}>{t(($) => $.integrations.feishu_project_no_mapping)}</SelectItem>
-                                  {MULTICA_STATUS_OPTIONS.map((option) => (
-                                    <SelectItem key={option} value={option}>{option}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <p className="text-xs font-medium">
-                          {t(($) => $.integrations.feishu_project_reverse_mapping)}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground">
-                          {t(($) => $.integrations.feishu_project_reverse_mapping_disable_hint)}
-                        </p>
-                        <div className="overflow-hidden rounded-md border border-border/70">
-                          {MULTICA_STATUS_OPTIONS.map((status) => {
-                            const current = reverseStatusMapping[status];
-                            const selected = current && issueStatusKeys.has(current) ? current : NO_MAPPING;
-                            return (
-                              <div key={status} className="grid grid-cols-[1fr_180px] items-center gap-3 border-b border-border/70 px-3 py-2 last:border-b-0">
-                                <p className="font-mono text-xs font-medium">{status}</p>
-                                <Select
-                                  value={selected}
-                                  onValueChange={(value) => {
-                                    setReverseStatusMapping((prev) => setMappingValue(prev, status, value || NO_MAPPING));
-                                  }}
-                                >
-                                  <SelectTrigger size="sm" className="w-full">
-                                    <span className="flex-1 truncate text-left">
-                                      {selected === NO_MAPPING
-                                        ? t(($) => $.integrations.feishu_project_no_mapping)
-                                        : statusOptionLabel(issueStatuses, selected)}
-                                    </span>
-                                  </SelectTrigger>
-                                  <SelectContent align="start">
-                                    <SelectItem value={NO_MAPPING}>{t(($) => $.integrations.feishu_project_no_mapping)}</SelectItem>
-                                    {issueStatuses.map((option) => (
-                                      <SelectItem key={option.key} value={option.key}>
-                                        {option.name} ({option.key})
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
                     </div>
                   )}
                 </div>
@@ -803,26 +722,6 @@ function FeishuProjectLabelSyncRuleRow({
   );
 }
 
-function setMappingValue(mapping: Record<string, string>, key: string, value: string): Record<string, string> {
-  const next = { ...mapping };
-  if (!value || value === NO_MAPPING) {
-    delete next[key];
-  } else {
-    next[key] = value;
-  }
-  return next;
-}
-
-function compactMapping(mapping: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(mapping)) {
-    if (key && value && value !== NO_MAPPING) {
-      out[key] = value;
-    }
-  }
-  return out;
-}
-
 function compactLabelSyncRules(rules: FeishuProjectLabelSyncRule[]): FeishuProjectLabelSyncRule[] {
   return rules.map((rule) => ({
     id: rule.id,
@@ -855,15 +754,4 @@ function flattenFieldOptions(nodes: FeishuProjectBusinessLineNode[]): Array<{ id
   };
   walk(nodes);
   return out;
-}
-
-function statusOptionLabel(options: Array<{ key: string; name: string }>, key: string): string {
-  const option = options.find((item) => item.key === key);
-  return option ? `${option.name} (${option.key})` : key;
-}
-
-function shallowEqualRecord(a: Record<string, string>, b: Record<string, string>): boolean {
-  const aEntries = Object.entries(a);
-  if (aEntries.length !== Object.keys(b).length) return false;
-  return aEntries.every(([key, value]) => b[key] === value);
 }

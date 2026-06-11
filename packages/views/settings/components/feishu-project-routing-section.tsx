@@ -88,7 +88,11 @@ export function FeishuProjectRoutingSection({
   const { t } = useT("settings");
   const queryClient = useQueryClient();
 
-  const integrationReady = Boolean(integration?.id && integration.has_plugin_secret);
+  // Credentials may come from the deployment-wide default plugin, in which
+  // case the integration row itself stores no secret.
+  const integrationReady = Boolean(
+    integration?.id && (integration.has_plugin_secret || integration.default_plugin_available),
+  );
   const hasFieldKey = fieldKey.trim() !== "";
 
   const { data: fieldsData, isFetching: fieldsLoading } = useQuery({

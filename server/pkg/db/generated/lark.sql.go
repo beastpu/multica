@@ -550,6 +550,47 @@ func (q *Queries) GetLarkChatSessionBindingBySession(ctx context.Context, chatSe
 	return i, err
 }
 
+const getLarkInboxIssueCard = `-- name: GetLarkInboxIssueCard :one
+SELECT id, workspace_id, recipient_id, issue_id, installation_id, lark_open_id, lark_card_message_id, created_at, updated_at
+FROM lark_inbox_issue_card
+WHERE workspace_id = $1
+  AND recipient_id = $2
+  AND issue_id = $3
+  AND installation_id = $4
+  AND lark_open_id = $5
+`
+
+type GetLarkInboxIssueCardParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	RecipientID    pgtype.UUID `json:"recipient_id"`
+	IssueID        pgtype.UUID `json:"issue_id"`
+	InstallationID pgtype.UUID `json:"installation_id"`
+	LarkOpenID     string      `json:"lark_open_id"`
+}
+
+func (q *Queries) GetLarkInboxIssueCard(ctx context.Context, arg GetLarkInboxIssueCardParams) (LarkInboxIssueCard, error) {
+	row := q.db.QueryRow(ctx, getLarkInboxIssueCard,
+		arg.WorkspaceID,
+		arg.RecipientID,
+		arg.IssueID,
+		arg.InstallationID,
+		arg.LarkOpenID,
+	)
+	var i LarkInboxIssueCard
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RecipientID,
+		&i.IssueID,
+		&i.InstallationID,
+		&i.LarkOpenID,
+		&i.LarkCardMessageID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getLarkInstallation = `-- name: GetLarkInstallation :one
 SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region FROM lark_installation WHERE id = $1
 `
@@ -886,6 +927,66 @@ func (q *Queries) ListLarkInboundAuditByInstallation(ctx context.Context, arg Li
 	return items, nil
 }
 
+const listLarkInboxIssueCardItems = `-- name: ListLarkInboxIssueCardItems :many
+SELECT id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details
+FROM inbox_item
+WHERE workspace_id = $1
+  AND recipient_type = 'member'
+  AND recipient_id = $2
+  AND issue_id = $3
+  AND type = ANY($4::text[])
+ORDER BY created_at ASC, id ASC
+LIMIT 20
+`
+
+type ListLarkInboxIssueCardItemsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RecipientID pgtype.UUID `json:"recipient_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	Types       []string    `json:"types"`
+}
+
+func (q *Queries) ListLarkInboxIssueCardItems(ctx context.Context, arg ListLarkInboxIssueCardItemsParams) ([]InboxItem, error) {
+	rows, err := q.db.Query(ctx, listLarkInboxIssueCardItems,
+		arg.WorkspaceID,
+		arg.RecipientID,
+		arg.IssueID,
+		arg.Types,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InboxItem{}
+	for rows.Next() {
+		var i InboxItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.RecipientType,
+			&i.RecipientID,
+			&i.Type,
+			&i.Severity,
+			&i.IssueID,
+			&i.Title,
+			&i.Body,
+			&i.Read,
+			&i.Archived,
+			&i.CreatedAt,
+			&i.ActorType,
+			&i.ActorID,
+			&i.Details,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLarkInstallationsByWorkspace = `-- name: ListLarkInstallationsByWorkspace :many
 SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region FROM lark_installation
 WHERE workspace_id = $1
@@ -1163,6 +1264,17 @@ func (q *Queries) SetLarkInstallationStatus(ctx context.Context, arg SetLarkInst
 	return err
 }
 
+const touchLarkInboxIssueCard = `-- name: TouchLarkInboxIssueCard :exec
+UPDATE lark_inbox_issue_card
+SET updated_at = now()
+WHERE id = $1
+`
+
+func (q *Queries) TouchLarkInboxIssueCard(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, touchLarkInboxIssueCard, id)
+	return err
+}
+
 const updateLarkOutboundCardStatus = `-- name: UpdateLarkOutboundCardStatus :exec
 UPDATE lark_outbound_card_message
 SET status = $2,
@@ -1178,6 +1290,55 @@ type UpdateLarkOutboundCardStatusParams struct {
 func (q *Queries) UpdateLarkOutboundCardStatus(ctx context.Context, arg UpdateLarkOutboundCardStatusParams) error {
 	_, err := q.db.Exec(ctx, updateLarkOutboundCardStatus, arg.ID, arg.Status)
 	return err
+}
+
+const upsertLarkInboxIssueCard = `-- name: UpsertLarkInboxIssueCard :one
+INSERT INTO lark_inbox_issue_card (
+    workspace_id,
+    recipient_id,
+    issue_id,
+    installation_id,
+    lark_open_id,
+    lark_card_message_id
+) VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (workspace_id, recipient_id, issue_id, installation_id, lark_open_id)
+DO UPDATE SET
+    lark_card_message_id = EXCLUDED.lark_card_message_id,
+    updated_at = now()
+RETURNING id, workspace_id, recipient_id, issue_id, installation_id, lark_open_id, lark_card_message_id, created_at, updated_at
+`
+
+type UpsertLarkInboxIssueCardParams struct {
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	RecipientID       pgtype.UUID `json:"recipient_id"`
+	IssueID           pgtype.UUID `json:"issue_id"`
+	InstallationID    pgtype.UUID `json:"installation_id"`
+	LarkOpenID        string      `json:"lark_open_id"`
+	LarkCardMessageID string      `json:"lark_card_message_id"`
+}
+
+func (q *Queries) UpsertLarkInboxIssueCard(ctx context.Context, arg UpsertLarkInboxIssueCardParams) (LarkInboxIssueCard, error) {
+	row := q.db.QueryRow(ctx, upsertLarkInboxIssueCard,
+		arg.WorkspaceID,
+		arg.RecipientID,
+		arg.IssueID,
+		arg.InstallationID,
+		arg.LarkOpenID,
+		arg.LarkCardMessageID,
+	)
+	var i LarkInboxIssueCard
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RecipientID,
+		&i.IssueID,
+		&i.InstallationID,
+		&i.LarkOpenID,
+		&i.LarkCardMessageID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const upsertLarkInstallation = `-- name: UpsertLarkInstallation :one

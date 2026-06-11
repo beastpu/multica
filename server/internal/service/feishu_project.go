@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"os"
 	"path"
 	"regexp"
 	"sort"
@@ -157,8 +158,12 @@ type FeishuProjectClient struct {
 }
 
 type FeishuProjectWorkItem struct {
-	ID                 string
-	Type               string
+	ID   string
+	Type string
+	// IdentifierPrefix overrides the type-derived prefix in externalIdentifier.
+	// Set for ticket items, whose Type is an opaque space-specific type_key
+	// that would otherwise fall through to the generic MEEGO prefix.
+	IdentifierPrefix   string
 	Title              string
 	Description        string
 	Status             string
@@ -350,8 +355,12 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 					}
 				}()
 			}
+			typeEntry := feishuProjectTypeConfigFor(cfg, typ)
 			for _, item := range page.Items {
 				item.Type = typ
+				if typeEntry != nil {
+					item.IdentifierPrefix = typeEntry.IdentifierPrefix
+				}
 				select {
 				case <-ctx.Done():
 					close(jobs)
@@ -463,12 +472,81 @@ func (s *FeishuProjectSyncService) updateRunProgress(ctx context.Context, runID 
 	})
 }
 
-func enabledFeishuProjectTypes(cfg db.FeishuProjectIntegration) []string {
-	var out []string
-	if cfg.SyncIssue {
-		out = append(out, "issue")
+// FeishuProjectWorkItemTypeConfig is one entry of the integration's
+// work_item_types JSONB column: a Meego work-item type the integration syncs,
+// with its own status mappings and an optional static project route.
+type FeishuProjectWorkItemTypeConfig struct {
+	TypeKey          string `json:"type_key"`
+	APIName          string `json:"api_name"`
+	Name             string `json:"name"`
+	IdentifierPrefix string `json:"identifier_prefix,omitempty"`
+	// ProjectID, when set, statically routes every synced item of this type to
+	// that Multica project, bypassing business-line routing.
+	ProjectID            string            `json:"project_id,omitempty"`
+	StatusMapping        map[string]string `json:"status_mapping"`
+	ReverseStatusMapping map[string]string `json:"reverse_status_mapping"`
+}
+
+// FeishuProjectWorkItemTypeConfigs decodes the integration's synced type list.
+// Entries with an empty type_key are dropped; duplicate type_keys keep the
+// first occurrence. Exported for the HTTP handler.
+func FeishuProjectWorkItemTypeConfigs(cfg db.FeishuProjectIntegration) []FeishuProjectWorkItemTypeConfig {
+	if len(cfg.WorkItemTypes) == 0 {
+		return nil
+	}
+	var raw []FeishuProjectWorkItemTypeConfig
+	if err := json.Unmarshal(cfg.WorkItemTypes, &raw); err != nil {
+		slog.Warn("Feishu Project work_item_types decode failed", "integration_id", UUIDString(cfg.ID), "error", err)
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]FeishuProjectWorkItemTypeConfig, 0, len(raw))
+	for _, entry := range raw {
+		entry.TypeKey = strings.TrimSpace(entry.TypeKey)
+		if entry.TypeKey == "" || seen[entry.TypeKey] {
+			continue
+		}
+		seen[entry.TypeKey] = true
+		out = append(out, entry)
 	}
 	return out
+}
+
+func feishuProjectTypeConfigFor(cfg db.FeishuProjectIntegration, typeKey string) *FeishuProjectWorkItemTypeConfig {
+	typeKey = strings.TrimSpace(typeKey)
+	for _, entry := range FeishuProjectWorkItemTypeConfigs(cfg) {
+		if entry.TypeKey == typeKey {
+			return &entry
+		}
+	}
+	return nil
+}
+
+func enabledFeishuProjectTypes(cfg db.FeishuProjectIntegration) []string {
+	entries := FeishuProjectWorkItemTypeConfigs(cfg)
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, entry.TypeKey)
+	}
+	return out
+}
+
+// FeishuProjectStatusMappingFor returns the Feishu→Multica status mapping of a
+// synced type. Nil-safe: unknown types get an empty map.
+func FeishuProjectStatusMappingFor(cfg db.FeishuProjectIntegration, typ string) map[string]string {
+	if entry := feishuProjectTypeConfigFor(cfg, typ); entry != nil {
+		return entry.StatusMapping
+	}
+	return nil
+}
+
+// FeishuProjectReverseStatusMappingFor is exported for the issue handler's
+// local→Feishu status transition, which resolves the mapping per binding type.
+func FeishuProjectReverseStatusMappingFor(cfg db.FeishuProjectIntegration, typ string) map[string]string {
+	if entry := feishuProjectTypeConfigFor(cfg, typ); entry != nil {
+		return entry.ReverseStatusMapping
+	}
+	return nil
 }
 
 func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, forceRefresh bool, legacyDefaultProjectID pgtype.UUID) (result string, attachErrs int, retErr error) {
@@ -524,7 +602,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	} else if legacyDefaultProjectID.Valid {
 		projectID = legacyDefaultProjectID
 	}
-	mappedStatus := mapFeishuStatus(cfg.StatusMapping, item.Type, item.Status)
+	mappedStatus, hasMappedLocalStatus := feishuProjectMappedLocalStatus(FeishuProjectStatusMappingFor(cfg, item.Type), item.Status)
 	status := mappedStatus
 	if status == "" {
 		status = "todo"
@@ -624,7 +702,11 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		// — we COALESCE on the DB side to preserve whatever's currently stored,
 		// so any manual edits the user made in Multica survive. title is treated
 		// as Meego-authoritative because users rarely rename synced issues.
-		if issue.Title == nextTitle && issue.Status == status &&
+		nextStatus := issue.Status
+		if hasMappedLocalStatus {
+			nextStatus = mappedStatus
+		}
+		if issue.Title == nextTitle && issue.Status == nextStatus &&
 			issue.Priority == nextPriority &&
 			sameNullableText(issue.AssigneeType, assigneeType) && sameNullableUUID(issue.AssigneeID, assigneeID) &&
 			issue.ProjectID == nextProjectID {
@@ -651,7 +733,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 			// above. UpdateIssue's COALESCE preserves the current value.
 			Title:         pgtype.Text{String: nextTitle, Valid: true},
 			Description:   pgtype.Text{},
-			Status:        pgtype.Text{String: status, Valid: true},
+			Status:        pgtype.Text{String: nextStatus, Valid: true},
 			Priority:      pgtype.Text{String: nextPriority, Valid: true},
 			AssigneeType:  assigneeType,
 			AssigneeID:    assigneeID,
@@ -769,7 +851,7 @@ func (s *FeishuProjectSyncService) reconcileLocalStatusDrift(ctx context.Context
 			if !binding.ExternalStatusLabel.Valid {
 				continue
 			}
-			targetStatus := mapFeishuStatus(cfg.StatusMapping, binding.WorkItemType, binding.ExternalStatusLabel.String)
+			targetStatus := FeishuProjectStatusMappingFor(cfg, binding.WorkItemType)[binding.ExternalStatusLabel.String]
 			if targetStatus == "" {
 				continue
 			}
@@ -1032,6 +1114,23 @@ func (s *FeishuProjectSyncService) resolveAssignee(ctx context.Context, cfg db.F
 // disabled and every item is synced into the workspace without a project — matching the
 // pre-routing behavior so this change is backward-compatible. In that case matched=nil.
 func (s *FeishuProjectSyncService) routeWorkItemProject(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem) (*db.FeishuProjectBusinessLineRoute, bool, error) {
+	// Static per-type route takes precedence: when the synced type is pinned to
+	// a project, every item of that type lands there and business-line routing
+	// is skipped entirely for it.
+	if entry := feishuProjectTypeConfigFor(cfg, item.Type); entry != nil && strings.TrimSpace(entry.ProjectID) != "" {
+		projectID, err := util.ParseUUID(strings.TrimSpace(entry.ProjectID))
+		if err != nil {
+			// Corrupted config (save-time validation should prevent this).
+			// Skip rather than dumping items into the workspace root.
+			slog.Warn("Feishu Project sync skipped: invalid static route project_id",
+				"integration_id", UUIDString(cfg.ID),
+				"work_item_type", item.Type,
+				"project_id", entry.ProjectID,
+			)
+			return nil, false, nil
+		}
+		return &db.FeishuProjectBusinessLineRoute{ProjectID: projectID}, true, nil
+	}
 	if strings.TrimSpace(cfg.BusinessLineFieldKey) == "" {
 		return nil, true, nil
 	}
@@ -1288,6 +1387,9 @@ func externalIdentifier(item FeishuProjectWorkItem) string {
 	id := strings.TrimSpace(item.ID)
 	if id == "" {
 		return ""
+	}
+	if prefix := strings.TrimSpace(item.IdentifierPrefix); prefix != "" {
+		return prefix + "-" + id
 	}
 	prefix := "MEEGO"
 	switch strings.ToLower(strings.TrimSpace(item.Type)) {
@@ -1623,22 +1725,6 @@ func isImageFilename(filename string) bool {
 	}
 }
 
-func mapFeishuStatus(raw []byte, typ, external string) string {
-	var mapping map[string]map[string]string
-	if err := json.Unmarshal(raw, &mapping); err == nil {
-		if byType := mapping[typ]; byType != nil {
-			if v := byType[external]; v != "" {
-				return v
-			}
-		}
-	}
-	var flat map[string]string
-	if err := json.Unmarshal(raw, &flat); err == nil {
-		return flat[external]
-	}
-	return ""
-}
-
 func mapFeishuPriority(external string) string {
 	normalized := strings.ToLower(strings.TrimSpace(external))
 	normalized = strings.ReplaceAll(normalized, " ", "")
@@ -1662,20 +1748,32 @@ func mapFeishuPriority(external string) string {
 	}
 }
 
-func MapMulticaStatusToFeishu(raw []byte, typ, status string) string {
-	var mapping map[string]map[string]string
-	if err := json.Unmarshal(raw, &mapping); err == nil {
-		if byType := mapping[typ]; byType != nil {
-			if v := byType[status]; v != "" {
-				return v
-			}
+func feishuProjectMappedLocalStatus(mapping map[string]string, externalStatus string) (string, bool) {
+	if mapping == nil {
+		return "", false
+	}
+	local, ok := mapping[strings.TrimSpace(externalStatus)]
+	local = strings.TrimSpace(local)
+	return local, ok && local != ""
+}
+
+// feishuProjectTrackedStatusKeys returns the sorted external status keys that
+// map to a non-empty Multica status — the set of Feishu statuses pulled into
+// the bounded sync query for a type. A status mapped to "" ("No mapping" in the
+// UI) means "don't sync this status": it is excluded here so its items are
+// neither fetched nor created, identical to a status the operator never
+// configured. (A targeted by-id sync bypasses this scope, so an explicit
+// fetch of such an item still works.)
+func feishuProjectTrackedStatusKeys(mapping map[string]string) []string {
+	out := make([]string, 0, len(mapping))
+	for external, local := range mapping {
+		external = strings.TrimSpace(external)
+		if external != "" && strings.TrimSpace(local) != "" {
+			out = append(out, external)
 		}
 	}
-	var flat map[string]string
-	if err := json.Unmarshal(raw, &flat); err == nil {
-		return flat[status]
-	}
-	return ""
+	sort.Strings(out)
+	return out
 }
 
 func mappedFeishuProjectStatuses(raw []byte, typ string) []string {
@@ -1826,7 +1924,11 @@ func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context,
 			explicitIDs = []string{id}
 		}
 	}
-	statuses := mappedFeishuProjectStatuses(cfg.StatusMapping, workItemType)
+	typeEntry := feishuProjectTypeConfigFor(cfg, workItemType)
+	var statuses []string
+	if typeEntry != nil {
+		statuses = feishuProjectTrackedStatusKeys(typeEntry.StatusMapping)
+	}
 	// A targeted (id-scoped) sync asks Meego for exactly that row regardless of
 	// state, so it doesn't need a status mapping. Only refuse here for the
 	// scheduled / full-sync path that would otherwise unbounded-scan.
@@ -1873,7 +1975,13 @@ func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context,
 		if err != nil {
 			return err
 		}
-		items := parseFeishuProjectSearch(payload, workItemType, cfg.ProjectKey, strings.TrimSpace(cfg.BusinessLineFieldKey))
+		// Detail URLs use the type's api_name, not its type_key. They only
+		// differ for custom types, where type_key is an opaque id.
+		urlType := workItemType
+		if typeEntry != nil && strings.TrimSpace(typeEntry.APIName) != "" {
+			urlType = strings.TrimSpace(typeEntry.APIName)
+		}
+		items := parseFeishuProjectSearch(payload, workItemType, urlType, cfg.ProjectKey, strings.TrimSpace(cfg.BusinessLineFieldKey))
 		total, hasTotal := feishuProjectOpenAPITotal(payload)
 		if !hasTotal {
 			total = 0
@@ -1938,7 +2046,7 @@ func (c *FeishuProjectClient) mappedStatusLabels(ctx context.Context, cfg db.Fei
 	if len(mapped) == 0 {
 		return nil, nil
 	}
-	options, err := c.IssueStatusOptions(ctx, cfg)
+	options, err := c.WorkItemStatusOptions(ctx, cfg, workItemType)
 	if err != nil {
 		return nil, err
 	}
@@ -1961,9 +2069,15 @@ func (c *FeishuProjectClient) mappedStatusLabels(ctx context.Context, cfg db.Fei
 	return out, nil
 }
 
-func (c *FeishuProjectClient) IssueStatusOptions(ctx context.Context, cfg db.FeishuProjectIntegration) ([]FeishuProjectStatusOption, error) {
+// WorkItemStatusOptions returns the selectable workflow statuses of a work-item
+// type. workItemType defaults to "issue" when empty (the legacy single-type path).
+func (c *FeishuProjectClient) WorkItemStatusOptions(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType string) ([]FeishuProjectStatusOption, error) {
+	workItemType = strings.TrimSpace(workItemType)
+	if workItemType == "" {
+		workItemType = "issue"
+	}
 	var statuses []FeishuProjectStatusOption
-	templates, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/template_list/%s", cfg.ProjectKey, "issue"), nil)
+	templates, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/template_list/%s", cfg.ProjectKey, workItemType), nil)
 	if err == nil {
 		for _, templateID := range parseFeishuProjectTemplateIDs(templates) {
 			detail, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/template_detail/%s", cfg.ProjectKey, templateID), nil)
@@ -1976,15 +2090,61 @@ func (c *FeishuProjectClient) IssueStatusOptions(ctx context.Context, cfg db.Fei
 	if len(statuses) > 0 {
 		return statuses, nil
 	}
-	payload, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/work_item/%s/meta", cfg.ProjectKey, "issue"), nil)
+	payload, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/work_item/%s/meta", cfg.ProjectKey, workItemType), nil)
 	if err != nil {
 		return nil, err
 	}
 	statuses = parseFeishuProjectStatusOptions(payload)
 	if len(statuses) == 0 {
-		return nil, fmt.Errorf("Feishu Project issue status metadata is empty")
+		return nil, fmt.Errorf("Feishu Project %s status metadata is empty", workItemType)
 	}
 	return statuses, nil
+}
+
+// FeishuProjectWorkItemType is one work-item type registered in a Meego space.
+// TypeKey is the OpenAPI identifier (opaque id for custom types), APIName the
+// URL path segment, Name the display label (e.g. "工单").
+type FeishuProjectWorkItemType struct {
+	TypeKey string `json:"type_key"`
+	APIName string `json:"api_name"`
+	Name    string `json:"name"`
+}
+
+// ListWorkItemTypes returns the space's work-item types from
+// GET /open_api/{project_key}/work_item/all-types. Disabled types
+// (is_disable == 1) are filtered out. Used by the settings UI so the operator
+// can pick which custom type (e.g. 工单) to sync — custom type_keys differ per
+// space and cannot be hardcoded.
+func (c *FeishuProjectClient) ListWorkItemTypes(ctx context.Context, cfg db.FeishuProjectIntegration) ([]FeishuProjectWorkItemType, error) {
+	payload, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/work_item/all-types", cfg.ProjectKey), nil)
+	if err != nil {
+		return nil, err
+	}
+	return parseFeishuProjectWorkItemTypes(payload), nil
+}
+
+func parseFeishuProjectWorkItemTypes(payload map[string]any) []FeishuProjectWorkItemType {
+	rows, _ := payload["data"].([]any)
+	out := make([]FeishuProjectWorkItemType, 0, len(rows))
+	for _, rowAny := range rows {
+		row, _ := rowAny.(map[string]any)
+		if row == nil {
+			continue
+		}
+		if disabled, ok := feishuProjectInt(row["is_disable"]); ok && disabled == 1 {
+			continue
+		}
+		typ := FeishuProjectWorkItemType{
+			TypeKey: strings.TrimSpace(firstNonEmpty(fmt.Sprint(row["type_key"]))),
+			APIName: strings.TrimSpace(firstNonEmpty(fmt.Sprint(row["api_name"]))),
+			Name:    strings.TrimSpace(firstNonEmpty(fmt.Sprint(row["name"]))),
+		}
+		if typ.TypeKey == "" {
+			continue
+		}
+		out = append(out, typ)
+	}
+	return out
 }
 
 // ListWorkItemFields returns the field definitions of a work-item type so the user
@@ -2130,7 +2290,7 @@ func (c *FeishuProjectClient) TransitionStatus(ctx context.Context, cfg db.Feish
 }
 
 func (c *FeishuProjectClient) openAPI(ctx context.Context, cfg db.FeishuProjectIntegration, method, path string, body any) (map[string]any, error) {
-	token, err := c.pluginToken(ctx, cfg.PluginID, cfg.PluginSecret)
+	token, err := c.tokenFor(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -2335,7 +2495,7 @@ func feishuProjectRetryableAPIError(payload map[string]any) bool {
 }
 
 func (c *FeishuProjectClient) callTool(ctx context.Context, cfg db.FeishuProjectIntegration, name string, args map[string]any) (map[string]any, error) {
-	token, err := c.pluginToken(ctx, cfg.PluginID, cfg.PluginSecret)
+	token, err := c.tokenFor(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -2406,7 +2566,7 @@ func (c *FeishuProjectClient) callTool(ctx context.Context, cfg db.FeishuProject
 
 func (c *FeishuProjectClient) DownloadAttachment(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, att FeishuProjectAttachment) ([]byte, string, string, error) {
 	if att.ID != "" {
-		token, err := c.pluginToken(ctx, cfg.PluginID, cfg.PluginSecret)
+		token, err := c.tokenFor(ctx, cfg)
 		if err != nil {
 			return nil, "", "", err
 		}
@@ -2466,7 +2626,7 @@ func (c *FeishuProjectClient) DownloadAttachment(ctx context.Context, cfg db.Fei
 	if err != nil {
 		return nil, "", "", err
 	}
-	if token, tokenErr := c.pluginToken(ctx, cfg.PluginID, cfg.PluginSecret); tokenErr == nil {
+	if token, tokenErr := c.tokenFor(ctx, cfg); tokenErr == nil {
 		req.Header.Set("X-PLUGIN-TOKEN", token)
 		if cfg.ActorUserKey.Valid {
 			req.Header.Set("X-USER-KEY", cfg.ActorUserKey.String)
@@ -2586,6 +2746,59 @@ func filenameFromContentDisposition(raw string) string {
 		return ""
 	}
 	return params["filename"]
+}
+
+// Deployment-wide default Meego plugin credentials. When set, workspaces may
+// leave plugin_id/plugin_secret empty in their integration config and the
+// shared company plugin is used instead — resolved at call time so rotating
+// the env value takes effect without re-saving each integration.
+const (
+	feishuProjectDefaultPluginIDEnv     = "FEISHU_PROJECT_DEFAULT_PLUGIN_ID"
+	feishuProjectDefaultPluginSecretEnv = "FEISHU_PROJECT_DEFAULT_PLUGIN_SECRET"
+)
+
+// FeishuProjectDefaultPluginID returns the deployment-wide default plugin id,
+// or "" when unset. Exported for the HTTP handler's config response.
+func FeishuProjectDefaultPluginID() string {
+	return strings.TrimSpace(os.Getenv(feishuProjectDefaultPluginIDEnv))
+}
+
+// FeishuProjectHasDefaultPluginCredentials reports whether both halves of the
+// deployment-wide default plugin credential pair are configured.
+func FeishuProjectHasDefaultPluginCredentials() bool {
+	return FeishuProjectDefaultPluginID() != "" &&
+		strings.TrimSpace(os.Getenv(feishuProjectDefaultPluginSecretEnv)) != ""
+}
+
+// ErrFeishuProjectNoPluginCredentials is returned when an integration stores no
+// plugin credentials and no deployment-wide default is configured (e.g. the
+// integration was saved while FEISHU_PROJECT_DEFAULT_PLUGIN_* was set and the
+// env was later removed). Surfaced as a clear cause instead of a vague Meego
+// token error, and recorded in last_error so the misconfiguration is visible.
+var ErrFeishuProjectNoPluginCredentials = errors.New("Feishu Project integration has no plugin credentials (set plugin_id/secret, or configure the deployment default plugin)")
+
+// tokenFor returns a plugin token for the integration, resolving credentials
+// (including deployment defaults) first.
+func (c *FeishuProjectClient) tokenFor(ctx context.Context, cfg db.FeishuProjectIntegration) (string, error) {
+	pluginID, pluginSecret := feishuProjectPluginCredentials(cfg)
+	if pluginID == "" || pluginSecret == "" {
+		return "", ErrFeishuProjectNoPluginCredentials
+	}
+	return c.pluginToken(ctx, pluginID, pluginSecret)
+}
+
+// feishuProjectPluginCredentials resolves the plugin credentials for one
+// integration, falling back per-field to the deployment defaults.
+func feishuProjectPluginCredentials(cfg db.FeishuProjectIntegration) (string, string) {
+	id := strings.TrimSpace(cfg.PluginID)
+	secret := strings.TrimSpace(cfg.PluginSecret)
+	// Fall back as a pair: an empty stored plugin_id means "use the company
+	// plugin". Mixing a custom id with the default secret (or vice versa) can
+	// never be a valid pairing, so per-field fallback is intentionally avoided.
+	if id == "" && FeishuProjectHasDefaultPluginCredentials() {
+		return FeishuProjectDefaultPluginID(), strings.TrimSpace(os.Getenv(feishuProjectDefaultPluginSecretEnv))
+	}
+	return id, secret
 }
 
 func (c *FeishuProjectClient) pluginToken(ctx context.Context, pluginID, pluginSecret string) (string, error) {
@@ -2742,7 +2955,7 @@ func feishuProjectInt(value any) (int, bool) {
 	}
 }
 
-func parseFeishuProjectSearch(payload map[string]any, typ, projectKey, businessLineFieldKey string) []FeishuProjectWorkItem {
+func parseFeishuProjectSearch(payload map[string]any, typ, urlType, projectKey, businessLineFieldKey string) []FeishuProjectWorkItem {
 	var out []FeishuProjectWorkItem
 	rows, _ := payload["data"].([]any)
 	for _, rowAny := range rows {
@@ -2832,7 +3045,7 @@ func parseFeishuProjectSearch(payload map[string]any, typ, projectKey, businessL
 			Priority:           feishuProjectPriorityValue(record),
 			OwnerEmail:         ownerEmail,
 			UpdatedAt:          updatedAt,
-			URL:                fmt.Sprintf("https://project.feishu.cn/%s/%s/detail/%s", projectKey, typ, id),
+			URL:                fmt.Sprintf("https://project.feishu.cn/%s/%s/detail/%s", projectKey, urlType, id),
 			Attachments:        dedupeFeishuProjectAttachments(attachments),
 			BusinessLineTokens: businessLineTokens,
 			FieldValues:        fieldValues,

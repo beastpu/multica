@@ -70,9 +70,10 @@ func (h *Handler) ListFeishuProjectWorkItemFields(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	workItemType := strings.TrimSpace(r.URL.Query().Get("work_item_type"))
-	if workItemType == "" {
-		workItemType = "issue"
+	workItemType, ok := validFeishuProjectWorkItemType(r.URL.Query().Get("work_item_type"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid work_item_type")
+		return
 	}
 	fields, err := service.NewFeishuProjectClient().ListWorkItemFields(r.Context(), cfg, workItemType)
 	if err != nil {
@@ -98,9 +99,10 @@ func (h *Handler) ListFeishuProjectBusinessLines(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "field_key query param is required")
 		return
 	}
-	workItemType := strings.TrimSpace(r.URL.Query().Get("work_item_type"))
-	if workItemType == "" {
-		workItemType = "issue"
+	workItemType, ok := validFeishuProjectWorkItemType(r.URL.Query().Get("work_item_type"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid work_item_type")
+		return
 	}
 	lines, err := service.NewFeishuProjectClient().ListFieldOptions(r.Context(), cfg, workItemType, fieldKey)
 	if err != nil {

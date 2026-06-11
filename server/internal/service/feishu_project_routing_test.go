@@ -164,7 +164,7 @@ func TestParseFeishuProjectSearchExtractsBusinessLine(t *testing.T) {
 			},
 		},
 	}
-	items := parseFeishuProjectSearch(payload, "issue", "proj", "business")
+	items := parseFeishuProjectSearch(payload, "issue", "issue", "proj", "business")
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -177,7 +177,7 @@ func TestParseFeishuProjectSearchExtractsBusinessLine(t *testing.T) {
 	}
 
 	// Without configured field key, no tokens are extracted (1:1 legacy mode).
-	items = parseFeishuProjectSearch(payload, "issue", "proj", "")
+	items = parseFeishuProjectSearch(payload, "issue", "issue", "proj", "")
 	if len(items) != 1 || len(items[0].BusinessLineTokens) != 0 {
 		t.Fatalf("legacy mode should have no tokens, got %#v", items[0].BusinessLineTokens)
 	}
@@ -204,7 +204,7 @@ func TestParseFeishuProjectSearchIndexesFieldValuesForLabelSync(t *testing.T) {
 			},
 		},
 	}
-	items := parseFeishuProjectSearch(payload, "issue", "partopia", "")
+	items := parseFeishuProjectSearch(payload, "issue", "issue", "partopia", "")
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -245,7 +245,7 @@ func TestParseFeishuProjectSearchExtractsPriority(t *testing.T) {
 			},
 		},
 	}
-	items := parseFeishuProjectSearch(payload, "issue", "partopia", "")
+	items := parseFeishuProjectSearch(payload, "issue", "issue", "partopia", "")
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -457,7 +457,7 @@ func TestParseFeishuProjectSearchIndexesByDisplayName(t *testing.T) {
 			},
 		},
 	}
-	items := parseFeishuProjectSearch(payload, "issue", "proj", "")
+	items := parseFeishuProjectSearch(payload, "issue", "issue", "proj", "")
 	if len(items) != 2 {
 		t.Fatalf("expected 2 items, got %d", len(items))
 	}
@@ -508,7 +508,7 @@ func TestParseFeishuProjectSearchResolvesOwnerFromUserObjects(t *testing.T) {
 			},
 		},
 	}
-	items := parseFeishuProjectSearch(payload, "issue", "proj", "")
+	items := parseFeishuProjectSearch(payload, "issue", "issue", "proj", "")
 	if len(items) != 2 {
 		t.Fatalf("expected 2 items, got %d", len(items))
 	}
@@ -547,7 +547,7 @@ func TestParseFeishuProjectSearchUsesOperatorRoleAsOwner(t *testing.T) {
 			},
 		},
 	}
-	items := parseFeishuProjectSearch(payload, "issue", "proj", "")
+	items := parseFeishuProjectSearch(payload, "issue", "issue", "proj", "")
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -580,7 +580,7 @@ func TestParseFeishuProjectSearchUsesRoleOwnersFieldAsOwner(t *testing.T) {
 			},
 		},
 	}
-	items := parseFeishuProjectSearch(payload, "issue", "proj", "")
+	items := parseFeishuProjectSearch(payload, "issue", "issue", "proj", "")
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}

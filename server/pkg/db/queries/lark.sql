@@ -257,6 +257,46 @@ WITH ins AS (
 )
 SELECT COALESCE((SELECT claimed FROM ins), false)::boolean AS claimed;
 
+-- name: GetLarkInboxIssueCard :one
+SELECT *
+FROM lark_inbox_issue_card
+WHERE workspace_id = $1
+  AND recipient_id = $2
+  AND issue_id = $3
+  AND installation_id = $4
+  AND lark_open_id = $5;
+
+-- name: UpsertLarkInboxIssueCard :one
+INSERT INTO lark_inbox_issue_card (
+    workspace_id,
+    recipient_id,
+    issue_id,
+    installation_id,
+    lark_open_id,
+    lark_card_message_id
+) VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (workspace_id, recipient_id, issue_id, installation_id, lark_open_id)
+DO UPDATE SET
+    lark_card_message_id = EXCLUDED.lark_card_message_id,
+    updated_at = now()
+RETURNING *;
+
+-- name: TouchLarkInboxIssueCard :exec
+UPDATE lark_inbox_issue_card
+SET updated_at = now()
+WHERE id = $1;
+
+-- name: ListLarkInboxIssueCardItems :many
+SELECT *
+FROM inbox_item
+WHERE workspace_id = $1
+  AND recipient_type = 'member'
+  AND recipient_id = $2
+  AND issue_id = $3
+  AND type = ANY(sqlc.arg('types')::text[])
+ORDER BY created_at ASC, id ASC
+LIMIT 20;
+
 -- =====================
 -- lark_inbound_message_dedup
 -- =====================

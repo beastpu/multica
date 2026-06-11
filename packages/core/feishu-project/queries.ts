@@ -5,7 +5,11 @@ import type { ReplaceFeishuProjectRoutesRequest } from "../types";
 export const feishuProjectKeys = {
   all: (wsId: string) => ["feishu-project", wsId] as const,
   integration: (wsId: string) => [...feishuProjectKeys.all(wsId), "integration"] as const,
-  issueStatuses: (wsId: string) => [...feishuProjectKeys.all(wsId), "issue-statuses"] as const,
+  // Base key kept separate so invalidating it hits every per-type entry.
+  issueStatusesAll: (wsId: string) => [...feishuProjectKeys.all(wsId), "issue-statuses"] as const,
+  issueStatuses: (wsId: string, workItemType: string) =>
+    [...feishuProjectKeys.issueStatusesAll(wsId), workItemType] as const,
+  workItemTypes: (wsId: string) => [...feishuProjectKeys.all(wsId), "work-item-types"] as const,
   sync: (wsId: string) => [...feishuProjectKeys.all(wsId), "sync"] as const,
   fieldsAll: (wsId: string) => [...feishuProjectKeys.all(wsId), "fields"] as const,
   fields: (wsId: string, workItemType: string) =>
@@ -25,11 +29,21 @@ export const feishuProjectIntegrationOptions = (wsId: string) =>
     enabled: !!wsId,
   });
 
-export const feishuProjectIssueStatusesOptions = (wsId: string, enabled = true) =>
+export const feishuProjectIssueStatusesOptions = (wsId: string, enabled = true, workItemType = "issue") =>
   queryOptions({
-    queryKey: feishuProjectKeys.issueStatuses(wsId),
-    queryFn: () => api.getFeishuProjectIssueStatuses(wsId),
+    queryKey: feishuProjectKeys.issueStatuses(wsId, workItemType),
+    queryFn: () => api.getFeishuProjectIssueStatuses(wsId, workItemType),
+    enabled: !!wsId && !!workItemType && enabled,
+  });
+
+// Space work-item type registry — only needed while the operator is picking the
+// ticket type in settings, so callers gate it on the integration being ready.
+export const feishuProjectWorkItemTypesOptions = (wsId: string, enabled = true) =>
+  queryOptions({
+    queryKey: feishuProjectKeys.workItemTypes(wsId),
+    queryFn: () => api.listFeishuProjectWorkItemTypes(wsId),
     enabled: !!wsId && enabled,
+    staleTime: Infinity,
   });
 
 export const feishuProjectSyncOptions = (wsId: string, enabled = true) =>
