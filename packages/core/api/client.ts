@@ -1801,53 +1801,6 @@ export class ApiClient {
     };
   }
 
-  // True when the client authenticates via a Bearer token — the Feishu
-  // Project plugin's `shipToken` or the Electron desktop app's stored token —
-  // rather than the browser session cookie. It matters for media: a native
-  // <img>/<video> resource load can't authenticate in this mode (the browser
-  // won't attach the Authorization header), so an auth-gated attachment URL
-  // has to be fetched through this client and handed to the element as a blob
-  // URL. See fetchInlineMediaObjectURL.
-  hasBearerToken(): boolean {
-    return Boolean(this.token);
-  }
-
-  // Fetches an auth-gated attachment URL (e.g. the
-  // `/api/attachments/{id}/content` links the Feishu-Project sync writes into
-  // issue / comment markdown) with the standard auth headers and returns an
-  // object URL usable as a native <img>/<video> src. Used only in Bearer-token
-  // mode (see hasBearerToken); cookie-mode clients load these URLs natively and
-  // never reach here.
-  //
-  // Deliberately does NOT route through fetchRaw: a transient image 401 must
-  // not trip handleUnauthorized() and tear down the whole session over one
-  // broken thumbnail. The caller owns the returned object URL and must revoke
-  // it (URL.revokeObjectURL) when the element unmounts or the src changes.
-  async fetchInlineMediaObjectURL(
-    src: string,
-    signal?: AbortSignal,
-  ): Promise<string> {
-    let path = src;
-    if (/^https?:\/\//i.test(src)) {
-      const u = new URL(src);
-      path = `${u.pathname}${u.search}`;
-    }
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      headers: { ...this.authHeaders() },
-      credentials: "include",
-      signal,
-    });
-    if (!res.ok) {
-      throw new ApiError(
-        `inline media fetch failed: ${res.status}`,
-        res.status,
-        res.statusText,
-        undefined,
-      );
-    }
-    return URL.createObjectURL(await res.blob());
-  }
-
   // Projects
   async listProjects(params?: { status?: string }): Promise<ListProjectsResponse> {
     const search = new URLSearchParams();
