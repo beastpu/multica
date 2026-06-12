@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -85,5 +85,18 @@ describe("LarkBindPage", () => {
     await waitFor(() => {
       expect(mockRedeem).toHaveBeenCalledWith("binding-token");
     });
+  });
+
+  it("uses the login next parameter when sign-in is required", async () => {
+    renderWithI18n(<LarkBindPage token="binding-token" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /sign in/i }));
+
+    expect(mockPush).toHaveBeenCalledWith(
+      `/login?next=${encodeURIComponent(
+        `/lark/bind?token=${encodeURIComponent("binding-token")}`,
+      )}`,
+    );
+    expect(mockPush.mock.calls[0]?.[0]).not.toContain("redirect=");
   });
 });

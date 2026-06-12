@@ -80,7 +80,7 @@ export function LarkBindPage({ token }: { token: string | null }) {
                 size="sm"
                 onClick={() =>
                   navigation.push(
-                    `/login?redirect=${encodeURIComponent(
+                    `/login?next=${encodeURIComponent(
                       `/lark/bind?token=${encodeURIComponent(token ?? "")}`,
                     )}`,
                   )
