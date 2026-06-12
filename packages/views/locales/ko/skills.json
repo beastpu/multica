@@ -190,6 +190,7 @@
       "supported_sources": "지원 출처",
       "import": "가져오기",
       "importing": "가져오는 중...",
+      "importing_atlas": "Atlas Skill Hub에서 가져오는 중...",
       "importing_clawhub": "ClawHub에서 가져오는 중...",
       "importing_skills_sh": "Skills.sh에서 가져오는 중...",
       "importing_github": "GitHub에서 가져오는 중...",

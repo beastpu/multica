@@ -190,6 +190,7 @@
       "supported_sources": "Supported sources",
       "import": "Import",
       "importing": "Importing…",
+      "importing_atlas": "Importing from Atlas Skill Hub…",
       "importing_clawhub": "Importing from ClawHub…",
       "importing_skills_sh": "Importing from Skills.sh…",
       "importing_github": "Importing from GitHub…",

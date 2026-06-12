@@ -238,10 +238,17 @@ function ManualForm({
 // URL import form
 // ---------------------------------------------------------------------------
 
-type DetectedSource = "clawhub" | "skills.sh" | "github" | null;
+type DetectedSource = "atlas" | "clawhub" | "skills.sh" | "github" | null;
 
 function detectUrlSource(url: string): DetectedSource {
   const u = url.trim().toLowerCase();
+  // Atlas Skill Hub is internal-only: match a `skill-hub` path on a Lilith
+  // domain so it never claims a third-party URL that happens to look similar.
+  if (
+    u.includes("/skill-hub") &&
+    (u.includes(".lilithgames.com") || u.includes(".lilithgame.com"))
+  )
+    return "atlas";
   if (u.includes("clawhub.ai")) return "clawhub";
   if (u.includes("skills.sh")) return "skills.sh";
   if (u.includes("github.com")) return "github";
@@ -312,6 +319,7 @@ function UrlForm({
 
   const submittingLabel = (() => {
     if (!loading) return t(($) => $.create.url.import);
+    if (source === "atlas") return t(($) => $.create.url.importing_atlas);
     if (source === "clawhub") return t(($) => $.create.url.importing_clawhub);
     if (source === "skills.sh") return t(($) => $.create.url.importing_skills_sh);
     if (source === "github") return t(($) => $.create.url.importing_github);
@@ -349,7 +357,13 @@ function UrlForm({
           <p className="mb-2 text-xs text-muted-foreground">
             {t(($) => $.create.url.supported_sources)}
           </p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
+            <SourceCard
+              label="Atlas Skill Hub"
+              exampleHost="atlas-ai.lilithgames.com"
+              browseUrl="https://atlas-ai.lilithgames.com"
+              active={source === "atlas"}
+            />
             <SourceCard
               label="ClawHub"
               exampleHost="clawhub.ai/owner/skill"

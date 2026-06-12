@@ -49,12 +49,20 @@ multica skill import --url skills.sh/owner/repo/skill --output json
 multica skill import --url github.com/owner/repo --output json
 multica skill import --url github.com/owner/repo/tree/main/path/to/skill --output json
 multica skill import --url github.com/owner/repo/blob/main/path/to/SKILL.md --output json
+multica skill import --url https://atlas-ai-api.lilithgames.com/api/skill-hub-internal/<slug>/install-prompt --output json
 ```
 
-- `clawhub.ai`, `skills.sh`, `github.com` are the recognized hosts.
+- `clawhub.ai`, `skills.sh`, `github.com` are the recognized public hosts.
 - A GitHub URL may be a bare `owner/repo`, a `/tree/{ref}/...` directory, or a
   `/blob/{ref}/.../SKILL.md` file.
 - A bare ClawHub slug (no host) is accepted and routed to ClawHub.
+- **Atlas Skill Hub** (Lilith-internal): any URL on a Lilith domain
+  (`*.lilithgames.com` / `*.lilithgame.com`) carrying a `skill-hub` /
+  `skill-hub-internal` path segment is recognized. The `install-prompt`,
+  `download`, and bare detail shapes all resolve to the same slug; the server
+  downloads the skill ZIP from `{slug}/download`, then extracts `SKILL.md` plus
+  the bundled supporting files. Requires the Multica server to have network
+  reach to the Atlas API host.
 - Any other host is rejected with a 400 naming the supported sources.
 
 ## Direct URL flow

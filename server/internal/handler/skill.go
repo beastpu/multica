@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -718,7 +720,33 @@ const (
 	sourceClawHub importSource = iota
 	sourceSkillsSh
 	sourceGitHub
+	sourceAtlasSkillHub
 )
+
+// isLilithHost reports whether host belongs to Lilith's official domains. Atlas
+// Skill Hub is an internal-only service, so its URLs are only ever served from
+// these domains — matching them keeps the detector from claiming a `/skill-hub`
+// path that happens to live on some unrelated third-party host.
+func isLilithHost(host string) bool {
+	return host == "lilithgames.com" || strings.HasSuffix(host, ".lilithgames.com") ||
+		host == "lilithgame.com" || strings.HasSuffix(host, ".lilithgame.com")
+}
+
+// isAtlasSkillHubURL reports whether a parsed URL points at Lilith's internal
+// Atlas Skill Hub. It matches a Lilith host carrying a `skill-hub` /
+// `skill-hub-internal` path segment, so the public detail, internal download,
+// and `install-prompt` URL shapes are all recognized.
+func isAtlasSkillHubURL(parsed *url.URL) bool {
+	if !isLilithHost(strings.ToLower(parsed.Hostname())) {
+		return false
+	}
+	for seg := range strings.SplitSeq(parsed.Path, "/") {
+		if seg == "skill-hub" || seg == "skill-hub-internal" {
+			return true
+		}
+	}
+	return false
+}
 
 // detectImportSource determines the source from a URL.
 // Returns the source and a normalized URL (with scheme).
@@ -740,6 +768,8 @@ func detectImportSource(raw string) (importSource, string, error) {
 
 	host := strings.ToLower(parsed.Hostname())
 	switch {
+	case isAtlasSkillHubURL(parsed):
+		return sourceAtlasSkillHub, normalized, nil
 	case host == "skills.sh" || host == "www.skills.sh":
 		return sourceSkillsSh, normalized, nil
 	case host == "clawhub.ai" || host == "www.clawhub.ai":
@@ -751,7 +781,7 @@ func detectImportSource(raw string) (importSource, string, error) {
 		if !strings.Contains(raw, "/") || !strings.Contains(raw, ".") {
 			return sourceClawHub, raw, nil
 		}
-		return 0, "", fmt.Errorf("unsupported source: %s (supported: clawhub.ai, skills.sh, github.com)", host)
+		return 0, "", fmt.Errorf("unsupported source: %s (supported: clawhub.ai, skills.sh, github.com, Atlas Skill Hub)", host)
 	}
 }
 
@@ -1648,6 +1678,194 @@ func fetchFromGitHub(httpClient *http.Client, rawURL string) (*importedSkill, er
 	return result, nil
 }
 
+// --- Atlas Skill Hub import ---
+
+// parseAtlasSkillHubSlug extracts the skill slug from an Atlas Skill Hub URL and
+// derives the internal download endpoint. The dialog hands us the user-facing
+// `install-prompt` URL, but any of these shapes resolve to the same slug:
+//
+//	.../api/skill-hub-internal/{slug}/install-prompt
+//	.../api/skill-hub-internal/{slug}/download
+//	.../api/skill-hub-internal/{slug}
+//	.../api/skill-hub/{slug}
+//
+// The download endpoint is rebuilt from the URL's own scheme/host/prefix so this
+// keeps working across environments (staging hosts, path prefixes) instead of
+// hardcoding the production base.
+func parseAtlasSkillHubSlug(raw string) (slug, downloadURL string, err error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid URL: %w", err)
+	}
+	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	hubIdx := -1
+	for i, seg := range segments {
+		if seg == "skill-hub-internal" || seg == "skill-hub" {
+			hubIdx = i
+			break
+		}
+	}
+	if hubIdx == -1 || hubIdx+1 >= len(segments) || segments[hubIdx+1] == "" {
+		return "", "", fmt.Errorf("missing skill slug in Atlas Skill Hub URL: %s", raw)
+	}
+	slug = segments[hubIdx+1]
+
+	prefix := append([]string{}, segments[:hubIdx]...)
+	prefix = append(prefix, "skill-hub-internal", url.PathEscape(slug), "download")
+	dl := &url.URL{Scheme: parsed.Scheme, Host: parsed.Host, Path: "/" + strings.Join(prefix, "/")}
+	return slug, dl.String(), nil
+}
+
+// fetchFromAtlasSkillHub imports a skill from Lilith's internal Atlas Skill Hub.
+// Unlike the Git-backed sources, Atlas serves the whole skill as a single ZIP
+// from `{slug}/download`; we extract SKILL.md as the primary content and the
+// remaining entries as supporting files.
+func fetchFromAtlasSkillHub(httpClient *http.Client, rawURL string) (*importedSkill, error) {
+	slug, downloadURL, err := parseAtlasSkillHubSlug(rawURL)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := httpClient.Get(downloadURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reach Atlas Skill Hub: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read the bundle up front (capped) so we can both surface Atlas's JSON error
+	// envelope on failure and hand the bytes to the zip reader on success.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxImportTotalSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to download skill bundle: %w", err)
+	}
+	if len(body) > maxImportTotalSize {
+		return nil, fmt.Errorf("%w: skill bundle exceeds %d byte limit", errImportCapExceeded, maxImportTotalSize)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Atlas Skill Hub returned status %d for %q: %s",
+			resp.StatusCode, slug, atlasErrorMessage(body))
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		return nil, fmt.Errorf("Atlas Skill Hub did not return a valid skill bundle for %q: %w", slug, err)
+	}
+
+	// Bundles are normally flat (SKILL.md at the root), but tolerate a single
+	// wrapping directory by treating the shortest-path SKILL.md as the root and
+	// stripping that prefix off every supporting file.
+	var skillMdFile *zip.File
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		if strings.EqualFold(zipEntryBase(f.Name), "SKILL.md") {
+			if skillMdFile == nil || len(f.Name) < len(skillMdFile.Name) {
+				skillMdFile = f
+			}
+		}
+	}
+	if skillMdFile == nil {
+		return nil, fmt.Errorf("Atlas Skill Hub bundle for %q has no SKILL.md", slug)
+	}
+	rootPrefix := zipEntryDir(skillMdFile.Name)
+
+	skillMdBody, err := readZipFile(skillMdFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read SKILL.md from Atlas bundle: %w", err)
+	}
+
+	name, description := skillpkg.ParseSkillFrontmatter(skillMdBody)
+	if name == "" {
+		name = slug
+	}
+
+	result := &importedSkill{
+		name:        name,
+		description: description,
+		content:     skillMdBody,
+		origin: map[string]any{
+			"type":       "atlas_skillhub",
+			"source_url": rawURL,
+			"slug":       slug,
+		},
+	}
+
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() || f == skillMdFile {
+			continue
+		}
+		relPath := strings.TrimPrefix(f.Name, rootPrefix)
+		if relPath == "" {
+			continue
+		}
+		content, err := readZipFile(f)
+		if err != nil {
+			if isCapError(err) {
+				return nil, fmt.Errorf("atlas import: %s: %w", f.Name, err)
+			}
+			slog.Warn("atlas import: file read failed", "path", f.Name, "error", err)
+			continue
+		}
+		if err := result.addFile(relPath, content); err != nil {
+			return nil, err
+		}
+	}
+
+	return result, nil
+}
+
+// atlasErrorMessage pulls the human-readable message out of Atlas's JSON error
+// envelope ({"code":..,"message":".."}), falling back to a trimmed snippet of
+// the raw body when it isn't the expected shape.
+func atlasErrorMessage(body []byte) string {
+	var env struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &env); err == nil && env.Message != "" {
+		return env.Message
+	}
+	snippet := strings.TrimSpace(string(body))
+	if len(snippet) > 200 {
+		snippet = snippet[:200]
+	}
+	return snippet
+}
+
+// readZipFile reads a single zip entry, enforcing the per-file import cap so an
+// oversized member fails the import instead of being silently truncated.
+func readZipFile(f *zip.File) (string, error) {
+	rc, err := f.Open()
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+	body, err := io.ReadAll(io.LimitReader(rc, maxImportFileSize+1))
+	if err != nil {
+		return "", err
+	}
+	if len(body) > maxImportFileSize {
+		return "", fmt.Errorf("%w: file exceeds %d byte limit", errImportCapExceeded, maxImportFileSize)
+	}
+	return string(body), nil
+}
+
+// zipEntryBase / zipEntryDir split a zip entry name on the archive's always
+// forward-slash separator (filepath would mis-handle this on Windows).
+func zipEntryBase(name string) string {
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+func zipEntryDir(name string) string {
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		return name[:i+1]
+	}
+	return ""
+}
+
 // --- Shared helpers ---
 
 // fetchRawFile downloads a URL and returns the body bytes. Returns an error
@@ -1756,6 +1974,8 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 		imported, err = fetchFromSkillsSh(httpClient, normalized)
 	case sourceGitHub:
 		imported, err = fetchFromGitHub(httpClient, normalized)
+	case sourceAtlasSkillHub:
+		imported, err = fetchFromAtlasSkillHub(httpClient, normalized)
 	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
