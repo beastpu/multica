@@ -73,12 +73,24 @@ it carries every `SkillResponse` field plus the `files` array.
 
 | Behavior | File:line |
 |---|---|
-| `detectImportSource` | `server/internal/handler/skill.go:723-756` |
-| `skills.sh` / `www.skills.sh` | `server/internal/handler/skill.go:743-744` |
-| `clawhub.ai` / `www.clawhub.ai` | `server/internal/handler/skill.go:745-746` |
-| `github.com` / `www.github.com` | `server/internal/handler/skill.go:747-748` |
-| Bare slug (no host) defaults to ClawHub | `server/internal/handler/skill.go:750-753` |
-| `parseGitHubURL` handles `/tree/{ref}/...` and `/blob/{ref}/.../SKILL.md` | `server/internal/handler/skill.go:1402-1455` (tree/blob check `:1415-1432`) |
+| `detectImportSource` | `server/internal/handler/skill.go:753` |
+| Atlas Skill Hub (Lilith host + `skill-hub` path segment) | `server/internal/handler/skill.go:771-772` (matcher `isAtlasSkillHubURL` `:739`, `isLilithHost` `:730`) |
+| `skills.sh` / `www.skills.sh` | `server/internal/handler/skill.go:773-774` |
+| `clawhub.ai` / `www.clawhub.ai` | `server/internal/handler/skill.go:775-776` |
+| `github.com` / `www.github.com` | `server/internal/handler/skill.go:777-778` |
+| Bare slug (no host) defaults to ClawHub | `server/internal/handler/skill.go:780-783` |
+| `parseGitHubURL` handles `/tree/{ref}/...` and `/blob/{ref}/.../SKILL.md` | `server/internal/handler/skill.go` (`grep -n "func parseGitHubURL"`) |
+
+## Atlas Skill Hub fetch (ZIP bundle)
+
+| Behavior | File:line |
+|---|---|
+| `parseAtlasSkillHubSlug` (slug + derived `{slug}/download` URL from `install-prompt`/`download`/detail shapes) | `server/internal/handler/skill.go:1695` |
+| `fetchFromAtlasSkillHub` (downloads ZIP, extracts SKILL.md + supporting files) | `server/internal/handler/skill.go:1723` |
+| Handler routes `sourceAtlasSkillHub` to the fetcher | `server/internal/handler/skill.go:1977` |
+| Origin provenance `{type:"atlas_skillhub", source_url, slug}` | `server/internal/handler/skill.go` (`grep -n '"atlas_skillhub"'`) |
+| Per-file / per-bundle caps reused via `readZipFile` + `importedSkill.addFile` | `server/internal/handler/skill.go` (`grep -n "func readZipFile"`) |
+| Atlas JSON error envelope surfaced on non-200 (`atlasErrorMessage`) | `server/internal/handler/skill.go` (`grep -n "func atlasErrorMessage"`) |
 
 ## Additive add vs replace-all set
 
