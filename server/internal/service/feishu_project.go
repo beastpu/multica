@@ -1203,9 +1203,10 @@ func isW3ClientLegacyWorkspace(ws db.Workspace) bool {
 
 // matchBusinessLineRoute applies the precedence rules from the design:
 //  1. exact leaf-id match (route.business_line_id == any item leaf id)
-//  2. exact leaf-name match
-//  3. parent-id match (route.business_line_id == any item parent id) — covers parent-level routes
-//  4. parent-name match
+//  2. exact leaf-name match scoped by parent id/name
+//  3. exact leaf-name match
+//  4. parent-id match (route.business_line_id == any item parent id) — covers parent-level routes
+//  5. parent-name match
 //
 // First-wins by route order. Multiple ties at the same precedence layer log a warning at
 // call sites; here we return deterministically the first.
@@ -1233,6 +1234,18 @@ func matchBusinessLineRoute(routes []db.FeishuProjectBusinessLineRoute, tokens [
 	}
 	matchers := []func(db.FeishuProjectBusinessLineRoute) bool{
 		func(r db.FeishuProjectBusinessLineRoute) bool { return leafIDs[strings.TrimSpace(r.BusinessLineID)] },
+		func(r db.FeishuProjectBusinessLineRoute) bool {
+			routeName := strings.TrimSpace(r.BusinessLineName)
+			if routeName == "" || !leafNames[routeName] {
+				return false
+			}
+			routeParentID := strings.TrimSpace(r.ParentBusinessLineID)
+			if routeParentID != "" && parentIDs[routeParentID] {
+				return true
+			}
+			routeParentName := strings.TrimSpace(r.ParentBusinessLineName)
+			return routeParentName != "" && parentNames[routeParentName]
+		},
 		func(r db.FeishuProjectBusinessLineRoute) bool {
 			return leafNames[strings.TrimSpace(r.BusinessLineName)]
 		},
@@ -3539,8 +3552,8 @@ func parseFeishuProjectBusinessLineTree(payload map[string]any) []FeishuProjectF
 				nodes = append(nodes, toNodes(child, parentID, parentName)...)
 			}
 		case map[string]any:
-			id := pickStr(x, "id", "business_id", "option_id", "key")
-			name := pickStr(x, "name", "business_name", "option_name", "label")
+			id := pickStr(x, "id", "business_id", "option_id", "key", "value")
+			name := pickStr(x, "name", "business_name", "option_name", "label", "text")
 			if id != "" || name != "" {
 				node := FeishuProjectFieldOption{
 					ID:         id,
