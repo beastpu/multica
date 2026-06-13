@@ -194,7 +194,7 @@ func (q *Queries) FinishFeishuProjectSyncRun(ctx context.Context, arg FinishFeis
 }
 
 const getFeishuProjectIntegration = `-- name: GetFeishuProjectIntegration :one
-SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at, work_item_types FROM feishu_project_integration
+SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at, work_item_types, sync_only_workspace_member_items FROM feishu_project_integration
 WHERE workspace_id = $1
 ORDER BY updated_at DESC, created_at DESC
 LIMIT 1
@@ -228,12 +228,13 @@ func (q *Queries) GetFeishuProjectIntegration(ctx context.Context, workspaceID p
 		&i.LabelSyncRules,
 		&i.LastOrphanReconciledAt,
 		&i.WorkItemTypes,
+		&i.SyncOnlyWorkspaceMemberItems,
 	)
 	return i, err
 }
 
 const getFeishuProjectIntegrationByID = `-- name: GetFeishuProjectIntegrationByID :one
-SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at, work_item_types FROM feishu_project_integration
+SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at, work_item_types, sync_only_workspace_member_items FROM feishu_project_integration
 WHERE id = $1
 `
 
@@ -265,6 +266,7 @@ func (q *Queries) GetFeishuProjectIntegrationByID(ctx context.Context, id pgtype
 		&i.LabelSyncRules,
 		&i.LastOrphanReconciledAt,
 		&i.WorkItemTypes,
+		&i.SyncOnlyWorkspaceMemberItems,
 	)
 	return i, err
 }
@@ -397,7 +399,7 @@ func (q *Queries) GetLatestFeishuProjectSyncRun(ctx context.Context, integration
 }
 
 const listEnabledFeishuProjectIntegrations = `-- name: ListEnabledFeishuProjectIntegrations :many
-SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at, work_item_types FROM feishu_project_integration
+SELECT id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at, work_item_types, sync_only_workspace_member_items FROM feishu_project_integration
 WHERE enabled = true
 ORDER BY updated_at ASC
 `
@@ -436,6 +438,7 @@ func (q *Queries) ListEnabledFeishuProjectIntegrations(ctx context.Context) ([]F
 			&i.LabelSyncRules,
 			&i.LastOrphanReconciledAt,
 			&i.WorkItemTypes,
+			&i.SyncOnlyWorkspaceMemberItems,
 		); err != nil {
 			return nil, err
 		}
@@ -724,7 +727,7 @@ UPDATE feishu_project_integration
 SET project_key = $3,
     plugin_id = $4,
     plugin_secret = $5,
-    actor_user_key = $17,
+    actor_user_key = $18,
     enabled = $6,
     sync_story = $7,
     sync_issue = $8,
@@ -736,29 +739,31 @@ SET project_key = $3,
     business_line_field_name = $14,
     label_sync_rules = $15,
     work_item_types = $16,
+    sync_only_workspace_member_items = $17,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at, work_item_types
+RETURNING id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at, work_item_types, sync_only_workspace_member_items
 `
 
 type UpdateFeishuProjectIntegrationByIDParams struct {
-	ID                          pgtype.UUID `json:"id"`
-	WorkspaceID                 pgtype.UUID `json:"workspace_id"`
-	ProjectKey                  string      `json:"project_key"`
-	PluginID                    string      `json:"plugin_id"`
-	PluginSecret                string      `json:"plugin_secret"`
-	Enabled                     bool        `json:"enabled"`
-	SyncStory                   bool        `json:"sync_story"`
-	SyncIssue                   bool        `json:"sync_issue"`
-	MqlFilter                   string      `json:"mql_filter"`
-	StatusMapping               []byte      `json:"status_mapping"`
-	ReverseStatusMapping        []byte      `json:"reverse_status_mapping"`
-	AssignOpenItemsToOwnerAgent bool        `json:"assign_open_items_to_owner_agent"`
-	BusinessLineFieldKey        string      `json:"business_line_field_key"`
-	BusinessLineFieldName       string      `json:"business_line_field_name"`
-	LabelSyncRules              []byte      `json:"label_sync_rules"`
-	WorkItemTypes               []byte      `json:"work_item_types"`
-	ActorUserKey                pgtype.Text `json:"actor_user_key"`
+	ID                           pgtype.UUID `json:"id"`
+	WorkspaceID                  pgtype.UUID `json:"workspace_id"`
+	ProjectKey                   string      `json:"project_key"`
+	PluginID                     string      `json:"plugin_id"`
+	PluginSecret                 string      `json:"plugin_secret"`
+	Enabled                      bool        `json:"enabled"`
+	SyncStory                    bool        `json:"sync_story"`
+	SyncIssue                    bool        `json:"sync_issue"`
+	MqlFilter                    string      `json:"mql_filter"`
+	StatusMapping                []byte      `json:"status_mapping"`
+	ReverseStatusMapping         []byte      `json:"reverse_status_mapping"`
+	AssignOpenItemsToOwnerAgent  bool        `json:"assign_open_items_to_owner_agent"`
+	BusinessLineFieldKey         string      `json:"business_line_field_key"`
+	BusinessLineFieldName        string      `json:"business_line_field_name"`
+	LabelSyncRules               []byte      `json:"label_sync_rules"`
+	WorkItemTypes                []byte      `json:"work_item_types"`
+	SyncOnlyWorkspaceMemberItems bool        `json:"sync_only_workspace_member_items"`
+	ActorUserKey                 pgtype.Text `json:"actor_user_key"`
 }
 
 func (q *Queries) UpdateFeishuProjectIntegrationByID(ctx context.Context, arg UpdateFeishuProjectIntegrationByIDParams) (FeishuProjectIntegration, error) {
@@ -779,6 +784,7 @@ func (q *Queries) UpdateFeishuProjectIntegrationByID(ctx context.Context, arg Up
 		arg.BusinessLineFieldName,
 		arg.LabelSyncRules,
 		arg.WorkItemTypes,
+		arg.SyncOnlyWorkspaceMemberItems,
 		arg.ActorUserKey,
 	)
 	var i FeishuProjectIntegration
@@ -807,6 +813,7 @@ func (q *Queries) UpdateFeishuProjectIntegrationByID(ctx context.Context, arg Up
 		&i.LabelSyncRules,
 		&i.LastOrphanReconciledAt,
 		&i.WorkItemTypes,
+		&i.SyncOnlyWorkspaceMemberItems,
 	)
 	return i, err
 }
@@ -913,12 +920,12 @@ INSERT INTO feishu_project_integration (
     enabled, sync_story, sync_issue, mql_filter, status_mapping,
     reverse_status_mapping, assign_open_items_to_owner_agent, created_by_id,
     business_line_field_key, business_line_field_name, label_sync_rules,
-    work_item_types
+    work_item_types, sync_only_workspace_member_items
 ) VALUES (
-    $1, $2, $3, $4, $16,
-    $5, $6, $7, $8, $9, $10, $11, $17,
+    $1, $2, $3, $4, $17,
+    $5, $6, $7, $8, $9, $10, $11, $18,
     $12, $13, $14,
-    $15
+    $15, $16
 )
 ON CONFLICT (workspace_id) DO UPDATE SET
     project_key = EXCLUDED.project_key,
@@ -936,28 +943,30 @@ ON CONFLICT (workspace_id) DO UPDATE SET
     business_line_field_name = EXCLUDED.business_line_field_name,
     label_sync_rules = EXCLUDED.label_sync_rules,
     work_item_types = EXCLUDED.work_item_types,
+    sync_only_workspace_member_items = EXCLUDED.sync_only_workspace_member_items,
     updated_at = now()
-RETURNING id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at, work_item_types
+RETURNING id, workspace_id, project_key, plugin_id, plugin_secret, actor_user_key, enabled, sync_story, sync_issue, mql_filter, status_mapping, reverse_status_mapping, created_by_id, last_synced_at, last_error, created_at, updated_at, assign_open_items_to_owner_agent, business_line_field_key, business_line_field_name, last_seen_updated_at_ms, label_sync_rules, last_orphan_reconciled_at, work_item_types, sync_only_workspace_member_items
 `
 
 type UpsertFeishuProjectIntegrationParams struct {
-	WorkspaceID                 pgtype.UUID `json:"workspace_id"`
-	ProjectKey                  string      `json:"project_key"`
-	PluginID                    string      `json:"plugin_id"`
-	PluginSecret                string      `json:"plugin_secret"`
-	Enabled                     bool        `json:"enabled"`
-	SyncStory                   bool        `json:"sync_story"`
-	SyncIssue                   bool        `json:"sync_issue"`
-	MqlFilter                   string      `json:"mql_filter"`
-	StatusMapping               []byte      `json:"status_mapping"`
-	ReverseStatusMapping        []byte      `json:"reverse_status_mapping"`
-	AssignOpenItemsToOwnerAgent bool        `json:"assign_open_items_to_owner_agent"`
-	BusinessLineFieldKey        string      `json:"business_line_field_key"`
-	BusinessLineFieldName       string      `json:"business_line_field_name"`
-	LabelSyncRules              []byte      `json:"label_sync_rules"`
-	WorkItemTypes               []byte      `json:"work_item_types"`
-	ActorUserKey                pgtype.Text `json:"actor_user_key"`
-	CreatedByID                 pgtype.UUID `json:"created_by_id"`
+	WorkspaceID                  pgtype.UUID `json:"workspace_id"`
+	ProjectKey                   string      `json:"project_key"`
+	PluginID                     string      `json:"plugin_id"`
+	PluginSecret                 string      `json:"plugin_secret"`
+	Enabled                      bool        `json:"enabled"`
+	SyncStory                    bool        `json:"sync_story"`
+	SyncIssue                    bool        `json:"sync_issue"`
+	MqlFilter                    string      `json:"mql_filter"`
+	StatusMapping                []byte      `json:"status_mapping"`
+	ReverseStatusMapping         []byte      `json:"reverse_status_mapping"`
+	AssignOpenItemsToOwnerAgent  bool        `json:"assign_open_items_to_owner_agent"`
+	BusinessLineFieldKey         string      `json:"business_line_field_key"`
+	BusinessLineFieldName        string      `json:"business_line_field_name"`
+	LabelSyncRules               []byte      `json:"label_sync_rules"`
+	WorkItemTypes                []byte      `json:"work_item_types"`
+	SyncOnlyWorkspaceMemberItems bool        `json:"sync_only_workspace_member_items"`
+	ActorUserKey                 pgtype.Text `json:"actor_user_key"`
+	CreatedByID                  pgtype.UUID `json:"created_by_id"`
 }
 
 func (q *Queries) UpsertFeishuProjectIntegration(ctx context.Context, arg UpsertFeishuProjectIntegrationParams) (FeishuProjectIntegration, error) {
@@ -977,6 +986,7 @@ func (q *Queries) UpsertFeishuProjectIntegration(ctx context.Context, arg Upsert
 		arg.BusinessLineFieldName,
 		arg.LabelSyncRules,
 		arg.WorkItemTypes,
+		arg.SyncOnlyWorkspaceMemberItems,
 		arg.ActorUserKey,
 		arg.CreatedByID,
 	)
@@ -1006,6 +1016,7 @@ func (q *Queries) UpsertFeishuProjectIntegration(ctx context.Context, arg Upsert
 		&i.LabelSyncRules,
 		&i.LastOrphanReconciledAt,
 		&i.WorkItemTypes,
+		&i.SyncOnlyWorkspaceMemberItems,
 	)
 	return i, err
 }

@@ -40,13 +40,16 @@ type FeishuProjectIntegrationResponse struct {
 	ReverseStatusMapping        map[string]string                         `json:"reverse_status_mapping"`
 	WorkItemTypes               []service.FeishuProjectWorkItemTypeConfig `json:"work_item_types"`
 	AssignOpenItemsToOwnerAgent bool                                      `json:"assign_open_items_to_owner_agent"`
-	BusinessLineFieldKey        string                                    `json:"business_line_field_key"`
-	BusinessLineFieldName       string                                    `json:"business_line_field_name"`
-	LabelSyncRules              []service.FeishuProjectLabelSyncRule      `json:"label_sync_rules"`
-	LastSyncedAt                *string                                   `json:"last_synced_at"`
-	LastError                   *string                                   `json:"last_error"`
-	CreatedAt                   string                                    `json:"created_at,omitempty"`
-	UpdatedAt                   string                                    `json:"updated_at,omitempty"`
+	// SyncOnlyWorkspaceMemberItems gates creation to items whose operator is a
+	// member of this workspace — for spaces shared by sibling-team workspaces.
+	SyncOnlyWorkspaceMemberItems bool                                 `json:"sync_only_workspace_member_items"`
+	BusinessLineFieldKey         string                               `json:"business_line_field_key"`
+	BusinessLineFieldName        string                               `json:"business_line_field_name"`
+	LabelSyncRules               []service.FeishuProjectLabelSyncRule `json:"label_sync_rules"`
+	LastSyncedAt                 *string                              `json:"last_synced_at"`
+	LastError                    *string                              `json:"last_error"`
+	CreatedAt                    string                               `json:"created_at,omitempty"`
+	UpdatedAt                    string                               `json:"updated_at,omitempty"`
 }
 
 type UpdateFeishuProjectIntegrationRequest struct {
@@ -66,11 +69,12 @@ type UpdateFeishuProjectIntegrationRequest struct {
 	// WorkItemTypes replaces per-type fields. nil (absent) preserves the
 	// stored list (modulo the legacy issue-mapping merge above); non-nil
 	// replaces it wholesale.
-	WorkItemTypes               *[]service.FeishuProjectWorkItemTypeConfig `json:"work_item_types"`
-	AssignOpenItemsToOwnerAgent bool                                       `json:"assign_open_items_to_owner_agent"`
-	BusinessLineFieldKey        string                                     `json:"business_line_field_key"`
-	BusinessLineFieldName       string                                     `json:"business_line_field_name"`
-	LabelSyncRules              *[]service.FeishuProjectLabelSyncRule      `json:"label_sync_rules"`
+	WorkItemTypes                *[]service.FeishuProjectWorkItemTypeConfig `json:"work_item_types"`
+	AssignOpenItemsToOwnerAgent  bool                                       `json:"assign_open_items_to_owner_agent"`
+	SyncOnlyWorkspaceMemberItems bool                                       `json:"sync_only_workspace_member_items"`
+	BusinessLineFieldKey         string                                     `json:"business_line_field_key"`
+	BusinessLineFieldName        string                                     `json:"business_line_field_name"`
+	LabelSyncRules               *[]service.FeishuProjectLabelSyncRule      `json:"label_sync_rules"`
 }
 
 type FeishuProjectSyncRunResponse struct {
@@ -110,17 +114,18 @@ func (h *Handler) GetFeishuProjectIntegration(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusOK, FeishuProjectIntegrationResponse{
-				Enabled:                     false,
-				SyncStory:                   false,
-				SyncIssue:                   true,
-				MQLFilter:                   "",
-				StatusMapping:               defaultFeishuProjectStatusMapping(),
-				ReverseStatusMapping:        defaultFeishuProjectReverseStatusMapping(),
-				WorkItemTypes:               []service.FeishuProjectWorkItemTypeConfig{defaultFeishuProjectIssueTypeConfig()},
-				DefaultPluginAvailable:      service.FeishuProjectHasDefaultPluginCredentials(),
-				DefaultPluginID:             service.FeishuProjectDefaultPluginID(),
-				AssignOpenItemsToOwnerAgent: false,
-				LabelSyncRules:              []service.FeishuProjectLabelSyncRule{},
+				Enabled:                      false,
+				SyncStory:                    false,
+				SyncIssue:                    true,
+				MQLFilter:                    "",
+				StatusMapping:                defaultFeishuProjectStatusMapping(),
+				ReverseStatusMapping:         defaultFeishuProjectReverseStatusMapping(),
+				WorkItemTypes:                []service.FeishuProjectWorkItemTypeConfig{defaultFeishuProjectIssueTypeConfig()},
+				DefaultPluginAvailable:       service.FeishuProjectHasDefaultPluginCredentials(),
+				DefaultPluginID:              service.FeishuProjectDefaultPluginID(),
+				AssignOpenItemsToOwnerAgent:  false,
+				SyncOnlyWorkspaceMemberItems: false,
+				LabelSyncRules:               []service.FeishuProjectLabelSyncRule{},
 			})
 			return
 		}
@@ -235,43 +240,45 @@ func (h *Handler) UpdateFeishuProjectIntegration(w http.ResponseWriter, r *http.
 	bizLineName := strings.TrimSpace(req.BusinessLineFieldName)
 	if existingErr == nil {
 		cfg, err = h.Queries.UpdateFeishuProjectIntegrationByID(r.Context(), db.UpdateFeishuProjectIntegrationByIDParams{
-			ID:                          existing.ID,
-			WorkspaceID:                 wsUUID,
-			ProjectKey:                  projectKey,
-			PluginID:                    pluginID,
-			PluginSecret:                pluginSecret,
-			ActorUserKey:                actor,
-			Enabled:                     req.Enabled,
-			SyncStory:                   req.SyncStory,
-			SyncIssue:                   syncIssue,
-			MqlFilter:                   mqlFilter,
-			StatusMapping:               statusJSON,
-			ReverseStatusMapping:        reverseJSON,
-			AssignOpenItemsToOwnerAgent: req.AssignOpenItemsToOwnerAgent,
-			BusinessLineFieldKey:        bizLineKey,
-			BusinessLineFieldName:       bizLineName,
-			LabelSyncRules:              labelSyncRulesJSON,
-			WorkItemTypes:               workItemTypesJSON,
+			ID:                           existing.ID,
+			WorkspaceID:                  wsUUID,
+			ProjectKey:                   projectKey,
+			PluginID:                     pluginID,
+			PluginSecret:                 pluginSecret,
+			ActorUserKey:                 actor,
+			Enabled:                      req.Enabled,
+			SyncStory:                    req.SyncStory,
+			SyncIssue:                    syncIssue,
+			MqlFilter:                    mqlFilter,
+			StatusMapping:                statusJSON,
+			ReverseStatusMapping:         reverseJSON,
+			AssignOpenItemsToOwnerAgent:  req.AssignOpenItemsToOwnerAgent,
+			SyncOnlyWorkspaceMemberItems: req.SyncOnlyWorkspaceMemberItems,
+			BusinessLineFieldKey:         bizLineKey,
+			BusinessLineFieldName:        bizLineName,
+			LabelSyncRules:               labelSyncRulesJSON,
+			WorkItemTypes:                workItemTypesJSON,
 		})
 	} else {
 		cfg, err = h.Queries.UpsertFeishuProjectIntegration(r.Context(), db.UpsertFeishuProjectIntegrationParams{
-			WorkspaceID:                 wsUUID,
-			ProjectKey:                  projectKey,
-			PluginID:                    pluginID,
-			PluginSecret:                pluginSecret,
-			ActorUserKey:                actor,
-			Enabled:                     req.Enabled,
-			SyncStory:                   req.SyncStory,
-			SyncIssue:                   syncIssue,
-			MqlFilter:                   mqlFilter,
-			StatusMapping:               statusJSON,
-			ReverseStatusMapping:        reverseJSON,
-			AssignOpenItemsToOwnerAgent: req.AssignOpenItemsToOwnerAgent,
-			CreatedByID:                 member.UserID,
-			BusinessLineFieldKey:        bizLineKey,
-			BusinessLineFieldName:       bizLineName,
-			LabelSyncRules:              labelSyncRulesJSON,
-			WorkItemTypes:               workItemTypesJSON,
+			WorkspaceID:                  wsUUID,
+			ProjectKey:                   projectKey,
+			PluginID:                     pluginID,
+			PluginSecret:                 pluginSecret,
+			ActorUserKey:                 actor,
+			Enabled:                      req.Enabled,
+			SyncStory:                    req.SyncStory,
+			SyncIssue:                    syncIssue,
+			MqlFilter:                    mqlFilter,
+			StatusMapping:                statusJSON,
+			ReverseStatusMapping:         reverseJSON,
+			AssignOpenItemsToOwnerAgent:  req.AssignOpenItemsToOwnerAgent,
+			SyncOnlyWorkspaceMemberItems: req.SyncOnlyWorkspaceMemberItems,
+			CreatedByID:                  member.UserID,
+			BusinessLineFieldKey:         bizLineKey,
+			BusinessLineFieldName:        bizLineName,
+			LabelSyncRules:               labelSyncRulesJSON,
+			WorkItemTypes:                workItemTypesJSON,
 		})
 	}
 	if err != nil {
@@ -594,30 +601,31 @@ func (h *Handler) ListFeishuProjectWorkItemTypes(w http.ResponseWriter, r *http.
 
 func feishuProjectIntegrationToResponse(cfg db.FeishuProjectIntegration) FeishuProjectIntegrationResponse {
 	return FeishuProjectIntegrationResponse{
-		ID:                          uuidToString(cfg.ID),
-		WorkspaceID:                 uuidToString(cfg.WorkspaceID),
-		ProjectName:                 cfg.ProjectKey,
-		ProjectKey:                  cfg.ProjectKey,
-		PluginID:                    cfg.PluginID,
-		HasPluginSecret:             cfg.PluginSecret != "",
-		ActorUserKey:                textToPtr(cfg.ActorUserKey),
-		Enabled:                     cfg.Enabled,
-		SyncStory:                   cfg.SyncStory,
-		SyncIssue:                   cfg.SyncIssue,
-		MQLFilter:                   cfg.MqlFilter,
-		StatusMapping:               decodeFlatStringMap(cfg.StatusMapping),
-		ReverseStatusMapping:        decodeFlatStringMap(cfg.ReverseStatusMapping),
-		WorkItemTypes:               feishuProjectWorkItemTypesForResponse(cfg),
-		DefaultPluginAvailable:      service.FeishuProjectHasDefaultPluginCredentials(),
-		DefaultPluginID:             service.FeishuProjectDefaultPluginID(),
-		AssignOpenItemsToOwnerAgent: cfg.AssignOpenItemsToOwnerAgent,
-		BusinessLineFieldKey:        cfg.BusinessLineFieldKey,
-		BusinessLineFieldName:       cfg.BusinessLineFieldName,
-		LabelSyncRules:              decodeFeishuProjectLabelSyncRules(cfg.LabelSyncRules),
-		LastSyncedAt:                timestampToPtr(cfg.LastSyncedAt),
-		LastError:                   textToPtr(cfg.LastError),
-		CreatedAt:                   timestampToString(cfg.CreatedAt),
-		UpdatedAt:                   timestampToString(cfg.UpdatedAt),
+		ID:                           uuidToString(cfg.ID),
+		WorkspaceID:                  uuidToString(cfg.WorkspaceID),
+		ProjectName:                  cfg.ProjectKey,
+		ProjectKey:                   cfg.ProjectKey,
+		PluginID:                     cfg.PluginID,
+		HasPluginSecret:              cfg.PluginSecret != "",
+		ActorUserKey:                 textToPtr(cfg.ActorUserKey),
+		Enabled:                      cfg.Enabled,
+		SyncStory:                    cfg.SyncStory,
+		SyncIssue:                    cfg.SyncIssue,
+		MQLFilter:                    cfg.MqlFilter,
+		StatusMapping:                decodeFlatStringMap(cfg.StatusMapping),
+		ReverseStatusMapping:         decodeFlatStringMap(cfg.ReverseStatusMapping),
+		WorkItemTypes:                feishuProjectWorkItemTypesForResponse(cfg),
+		DefaultPluginAvailable:       service.FeishuProjectHasDefaultPluginCredentials(),
+		DefaultPluginID:              service.FeishuProjectDefaultPluginID(),
+		AssignOpenItemsToOwnerAgent:  cfg.AssignOpenItemsToOwnerAgent,
+		SyncOnlyWorkspaceMemberItems: cfg.SyncOnlyWorkspaceMemberItems,
+		BusinessLineFieldKey:         cfg.BusinessLineFieldKey,
+		BusinessLineFieldName:        cfg.BusinessLineFieldName,
+		LabelSyncRules:               decodeFeishuProjectLabelSyncRules(cfg.LabelSyncRules),
+		LastSyncedAt:                 timestampToPtr(cfg.LastSyncedAt),
+		LastError:                    textToPtr(cfg.LastError),
+		CreatedAt:                    timestampToString(cfg.CreatedAt),
+		UpdatedAt:                    timestampToString(cfg.UpdatedAt),
 	}
 }
 
