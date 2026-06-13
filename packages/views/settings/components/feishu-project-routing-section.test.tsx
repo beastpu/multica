@@ -21,13 +21,22 @@ const fieldsRef = vi.hoisted(() => ({
     ],
   },
 }));
+const businessLinesRef = vi.hoisted(() => ({
+  current: [] as Array<{
+    id: string;
+    name: string;
+    parent_id?: string;
+    parent_name?: string;
+    children?: Array<{ id: string; name: string; parent_id?: string; parent_name?: string }>;
+  }>,
+}));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (opts: { queryKey: unknown[]; enabled?: boolean }) => {
     if (opts.enabled === false) return { data: undefined, isFetching: false, refetch: vi.fn() };
     const key = JSON.stringify(opts.queryKey);
     if (key.includes("fp-fields")) return { data: fieldsRef.current, isFetching: false, refetch: vi.fn() };
-    if (key.includes("fp-bizlines")) return { data: { business_lines: [] }, isFetching: false, refetch: vi.fn() };
+    if (key.includes("fp-bizlines")) return { data: { business_lines: businessLinesRef.current }, isFetching: false, refetch: vi.fn() };
     return { data: [], isFetching: false, refetch: vi.fn() };
   },
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
@@ -108,6 +117,7 @@ describe("FeishuProjectRoutingSection field picker", () => {
         { key: "field_team", name: "团队", type: "select" },
       ],
     };
+    businessLinesRef.current = [];
   });
 
   it("shows an explicit 'no routing' option in the dropdown", async () => {
@@ -139,5 +149,42 @@ describe("FeishuProjectRoutingSection field picker", () => {
     // Clearing routes through onFieldChanged("", "") — the parent's "disable
     // routing" signal — without needing to open the dropdown.
     expect(onFieldChanged).toHaveBeenCalledWith("", "");
+  });
+
+  it("does not mark every option checked when Meego omits option ids", () => {
+    businessLinesRef.current = [
+      { id: "", name: "Park" },
+      { id: "", name: "Parkway" },
+    ];
+
+    render(
+      <FeishuProjectRoutingSection
+        workspaceId="ws-1"
+        integration={readyIntegration}
+        fieldKey="field_biz"
+        onFieldChanged={vi.fn()}
+        rows={[
+          {
+            businessLineId: "",
+            businessLineName: "Park",
+            parentBusinessLineId: "",
+            parentBusinessLineName: "",
+            projectId: "",
+            fallbackAgentId: "",
+          },
+        ]}
+        setRows={vi.fn()}
+        expanded={{}}
+        setExpanded={vi.fn()}
+      />,
+      { wrapper: I18nWrapper },
+    );
+
+    const checkboxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+    expect(checkboxes).toHaveLength(2);
+    const park = checkboxes[0]!;
+    const parkway = checkboxes[1]!;
+    expect(park.checked).toBe(true);
+    expect(parkway.checked).toBe(false);
   });
 });
