@@ -297,6 +297,7 @@ export const FeishuProjectIntegrationSchema = z.object({
   reverse_status_mapping: z.record(z.string(), z.string()).default({}),
   work_item_types: z.array(FeishuProjectWorkItemTypeConfigSchema).default([]),
   assign_open_items_to_owner_agent: z.boolean().default(false),
+  sync_only_workspace_member_items: z.boolean().default(false),
   label_sync_rules: z.array(z.object({
     id: z.string().default(""),
     enabled: z.boolean().default(true),
@@ -328,6 +329,7 @@ export const EMPTY_FEISHU_PROJECT_INTEGRATION: FeishuProjectIntegration = {
   reverse_status_mapping: {},
   work_item_types: [],
   assign_open_items_to_owner_agent: false,
+  sync_only_workspace_member_items: false,
   label_sync_rules: [],
   business_line_field_key: "",
   business_line_field_name: "",
