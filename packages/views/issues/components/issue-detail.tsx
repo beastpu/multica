@@ -59,6 +59,8 @@ import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
 import { PullRequestList } from "./pull-request-list";
 import { useGitHubSettings } from "@multica/core/github";
+import { PerforceReviewList } from "./perforce-review-list";
+import { usePerforceSettings } from "@multica/core/perforce";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -694,9 +696,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const [detailsOpen, setDetailsOpen] = useState(true);
   const [parentIssueOpen, setParentIssueOpen] = useState(true);
   const [pullRequestsOpen, setPullRequestsOpen] = useState(true);
+  const [reviewsOpen, setReviewsOpen] = useState(true);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [tokenUsageOpen, setTokenUsageOpen] = useState(true);
   const githubSettings = useGitHubSettings();
+  const perforceSettings = usePerforceSettings();
 
   // Per-issue, per-session set of optional properties currently visible in
   // the sidebar Properties section. Seeded on issue switch with whichever
@@ -1511,6 +1515,22 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${pullRequestsOpen ? "rotate-90" : ""}`} />
           </button>
           {pullRequestsOpen && <div className="pl-2"><PullRequestList issueId={id} /></div>}
+        </div>
+      )}
+
+      {/* Perforce reviews — hidden when the workspace disables the review
+          sidebar (or the Perforce master switch is off). */}
+      {perforceSettings.reviewSidebar && (
+        <div>
+          <button
+            type="button"
+            className={`flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors mb-2 hover:bg-accent/70 ${reviewsOpen ? "" : "text-muted-foreground hover:text-foreground"}`}
+            onClick={() => setReviewsOpen(!reviewsOpen)}
+          >
+            {t(($) => $.detail.section_reviews)}
+            <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${reviewsOpen ? "rotate-90" : ""}`} />
+          </button>
+          {reviewsOpen && <div className="pl-2"><PerforceReviewList issueId={id} /></div>}
         </div>
       )}
 

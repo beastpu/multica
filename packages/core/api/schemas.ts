@@ -28,6 +28,7 @@ import type {
   TimelineEntry,
   User,
   WebhookDelivery,
+  PerforceReview,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 
@@ -1098,3 +1099,53 @@ export const CreateBillingPortalSessionResponseSchema = z.object({
 export const EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE: CreateBillingPortalSessionResponse = {
   url: "",
 };
+
+// ── Perforce / Helix Swarm ──────────────────────────────────────────────────
+export const PerforceConnectionSchema = z.object({
+  workspace_id: z.string(),
+  swarm_url: z.string(),
+  swarm_user: z.string(),
+  has_credential: z.boolean(),
+  last_polled_at: z.string().optional(),
+});
+
+export const GetPerforceConnectionResponseSchema = z.object({
+  connection: PerforceConnectionSchema.nullish().transform((v) => v ?? null),
+  configured: z.boolean(),
+  can_manage: z.boolean().optional(),
+});
+
+export const SavePerforceConnectionResponseSchema = z.object({
+  connection: PerforceConnectionSchema,
+});
+
+export const TestPerforceConnectionResponseSchema = z.object({
+  ok: z.boolean(),
+  error: z.string().optional(),
+});
+
+export const PerforceReviewSchema = z.object({
+  review_id: z.number(),
+  state: z.string(),
+  title: z.string(),
+  html_url: z.string(),
+  author: z.string().optional(),
+  shelved_cl: z.number().optional(),
+  committed_cl: z.number().optional(),
+});
+
+export const PerforceReviewsResponseSchema = z.object({
+  reviews: z.array(PerforceReviewSchema),
+});
+
+export const EMPTY_PERFORCE_CONNECTION_RESPONSE: {
+  connection: null;
+  configured: boolean;
+  can_manage: boolean;
+} = {
+  connection: null,
+  configured: false,
+  can_manage: false,
+};
+
+export const EMPTY_PERFORCE_REVIEWS_RESPONSE: { reviews: PerforceReview[] } = { reviews: [] };

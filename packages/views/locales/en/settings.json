@@ -35,7 +35,8 @@
       "github": "GitHub",
       "integrations": "Integrations",
       "labs": "Labs",
-      "members": "Members"
+      "members": "Members",
+      "perforce": "Perforce"
     }
   },
   "account": {
@@ -501,5 +502,41 @@
         "description": "Create and work on issues"
       }
     }
+  },
+  "perforce": {
+    "page_description": "Connect Helix Swarm so review progress flows back to your issues. When a review whose description contains an issue identifier (e.g. TES-3) is submitted, the issue automatically moves to Done.",
+    "section_master": "Enable Perforce features",
+    "master_description_on": "When off, the Swarm poller is paused and the review sidebar is hidden. Stored data is kept on the backend.",
+    "master_description_off": "Perforce features are turned off. The review poller and sidebar are paused. Data on the backend is not deleted.",
+    "section_connection": "Connection",
+    "not_configured": "Perforce is not configured on this server. Set",
+    "read_only_hint": "Only workspace admins can edit the Swarm connection.",
+    "field_swarm_url": "Swarm URL",
+    "field_swarm_user": "Swarm user",
+    "field_ticket": "Password or ticket",
+    "field_ticket_placeholder_stored": "Leave blank to keep the stored credential",
+    "field_ticket_placeholder_new": "Perforce password or login ticket",
+    "save": "Save",
+    "saving": "Saving…",
+    "test": "Test connection",
+    "testing": "Testing…",
+    "disconnect": "Disconnect",
+    "section_features": "Features",
+    "feature_review_sidebar_label": "Review sidebar",
+    "feature_review_sidebar_description": "Show linked Swarm reviews in the issue detail panel.",
+    "disconnect_confirm_title": "Disconnect Perforce",
+    "disconnect_confirm_description": "Multica will stop polling Swarm for this workspace. Existing review links are kept; reconnect any time to resume updates.",
+    "disconnect_confirm_cancel": "Cancel",
+    "disconnect_confirm_action": "Disconnect",
+    "disconnecting": "Disconnecting…",
+    "toast_failed": "Could not update settings",
+    "toast_missing_fields": "Swarm URL and user are required",
+    "toast_ticket_required": "A password or ticket is required to connect",
+    "toast_saved": "Connection saved",
+    "toast_save_failed": "Could not save the connection",
+    "toast_test_ok": "Connection succeeded",
+    "toast_test_failed": "Could not reach Swarm or authentication failed",
+    "toast_disconnected": "Perforce disconnected",
+    "toast_disconnect_failed": "Could not disconnect"
   }
 }

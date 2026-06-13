@@ -35,7 +35,8 @@
       "github": "GitHub",
       "integrations": "연동",
       "labs": "실험실",
-      "members": "멤버"
+      "members": "멤버",
+      "perforce": "Perforce"
     }
   },
   "account": {
@@ -501,5 +502,41 @@
     "feishu_project_routes_fallback_agent_placeholder": "Fallback agent (optional)",
     "feishu_project_routes_fallback_agent_none": "No fallback",
     "feishu_project_routes_no_agents": "This workspace has no agents yet."
+  },
+  "perforce": {
+    "page_description": "Helix Swarm를 연결하여 리뷰 진행 상황을 이슈에 반영합니다. 설명에 이슈 식별자(예: TES-3)가 포함된 리뷰가 제출되면 해당 이슈가 자동으로 '완료'로 이동합니다.",
+    "section_master": "Perforce 기능 사용",
+    "master_description_on": "끄면 Swarm 폴링이 일시 중지되고 리뷰 사이드바가 숨겨집니다. 저장된 데이터는 백엔드에 유지됩니다.",
+    "master_description_off": "Perforce 기능이 꺼져 있습니다. 리뷰 폴링과 사이드바가 일시 중지됩니다. 백엔드 데이터는 삭제되지 않습니다.",
+    "section_connection": "연결",
+    "not_configured": "이 서버에는 Perforce가 구성되지 않았습니다. 다음을 설정하세요:",
+    "read_only_hint": "Swarm 연결은 워크스페이스 관리자만 편집할 수 있습니다.",
+    "field_swarm_url": "Swarm URL",
+    "field_swarm_user": "Swarm 사용자",
+    "field_ticket": "비밀번호 또는 티켓",
+    "field_ticket_placeholder_stored": "저장된 자격 증명을 유지하려면 비워 두세요",
+    "field_ticket_placeholder_new": "Perforce 비밀번호 또는 로그인 티켓",
+    "save": "저장",
+    "saving": "저장 중…",
+    "test": "연결 테스트",
+    "testing": "테스트 중…",
+    "disconnect": "연결 해제",
+    "section_features": "기능",
+    "feature_review_sidebar_label": "리뷰 사이드바",
+    "feature_review_sidebar_description": "이슈 상세 패널에 연결된 Swarm 리뷰를 표시합니다.",
+    "disconnect_confirm_title": "Perforce 연결 해제",
+    "disconnect_confirm_description": "Multica가 이 워크스페이스의 Swarm 폴링을 중지합니다. 기존 리뷰 링크는 유지되며 언제든 다시 연결할 수 있습니다.",
+    "disconnect_confirm_cancel": "취소",
+    "disconnect_confirm_action": "연결 해제",
+    "disconnecting": "연결 해제 중…",
+    "toast_failed": "설정을 업데이트할 수 없습니다",
+    "toast_missing_fields": "Swarm URL과 사용자는 필수입니다",
+    "toast_ticket_required": "연결하려면 비밀번호 또는 티켓이 필요합니다",
+    "toast_saved": "연결이 저장되었습니다",
+    "toast_save_failed": "연결을 저장할 수 없습니다",
+    "toast_test_ok": "연결에 성공했습니다",
+    "toast_test_failed": "Swarm에 연결할 수 없거나 인증에 실패했습니다",
+    "toast_disconnected": "Perforce 연결이 해제되었습니다",
+    "toast_disconnect_failed": "연결을 해제할 수 없습니다"
   }
 }
