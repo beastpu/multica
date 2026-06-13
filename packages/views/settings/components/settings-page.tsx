@@ -11,8 +11,10 @@ import {
   FlaskConical,
   Bell,
   Plug,
+  Server,
 } from "lucide-react";
 import { GitHubMark } from "./github-mark";
+import { PerforceTab } from "./perforce-tab";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { useNavigation } from "../../navigation";
@@ -40,6 +42,7 @@ const WORKSPACE_TAB_KEYS = [
   "general",
   "repositories",
   "github",
+  "perforce",
   "integrations",
   "labs",
   "members",
@@ -48,6 +51,7 @@ const WORKSPACE_TAB_VALUES = {
   general: "workspace",
   repositories: "repositories",
   github: "github",
+  perforce: "perforce",
   integrations: "integrations",
   labs: "labs",
   members: "members",
@@ -56,6 +60,7 @@ const WORKSPACE_TAB_ICONS = {
   general: Settings,
   repositories: FolderGit2,
   github: GitHubMark,
+  perforce: Server,
   integrations: Plug,
   labs: FlaskConical,
   members: Users,
@@ -174,6 +179,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="workspace"><WorkspaceTab /></TabsContent>
           <TabsContent value="repositories"><RepositoriesTab /></TabsContent>
           <TabsContent value="github"><GitHubTab /></TabsContent>
+          <TabsContent value="perforce"><PerforceTab /></TabsContent>
           <TabsContent value="integrations"><IntegrationsTab /></TabsContent>
           <TabsContent value="labs"><LabsTab /></TabsContent>
           <TabsContent value="members"><MembersTab /></TabsContent>

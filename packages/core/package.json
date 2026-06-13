@@ -81,6 +81,8 @@
     "./billing/mutations": "./billing/mutations.ts",
     "./github": "./github/index.ts",
     "./github/queries": "./github/queries.ts",
+    "./perforce": "./perforce/index.ts",
+    "./perforce/queries": "./perforce/queries.ts",
     "./feishu-project/queries": "./feishu-project/queries.ts",
     "./lark": "./lark/index.ts",
     "./lark/queries": "./lark/queries.ts",

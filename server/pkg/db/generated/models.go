@@ -475,6 +475,15 @@ type IssueLabel struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type IssuePerforceReview struct {
+	IssueID          pgtype.UUID        `json:"issue_id"`
+	PerforceReviewID pgtype.UUID        `json:"perforce_review_id"`
+	LinkedByType     pgtype.Text        `json:"linked_by_type"`
+	LinkedByID       pgtype.UUID        `json:"linked_by_id"`
+	CloseIntent      bool               `json:"close_intent"`
+	LinkedAt         pgtype.Timestamptz `json:"linked_at"`
+}
+
 type IssuePullRequest struct {
 	IssueID       pgtype.UUID        `json:"issue_id"`
 	PullRequestID pgtype.UUID        `json:"pull_request_id"`
@@ -618,6 +627,35 @@ type NotificationPreference struct {
 	UserID      pgtype.UUID        `json:"user_id"`
 	Preferences []byte             `json:"preferences"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PerforceConnection struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	SwarmUrl             string             `json:"swarm_url"`
+	SwarmUser            string             `json:"swarm_user"`
+	SwarmTicketEncrypted []byte             `json:"swarm_ticket_encrypted"`
+	ConnectedByID        pgtype.UUID        `json:"connected_by_id"`
+	LastSeenReviewID     int64              `json:"last_seen_review_id"`
+	LastPolledAt         pgtype.Timestamptz `json:"last_polled_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PerforceReview struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	ReviewID        int64              `json:"review_id"`
+	Title           string             `json:"title"`
+	State           string             `json:"state"`
+	HtmlUrl         string             `json:"html_url"`
+	Author          pgtype.Text        `json:"author"`
+	ShelvedCl       pgtype.Int4        `json:"shelved_cl"`
+	CommittedCl     pgtype.Int4        `json:"committed_cl"`
+	ReviewCreatedAt pgtype.Timestamptz `json:"review_created_at"`
+	ReviewUpdatedAt pgtype.Timestamptz `json:"review_updated_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PersonalAccessToken struct {

@@ -217,7 +217,21 @@
     "link_copy_failed": "复制链接失败",
     "workdir_path_copied": "已复制本地 workdir 路径",
     "workdir_path_copy_failed": "复制本地 workdir 路径失败",
-    "workdir_path_unavailable": "暂无本地 workdir — 这个 issue 还没被本地 agent 运行过"
+    "workdir_path_unavailable": "暂无本地 workdir — 这个 issue 还没被本地 agent 运行过",
+    "section_reviews": "Perforce 评审",
+    "reviews_loading": "加载评审中…",
+    "reviews_empty": "暂无关联评审",
+    "reviews_show_more": "显示其余 {{count}} 条",
+    "reviews_show_less": "收起",
+    "review_state_needs_review": "待评审",
+    "review_state_needs_revision": "需修改",
+    "review_state_approved": "已批准",
+    "review_state_rejected": "已拒绝",
+    "review_state_archived": "已归档",
+    "review_state_committed": "已提交",
+    "review_state_unknown": "未知",
+    "review_shelved_cl": "Shelve CL {{cl}}",
+    "review_committed_cl": "提交 CL {{cl}}"
   },
   "timeline": {
     "loading": "加载中…"

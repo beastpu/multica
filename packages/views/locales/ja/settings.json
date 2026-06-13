@@ -35,7 +35,8 @@
       "github": "GitHub",
       "integrations": "連携",
       "labs": "ラボ",
-      "members": "メンバー"
+      "members": "メンバー",
+      "perforce": "Perforce"
     }
   },
   "account": {
@@ -501,5 +502,41 @@
     "feishu_project_routes_fallback_agent_placeholder": "Fallback agent (optional)",
     "feishu_project_routes_fallback_agent_none": "No fallback",
     "feishu_project_routes_no_agents": "This workspace has no agents yet."
+  },
+  "perforce": {
+    "page_description": "Helix Swarm を接続して、レビューの進捗を課題へ反映します。説明に課題識別子（例: TES-3）を含むレビューが提出されると、その課題は自動的に「完了」に移動します。",
+    "section_master": "Perforce 機能を有効化",
+    "master_description_on": "オフにすると Swarm のポーリングが停止し、レビューサイドバーは非表示になります。保存済みデータはバックエンドに残ります。",
+    "master_description_off": "Perforce 機能はオフです。レビューのポーリングとサイドバーは停止中です。バックエンドのデータは削除されません。",
+    "section_connection": "接続",
+    "not_configured": "このサーバーでは Perforce が未設定です。次を設定してください:",
+    "read_only_hint": "Swarm 接続を編集できるのはワークスペース管理者のみです。",
+    "field_swarm_url": "Swarm URL",
+    "field_swarm_user": "Swarm ユーザー",
+    "field_ticket": "パスワードまたはチケット",
+    "field_ticket_placeholder_stored": "空欄のままで保存済みの認証情報を保持",
+    "field_ticket_placeholder_new": "Perforce のパスワードまたはログインチケット",
+    "save": "保存",
+    "saving": "保存中…",
+    "test": "接続テスト",
+    "testing": "テスト中…",
+    "disconnect": "切断",
+    "section_features": "機能",
+    "feature_review_sidebar_label": "レビューサイドバー",
+    "feature_review_sidebar_description": "課題詳細パネルに関連する Swarm レビューを表示します。",
+    "disconnect_confirm_title": "Perforce を切断",
+    "disconnect_confirm_description": "Multica はこのワークスペースの Swarm ポーリングを停止します。既存のレビューリンクは保持され、いつでも再接続できます。",
+    "disconnect_confirm_cancel": "キャンセル",
+    "disconnect_confirm_action": "切断",
+    "disconnecting": "切断中…",
+    "toast_failed": "設定を更新できませんでした",
+    "toast_missing_fields": "Swarm URL とユーザーは必須です",
+    "toast_ticket_required": "接続にはパスワードまたはチケットが必要です",
+    "toast_saved": "接続を保存しました",
+    "toast_save_failed": "接続を保存できませんでした",
+    "toast_test_ok": "接続に成功しました",
+    "toast_test_failed": "Swarm に到達できないか認証に失敗しました",
+    "toast_disconnected": "Perforce を切断しました",
+    "toast_disconnect_failed": "切断できませんでした"
   }
 }
