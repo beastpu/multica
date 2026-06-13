@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import {
@@ -47,18 +47,24 @@ interface Props {
   integrationReady: boolean;
   entries: FeishuProjectWorkItemTypeConfig[];
   setEntries: SetWorkItemTypeConfigs;
+  // Section heading (step number + title + description) supplied by the parent
+  // so it matches the other step cards; rendered next to the add-type select.
+  header: ReactNode;
 }
 
 /**
- * "Synced work-item types" section: one card per type, each carrying its own
- * identifier prefix, sync target (business-line routing vs a pinned project)
- * and status mapping pair. Types are added from the space's type registry.
+ * "Synced work-item types" section: one collapsible card per type, each
+ * carrying its own identifier prefix, sync target (business-line routing vs a
+ * pinned project) and status mapping pair. Types are added from the space's
+ * type registry. Cards collapse to a one-line summary so a multi-type list
+ * stays scannable; unmapped types start expanded because they need attention.
  */
 export function FeishuProjectWorkItemTypesSection({
   workspaceId,
   integrationReady,
   entries,
   setEntries,
+  header,
 }: Props) {
   const { t } = useT("settings");
 
@@ -101,17 +107,10 @@ export function FeishuProjectWorkItemTypesSection({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3 border-b border-border/70 pb-2">
-        <div>
-          <p className="text-xs font-medium text-muted-foreground">
-            {t(($) => $.integrations.feishu_project_types_section)}
-          </p>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            {t(($) => $.integrations.feishu_project_types_hint)}
-          </p>
-        </div>
+      <div className="flex items-start justify-between gap-3">
+        {header}
         <Select value={ADD_TYPE} onValueChange={(v) => v && v !== ADD_TYPE && addType(v)}>
-          <SelectTrigger size="sm" className="w-44">
+          <SelectTrigger size="sm" className="w-44 shrink-0">
             <span className="flex items-center gap-1.5">
               <Plus className="h-3.5 w-3.5" />
               {t(($) => $.integrations.feishu_project_types_add)}
@@ -201,19 +200,50 @@ function WorkItemTypeCard({
 
   const target = entry.project_id ? entry.project_id : TARGET_ROUTING;
 
+  const mappedCount = Object.keys(entry.status_mapping).length;
+  const reverseCount = Object.keys(entry.reverse_status_mapping).length;
+  // Freshly added (or never-mapped) types start expanded — they still need
+  // configuration; mapped ones start collapsed so the list stays scannable.
+  const [expanded, setExpanded] = useState(mappedCount === 0);
+
   return (
-    <div className="space-y-4 rounded-md border border-border/70 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium">
-            {entry.name || entry.type_key}
-            {entry.api_name && (
-              <span className="ml-1.5 font-mono text-[11px] font-normal text-muted-foreground">
-                {entry.api_name}
-              </span>
+    <div className="rounded-md border border-border/70">
+      <div className="flex items-center gap-2 px-4 py-3">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((prev) => !prev)}
+          className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            {expanded ? (
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             )}
-          </p>
-        </div>
+            <span className="truncate text-sm font-medium">
+              {entry.name || entry.type_key}
+              {entry.api_name && (
+                <span className="ml-1.5 font-mono text-[11px] font-normal text-muted-foreground">
+                  {entry.api_name}
+                </span>
+              )}
+              {entry.identifier_prefix && (
+                <span className="ml-1.5 font-mono text-[11px] font-normal text-muted-foreground">
+                  [{entry.identifier_prefix}-]
+                </span>
+              )}
+            </span>
+          </span>
+          <span className={`shrink-0 text-xs ${mappedCount === 0 ? "text-warning" : "text-muted-foreground"}`}>
+            {mappedCount === 0
+              ? t(($) => $.integrations.feishu_project_type_mapping_none)
+              : t(($) => $.integrations.feishu_project_type_mapping_summary, {
+                  mapped: mappedCount,
+                  reverse: reverseCount,
+                })}
+          </span>
+        </button>
         <Button
           type="button"
           size="sm"
@@ -225,80 +255,84 @@ function WorkItemTypeCard({
         </Button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <label className="space-y-1.5 text-xs font-medium">
-          {t(($) => $.integrations.feishu_project_type_identifier_prefix)}
-          <Input
-            value={entry.identifier_prefix ?? ""}
-            onChange={(e) =>
-              onPatch((prev) => ({
-                ...prev,
-                identifier_prefix: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "").slice(0, 16),
-              }))
-            }
-            placeholder="BUG"
-          />
-          <span className="block text-[11px] font-normal text-muted-foreground">
-            {t(($) => $.integrations.feishu_project_type_identifier_prefix_hint)}
-          </span>
-        </label>
-
-        <label className="space-y-1.5 text-xs font-medium">
-          {t(($) => $.integrations.feishu_project_type_target)}
-          <Select
-            value={target}
-            onValueChange={(v) =>
-              onPatch((prev) => ({ ...prev, project_id: !v || v === TARGET_ROUTING ? "" : v }))
-            }
-          >
-            <SelectTrigger size="sm" className="w-full">
-              <span className="flex-1 truncate text-left">
-                {entry.project_id
-                  ? (projects.find((p) => p.id === entry.project_id)?.title ?? entry.project_id)
-                  : t(($) => $.integrations.feishu_project_type_target_routing)}
+      {expanded && (
+        <div className="space-y-4 border-t border-border/70 p-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="space-y-1.5 text-xs font-medium">
+              {t(($) => $.integrations.feishu_project_type_identifier_prefix)}
+              <Input
+                value={entry.identifier_prefix ?? ""}
+                onChange={(e) =>
+                  onPatch((prev) => ({
+                    ...prev,
+                    identifier_prefix: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "").slice(0, 16),
+                  }))
+                }
+                placeholder="BUG"
+              />
+              <span className="block text-[11px] font-normal text-muted-foreground">
+                {t(($) => $.integrations.feishu_project_type_identifier_prefix_hint)}
               </span>
-            </SelectTrigger>
-            <SelectContent align="start">
-              <SelectItem value={TARGET_ROUTING}>
-                {t(($) => $.integrations.feishu_project_type_target_routing)}
-              </SelectItem>
-              {projects.length === 0 && (
-                <div className="max-w-56 px-2 py-1.5 text-xs text-muted-foreground">
-                  {t(($) => $.integrations.feishu_project_routes_no_projects)}
-                </div>
-              )}
-              {projects.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <span className="block text-[11px] font-normal text-muted-foreground">
-            {t(($) => $.integrations.feishu_project_type_target_hint)}
-          </span>
-        </label>
-      </div>
+            </label>
 
-      {statuses.length === 0 ? (
-        <p className="rounded-md border border-border/70 px-3 py-3 text-xs text-muted-foreground">
-          {t(($) => $.integrations.feishu_project_statuses_empty)}
-        </p>
-      ) : (
-        <FeishuProjectStatusMappingTables
-          statuses={statuses}
-          statusMapping={entry.status_mapping}
-          reverseStatusMapping={entry.reverse_status_mapping}
-          onStatusMappingChange={(key, value) =>
-            onPatch((prev) => ({ ...prev, status_mapping: setMappingValue(prev.status_mapping, key, value) }))
-          }
-          onReverseStatusMappingChange={(key, value) =>
-            onPatch((prev) => ({
-              ...prev,
-              reverse_status_mapping: setMappingValue(prev.reverse_status_mapping, key, value),
-            }))
-          }
-        />
+            <label className="space-y-1.5 text-xs font-medium">
+              {t(($) => $.integrations.feishu_project_type_target)}
+              <Select
+                value={target}
+                onValueChange={(v) =>
+                  onPatch((prev) => ({ ...prev, project_id: !v || v === TARGET_ROUTING ? "" : v }))
+                }
+              >
+                <SelectTrigger size="sm" className="w-full">
+                  <span className="flex-1 truncate text-left">
+                    {entry.project_id
+                      ? (projects.find((p) => p.id === entry.project_id)?.title ?? entry.project_id)
+                      : t(($) => $.integrations.feishu_project_type_target_routing)}
+                  </span>
+                </SelectTrigger>
+                <SelectContent align="start">
+                  <SelectItem value={TARGET_ROUTING}>
+                    {t(($) => $.integrations.feishu_project_type_target_routing)}
+                  </SelectItem>
+                  {projects.length === 0 && (
+                    <div className="max-w-56 px-2 py-1.5 text-xs text-muted-foreground">
+                      {t(($) => $.integrations.feishu_project_routes_no_projects)}
+                    </div>
+                  )}
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="block text-[11px] font-normal text-muted-foreground">
+                {t(($) => $.integrations.feishu_project_type_target_hint)}
+              </span>
+            </label>
+          </div>
+
+          {statuses.length === 0 ? (
+            <p className="rounded-md border border-border/70 px-3 py-3 text-xs text-muted-foreground">
+              {t(($) => $.integrations.feishu_project_statuses_empty)}
+            </p>
+          ) : (
+            <FeishuProjectStatusMappingTables
+              statuses={statuses}
+              statusMapping={entry.status_mapping}
+              reverseStatusMapping={entry.reverse_status_mapping}
+              onStatusMappingChange={(key, value) =>
+                onPatch((prev) => ({ ...prev, status_mapping: setMappingValue(prev.status_mapping, key, value) }))
+              }
+              onReverseStatusMappingChange={(key, value) =>
+                onPatch((prev) => ({
+                  ...prev,
+                  reverse_status_mapping: setMappingValue(prev.reverse_status_mapping, key, value),
+                }))
+              }
+            />
+          )}
+        </div>
       )}
     </div>
   );

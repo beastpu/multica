@@ -293,30 +293,31 @@ type FeishuProjectBusinessLineRoute struct {
 }
 
 type FeishuProjectIntegration struct {
-	ID                          pgtype.UUID        `json:"id"`
-	WorkspaceID                 pgtype.UUID        `json:"workspace_id"`
-	ProjectKey                  string             `json:"project_key"`
-	PluginID                    string             `json:"plugin_id"`
-	PluginSecret                string             `json:"plugin_secret"`
-	ActorUserKey                pgtype.Text        `json:"actor_user_key"`
-	Enabled                     bool               `json:"enabled"`
-	SyncStory                   bool               `json:"sync_story"`
-	SyncIssue                   bool               `json:"sync_issue"`
-	MqlFilter                   string             `json:"mql_filter"`
-	StatusMapping               []byte             `json:"status_mapping"`
-	ReverseStatusMapping        []byte             `json:"reverse_status_mapping"`
-	CreatedByID                 pgtype.UUID        `json:"created_by_id"`
-	LastSyncedAt                pgtype.Timestamptz `json:"last_synced_at"`
-	LastError                   pgtype.Text        `json:"last_error"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
-	AssignOpenItemsToOwnerAgent bool               `json:"assign_open_items_to_owner_agent"`
-	BusinessLineFieldKey        string             `json:"business_line_field_key"`
-	BusinessLineFieldName       string             `json:"business_line_field_name"`
-	LastSeenUpdatedAtMs         pgtype.Int8        `json:"last_seen_updated_at_ms"`
-	LabelSyncRules              []byte             `json:"label_sync_rules"`
-	LastOrphanReconciledAt      pgtype.Timestamptz `json:"last_orphan_reconciled_at"`
-	WorkItemTypes               []byte             `json:"work_item_types"`
+	ID                           pgtype.UUID        `json:"id"`
+	WorkspaceID                  pgtype.UUID        `json:"workspace_id"`
+	ProjectKey                   string             `json:"project_key"`
+	PluginID                     string             `json:"plugin_id"`
+	PluginSecret                 string             `json:"plugin_secret"`
+	ActorUserKey                 pgtype.Text        `json:"actor_user_key"`
+	Enabled                      bool               `json:"enabled"`
+	SyncStory                    bool               `json:"sync_story"`
+	SyncIssue                    bool               `json:"sync_issue"`
+	MqlFilter                    string             `json:"mql_filter"`
+	StatusMapping                []byte             `json:"status_mapping"`
+	ReverseStatusMapping         []byte             `json:"reverse_status_mapping"`
+	CreatedByID                  pgtype.UUID        `json:"created_by_id"`
+	LastSyncedAt                 pgtype.Timestamptz `json:"last_synced_at"`
+	LastError                    pgtype.Text        `json:"last_error"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	AssignOpenItemsToOwnerAgent  bool               `json:"assign_open_items_to_owner_agent"`
+	BusinessLineFieldKey         string             `json:"business_line_field_key"`
+	BusinessLineFieldName        string             `json:"business_line_field_name"`
+	LastSeenUpdatedAtMs          pgtype.Int8        `json:"last_seen_updated_at_ms"`
+	LabelSyncRules               []byte             `json:"label_sync_rules"`
+	LastOrphanReconciledAt       pgtype.Timestamptz `json:"last_orphan_reconciled_at"`
+	WorkItemTypes                []byte             `json:"work_item_types"`
+	SyncOnlyWorkspaceMemberItems bool               `json:"sync_only_workspace_member_items"`
 }
 
 type FeishuProjectIssueBinding struct {

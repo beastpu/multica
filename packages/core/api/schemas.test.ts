@@ -5,7 +5,9 @@ import {
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
   DuplicateIssueErrorBodySchema,
+  EMPTY_FEISHU_PROJECT_INTEGRATION,
   EMPTY_USER,
+  FeishuProjectIntegrationSchema,
   ListIssuesResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
@@ -327,5 +329,27 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
       { endpoint: "GET /api/operations/agent-fixes (test)" },
     );
     expect(parsed).toEqual([]);
+  });
+});
+
+describe("FeishuProjectIntegrationSchema", () => {
+  it("defaults sync_only_workspace_member_items to false when the field is absent (older server)", () => {
+    // An older backend won't send the field. parseWithFallback must keep the
+    // integration usable, defaulting the assignee-scope gate to off.
+    const parsed = parseWithFallback(
+      { project_name: "proj", project_key: "proj" },
+      FeishuProjectIntegrationSchema,
+      EMPTY_FEISHU_PROJECT_INTEGRATION,
+      { endpoint: "GET /api/.../feishu-project (test)" },
+    );
+    expect(parsed.sync_only_workspace_member_items).toBe(false);
+  });
+
+  it("parses sync_only_workspace_member_items=true through", () => {
+    const parsed = FeishuProjectIntegrationSchema.parse({
+      project_name: "proj",
+      sync_only_workspace_member_items: true,
+    });
+    expect(parsed.sync_only_workspace_member_items).toBe(true);
   });
 });

@@ -639,6 +639,15 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 				"lookup_error", lookupErr)
 		}
 	}
+	// Assignee scope gate: a workspace sharing a Meego space with sibling teams
+	// can restrict creation to items whose operator is a member of THIS
+	// workspace. Applied at creation only (see feishuProjectSkipsNonMemberWorkItem);
+	// the membership lookup is deferred behind the cheap flag/binding checks.
+	if cfg.SyncOnlyWorkspaceMemberItems && !issueFound {
+		if feishuProjectSkipsNonMemberWorkItem(true, false, s.ownerEmailIsWorkspaceMember(ctx, cfg.WorkspaceID, item.OwnerEmail)) {
+			return "skipped", 0, nil
+		}
+	}
 	if issueFound {
 		needsDefaultProject := projectID.Valid && issue.ProjectID != projectID
 		// Watermark short-circuit: if Meego hasn't touched the work item since
@@ -1343,6 +1352,36 @@ func (s *FeishuProjectSyncService) resolveOwnerAgent(ctx context.Context, worksp
 
 func isFeishuProjectOwnerAgentAssignableStatus(externalStatus, localStatus string) bool {
 	return strings.TrimSpace(localStatus) == "todo"
+}
+
+// feishuProjectSkipsNonMemberWorkItem decides whether the assignee scope gate
+// should drop a work item. It only ever skips at CREATION (issueExists=false):
+// once an issue is bound, it keeps syncing even if the operator is later
+// reassigned to a non-member, so an already-imported ticket is never silently
+// frozen out from under the team that owns it.
+func feishuProjectSkipsNonMemberWorkItem(memberOnly, issueExists, ownerIsMember bool) bool {
+	if !memberOnly || issueExists {
+		return false
+	}
+	return !ownerIsMember
+}
+
+// ownerEmailIsWorkspaceMember reports whether the work item's operator email
+// resolves to a member of this workspace. Mirrors the email→user→member chain
+// in resolveOwnerAgent (minus the agent lookup); a blank or unresolvable email
+// is treated as "not a member" so unassigned items are gated out.
+func (s *FeishuProjectSyncService) ownerEmailIsWorkspaceMember(ctx context.Context, workspaceID pgtype.UUID, email string) bool {
+	if strings.TrimSpace(email) == "" {
+		return false
+	}
+	user, err := s.Queries.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(email)))
+	if err != nil {
+		return false
+	}
+	if _, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: user.ID, WorkspaceID: workspaceID}); err != nil {
+		return false
+	}
+	return true
 }
 
 func sameNullableText(a, b pgtype.Text) bool {
