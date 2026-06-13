@@ -103,6 +103,31 @@ func TestMatchBusinessLineRouteNameFallback(t *testing.T) {
 	}
 }
 
+func TestMatchBusinessLineRouteParentScopedNameWins(t *testing.T) {
+	mobileProj := uuidLike(6)
+	pcProj := uuidLike(7)
+	routes := []db.FeishuProjectBusinessLineRoute{
+		{
+			ProjectID:              mobileProj,
+			BusinessLineID:         "mobile/other",
+			BusinessLineName:       "其他",
+			ParentBusinessLineName: "移动SDK组",
+		},
+		{
+			ProjectID:              pcProj,
+			BusinessLineID:         "pc/other",
+			BusinessLineName:       "其他",
+			ParentBusinessLineName: "PC与生态",
+		},
+	}
+	tokens := []FeishuBusinessLineToken{{Name: "其他", ParentName: "PC与生态"}}
+
+	got := matchBusinessLineRoute(routes, tokens)
+	if got == nil || got.ProjectID != pcProj {
+		t.Fatalf("parent-scoped name match expected PC route, got %#v", got)
+	}
+}
+
 func TestMatchBusinessLineRouteNoMatch(t *testing.T) {
 	routes := []db.FeishuProjectBusinessLineRoute{
 		{ProjectID: uuidLike(5), BusinessLineID: "unrelated", BusinessLineName: "Other"},
@@ -368,6 +393,31 @@ func TestParseFeishuProjectBusinessLineTree(t *testing.T) {
 	}
 	if tree[0].Children[0].ParentID != "parent-1" || tree[0].Children[0].ParentName != "玩家服务组" {
 		t.Fatalf("child parent fields not propagated: %#v", tree[0].Children[0])
+	}
+}
+
+func TestParseFeishuProjectBusinessLineTreeAcceptsLabelValueOptions(t *testing.T) {
+	payload := map[string]any{
+		"data": []any{
+			map[string]any{
+				"value": "mobile", "label": "移动SDK组",
+				"children": []any{
+					map[string]any{"value": "park", "label": "Park"},
+					map[string]any{"value": "other", "label": "其他"},
+				},
+			},
+		},
+	}
+
+	tree := parseFeishuProjectBusinessLineTree(payload)
+	if len(tree) != 1 || tree[0].ID != "mobile" || tree[0].Name != "移动SDK组" {
+		t.Fatalf("unexpected root: %#v", tree)
+	}
+	if len(tree[0].Children) != 2 || tree[0].Children[1].ID != "other" || tree[0].Children[1].Name != "其他" {
+		t.Fatalf("label/value child ids not parsed: %#v", tree[0].Children)
+	}
+	if tree[0].Children[0].ParentID != "mobile" || tree[0].Children[0].ParentName != "移动SDK组" {
+		t.Fatalf("label/value child parent fields not propagated: %#v", tree[0].Children[0])
 	}
 }
 
