@@ -34,9 +34,9 @@ import type {
 import { useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
-// Each user-edited row in the routes table. business_line_id is the lookup key; we keep
-// the parent denormalized so we can save it back to the server without re-fetching the
-// tree at save time.
+// Each user-edited row in the routes table. business_line_id is the persisted
+// external value; the UI keys rows by value + parent because Meego can omit ids
+// or reuse labels in different branches.
 export interface RouteRow {
   businessLineId: string;
   businessLineName: string;
@@ -64,6 +64,68 @@ interface Props {
 const NO_PROJECT = "__none__";
 const NO_AGENT = "__none__";
 const NO_FIELD = "__none__";
+
+function compactPart(value: string | undefined): string {
+  return value?.trim() ?? "";
+}
+
+function parentIdentity(
+  parentId: string | undefined,
+  parentName: string | undefined,
+): string {
+  return compactPart(parentId) || compactPart(parentName);
+}
+
+function routeIdentity(
+  businessLineId: string | undefined,
+  businessLineName: string | undefined,
+  parentId: string | undefined,
+  parentName: string | undefined,
+): string {
+  const own = compactPart(businessLineId) || compactPart(businessLineName);
+  const parent = parentIdentity(parentId, parentName);
+  return parent ? `parent:${parent}|value:${own}` : `value:${own}`;
+}
+
+function routeIdForNode(
+  node: FeishuProjectBusinessLineNode,
+  parent: FeishuProjectBusinessLineNode | null,
+): string {
+  const id = compactPart(node.id);
+  if (id) return id;
+  const name = compactPart(node.name);
+  if (!name) return "";
+  const parentKey = parentIdentity(parent?.id ?? node.parent_id, parent?.name ?? node.parent_name);
+  return parentKey ? `${parentKey}/${name}` : name;
+}
+
+function routeKeyForNode(
+  node: FeishuProjectBusinessLineNode,
+  parent: FeishuProjectBusinessLineNode | null,
+): string {
+  return routeIdentity(
+    routeIdForNode(node, parent),
+    node.name,
+    parent?.id ?? node.parent_id,
+    parent?.name ?? node.parent_name,
+  );
+}
+
+function routeKeyForRow(row: RouteRow): string {
+  return routeIdentity(
+    row.businessLineId,
+    row.businessLineName,
+    row.parentBusinessLineId,
+    row.parentBusinessLineName,
+  );
+}
+
+function treeKeyForNode(
+  node: FeishuProjectBusinessLineNode,
+  parent: FeishuProjectBusinessLineNode | null,
+): string {
+  return routeKeyForNode(node, parent);
+}
 
 /**
  * Business-line → project routing UI for a Feishu Project integration.
@@ -125,14 +187,17 @@ export function FeishuProjectRoutingSection({
 
   function toggleNode(node: FeishuProjectBusinessLineNode, parent: FeishuProjectBusinessLineNode | null) {
     setRows((prev) => {
-      const exists = prev.find((r) => r.businessLineId === node.id);
+      const rowKey = routeKeyForNode(node, parent);
+      const exists = prev.find((r) => routeKeyForRow(r) === rowKey);
       if (exists) {
-        return prev.filter((r) => r.businessLineId !== node.id);
+        return prev.filter((r) => routeKeyForRow(r) !== rowKey);
       }
+      const businessLineId = routeIdForNode(node, parent);
+      if (!businessLineId) return prev;
       return [
         ...prev,
         {
-          businessLineId: node.id,
+          businessLineId,
           businessLineName: node.name,
           parentBusinessLineId: parent?.id ?? node.parent_id ?? "",
           parentBusinessLineName: parent?.name ?? node.parent_name ?? "",
@@ -143,22 +208,22 @@ export function FeishuProjectRoutingSection({
     });
   }
 
-  function setRowProject(bizLineId: string, projectId: string | null) {
+  function setRowProject(rowKey: string, projectId: string | null) {
     const next = projectId && projectId !== NO_PROJECT ? projectId : "";
     setRows((prev) =>
-      prev.map((r) => (r.businessLineId === bizLineId ? { ...r, projectId: next } : r)),
+      prev.map((r) => (routeKeyForRow(r) === rowKey ? { ...r, projectId: next } : r)),
     );
   }
 
-  function setRowFallbackAgent(bizLineId: string, agentId: string | null) {
+  function setRowFallbackAgent(rowKey: string, agentId: string | null) {
     const next = agentId && agentId !== NO_AGENT ? agentId : "";
     setRows((prev) =>
-      prev.map((r) => (r.businessLineId === bizLineId ? { ...r, fallbackAgentId: next } : r)),
+      prev.map((r) => (routeKeyForRow(r) === rowKey ? { ...r, fallbackAgentId: next } : r)),
     );
   }
 
-  function removeRow(bizLineId: string) {
-    setRows((prev) => prev.filter((r) => r.businessLineId !== bizLineId));
+  function removeRow(rowKey: string) {
+    setRows((prev) => prev.filter((r) => routeKeyForRow(r) !== rowKey));
   }
 
   async function handleRefreshBusinessLines() {
@@ -201,7 +266,7 @@ export function FeishuProjectRoutingSection({
     );
   }
 
-  const rowsByBizLineId = new Map(rows.map((r) => [r.businessLineId, r] as const));
+  const rowsByRouteKey = new Map(rows.map((r) => [routeKeyForRow(r), r] as const));
 
   return (
     <div className="space-y-4">
@@ -264,12 +329,12 @@ export function FeishuProjectRoutingSection({
             <div className="overflow-hidden rounded-md border border-border/70">
               {businessLines.map((parent) => (
                 <BizLineTreeRow
-                  key={parent.id || parent.name}
+                  key={treeKeyForNode(parent, null)}
                   node={parent}
                   parent={null}
                   expanded={expanded}
                   setExpanded={setExpanded}
-                  rowsByBizLineId={rowsByBizLineId}
+                  rowsByRouteKey={rowsByRouteKey}
                   toggleNode={toggleNode}
                 />
               ))}
@@ -298,6 +363,7 @@ export function FeishuProjectRoutingSection({
                   <span />
                 </div>
                 {rows.map((row) => {
+                  const rowKey = routeKeyForRow(row);
                   const projectChoices = projects.map((p) => ({ id: p.id, title: p.title }));
                   // Only offer active (non-archived) agents in the dropdown — the
                   // workspace query asks the API for archived ones too because other
@@ -314,7 +380,7 @@ export function FeishuProjectRoutingSection({
                     : "";
                   return (
                     <div
-                      key={row.businessLineId}
+                      key={rowKey}
                       className="grid grid-cols-[1fr_220px_220px_auto] items-center gap-3 border-b border-border/70 px-3 py-2 last:border-b-0"
                     >
                       <div className="min-w-0">
@@ -329,7 +395,7 @@ export function FeishuProjectRoutingSection({
                       </div>
                       <Select
                         value={row.projectId || NO_PROJECT}
-                        onValueChange={(v) => setRowProject(row.businessLineId, v)}
+                        onValueChange={(v) => setRowProject(rowKey, v)}
                       >
                         <SelectTrigger size="sm" className="w-full">
                           <span className="flex-1 truncate text-left">
@@ -353,7 +419,7 @@ export function FeishuProjectRoutingSection({
                       </Select>
                       <Select
                         value={row.fallbackAgentId || NO_AGENT}
-                        onValueChange={(v) => setRowFallbackAgent(row.businessLineId, v)}
+                        onValueChange={(v) => setRowFallbackAgent(rowKey, v)}
                       >
                         <SelectTrigger size="sm" className="w-full">
                           <span className="flex-1 truncate text-left">
@@ -382,7 +448,7 @@ export function FeishuProjectRoutingSection({
                         type="button"
                         size="sm"
                         variant="ghost"
-                        onClick={() => removeRow(row.businessLineId)}
+                        onClick={() => removeRow(rowKey)}
                         aria-label={t(($) => $.integrations.feishu_project_routes_remove)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -404,14 +470,15 @@ interface RowProps {
   parent: FeishuProjectBusinessLineNode | null;
   expanded: Record<string, boolean>;
   setExpanded: (updater: (prev: Record<string, boolean>) => Record<string, boolean>) => void;
-  rowsByBizLineId: Map<string, RouteRow>;
+  rowsByRouteKey: Map<string, RouteRow>;
   toggleNode: (node: FeishuProjectBusinessLineNode, parent: FeishuProjectBusinessLineNode | null) => void;
 }
 
-function BizLineTreeRow({ node, parent, expanded, setExpanded, rowsByBizLineId, toggleNode }: RowProps) {
+function BizLineTreeRow({ node, parent, expanded, setExpanded, rowsByRouteKey, toggleNode }: RowProps) {
   const hasChildren = (node.children?.length ?? 0) > 0;
-  const isOpen = expanded[node.id];
-  const checked = rowsByBizLineId.has(node.id);
+  const treeKey = treeKeyForNode(node, parent);
+  const isOpen = expanded[treeKey] ?? (node.id ? expanded[node.id] : false);
+  const checked = rowsByRouteKey.has(routeKeyForNode(node, parent));
   const depth = parent ? 1 : 0;
 
   return (
@@ -424,7 +491,7 @@ function BizLineTreeRow({ node, parent, expanded, setExpanded, rowsByBizLineId, 
           <button
             type="button"
             className="flex h-5 w-5 items-center justify-center rounded hover:bg-muted"
-            onClick={() => setExpanded((prev) => ({ ...prev, [node.id]: !prev[node.id] }))}
+            onClick={() => setExpanded((prev) => ({ ...prev, [treeKey]: !isOpen }))}
             aria-label={isOpen ? "collapse" : "expand"}
           >
             {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
@@ -446,12 +513,12 @@ function BizLineTreeRow({ node, parent, expanded, setExpanded, rowsByBizLineId, 
         <>
           {(node.children ?? []).map((child) => (
             <BizLineTreeRow
-              key={child.id || child.name}
+              key={treeKeyForNode(child, node)}
               node={child}
               parent={node}
               expanded={expanded}
               setExpanded={setExpanded}
-              rowsByBizLineId={rowsByBizLineId}
+              rowsByRouteKey={rowsByRouteKey}
               toggleNode={toggleNode}
             />
           ))}
