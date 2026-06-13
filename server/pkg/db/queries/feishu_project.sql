@@ -19,12 +19,12 @@ INSERT INTO feishu_project_integration (
     enabled, sync_story, sync_issue, mql_filter, status_mapping,
     reverse_status_mapping, assign_open_items_to_owner_agent, created_by_id,
     business_line_field_key, business_line_field_name, label_sync_rules,
-    work_item_types
+    work_item_types, sync_only_workspace_member_items
 ) VALUES (
     $1, $2, $3, $4, sqlc.narg('actor_user_key'),
     $5, $6, $7, $8, $9, $10, $11, sqlc.narg('created_by_id'),
     $12, $13, $14,
-    $15
+    $15, $16
 )
 ON CONFLICT (workspace_id) DO UPDATE SET
     project_key = EXCLUDED.project_key,
@@ -42,6 +42,7 @@ ON CONFLICT (workspace_id) DO UPDATE SET
     business_line_field_name = EXCLUDED.business_line_field_name,
     label_sync_rules = EXCLUDED.label_sync_rules,
     work_item_types = EXCLUDED.work_item_types,
+    sync_only_workspace_member_items = EXCLUDED.sync_only_workspace_member_items,
     updated_at = now()
 RETURNING *;
 
@@ -62,6 +63,7 @@ SET project_key = $3,
     business_line_field_name = $14,
     label_sync_rules = $15,
     work_item_types = $16,
+    sync_only_workspace_member_items = $17,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
 RETURNING *;

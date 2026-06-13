@@ -30,6 +30,9 @@ export interface FeishuProjectIntegration {
   reverse_status_mapping: Record<string, string>;
   work_item_types: FeishuProjectWorkItemTypeConfig[];
   assign_open_items_to_owner_agent: boolean;
+  // When true, only sync work items whose 处理人 (operator) is a member of this
+  // workspace — for a Meego space shared across sibling-team workspaces.
+  sync_only_workspace_member_items: boolean;
   label_sync_rules: FeishuProjectLabelSyncRule[];
   business_line_field_key: string;
   business_line_field_name: string;
@@ -63,6 +66,7 @@ export interface UpdateFeishuProjectIntegrationRequest {
   reverse_status_mapping: Record<string, string>;
   work_item_types?: FeishuProjectWorkItemTypeConfig[];
   assign_open_items_to_owner_agent: boolean;
+  sync_only_workspace_member_items: boolean;
   label_sync_rules?: FeishuProjectLabelSyncRule[];
   business_line_field_key?: string;
   business_line_field_name?: string;
