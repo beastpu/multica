@@ -2,8 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronsUpDown, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronsUpDown,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Save,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import {
@@ -39,7 +49,9 @@ import { api } from "@multica/core/api";
 import type {
   FeishuProjectBusinessLineNode,
   FeishuProjectFieldMeta,
+  FeishuProjectIntegration,
   FeishuProjectLabelSyncRule,
+  FeishuProjectRoute,
   FeishuProjectRouteInput,
   FeishuProjectWorkItemTypeConfig,
 } from "@multica/core/types";
@@ -51,9 +63,94 @@ import { FeishuProjectWorkItemTypesSection } from "./feishu-project-work-item-ty
 const NO_FIELD = "__none__";
 const NO_MATCH = "__none__";
 
+// Everything the unified Save button persists, normalized into one shape so the
+// server snapshot and the live draft serialize with an identical key order —
+// dirty detection is a plain JSON string comparison.
+interface FeishuProjectDraft {
+  enabled: boolean;
+  projectKey: string;
+  pluginId: string;
+  pluginSecret: string;
+  useDefaultPlugin: boolean;
+  actorUserKey: string;
+  assignOpenItemsToOwnerAgent: boolean;
+  syncOnlyWorkspaceMemberItems: boolean;
+  workItemTypeConfigs: FeishuProjectWorkItemTypeConfig[];
+  labelSyncRules: FeishuProjectLabelSyncRule[];
+  businessLineFieldKey: string;
+  businessLineFieldName: string;
+  routeRows: RouteRow[];
+}
+
+function feishuDraftJson(d: FeishuProjectDraft): string {
+  return JSON.stringify({
+    enabled: d.enabled,
+    projectKey: d.projectKey,
+    pluginId: d.pluginId,
+    pluginSecret: d.pluginSecret,
+    useDefaultPlugin: d.useDefaultPlugin,
+    actorUserKey: d.actorUserKey,
+    assignOpenItemsToOwnerAgent: d.assignOpenItemsToOwnerAgent,
+    syncOnlyWorkspaceMemberItems: d.syncOnlyWorkspaceMemberItems,
+    workItemTypeConfigs: d.workItemTypeConfigs,
+    labelSyncRules: d.labelSyncRules,
+    businessLineFieldKey: d.businessLineFieldKey,
+    businessLineFieldName: d.businessLineFieldName,
+    routeRows: d.routeRows,
+  });
+}
+
+function routeRowFromSaved(r: FeishuProjectRoute): RouteRow {
+  return {
+    businessLineId: r.business_line_id,
+    businessLineName: r.business_line_name,
+    parentBusinessLineId: r.parent_business_line_id ?? "",
+    parentBusinessLineName: r.parent_business_line_name ?? "",
+    projectId: r.project_id,
+    fallbackAgentId: r.fallback_agent_id ?? "",
+  };
+}
+
+// The default-plugin toggle starts on whenever the deployment offers a company
+// plugin AND this integration isn't pinned to a *different* custom plugin: an
+// empty plugin_id (fresh integration) or one that already equals the default id
+// both count as "using the company plugin", so a new workspace never has to
+// fill credentials. A genuinely custom plugin id keeps the toggle off.
+function feishuUsesDefaultPlugin(fp: FeishuProjectIntegration | null): boolean {
+  if (!fp || !fp.default_plugin_available) return false;
+  return !fp.plugin_id || fp.plugin_id === fp.default_plugin_id;
+}
+
+function draftFromServer(
+  fp: FeishuProjectIntegration | null,
+  routes: FeishuProjectRoute[],
+): FeishuProjectDraft {
+  return {
+    enabled: fp?.enabled ?? false,
+    projectKey: fp ? fp.project_name || fp.project_key : "",
+    pluginId: fp?.plugin_id ?? "",
+    pluginSecret: "",
+    useDefaultPlugin: feishuUsesDefaultPlugin(fp),
+    actorUserKey: fp?.actor_user_key ?? "",
+    assignOpenItemsToOwnerAgent: fp?.assign_open_items_to_owner_agent ?? false,
+    syncOnlyWorkspaceMemberItems: fp?.sync_only_workspace_member_items ?? false,
+    workItemTypeConfigs: fp?.work_item_types ?? [],
+    labelSyncRules: fp?.label_sync_rules ?? [],
+    businessLineFieldKey: fp?.business_line_field_key ?? "",
+    businessLineFieldName: fp?.business_line_field_name ?? "",
+    routeRows: routes.map(routeRowFromSaved),
+  };
+}
+
 // GitHub integration moved to its own Settings tab (see github-tab.tsx).
 // This tab hosts the remaining workspace-scoped third-party integrations —
 // currently Feishu Project and Lark.
+//
+// The Feishu Project panel is organized as numbered steps that mirror the
+// operator's mental model: ① connect the space → ② choose what to sync →
+// ③ decide where items go → ④ optional label rules, followed by a separate
+// runtime card (sync status + manual sync) and a sticky save bar that only
+// appears when the draft differs from the saved server state.
 export function IntegrationsTab() {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -70,7 +167,9 @@ export function IntegrationsTab() {
   const [pluginSecret, setPluginSecret] = useState("");
   const [actorUserKey, setActorUserKey] = useState("");
   const [assignOpenItemsToOwnerAgent, setAssignOpenItemsToOwnerAgent] = useState(false);
+  const [syncOnlyWorkspaceMemberItems, setSyncOnlyWorkspaceMemberItems] = useState(false);
   const [syncWorkItemId, setSyncWorkItemId] = useState("");
+  const [advancedSyncOpen, setAdvancedSyncOpen] = useState(false);
   // The synced type list (缺陷/工单/…), each entry with its own mappings and
   // optional static project route. Draft state; persisted on Save.
   const [workItemTypeConfigs, setWorkItemTypeConfigs] = useState<FeishuProjectWorkItemTypeConfig[]>([]);
@@ -85,6 +184,11 @@ export function IntegrationsTab() {
   // can commit both integration fields and the route table in one click.
   const [routeRows, setRouteRows] = useState<RouteRow[]>([]);
   const [routesExpanded, setRoutesExpanded] = useState<Record<string, boolean>>({});
+  // The serialized server snapshot the draft state was last seeded from. Dirty
+  // detection requires it to match the *current* snapshot — otherwise the save
+  // bar would flash for the one frame between a query (re)load and the seeding
+  // effects below.
+  const [hydratedDraftJson, setHydratedDraftJson] = useState<string | null>(null);
 
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
   const canManage = currentMember?.role === "owner" || currentMember?.role === "admin";
@@ -119,41 +223,71 @@ export function IntegrationsTab() {
   const syncTotal = syncRun?.total ?? 0;
   const syncProgress = syncTotal > 0 ? Math.min(100, Math.max(8, Math.round((syncProcessed / syncTotal) * 100))) : 50;
 
-  useEffect(() => {
-    if (!feishuProject) return;
-    setFeishuEnabled(feishuProject.enabled);
-    setProjectKey(feishuProject.project_name || feishuProject.project_key);
-    setPluginId(feishuProject.plugin_id);
-    setPluginSecret("");
-    setUseDefaultPlugin(feishuProject.default_plugin_available && !feishuProject.plugin_id);
-    setActorUserKey(feishuProject.actor_user_key ?? "");
-    setAssignOpenItemsToOwnerAgent(feishuProject.assign_open_items_to_owner_agent);
-    setWorkItemTypeConfigs(feishuProject.work_item_types ?? []);
-    setLabelSyncRules(feishuProject.label_sync_rules ?? []);
-    setBusinessLineFieldKey(feishuProject.business_line_field_key);
-    setBusinessLineFieldName(feishuProject.business_line_field_name);
-  }, [feishuProject]);
+  const serverDraftJson = useMemo(
+    () => feishuDraftJson(draftFromServer(feishuProject ?? null, routesData?.routes ?? [])),
+    [feishuProject, routesData],
+  );
+  const currentDraftJson = feishuDraftJson({
+    enabled: feishuEnabled,
+    projectKey,
+    pluginId,
+    pluginSecret,
+    useDefaultPlugin,
+    actorUserKey,
+    assignOpenItemsToOwnerAgent,
+    syncOnlyWorkspaceMemberItems,
+    workItemTypeConfigs,
+    labelSyncRules,
+    businessLineFieldKey,
+    businessLineFieldName,
+    routeRows,
+  });
+  const isDirty =
+    canManage && hydratedDraftJson === serverDraftJson && currentDraftJson !== serverDraftJson;
 
-  // Seed route draft from the server's saved table whenever it (re)loads. Auto-expand
-  // parents that already have a routed child so the user sees their current state
-  // without expanding manually.
-  useEffect(() => {
-    setRouteRows(
-      savedRoutes.map((r) => ({
-        businessLineId: r.business_line_id,
-        businessLineName: r.business_line_name,
-        parentBusinessLineId: r.parent_business_line_id ?? "",
-        parentBusinessLineName: r.parent_business_line_name ?? "",
-        projectId: r.project_id,
-        fallbackAgentId: r.fallback_agent_id ?? "",
-      })),
-    );
+  // Steps ② / ③ / ④ need a *saved* integration with working credentials — the
+  // Meego registry/field/status queries behind them are gated the same way.
+  const stepsLocked = !feishuProject?.id || !credentialsReady;
+
+  function seedIntegrationDraft() {
+    setFeishuEnabled(feishuProject?.enabled ?? false);
+    setProjectKey(feishuProject ? feishuProject.project_name || feishuProject.project_key : "");
+    setPluginId(feishuProject?.plugin_id ?? "");
+    setPluginSecret("");
+    setUseDefaultPlugin(feishuUsesDefaultPlugin(feishuProject ?? null));
+    setActorUserKey(feishuProject?.actor_user_key ?? "");
+    setAssignOpenItemsToOwnerAgent(feishuProject?.assign_open_items_to_owner_agent ?? false);
+    setSyncOnlyWorkspaceMemberItems(feishuProject?.sync_only_workspace_member_items ?? false);
+    setWorkItemTypeConfigs(feishuProject?.work_item_types ?? []);
+    setLabelSyncRules(feishuProject?.label_sync_rules ?? []);
+    setBusinessLineFieldKey(feishuProject?.business_line_field_key ?? "");
+    setBusinessLineFieldName(feishuProject?.business_line_field_name ?? "");
+    setHydratedDraftJson(serverDraftJson);
+  }
+
+  // Seed route draft from the server's saved table. Auto-expand parents that
+  // already have a routed child so the user sees their current state without
+  // expanding manually.
+  function seedRoutesDraft() {
+    setRouteRows(savedRoutes.map(routeRowFromSaved));
     const auto: Record<string, boolean> = {};
     for (const r of savedRoutes) {
       const parentId = r.parent_business_line_id ?? "";
       if (parentId) auto[parentId] = true;
     }
     setRoutesExpanded(auto);
+    setHydratedDraftJson(serverDraftJson);
+  }
+
+  // (Re)seed the draft whenever the server copy loads. This intentionally
+  // overwrites in-flight edits on refetch — same behavior as before the redesign.
+  useEffect(() => {
+    seedIntegrationDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feishuProject]);
+
+  useEffect(() => {
+    seedRoutesDraft();
     // savedRoutes identity changes on every render; key by the server's underlying data
     // shape via JSON to avoid resetting the user's in-flight edits on cache touches.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -187,6 +321,10 @@ export function IntegrationsTab() {
     );
   }, [activeSyncRunId, lastNotifiedSyncRunId, queryClient, syncRun, t, wsId]);
 
+  function handleDiscardChanges() {
+    seedIntegrationDraft();
+    seedRoutesDraft();
+  }
 
   async function handleSaveFeishuProject() {
     // Validate route rows upfront so a user clicking Save with a half-configured route
@@ -233,6 +371,7 @@ export function IntegrationsTab() {
           project_id: entry.project_id || undefined,
         })),
         assign_open_items_to_owner_agent: assignOpenItemsToOwnerAgent,
+        sync_only_workspace_member_items: syncOnlyWorkspaceMemberItems,
         label_sync_rules: compactLabelSyncRules(labelSyncRules),
         business_line_field_key: bizLineKey,
         business_line_field_name: businessLineFieldName.trim(),
@@ -270,11 +409,11 @@ export function IntegrationsTab() {
     }
   }
 
-  async function handleSyncFeishuProject() {
+  async function handleSyncFeishuProject(workItemId?: string) {
     setSyncingFeishu(true);
     try {
       const resp = await api.syncFeishuProjectIntegration(wsId, {
-        work_item_id: syncWorkItemId.trim() || undefined,
+        work_item_id: workItemId || undefined,
       });
       queryClient.setQueryData(feishuProjectKeys.sync(wsId), resp);
       setActiveSyncRunId(resp.run?.id ?? null);
@@ -295,25 +434,47 @@ export function IntegrationsTab() {
       <section className="space-y-4">
         <h2 className="text-sm font-semibold">{t(($) => $.integrations.section_title)}</h2>
 
-        <Card>
-          <CardContent className="space-y-6">
-            <div className="flex items-start justify-between gap-6">
-              <div className="space-y-1">
-                <p className="text-sm font-medium">{t(($) => $.integrations.feishu_project_title)}</p>
+        <div className="space-y-3">
+          <Card>
+            <CardContent className="flex items-start justify-between gap-6">
+              <div className="min-w-0 space-y-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">{t(($) => $.integrations.feishu_project_title)}</p>
+                  {canManage && <FeishuConnectionBadge integration={feishuProject ?? null} />}
+                </div>
                 <p className="text-xs text-muted-foreground">
                   {t(($) => $.integrations.feishu_project_description)}
                 </p>
+                {!canManage && (
+                  <p className="text-xs text-muted-foreground">
+                    {t(($) => $.integrations.manage_hint)}
+                  </p>
+                )}
               </div>
               {canManage && <Switch checked={feishuEnabled} onCheckedChange={setFeishuEnabled} />}
-            </div>
+            </CardContent>
+          </Card>
 
-            {canManage ? (
-              <div className="space-y-6">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-3 border-b border-border/70 pb-2">
-                    <p className="text-xs font-medium text-muted-foreground">
-                      {t(($) => $.integrations.feishu_project_basic_section)}
-                    </p>
+          {canManage && (
+            <>
+              <Card>
+                <CardContent className="space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <StepHeader
+                      index={1}
+                      title={t(($) => $.integrations.feishu_project_step_connection_title)}
+                      description={t(($) => $.integrations.feishu_project_step_connection_desc)}
+                    />
+                    {credentialsReady ? (
+                      <span className="flex shrink-0 items-center gap-1 text-xs text-success">
+                        <Check className="h-3.5 w-3.5" />
+                        {t(($) => $.integrations.feishu_project_step_done)}
+                      </span>
+                    ) : (
+                      <span className="shrink-0 text-xs text-warning">
+                        {t(($) => $.integrations.feishu_project_step_pending)}
+                      </span>
+                    )}
                   </div>
                   <div className="grid gap-4 md:grid-cols-2">
                     <label className="space-y-1.5 text-xs font-medium">
@@ -323,6 +484,9 @@ export function IntegrationsTab() {
                     <label className="space-y-1.5 text-xs font-medium">
                       {t(($) => $.integrations.feishu_project_actor_user_key)}
                       <Input value={actorUserKey} onChange={(e) => setActorUserKey(e.target.value)} />
+                      <span className="block text-[11px] font-normal text-muted-foreground">
+                        {t(($) => $.integrations.feishu_project_actor_user_key_hint)}
+                      </span>
                     </label>
                   </div>
 
@@ -363,49 +527,141 @@ export function IntegrationsTab() {
                       </label>
                     </div>
                   )}
-                </div>
+                </CardContent>
+              </Card>
 
-                <FeishuProjectWorkItemTypesSection
-                  workspaceId={wsId}
-                  integrationReady={canManage && !!feishuProject?.id && credentialsReady}
-                  entries={workItemTypeConfigs}
-                  setEntries={setWorkItemTypeConfigs}
-                />
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-3 border-b border-border/70 pb-2">
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground">
-                        {t(($) => $.integrations.feishu_project_label_sync_section)}
-                      </p>
-                      <p className="mt-1 text-[11px] text-muted-foreground">
-                        {t(($) => $.integrations.feishu_project_label_sync_hint)}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() =>
-                        setLabelSyncRules((prev) => [
-                          ...prev,
-                          {
-                            id: newLocalRuleId(),
-                            enabled: true,
-                            field_key: "",
-                            field_name: "",
-                            match: "",
-                            label_name: "",
-                          },
-                        ])
+              <Card>
+                <CardContent className="space-y-3">
+                  {stepsLocked ? (
+                    <>
+                      <StepHeader
+                        index={2}
+                        title={t(($) => $.integrations.feishu_project_step_content_title)}
+                        description={t(($) => $.integrations.feishu_project_types_hint)}
+                      />
+                      <StepLockedNote />
+                    </>
+                  ) : (
+                    <FeishuProjectWorkItemTypesSection
+                      workspaceId={wsId}
+                      integrationReady={canManage && !!feishuProject?.id && credentialsReady}
+                      entries={workItemTypeConfigs}
+                      setEntries={setWorkItemTypeConfigs}
+                      header={
+                        <StepHeader
+                          index={2}
+                          title={t(($) => $.integrations.feishu_project_step_content_title)}
+                          description={t(($) => $.integrations.feishu_project_types_hint)}
+                        />
                       }
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      {t(($) => $.integrations.feishu_project_label_sync_add)}
-                    </Button>
+                    />
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="space-y-4">
+                  <StepHeader
+                    index={3}
+                    title={t(($) => $.integrations.feishu_project_step_routing_title)}
+                    description={t(($) => $.integrations.feishu_project_step_routing_desc)}
+                  />
+                  {stepsLocked ? (
+                    <StepLockedNote />
+                  ) : (
+                    <>
+                      {/* Assignee scope gate — decides WHETHER an item belongs to
+                          this workspace (by 处理人), independently of routing which
+                          decides WHERE it goes. Placed first because it gates
+                          everything below. */}
+                      <div className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-3">
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium">
+                            {t(($) => $.integrations.feishu_project_member_scope)}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {t(($) => $.integrations.feishu_project_member_scope_hint)}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={syncOnlyWorkspaceMemberItems}
+                          onCheckedChange={setSyncOnlyWorkspaceMemberItems}
+                        />
+                      </div>
+                      <FeishuProjectRoutingSection
+                        workspaceId={wsId}
+                        integration={feishuProject ?? null}
+                        fieldKey={businessLineFieldKey}
+                        onFieldChanged={(key, name) => {
+                          setBusinessLineFieldKey(key);
+                          setBusinessLineFieldName(name);
+                        }}
+                        rows={routeRows}
+                        setRows={setRouteRows}
+                        expanded={routesExpanded}
+                        setExpanded={setRoutesExpanded}
+                      />
+                      {/* Assignment policy lives with routing: routing decides the
+                          project, this toggle decides who picks up the new issue.
+                          The per-route fallback agent (above) covers the case
+                          where this lookup misses. */}
+                      <div className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-3">
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium">
+                            {t(($) => $.integrations.feishu_project_assign_owner_agent)}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {t(($) => $.integrations.feishu_project_assign_owner_agent_hint)}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={assignOpenItemsToOwnerAgent}
+                          onCheckedChange={setAssignOpenItemsToOwnerAgent}
+                        />
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <StepHeader
+                      index={4}
+                      optional
+                      title={t(($) => $.integrations.feishu_project_step_rules_title)}
+                      description={t(($) => $.integrations.feishu_project_label_sync_hint)}
+                    />
+                    {!stepsLocked && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={() =>
+                          setLabelSyncRules((prev) => [
+                            ...prev,
+                            {
+                              id: newLocalRuleId(),
+                              enabled: true,
+                              field_key: "",
+                              field_name: "",
+                              match: "",
+                              label_name: "",
+                            },
+                          ])
+                        }
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        {t(($) => $.integrations.feishu_project_label_sync_add)}
+                      </Button>
+                    )}
                   </div>
 
-                  {labelSyncRules.length === 0 ? (
+                  {stepsLocked ? (
+                    <StepLockedNote />
+                  ) : labelSyncRules.length === 0 ? (
                     <p className="rounded-md border border-border/70 px-3 py-3 text-xs text-muted-foreground">
                       {t(($) => $.integrations.feishu_project_label_sync_empty)}
                     </p>
@@ -428,50 +684,23 @@ export function IntegrationsTab() {
                       ))}
                     </div>
                   )}
-                </div>
+                </CardContent>
+              </Card>
 
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-3 border-b border-border/70 pb-2">
-                    <p className="text-xs font-medium text-muted-foreground">
-                      {t(($) => $.integrations.feishu_project_routing_section)}
+              <Card>
+                <CardContent className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <p className="flex items-center gap-1.5 text-sm font-medium">
+                      <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
+                      {t(($) => $.integrations.feishu_project_sync_section)}
                     </p>
-                  </div>
-                  <FeishuProjectRoutingSection
-                    workspaceId={wsId}
-                    integration={feishuProject ?? null}
-                    fieldKey={businessLineFieldKey}
-                    onFieldChanged={(key, name) => {
-                      setBusinessLineFieldKey(key);
-                      setBusinessLineFieldName(name);
-                    }}
-                    rows={routeRows}
-                    setRows={setRouteRows}
-                    expanded={routesExpanded}
-                    setExpanded={setRoutesExpanded}
-                  />
-                  {/* Assignment policy lives with routing: routing decides the
-                      project, this toggle decides who picks up the new issue.
-                      The per-route fallback agent (above) covers the case
-                      where this lookup misses. */}
-                  <div className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-3">
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium">
-                        {t(($) => $.integrations.feishu_project_assign_owner_agent)}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">
-                        {t(($) => $.integrations.feishu_project_assign_owner_agent_hint)}
-                      </p>
-                    </div>
-                    <Switch
-                      checked={assignOpenItemsToOwnerAgent}
-                      onCheckedChange={setAssignOpenItemsToOwnerAgent}
-                    />
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-4 border-t border-border/70 pt-4 lg:flex-row lg:items-end lg:justify-between">
-                  <div className="min-h-12 min-w-0 flex-1 space-y-2">
-                    <p className="break-words text-xs text-muted-foreground">
+                    <p
+                      className={`break-words text-xs ${
+                        !syncRunning && feishuProject?.last_error
+                          ? "text-destructive"
+                          : "text-muted-foreground"
+                      }`}
+                    >
                       {syncRunning
                         ? syncTotal > 0
                           ? t(($) => $.integrations.feishu_project_sync_progress_count, { processed: syncProcessed, total: syncTotal })
@@ -493,20 +722,18 @@ export function IntegrationsTab() {
                         />
                       </div>
                     )}
+                    {isDirty && (
+                      <p className="text-xs text-warning">
+                        {t(($) => $.integrations.feishu_project_sync_blocked_unsaved)}
+                      </p>
+                    )}
                   </div>
-                  <div className="flex shrink-0 items-center justify-end gap-2">
-                    <Input
-                      value={syncWorkItemId}
-                      onChange={(event) => setSyncWorkItemId(event.target.value)}
-                      placeholder={t(($) => $.integrations.feishu_project_sync_id_placeholder)}
-                      className="h-9 w-44"
-                      disabled={syncRunning}
-                    />
+                  <div className="flex shrink-0 items-center gap-2">
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={handleSyncFeishuProject}
-                      disabled={syncRunning || !feishuProject?.id}
+                      onClick={() => handleSyncFeishuProject()}
+                      disabled={syncRunning || !feishuProject?.id || isDirty}
                     >
                       {syncRunning ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -515,30 +742,158 @@ export function IntegrationsTab() {
                       )}
                       {syncRunning ? t(($) => $.integrations.feishu_project_syncing) : t(($) => $.integrations.feishu_project_sync_now)}
                     </Button>
-                    <Button size="sm" onClick={handleSaveFeishuProject} disabled={savingFeishu || syncRunning}>
-                      {savingFeishu ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Save className="h-3.5 w-3.5" />
-                      )}
-                      {savingFeishu ? t(($) => $.integrations.feishu_project_saving) : t(($) => $.integrations.feishu_project_save)}
-                    </Button>
+                    <Popover open={advancedSyncOpen} onOpenChange={setAdvancedSyncOpen}>
+                      <PopoverTrigger
+                        aria-label={t(($) => $.integrations.feishu_project_sync_advanced_open)}
+                        disabled={syncRunning || !feishuProject?.id}
+                        className="flex h-8 w-8 items-center justify-center rounded-md border border-input bg-transparent transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30 dark:hover:bg-input/50"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </PopoverTrigger>
+                      <PopoverContent align="end" sideOffset={4} className="w-72 space-y-2 p-3">
+                        <div>
+                          <p className="text-xs font-medium">
+                            {t(($) => $.integrations.feishu_project_sync_advanced)}
+                          </p>
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            {t(($) => $.integrations.feishu_project_sync_advanced_hint)}
+                          </p>
+                        </div>
+                        <Input
+                          value={syncWorkItemId}
+                          onChange={(event) => setSyncWorkItemId(event.target.value)}
+                          placeholder={t(($) => $.integrations.feishu_project_sync_id_placeholder)}
+                          className="h-8"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full"
+                          disabled={syncRunning || isDirty || !syncWorkItemId.trim()}
+                          onClick={() => {
+                            setAdvancedSyncOpen(false);
+                            void handleSyncFeishuProject(syncWorkItemId.trim());
+                          }}
+                        >
+                          {t(($) => $.integrations.feishu_project_sync_now)}
+                        </Button>
+                      </PopoverContent>
+                    </Popover>
                   </div>
+                </CardContent>
+              </Card>
+
+              {/* The save bar is always mounted so the Save button stays
+                  discoverable even on a pristine, already-configured
+                  integration. The "unsaved changes" warning and Discard
+                  action only appear once the draft diverges from the server
+                  snapshot; Save itself is disabled while clean. */}
+              <div className="sticky bottom-4 z-10 flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-4 py-2.5 shadow-md">
+                <p className="text-xs text-muted-foreground">
+                  {isDirty
+                    ? t(($) => $.integrations.feishu_project_unsaved_changes)
+                    : t(($) => $.integrations.feishu_project_all_saved)}
+                </p>
+                <div className="flex items-center gap-2">
+                  {isDirty && (
+                    <Button size="sm" variant="ghost" onClick={handleDiscardChanges} disabled={savingFeishu}>
+                      {t(($) => $.integrations.feishu_project_discard)}
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={handleSaveFeishuProject}
+                    disabled={savingFeishu || syncRunning || !isDirty}
+                  >
+                    {savingFeishu ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Save className="h-3.5 w-3.5" />
+                    )}
+                    {savingFeishu ? t(($) => $.integrations.feishu_project_saving) : t(($) => $.integrations.feishu_project_save)}
+                  </Button>
                 </div>
               </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                {t(($) => $.integrations.manage_hint)}
-              </p>
-            )}
-          </CardContent>
-        </Card>
+            </>
+          )}
+        </div>
       </section>
       <section className="space-y-4">
         <h2 className="text-sm font-semibold">{t(($) => $.lark.section_title)}</h2>
         <LarkTab />
       </section>
     </div>
+  );
+}
+
+// Connection state surfaced next to the panel title so a credential problem is
+// visible without scrolling to the sync footer. "Connected" requires at least
+// one successful sync — config alone only proves the form was filled in.
+function FeishuConnectionBadge({ integration }: { integration: FeishuProjectIntegration | null }) {
+  const { t } = useT("settings");
+  if (!integration?.id) {
+    return (
+      <Badge variant="outline" className="text-muted-foreground">
+        {t(($) => $.integrations.feishu_project_conn_not_configured)}
+      </Badge>
+    );
+  }
+  if (integration.last_error) {
+    return (
+      <Badge variant="destructive">{t(($) => $.integrations.feishu_project_conn_error)}</Badge>
+    );
+  }
+  if (integration.last_synced_at) {
+    return (
+      <Badge variant="outline" className="border-transparent bg-success/10 text-success">
+        <Check />
+        {t(($) => $.integrations.feishu_project_conn_connected)}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="secondary">{t(($) => $.integrations.feishu_project_conn_configured)}</Badge>
+  );
+}
+
+function StepHeader({
+  index,
+  title,
+  description,
+  optional,
+}: {
+  index: number;
+  title: string;
+  description: string;
+  optional?: boolean;
+}) {
+  const { t } = useT("settings");
+  return (
+    <div className="flex min-w-0 items-start gap-2.5">
+      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-medium text-muted-foreground">
+        {index}
+      </span>
+      <div className="min-w-0">
+        <p className="text-sm font-medium">
+          {title}
+          {optional && (
+            <span className="ml-2 text-[11px] font-normal text-muted-foreground">
+              {t(($) => $.integrations.feishu_project_step_optional)}
+            </span>
+          )}
+        </p>
+        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</p>
+      </div>
+    </div>
+  );
+}
+
+function StepLockedNote() {
+  const { t } = useT("settings");
+  return (
+    <p className="rounded-md border border-border/70 px-3 py-3 text-xs text-muted-foreground">
+      {t(($) => $.integrations.feishu_project_step_locked)}
+    </p>
   );
 }
 

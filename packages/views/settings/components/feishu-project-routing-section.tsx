@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, ChevronsUpDown, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, RefreshCw, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -224,6 +224,8 @@ export function FeishuProjectRoutingSection({
           noResultsLabel={t(($) => $.integrations.feishu_project_business_line_field_no_results)}
           loadingLabel={t(($) => $.integrations.feishu_project_fields_loading)}
           emptyLabel={t(($) => $.integrations.feishu_project_fields_empty)}
+          noneLabel={t(($) => $.integrations.feishu_project_business_line_field_none)}
+          clearLabel={t(($) => $.integrations.feishu_project_business_line_field_clear)}
         />
         <span className="block text-[11px] font-normal text-muted-foreground">
           {t(($) => $.integrations.feishu_project_business_line_field_hint)}
@@ -477,6 +479,8 @@ function FieldPicker({
   noResultsLabel,
   loadingLabel,
   emptyLabel,
+  noneLabel,
+  clearLabel,
 }: {
   fields: FieldOption[];
   syntheticSavedField: FieldOption | null;
@@ -489,6 +493,10 @@ function FieldPicker({
   noResultsLabel: string;
   loadingLabel: string;
   emptyLabel: string;
+  // Explicit "don't route" choice shown at the top of the list, and the
+  // aria-label for the inline clear button on the trigger.
+  noneLabel: string;
+  clearLabel: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -516,12 +524,36 @@ function FieldPicker({
     >
       <PopoverTrigger
         disabled={triggerDisabled}
-        className="flex h-8 w-full items-center justify-between gap-1.5 rounded-lg border border-input bg-transparent px-2.5 text-sm whitespace-nowrap transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30 dark:hover:bg-input/50"
+        className="flex h-8 w-full items-center justify-between gap-1.5 rounded-lg border border-input bg-transparent px-2.5 text-sm whitespace-nowrap transition-colors outline-none hover:bg-muted/40 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30 dark:hover:bg-input/50"
       >
         <span className={`min-w-0 flex-1 truncate text-left ${hasFieldKey ? "" : "text-muted-foreground"}`}>
           {hasFieldKey ? fieldDisplayName : placeholder}
         </span>
-        <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        {hasFieldKey && (
+          // Inline clear — unsets routing in one click without opening the list.
+          // role="button" (not a nested <button>, which Base UI's trigger forbids).
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label={clearLabel}
+            className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onPick("__none__");
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                onPick("__none__");
+              }
+            }}
+          >
+            <X className="h-3.5 w-3.5" />
+          </span>
+        )}
+        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={4} className="w-[var(--anchor-width)] p-0">
         <Command shouldFilter={false}>
@@ -540,10 +572,11 @@ function FieldPicker({
                 {visibleFields.length === 0 && !syntheticSavedField && (
                   <CommandEmpty>{noResultsLabel}</CommandEmpty>
                 )}
-                {/* "Clear" entry — picking it sends "__none__" back to onPick, which
-                    handlePickField treats as "disable routing". Without this the
-                    operator has no way to undo a field choice (label-sync's picker
-                    has the same affordance). */}
+                {/* Explicit "don't route" entry — picking it sends "__none__"
+                    back to onPick, which handlePickField treats as "disable
+                    routing". Worded as a real choice (not the bare placeholder)
+                    and check-marked when routing is currently off, so it reads
+                    as a selectable option rather than repeated hint text. */}
                 <CommandGroup>
                   <CommandItem
                     value="__none__"
@@ -551,8 +584,10 @@ function FieldPicker({
                       onPick(value);
                       setOpen(false);
                     }}
+                    className="flex items-center gap-2"
                   >
-                    <span className="text-muted-foreground">{placeholder}</span>
+                    <Check className={`h-3.5 w-3.5 shrink-0 ${hasFieldKey ? "opacity-0" : "opacity-100"}`} />
+                    <span className="min-w-0 flex-1 truncate">{noneLabel}</span>
                   </CommandItem>
                 </CommandGroup>
                 {syntheticSavedField && (
@@ -566,6 +601,7 @@ function FieldPicker({
                       }}
                       className="flex items-center gap-2"
                     >
+                      <Check className={`h-3.5 w-3.5 shrink-0 ${fieldKey === syntheticSavedField.key ? "opacity-100" : "opacity-0"}`} />
                       <span className="min-w-0 flex-1 truncate">{syntheticSavedField.name}</span>
                       <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
                         {syntheticSavedField.key}
@@ -584,6 +620,7 @@ function FieldPicker({
                       }}
                       className="flex items-center gap-2"
                     >
+                      <Check className={`h-3.5 w-3.5 shrink-0 ${fieldKey === f.key ? "opacity-100" : "opacity-0"}`} />
                       <span className="min-w-0 flex-1 truncate">{f.name}</span>
                       <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
                         {f.key}
