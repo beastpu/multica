@@ -349,6 +349,23 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else {
 		slog.Info("lark integration disabled (MULTICA_LARK_SECRET_KEY not set)")
 	}
+
+	// Perforce / Helix Swarm integration. Wired only when
+	// MULTICA_PERFORCE_SECRET_KEY is set: the per-workspace Swarm ticket is
+	// stored sealed, so without the at-rest key the Perforce handlers return
+	// 503 and the review poller idles (perforcePollScopes returns nothing).
+	if perforceKey, err := secretbox.LoadKey("MULTICA_PERFORCE_SECRET_KEY"); err == nil {
+		box, err := secretbox.New(perforceKey)
+		if err != nil {
+			slog.Error("perforce: secretbox.New failed; perforce integration disabled", "error", err)
+		} else {
+			h.PerforceBox = box
+			slog.Info("perforce integration enabled")
+		}
+	} else {
+		slog.Info("perforce integration disabled (MULTICA_PERFORCE_SECRET_KEY not set)")
+	}
+
 	if opts.HeartbeatScheduler != nil {
 		h.HeartbeatScheduler = opts.HeartbeatScheduler
 	}
@@ -616,6 +633,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// the handler strips the management handle and adds a
 					// can_manage hint so the UI can gate connect/disconnect.
 					r.Get("/github/installations", h.ListGitHubInstallations)
+					// Perforce connection is member-visible (config + can_manage
+					// hint) so the settings tab renders for non-admins; the
+					// handler never returns the stored Swarm ticket.
+					r.Get("/perforce/connection", h.GetPerforceConnection)
 				})
 				// Admin-level access
 				r.Group(func(r chi.Router) {
@@ -639,6 +660,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Get("/github/connect", h.GitHubConnect)
 					r.Delete("/github/installations/{installationId}", h.DeleteGitHubInstallation)
+					r.Put("/perforce/connection", h.SavePerforceConnection)
+					r.Delete("/perforce/connection", h.DeletePerforceConnection)
+					r.Post("/perforce/test", h.TestPerforceConnection)
 					r.Get("/feishu-project", h.GetFeishuProjectIntegration)
 					r.Put("/feishu-project", h.UpdateFeishuProjectIntegration)
 					r.Delete("/feishu-project", h.DeleteFeishuProjectIntegration)
@@ -781,6 +805,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/metadata/{key}", h.SetIssueMetadataKey)
 					r.Delete("/metadata/{key}", h.DeleteIssueMetadataKey)
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
+					r.Get("/reviews", h.ListPerforceReviewsForIssue)
 				})
 			})
 

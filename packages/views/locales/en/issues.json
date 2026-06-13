@@ -219,7 +219,21 @@
     "link_copy_failed": "Failed to copy link",
     "workdir_path_copied": "Workdir path copied",
     "workdir_path_copy_failed": "Failed to copy workdir path",
-    "workdir_path_unavailable": "No local workdir yet — issue has not been run by a local agent"
+    "workdir_path_unavailable": "No local workdir yet — issue has not been run by a local agent",
+    "section_reviews": "Perforce reviews",
+    "reviews_loading": "Loading reviews…",
+    "reviews_empty": "No linked reviews",
+    "reviews_show_more": "Show {{count}} more",
+    "reviews_show_less": "Show less",
+    "review_state_needs_review": "Needs review",
+    "review_state_needs_revision": "Needs revision",
+    "review_state_approved": "Approved",
+    "review_state_rejected": "Rejected",
+    "review_state_archived": "Archived",
+    "review_state_committed": "Committed",
+    "review_state_unknown": "Unknown",
+    "review_shelved_cl": "Shelved CL {{cl}}",
+    "review_committed_cl": "Submitted CL {{cl}}"
   },
   "timeline": {
     "loading": "Loading..."

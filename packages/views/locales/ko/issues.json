@@ -219,7 +219,21 @@
     "link_copy_failed": "링크를 복사하지 못했습니다",
     "workdir_path_copied": "작업 디렉터리 경로를 복사했습니다",
     "workdir_path_copy_failed": "작업 디렉터리 경로를 복사하지 못했습니다",
-    "workdir_path_unavailable": "아직 로컬 작업 디렉터리가 없습니다. 로컬 에이전트가 이 이슈를 실행하지 않았습니다"
+    "workdir_path_unavailable": "아직 로컬 작업 디렉터리가 없습니다. 로컬 에이전트가 이 이슈를 실행하지 않았습니다",
+    "section_reviews": "Perforce 리뷰",
+    "reviews_loading": "리뷰 로드 중…",
+    "reviews_empty": "연결된 리뷰 없음",
+    "reviews_show_more": "{{count}}개 더 보기",
+    "reviews_show_less": "접기",
+    "review_state_needs_review": "리뷰 필요",
+    "review_state_needs_revision": "수정 필요",
+    "review_state_approved": "승인됨",
+    "review_state_rejected": "거부됨",
+    "review_state_archived": "보관됨",
+    "review_state_committed": "커밋됨",
+    "review_state_unknown": "알 수 없음",
+    "review_shelved_cl": "Shelve CL {{cl}}",
+    "review_committed_cl": "제출 CL {{cl}}"
   },
   "timeline": {
     "loading": "불러오는 중..."

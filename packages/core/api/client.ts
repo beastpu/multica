@@ -101,6 +101,9 @@ import type {
   GitHubPullRequest,
   ListGitHubInstallationsResponse,
   GitHubConnectResponse,
+  GetPerforceConnectionResponse,
+  PerforceConnection,
+  PerforceReview,
   FeishuProjectBusinessLinesResponse,
   FeishuProjectFieldsResponse,
   FeishuProjectIntegration,
@@ -214,6 +217,12 @@ import {
   EMPTY_CREATE_BILLING_CHECKOUT_SESSION_RESPONSE,
   EMPTY_BILLING_CHECKOUT_SESSION_STATUS,
   EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE,
+  GetPerforceConnectionResponseSchema,
+  SavePerforceConnectionResponseSchema,
+  TestPerforceConnectionResponseSchema,
+  PerforceReviewsResponseSchema,
+  EMPTY_PERFORCE_CONNECTION_RESPONSE,
+  EMPTY_PERFORCE_REVIEWS_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -2144,6 +2153,58 @@ export class ApiClient {
 
   async listIssuePullRequests(issueId: string): Promise<{ pull_requests: GitHubPullRequest[] }> {
     return this.fetch(`/api/issues/${issueId}/pull-requests`);
+  }
+
+  // Perforce / Helix Swarm integration
+  async getPerforceConnection(workspaceId: string): Promise<GetPerforceConnectionResponse> {
+    const raw = await this.fetch(`/api/workspaces/${workspaceId}/perforce/connection`);
+    return parseWithFallback(raw, GetPerforceConnectionResponseSchema, EMPTY_PERFORCE_CONNECTION_RESPONSE, {
+      endpoint: "GET /api/workspaces/:id/perforce/connection",
+    });
+  }
+
+  async savePerforceConnection(
+    workspaceId: string,
+    data: {
+      swarm_url: string;
+      swarm_user: string;
+      ticket?: string;
+    },
+  ): Promise<{ connection: PerforceConnection }> {
+    const raw = await this.fetch(`/api/workspaces/${workspaceId}/perforce/connection`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      SavePerforceConnectionResponseSchema,
+      { connection: { workspace_id: workspaceId, swarm_url: "", swarm_user: "", has_credential: false } },
+      { endpoint: "PUT /api/workspaces/:id/perforce/connection" },
+    );
+  }
+
+  async deletePerforceConnection(workspaceId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/perforce/connection`, { method: "DELETE" });
+  }
+
+  async testPerforceConnection(
+    workspaceId: string,
+    data: { swarm_url?: string; swarm_user?: string; ticket?: string },
+  ): Promise<{ ok: boolean; error?: string }> {
+    const raw = await this.fetch(`/api/workspaces/${workspaceId}/perforce/test`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, TestPerforceConnectionResponseSchema, { ok: false }, {
+      endpoint: "POST /api/workspaces/:id/perforce/test",
+    });
+  }
+
+  async listIssuePerforceReviews(issueId: string): Promise<{ reviews: PerforceReview[] }> {
+    const raw = await this.fetch(`/api/issues/${issueId}/reviews`);
+    return parseWithFallback(raw, PerforceReviewsResponseSchema, EMPTY_PERFORCE_REVIEWS_RESPONSE, {
+      endpoint: "GET /api/issues/:id/reviews",
+    });
   }
 
   // Feishu Project integration

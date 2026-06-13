@@ -63,6 +63,12 @@ export type {
   AssigneeFrequencyEntry,
 } from "./activity";
 export type { IssueSubscriber } from "./subscriber";
+export type {
+  PerforceConnection,
+  GetPerforceConnectionResponse,
+  PerforceReview,
+  PerforceReviewState,
+} from "./perforce";
 export type * from "./events";
 export type * from "./api";
 export type { Attachment } from "./attachment";

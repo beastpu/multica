@@ -872,7 +872,7 @@ func (h *Handler) handlePullRequestEvent(ctx context.Context, body []byte) {
 					continue
 				}
 				if counts.OpenCount == 0 && counts.MergedWithCloseIntentCount > 0 {
-					h.advanceIssueToDone(ctx, issue, workspaceID)
+					h.advanceIssueToDone(ctx, issue, workspaceID, "github_pr_merged")
 				}
 			}
 		}
@@ -1189,10 +1189,13 @@ func (h *Handler) lookupIssueByIdentifier(ctx context.Context, workspaceID pgtyp
 	return issue, true
 }
 
-func (h *Handler) advanceIssueToDone(ctx context.Context, issue db.Issue, workspaceID string) {
+// advanceIssueToDone transitions an issue to done from an integration event.
+// mergedSource is the WS event source published when no Feishu Project status
+// transition pre-empts it (e.g. "github_pr_merged", "perforce_review_committed").
+func (h *Handler) advanceIssueToDone(ctx context.Context, issue db.Issue, workspaceID, mergedSource string) {
 	feishuProjectTransitioned, err := h.transitionFeishuProjectStatusBeforeLocalUpdate(ctx, issue, "done")
 	if err != nil {
-		slog.Warn("github: advance issue to done blocked by Feishu Project status transition", "err", err)
+		slog.Warn("advance issue to done blocked by Feishu Project status transition", "err", err)
 		return
 	}
 	updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
@@ -1201,7 +1204,7 @@ func (h *Handler) advanceIssueToDone(ctx context.Context, issue db.Issue, worksp
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		slog.Warn("github: advance issue to done failed", "err", err)
+		slog.Warn("advance issue to done failed", "err", err)
 		return
 	}
 
@@ -1221,15 +1224,15 @@ func (h *Handler) advanceIssueToDone(ctx context.Context, issue db.Issue, worksp
 		"prev_status":    issue.Status,
 		"creator_type":   issue.CreatorType,
 		"creator_id":     uuidToString(issue.CreatorID),
-		"source":         githubIssueUpdateSource(feishuProjectTransitioned),
+		"source":         issueAdvanceSource(feishuProjectTransitioned, mergedSource),
 	})
 }
 
-func githubIssueUpdateSource(feishuProjectTransitioned bool) string {
+func issueAdvanceSource(feishuProjectTransitioned bool, mergedSource string) string {
 	if feishuProjectTransitioned {
 		return FeishuProjectLocalStatusUpdateSource
 	}
-	return "github_pr_merged"
+	return mergedSource
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
