@@ -162,14 +162,22 @@ function normalize(
 //                             CloudFront-signed URL that DOES work as
 //                             a native <img> src.
 //
-// Heuristic: when `download_url` is an absolute URL with a recognised
-// CDN signature query (`Signature` / `Expires` / `Key-Pair-Id` for
-// CloudFront, `X-Amz-Signature` / `X-Amz-Expires` for raw S3 presigns
-// that may surface here in future modes), use it. Otherwise use
-// `record.url`, which carries the LocalStorage `?exp&sig` token and is
-// the only inline-loadable URL in that backend. Falls back to the
-// input URL when neither is usable so legacy markdown links keep their
-// pre-fix behaviour.
+// Heuristic, in priority order:
+//   1. `download_url` when it is an absolute URL with a recognised CDN
+//      signature query (`Signature` / `Expires` / `Key-Pair-Id` for
+//      CloudFront, `X-Amz-Signature` / `X-Amz-Expires` for raw S3 presigns) —
+//      these load natively as an <img> src.
+//   2. `record.url` when it carries the LocalStorage `?exp&sig` token — that
+//      query IS the auth, so it is the only inline-loadable URL in that
+//      backend. Only matched when the signature query is present so we don't
+//      pick a raw, unauthenticated stored URL here.
+//   3. `record.content_url` — the proxy content endpoint
+//      (`/api/attachments/<id>/content`) used in the default proxy/presign
+//      mode. This is what desktop/cloud needs (restores MUL "Fix desktop
+//      attachment URLs"); without it a relative markdown image resolves to the
+//      raw stored `url` and breaks.
+//   4. `record.url` / the input URL as last resorts so legacy markdown links
+//      keep their pre-fix behaviour.
 function pickInlineMediaURL(record: AttachmentRecord, fallback: string): string {
   const dl = record.download_url ?? "";
   if (
@@ -178,6 +186,8 @@ function pickInlineMediaURL(record: AttachmentRecord, fallback: string): string 
   ) {
     return dl;
   }
+  if (record.url && /[?&](exp|sig)=/i.test(record.url)) return record.url;
+  if (record.content_url) return record.content_url;
   if (record.url) return record.url;
   return fallback;
 }
