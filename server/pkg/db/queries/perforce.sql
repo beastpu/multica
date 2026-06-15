@@ -6,38 +6,27 @@
 SELECT * FROM perforce_connection
 WHERE workspace_id = $1;
 
--- name: ListPerforceConnectionsForPolling :many
+-- name: ListPerforceConnectionsBySwarmURL :many
+-- Webhook routing: one Swarm URL can map to several workspaces (a shared
+-- Swarm). Match ignores case and a trailing slash. The issue identifier in the
+-- review description disambiguates among the returned candidates.
 SELECT * FROM perforce_connection
+WHERE lower(rtrim(swarm_url, '/')) = lower(rtrim(sqlc.arg('swarm_url')::text, '/'))
 ORDER BY created_at ASC;
 
 -- name: UpsertPerforceConnection :one
--- swarm_ticket_encrypted preserves the stored secret on a scope-only edit:
--- when the caller omits the ticket (sqlc.narg null) the existing ciphertext is
--- kept, so the UI never has to round-trip the secret back to re-save scope.
+-- A connection only records the Swarm URL the webhook routes on; master never
+-- calls Swarm, so no credentials are stored.
 INSERT INTO perforce_connection (
-    workspace_id, swarm_url, swarm_user, swarm_ticket_encrypted, connected_by_id
+    workspace_id, swarm_url, connected_by_id
 ) VALUES (
-    $1, $2, $3, sqlc.narg('swarm_ticket_encrypted'), sqlc.narg('connected_by_id')
+    $1, $2, sqlc.narg('connected_by_id')
 )
 ON CONFLICT (workspace_id) DO UPDATE SET
     swarm_url = EXCLUDED.swarm_url,
-    swarm_user = EXCLUDED.swarm_user,
-    swarm_ticket_encrypted = COALESCE(EXCLUDED.swarm_ticket_encrypted, perforce_connection.swarm_ticket_encrypted),
     connected_by_id = EXCLUDED.connected_by_id,
     updated_at = now()
 RETURNING *;
-
--- name: UpdatePerforceConnectionPollCursor :exec
--- Advances the discovery cursor after a successful tick. last_seen_review_id is
--- monotonic: GREATEST guards against a late tick rewinding the cursor.
-UPDATE perforce_connection SET
-    last_seen_review_id = GREATEST(last_seen_review_id, $2),
-    last_polled_at = now(),
-    updated_at = now()
-WHERE id = $1;
-
--- name: DeletePerforceConnection :exec
-DELETE FROM perforce_connection WHERE id = $1 AND workspace_id = $2;
 
 -- =====================
 -- Perforce Review
@@ -65,16 +54,9 @@ ON CONFLICT (workspace_id, review_id) DO UPDATE SET
     updated_at = now()
 RETURNING *;
 
--- name: ListInFlightPerforceReviews :many
--- Reviews the poller must re-fetch by id to catch progress (approval, submit).
--- In flight = not yet committed and not in a terminal Swarm state. Bounded so a
--- single tick cannot fan out unboundedly.
+-- name: GetPerforceReviewByWorkspaceReviewID :one
 SELECT * FROM perforce_review
-WHERE workspace_id = $1
-  AND committed_cl IS NULL
-  AND state IN ('needsReview', 'needsRevision', 'approved')
-ORDER BY review_updated_at ASC
-LIMIT $2;
+WHERE workspace_id = $1 AND review_id = $2;
 
 -- name: ListReviewsByIssue :many
 SELECT pr.* FROM perforce_review pr

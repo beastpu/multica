@@ -21,14 +21,12 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
-	"github.com/multica-ai/multica/server/internal/integrations/perforce"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
-	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -163,15 +161,7 @@ type Handler struct {
 	// process exit indefinitely if the pool is frozen — at worst the
 	// next replica waits the full TTL.
 	LarkHub *lark.Hub
-	// PerforceBox seals/opens the per-workspace Swarm ticket at rest. Nil when
-	// MULTICA_PERFORCE_SECRET_KEY is unset; the Perforce HTTP handlers then
-	// return 503 and the review poller skips, mirroring the Lark master-key
-	// gate. Wired in cmd/server/router.go after handler.New.
-	PerforceBox *secretbox.Box
-	// NewSwarmClient builds a Swarm API client from per-connection credentials.
-	// Defaults to perforce.NewHTTPClient; tests inject a fake.
-	NewSwarmClient func(perforce.Config) perforce.Client
-	cfg            Config
+	cfg     Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {

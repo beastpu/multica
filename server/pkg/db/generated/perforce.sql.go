@@ -11,20 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const deletePerforceConnection = `-- name: DeletePerforceConnection :exec
-DELETE FROM perforce_connection WHERE id = $1 AND workspace_id = $2
-`
-
-type DeletePerforceConnectionParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) DeletePerforceConnection(ctx context.Context, arg DeletePerforceConnectionParams) error {
-	_, err := q.db.Exec(ctx, deletePerforceConnection, arg.ID, arg.WorkspaceID)
-	return err
-}
-
 const getIssuePerforceReviewCloseAggregate = `-- name: GetIssuePerforceReviewCloseAggregate :one
 SELECT
     COALESCE(SUM(CASE
@@ -56,7 +42,7 @@ func (q *Queries) GetIssuePerforceReviewCloseAggregate(ctx context.Context, issu
 
 const getPerforceConnectionByWorkspace = `-- name: GetPerforceConnectionByWorkspace :one
 
-SELECT id, workspace_id, swarm_url, swarm_user, swarm_ticket_encrypted, connected_by_id, last_seen_review_id, last_polled_at, created_at, updated_at FROM perforce_connection
+SELECT id, workspace_id, swarm_url, connected_by_id, created_at, updated_at FROM perforce_connection
 WHERE workspace_id = $1
 `
 
@@ -70,11 +56,38 @@ func (q *Queries) GetPerforceConnectionByWorkspace(ctx context.Context, workspac
 		&i.ID,
 		&i.WorkspaceID,
 		&i.SwarmUrl,
-		&i.SwarmUser,
-		&i.SwarmTicketEncrypted,
 		&i.ConnectedByID,
-		&i.LastSeenReviewID,
-		&i.LastPolledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getPerforceReviewByWorkspaceReviewID = `-- name: GetPerforceReviewByWorkspaceReviewID :one
+SELECT id, workspace_id, review_id, title, state, html_url, author, shelved_cl, committed_cl, review_created_at, review_updated_at, created_at, updated_at FROM perforce_review
+WHERE workspace_id = $1 AND review_id = $2
+`
+
+type GetPerforceReviewByWorkspaceReviewIDParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ReviewID    int64       `json:"review_id"`
+}
+
+func (q *Queries) GetPerforceReviewByWorkspaceReviewID(ctx context.Context, arg GetPerforceReviewByWorkspaceReviewIDParams) (PerforceReview, error) {
+	row := q.db.QueryRow(ctx, getPerforceReviewByWorkspaceReviewID, arg.WorkspaceID, arg.ReviewID)
+	var i PerforceReview
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ReviewID,
+		&i.Title,
+		&i.State,
+		&i.HtmlUrl,
+		&i.Author,
+		&i.ShelvedCl,
+		&i.CommittedCl,
+		&i.ReviewCreatedAt,
+		&i.ReviewUpdatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -119,57 +132,6 @@ func (q *Queries) LinkIssueToPerforceReview(ctx context.Context, arg LinkIssueTo
 	return err
 }
 
-const listInFlightPerforceReviews = `-- name: ListInFlightPerforceReviews :many
-SELECT id, workspace_id, review_id, title, state, html_url, author, shelved_cl, committed_cl, review_created_at, review_updated_at, created_at, updated_at FROM perforce_review
-WHERE workspace_id = $1
-  AND committed_cl IS NULL
-  AND state IN ('needsReview', 'needsRevision', 'approved')
-ORDER BY review_updated_at ASC
-LIMIT $2
-`
-
-type ListInFlightPerforceReviewsParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Limit       int32       `json:"limit"`
-}
-
-// Reviews the poller must re-fetch by id to catch progress (approval, submit).
-// In flight = not yet committed and not in a terminal Swarm state. Bounded so a
-// single tick cannot fan out unboundedly.
-func (q *Queries) ListInFlightPerforceReviews(ctx context.Context, arg ListInFlightPerforceReviewsParams) ([]PerforceReview, error) {
-	rows, err := q.db.Query(ctx, listInFlightPerforceReviews, arg.WorkspaceID, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []PerforceReview{}
-	for rows.Next() {
-		var i PerforceReview
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.ReviewID,
-			&i.Title,
-			&i.State,
-			&i.HtmlUrl,
-			&i.Author,
-			&i.ShelvedCl,
-			&i.CommittedCl,
-			&i.ReviewCreatedAt,
-			&i.ReviewUpdatedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listIssueIDsForReview = `-- name: ListIssueIDsForReview :many
 SELECT issue_id FROM issue_perforce_review
 WHERE perforce_review_id = $1
@@ -195,13 +157,17 @@ func (q *Queries) ListIssueIDsForReview(ctx context.Context, perforceReviewID pg
 	return items, nil
 }
 
-const listPerforceConnectionsForPolling = `-- name: ListPerforceConnectionsForPolling :many
-SELECT id, workspace_id, swarm_url, swarm_user, swarm_ticket_encrypted, connected_by_id, last_seen_review_id, last_polled_at, created_at, updated_at FROM perforce_connection
+const listPerforceConnectionsBySwarmURL = `-- name: ListPerforceConnectionsBySwarmURL :many
+SELECT id, workspace_id, swarm_url, connected_by_id, created_at, updated_at FROM perforce_connection
+WHERE lower(rtrim(swarm_url, '/')) = lower(rtrim($1::text, '/'))
 ORDER BY created_at ASC
 `
 
-func (q *Queries) ListPerforceConnectionsForPolling(ctx context.Context) ([]PerforceConnection, error) {
-	rows, err := q.db.Query(ctx, listPerforceConnectionsForPolling)
+// Webhook routing: one Swarm URL can map to several workspaces (a shared
+// Swarm). Match ignores case and a trailing slash. The issue identifier in the
+// review description disambiguates among the returned candidates.
+func (q *Queries) ListPerforceConnectionsBySwarmURL(ctx context.Context, swarmUrl string) ([]PerforceConnection, error) {
+	rows, err := q.db.Query(ctx, listPerforceConnectionsBySwarmURL, swarmUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -213,11 +179,7 @@ func (q *Queries) ListPerforceConnectionsForPolling(ctx context.Context) ([]Perf
 			&i.ID,
 			&i.WorkspaceID,
 			&i.SwarmUrl,
-			&i.SwarmUser,
-			&i.SwarmTicketEncrypted,
 			&i.ConnectedByID,
-			&i.LastSeenReviewID,
-			&i.LastPolledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -287,70 +249,35 @@ func (q *Queries) UnlinkIssueFromPerforceReview(ctx context.Context, arg UnlinkI
 	return err
 }
 
-const updatePerforceConnectionPollCursor = `-- name: UpdatePerforceConnectionPollCursor :exec
-UPDATE perforce_connection SET
-    last_seen_review_id = GREATEST(last_seen_review_id, $2),
-    last_polled_at = now(),
-    updated_at = now()
-WHERE id = $1
-`
-
-type UpdatePerforceConnectionPollCursorParams struct {
-	ID               pgtype.UUID `json:"id"`
-	LastSeenReviewID int64       `json:"last_seen_review_id"`
-}
-
-// Advances the discovery cursor after a successful tick. last_seen_review_id is
-// monotonic: GREATEST guards against a late tick rewinding the cursor.
-func (q *Queries) UpdatePerforceConnectionPollCursor(ctx context.Context, arg UpdatePerforceConnectionPollCursorParams) error {
-	_, err := q.db.Exec(ctx, updatePerforceConnectionPollCursor, arg.ID, arg.LastSeenReviewID)
-	return err
-}
-
 const upsertPerforceConnection = `-- name: UpsertPerforceConnection :one
 INSERT INTO perforce_connection (
-    workspace_id, swarm_url, swarm_user, swarm_ticket_encrypted, connected_by_id
+    workspace_id, swarm_url, connected_by_id
 ) VALUES (
-    $1, $2, $3, $4, $5
+    $1, $2, $3
 )
 ON CONFLICT (workspace_id) DO UPDATE SET
     swarm_url = EXCLUDED.swarm_url,
-    swarm_user = EXCLUDED.swarm_user,
-    swarm_ticket_encrypted = COALESCE(EXCLUDED.swarm_ticket_encrypted, perforce_connection.swarm_ticket_encrypted),
     connected_by_id = EXCLUDED.connected_by_id,
     updated_at = now()
-RETURNING id, workspace_id, swarm_url, swarm_user, swarm_ticket_encrypted, connected_by_id, last_seen_review_id, last_polled_at, created_at, updated_at
+RETURNING id, workspace_id, swarm_url, connected_by_id, created_at, updated_at
 `
 
 type UpsertPerforceConnectionParams struct {
-	WorkspaceID          pgtype.UUID `json:"workspace_id"`
-	SwarmUrl             string      `json:"swarm_url"`
-	SwarmUser            string      `json:"swarm_user"`
-	SwarmTicketEncrypted []byte      `json:"swarm_ticket_encrypted"`
-	ConnectedByID        pgtype.UUID `json:"connected_by_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	SwarmUrl      string      `json:"swarm_url"`
+	ConnectedByID pgtype.UUID `json:"connected_by_id"`
 }
 
-// swarm_ticket_encrypted preserves the stored secret on a scope-only edit:
-// when the caller omits the ticket (sqlc.narg null) the existing ciphertext is
-// kept, so the UI never has to round-trip the secret back to re-save scope.
+// A connection only records the Swarm URL the webhook routes on; master never
+// calls Swarm, so no credentials are stored.
 func (q *Queries) UpsertPerforceConnection(ctx context.Context, arg UpsertPerforceConnectionParams) (PerforceConnection, error) {
-	row := q.db.QueryRow(ctx, upsertPerforceConnection,
-		arg.WorkspaceID,
-		arg.SwarmUrl,
-		arg.SwarmUser,
-		arg.SwarmTicketEncrypted,
-		arg.ConnectedByID,
-	)
+	row := q.db.QueryRow(ctx, upsertPerforceConnection, arg.WorkspaceID, arg.SwarmUrl, arg.ConnectedByID)
 	var i PerforceConnection
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
 		&i.SwarmUrl,
-		&i.SwarmUser,
-		&i.SwarmTicketEncrypted,
 		&i.ConnectedByID,
-		&i.LastSeenReviewID,
-		&i.LastPolledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
