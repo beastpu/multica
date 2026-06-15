@@ -12,6 +12,10 @@ import { handleAppShortcut } from "./keyboard-shortcuts";
 import { installNavigationGestures } from "./navigation-gestures";
 import { getAppVersion } from "./app-version";
 import { loadRuntimeConfig } from "./runtime-config-loader";
+import {
+  clearDesktopAuthCookie,
+  installDesktopAuthCookie,
+} from "./auth-cookie";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
 import {
   createElectronReloadPrompt,
@@ -376,6 +380,23 @@ if (!gotTheLock) {
         return;
       }
       downloadURLSafely(mainWindow, url);
+    });
+
+    ipcMain.handle("auth:install-cookie", async (_event, token: string) => {
+      if (!mainWindow) return false;
+      return installDesktopAuthCookie(
+        mainWindow.webContents.session,
+        runtimeConfigResult,
+        token,
+      );
+    });
+
+    ipcMain.handle("auth:clear-cookie", async () => {
+      if (!mainWindow) return false;
+      return clearDesktopAuthCookie(
+        mainWindow.webContents.session,
+        runtimeConfigResult,
+      );
     });
 
     // Sync IPC: app version + normalized OS for preload. Sync (not invoke) so
