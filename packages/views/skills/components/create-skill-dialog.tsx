@@ -41,7 +41,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { openExternal } from "../../platform";
 import { RuntimeLocalSkillImportPanel } from "./runtime-local-skill-import-panel";
 import { useT } from "../../i18n";
-import { isNameConflictError } from "../lib/utils";
+import { extractSkillUrl, isNameConflictError } from "../lib/utils";
 
 type Method = "chooser" | "manual" | "url" | "runtime";
 
@@ -297,17 +297,19 @@ function UrlForm({
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const source = detectUrlSource(url);
+  // Detect against the extracted URL so the source card still lights up when the
+  // user pasted an Atlas install prompt with the URL buried in surrounding prose.
+  const source = detectUrlSource(extractSkillUrl(url));
   const scrollRef = useRef<HTMLDivElement>(null);
   const fadeStyle = useScrollFade(scrollRef);
 
   const submit = async () => {
-    const trimmed = url.trim();
-    if (!trimmed) return;
+    const cleaned = extractSkillUrl(url);
+    if (!cleaned) return;
     setLoading(true);
     setError("");
     try {
-      const skill = await api.importSkill({ url: trimmed });
+      const skill = await api.importSkill({ url: cleaned });
       seedAfterCreate(qc, wsId, skill);
       toast.success(t(($) => $.create.url.toast_imported));
       onCreated(skill);
@@ -344,6 +346,21 @@ function UrlForm({
             onChange={(e) => {
               setUrl(e.target.value);
               setError("");
+            }}
+            onPaste={(e) => {
+              const pasted = e.clipboardData.getData("text");
+              const extracted = extractSkillUrl(pasted);
+              // Only intercept when we actually stripped surrounding prose from a
+              // real URL — clean-URL pastes and incremental edits keep native
+              // paste behavior (cursor position, selection replacement).
+              if (
+                /^https?:\/\//i.test(extracted) &&
+                extracted !== pasted.trim()
+              ) {
+                e.preventDefault();
+                setUrl(extracted);
+                setError("");
+              }
             }}
             placeholder="https://clawhub.ai/owner/skill"
             className="font-mono text-sm"
