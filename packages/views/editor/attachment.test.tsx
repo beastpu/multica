@@ -264,6 +264,26 @@ describe("Attachment — image dispatch", () => {
     expect(img?.getAttribute("src")).toBe(signedStorageURL);
     expect(img?.getAttribute("src")).not.toContain("/api/attachments/");
   });
+
+  it("S3/OSS private-bucket record.url is unreachable inline, so route through the content proxy", () => {
+    // Regression: on an S3/OSS backend with no CloudFront signer, record.url
+    // is a bare object-store URL pointing at a PRIVATE bucket — it 403s when
+    // loaded directly as an <img> src. The content proxy
+    // (/api/attachments/<id>/content?workspace_id=...) carries the workspace
+    // in the query, authenticates via the session cookie, and streams the
+    // bytes back inline. pickInlineMediaURL must NOT fall through to the raw
+    // private url here (that left images broken on web for OSS deployments).
+    const att = makeRecord({
+      url: "https://my-bucket.oss-cn-shanghai.aliyuncs.com/workspaces/ws-1/shot.png",
+      download_url: "/api/attachments/att-1/download",
+      content_url: "/api/attachments/att-1/content?workspace_id=ws-1",
+    });
+    renderWithQuery(<Attachment attachment={{ kind: "record", attachment: att }} />);
+    const img = document.querySelector("img");
+    expect(img?.getAttribute("src")).toBe(
+      "/api/attachments/att-1/content?workspace_id=ws-1",
+    );
+  });
 });
 
 describe("Attachment — html dispatch", () => {
