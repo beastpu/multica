@@ -23,6 +23,10 @@ interface DesktopAPI {
   /** Download a file by URL through Electron's native download system.
    *  Shows a native save dialog. On non-desktop platforms this is undefined. */
   downloadURL: (url: string) => Promise<void>;
+  /** Install the current token into Electron's session cookie jar. */
+  installAuthCookie: (token: string) => Promise<boolean>;
+  /** Clear the session auth cookie on logout/account switch. */
+  clearAuthCookie: () => Promise<boolean>;
   /** Hide macOS traffic lights for full-screen modals; restore when false. */
   setImmersiveMode: (immersive: boolean) => Promise<void>;
   /** Show a native OS notification for a new inbox item. */
