@@ -84,6 +84,7 @@ services:
       DISABLE_WORKSPACE_CREATION: ${DISABLE_WORKSPACE_CREATION:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      MULTICA_P4_SWARM_WEBHOOK_TOKEN: ${MULTICA_P4_SWARM_WEBHOOK_TOKEN:-}
       # Desktop release downloads proxy. Empty DOWNLOADS_OSS_BUCKET
       # leaves /api/downloads + /api/downloads/<file> returning 503;
       # set when self-hosting a desktop release pipeline against a

@@ -512,6 +512,7 @@
     "not_configured": "Perforce is not configured on this server. Set",
     "read_only_hint": "Only workspace admins can edit the Swarm connection.",
     "field_swarm_url": "Swarm URL",
+    "connection_hint": "The Swarm platform posts review updates here; this URL is what inbound pushes are matched against to route them to this workspace.",
     "field_swarm_user": "Swarm user",
     "field_ticket": "Password or ticket",
     "field_ticket_placeholder_stored": "Leave blank to keep the stored credential",
@@ -520,23 +521,15 @@
     "saving": "Saving…",
     "test": "Test connection",
     "testing": "Testing…",
-    "disconnect": "Disconnect",
     "section_features": "Features",
     "feature_review_sidebar_label": "Review sidebar",
     "feature_review_sidebar_description": "Show linked Swarm reviews in the issue detail panel.",
-    "disconnect_confirm_title": "Disconnect Perforce",
-    "disconnect_confirm_description": "Multica will stop polling Swarm for this workspace. Existing review links are kept; reconnect any time to resume updates.",
-    "disconnect_confirm_cancel": "Cancel",
-    "disconnect_confirm_action": "Disconnect",
-    "disconnecting": "Disconnecting…",
     "toast_failed": "Could not update settings",
-    "toast_missing_fields": "Swarm URL and user are required",
+    "toast_missing_fields": "Swarm URL is required",
     "toast_ticket_required": "A password or ticket is required to connect",
     "toast_saved": "Connection saved",
     "toast_save_failed": "Could not save the connection",
     "toast_test_ok": "Connection succeeded",
-    "toast_test_failed": "Could not reach Swarm or authentication failed",
-    "toast_disconnected": "Perforce disconnected",
-    "toast_disconnect_failed": "Could not disconnect"
+    "toast_test_failed": "Could not reach Swarm or authentication failed"
   }
 }

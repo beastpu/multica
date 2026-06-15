@@ -384,9 +384,6 @@ func main() {
 	if err := schedulerMgr.Register(scheduler.TaskUsageHourlyJob(pool)); err != nil {
 		slog.Warn("scheduler: failed to register task_usage_hourly rollup job", "error", err)
 	}
-	if err := schedulerMgr.Register(h.PerforcePollJob()); err != nil {
-		slog.Warn("scheduler: failed to register poll_perforce_reviews job", "error", err)
-	}
 	go func() {
 		_ = schedulerMgr.Run(sweepCtx)
 	}()

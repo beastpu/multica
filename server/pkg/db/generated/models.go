@@ -630,16 +630,12 @@ type NotificationPreference struct {
 }
 
 type PerforceConnection struct {
-	ID                   pgtype.UUID        `json:"id"`
-	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
-	SwarmUrl             string             `json:"swarm_url"`
-	SwarmUser            string             `json:"swarm_user"`
-	SwarmTicketEncrypted []byte             `json:"swarm_ticket_encrypted"`
-	ConnectedByID        pgtype.UUID        `json:"connected_by_id"`
-	LastSeenReviewID     int64              `json:"last_seen_review_id"`
-	LastPolledAt         pgtype.Timestamptz `json:"last_polled_at"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	SwarmUrl      string             `json:"swarm_url"`
+	ConnectedByID pgtype.UUID        `json:"connected_by_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PerforceReview struct {
