@@ -1104,9 +1104,6 @@ export const EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE: CreateBillingPortalSe
 export const PerforceConnectionSchema = z.object({
   workspace_id: z.string(),
   swarm_url: z.string(),
-  swarm_user: z.string(),
-  has_credential: z.boolean(),
-  last_polled_at: z.string().optional(),
 });
 
 export const GetPerforceConnectionResponseSchema = z.object({
@@ -1117,11 +1114,6 @@ export const GetPerforceConnectionResponseSchema = z.object({
 
 export const SavePerforceConnectionResponseSchema = z.object({
   connection: PerforceConnectionSchema,
-});
-
-export const TestPerforceConnectionResponseSchema = z.object({
-  ok: z.boolean(),
-  error: z.string().optional(),
 });
 
 export const PerforceReviewSchema = z.object({

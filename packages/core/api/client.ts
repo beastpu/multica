@@ -219,7 +219,6 @@ import {
   EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE,
   GetPerforceConnectionResponseSchema,
   SavePerforceConnectionResponseSchema,
-  TestPerforceConnectionResponseSchema,
   PerforceReviewsResponseSchema,
   EMPTY_PERFORCE_CONNECTION_RESPONSE,
   EMPTY_PERFORCE_REVIEWS_RESPONSE,
@@ -2163,8 +2162,6 @@ export class ApiClient {
     workspaceId: string,
     data: {
       swarm_url: string;
-      swarm_user: string;
-      ticket?: string;
     },
   ): Promise<{ connection: PerforceConnection }> {
     const raw = await this.fetch(`/api/workspaces/${workspaceId}/perforce/connection`, {
@@ -2174,26 +2171,9 @@ export class ApiClient {
     return parseWithFallback(
       raw,
       SavePerforceConnectionResponseSchema,
-      { connection: { workspace_id: workspaceId, swarm_url: "", swarm_user: "", has_credential: false } },
+      { connection: { workspace_id: workspaceId, swarm_url: "" } },
       { endpoint: "PUT /api/workspaces/:id/perforce/connection" },
     );
-  }
-
-  async deletePerforceConnection(workspaceId: string): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/perforce/connection`, { method: "DELETE" });
-  }
-
-  async testPerforceConnection(
-    workspaceId: string,
-    data: { swarm_url?: string; swarm_user?: string; ticket?: string },
-  ): Promise<{ ok: boolean; error?: string }> {
-    const raw = await this.fetch(`/api/workspaces/${workspaceId}/perforce/test`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, TestPerforceConnectionResponseSchema, { ok: false }, {
-      endpoint: "POST /api/workspaces/:id/perforce/test",
-    });
   }
 
   async listIssuePerforceReviews(issueId: string): Promise<{ reviews: PerforceReview[] }> {

@@ -9,17 +9,15 @@ export type PerforceReviewState =
 
 export interface PerforceConnection {
   workspace_id: string;
+  /** The Swarm URL the webhook routes on. v1 is webhook-push only — no
+   * credentials are stored. */
   swarm_url: string;
-  swarm_user: string;
-  /** Whether a Swarm ticket/password is stored. The secret itself is never
-   * returned to clients. */
-  has_credential: boolean;
-  last_polled_at?: string;
 }
 
 export interface GetPerforceConnectionResponse {
   connection: PerforceConnection | null;
-  /** Whether the deployment has the at-rest key (MULTICA_PERFORCE_SECRET_KEY). */
+  /** Whether the deployment has the webhook token (MULTICA_P4_SWARM_WEBHOOK_TOKEN)
+   * set, i.e. whether inbound Swarm pushes can be authenticated. */
   configured: boolean;
   /** Whether the caller may edit the connection. Older backends omit it; treat
    * absence as false for read-only safety. */

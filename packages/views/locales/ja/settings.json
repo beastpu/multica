@@ -512,6 +512,7 @@
     "not_configured": "このサーバーでは Perforce が未設定です。次を設定してください:",
     "read_only_hint": "Swarm 接続を編集できるのはワークスペース管理者のみです。",
     "field_swarm_url": "Swarm URL",
+    "connection_hint": "Swarm プラットフォームがレビュー更新をここに送信します。受信したプッシュはこの URL でこのワークスペースに振り分けられます。",
     "field_swarm_user": "Swarm ユーザー",
     "field_ticket": "パスワードまたはチケット",
     "field_ticket_placeholder_stored": "空欄のままで保存済みの認証情報を保持",
@@ -520,23 +521,15 @@
     "saving": "保存中…",
     "test": "接続テスト",
     "testing": "テスト中…",
-    "disconnect": "切断",
     "section_features": "機能",
     "feature_review_sidebar_label": "レビューサイドバー",
     "feature_review_sidebar_description": "課題詳細パネルに関連する Swarm レビューを表示します。",
-    "disconnect_confirm_title": "Perforce を切断",
-    "disconnect_confirm_description": "Multica はこのワークスペースの Swarm ポーリングを停止します。既存のレビューリンクは保持され、いつでも再接続できます。",
-    "disconnect_confirm_cancel": "キャンセル",
-    "disconnect_confirm_action": "切断",
-    "disconnecting": "切断中…",
     "toast_failed": "設定を更新できませんでした",
-    "toast_missing_fields": "Swarm URL とユーザーは必須です",
+    "toast_missing_fields": "Swarm URL は必須です",
     "toast_ticket_required": "接続にはパスワードまたはチケットが必要です",
     "toast_saved": "接続を保存しました",
     "toast_save_failed": "接続を保存できませんでした",
     "toast_test_ok": "接続に成功しました",
-    "toast_test_failed": "Swarm に到達できないか認証に失敗しました",
-    "toast_disconnected": "Perforce を切断しました",
-    "toast_disconnect_failed": "切断できませんでした"
+    "toast_test_failed": "Swarm に到達できないか認証に失敗しました"
   }
 }

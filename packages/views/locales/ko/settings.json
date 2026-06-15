@@ -512,6 +512,7 @@
     "not_configured": "이 서버에는 Perforce가 구성되지 않았습니다. 다음을 설정하세요:",
     "read_only_hint": "Swarm 연결은 워크스페이스 관리자만 편집할 수 있습니다.",
     "field_swarm_url": "Swarm URL",
+    "connection_hint": "Swarm 플랫폼이 리뷰 변경을 여기로 전송합니다. 수신된 푸시는 이 URL로 이 워크스페이스에 라우팅됩니다.",
     "field_swarm_user": "Swarm 사용자",
     "field_ticket": "비밀번호 또는 티켓",
     "field_ticket_placeholder_stored": "저장된 자격 증명을 유지하려면 비워 두세요",
@@ -520,23 +521,15 @@
     "saving": "저장 중…",
     "test": "연결 테스트",
     "testing": "테스트 중…",
-    "disconnect": "연결 해제",
     "section_features": "기능",
     "feature_review_sidebar_label": "리뷰 사이드바",
     "feature_review_sidebar_description": "이슈 상세 패널에 연결된 Swarm 리뷰를 표시합니다.",
-    "disconnect_confirm_title": "Perforce 연결 해제",
-    "disconnect_confirm_description": "Multica가 이 워크스페이스의 Swarm 폴링을 중지합니다. 기존 리뷰 링크는 유지되며 언제든 다시 연결할 수 있습니다.",
-    "disconnect_confirm_cancel": "취소",
-    "disconnect_confirm_action": "연결 해제",
-    "disconnecting": "연결 해제 중…",
     "toast_failed": "설정을 업데이트할 수 없습니다",
-    "toast_missing_fields": "Swarm URL과 사용자는 필수입니다",
+    "toast_missing_fields": "Swarm URL은 필수입니다",
     "toast_ticket_required": "연결하려면 비밀번호 또는 티켓이 필요합니다",
     "toast_saved": "연결이 저장되었습니다",
     "toast_save_failed": "연결을 저장할 수 없습니다",
     "toast_test_ok": "연결에 성공했습니다",
-    "toast_test_failed": "Swarm에 연결할 수 없거나 인증에 실패했습니다",
-    "toast_disconnected": "Perforce 연결이 해제되었습니다",
-    "toast_disconnect_failed": "연결을 해제할 수 없습니다"
+    "toast_test_failed": "Swarm에 연결할 수 없거나 인증에 실패했습니다"
   }
 }

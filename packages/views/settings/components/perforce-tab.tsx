@@ -3,22 +3,12 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { PanelRight, PlugZap, Server } from "lucide-react";
+import { PanelRight, Server } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { Switch } from "@multica/ui/components/ui/switch";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@multica/ui/components/ui/alert-dialog";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { workspaceKeys } from "@multica/core/workspace/queries";
@@ -47,20 +37,13 @@ export function PerforceTab() {
   const flags = derivePerforceSettings(workspace);
   const [savingKey, setSavingKey] = useState<SettingsKey | null>(null);
 
-  // Connection form. Seeded from the loaded connection; the ticket field stays
-  // blank (write-only) and is sent only when the admin types a new secret.
+  // Connection form. v1 is webhook-push only, so the only field is the Swarm
+  // URL the webhook routes on — no credentials.
   const [swarmUrl, setSwarmUrl] = useState("");
-  const [swarmUser, setSwarmUser] = useState("");
-  const [ticket, setTicket] = useState("");
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     setSwarmUrl(connection?.swarm_url ?? "");
-    setSwarmUser(connection?.swarm_user ?? "");
-    setTicket("");
   }, [connection]);
 
   async function persistSetting(key: SettingsKey, next: boolean) {
@@ -82,67 +65,21 @@ export function PerforceTab() {
     }
   }
 
-  function connectionPayload() {
-    return {
-      swarm_url: swarmUrl.trim(),
-      swarm_user: swarmUser.trim(),
-      ticket: ticket || undefined,
-    };
-  }
-
   async function handleSave() {
     if (saving) return;
-    if (!swarmUrl.trim() || !swarmUser.trim()) {
+    if (!swarmUrl.trim()) {
       toast.error(t(($) => $.perforce.toast_missing_fields));
-      return;
-    }
-    if (!connection && !ticket) {
-      toast.error(t(($) => $.perforce.toast_ticket_required));
       return;
     }
     setSaving(true);
     try {
-      await api.savePerforceConnection(wsId, connectionPayload());
+      await api.savePerforceConnection(wsId, { swarm_url: swarmUrl.trim() });
       await qc.invalidateQueries({ queryKey: perforceKeys.connection(wsId) });
       toast.success(t(($) => $.perforce.toast_saved));
-      setTicket("");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t(($) => $.perforce.toast_save_failed));
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleTest() {
-    if (testing) return;
-    setTesting(true);
-    try {
-      const res = await api.testPerforceConnection(wsId, {
-        swarm_url: swarmUrl.trim(),
-        swarm_user: swarmUser.trim(),
-        ticket: ticket || undefined,
-      });
-      if (res.ok) toast.success(t(($) => $.perforce.toast_test_ok));
-      else toast.error(t(($) => $.perforce.toast_test_failed));
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.perforce.toast_test_failed));
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  async function handleDelete() {
-    if (deleting) return;
-    setDeleting(true);
-    try {
-      await api.deletePerforceConnection(wsId);
-      await qc.invalidateQueries({ queryKey: perforceKeys.connection(wsId) });
-      toast.success(t(($) => $.perforce.toast_disconnected));
-      setDeleteOpen(false);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.perforce.toast_disconnect_failed));
-    } finally {
-      setDeleting(false);
     }
   }
 
@@ -191,7 +128,10 @@ export function PerforceTab() {
             {!configured && (
               <p className="text-xs text-muted-foreground">
                 {t(($) => $.perforce.not_configured)}{" "}
-                <code className="rounded bg-muted px-1 py-0.5 text-[10px]">MULTICA_PERFORCE_SECRET_KEY</code>.
+                <code className="rounded bg-muted px-1 py-0.5 text-[10px]">
+                  MULTICA_P4_SWARM_WEBHOOK_TOKEN
+                </code>
+                .
               </p>
             )}
             {!canManage ? (
@@ -204,47 +144,12 @@ export function PerforceTab() {
                   placeholder="http://igame-swarm.lilithgame.com"
                   value={swarmUrl}
                   onChange={setSwarmUrl}
-                  disabled={!configured}
                 />
-                <Field
-                  id="perforce-swarm-user"
-                  label={t(($) => $.perforce.field_swarm_user)}
-                  placeholder="svc-multica"
-                  value={swarmUser}
-                  onChange={setSwarmUser}
-                  disabled={!configured}
-                />
-                <Field
-                  id="perforce-ticket"
-                  label={t(($) => $.perforce.field_ticket)}
-                  placeholder={
-                    connection?.has_credential
-                      ? t(($) => $.perforce.field_ticket_placeholder_stored)
-                      : t(($) => $.perforce.field_ticket_placeholder_new)
-                  }
-                  value={ticket}
-                  onChange={setTicket}
-                  disabled={!configured}
-                  type="password"
-                />
+                <p className="text-xs text-muted-foreground">{t(($) => $.perforce.connection_hint)}</p>
                 <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <Button size="sm" onClick={handleSave} disabled={saving || !configured}>
+                  <Button size="sm" onClick={handleSave} disabled={saving}>
                     {saving ? t(($) => $.perforce.saving) : t(($) => $.perforce.save)}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={handleTest} disabled={testing || !configured}>
-                    <PlugZap className="h-3 w-3" />
-                    {testing ? t(($) => $.perforce.testing) : t(($) => $.perforce.test)}
-                  </Button>
-                  {connection && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="ml-auto"
-                      onClick={() => setDeleteOpen(true)}
-                    >
-                      {t(($) => $.perforce.disconnect)}
-                    </Button>
-                  )}
                 </div>
               </>
             )}
@@ -280,30 +185,6 @@ export function PerforceTab() {
           </CardContent>
         </Card>
       </section>
-
-      <AlertDialog
-        open={deleteOpen}
-        onOpenChange={(v) => {
-          if (!v && !deleting) setDeleteOpen(false);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t(($) => $.perforce.disconnect_confirm_title)}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(($) => $.perforce.disconnect_confirm_description)}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>
-              {t(($) => $.perforce.disconnect_confirm_cancel)}
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} disabled={deleting}>
-              {deleting ? t(($) => $.perforce.disconnecting) : t(($) => $.perforce.disconnect_confirm_action)}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
@@ -314,16 +195,12 @@ function Field({
   placeholder,
   value,
   onChange,
-  disabled,
-  type,
 }: {
   id: string;
   label: string;
   placeholder?: string;
   value: string;
   onChange: (v: string) => void;
-  disabled?: boolean;
-  type?: string;
 }) {
   return (
     <div className="space-y-1.5">
@@ -332,10 +209,8 @@ function Field({
       </Label>
       <Input
         id={id}
-        type={type}
         placeholder={placeholder}
         value={value}
-        disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
       />
     </div>
