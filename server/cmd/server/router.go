@@ -350,22 +350,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("lark integration disabled (MULTICA_LARK_SECRET_KEY not set)")
 	}
 
-	// Perforce / Helix Swarm integration. Wired only when
-	// MULTICA_PERFORCE_SECRET_KEY is set: the per-workspace Swarm ticket is
-	// stored sealed, so without the at-rest key the Perforce handlers return
-	// 503 and the review poller idles (perforcePollScopes returns nothing).
-	if perforceKey, err := secretbox.LoadKey("MULTICA_PERFORCE_SECRET_KEY"); err == nil {
-		box, err := secretbox.New(perforceKey)
-		if err != nil {
-			slog.Error("perforce: secretbox.New failed; perforce integration disabled", "error", err)
-		} else {
-			h.PerforceBox = box
-			slog.Info("perforce integration enabled")
-		}
-	} else {
-		slog.Info("perforce integration disabled (MULTICA_PERFORCE_SECRET_KEY not set)")
-	}
-
 	if opts.HeartbeatScheduler != nil {
 		h.HeartbeatScheduler = opts.HeartbeatScheduler
 	}
@@ -540,6 +524,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
+	// Perforce / Helix Swarm webhook (no Multica session auth — the Swarm
+	// platform pushes a self-contained review snapshot, authenticated by a
+	// static bearer token; the public ingress is additionally IP-allowlisted).
+	r.Post("/api/webhooks/p4-swarm", h.HandleP4SwarmWebhook)
 	// Stripe webhook (no Multica auth — Stripe signs the raw body
 	// with a shared secret, the multica-cloud upstream verifies. We
 	// only forward the bytes + the Stripe-Signature header; see
@@ -661,8 +649,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/github/connect", h.GitHubConnect)
 					r.Delete("/github/installations/{installationId}", h.DeleteGitHubInstallation)
 					r.Put("/perforce/connection", h.SavePerforceConnection)
-					r.Delete("/perforce/connection", h.DeletePerforceConnection)
-					r.Post("/perforce/test", h.TestPerforceConnection)
 					r.Get("/feishu-project", h.GetFeishuProjectIntegration)
 					r.Put("/feishu-project", h.UpdateFeishuProjectIntegration)
 					r.Delete("/feishu-project", h.DeleteFeishuProjectIntegration)
