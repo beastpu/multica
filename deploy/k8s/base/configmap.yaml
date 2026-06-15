@@ -44,6 +44,9 @@ data:
   APP_ENV: "production"
   ALLOW_SIGNUP: "true"
   NEXT_PUBLIC_ALLOW_SIGNUP: "true"
+  # Keep attachment downloads on the Multica server instead of redirecting
+  # external clients to the private/internal OSS endpoint.
+  ATTACHMENT_DOWNLOAD_MODE: "proxy"
 
   # --- Email (Resend) ---
   # Leave RESEND_API_KEY empty in the Secret if you don't use email invites;
