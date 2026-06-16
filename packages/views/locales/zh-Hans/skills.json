@@ -202,6 +202,7 @@
       "supported_sources": "支持的来源",
       "import": "导入",
       "importing": "导入中...",
+      "importing_atlas": "正在从 Atlas Skill Hub 导入...",
       "importing_clawhub": "正在从 ClawHub 导入...",
       "importing_skills_sh": "正在从 Skills.sh 导入...",
       "importing_github": "正在从 GitHub 导入...",

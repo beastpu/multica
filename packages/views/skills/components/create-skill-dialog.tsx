@@ -41,7 +41,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { openExternal } from "../../platform";
 import { RuntimeLocalSkillImportPanel } from "./runtime-local-skill-import-panel";
 import { useT } from "../../i18n";
-import { isNameConflictError } from "../lib/utils";
+import { extractSkillUrl, isNameConflictError } from "../lib/utils";
 
 type Method = "chooser" | "manual" | "url" | "runtime";
 
@@ -238,10 +238,17 @@ function ManualForm({
 // URL import form
 // ---------------------------------------------------------------------------
 
-type DetectedSource = "clawhub" | "skills.sh" | "github" | null;
+type DetectedSource = "atlas" | "clawhub" | "skills.sh" | "github" | null;
 
 function detectUrlSource(url: string): DetectedSource {
   const u = url.trim().toLowerCase();
+  // Atlas Skill Hub is internal-only: match a `skill-hub` path on a Lilith
+  // domain so it never claims a third-party URL that happens to look similar.
+  if (
+    u.includes("/skill-hub") &&
+    (u.includes(".lilithgames.com") || u.includes(".lilithgame.com"))
+  )
+    return "atlas";
   if (u.includes("clawhub.ai")) return "clawhub";
   if (u.includes("skills.sh")) return "skills.sh";
   if (u.includes("github.com")) return "github";
@@ -290,17 +297,19 @@ function UrlForm({
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const source = detectUrlSource(url);
+  // Detect against the extracted URL so the source card still lights up when the
+  // user pasted an Atlas install prompt with the URL buried in surrounding prose.
+  const source = detectUrlSource(extractSkillUrl(url));
   const scrollRef = useRef<HTMLDivElement>(null);
   const fadeStyle = useScrollFade(scrollRef);
 
   const submit = async () => {
-    const trimmed = url.trim();
-    if (!trimmed) return;
+    const cleaned = extractSkillUrl(url);
+    if (!cleaned) return;
     setLoading(true);
     setError("");
     try {
-      const skill = await api.importSkill({ url: trimmed });
+      const skill = await api.importSkill({ url: cleaned });
       seedAfterCreate(qc, wsId, skill);
       toast.success(t(($) => $.create.url.toast_imported));
       onCreated(skill);
@@ -312,6 +321,7 @@ function UrlForm({
 
   const submittingLabel = (() => {
     if (!loading) return t(($) => $.create.url.import);
+    if (source === "atlas") return t(($) => $.create.url.importing_atlas);
     if (source === "clawhub") return t(($) => $.create.url.importing_clawhub);
     if (source === "skills.sh") return t(($) => $.create.url.importing_skills_sh);
     if (source === "github") return t(($) => $.create.url.importing_github);
@@ -337,6 +347,21 @@ function UrlForm({
               setUrl(e.target.value);
               setError("");
             }}
+            onPaste={(e) => {
+              const pasted = e.clipboardData.getData("text");
+              const extracted = extractSkillUrl(pasted);
+              // Only intercept when we actually stripped surrounding prose from a
+              // real URL — clean-URL pastes and incremental edits keep native
+              // paste behavior (cursor position, selection replacement).
+              if (
+                /^https?:\/\//i.test(extracted) &&
+                extracted !== pasted.trim()
+              ) {
+                e.preventDefault();
+                setUrl(extracted);
+                setError("");
+              }
+            }}
             placeholder="https://clawhub.ai/owner/skill"
             className="font-mono text-sm"
             onKeyDown={(e) => {
@@ -349,7 +374,13 @@ function UrlForm({
           <p className="mb-2 text-xs text-muted-foreground">
             {t(($) => $.create.url.supported_sources)}
           </p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
+            <SourceCard
+              label="Atlas Skill Hub"
+              exampleHost="atlas-ai.lilithgames.com"
+              browseUrl="https://atlas-ai.lilithgames.com"
+              active={source === "atlas"}
+            />
             <SourceCard
               label="ClawHub"
               exampleHost="clawhub.ai/owner/skill"

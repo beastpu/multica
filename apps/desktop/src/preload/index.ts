@@ -92,6 +92,16 @@ const desktopAPI = {
       ipcRenderer.removeListener("invite:open", handler);
     };
   },
+  /** Fires when the OS resumes from sleep or the session unlocks. The
+   *  renderer probes WS liveness — after sleep the socket is usually dead
+   *  but still reports OPEN, so it would otherwise never reconnect. */
+  onPowerResume: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on("power:resume", handler);
+    return () => {
+      ipcRenderer.removeListener("power:resume", handler);
+    };
+  },
   /** Open a URL in the default browser */
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
   /** Download a file by URL through Electron's native download system.

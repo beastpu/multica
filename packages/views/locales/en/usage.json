@@ -57,7 +57,9 @@
   },
   "operations": {
     "title": "Operations",
-    "subtitle": "Issues your agents have worked on — the latest run, the issue's status, and its most recent comment.",
+    "subtitle": "Issues your agents have worked on — the latest run, the issue's status, and the agent's most recent comment.",
+    "search_placeholder": "Search comments",
+    "search_clear": "Clear search",
     "filter": {
       "all_agents": "All agents",
       "status_all": "All statuses"
@@ -73,7 +75,9 @@
     "caption": "{{count}} records",
     "empty": {
       "title": "No fixes yet",
-      "body": "Once your agents start working issues, each one shows up here with its status and latest comment."
+      "body": "Once your agents start working issues, each one shows up here with its status and latest comment.",
+      "search_title": "No matching comments",
+      "search_body": "No agent comment in this period contains “{{term}}”. Try a different term or widen the time range."
     }
   }
 }
