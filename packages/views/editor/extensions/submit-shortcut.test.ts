@@ -74,17 +74,20 @@ describe("createSubmitExtension", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("Enter is suppressed inside a code block", () => {
-    const onSubmit = vi.fn(() => true);
-    const shortcuts = getShortcuts(
-      createSubmitExtension(onSubmit, { submitOnEnter: true }),
-      {
-        view: { composing: false } as unknown as Editor["view"],
-        isActive: (name: string) => name === "codeBlock",
-      },
-    );
+  it.each(["codeBlock", "listItem", "taskItem", "blockquote"])(
+    "Enter falls through (does not submit) inside a %s",
+    (activeNode) => {
+      const onSubmit = vi.fn(() => true);
+      const shortcuts = getShortcuts(
+        createSubmitExtension(onSubmit, { submitOnEnter: true }),
+        {
+          view: { composing: false } as unknown as Editor["view"],
+          isActive: (name: string) => name === activeNode,
+        },
+      );
 
-    expect(shortcuts.Enter!()).toBe(false);
-    expect(onSubmit).not.toHaveBeenCalled();
-  });
+      expect(shortcuts.Enter!()).toBe(false);
+      expect(onSubmit).not.toHaveBeenCalled();
+    },
+  );
 });
