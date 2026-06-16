@@ -44,8 +44,8 @@ const (
 	// half a year is the largest window we expose.
 	feishuProjectDefaultManualLookbackDays = 30
 	feishuProjectMaxManualLookbackDays     = 180
-	feishuProjectSyncMaxPages      = 1000
-	feishuProjectAttachmentMaxSize = 20 << 20
+	feishuProjectSyncMaxPages              = 1000
+	feishuProjectAttachmentMaxSize         = 20 << 20
 	// Tolerance before a Feishu updated_at that exceeds our clock is treated as
 	// bad data and logged. Absorbs normal multica/Feishu clock skew so the
 	// warning only fires on genuinely future-dated items. The watermark value
