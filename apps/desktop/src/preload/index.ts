@@ -109,6 +109,13 @@ const desktopAPI = {
    *  avoids browser rendering of HTML files on Linux.
    *  On non-desktop platforms this property is undefined. */
   downloadURL: (url: string) => ipcRenderer.invoke("file:download-url", url),
+  /** Install the current token into Electron's session cookie jar so native
+   *  image/video/PDF loads and webContents.downloadURL carry auth. */
+  installAuthCookie: (token: string) =>
+    ipcRenderer.invoke("auth:install-cookie", token) as Promise<boolean>,
+  /** Clear the session auth cookie on logout/account switch. */
+  clearAuthCookie: () =>
+    ipcRenderer.invoke("auth:clear-cookie") as Promise<boolean>,
   /** Toggle immersive mode — hide macOS traffic lights for full-screen modals */
   setImmersiveMode: (immersive: boolean) =>
     ipcRenderer.invoke("window:setImmersive", immersive),

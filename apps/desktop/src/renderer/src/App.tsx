@@ -34,6 +34,16 @@ const HTML_LANG: Record<SupportedLocale, string> = {
   ja: "ja-JP",
 };
 
+async function installDesktopAuthCookie(token: string): Promise<void> {
+  try {
+    const installed = await window.desktopAPI.installAuthCookie(token);
+    if (!installed) {
+      console.warn("Desktop auth cookie was not installed");
+    }
+  } catch (err) {
+    console.warn("Failed to install desktop auth cookie", err);
+  }
+}
 
 function AppContent() {
   const user = useAuthStore((s) => s.user);
@@ -47,6 +57,7 @@ function AppContent() {
   // finishes, so IndexRedirect gets a definitive workspace state on
   // first render.
   const [bootstrapping, setBootstrapping] = useState(false);
+  const [authCookieReady, setAuthCookieReady] = useState(false);
 
   const runtimeConfig = window.desktopAPI.runtimeConfig.ok
     ? window.desktopAPI.runtimeConfig.config
@@ -78,6 +89,7 @@ function AppContent() {
       setBootstrapping(true);
       try {
         await useAuthStore.getState().loginWithToken(token);
+        await installDesktopAuthCookie(token);
         // Seed React Query cache with the workspace list so the index-route
         // redirect (routes.tsx `IndexRedirect`) can resolve the initial
         // destination without a second fetch. Workspace side-effects
@@ -92,6 +104,33 @@ function AppContent() {
       }
     });
   }, [qc]);
+
+  // Desktop uses bearer-token auth for API fetches, but native Chromium
+  // resource loads (<img>/<video>/<iframe>) and webContents.downloadURL do
+  // not attach that Authorization header. Mirror the token into Electron's
+  // session cookie jar before rendering authenticated attachment resources.
+  useEffect(() => {
+    let cancelled = false;
+    if (!user) {
+      setAuthCookieReady(false);
+      void window.desktopAPI.clearAuthCookie();
+      return undefined;
+    }
+
+    const token = localStorage.getItem("multica_token");
+    if (!token) {
+      setAuthCookieReady(true);
+      return undefined;
+    }
+
+    setAuthCookieReady(false);
+    void installDesktopAuthCookie(token).finally(() => {
+      if (!cancelled) setAuthCookieReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   // Sync token and start the daemon whenever the user logs in.
   useEffect(() => {
@@ -241,7 +280,7 @@ function AppContent() {
     }
   }, [user, workspaceListFetched, wsCount]);
 
-  if (isLoading || bootstrapping) {
+  if (isLoading || bootstrapping || (user && !authCookieReady)) {
     return (
       <div className="flex h-screen items-center justify-center">
         <MulticaIcon className="size-6 animate-pulse" />
@@ -287,6 +326,11 @@ async function handleDaemonLogout() {
   // Drop any post-onboarding welcome signal so user B logging in next
   // doesn't inherit user A's pending modal state.
   useWelcomeStore.getState().reset();
+  try {
+    await window.desktopAPI.clearAuthCookie();
+  } catch {
+    // Best-effort; the auth store has already dropped the renderer token.
+  }
   try {
     await window.daemonAPI.clearToken();
   } catch {
