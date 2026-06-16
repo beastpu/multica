@@ -287,6 +287,36 @@ describe("IntegrationsTab (Feishu Project panel)", () => {
     expect(syncButton.disabled).toBe(false);
   });
 
+  it("sends the default 30-day lookback with a manual sync", async () => {
+    const user = userEvent.setup();
+    mockSyncIntegration.mockResolvedValue({ status: "running", run: { id: "run-1" } });
+    render(<IntegrationsTab />, { wrapper: I18nWrapper });
+
+    await user.click(screen.getByRole("button", { name: STR.feishu_project_sync_now }));
+
+    await waitFor(() => expect(mockSyncIntegration).toHaveBeenCalledTimes(1));
+    expect(mockSyncIntegration).toHaveBeenLastCalledWith("workspace-1", {
+      work_item_id: undefined,
+      lookback_days: 30,
+    });
+  });
+
+  it("sends the selected lookback window (up to half a year) with a manual sync", async () => {
+    const user = userEvent.setup();
+    mockSyncIntegration.mockResolvedValue({ status: "running", run: { id: "run-1" } });
+    render(<IntegrationsTab />, { wrapper: I18nWrapper });
+
+    await user.click(screen.getByLabelText(STR.feishu_project_sync_range_label));
+    await user.click(screen.getByRole("option", { name: "Last 180 days" }));
+    await user.click(screen.getByRole("button", { name: STR.feishu_project_sync_now }));
+
+    await waitFor(() => expect(mockSyncIntegration).toHaveBeenCalledTimes(1));
+    expect(mockSyncIntegration).toHaveBeenLastCalledWith("workspace-1", {
+      work_item_id: undefined,
+      lookback_days: 180,
+    });
+  });
+
   it("saves the draft and replaces routes when Save in the save bar is clicked", async () => {
     const user = userEvent.setup();
     render(<IntegrationsTab />, { wrapper: I18nWrapper });
