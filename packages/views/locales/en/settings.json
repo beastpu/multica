@@ -249,6 +249,8 @@
     "feishu_project_saved": "Feishu Project integration saved",
     "feishu_project_save_failed": "Failed to save Feishu Project integration",
     "feishu_project_sync_now": "Sync now",
+    "feishu_project_sync_range_label": "Sync time range",
+    "feishu_project_sync_range_days": "Last {{days}} days",
     "feishu_project_syncing": "Syncing...",
     "feishu_project_sync_progress": "Syncing Feishu Project. Results will refresh when it completes.",
     "feishu_project_sync_progress_count": "Syncing Feishu Project: {{processed}} / {{total}} processed.",

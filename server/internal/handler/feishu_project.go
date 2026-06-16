@@ -103,6 +103,10 @@ type FeishuProjectSyncResponse struct {
 
 type SyncFeishuProjectIntegrationRequest struct {
 	WorkItemID string `json:"work_item_id"`
+	// LookbackDays bounds how far back a manual sync asks Feishu for changes.
+	// Zero (or unset) falls back to the default window; oversized values are
+	// clamped server-side. Ignored when WorkItemID targets a single item.
+	LookbackDays int `json:"lookback_days"`
 }
 
 func (h *Handler) GetFeishuProjectIntegration(w http.ResponseWriter, r *http.Request) {
@@ -512,12 +516,13 @@ func (h *Handler) SyncFeishuProjectIntegration(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, "failed to start Feishu Project sync")
 		return
 	}
+	sinceUnixMilli, _ := service.FeishuProjectManualSinceUnixMilli(req.LookbackDays, time.Now())
 	go func() {
 		defer unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 		defer cancel()
 		svc := &service.FeishuProjectSyncService{Queries: h.Queries, Tx: h.TxStarter, Client: service.NewFeishuProjectClient(), Storage: h.Storage, TaskService: h.TaskService}
-		if _, err := svc.SyncWithRunAndOptions(ctx, cfg, "manual", run, service.FeishuProjectSyncOptions{WorkItemID: req.WorkItemID}); err != nil {
+		if _, err := svc.SyncWithRunAndOptions(ctx, cfg, "manual", run, service.FeishuProjectSyncOptions{WorkItemID: req.WorkItemID, SinceUnixMilli: sinceUnixMilli}); err != nil {
 			slog.Warn("Feishu Project manual sync failed", "workspace_id", workspaceID, "integration_id", uuidToString(cfg.ID), "run_id", uuidToString(run.ID), "error", err)
 		}
 	}()

@@ -38,6 +38,12 @@ const (
 	feishuProjectInitialLookback   = 24 * time.Hour
 	feishuProjectManualLookback    = 30 * 24 * time.Hour
 	feishuProjectIncrementalReplay = 10 * time.Minute
+	// feishuProjectDefaultManualLookbackDays / feishuProjectMaxManualLookbackDays
+	// bound a user-selected manual-sync window. Feishu Project enforces a
+	// monthly open-platform quota, so an unbounded lookback could exhaust it;
+	// half a year is the largest window we expose.
+	feishuProjectDefaultManualLookbackDays = 30
+	feishuProjectMaxManualLookbackDays     = 180
 	feishuProjectSyncMaxPages      = 1000
 	feishuProjectAttachmentMaxSize = 20 << 20
 	// Tolerance before a Feishu updated_at that exceeds our clock is treated as
@@ -1873,6 +1879,21 @@ func feishuProjectSyncSinceUnixMilli(cfg db.FeishuProjectIntegration, now time.T
 
 func feishuProjectManualSyncSinceUnixMilli(now time.Time) int64 {
 	return now.Add(-feishuProjectManualLookback).UnixMilli()
+}
+
+// FeishuProjectManualSinceUnixMilli converts a user-selected manual-sync
+// lookback window (in days) into an updated_at>= start in unix-millis. A
+// non-positive value defaults to feishuProjectDefaultManualLookbackDays and
+// anything larger than feishuProjectMaxManualLookbackDays is clamped down. It
+// returns the start and the effective day count actually applied.
+func FeishuProjectManualSinceUnixMilli(days int, now time.Time) (sinceMs int64, effectiveDays int) {
+	if days <= 0 {
+		days = feishuProjectDefaultManualLookbackDays
+	}
+	if days > feishuProjectMaxManualLookbackDays {
+		days = feishuProjectMaxManualLookbackDays
+	}
+	return now.Add(-time.Duration(days) * 24 * time.Hour).UnixMilli(), days
 }
 
 // feishuProjectSyncSince computes the legacy local-clock-based incremental
