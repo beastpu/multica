@@ -18,9 +18,9 @@ commonAnnotations:
 # tag (e.g. main-<sha>) once CI is wired and you can drop the Always patch.
 images:
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server
-    newTag: "0.2.57-disable-agent-summary-20260610-d82bad5a3"
+    newTag: "0.2-p4-swarm-webhook-8da6ee501"
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web
-    newTag: "0.2.56-upstream-merge"
+    newTag: "0.2-p4-swarm-webhook-8da6ee501"
 
 # Test runs at 1/1 — single web pod is enough for smoke testing and matches
 # the server's single-replica constraint (in-memory WS hub).

@@ -188,6 +188,7 @@
       "supported_sources": "対応ソース",
       "import": "インポート",
       "importing": "インポート中…",
+      "importing_atlas": "Atlas Skill Hub からインポート中…",
       "importing_clawhub": "ClawHub からインポート中…",
       "importing_skills_sh": "Skills.sh からインポート中…",
       "importing_github": "GitHub からインポート中…",

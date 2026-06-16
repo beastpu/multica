@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestListWorkspaceAgentTaskSnapshot covers the agent presence snapshot endpoint:
@@ -207,12 +208,21 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 		RETURNING id
 	`, agentID, reviewIssue, testRuntimeID)
 
-	// reviewIssue's most recent comment — the "原因/描述" column source.
+	// reviewIssue comments — the "原因/描述" column tracks the AGENT's latest
+	// comment, not the issue's. Seed an agent comment (the closing action) and
+	// then a NEWER member reply: the feed must surface the agent comment, the
+	// member "收到" must NOT mask it.
 	if _, err := testPool.Exec(ctx, `
-		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content, type)
-		VALUES ($1, $2, 'member', $3, 'looks good, ready for review', 'comment')
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content, type, created_at)
+		VALUES ($1, $2, 'agent', $3, 'looks good, ready for review', 'comment', now() - interval '10 minutes')
+	`, testWorkspaceID, reviewIssue, agentID); err != nil {
+		t.Fatalf("insert agent comment: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content, type, created_at)
+		VALUES ($1, $2, 'member', $3, '收到，辛苦了', 'comment', now() - interval '1 minute')
 	`, testWorkspaceID, reviewIssue, testUserID); err != nil {
-		t.Fatalf("insert comment: %v", err)
+		t.Fatalf("insert member comment: %v", err)
 	}
 	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, reviewIssue) })
 
@@ -275,8 +285,13 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	if review.IssueStatus != "in_review" {
 		t.Errorf("review.IssueStatus = %q, want in_review", review.IssueStatus)
 	}
+	// The agent's comment, not the newer member "收到" — the column tracks the
+	// agent's own closing action.
 	if review.LastComment != "looks good, ready for review" {
-		t.Errorf("review.LastComment = %q, want the latest comment", review.LastComment)
+		t.Errorf("review.LastComment = %q, want the agent comment (member reply must not mask it)", review.LastComment)
+	}
+	if review.LastCommentAuthorType != "agent" {
+		t.Errorf("review.LastCommentAuthorType = %q, want agent", review.LastCommentAuthorType)
 	}
 
 	for _, f := range fixes {
@@ -284,6 +299,178 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 			t.Errorf("task with no linked issue must be excluded from the fix feed")
 		}
 	}
+}
+
+// TestListWorkspaceAgentFixes_Search covers the ?search= filter on the
+// Operations feed: only issues whose AGENT comment contains the term (case-
+// insensitive) come back, an issue whose agent comment lacks the term is
+// dropped, and a no-comment issue never matches. The returned snippet is
+// centered on the match so the keyword is visible.
+func TestListWorkspaceAgentFixes_Search(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	agentID := createHandlerTestAgent(t, "search-agent", []byte(`{}`))
+
+	mkIssue := func(title string) string {
+		var id string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number)
+			VALUES ($1, $2, 'in_progress', 'medium', $3, 'member',
+				(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
+			RETURNING id
+		`, testWorkspaceID, title, testUserID).Scan(&id); err != nil {
+			t.Fatalf("insert issue %q: %v", title, err)
+		}
+		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, id) })
+		return id
+	}
+	mkRun := func(issueID string) {
+		var id string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, priority, completed_at)
+			VALUES ($1, $2, $3, 'completed', 0, now() - interval '20 minutes')
+			RETURNING id
+		`, agentID, issueID, testRuntimeID).Scan(&id); err != nil {
+			t.Fatalf("insert run: %v", err)
+		}
+		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, id) })
+	}
+	mkAgentComment := func(issueID, content string) {
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content, type)
+			VALUES ($1, $2, 'agent', $3, $4, 'comment')
+		`, testWorkspaceID, issueID, agentID, content); err != nil {
+			t.Fatalf("insert agent comment: %v", err)
+		}
+		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, issueID) })
+	}
+
+	// A long comment so the matched keyword sits past the leading snippet — the
+	// match-centered snippet must still surface it. The keyword is mixed-case in
+	// the content to prove the search is case-insensitive.
+	matchIssue := mkIssue("Refactor the parser")
+	mkRun(matchIssue)
+	longBody := strings.Repeat("分析了一遍代码并做了大量改动，", 12) + "最终通过 Code Review 后合并。"
+	mkAgentComment(matchIssue, longBody)
+
+	// Agent commented, but the term isn't there — must be dropped by search.
+	noMatchIssue := mkIssue("Tune the cache")
+	mkRun(noMatchIssue)
+	mkAgentComment(noMatchIssue, "just started looking into it")
+
+	// No agent comment at all — must never match a search.
+	silentIssue := mkIssue("Investigate flake")
+	mkRun(silentIssue)
+
+	get := func(query string) map[string]AgentFixResponse {
+		w := httptest.NewRecorder()
+		testHandler.ListWorkspaceAgentFixes(w, newRequest(http.MethodGet, "/api/operations/agent-fixes"+query, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("ListWorkspaceAgentFixes%s: expected 200, got %d: %s", query, w.Code, w.Body.String())
+		}
+		var fixes []AgentFixResponse
+		if err := json.NewDecoder(w.Body).Decode(&fixes); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		byIssue := map[string]AgentFixResponse{}
+		for _, f := range fixes {
+			byIssue[f.IssueID] = f
+		}
+		return byIssue
+	}
+
+	// Case-insensitive match: search "review" finds the "Code Review" comment.
+	got := get("?search=review")
+	match, ok := got[matchIssue]
+	if !ok {
+		t.Fatalf("search=review should return the matching issue")
+	}
+	if !strings.Contains(match.LastComment, "Review") {
+		t.Errorf("snippet should be centered on the match and contain %q; got %q", "Review", match.LastComment)
+	}
+	if _, ok := got[noMatchIssue]; ok {
+		t.Errorf("issue whose agent comment lacks the term must be dropped by search")
+	}
+	if _, ok := got[silentIssue]; ok {
+		t.Errorf("issue with no agent comment must never match a search")
+	}
+
+	// No-results term returns none of our seeded issues.
+	none := get("?search=zzz-no-such-term")
+	for _, id := range []string{matchIssue, noMatchIssue, silentIssue} {
+		if _, ok := none[id]; ok {
+			t.Errorf("non-matching search must return no rows; issue %s leaked", id)
+		}
+	}
+
+	// No search arg: the agent-commented issues come back (silent one too — it
+	// has a run), proving the filter is truly optional.
+	all := get("")
+	if _, ok := all[matchIssue]; !ok {
+		t.Errorf("no-search query should include the matching issue")
+	}
+	if _, ok := all[noMatchIssue]; !ok {
+		t.Errorf("no-search query should include the non-matching-comment issue")
+	}
+}
+
+// TestCommentSnippetAround is a pure unit test (no DB) for the match-centering
+// excerpt used by the "原因/描述" column when a search term is active.
+func TestCommentSnippetAround(t *testing.T) {
+	t.Run("empty keyword falls back to leading snippet", func(t *testing.T) {
+		long := strings.Repeat("a", 300)
+		got := commentSnippetAround(long, "")
+		want := strings.Repeat("a", commentSnippetMaxRunes) + "…"
+		if got != want {
+			t.Errorf("empty keyword should give the leading snippet; got len %d", len([]rune(got)))
+		}
+	})
+
+	t.Run("keyword far into a long body is centered with ellipses", func(t *testing.T) {
+		body := strings.Repeat("x", 100) + "REVIEW" + strings.Repeat("y", 100)
+		got := commentSnippetAround(body, "review")
+		if !strings.Contains(got, "REVIEW") {
+			t.Errorf("centered snippet must contain the match; got %q", got)
+		}
+		if !strings.HasPrefix(got, "…") {
+			t.Errorf("elided lead should be marked with an ellipsis; got %q", got)
+		}
+		if !strings.HasSuffix(got, "…") {
+			t.Errorf("elided tail should be marked with an ellipsis; got %q", got)
+		}
+	})
+
+	t.Run("keyword near the start has no leading ellipsis", func(t *testing.T) {
+		body := "REVIEW done, " + strings.Repeat("z", 200)
+		got := commentSnippetAround(body, "review")
+		if strings.HasPrefix(got, "…") {
+			t.Errorf("a match at the start should not get a leading ellipsis; got %q", got)
+		}
+		if !strings.Contains(got, "REVIEW") {
+			t.Errorf("snippet must contain the match; got %q", got)
+		}
+	})
+
+	t.Run("CJK content is cut on rune boundaries around the match", func(t *testing.T) {
+		body := strings.Repeat("前面无关内容", 12) + "关键动作：审阅完成已合并" + strings.Repeat("后面内容", 12)
+		got := commentSnippetAround(body, "审阅")
+		if !strings.Contains(got, "审阅") {
+			t.Errorf("CJK snippet must contain the match; got %q", got)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("snippet must not cut a multi-byte rune; got invalid UTF-8 %q", got)
+		}
+	})
+
+	t.Run("no match defensively falls back to leading snippet", func(t *testing.T) {
+		got := commentSnippetAround("hello world", "absent")
+		if got != "hello world" {
+			t.Errorf("no-match should return the leading snippet; got %q", got)
+		}
+	})
 }
 
 func TestCreateAgent_RejectsDuplicateName(t *testing.T) {

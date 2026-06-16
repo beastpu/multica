@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Radar } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Radar, Search, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { Input } from "@multica/ui/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -79,11 +80,50 @@ function formatDay(iso: string | null, tz: string): string {
   }
 }
 
+// Debounce delay before a typed search term hits the server. Long enough to
+// coalesce a burst of keystrokes, short enough to feel responsive.
+const SEARCH_DEBOUNCE_MS = 300;
+
+// One run of a highlighted snippet: `match` segments are the keyword hits.
+interface HighlightPart {
+  text: string;
+  match: boolean;
+}
+
+/**
+ * Split `text` into alternating plain / matched parts on every case-insensitive
+ * occurrence of `keyword`, for rendering with <mark> highlights. Uses literal
+ * substring matching (lowercased indexOf), mirroring the server's `position()`
+ * filter — so what the backend matched is exactly what we highlight, and a
+ * user-typed regex/`%` char is treated literally. An empty keyword (or no hit)
+ * returns the whole text as a single plain part.
+ */
+export function splitHighlight(text: string, keyword: string): HighlightPart[] {
+  const term = keyword.trim();
+  if (!term) return [{ text, match: false }];
+  const hay = text.toLowerCase();
+  const needle = term.toLowerCase();
+  const parts: HighlightPart[] = [];
+  let from = 0;
+  let hit = hay.indexOf(needle, from);
+  if (hit < 0) return [{ text, match: false }];
+  while (hit >= 0) {
+    if (hit > from) parts.push({ text: text.slice(from, hit), match: false });
+    parts.push({ text: text.slice(hit, hit + needle.length), match: true });
+    from = hit + needle.length;
+    hit = hay.indexOf(needle, from);
+  }
+  if (from < text.length) parts.push({ text: text.slice(from), match: false });
+  return parts;
+}
+
 /**
  * Operations page — a left-sidebar section sitting under Usage. One row per
  * issue an agent has worked on (the latest run only), showing the agent, the
- * issue, the run day, the issue's workflow status, and the issue's most recent
- * comment. Lives at `/{slug}/operations`; backed by GET /api/operations/agent-fixes.
+ * issue, the run day, the issue's workflow status, and the agent's most recent
+ * comment. A search box filters by that comment's text (server-side, on the
+ * agent's latest comment) and highlights the match. Lives at
+ * `/{slug}/operations`; backed by GET /api/operations/agent-fixes.
  */
 export function OperationsPage() {
   const { t } = useT("usage");
@@ -96,9 +136,21 @@ export function OperationsPage() {
   const [days, setDays] = useState<OpsRange>(30);
   const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS);
   const [statusFilter, setStatusFilter] = useState<string>(ALL_STATUSES);
+  // `searchInput` is what the user types; `search` is the debounced term that
+  // actually keys the query (so we don't refetch on every keystroke).
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    const id = setTimeout(
+      () => setSearch(searchInput.trim()),
+      SEARCH_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(id);
+  }, [searchInput]);
 
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const fixesQuery = useQuery(operationsFixesOptions(wsId, days));
+  const fixesQuery = useQuery(operationsFixesOptions(wsId, days, search));
   const fixes = fixesQuery.data ?? EMPTY;
 
   // Validate the picked agent against the current workspace's list so a stale
@@ -134,6 +186,7 @@ export function OperationsPage() {
           <h1 className="truncate text-sm font-medium">{t(($) => $.operations.title)}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <SearchBox value={searchInput} onChange={setSearchInput} />
           <AgentFilter
             agents={agents}
             value={agentFilter}
@@ -164,7 +217,7 @@ export function OperationsPage() {
           {fixesQuery.isLoading ? (
             <OperationsSkeleton />
           ) : rows.length === 0 ? (
-            <OperationsEmpty />
+            <OperationsEmpty search={search} />
           ) : (
             <div className="rounded-lg border bg-card">
               {/* Header row — Agent first, then Issue / Time (by day) / Status
@@ -221,7 +274,11 @@ export function OperationsPage() {
                         className="truncate text-xs text-muted-foreground"
                         title={comment || undefined}
                       >
-                        {comment || t(($) => $.operations.no_reason)}
+                        {comment ? (
+                          <ReasonText text={comment} keyword={search} />
+                        ) : (
+                          t(($) => $.operations.no_reason)
+                        )}
                       </span>
                     </div>
                   );
@@ -263,6 +320,64 @@ function IssueCell({
     );
   }
   return <div className="flex min-w-0 items-center gap-2">{inner}</div>;
+}
+
+// Renders the "原因/描述" comment snippet, highlighting every occurrence of the
+// active search term. The backend centers the snippet on the match, so the
+// keyword is always present when `keyword` is set.
+function ReasonText({ text, keyword }: { text: string; keyword: string }) {
+  const parts = useMemo(() => splitHighlight(text, keyword), [text, keyword]);
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.match ? (
+          <mark
+            key={i}
+            className="rounded-sm bg-primary/15 px-0.5 font-medium text-foreground"
+          >
+            {p.text}
+          </mark>
+        ) : (
+          <span key={i}>{p.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+// Free-text filter on the agent comment ("原因/描述"). Controlled; the parent
+// debounces before it reaches the query. A clear button resets it in one click.
+function SearchBox({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const { t } = useT("usage");
+  return (
+    <div className="relative">
+      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={t(($) => $.operations.search_placeholder)}
+        aria-label={t(($) => $.operations.search_placeholder)}
+        className="h-8 w-[200px] pl-8 pr-7 text-sm [&::-webkit-search-cancel-button]:appearance-none"
+      />
+      {value ? (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          aria-label={t(($) => $.operations.search_clear)}
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 function AgentFilter({
@@ -348,14 +463,28 @@ function OperationsSkeleton() {
   );
 }
 
-function OperationsEmpty() {
+// Empty state. With an active search the copy explains "no matches" rather than
+// the default "no fixes yet" — otherwise a successful-but-empty search reads as
+// if the agents never did anything.
+function OperationsEmpty({ search }: { search: string }) {
   const { t } = useT("usage");
+  const searching = search.trim().length > 0;
   return (
     <div className="flex flex-col items-center rounded-lg border border-dashed py-12 text-center">
-      <Radar className="h-6 w-6 text-muted-foreground/40" />
-      <p className="mt-3 text-sm font-medium">{t(($) => $.operations.empty.title)}</p>
+      {searching ? (
+        <Search className="h-6 w-6 text-muted-foreground/40" />
+      ) : (
+        <Radar className="h-6 w-6 text-muted-foreground/40" />
+      )}
+      <p className="mt-3 text-sm font-medium">
+        {searching
+          ? t(($) => $.operations.empty.search_title)
+          : t(($) => $.operations.empty.title)}
+      </p>
       <p className="mt-1 max-w-md text-xs text-muted-foreground">
-        {t(($) => $.operations.empty.body)}
+        {searching
+          ? t(($) => $.operations.empty.search_body, { term: search.trim() })
+          : t(($) => $.operations.empty.body)}
       </p>
     </div>
   );

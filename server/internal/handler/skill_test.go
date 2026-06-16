@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"archive/zip"
 	"bytes"
 	"log/slog"
 	"net/http"
@@ -1225,4 +1226,146 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// --- Atlas Skill Hub import ---
+
+func TestDetectImportSource_RecognizesAtlasSkillHub(t *testing.T) {
+	src, normalized, err := detectImportSource("https://atlas-ai-api.lilithgames.com/api/skill-hub-internal/ocr-review/install-prompt?t=1")
+	if err != nil {
+		t.Fatalf("detectImportSource: %v", err)
+	}
+	if src != sourceAtlasSkillHub {
+		t.Fatalf("source = %v, want sourceAtlasSkillHub", src)
+	}
+	if !strings.Contains(normalized, "skill-hub-internal/ocr-review") {
+		t.Fatalf("normalized = %q", normalized)
+	}
+}
+
+func TestParseAtlasSkillHubSlug(t *testing.T) {
+	cases := []struct {
+		name         string
+		url          string
+		wantSlug     string
+		wantDLSuffix string
+	}{
+		{"install-prompt", "https://atlas-ai-api.lilithgames.com/api/skill-hub-internal/ocr-review/install-prompt?t=1", "ocr-review", "/api/skill-hub-internal/ocr-review/download"},
+		{"download", "https://atlas-ai-api.lilithgames.com/api/skill-hub-internal/ocr-review/download", "ocr-review", "/api/skill-hub-internal/ocr-review/download"},
+		{"bare internal", "https://atlas-ai-api.lilithgames.com/api/skill-hub-internal/ocr-review", "ocr-review", "/api/skill-hub-internal/ocr-review/download"},
+		{"public detail", "https://atlas-ai-api.lilithgames.com/api/skill-hub/ocr-review", "ocr-review", "/api/skill-hub-internal/ocr-review/download"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			slug, dl, err := parseAtlasSkillHubSlug(tc.url)
+			if err != nil {
+				t.Fatalf("parseAtlasSkillHubSlug: %v", err)
+			}
+			if slug != tc.wantSlug {
+				t.Fatalf("slug = %q, want %q", slug, tc.wantSlug)
+			}
+			if !strings.HasSuffix(dl, tc.wantDLSuffix) {
+				t.Fatalf("downloadURL = %q, want suffix %q", dl, tc.wantDLSuffix)
+			}
+		})
+	}
+
+	t.Run("missing slug", func(t *testing.T) {
+		if _, _, err := parseAtlasSkillHubSlug("https://atlas-ai-api.lilithgames.com/api/skill-hub-internal"); err == nil {
+			t.Fatal("expected error for a URL without a slug")
+		}
+	})
+}
+
+func buildTestZip(t *testing.T, files map[string]string, dirs []string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, d := range dirs {
+		if _, err := zw.Create(d); err != nil { // trailing slash → directory entry
+			t.Fatalf("create dir %q: %v", d, err)
+		}
+	}
+	for name, content := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("create %q: %v", name, err)
+		}
+		if _, err := w.Write([]byte(content)); err != nil {
+			t.Fatalf("write %q: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestFetchFromAtlasSkillHub_ExtractsBundle(t *testing.T) {
+	zipBytes := buildTestZip(t,
+		map[string]string{
+			"SKILL.md":            "---\nname: ocr-review\ndescription: native code review\n---\nbody",
+			"references/guide.md": "guide",
+			"scripts/run.py":      "print('x')",
+		},
+		[]string{"references/", "scripts/"},
+	)
+
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if r.URL.Path != "/api/skill-hub-internal/ocr-review/download" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		w.Write(zipBytes)
+	}))
+	t.Cleanup(server.Close)
+
+	rawURL := server.URL + "/api/skill-hub-internal/ocr-review/install-prompt?t=123"
+	result, err := fetchFromAtlasSkillHub(server.Client(), rawURL)
+	if err != nil {
+		t.Fatalf("fetchFromAtlasSkillHub: %v", err)
+	}
+	if gotPath != "/api/skill-hub-internal/ocr-review/download" {
+		t.Fatalf("server hit %q, want the derived /download endpoint", gotPath)
+	}
+	if result.name != "ocr-review" {
+		t.Fatalf("name = %q, want ocr-review", result.name)
+	}
+	if result.description != "native code review" {
+		t.Fatalf("description = %q, want native code review", result.description)
+	}
+	if !strings.Contains(result.content, "name: ocr-review") {
+		t.Fatalf("content missing SKILL.md frontmatter: %q", result.content)
+	}
+	gotFiles := importedFilePaths(result.files)
+	wantFiles := []string{"references/guide.md", "scripts/run.py"}
+	if !equalStrings(gotFiles, wantFiles) {
+		t.Fatalf("files = %v, want %v (SKILL.md excluded, dir entries skipped)", gotFiles, wantFiles)
+	}
+	if result.origin["type"] != "atlas_skillhub" || result.origin["slug"] != "ocr-review" {
+		t.Fatalf("origin = %v, want type=atlas_skillhub slug=ocr-review", result.origin)
+	}
+	if result.origin["source_url"] != rawURL {
+		t.Fatalf("origin source_url = %v, want %q", result.origin["source_url"], rawURL)
+	}
+}
+
+func TestFetchFromAtlasSkillHub_SurfacesJSONError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"code":400,"message":"Skill 'lark-cli' 无可下载文件"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := fetchFromAtlasSkillHub(server.Client(), server.URL+"/api/skill-hub-internal/lark-cli/install-prompt")
+	if err == nil {
+		t.Fatal("expected error for a non-downloadable skill, got nil")
+	}
+	if !strings.Contains(err.Error(), "无可下载文件") {
+		t.Fatalf("error = %q, want the Atlas message surfaced", err.Error())
+	}
 }

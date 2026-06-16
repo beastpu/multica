@@ -1443,8 +1443,8 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 // AgentFixResponse is one row of the Usage page's Operations tab: one issue an
 // agent has worked on, carrying only the LATEST agent run for that issue. The
 // "状态" column is the issue's workflow status (IssueStatus); the "原因/描述"
-// column is the issue's most recent comment/reply (LastComment), truncated to a
-// short leading snippet. Backs GET /api/operations/agent-fixes.
+// column is the AGENT's most recent comment/reply (LastComment), truncated to a
+// short snippet. Backs GET /api/operations/agent-fixes.
 type AgentFixResponse struct {
 	TaskID          string `json:"task_id"`
 	AgentID         string `json:"agent_id"`
@@ -1453,19 +1453,27 @@ type AgentFixResponse struct {
 	IssueIdentifier string `json:"issue_identifier"`
 	IssueTitle      string `json:"issue_title"`
 	IssueStatus     string `json:"issue_status"` // issue workflow status: backlog/todo/in_progress/in_review/done/blocked/cancelled
-	// LastComment is the most recent comment on the issue (member or agent),
-	// truncated to a short leading snippet. Empty when the issue has no comments.
+	// LastComment is the agent's most recent comment on the issue, truncated to
+	// a short snippet. When a search term is in play the snippet is centered on
+	// the match (so the matched keyword is always visible for the frontend to
+	// highlight); otherwise it's the leading excerpt. Empty when the agent left
+	// no comment.
 	LastComment           string  `json:"last_comment,omitempty"`
-	LastCommentAuthorType string  `json:"last_comment_author_type,omitempty"` // "member" | "agent"
+	LastCommentAuthorType string  `json:"last_comment_author_type,omitempty"` // always "agent" (or "" when none)
 	StartedAt             *string `json:"started_at"`
 	CompletedAt           *string `json:"completed_at"`
 	CreatedAt             string  `json:"created_at"`
 }
 
 // commentSnippetMaxRunes bounds the "原因/描述" text so the table column stays a
-// short leading excerpt, not a full comment body. Rune-aware so multi-byte
-// (Chinese) content isn't cut mid-character.
+// short excerpt, not a full comment body. Rune-aware so multi-byte (Chinese)
+// content isn't cut mid-character.
 const commentSnippetMaxRunes = 120
+
+// commentSnippetLeadRunes is how much context precedes the matched keyword when
+// a search term centers the snippet — enough to read the run-up to the action
+// word without pushing the keyword off the (single-line, CSS-truncated) column.
+const commentSnippetLeadRunes = 24
 
 func commentSnippet(s string) string {
 	r := []rune(strings.TrimSpace(s))
@@ -1473,6 +1481,40 @@ func commentSnippet(s string) string {
 		return string(r)
 	}
 	return string(r[:commentSnippetMaxRunes]) + "…"
+}
+
+// commentSnippetAround returns a snippet of `s` centered on the first
+// case-insensitive occurrence of `keyword`, so the matched term is always
+// inside the bounded excerpt the frontend highlights. With an empty keyword (or
+// no match — the SQL already matched, so this is just defensive) it falls back
+// to the leading snippet. A leading/trailing "…" marks elided text.
+func commentSnippetAround(s, keyword string) string {
+	trimmed := strings.TrimSpace(s)
+	if keyword == "" {
+		return commentSnippet(trimmed)
+	}
+	idxByte := strings.Index(strings.ToLower(trimmed), strings.ToLower(keyword))
+	if idxByte < 0 {
+		return commentSnippet(trimmed)
+	}
+	r := []rune(trimmed)
+	idxRune := utf8.RuneCountInString(trimmed[:idxByte])
+
+	start := idxRune - commentSnippetLeadRunes
+	prefix := ""
+	if start > 0 {
+		prefix = "…"
+	} else {
+		start = 0
+	}
+	end := start + commentSnippetMaxRunes
+	suffix := ""
+	if end < len(r) {
+		suffix = "…"
+	} else {
+		end = len(r)
+	}
+	return prefix + string(r[start:end]) + suffix
 }
 
 // ListWorkspaceAgentFixes returns the Operations-tab feed for the Usage page:
@@ -1495,10 +1537,17 @@ func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// Optional case-insensitive substring filter on the agent comment ("原因/
+	// 描述" column). Empty/whitespace → no filter (NULL search arg). The SQL
+	// drops rows whose agent comment doesn't contain the term; the snippet is
+	// then centered on the match so the keyword is visible for highlighting.
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+
 	wsUUID := parseUUID(workspaceID)
 	rows, err := h.Queries.ListWorkspaceAgentFixes(r.Context(), db.ListWorkspaceAgentFixesParams{
 		WorkspaceID: wsUUID,
 		Days:        int32(days),
+		Search:      pgtype.Text{String: search, Valid: search != ""},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agent fixes")
@@ -1526,7 +1575,7 @@ func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request
 			IssueIdentifier:       prefix + "-" + strconv.Itoa(int(row.IssueNumber)),
 			IssueTitle:            row.IssueTitle,
 			IssueStatus:           row.IssueStatus,
-			LastComment:           commentSnippet(row.LastComment),
+			LastComment:           commentSnippetAround(row.LastComment, search),
 			LastCommentAuthorType: row.LastCommentAuthorType,
 			StartedAt:             timestampToPtr(row.StartedAt),
 			CompletedAt:           timestampToPtr(row.CompletedAt),
