@@ -639,8 +639,17 @@ export type RuntimeLocalSkillStatus =
   | "pending"
   | "running"
   | "completed"
+  | "conflict"
   | "failed"
   | "timeout";
+
+export type RuntimeLocalSkillImportAction = "overwrite";
+
+export interface RuntimeLocalSkillImportConflict {
+  existing_skill_id: string;
+  existing_created_by?: string;
+  can_overwrite: boolean;
+}
 
 export interface RuntimeLocalSkillSummary {
   key: string;
@@ -666,6 +675,9 @@ export interface CreateRuntimeLocalSkillImportRequest {
   skill_key: string;
   name?: string;
   description?: string;
+  action?: RuntimeLocalSkillImportAction;
+  target_skill_id?: string;
+  supports_conflict?: boolean;
 }
 
 export interface RuntimeLocalSkillImportRequest {
@@ -674,8 +686,12 @@ export interface RuntimeLocalSkillImportRequest {
   skill_key: string;
   name?: string;
   description?: string;
+  action?: RuntimeLocalSkillImportAction;
+  target_skill_id?: string;
+  supports_conflict?: boolean;
   status: RuntimeLocalSkillStatus;
   skill?: Skill;
+  conflict?: RuntimeLocalSkillImportConflict;
   error?: string;
   created_at: string;
   updated_at: string;
@@ -687,5 +703,7 @@ export interface RuntimeLocalSkillsResult {
 }
 
 export interface RuntimeLocalSkillImportResult {
-  skill: Skill;
+  status: "created" | "updated" | "conflict";
+  skill?: Skill;
+  conflict?: RuntimeLocalSkillImportConflict;
 }
