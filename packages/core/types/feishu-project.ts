@@ -86,6 +86,8 @@ export interface FeishuProjectSyncResponse {
 
 export interface FeishuProjectSyncRequest {
   work_item_id?: string;
+  /** Manual-sync lookback window in days. Defaults to 30 and is capped at 180 server-side. */
+  lookback_days?: number;
 }
 
 export interface FeishuProjectSyncRun {

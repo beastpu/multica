@@ -38,8 +38,14 @@ const (
 	feishuProjectInitialLookback   = 24 * time.Hour
 	feishuProjectManualLookback    = 30 * 24 * time.Hour
 	feishuProjectIncrementalReplay = 10 * time.Minute
-	feishuProjectSyncMaxPages      = 1000
-	feishuProjectAttachmentMaxSize = 20 << 20
+	// feishuProjectDefaultManualLookbackDays / feishuProjectMaxManualLookbackDays
+	// bound a user-selected manual-sync window. Feishu Project enforces a
+	// monthly open-platform quota, so an unbounded lookback could exhaust it;
+	// half a year is the largest window we expose.
+	feishuProjectDefaultManualLookbackDays = 30
+	feishuProjectMaxManualLookbackDays     = 180
+	feishuProjectSyncMaxPages              = 1000
+	feishuProjectAttachmentMaxSize         = 20 << 20
 	// Tolerance before a Feishu updated_at that exceeds our clock is treated as
 	// bad data and logged. Absorbs normal multica/Feishu clock skew so the
 	// warning only fires on genuinely future-dated items. The watermark value
@@ -278,6 +284,10 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 	if s.Client == nil {
 		s.Client = NewFeishuProjectClient()
 	}
+	var syncStartedAt time.Time
+	if run.StartedAt.Valid {
+		syncStartedAt = run.StartedAt.Time
+	}
 	summary := FeishuProjectSyncSummary{}
 	var summaryMu sync.Mutex
 	var syncErr error
@@ -380,7 +390,7 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 		}
 	}
 	if syncErr == nil {
-		driftFixed, driftErr := s.reconcileLocalStatusDrift(ctx, cfg)
+		driftFixed, driftErr := s.reconcileLocalStatusDrift(ctx, cfg, syncStartedAt)
 		if driftErr != nil {
 			summary.Errors++
 			syncErr = driftErr
@@ -840,13 +850,24 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	return "created", 0, nil
 }
 
-func (s *FeishuProjectSyncService) reconcileLocalStatusDrift(ctx context.Context, cfg db.FeishuProjectIntegration) (int, error) {
+func (s *FeishuProjectSyncService) reconcileLocalStatusDrift(ctx context.Context, cfg db.FeishuProjectIntegration, syncStartedAt time.Time) (int, error) {
+	// A zero run-start means we can't tell which bindings this sync actually
+	// touched, so reconciling any of them risks clobbering a manual local status
+	// edit with a stale binding's mapping. Skip entirely rather than guess.
+	if syncStartedAt.IsZero() {
+		return 0, nil
+	}
 	cursor := pgtype.UUID{Valid: true}
+	syncedSince := pgtype.Timestamptz{Time: syncStartedAt, Valid: true}
 	updated := 0
 	for {
-		bindings, err := s.Queries.ListFeishuProjectIssueBindingsByIntegration(ctx, db.ListFeishuProjectIssueBindingsByIntegrationParams{
+		// Only bindings re-synced during this run are fresh enough to drive a
+		// status overwrite; the query filters out stale ones so a large
+		// integration's idle bindings never reach this loop.
+		bindings, err := s.Queries.ListFeishuProjectIssueBindingsSyncedSince(ctx, db.ListFeishuProjectIssueBindingsSyncedSinceParams{
 			IntegrationID: cfg.ID,
 			ID:            cursor,
+			LastSyncedAt:  syncedSince,
 			Limit:         feishuProjectOrphanBindingPageSize,
 		})
 		if err != nil {
@@ -1873,6 +1894,21 @@ func feishuProjectSyncSinceUnixMilli(cfg db.FeishuProjectIntegration, now time.T
 
 func feishuProjectManualSyncSinceUnixMilli(now time.Time) int64 {
 	return now.Add(-feishuProjectManualLookback).UnixMilli()
+}
+
+// FeishuProjectManualSinceUnixMilli converts a user-selected manual-sync
+// lookback window (in days) into an updated_at>= start in unix-millis. A
+// non-positive value defaults to feishuProjectDefaultManualLookbackDays and
+// anything larger than feishuProjectMaxManualLookbackDays is clamped down. It
+// returns the start and the effective day count actually applied.
+func FeishuProjectManualSinceUnixMilli(days int, now time.Time) (sinceMs int64, effectiveDays int) {
+	if days <= 0 {
+		days = feishuProjectDefaultManualLookbackDays
+	}
+	if days > feishuProjectMaxManualLookbackDays {
+		days = feishuProjectMaxManualLookbackDays
+	}
+	return now.Add(-time.Duration(days) * 24 * time.Hour).UnixMilli(), days
 }
 
 // feishuProjectSyncSince computes the legacy local-clock-based incremental
