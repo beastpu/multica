@@ -249,6 +249,8 @@
     "feishu_project_saved": "已保存飞书项目集成",
     "feishu_project_save_failed": "保存飞书项目集成失败",
     "feishu_project_sync_now": "立即同步",
+    "feishu_project_sync_range_label": "同步时间范围",
+    "feishu_project_sync_range_days": "最近 {{days}} 天",
     "feishu_project_syncing": "同步中...",
     "feishu_project_sync_progress": "正在同步飞书项目，完成后会刷新同步结果。",
     "feishu_project_sync_progress_count": "正在同步飞书项目：已处理 {{processed}} / {{total}}。",

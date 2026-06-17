@@ -63,6 +63,10 @@ import { FeishuProjectWorkItemTypesSection } from "./feishu-project-work-item-ty
 const NO_FIELD = "__none__";
 const NO_MATCH = "__none__";
 
+// Manual-sync lookback presets (days). First entry is the default; the largest
+// (half a year) matches the server-side cap in FeishuProjectManualSinceUnixMilli.
+const FEISHU_SYNC_LOOKBACK_DAY_OPTIONS = [30, 90, 180] as const;
+
 // Everything the unified Save button persists, normalized into one shape so the
 // server snapshot and the live draft serialize with an identical key order —
 // dirty detection is a plain JSON string comparison.
@@ -169,6 +173,7 @@ export function IntegrationsTab() {
   const [assignOpenItemsToOwnerAgent, setAssignOpenItemsToOwnerAgent] = useState(false);
   const [syncOnlyWorkspaceMemberItems, setSyncOnlyWorkspaceMemberItems] = useState(false);
   const [syncWorkItemId, setSyncWorkItemId] = useState("");
+  const [syncLookbackDays, setSyncLookbackDays] = useState<number>(FEISHU_SYNC_LOOKBACK_DAY_OPTIONS[0]);
   const [advancedSyncOpen, setAdvancedSyncOpen] = useState(false);
   // The synced type list (缺陷/工单/…), each entry with its own mappings and
   // optional static project route. Draft state; persisted on Save.
@@ -414,6 +419,7 @@ export function IntegrationsTab() {
     try {
       const resp = await api.syncFeishuProjectIntegration(wsId, {
         work_item_id: workItemId || undefined,
+        lookback_days: workItemId ? undefined : syncLookbackDays,
       });
       queryClient.setQueryData(feishuProjectKeys.sync(wsId), resp);
       setActiveSyncRunId(resp.run?.id ?? null);
@@ -729,6 +735,30 @@ export function IntegrationsTab() {
                     )}
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
+                    <Select
+                      value={String(syncLookbackDays)}
+                      onValueChange={(value) =>
+                        setSyncLookbackDays(Number(value) || FEISHU_SYNC_LOOKBACK_DAY_OPTIONS[0])
+                      }
+                      disabled={syncRunning || !feishuProject?.id}
+                    >
+                      <SelectTrigger
+                        size="sm"
+                        className="w-32"
+                        aria-label={t(($) => $.integrations.feishu_project_sync_range_label)}
+                      >
+                        <span className="min-w-0 flex-1 truncate text-left">
+                          {t(($) => $.integrations.feishu_project_sync_range_days, { days: syncLookbackDays })}
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent align="end">
+                        {FEISHU_SYNC_LOOKBACK_DAY_OPTIONS.map((days) => (
+                          <SelectItem key={days} value={String(days)}>
+                            {t(($) => $.integrations.feishu_project_sync_range_days, { days })}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <Button
                       size="sm"
                       variant="outline"

@@ -578,6 +578,67 @@ func (q *Queries) ListFeishuProjectIssueBindingsByIntegration(ctx context.Contex
 	return items, nil
 }
 
+const listFeishuProjectIssueBindingsSyncedSince = `-- name: ListFeishuProjectIssueBindingsSyncedSince :many
+SELECT id, workspace_id, integration_id, issue_id, project_key, work_item_type, work_item_id, external_identifier, external_url, external_status_label, last_external_updated_at, last_synced_at, created_at, updated_at FROM feishu_project_issue_binding
+WHERE integration_id = $1 AND id > $2 AND last_synced_at >= $3
+ORDER BY id ASC
+LIMIT $4
+`
+
+type ListFeishuProjectIssueBindingsSyncedSinceParams struct {
+	IntegrationID pgtype.UUID        `json:"integration_id"`
+	ID            pgtype.UUID        `json:"id"`
+	LastSyncedAt  pgtype.Timestamptz `json:"last_synced_at"`
+	Limit         int32              `json:"limit"`
+}
+
+// Like ListFeishuProjectIssueBindingsByIntegration but only returns bindings
+// whose last_synced_at is at or after the cutoff. The status-drift reconcile
+// uses this so it revisits only bindings the current sync run actually touched,
+// skipping stale ones whose external_status_label no longer reflects reality
+// (the work item left the mapped-status filter and was never re-fetched). The
+// WHERE filter keeps a large integration's idle bindings out of the page scan
+// instead of paging the whole set and discarding them in Go.
+func (q *Queries) ListFeishuProjectIssueBindingsSyncedSince(ctx context.Context, arg ListFeishuProjectIssueBindingsSyncedSinceParams) ([]FeishuProjectIssueBinding, error) {
+	rows, err := q.db.Query(ctx, listFeishuProjectIssueBindingsSyncedSince,
+		arg.IntegrationID,
+		arg.ID,
+		arg.LastSyncedAt,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FeishuProjectIssueBinding{}
+	for rows.Next() {
+		var i FeishuProjectIssueBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.IntegrationID,
+			&i.IssueID,
+			&i.ProjectKey,
+			&i.WorkItemType,
+			&i.WorkItemID,
+			&i.ExternalIdentifier,
+			&i.ExternalUrl,
+			&i.ExternalStatusLabel,
+			&i.LastExternalUpdatedAt,
+			&i.LastSyncedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFeishuProjectLabelSyncBindingsByIssue = `-- name: ListFeishuProjectLabelSyncBindingsByIssue :many
 SELECT integration_id, workspace_id, issue_id, rule_id, label_id, created_at, updated_at FROM feishu_project_label_sync_binding
 WHERE integration_id = $1 AND issue_id = $2

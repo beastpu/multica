@@ -1227,6 +1227,40 @@ func TestFeishuProjectSinceUnixMilliForTrigger(t *testing.T) {
 	}
 }
 
+func TestFeishuProjectManualSinceUnixMilli(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	day := 24 * time.Hour
+
+	tests := []struct {
+		name     string
+		days     int
+		wantDays int
+	}{
+		{name: "zero defaults to 30", days: 0, wantDays: 30},
+		{name: "negative defaults to 30", days: -5, wantDays: 30},
+		{name: "default 30 unchanged", days: 30, wantDays: 30},
+		{name: "midrange honored", days: 90, wantDays: 90},
+		{name: "half year max honored", days: 180, wantDays: 180},
+		{name: "above max clamps to 180", days: 365, wantDays: 180},
+		{name: "single day honored", days: 1, wantDays: 1},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gotMs, gotDays := FeishuProjectManualSinceUnixMilli(tc.days, now)
+			if gotDays != tc.wantDays {
+				t.Fatalf("effectiveDays = %d, want %d", gotDays, tc.wantDays)
+			}
+			wantMs := now.Add(-time.Duration(tc.wantDays) * day).UnixMilli()
+			if gotMs != wantMs {
+				t.Fatalf("sinceMs = %d, want %d", gotMs, wantMs)
+			}
+		})
+	}
+}
+
 // /work_item/filter must receive opts.SinceUnixMilli verbatim when set,
 // so callers (Sync) can pick the lookback policy in one place.
 func TestFeishuProjectQueryWorkItemsHonorsExplicitSinceFromOpts(t *testing.T) {
