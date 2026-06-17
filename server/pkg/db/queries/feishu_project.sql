@@ -136,6 +136,19 @@ WHERE integration_id = $1 AND id > $2
 ORDER BY id ASC
 LIMIT $3;
 
+-- name: ListFeishuProjectIssueBindingsSyncedSince :many
+-- Like ListFeishuProjectIssueBindingsByIntegration but only returns bindings
+-- whose last_synced_at is at or after the cutoff. The status-drift reconcile
+-- uses this so it revisits only bindings the current sync run actually touched,
+-- skipping stale ones whose external_status_label no longer reflects reality
+-- (the work item left the mapped-status filter and was never re-fetched). The
+-- WHERE filter keeps a large integration's idle bindings out of the page scan
+-- instead of paging the whole set and discarding them in Go.
+SELECT * FROM feishu_project_issue_binding
+WHERE integration_id = $1 AND id > $2 AND last_synced_at >= $3
+ORDER BY id ASC
+LIMIT $4;
+
 -- name: CreateFeishuProjectSyncRun :one
 INSERT INTO feishu_project_sync_run (
     integration_id, workspace_id, status, trigger

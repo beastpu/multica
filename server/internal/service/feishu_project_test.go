@@ -569,60 +569,6 @@ func TestFeishuProjectMappedLocalStatusRequiresNonEmptyMapping(t *testing.T) {
 	}
 }
 
-func TestFeishuProjectBindingFreshForStatusDrift(t *testing.T) {
-	startedAt := time.Date(2026, 6, 17, 20, 41, 47, 0, time.UTC)
-	tests := []struct {
-		name      string
-		binding   db.FeishuProjectIssueBinding
-		syncStart time.Time
-		want      bool
-	}{
-		{
-			name: "stale binding from earlier sync",
-			binding: db.FeishuProjectIssueBinding{
-				LastSyncedAt: pgtype.Timestamptz{Time: startedAt.Add(-time.Second), Valid: true},
-			},
-			syncStart: startedAt,
-		},
-		{
-			name: "binding refreshed during this sync",
-			binding: db.FeishuProjectIssueBinding{
-				LastSyncedAt: pgtype.Timestamptz{Time: startedAt.Add(time.Second), Valid: true},
-			},
-			syncStart: startedAt,
-			want:      true,
-		},
-		{
-			name: "binding refreshed exactly at run start",
-			binding: db.FeishuProjectIssueBinding{
-				LastSyncedAt: pgtype.Timestamptz{Time: startedAt, Valid: true},
-			},
-			syncStart: startedAt,
-			want:      true,
-		},
-		{
-			name: "missing binding timestamp",
-			binding: db.FeishuProjectIssueBinding{
-				LastSyncedAt: pgtype.Timestamptz{},
-			},
-			syncStart: startedAt,
-		},
-		{
-			name: "missing sync start",
-			binding: db.FeishuProjectIssueBinding{
-				LastSyncedAt: pgtype.Timestamptz{Time: startedAt.Add(time.Second), Valid: true},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := feishuProjectBindingFreshForStatusDrift(tt.binding, tt.syncStart); got != tt.want {
-				t.Fatalf("fresh = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestFeishuProjectStaticRoute(t *testing.T) {
 	projectID := "0198cbb4-31a0-7d33-9e2f-1b08b1f2a001"
 	cfg := db.FeishuProjectIntegration{

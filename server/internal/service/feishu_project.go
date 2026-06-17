@@ -851,12 +851,23 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 }
 
 func (s *FeishuProjectSyncService) reconcileLocalStatusDrift(ctx context.Context, cfg db.FeishuProjectIntegration, syncStartedAt time.Time) (int, error) {
+	// A zero run-start means we can't tell which bindings this sync actually
+	// touched, so reconciling any of them risks clobbering a manual local status
+	// edit with a stale binding's mapping. Skip entirely rather than guess.
+	if syncStartedAt.IsZero() {
+		return 0, nil
+	}
 	cursor := pgtype.UUID{Valid: true}
+	syncedSince := pgtype.Timestamptz{Time: syncStartedAt, Valid: true}
 	updated := 0
 	for {
-		bindings, err := s.Queries.ListFeishuProjectIssueBindingsByIntegration(ctx, db.ListFeishuProjectIssueBindingsByIntegrationParams{
+		// Only bindings re-synced during this run are fresh enough to drive a
+		// status overwrite; the query filters out stale ones so a large
+		// integration's idle bindings never reach this loop.
+		bindings, err := s.Queries.ListFeishuProjectIssueBindingsSyncedSince(ctx, db.ListFeishuProjectIssueBindingsSyncedSinceParams{
 			IntegrationID: cfg.ID,
 			ID:            cursor,
+			LastSyncedAt:  syncedSince,
 			Limit:         feishuProjectOrphanBindingPageSize,
 		})
 		if err != nil {
@@ -868,9 +879,6 @@ func (s *FeishuProjectSyncService) reconcileLocalStatusDrift(ctx context.Context
 
 		for _, binding := range bindings {
 			if !binding.ExternalStatusLabel.Valid {
-				continue
-			}
-			if !feishuProjectBindingFreshForStatusDrift(binding, syncStartedAt) {
 				continue
 			}
 			targetStatus := FeishuProjectStatusMappingFor(cfg, binding.WorkItemType)[binding.ExternalStatusLabel.String]
@@ -907,13 +915,6 @@ func (s *FeishuProjectSyncService) reconcileLocalStatusDrift(ctx context.Context
 			return updated, nil
 		}
 	}
-}
-
-func feishuProjectBindingFreshForStatusDrift(binding db.FeishuProjectIssueBinding, syncStartedAt time.Time) bool {
-	if syncStartedAt.IsZero() || !binding.LastSyncedAt.Valid {
-		return false
-	}
-	return !binding.LastSyncedAt.Time.Before(syncStartedAt)
 }
 
 func (s *FeishuProjectSyncService) syncIssueLabels(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, issueID pgtype.UUID) (bool, error) {
