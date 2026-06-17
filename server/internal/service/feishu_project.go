@@ -284,6 +284,10 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 	if s.Client == nil {
 		s.Client = NewFeishuProjectClient()
 	}
+	var syncStartedAt time.Time
+	if run.StartedAt.Valid {
+		syncStartedAt = run.StartedAt.Time
+	}
 	summary := FeishuProjectSyncSummary{}
 	var summaryMu sync.Mutex
 	var syncErr error
@@ -386,7 +390,7 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 		}
 	}
 	if syncErr == nil {
-		driftFixed, driftErr := s.reconcileLocalStatusDrift(ctx, cfg)
+		driftFixed, driftErr := s.reconcileLocalStatusDrift(ctx, cfg, syncStartedAt)
 		if driftErr != nil {
 			summary.Errors++
 			syncErr = driftErr
@@ -846,7 +850,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	return "created", 0, nil
 }
 
-func (s *FeishuProjectSyncService) reconcileLocalStatusDrift(ctx context.Context, cfg db.FeishuProjectIntegration) (int, error) {
+func (s *FeishuProjectSyncService) reconcileLocalStatusDrift(ctx context.Context, cfg db.FeishuProjectIntegration, syncStartedAt time.Time) (int, error) {
 	cursor := pgtype.UUID{Valid: true}
 	updated := 0
 	for {
@@ -864,6 +868,9 @@ func (s *FeishuProjectSyncService) reconcileLocalStatusDrift(ctx context.Context
 
 		for _, binding := range bindings {
 			if !binding.ExternalStatusLabel.Valid {
+				continue
+			}
+			if !feishuProjectBindingFreshForStatusDrift(binding, syncStartedAt) {
 				continue
 			}
 			targetStatus := FeishuProjectStatusMappingFor(cfg, binding.WorkItemType)[binding.ExternalStatusLabel.String]
@@ -900,6 +907,13 @@ func (s *FeishuProjectSyncService) reconcileLocalStatusDrift(ctx context.Context
 			return updated, nil
 		}
 	}
+}
+
+func feishuProjectBindingFreshForStatusDrift(binding db.FeishuProjectIssueBinding, syncStartedAt time.Time) bool {
+	if syncStartedAt.IsZero() || !binding.LastSyncedAt.Valid {
+		return false
+	}
+	return !binding.LastSyncedAt.Time.Before(syncStartedAt)
 }
 
 func (s *FeishuProjectSyncService) syncIssueLabels(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, issueID pgtype.UUID) (bool, error) {
