@@ -383,6 +383,11 @@ function useResignedInlineMediaURL(
 // API calls via Authorization: Bearer. Native <img> loads cannot attach that
 // header, so API-shaped attachment URLs need a client-side authenticated fetch
 // and a temporary blob: URL.
+//
+// Do not use this as a generic Desktop/web fallback. Those clients have working
+// native resource auth paths: web has same-site cookies, and desktop installs
+// an auth cookie into Electron's session. Pulling them through blob fetches
+// bypasses those paths and has regressed normal image rendering before.
 const EMBEDDED_SESSION_TOKEN_KEY = "shipToken";
 
 function hasEmbeddedSessionToken(): boolean {
@@ -436,7 +441,7 @@ function useAuthenticatedBlobMediaURL(
     enabled &&
     !!id &&
     isAttachmentAPIURL(pickedUrl) &&
-    (hasEmbeddedSessionToken() || (api.getBaseUrl?.() ?? "") !== "") &&
+    hasEmbeddedSessionToken() &&
     typeof URL !== "undefined" &&
     typeof URL.createObjectURL === "function";
 
@@ -448,7 +453,7 @@ function useAuthenticatedBlobMediaURL(
       return undefined;
     }
 
-    api.getAttachmentBlobContent(id)
+    api.getAttachmentBlobContent(id, pickedUrl)
       .then((blob) => {
         if (cancelled) return;
         objectUrl = URL.createObjectURL(blob);
