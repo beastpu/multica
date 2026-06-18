@@ -8,6 +8,7 @@ import {
 
 const ATTACHMENT_ID = "11111111-2222-3333-4444-555555555555";
 const ATTACHMENT_DOWNLOAD = `/api/attachments/${ATTACHMENT_ID}/download`;
+const ATTACHMENT_CONTENT = `/api/attachments/${ATTACHMENT_ID}/content?workspace_id=ws-1`;
 
 const allowedClickHrefs = [
   "/uploads/ok",
@@ -16,6 +17,7 @@ const allowedClickHrefs = [
   "http://localhost:8080/uploads/x.png",
   "HTTPS://CDN.EXAMPLE.COM/x",
   ATTACHMENT_DOWNLOAD,
+  ATTACHMENT_CONTENT,
 ];
 
 const parsedAllowedFileCardHrefs = [
@@ -24,6 +26,7 @@ const parsedAllowedFileCardHrefs = [
   "https://cdn.example.com/x.md",
   "http://localhost:8080/uploads/x.md",
   ATTACHMENT_DOWNLOAD,
+  ATTACHMENT_CONTENT,
 ];
 
 const rejectedFileCardHrefs = [
@@ -34,7 +37,6 @@ const rejectedFileCardHrefs = [
   "/../api/x",
   "/api/x",
   "/api/internal/x",
-  `/api/attachments/${ATTACHMENT_ID}/content`,
   `/api/attachments/${ATTACHMENT_ID}`,
   "/api/attachments/not-a-uuid/download",
   "/api/attachments//download",
@@ -124,8 +126,8 @@ describe("preprocessFileCards (integration)", () => {
   // separated from adjacent content.
   it("blank-line separates the file-card div from an adjacent image", () => {
     const md =
-      "!file[log.log](/api/attachments/a/content?workspace_id=w)\n" +
-      "![shot.png](/api/attachments/b/content?workspace_id=w)";
+      `!file[log.log](${ATTACHMENT_CONTENT})\n` +
+      `![shot.png](/api/attachments/22222222-3333-4444-5555-666666666666/content?workspace_id=ws-1)`;
     const out = preprocessFileCards(md, cdn);
     expect(out).toContain("![shot.png]"); // image line preserved untouched
     expect(out).toContain("</div>\n\n![shot.png]"); // blank line before the image
