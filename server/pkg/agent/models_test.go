@@ -57,6 +57,29 @@ func TestListModelsCopilotFallsBackToStatic(t *testing.T) {
 	}
 }
 
+func TestClaudeStaticModelsExposesFable5(t *testing.T) {
+	models := claudeStaticModels()
+	ids := map[string]Model{}
+	defaults := 0
+	for _, m := range models {
+		ids[m.ID] = m
+		if m.Default {
+			defaults++
+		}
+	}
+
+	fable, ok := ids["claude-fable-5"]
+	if !ok {
+		t.Fatalf("missing Claude Fable 5 in: %+v", models)
+	}
+	if fable.Label != "Claude Fable 5" || fable.Provider != "anthropic" || fable.Default {
+		t.Errorf("unexpected Fable entry: %+v", fable)
+	}
+	if defaults != 1 || !ids["claude-sonnet-4-6"].Default {
+		t.Errorf("expected Sonnet 4.6 to remain the sole default, got defaults=%d models=%+v", defaults, models)
+	}
+}
+
 func TestGeminiStaticModelsExposesAliasesAndGemini3(t *testing.T) {
 	// Gemini CLI has no `models list` subcommand, so we expose the
 	// CLI's own aliases (auto / pro / flash / flash-lite) plus
@@ -123,6 +146,78 @@ func TestCodexStaticModelsExposesGPT55(t *testing.T) {
 	}
 	if defaults != 1 {
 		t.Errorf("expected exactly one default Codex entry, got %d", defaults)
+	}
+}
+
+func TestModelKnownIncompatibleWithProvider(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider string
+		model    string
+		want     bool
+	}{
+		{
+			name:     "claude model is incompatible with codex",
+			provider: "codex",
+			model:    "claude-sonnet-4-6",
+			want:     true,
+		},
+		{
+			name:     "codex model is compatible with codex",
+			provider: "codex",
+			model:    "gpt-5.5",
+			want:     false,
+		},
+		{
+			name:     "codex model is incompatible with claude",
+			provider: "claude",
+			model:    "o3",
+			want:     true,
+		},
+		{
+			name:     "exact claude model is compatible with claude",
+			provider: "claude",
+			model:    "claude-opus-4-7",
+			want:     false,
+		},
+		{
+			name:     "provider-prefixed openai model is incompatible with codex",
+			provider: "codex",
+			model:    "openai/gpt-4o",
+			want:     true,
+		},
+		{
+			name:     "provider-prefixed anthropic model is incompatible with claude",
+			provider: "claude",
+			model:    "anthropic/claude-opus-4.7",
+			want:     true,
+		},
+		{
+			name:     "known openai-looking model outside codex catalog is incompatible",
+			provider: "codex",
+			model:    "gpt-99",
+			want:     true,
+		},
+		{
+			name:     "unknown custom model is not classified",
+			provider: "codex",
+			model:    "private-lab-model",
+			want:     false,
+		},
+		{
+			name:     "unknown target provider does not clear",
+			provider: "opencode",
+			model:    "claude-sonnet-4-6",
+			want:     false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ModelKnownIncompatibleWithProvider(tc.provider, tc.model); got != tc.want {
+				t.Fatalf("ModelKnownIncompatibleWithProvider(%q, %q) = %v, want %v", tc.provider, tc.model, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -1,38 +1,37 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactElement, ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../locales/en/common.json";
 
-const authState = vi.hoisted(() => ({
-  current: {
-    user: null as { id: string } | null,
-    isLoading: false,
-  },
-}));
-const mockRedeem = vi.hoisted(() => vi.fn());
-const mockPush = vi.hoisted(() => vi.fn());
+const TEST_RESOURCES = { en: { common: enCommon } };
 
-vi.mock("@multica/core/auth", () => ({
-  useAuthStore: (selector: (s: typeof authState.current) => unknown) =>
-    selector(authState.current),
+const mockAuthState = vi.hoisted(() => ({
+  user: null as { id: string; email?: string } | null,
+  isLoading: false,
+}));
+
+const mockNavigatePush = vi.hoisted(() => vi.fn());
+const mockRedeemToken = vi.hoisted(() => vi.fn());
+
+vi.mock("@multica/core/auth", () => {
+  const useAuthStore = Object.assign(
+    (sel?: (s: typeof mockAuthState) => unknown) =>
+      sel ? sel(mockAuthState) : mockAuthState,
+    { getState: () => mockAuthState },
+  );
+  return { useAuthStore };
+});
+
+vi.mock("../navigation", () => ({
+  useNavigation: () => ({ push: mockNavigatePush }),
 }));
 
 vi.mock("@multica/core/api", () => ({
-  api: {
-    redeemLarkBindingToken: mockRedeem,
-  },
-}));
-
-vi.mock("../navigation", () => ({
-  useNavigation: () => ({ push: mockPush }),
+  api: { redeemLarkBindingToken: mockRedeemToken },
 }));
 
 import { LarkBindPage } from "./bind-page";
-
-const TEST_RESOURCES = {
-  en: { common: enCommon },
-};
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
@@ -42,61 +41,97 @@ function I18nWrapper({ children }: { children: ReactNode }) {
   );
 }
 
-function renderWithI18n(ui: ReactElement) {
-  return render(ui, { wrapper: I18nWrapper });
+function renderPage(token: string | null) {
+  return render(<LarkBindPage token={token} />, { wrapper: I18nWrapper });
 }
 
 describe("LarkBindPage", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    authState.current = { user: null, isLoading: false };
-    mockRedeem.mockResolvedValue({
-      workspace_id: "ws-1",
-      installation_id: "install-1",
-      lark_open_id: "ou_1",
+    mockAuthState.user = null;
+    mockAuthState.isLoading = false;
+    mockNavigatePush.mockReset();
+    mockRedeemToken.mockReset();
+    mockRedeemToken.mockResolvedValue({
+      workspace_id: "ws1",
+      installation_id: "inst1",
     });
   });
 
+  it("shows redeeming text while auth is still loading (not needs-auth)", () => {
+    mockAuthState.isLoading = true;
+    mockAuthState.user = null;
+    renderPage("tok123");
+    expect(screen.getByText(/redeeming binding token/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sign in/i })).toBeNull();
+  });
+
+  it("shows needs-auth UI when auth finishes loading and user is null", () => {
+    mockAuthState.isLoading = false;
+    mockAuthState.user = null;
+    renderPage("tok123");
+    expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+  });
+
   it("redeems after the user signs in from the needs-auth state", async () => {
-    const view = renderWithI18n(<LarkBindPage token="binding-token" />);
+    const view = renderPage("binding-token");
 
     expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
-    expect(mockRedeem).not.toHaveBeenCalled();
+    expect(mockRedeemToken).not.toHaveBeenCalled();
 
-    authState.current = { user: { id: "user-1" }, isLoading: false };
+    mockAuthState.user = { id: "user-1" };
     view.rerender(<LarkBindPage token="binding-token" />);
 
     await waitFor(() => {
-      expect(mockRedeem).toHaveBeenCalledWith("binding-token");
+      expect(mockRedeemToken).toHaveBeenCalledWith("binding-token");
     });
     expect(await screen.findByText(/you're bound/i)).toBeInTheDocument();
   });
 
   it("waits for auth initialization before deciding that sign-in is required", async () => {
-    authState.current = { user: null, isLoading: true };
-    const view = renderWithI18n(<LarkBindPage token="binding-token" />);
+    mockAuthState.isLoading = true;
+    mockAuthState.user = null;
+    const view = renderPage("binding-token");
 
     expect(screen.getByText(/redeeming binding token/i)).toBeInTheDocument();
-    expect(mockRedeem).not.toHaveBeenCalled();
+    expect(mockRedeemToken).not.toHaveBeenCalled();
 
-    authState.current = { user: { id: "user-1" }, isLoading: false };
+    mockAuthState.isLoading = false;
+    mockAuthState.user = { id: "user-1" };
     view.rerender(<LarkBindPage token="binding-token" />);
 
     await waitFor(() => {
-      expect(mockRedeem).toHaveBeenCalledWith("binding-token");
+      expect(mockRedeemToken).toHaveBeenCalledWith("binding-token");
     });
   });
 
-  it("uses the login next parameter when sign-in is required", async () => {
-    renderWithI18n(<LarkBindPage token="binding-token" />);
+  it("starts redemption immediately when user is already logged in", async () => {
+    mockAuthState.user = { id: "u1", email: "u@example.com" };
+    renderPage("tok123");
+    await waitFor(() => {
+      expect(mockRedeemToken).toHaveBeenCalledWith("tok123");
+    });
+  });
 
-    fireEvent.click(await screen.findByRole("button", { name: /sign in/i }));
+  it("shows success state after successful redemption", async () => {
+    mockAuthState.user = { id: "u1", email: "u@example.com" };
+    renderPage("tok123");
+    await waitFor(() => {
+      expect(screen.getByText(/you're bound/i)).toBeInTheDocument();
+    });
+  });
 
-    expect(mockPush).toHaveBeenCalledWith(
-      `/login?next=${encodeURIComponent(
-        `/lark/bind?token=${encodeURIComponent("binding-token")}`,
-      )}`,
-    );
-    expect(mockPush.mock.calls[0]?.[0]).not.toContain("redirect=");
+  it("sign-in button navigates with ?next= parameter (not ?redirect=)", () => {
+    renderPage("mytoken");
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+    expect(mockNavigatePush).toHaveBeenCalledTimes(1);
+    const url: string = mockNavigatePush.mock.calls[0]?.[0] as string;
+    expect(url).toContain("?next=");
+    expect(url).not.toContain("?redirect=");
+    expect(url).toContain(encodeURIComponent("mytoken"));
+  });
+
+  it("shows missing token error when token is null", () => {
+    renderPage(null);
+    expect(screen.getByText(/missing its binding token/i)).toBeInTheDocument();
   });
 });

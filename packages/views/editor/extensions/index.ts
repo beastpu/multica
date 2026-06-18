@@ -52,6 +52,7 @@ import { FileCardExtension } from "./file-card";
 import { ImageView } from "./image-view";
 import { BlockMathExtension, InlineMathExtension } from "./math";
 import { HighlightExtension } from "./highlight";
+import { AutolinkEmailRepairExtension } from "./autolink-email-repair";
 
 const lowlight = createLowlight(common);
 
@@ -179,8 +180,14 @@ export function createEditorExtensions(
     // linkOnPaste relies on Link's handlePaste plugin firing first;
     // markdownPaste's handlePaste is a catch-all that returns true.
     LinkExtension,
+    AutolinkEmailRepairExtension,
     ImageExtension,
-    Table.configure({ resizable: false }),
+    // renderWrapper wraps the table in `<div class="tableWrapper">` (the same
+    // wrapper the resizable NodeView emits), which prose.css styles with
+    // `overflow-x: auto`. Without it a wide table is a bare <table> that can't
+    // shrink below min-content, so the horizontal scrollbar lands on the
+    // page-level scroll container instead of the table itself.
+    Table.configure({ resizable: false, renderWrapper: true }),
     TableRow,
     TableHeader,
     TableCell,

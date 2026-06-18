@@ -4,6 +4,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { ArrowUp, Loader2 } from "lucide-react";
 import { ContentEditor, type ContentEditorRef, useFileDropZone, FileDropOverlay } from "../../editor";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
+import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { api } from "@multica/core/api";
@@ -12,6 +13,8 @@ import { contentReferencesAttachment } from "@multica/core/types";
 import { useCommentDraftStore, type CommentDraftKey } from "@multica/core/issues/stores";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
+import { CommentTriggerChips } from "./comment-trigger-chips";
+import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -19,10 +22,11 @@ import { useT } from "../../i18n";
 
 interface ReplyInputProps {
   issueId: string;
+  parentId: string;
   placeholder?: string;
   avatarType: string;
   avatarId: string;
-  onSubmit: (content: string, attachmentIds?: string[]) => Promise<void>;
+  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[]) => Promise<void>;
   size?: "sm" | "default";
   /** When set, hydrates/persists the in-progress reply via the draft store.
    *  Required for replies inside virtualized timeline threads, where the
@@ -36,6 +40,7 @@ interface ReplyInputProps {
 
 function ReplyInput({
   issueId,
+  parentId,
   placeholder,
   avatarType,
   avatarId,
@@ -51,10 +56,13 @@ function ReplyInput({
   const initialDraft = draftKey
     ? useCommentDraftStore.getState().getDraft(draftKey)
     : undefined;
+  const [content, setContent] = useState(initialDraft ?? "");
   const setDraft = useCommentDraftStore((s) => s.setDraft);
   const clearDraft = useCommentDraftStore((s) => s.clearDraft);
   const [isEmpty, setIsEmpty] = useState(!initialDraft?.trim());
   const [submitting, setSubmitting] = useState(false);
+  const [suppressedAgentIds, setSuppressedAgentIds] = useState<Set<string>>(() => new Set());
+  const triggerPreview = useCommentTriggerPreview({ issueId, parentId, content });
   // Attachments uploaded in this composer session — see CommentInput for the
   // rationale (drives both submit-time attachment_ids and editor previews).
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
@@ -87,6 +95,27 @@ function ReplyInput({
     return result;
   }, [uploadWithToast, issueId]);
 
+  useEffect(() => {
+    setSuppressedAgentIds(new Set());
+  }, [issueId, parentId]);
+
+  useEffect(() => {
+    const visible = new Set(triggerPreview.agents.map((agent) => agent.id));
+    setSuppressedAgentIds((prev) => {
+      const next = new Set([...prev].filter((id) => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [triggerPreview.agents]);
+
+  const toggleSuppressedAgent = useCallback((agentId: string) => {
+    setSuppressedAgentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(agentId)) next.delete(agentId);
+      else next.add(agentId);
+      return next;
+    });
+  }, []);
+
   const handleSubmit = async () => {
     const content = editorRef.current?.getMarkdown()?.replace(/(\n\s*)+$/, "").trim();
     if (!content || submitting) return;
@@ -96,11 +125,20 @@ function ReplyInput({
     const activeIds = pendingAttachments
       .filter((a) => contentReferencesAttachment(content, a))
       .map((a) => a.id);
+    const suppressAgentIds = triggerPreview.agents
+      .filter((agent) => suppressedAgentIds.has(agent.id))
+      .map((agent) => agent.id);
     setSubmitting(true);
     try {
-      await onSubmit(content, activeIds.length > 0 ? activeIds : undefined);
+      await onSubmit(
+        content,
+        activeIds.length > 0 ? activeIds : undefined,
+        suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
+      );
       editorRef.current?.clearContent();
+      setContent("");
       setIsEmpty(true);
+      setSuppressedAgentIds(new Set());
       setPendingAttachments([]);
       if (draftKey) clearDraft(draftKey);
     } finally {
@@ -122,7 +160,7 @@ function ReplyInput({
         {...dropZoneProps}
         className={cn(
           "relative min-w-0 flex-1 flex flex-col",
-          !isEmpty && "pb-7",
+          !isEmpty && "pb-9",
         )}
       >
         <div className="flex-1 min-h-0 overflow-y-auto">
@@ -131,6 +169,7 @@ function ReplyInput({
             defaultValue={initialDraft}
             placeholder={placeholderText}
             onUpdate={(md) => {
+              setContent(md);
               setIsEmpty(!md.trim());
               if (draftKey) {
                 if (md.trim().length > 0) setDraft(draftKey, md);
@@ -146,29 +185,32 @@ function ReplyInput({
             slashCommandMode="command"
           />
         </div>
+        <div className="absolute bottom-0 left-0 right-24 min-w-0">
+          <CommentTriggerChips
+            agents={triggerPreview.agents}
+            suppressedAgentIds={suppressedAgentIds}
+            onToggle={toggleSuppressedAgent}
+          />
+        </div>
         <div className="absolute bottom-0 right-0 flex items-center gap-1">
           <FileUploadButton
             size="sm"
             multiple
             onSelect={(file) => editorRef.current?.uploadFile(file)}
           />
-          <button
+          <Button
             type="button"
+            variant={isEmpty ? "ghost" : "default"}
+            size="icon-xs"
             disabled={isEmpty || submitting}
             onClick={handleSubmit}
-            className={cn(
-              "inline-flex h-6 w-6 items-center justify-center rounded-full transition-colors disabled:pointer-events-none disabled:opacity-50",
-              isEmpty
-                ? "text-muted-foreground hover:bg-accent hover:text-foreground"
-                : "bg-primary text-primary-foreground hover:bg-primary/90",
-            )}
           >
             {submitting ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <ArrowUp className="h-3.5 w-3.5" />
             )}
-          </button>
+          </Button>
         </div>
         {isDragOver && <FileDropOverlay />}
       </div>
