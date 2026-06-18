@@ -70,6 +70,15 @@ type AgentResponse struct {
 	ArchivedBy    *string             `json:"archived_by"`
 }
 
+// runtimeConfigGatewayTokenMask is the placeholder the API substitutes for
+// any non-empty `runtime_config.gateway.token` (openclaw gateway mode, issue
+// #3260). The token is a bearer credential; surfacing the real value through
+// GET responses would let anyone with read access to the agent dump the
+// gateway secret. The mask is a sentinel — when the UI later PATCHes the
+// agent and submits the same mask verbatim under that field, the update
+// handler restores the persisted token instead of overwriting it.
+const runtimeConfigGatewayTokenMask = "***"
+
 func agentToResponse(a db.Agent) AgentResponse {
 	var rc any
 	if a.RuntimeConfig != nil {
@@ -78,6 +87,7 @@ func agentToResponse(a db.Agent) AgentResponse {
 	if rc == nil {
 		rc = map[string]any{}
 	}
+	maskGatewayToken(rc)
 
 	// Compute env metadata WITHOUT exposing the values. We unmarshal here
 	// only to count keys; the map never reaches the response. A coarse
@@ -134,6 +144,62 @@ func agentToResponse(a db.Agent) AgentResponse {
 		ArchivedAt:         timestampToPtr(a.ArchivedAt),
 		ArchivedBy:         uuidToPtr(a.ArchivedBy),
 	}
+}
+
+// maskGatewayToken replaces runtime_config.gateway.token with the public
+// mask sentinel when a non-empty value is present. No-op for any other
+// shape so non-openclaw / non-gateway agents pass through untouched.
+func maskGatewayToken(rc any) {
+	root, ok := rc.(map[string]any)
+	if !ok {
+		return
+	}
+	gw, ok := root["gateway"].(map[string]any)
+	if !ok {
+		return
+	}
+	tok, _ := gw["token"].(string)
+	if tok == "" {
+		return
+	}
+	gw["token"] = runtimeConfigGatewayTokenMask
+}
+
+// preserveMaskedGatewayToken substitutes the previously persisted gateway
+// token back into an incoming runtime_config when the request submitted the
+// public mask sentinel under `gateway.token`. Without this the next PATCH
+// after a GET would round-trip the masked sentinel into the database and
+// silently destroy the real secret. The previous value is taken from the
+// agent row the handler has just loaded for ownership / scoping checks.
+func preserveMaskedGatewayToken(incoming any, persistedRuntimeConfig []byte) {
+	root, ok := incoming.(map[string]any)
+	if !ok {
+		return
+	}
+	gw, ok := root["gateway"].(map[string]any)
+	if !ok {
+		return
+	}
+	tok, _ := gw["token"].(string)
+	if tok != runtimeConfigGatewayTokenMask {
+		return
+	}
+	// The incoming token is the mask — fish the real one out of the row.
+	var prev struct {
+		Gateway struct {
+			Token string `json:"token"`
+		} `json:"gateway"`
+	}
+	if len(persistedRuntimeConfig) == 0 {
+		// No prior token to keep; the field becomes effectively empty.
+		delete(gw, "token")
+		return
+	}
+	if err := json.Unmarshal(persistedRuntimeConfig, &prev); err != nil || prev.Gateway.Token == "" {
+		delete(gw, "token")
+		return
+	}
+	gw["token"] = prev.Gateway.Token
 }
 
 // RepoData holds repository information included in claim responses so the
@@ -200,29 +266,30 @@ type AgentTaskResponse struct {
 	// when WorkDir is empty, or when stripping leaves nothing. See
 	// relativeWorkDir() for the full rules. Older clients can still read
 	// WorkDir directly; newer UIs should prefer RelativeWorkDir.
-	RelativeWorkDir         string               `json:"relative_work_dir,omitempty"`
-	TriggerCommentID        *string              `json:"trigger_comment_id,omitempty"`        // comment that triggered this task
-	TriggerThreadID         string               `json:"trigger_thread_id,omitempty"`         // root comment ID for the triggering thread
-	TriggerCommentContent   string               `json:"trigger_comment_content,omitempty"`   // content of the triggering comment
-	TriggerSummary          *string              `json:"trigger_summary,omitempty"`           // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
-	TriggerAuthorType       string               `json:"trigger_author_type,omitempty"`       // "agent" or "member" — author kind of the triggering comment
-	TriggerAuthorName       string               `json:"trigger_author_name,omitempty"`       // display name of the triggering comment author
-	NewCommentCount         int                  `json:"new_comment_count,omitempty"`         // trigger-thread comments since last run; excludes injected trigger + own comments; omitempty so old daemons ignore it
-	NewCommentsSince        string               `json:"new_comments_since,omitempty"`        // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it
-	ChatSessionID           string               `json:"chat_session_id,omitempty"`           // non-empty for chat tasks
-	ChatMessage             string               `json:"chat_message,omitempty"`              // user message for chat tasks
-	ChatMessageAttachments  []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`  // attachments on the user message — agent calls `multica attachment download <id>` per entry
-	AutopilotRunID          string               `json:"autopilot_run_id,omitempty"`          // non-empty for autopilot-spawned tasks
-	AutopilotID             string               `json:"autopilot_id,omitempty"`              // autopilot that spawned this task
-	AutopilotTitle          string               `json:"autopilot_title,omitempty"`           // autopilot title used as task context
-	AutopilotDescription    string               `json:"autopilot_description,omitempty"`     // autopilot description used as task prompt
-	AutopilotSource         string               `json:"autopilot_source,omitempty"`          // manual, schedule, webhook, or api
-	AutopilotTriggerPayload json.RawMessage      `json:"autopilot_trigger_payload,omitempty"` // optional trigger payload for webhook/api runs
-	QuickCreatePrompt       string               `json:"quick_create_prompt,omitempty"`       // user's natural-language input for quick-create tasks
-	SquadID                 string               `json:"squad_id,omitempty"`                  // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
-	SquadName               string               `json:"squad_name,omitempty"`                // display name for the picker squad
-	ParentIssueID           string               `json:"parent_issue_id,omitempty"`           // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
-	ParentIssueIdentifier   string               `json:"parent_issue_identifier,omitempty"`   // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
+	RelativeWorkDir          string               `json:"relative_work_dir,omitempty"`
+	TriggerCommentID         *string              `json:"trigger_comment_id,omitempty"`          // comment that triggered this task
+	TriggerThreadID          string               `json:"trigger_thread_id,omitempty"`           // root comment ID for the triggering thread
+	TriggerCommentContent    string               `json:"trigger_comment_content,omitempty"`     // content of the triggering comment
+	TriggerSummary           *string              `json:"trigger_summary,omitempty"`             // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
+	TriggerAuthorType        string               `json:"trigger_author_type,omitempty"`         // "agent" or "member" — author kind of the triggering comment
+	TriggerAuthorName        string               `json:"trigger_author_name,omitempty"`         // display name of the triggering comment author
+	NewCommentCount          int                  `json:"new_comment_count,omitempty"`           // trigger-thread comments since last run; excludes injected trigger + own comments; omitempty so old daemons ignore it
+	NewCommentsSince         string               `json:"new_comments_since,omitempty"`          // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it
+	ChatSessionID            string               `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
+	ChatMessage              string               `json:"chat_message,omitempty"`                // user message for chat tasks
+	ChatMessageAttachments   []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`    // attachments on the user message — agent calls `multica attachment download <id>` per entry
+	AutopilotRunID           string               `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot-spawned tasks
+	AutopilotID              string               `json:"autopilot_id,omitempty"`                // autopilot that spawned this task
+	AutopilotTitle           string               `json:"autopilot_title,omitempty"`             // autopilot title used as task context
+	AutopilotDescription     string               `json:"autopilot_description,omitempty"`       // autopilot description used as task prompt
+	AutopilotSource          string               `json:"autopilot_source,omitempty"`            // manual, schedule, webhook, or api
+	AutopilotTriggerPayload  json.RawMessage      `json:"autopilot_trigger_payload,omitempty"`   // optional trigger payload for webhook/api runs
+	QuickCreatePrompt        string               `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
+	QuickCreateAttachmentIDs []string             `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
+	SquadID                  string               `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
+	SquadName                string               `json:"squad_name,omitempty"`                  // display name for the picker squad
+	ParentIssueID            string               `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
+	ParentIssueIdentifier    string               `json:"parent_issue_identifier,omitempty"`     // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and
@@ -254,9 +321,9 @@ type AgentTaskResponse struct {
 	// this (agent_id, task_id) pair at claim time and treats any request
 	// authenticated with it as actor=agent, regardless of headers — so the
 	// agent process cannot use it to read another agent's secrets via the
-	// env-management endpoint. Empty when the runtime has no owning user
-	// (cloud / system runtimes that pre-date per-task tokens); in that case
-	// the daemon falls back to its own credential. See MUL-2600.
+	// env-management endpoint. Claim fails closed when the runtime has no
+	// owning user; the daemon must not fall back to its own credential. See
+	// MUL-3292.
 	AuthToken string `json:"auth_token,omitempty"`
 }
 
@@ -284,6 +351,12 @@ type TaskAgentData struct {
 	McpConfig     json.RawMessage          `json:"mcp_config,omitempty"`
 	Model         string                   `json:"model,omitempty"`
 	ThinkingLevel string                   `json:"thinking_level,omitempty"`
+	// RuntimeConfig is the agent's saved runtime_config JSON as-is. The
+	// daemon decodes it per-provider — e.g. the openclaw backend reads
+	// `mode` + `gateway.*` to choose between embedded and gateway routing
+	// (issue #3260). Other providers ignore the payload entirely. Sent
+	// raw so the daemon can evolve its schema without a server roundtrip.
+	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
 
 // taskToResponse maps a queue row to its wire shape. workspaceID is threaded
@@ -706,6 +779,10 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		isFirstAgent = len(existing) == 0
 	}
 
+	// A create has no prior token to restore, so if the caller submitted the
+	// public mask sentinel as gateway.token (e.g. replayed a masked GET body)
+	// drop it rather than persisting a literal "***" as a real bearer token.
+	preserveMaskedGatewayToken(req.RuntimeConfig, nil)
 	rc, _ := json.Marshal(req.RuntimeConfig)
 	if req.RuntimeConfig == nil {
 		rc = []byte("{}")
@@ -860,6 +937,13 @@ func canViewAgentSecrets(agent db.Agent, userID string, memberRole string) bool 
 func broadcastAgentResponse(resp AgentResponse) AgentResponse {
 	out := resp
 	redactMcpConfig(&out)
+	// Belt-and-suspenders: agentToResponse already masks gateway.token on
+	// every read, so by the time a response reaches this broadcast helper
+	// the field is already "***". Re-mask anyway so a future refactor that
+	// bypasses agentToResponse (e.g. constructing AgentResponse from raw
+	// db.Agent in a new handler) cannot silently leak the token to every
+	// WebSocket subscriber on the workspace, agent processes included.
+	maskGatewayToken(out.RuntimeConfig)
 	return out
 }
 
@@ -953,6 +1037,11 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		params.AvatarUrl = pgtype.Text{String: *req.AvatarURL, Valid: true}
 	}
 	if req.RuntimeConfig != nil {
+		// Restore the persisted gateway token when the request submitted the
+		// public mask sentinel. Without this, a UI that GETs the agent and
+		// PATCHes the same payload back round-trips "***" into the database
+		// and silently destroys the real secret (issue #3260).
+		preserveMaskedGatewayToken(req.RuntimeConfig, existing.RuntimeConfig)
 		rc, _ := json.Marshal(req.RuntimeConfig)
 		params.RuntimeConfig = rc
 	}
@@ -971,6 +1060,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// request doesn't move the agent, we still need to load the *current*
 	// runtime to validate a thinking_level change. Resolve once and reuse.
 	targetRuntimeID := existing.RuntimeID
+	targetProvider := ""
 	if req.RuntimeID != nil {
 		runtimeUUID, ok := parseUUIDOrBadRequest(w, *req.RuntimeID, "runtime_id")
 		if !ok {
@@ -998,6 +1088,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		params.RuntimeID = runtime.ID
 		params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
 		targetRuntimeID = runtime.ID
+		targetProvider = runtime.Provider
 	}
 	if req.Visibility != nil {
 		params.Visibility = pgtype.Text{String: *req.Visibility, Valid: true}
@@ -1010,6 +1101,13 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Model != nil {
 		params.Model = pgtype.Text{String: *req.Model, Valid: true}
+	} else if req.RuntimeID != nil && existing.Model.Valid && agent.ModelKnownIncompatibleWithProvider(targetProvider, existing.Model.String) {
+		// Model is runtime-native. When moving an agent across known provider
+		// families and the caller did not choose a replacement model, clear the
+		// old value so the new runtime falls back to its own default instead of
+		// receiving an obvious foreign model ID (e.g. Claude Code -> Codex).
+		// Unknown/custom model strings are preserved by the helper.
+		params.Model = pgtype.Text{String: "", Valid: true}
 	}
 
 	// thinking_level handling (MUL-2339). Tri-state semantics:
@@ -1033,10 +1131,14 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			// Need the target runtime's provider to validate. Re-fetch only when
 			// we haven't already loaded it above (i.e. the request didn't change
 			// runtime_id), to keep the no-change path one DB roundtrip.
-			provider, ok := h.resolveAgentProvider(r, existing.WorkspaceID, targetRuntimeID)
-			if !ok {
-				writeError(w, http.StatusInternalServerError, "failed to resolve runtime for thinking_level validation")
-				return
+			provider := targetProvider
+			if provider == "" {
+				var ok bool
+				provider, ok = h.resolveAgentProvider(r, existing.WorkspaceID, targetRuntimeID)
+				if !ok {
+					writeError(w, http.StatusInternalServerError, "failed to resolve runtime for thinking_level validation")
+					return
+				}
 			}
 			if !agent.IsKnownThinkingValue(provider, value) {
 				writeError(w, http.StatusBadRequest, fmt.Sprintf("thinking_level %q is not a recognised value for runtime %q", value, provider))
@@ -1052,10 +1154,14 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// literal-invalid, never silently coerce. The caller can either
 		// pass `thinking_level: ""` to clear or pick a value valid for the
 		// new runtime.
-		provider, ok := h.resolveAgentProvider(r, existing.WorkspaceID, targetRuntimeID)
-		if !ok {
-			writeError(w, http.StatusInternalServerError, "failed to resolve runtime for thinking_level validation")
-			return
+		provider := targetProvider
+		if provider == "" {
+			var ok bool
+			provider, ok = h.resolveAgentProvider(r, existing.WorkspaceID, targetRuntimeID)
+			if !ok {
+				writeError(w, http.StatusInternalServerError, "failed to resolve runtime for thinking_level validation")
+				return
+			}
 		}
 		if !agent.IsKnownThinkingValue(provider, existing.ThinkingLevel.String) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf(
