@@ -41,10 +41,16 @@ describe("attachmentIdFromDownloadURL", () => {
     ).toBeUndefined();
   });
 
-  it("rejects URLs missing the /download suffix", () => {
+  it("accepts a content URL with query params", () => {
+    expect(
+      attachmentIdFromDownloadURL(`/api/attachments/${ID}/content?workspace_id=ws-1`),
+    ).toBe(ID);
+  });
+
+  it("rejects URLs missing a known attachment resource suffix", () => {
     expect(attachmentIdFromDownloadURL(`/api/attachments/${ID}`)).toBeUndefined();
     expect(
-      attachmentIdFromDownloadURL(`/api/attachments/${ID}/content`),
+      attachmentIdFromDownloadURL(`/api/attachments/${ID}/preview`),
     ).toBeUndefined();
   });
 
@@ -71,6 +77,11 @@ describe("contentReferencesAttachment", () => {
 
   it("matches when the markdown uses the stable download path", () => {
     const md = `body\n\n![file](${attachmentDownloadPath(ID)})\n`;
+    expect(contentReferencesAttachment(md, att)).toBe(true);
+  });
+
+  it("matches older issue descriptions that persist the inline content path", () => {
+    const md = `body\n\n![file](/api/attachments/${ID}/content?workspace_id=ws-1)\n`;
     expect(contentReferencesAttachment(md, att)).toBe(true);
   });
 

@@ -23,6 +23,7 @@
 
 const DOWNLOAD_PREFIX = "/api/attachments/";
 const DOWNLOAD_SUFFIX = "/download";
+const CONTENT_SUFFIX = "/content";
 
 /**
  * UUID literal regex (RFC 4122 form). Used to extract an attachment id
@@ -52,15 +53,20 @@ export function attachmentDownloadPath(attachmentId: string): string {
 
 /**
  * Extract the attachment id from a `/api/attachments/<uuid>/download`
- * URL (with or without query/host). Returns `undefined` if the URL is
- * not a download URL, or if the captured segment is not a valid UUID
- * literal.
+ * or `/api/attachments/<uuid>/content` URL (with or without query/host).
+ * Returns `undefined` if the URL is not a managed attachment URL, or if
+ * the captured segment is not a valid UUID literal.
  *
  * The renderer uses this to map a markdown image ref back to its
  * attachment record so it can swap in CloudFront-signed URLs for
  * faster fetches when configured, surface preview metadata, and keep
  * the standalone-attachment dedup logic working when the markdown
  * uses a stable path instead of the storage URL.
+ *
+ * Older Feishu-imported issue descriptions persisted `/content?workspace_id=...`
+ * rather than `/download`. Treat that shape as the same attachment identity so
+ * renderers and standalone attachment filtering do not depend on exact query
+ * string equality with the current API response.
  */
 export function attachmentIdFromDownloadURL(rawURL: string): string | undefined {
   if (!rawURL) return undefined;
@@ -85,9 +91,14 @@ export function attachmentIdFromDownloadURL(rawURL: string): string | undefined 
   }
 
   if (!path.startsWith(DOWNLOAD_PREFIX)) return undefined;
-  if (!path.endsWith(DOWNLOAD_SUFFIX)) return undefined;
+  const suffix = path.endsWith(DOWNLOAD_SUFFIX)
+    ? DOWNLOAD_SUFFIX
+    : path.endsWith(CONTENT_SUFFIX)
+      ? CONTENT_SUFFIX
+      : "";
+  if (!suffix) return undefined;
 
-  const id = path.slice(DOWNLOAD_PREFIX.length, path.length - DOWNLOAD_SUFFIX.length);
+  const id = path.slice(DOWNLOAD_PREFIX.length, path.length - suffix.length);
   if (!UUID_RE.test(id)) return undefined;
   return id;
 }
@@ -118,6 +129,9 @@ export function contentReferencesAttachment(
 ): boolean {
   if (!content) return false;
   if (content.includes(attachmentDownloadPath(attachment.id))) return true;
+  if (content.includes(`${DOWNLOAD_PREFIX}${attachment.id}${CONTENT_SUFFIX}`)) {
+    return true;
+  }
   const candidates = [
     attachment.url,
     attachment.content_url ?? "",

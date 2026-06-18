@@ -503,6 +503,52 @@ func TestAttachmentToResponse_NonCloudFrontUsesDownloadEndpoint(t *testing.T) {
 	}
 }
 
+// TestAttachmentToResponse_PrivateBucketModeDoesNotAdvertiseRawURL guards the
+// regression where a private OSS/S3 bucket served via proxy/presign mode had
+// its raw object URL (which happens to sit on the configured cdn_domain) leak
+// into markdown_url. The client then rendered that raw URL as a native <img>
+// src, which 403s against the private bucket. In these modes the durable URL
+// must be the server-mediated /download endpoint, not the raw object URL.
+func TestAttachmentToResponse_PrivateBucketModeDoesNotAdvertiseRawURL(t *testing.T) {
+	origStorage := testHandler.Storage
+	origCfg := testHandler.cfg
+	origSigner := testHandler.CFSigner
+	testHandler.Storage = &mockStorage{} // CdnDomain() == "cdn.example.com"
+	testHandler.CFSigner = nil
+	t.Cleanup(func() {
+		testHandler.Storage = origStorage
+		testHandler.cfg = origCfg
+		testHandler.CFSigner = origSigner
+	})
+
+	// Raw object URL living on the configured cdn_domain, no signature query —
+	// the exact shape that isDurablePublicURL alone would wrongly treat as public.
+	rawURL := "https://cdn.example.com/test-bucket/private.png"
+
+	for _, mode := range []string{"proxy", "presign"} {
+		t.Run(mode, func(t *testing.T) {
+			testHandler.cfg.AttachmentDownloadMode = mode
+
+			id := seedAttachmentURL(t, rawURL, "private.png", "image/png", 7)
+			att, err := testHandler.Queries.GetAttachment(context.Background(), db.GetAttachmentParams{
+				ID:          parseUUID(id),
+				WorkspaceID: parseUUID(testWorkspaceID),
+			})
+			if err != nil {
+				t.Fatalf("GetAttachment: %v", err)
+			}
+
+			resp := testHandler.attachmentToResponse(att)
+			if resp.MarkdownURL == rawURL {
+				t.Fatalf("markdown_url leaked the raw private-bucket URL %q in %s mode", rawURL, mode)
+			}
+			if !strings.HasSuffix(resp.MarkdownURL, "/api/attachments/"+id+"/download") {
+				t.Fatalf("markdown_url = %q, want the server-mediated download endpoint in %s mode", resp.MarkdownURL, mode)
+			}
+		})
+	}
+}
+
 func TestDownloadAttachment_CloudFrontRedirectSignsAttachmentDisposition(t *testing.T) {
 	origStorage := testHandler.Storage
 	origCfg := testHandler.cfg

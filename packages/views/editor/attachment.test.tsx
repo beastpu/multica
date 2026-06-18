@@ -439,10 +439,11 @@ describe("Attachment — image dispatch", () => {
     expect(getAttachmentMock).toHaveBeenCalledWith(id);
   });
 
-  it("blob-loads the attachment when fresh metadata has no signed download_url (MUL-3254)", async () => {
+  it("keeps the API URL in desktop mode when fresh metadata has no signed download_url", async () => {
     // Non-CloudFront deployments return the API path again as download_url —
-    // swapping to it gains nothing. Token-mode clients fetch the content
-    // through the authenticated API client and render a blob URL instead.
+    // swapping to it gains nothing. Desktop/web should keep using their native
+    // resource-auth paths instead of blob-loading; blob is reserved for Feishu
+    // plugin shipToken iframes where native <img> cannot attach Bearer auth.
     const objectURL = installObjectURLMock();
     getBaseUrlMock.mockReturnValue("https://multica-api.copilothub.ai");
     const id = "11111111-2222-3333-4444-555555555555";
@@ -472,14 +473,11 @@ describe("Attachment — image dispatch", () => {
         />,
       );
 
-      await waitFor(() => {
-        expect(document.querySelector("img")?.getAttribute("src")).toBe(
-          "blob:https://app.example/authenticated-image",
-        );
-      });
+      await waitFor(() => expect(getAttachmentMock).toHaveBeenCalledWith(id));
+      expect(document.querySelector("img")?.getAttribute("src")).toBe(markdownUrl);
       expect(getAttachmentMock).toHaveBeenCalledWith(id);
-      expect(getAttachmentBlobContentMock).toHaveBeenCalledWith(id);
-      expect(objectURL.create).toHaveBeenCalledTimes(1);
+      expect(getAttachmentBlobContentMock).not.toHaveBeenCalled();
+      expect(objectURL.create).not.toHaveBeenCalled();
     } finally {
       objectURL.restore();
     }
@@ -510,7 +508,7 @@ describe("Attachment — image dispatch", () => {
         );
       });
       expect(getBaseUrlMock()).toBe("");
-      expect(getAttachmentBlobContentMock).toHaveBeenCalledWith(id);
+      expect(getAttachmentBlobContentMock).toHaveBeenCalledWith(id, contentUrl);
       expect(getAttachmentMock).not.toHaveBeenCalled();
     } finally {
       objectURL.restore();

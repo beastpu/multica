@@ -207,6 +207,18 @@ func (h *Handler) storageURLIsPubliclyReadable(rawURL string) bool {
 		// LocalStorage path that doesn't carry an origin.
 		return false
 	}
+	switch h.attachmentDownloadMode() {
+	case attachmentDownloadModeProxy, attachmentDownloadModePresign:
+		// An operator who explicitly selects proxy/presign is declaring the
+		// bucket private — the object is reachable only via server-mediated
+		// access (auth proxy or a short-lived signed URL). The raw object URL
+		// is not anonymously loadable, so it must never be advertised as a
+		// public markdown URL, even when its host happens to sit on the
+		// configured cdn_domain — otherwise a native <img> load hits the
+		// private bucket directly and 403s (e.g. a private Aliyun OSS bucket).
+		// `auto` and `cloudfront` keep the existing cdn_domain/CFSigner policy.
+		return false
+	}
 	return isDurablePublicURL(rawURL)
 }
 
