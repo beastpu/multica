@@ -297,6 +297,25 @@ export class PreviewUnsupportedError extends Error {
   }
 }
 
+function attachmentContentPathFromURL(rawURL?: string): string | null {
+  if (!rawURL) return null;
+  let path = rawURL;
+  try {
+    if (/^https?:\/\//i.test(rawURL)) {
+      const parsed = new URL(rawURL);
+      path = `${parsed.pathname}${parsed.search}`;
+    }
+  } catch {
+    return null;
+  }
+  const queryIndex = path.indexOf("?");
+  const barePath = queryIndex >= 0 ? path.slice(0, queryIndex) : path;
+  if (!/^\/api\/attachments\/[0-9a-f-]+\/(content|download)$/i.test(barePath)) {
+    return null;
+  }
+  return path;
+}
+
 export class ApiClient {
   private baseUrl: string;
   private token: string | null = null;
@@ -1920,8 +1939,9 @@ export class ApiClient {
     };
   }
 
-  async getAttachmentBlobContent(id: string): Promise<Blob> {
-    const res = await this.fetchRaw(`/api/attachments/${id}/content`);
+  async getAttachmentBlobContent(id: string, sourceURL?: string): Promise<Blob> {
+    const contentPath = attachmentContentPathFromURL(sourceURL) ?? `/api/attachments/${id}/content`;
+    const res = await this.fetchRaw(contentPath);
     return res.blob();
   }
 
