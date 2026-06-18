@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -1131,6 +1132,14 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		if agent.McpConfig != nil {
 			mcpConfig = json.RawMessage(agent.McpConfig)
 		}
+		// runtime_config is stored as JSONB and may legitimately be the
+		// empty object `{}` for agents that haven't opted into any
+		// provider-specific tuning. Forward only non-empty payloads so the
+		// daemon's per-provider decoders treat absent-or-empty identically.
+		var runtimeConfig json.RawMessage
+		if rc := bytes.TrimSpace(agent.RuntimeConfig); len(rc) > 0 && !bytes.Equal(rc, []byte("{}")) && !bytes.Equal(rc, []byte("null")) {
+			runtimeConfig = json.RawMessage(agent.RuntimeConfig)
+		}
 		resp.Agent = &TaskAgentData{
 			ID:            uuidToString(agent.ID),
 			Name:          agent.Name,
@@ -1141,6 +1150,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			McpConfig:     mcpConfig,
 			Model:         agent.Model.String,
 			ThinkingLevel: agent.ThinkingLevel.String,
+			RuntimeConfig: runtimeConfig,
 		}
 	}
 
@@ -1481,6 +1491,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(task.Context, &qc) == nil && qc.Type == service.QuickCreateContextType {
 			hasQuickCreate = true
 			resp.QuickCreatePrompt = qc.Prompt
+			resp.QuickCreateAttachmentIDs = append([]string(nil), qc.AttachmentIDs...)
 			resp.ThreadName = qc.Prompt
 			resp.WorkspaceID = qc.WorkspaceID
 
@@ -1650,38 +1661,49 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	// process instead of its own credential, so any API call the agent
 	// makes — even one that strips X-Agent-ID / X-Task-ID headers — is
 	// recognized server-side as actor=agent, closing the lateral-movement
-	// path on owner-only endpoints (e.g. `/api/agents/{id}/env`). MUL-2600.
-	//
-	// Skip silently when the runtime has no owning user (cloud / system
-	// runtimes installed before this PR) — the response carries no
-	// `auth_token`, and the daemon falls back to its existing credential.
+	// path on owner-only endpoints (e.g. `/api/agents/{id}/env`). Runtime
+	// owner is required because task tokens are still bound to an owning user;
+	// without one, fail the claim explicitly instead of letting the daemon
+	// fall back to a member/owner credential. MUL-3292.
 	// Token expires after the queue/runtime upper bound (24h) so it survives
 	// long-running tasks but cannot outlive a forgotten one.
-	if runtime.OwnerID.Valid {
-		tokenStr, terr := auth.GenerateAgentTaskToken()
-		if terr != nil {
-			outcome = "error_token"
-			slog.Error("task claim: failed to generate agent task token",
-				"task_id", uuidToString(task.ID), "error", terr)
-			writeError(w, http.StatusInternalServerError, "failed to mint task token")
-			return
+	if !runtime.OwnerID.Valid {
+		outcome = "error_token"
+		slog.Error("task claim: runtime owner missing; cancelling task to avoid unscoped agent credentials",
+			"task_id", uuidToString(task.ID),
+			"runtime_id", runtimeID,
+			"workspace_id", runtimeWorkspaceID,
+		)
+		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
+			slog.Error("task claim: cancel after missing runtime owner failed",
+				"task_id", uuidToString(task.ID), "error", cerr)
 		}
-		if _, terr := h.Queries.CreateTaskToken(r.Context(), db.CreateTaskTokenParams{
-			TokenHash:   auth.HashToken(tokenStr),
-			TaskID:      task.ID,
-			AgentID:     task.AgentID,
-			WorkspaceID: parseUUID(resp.WorkspaceID),
-			UserID:      runtime.OwnerID,
-			ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
-		}); terr != nil {
-			outcome = "error_token"
-			slog.Error("task claim: failed to persist agent task token",
-				"task_id", uuidToString(task.ID), "error", terr)
-			writeError(w, http.StatusInternalServerError, "failed to persist task token")
-			return
-		}
-		resp.AuthToken = tokenStr
+		writeError(w, http.StatusInternalServerError, "runtime owner required to mint task token")
+		return
 	}
+	tokenStr, terr := auth.GenerateAgentTaskToken()
+	if terr != nil {
+		outcome = "error_token"
+		slog.Error("task claim: failed to generate agent task token",
+			"task_id", uuidToString(task.ID), "error", terr)
+		writeError(w, http.StatusInternalServerError, "failed to mint task token")
+		return
+	}
+	if _, terr := h.Queries.CreateTaskToken(r.Context(), db.CreateTaskTokenParams{
+		TokenHash:   auth.HashToken(tokenStr),
+		TaskID:      task.ID,
+		AgentID:     task.AgentID,
+		WorkspaceID: parseUUID(resp.WorkspaceID),
+		UserID:      runtime.OwnerID,
+		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
+	}); terr != nil {
+		outcome = "error_token"
+		slog.Error("task claim: failed to persist agent task token",
+			"task_id", uuidToString(task.ID), "error", terr)
+		writeError(w, http.StatusInternalServerError, "failed to persist task token")
+		return
+	}
+	resp.AuthToken = tokenStr
 
 	slog.Info("task claimed by runtime", "task_id", uuidToString(task.ID), "runtime_id", runtimeID, "agent_id", uuidToString(task.AgentID), "prior_session", resp.PriorSessionID)
 	writeJSON(w, http.StatusOK, map[string]any{"task": resp})
@@ -2080,7 +2102,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		if msg.Input != nil {
 			inputJSON, _ = json.Marshal(msg.Input)
 		}
-		h.Queries.CreateTaskMessage(r.Context(), db.CreateTaskMessageParams{
+		created, createErr := h.Queries.CreateTaskMessage(r.Context(), db.CreateTaskMessageParams{
 			TaskID:  parseUUID(taskID),
 			Seq:     int32(msg.Seq),
 			Type:    msg.Type,
@@ -2089,22 +2111,41 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			Input:   inputJSON,
 			Output:  pgtype.Text{String: msg.Output, Valid: msg.Output != ""},
 		})
+		if createErr != nil {
+			slog.Error("failed to create task message", "task_id", taskID, "seq", msg.Seq, "error", createErr)
+			writeError(w, http.StatusInternalServerError, "failed to persist task message")
+			return
+		}
 
 		if workspaceID != "" {
-			h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID, protocol.TaskMessagePayload{
-				TaskID:  taskID,
-				IssueID: uuidToString(task.IssueID),
-				Seq:     msg.Seq,
-				Type:    msg.Type,
-				Tool:    msg.Tool,
-				Content: msg.Content,
-				Input:   msg.Input,
-				Output:  msg.Output,
-			})
+			h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID,
+				taskMessageToPayload(created, taskID, uuidToString(task.IssueID)))
 		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.TaskMessagePayload {
+	var input map[string]any
+	if m.Input != nil {
+		json.Unmarshal(m.Input, &input)
+	}
+	createdAt := ""
+	if m.CreatedAt.Valid {
+		createdAt = m.CreatedAt.Time.UTC().Format(time.RFC3339Nano)
+	}
+	return protocol.TaskMessagePayload{
+		TaskID:    taskID,
+		IssueID:   issueID,
+		Seq:       int(m.Seq),
+		Type:      m.Type,
+		Tool:      m.Tool.String,
+		Content:   m.Content.String,
+		Input:     input,
+		Output:    m.Output.String,
+		CreatedAt: createdAt,
+	}
 }
 
 // ListTaskMessages returns the persisted messages for a task (for catch-up after reconnect).
@@ -2143,20 +2184,7 @@ func (h *Handler) ListTaskMessages(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]protocol.TaskMessagePayload, len(messages))
 	for i, m := range messages {
-		var input map[string]any
-		if m.Input != nil {
-			json.Unmarshal(m.Input, &input)
-		}
-		resp[i] = protocol.TaskMessagePayload{
-			TaskID:  taskID,
-			IssueID: issueID,
-			Seq:     int(m.Seq),
-			Type:    m.Type,
-			Tool:    m.Tool.String,
-			Content: m.Content.String,
-			Input:   input,
-			Output:  m.Output.String,
-		}
+		resp[i] = taskMessageToPayload(m, taskID, issueID)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -2286,20 +2314,7 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 
 	resp := make([]protocol.TaskMessagePayload, len(messages))
 	for i, m := range messages {
-		var input map[string]any
-		if m.Input != nil {
-			json.Unmarshal(m.Input, &input)
-		}
-		resp[i] = protocol.TaskMessagePayload{
-			TaskID:  taskID,
-			IssueID: issueID,
-			Seq:     int(m.Seq),
-			Type:    m.Type,
-			Tool:    m.Tool.String,
-			Content: m.Content.String,
-			Input:   input,
-			Output:  m.Output.String,
-		}
+		resp[i] = taskMessageToPayload(m, taskID, issueID)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

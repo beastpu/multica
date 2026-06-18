@@ -238,6 +238,27 @@ var validIssueStatuses = []string{
 	"backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled",
 }
 
+var validIssuePriorities = []string{
+	"urgent", "high", "medium", "low", "none",
+}
+
+func validateIssueStatus(status string) error {
+	return validateIssueEnum("status", status, validIssueStatuses)
+}
+
+func validateIssuePriority(priority string) error {
+	return validateIssueEnum("priority", priority, validIssuePriorities)
+}
+
+func validateIssueEnum(field, value string, allowed []string) error {
+	for _, a := range allowed {
+		if value == a {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid %s %q; valid values: %s", field, value, strings.Join(allowed, ", "))
+}
+
 func init() {
 	issueCmd.AddCommand(issueListCmd)
 	issueCmd.AddCommand(issueGetCmd)
@@ -296,6 +317,7 @@ func init() {
 	issueCreateCmd.Flags().Bool("allow-duplicate", false, "Allow creating an issue even when an active duplicate exists")
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
+	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
 
 	// issue update
 	issueUpdateCmd.Flags().String("title", "", "New title")
@@ -624,10 +646,51 @@ func isHTTPURL(path string) bool {
 	return strings.HasPrefix(p, "http://") || strings.HasPrefix(p, "https://")
 }
 
+func appendUniqueStrings(dst []string, values ...string) []string {
+	seen := make(map[string]struct{}, len(dst)+len(values))
+	out := make([]string, 0, len(dst)+len(values))
+	for _, v := range append(dst, values...) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func quickCreateAttachmentIDsFromEnv() ([]string, error) {
+	raw := strings.TrimSpace(os.Getenv("MULTICA_QUICK_CREATE_ATTACHMENT_IDS"))
+	if raw == "" {
+		return nil, nil
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return nil, fmt.Errorf("parse MULTICA_QUICK_CREATE_ATTACHMENT_IDS: %w", err)
+	}
+	return appendUniqueStrings(nil, ids...), nil
+}
+
 func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	title, _ := cmd.Flags().GetString("title")
 	if title == "" {
 		return fmt.Errorf("--title is required")
+	}
+	statusFlag, _ := cmd.Flags().GetString("status")
+	if statusFlag != "" {
+		if err := validateIssueStatus(statusFlag); err != nil {
+			return err
+		}
+	}
+	priorityFlag, _ := cmd.Flags().GetString("priority")
+	if priorityFlag != "" {
+		if err := validateIssuePriority(priorityFlag); err != nil {
+			return err
+		}
 	}
 
 	client, err := newAPIClient(cmd)
@@ -652,11 +715,11 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if hasDesc {
 		body["description"] = desc
 	}
-	if v, _ := cmd.Flags().GetString("status"); v != "" {
-		body["status"] = v
+	if statusFlag != "" {
+		body["status"] = statusFlag
 	}
-	if v, _ := cmd.Flags().GetString("priority"); v != "" {
-		body["priority"] = v
+	if priorityFlag != "" {
+		body["priority"] = priorityFlag
 	}
 	if v, _ := cmd.Flags().GetString("parent"); v != "" {
 		parent, err := resolveIssueRef(ctx, client, v)
@@ -700,6 +763,15 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if taskID := os.Getenv("MULTICA_QUICK_CREATE_TASK_ID"); taskID != "" {
 		body["origin_type"] = "quick_create"
 		body["origin_id"] = taskID
+	}
+	attachmentIDs, _ := cmd.Flags().GetStringSlice("attachment-id")
+	envAttachmentIDs, err := quickCreateAttachmentIDsFromEnv()
+	if err != nil {
+		return err
+	}
+	attachmentIDs = appendUniqueStrings(attachmentIDs, envAttachmentIDs...)
+	if len(attachmentIDs) > 0 {
+		body["attachment_ids"] = attachmentIDs
 	}
 
 	// Pre-validate attachments BEFORE creating the issue so a bad path
@@ -789,6 +861,21 @@ func activeDuplicateIssueCreateMessage(err error) (string, bool) {
 }
 
 func runIssueUpdate(cmd *cobra.Command, args []string) error {
+	statusChanged := cmd.Flags().Changed("status")
+	statusFlag, _ := cmd.Flags().GetString("status")
+	if statusChanged {
+		if err := validateIssueStatus(statusFlag); err != nil {
+			return err
+		}
+	}
+	priorityChanged := cmd.Flags().Changed("priority")
+	priorityFlag, _ := cmd.Flags().GetString("priority")
+	if priorityChanged {
+		if err := validateIssuePriority(priorityFlag); err != nil {
+			return err
+		}
+	}
+
 	client, err := newAPIClient(cmd)
 	if err != nil {
 		return err
@@ -814,13 +901,11 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		}
 		body["description"] = desc
 	}
-	if cmd.Flags().Changed("status") {
-		v, _ := cmd.Flags().GetString("status")
-		body["status"] = v
+	if statusChanged {
+		body["status"] = statusFlag
 	}
-	if cmd.Flags().Changed("priority") {
-		v, _ := cmd.Flags().GetString("priority")
-		body["priority"] = v
+	if priorityChanged {
+		body["priority"] = priorityFlag
 	}
 	if cmd.Flags().Changed("project") {
 		v, _ := cmd.Flags().GetString("project")
@@ -955,15 +1040,8 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 	id := args[0]
 	status := args[1]
 
-	valid := false
-	for _, s := range validIssueStatuses {
-		if s == status {
-			valid = true
-			break
-		}
-	}
-	if !valid {
-		return fmt.Errorf("invalid status %q; valid values: %s", status, strings.Join(validIssueStatuses, ", "))
+	if err := validateIssueStatus(status); err != nil {
+		return err
 	}
 
 	client, err := newAPIClient(cmd)

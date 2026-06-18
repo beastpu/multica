@@ -45,6 +45,8 @@ export type {
   RuntimeModelListStatus,
   RuntimeModelsResult,
   RuntimeLocalSkillStatus,
+  RuntimeLocalSkillImportAction,
+  RuntimeLocalSkillImportConflict,
   RuntimeLocalSkillSummary,
   RuntimeLocalSkillListRequest,
   CreateRuntimeLocalSkillImportRequest,
@@ -56,7 +58,7 @@ export type {
 export type { Workspace, WorkspaceRepo, Member, MemberRole, User, MemberWithUser, Invitation } from "./workspace";
 export type { InboxItem, InboxSeverity, InboxItemType } from "./inbox";
 export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences, NotificationPreferenceResponse } from "./notification-preference";
-export type { Comment, CommentType, CommentAuthorType, Reaction } from "./comment";
+export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, Reaction } from "./comment";
 export type { Label, CreateLabelRequest, UpdateLabelRequest, ListLabelsResponse, IssueLabelsResponse } from "./label";
 export type {
   TimelineEntry,
@@ -73,7 +75,17 @@ export type * from "./events";
 export type * from "./api";
 export type { Attachment } from "./attachment";
 export { attachmentDownloadPath, attachmentIdFromDownloadURL, contentReferencesAttachment } from "./attachment-url";
-export type { ChatSession, ChatMessage, ChatMessagesPage, ChatPendingTask, PendingChatTaskItem, PendingChatTasksResponse, SendChatMessageResponse } from "./chat";
+export type {
+  ChatSession,
+  ChatMessage,
+  ChatMessagesPage,
+  ChatPendingTask,
+  PendingChatTaskItem,
+  PendingChatTasksResponse,
+  SendChatMessageResponse,
+  CancelledChatMessage,
+  CancelTaskResponse,
+} from "./chat";
 export type { StorageAdapter } from "./storage";
 export type {
   Project,
