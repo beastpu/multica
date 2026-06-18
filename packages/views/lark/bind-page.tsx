@@ -29,7 +29,7 @@ type RedeemState =
 export function LarkBindPage({ token }: { token: string | null }) {
   const { t } = useT("common");
   const user = useAuthStore((s) => s.user);
-  const authLoading = useAuthStore((s) => s.isLoading);
+  const isAuthLoading = useAuthStore((s) => s.isLoading);
   const navigation = useNavigation();
   const [state, setState] = useState<RedeemState>({ kind: "idle" });
 
@@ -38,9 +38,7 @@ export function LarkBindPage({ token }: { token: string | null }) {
       setState({ kind: "error", reason: "missing_token" });
       return;
     }
-    if (authLoading) {
-      return;
-    }
+    if (isAuthLoading) return;
     if (!user) {
       setState({ kind: "needs-auth" });
       return;
@@ -62,7 +60,7 @@ export function LarkBindPage({ token }: { token: string | null }) {
         });
       }
     })();
-  }, [token, user, authLoading, state.kind]);
+  }, [token, user, isAuthLoading, state.kind]);
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center p-6">
