@@ -29,6 +29,7 @@ import {
   Maximize2,
   Trash2,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -233,15 +234,14 @@ function absolutizeMediaURL(rawUrl: string): string {
 //     beats `markdown_url` on first paint (no extra hop through the
 //     API endpoint), and the renderer doesn't persist it so the TTL is
 //     not a problem.
-//  2. Known CDN `record.url` — when `/api/config` exposes the same CDN
-//     host as the attachment record, the browser can load the object
-//     directly (public CDN, or CloudFront cookie mode). Prefer it over
-//     an API-shaped `markdown_url` so the rendered `<img src>` and Copy
-//     Link affordance expose the CDN URL while the persisted markdown
-//     can remain the stable attachment endpoint. Skipped when the server
-//     reports `cdn_signed` — in CloudFront signed-URL mode the same
-//     domain serves PRIVATE content and a raw (unsigned) storage URL is
-//     a guaranteed 403 (MUL-3254).
+//  2. Confirmed-public `record.url` — when `/api/config` exposes the same
+//     CDN host AND the server-chosen durable `markdown_url` is the raw storage
+//     URL too, the browser can load the object directly. `cdnDomain` alone is
+//     not enough: proxy/private-bucket deployments can expose a bucket host
+//     for legacy file-card detection even though direct object loads 403.
+//     Skipped when the server reports `cdn_signed` — in CloudFront signed-URL
+//     mode the same domain serves PRIVATE content and a raw (unsigned) storage
+//     URL is a guaranteed 403 (MUL-3254).
 //  3. LocalStorage signed `record.url` — when it carries `?exp&sig`, that
 //     query is the auth and can load natively.
 //  4. `record.content_url` — private-bucket inline proxy used by the default
@@ -266,7 +266,13 @@ function pickInlineMediaURL(
     return dl;
   }
   if (record.url && /[?&](exp|sig)=/i.test(record.url)) return record.url;
-  if (!cdnSigned && storageURLMatchesCdnDomain(record.url, cdnDomain)) return record.url;
+  if (
+    !cdnSigned &&
+    storageURLMatchesCdnDomain(record.url, cdnDomain) &&
+    markdownURLConfirmsRawStorageURL(record.markdown_url, record.url)
+  ) {
+    return record.url;
+  }
   if (record.content_url) return record.content_url;
   if (record.markdown_url) return record.markdown_url;
   if (record.url) return record.url;
@@ -284,6 +290,17 @@ function storageURLMatchesCdnDomain(rawURL: string, cdnDomain: string): boolean 
   } catch {
     return false;
   }
+}
+
+function markdownURLConfirmsRawStorageURL(
+  markdownURL: string | null | undefined,
+  rawStorageURL: string,
+): boolean {
+  if (!rawStorageURL) return false;
+  // Legacy servers predate `markdown_url`; preserve their previous direct-CDN
+  // behavior when the operator exposed a cdnDomain.
+  if (!markdownURL) return true;
+  return markdownURL === rawStorageURL;
 }
 
 function normalizeHost(host: string): string {
@@ -334,7 +351,7 @@ const RESIGN_STALE_MS = 20 * 60 * 1000;
 function useResignedInlineMediaURL(
   attachmentId: string | undefined,
   pickedUrl: string,
-): string {
+): { url: string; allowBlobFallback: boolean } {
   const idFromPickedUrl = attachmentIdFromDownloadURL(pickedUrl);
   const resignAttachmentId = attachmentId ?? idFromPickedUrl;
   const needsResign =
@@ -343,7 +360,7 @@ function useResignedInlineMediaURL(
     idFromPickedUrl !== undefined &&
     (api.getBaseUrl?.() ?? "") !== "";
 
-  const { data: fresh } = useQuery({
+  const { data: fresh, isError, isSuccess } = useQuery({
     queryKey: ["attachment-inline-resign", resignAttachmentId],
     queryFn: () => api.getAttachment(resignAttachmentId as string),
     enabled: needsResign,
@@ -351,15 +368,103 @@ function useResignedInlineMediaURL(
     gcTime: RESIGN_STALE_MS,
   });
 
-  if (!needsResign) return pickedUrl;
+  if (!needsResign) return { url: pickedUrl, allowBlobFallback: true };
   const dl = fresh?.download_url ?? "";
-  // Accept the fresh URL only when it is an actual upgrade — absolute and no
-  // longer the auth-gated API shape (i.e. a signed storage URL the renderer
-  // can load natively).
+  // Accept the fresh URL only when it is an actual upgrade: an absolute signed
+  // storage URL the renderer can load natively. Otherwise leave the API-shaped
+  // URL in place so token-mode clients can blob-load it below.
   if (/^https?:\/\//i.test(dl) && attachmentIdFromDownloadURL(dl) === undefined) {
-    return dl;
+    return { url: dl, allowBlobFallback: false };
   }
-  return pickedUrl;
+  return { url: pickedUrl, allowBlobFallback: isSuccess || isError };
+}
+
+// Feishu Project plugin embeds Multica with `#shipToken=...` and authenticates
+// API calls via Authorization: Bearer. Native <img> loads cannot attach that
+// header, so API-shaped attachment URLs need a client-side authenticated fetch
+// and a temporary blob: URL.
+const EMBEDDED_SESSION_TOKEN_KEY = "shipToken";
+
+function hasEmbeddedSessionToken(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (window.sessionStorage.getItem(EMBEDDED_SESSION_TOKEN_KEY)) return true;
+  } catch {
+    // Ignore unavailable sessionStorage.
+  }
+  const hash = window.location.hash.startsWith("#")
+    ? window.location.hash.slice(1)
+    : "";
+  return hash ? new URLSearchParams(hash).has(EMBEDDED_SESSION_TOKEN_KEY) : false;
+}
+
+const ATTACHMENT_API_RE =
+  /^\/api\/attachments\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(content|download)$/i;
+
+function attachmentIdFromAPIURL(rawURL: string): string | undefined {
+  if (!rawURL) return undefined;
+  if (attachmentIdFromDownloadURL(rawURL)) {
+    return attachmentIdFromDownloadURL(rawURL);
+  }
+  let path = rawURL;
+  const qi = path.indexOf("?");
+  if (qi >= 0) path = path.slice(0, qi);
+  const hi = path.indexOf("#");
+  if (hi >= 0) path = path.slice(0, hi);
+  if (/^https?:\/\//i.test(path)) {
+    try {
+      path = new URL(path).pathname;
+    } catch {
+      return undefined;
+    }
+  }
+  return path.match(ATTACHMENT_API_RE)?.[1];
+}
+
+function isAttachmentAPIURL(rawURL: string): boolean {
+  return !!attachmentIdFromAPIURL(rawURL);
+}
+
+function useAuthenticatedBlobMediaURL(
+  attachmentId: string | undefined,
+  pickedUrl: string,
+  enabled: boolean,
+): string {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const id = attachmentId ?? attachmentIdFromAPIURL(pickedUrl);
+  const needsBlob =
+    enabled &&
+    !!id &&
+    isAttachmentAPIURL(pickedUrl) &&
+    (hasEmbeddedSessionToken() || (api.getBaseUrl?.() ?? "") !== "") &&
+    typeof URL !== "undefined" &&
+    typeof URL.createObjectURL === "function";
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = "";
+    if (!needsBlob || !id) {
+      setBlobUrl(null);
+      return undefined;
+    }
+
+    api.getAttachmentBlobContent(id)
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setBlobUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setBlobUrl(null);
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [id, needsBlob]);
+
+  return blobUrl ?? pickedUrl;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +488,13 @@ export function Attachment({
   // The picked URL may still be the auth-gated API endpoint (reopened drafts
   // whose persisted record has no signed download_url). Upgrade it to a
   // freshly signed URL on clients that can't load the endpoint natively.
-  const mediaUrl = useResignedInlineMediaURL(state.attachmentId, state.url);
+  const media = useResignedInlineMediaURL(state.attachmentId, state.url);
+  const mediaUrl = media.url;
+  const displayMediaUrl = useAuthenticatedBlobMediaURL(
+    state.attachmentId,
+    mediaUrl,
+    media.allowBlobFallback,
+  );
   const forceKind =
     attachment.kind === "url" ? attachment.forceKind : undefined;
   const kind =
@@ -398,15 +509,15 @@ export function Attachment({
         kind: "full",
         attachment: {
           ...state.record,
-          download_url: mediaUrl || state.record.download_url,
+          download_url: displayMediaUrl || state.record.download_url,
         },
       });
       return;
     }
-    if (mediaUrl) {
+    if (displayMediaUrl) {
       preview.tryOpen({
         kind: "url",
-        url: mediaUrl,
+        url: displayMediaUrl,
         filename: state.filename,
       });
     }
@@ -424,7 +535,8 @@ export function Attachment({
     return (
       <>
         <ImageAttachmentView
-          src={mediaUrl}
+          src={displayMediaUrl}
+          copySrc={mediaUrl}
           alt={state.filename}
           uploading={state.uploading}
           width={state.width}
@@ -485,6 +597,7 @@ export function Attachment({
 
 interface ImageAttachmentViewProps {
   src: string;
+  copySrc?: string;
   alt: string;
   uploading: boolean;
   width?: number;
@@ -499,6 +612,7 @@ interface ImageAttachmentViewProps {
 
 function ImageAttachmentView({
   src,
+  copySrc,
   alt,
   uploading,
   width,
@@ -513,7 +627,7 @@ function ImageAttachmentView({
   const { t } = useT("editor");
 
   const handleCopyLink = async () => {
-    if (await copyText(src)) {
+    if (await copyText(copySrc || src)) {
       toast.success(t(($) => $.image.link_copied));
     } else {
       toast.error(t(($) => $.image.copy_link_failed));

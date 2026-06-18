@@ -1920,6 +1920,11 @@ export class ApiClient {
     };
   }
 
+  async getAttachmentBlobContent(id: string): Promise<Blob> {
+    const res = await this.fetchRaw(`/api/attachments/${id}/content`);
+    return res.blob();
+  }
+
   // Projects
   async listProjects(params?: { status?: string }): Promise<ListProjectsResponse> {
     const search = new URLSearchParams();
