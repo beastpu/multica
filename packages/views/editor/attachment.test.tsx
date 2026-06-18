@@ -6,6 +6,7 @@ import type { Attachment as AttachmentRecord } from "@multica/core/types";
 
 const {
   getAttachmentTextContentMock,
+  getAttachmentBlobContentMock,
   getAttachmentMock,
   getBaseUrlMock,
   downloadMock,
@@ -13,6 +14,7 @@ const {
   openByUrlMock,
 } = vi.hoisted(() => ({
   getAttachmentTextContentMock: vi.fn(),
+  getAttachmentBlobContentMock: vi.fn(),
   getAttachmentMock: vi.fn(),
   // Default: empty base URL so existing tests render site-relative URLs
   // through the proxy (i.e. exactly the way the web app behaves). The
@@ -27,6 +29,7 @@ const {
 vi.mock("@multica/core/api", () => ({
   api: {
     getAttachmentTextContent: getAttachmentTextContentMock,
+    getAttachmentBlobContent: getAttachmentBlobContentMock,
     getAttachment: getAttachmentMock,
     getBaseUrl: getBaseUrlMock,
   },
@@ -155,8 +158,49 @@ function renderWithQuery(ui: ReactElement) {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
+function installObjectURLMock(url = "blob:https://app.example/authenticated-image") {
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  const create = vi.fn(() => url);
+  const revoke = vi.fn();
+
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: create,
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: revoke,
+  });
+
+  return {
+    create,
+    revoke,
+    restore: () => {
+      if (originalCreate) {
+        Object.defineProperty(URL, "createObjectURL", {
+          configurable: true,
+          value: originalCreate,
+        });
+      } else {
+        delete (URL as Partial<typeof URL>).createObjectURL;
+      }
+      if (originalRevoke) {
+        Object.defineProperty(URL, "revokeObjectURL", {
+          configurable: true,
+          value: originalRevoke,
+        });
+      } else {
+        delete (URL as Partial<typeof URL>).revokeObjectURL;
+      }
+    },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  window.sessionStorage.clear();
+  window.history.replaceState(null, "", "/");
   resolverState.attachments = [];
   configStore.setState({ cdnDomain: "", cdnSigned: false });
   // Default to "no proxy override" — site-relative URLs stay as-is, mirroring
@@ -230,18 +274,18 @@ describe("Attachment — image dispatch", () => {
     expect(downloadMock).toHaveBeenCalledWith("att-1");
   });
 
-  it("renders the configured CDN URL when description markdown stores the stable API URL", () => {
+  it("renders the configured CDN URL when server marks it as the durable markdown URL", () => {
     configStore.setState({ cdnDomain: "cdn.example.test" });
     const id = "11111111-2222-3333-4444-555555555555";
     const markdownUrl = `https://multica-api.copilothub.ai/api/attachments/${id}/download`;
+    const mediaUrl = "https://cdn.example.test/uploads/ws/shot.png";
     const att = makeRecord({
       id,
-      url: "https://cdn.example.test/uploads/ws/shot.png",
-      // This is the shape persisted in issue descriptions on deployments
-      // that keep markdown stable via the API endpoint. Once the URL
-      // resolves to an attachment record, the rendered <img> must expose the
-      // CDN URL instead of copying the API endpoint back to the user.
-      markdown_url: markdownUrl,
+      url: mediaUrl,
+      // Public-CDN deployments return the raw storage URL as `markdown_url`.
+      // That is the server-side signal that the raw CDN URL is durable and
+      // loadable; a matching cdnDomain alone is not enough for private buckets.
+      markdown_url: mediaUrl,
       download_url: `/api/attachments/${id}/download`,
     });
     resolverState.attachments = [att];
@@ -258,9 +302,7 @@ describe("Attachment — image dispatch", () => {
     );
 
     const img = document.querySelector("img");
-    expect(img?.getAttribute("src")).toBe(
-      "https://cdn.example.test/uploads/ws/shot.png",
-    );
+    expect(img?.getAttribute("src")).toBe(mediaUrl);
   });
 
   it("opens preview with the same resolved media URL when a reopened draft record has no download_url", () => {
@@ -271,7 +313,7 @@ describe("Attachment — image dispatch", () => {
     const att = makeRecord({
       id,
       url: mediaUrl,
-      markdown_url: markdownUrl,
+      markdown_url: mediaUrl,
       download_url: "",
     });
     resolverState.attachments = [att];
@@ -397,9 +439,11 @@ describe("Attachment — image dispatch", () => {
     expect(getAttachmentMock).toHaveBeenCalledWith(id);
   });
 
-  it("keeps the picked URL when fresh metadata has no signed download_url (MUL-3254)", async () => {
+  it("blob-loads the attachment when fresh metadata has no signed download_url (MUL-3254)", async () => {
     // Non-CloudFront deployments return the API path again as download_url —
-    // swapping to it gains nothing, so the original pick must stay.
+    // swapping to it gains nothing. Token-mode clients fetch the content
+    // through the authenticated API client and render a blob URL instead.
+    const objectURL = installObjectURLMock();
     getBaseUrlMock.mockReturnValue("https://multica-api.copilothub.ai");
     const id = "11111111-2222-3333-4444-555555555555";
     const markdownUrl = `https://multica-api.copilothub.ai/api/attachments/${id}/download`;
@@ -414,20 +458,63 @@ describe("Attachment — image dispatch", () => {
     getAttachmentMock.mockResolvedValue(
       makeRecord({ id, download_url: `/api/attachments/${id}/download` }),
     );
+    getAttachmentBlobContentMock.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
 
-    renderWithQuery(
-      <Attachment
-        attachment={{
-          kind: "url",
-          url: markdownUrl,
-          filename: "shot.png",
-          forceKind: "image",
-        }}
-      />,
-    );
+    try {
+      renderWithQuery(
+        <Attachment
+          attachment={{
+            kind: "url",
+            url: markdownUrl,
+            filename: "shot.png",
+            forceKind: "image",
+          }}
+        />,
+      );
 
-    await waitFor(() => expect(getAttachmentMock).toHaveBeenCalledWith(id));
-    expect(document.querySelector("img")?.getAttribute("src")).toBe(markdownUrl);
+      await waitFor(() => {
+        expect(document.querySelector("img")?.getAttribute("src")).toBe(
+          "blob:https://app.example/authenticated-image",
+        );
+      });
+      expect(getAttachmentMock).toHaveBeenCalledWith(id);
+      expect(getAttachmentBlobContentMock).toHaveBeenCalledWith(id);
+      expect(objectURL.create).toHaveBeenCalledTimes(1);
+    } finally {
+      objectURL.restore();
+    }
+  });
+
+  it("blob-loads API attachment images in Feishu plugin shipToken sessions", async () => {
+    const objectURL = installObjectURLMock("blob:https://app.example/feishu-image");
+    const id = "11111111-2222-3333-4444-555555555555";
+    const contentUrl = `/api/attachments/${id}/content?workspace_id=ws-1`;
+    window.sessionStorage.setItem("shipToken", "jwt-for-test");
+    getAttachmentBlobContentMock.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+
+    try {
+      renderWithQuery(
+        <Attachment
+          attachment={{
+            kind: "url",
+            url: contentUrl,
+            filename: "shot.png",
+            forceKind: "image",
+          }}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(document.querySelector("img")?.getAttribute("src")).toBe(
+          "blob:https://app.example/feishu-image",
+        );
+      });
+      expect(getBaseUrlMock()).toBe("");
+      expect(getAttachmentBlobContentMock).toHaveBeenCalledWith(id);
+      expect(getAttachmentMock).not.toHaveBeenCalled();
+    } finally {
+      objectURL.restore();
+    }
   });
 
   it("forceKind=image renders as image even when filename is empty (markdown ![](url) regression)", () => {
@@ -516,18 +603,21 @@ describe("Attachment — image dispatch", () => {
     expect(img?.getAttribute("src")).toBe("https://cdn.example.test/legacy.png");
   });
 
-  it("S3/OSS private-bucket record.url is unreachable inline, so route through the content proxy", () => {
+  it("S3/OSS private-bucket record.url is unreachable inline even when it matches cdnDomain", () => {
     // Regression: on an S3/OSS backend with no CloudFront signer, record.url
     // is a bare object-store URL pointing at a PRIVATE bucket — it 403s when
     // loaded directly as an <img> src. The content proxy
     // (/api/attachments/<id>/content?workspace_id=...) carries the workspace
     // in the query, authenticates via the session cookie, and streams the
-    // bytes back inline. pickInlineMediaURL must NOT fall through to the raw
-    // private url here (that left images broken on web for OSS deployments).
+    // bytes back inline. /api/config can still expose the bucket host as
+    // cdnDomain for legacy file-card detection; that must not make the
+    // renderer pick the raw private URL.
+    configStore.setState({ cdnDomain: "my-bucket.oss-cn-shanghai.aliyuncs.com" });
     const att = makeRecord({
       url: "https://my-bucket.oss-cn-shanghai.aliyuncs.com/workspaces/ws-1/shot.png",
       download_url: "/api/attachments/att-1/download",
       content_url: "/api/attachments/att-1/content?workspace_id=ws-1",
+      markdown_url: "https://api.multica.test/api/attachments/att-1/download",
     });
     renderWithQuery(<Attachment attachment={{ kind: "record", attachment: att }} />);
     const img = document.querySelector("img");
