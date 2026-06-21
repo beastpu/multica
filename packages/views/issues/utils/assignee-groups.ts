@@ -6,9 +6,7 @@ export function filterAssigneeGroups(
   filters: IssueFilters,
 ): IssueAssigneeGroup[] | undefined {
   if (!groups) return groups;
-  const hasClientSideFilter =
-    filters.parentOnlyFilter === true ||
-    filters.agentRunningFilter === true;
+  const hasClientSideFilter = filters.agentRunningFilter === true;
   if (!hasClientSideFilter) return groups;
 
   return groups

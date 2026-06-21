@@ -83,8 +83,8 @@ export function IssuesPage() {
     [dateFilter],
   );
   const queryParams = useMemo(
-    () => ({ ...sort, ...dateParams }),
-    [dateParams, sort],
+    () => ({ ...sort, ...dateParams, parent_only: parentOnlyFilter || undefined }),
+    [dateParams, parentOnlyFilter, sort],
   );
 
   // Derive the set of issue ids that currently have at least one
@@ -112,11 +112,12 @@ export function IssuesPage() {
       project_ids: projectFilters,
       include_no_project: includeNoProject,
       label_ids: labelFilters,
+      parent_only: parentOnlyFilter || undefined,
     };
     if (scope === "members") filter.assignee_types = ["member"];
     if (scope === "agents") filter.assignee_types = ["agent", "squad"];
     return filter;
-  }, [assigneeFilters, creatorFilters, includeNoAssignee, includeNoProject, labelFilters, priorityFilters, projectFilters, scope, statusFilters]);
+  }, [assigneeFilters, creatorFilters, includeNoAssignee, includeNoProject, labelFilters, parentOnlyFilter, priorityFilters, projectFilters, scope, statusFilters]);
 
   const assigneeGroupsOptions = issueAssigneeGroupsOptions(wsId, assigneeGroupFilter, queryParams);
   const statusIssuesQuery = useQuery({

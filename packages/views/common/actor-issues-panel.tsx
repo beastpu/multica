@@ -70,11 +70,13 @@ export function ActorIssuesPanel({
   }, [scope, actorType, actorId]);
 
   const queryFilter: MyIssuesFilter = useMemo(
-    () =>
-      scope === "assigned"
+    () => ({
+      ...(scope === "assigned"
         ? { assignee_id: actorId }
-        : { creator_id: actorId },
-    [scope, actorId],
+        : { creator_id: actorId }),
+      parent_only: parentOnlyFilter || undefined,
+    }),
+    [actorId, parentOnlyFilter, scope],
   );
   const queryScope = `${actorType}:${actorId}:${scope}`;
 

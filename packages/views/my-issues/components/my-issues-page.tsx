@@ -46,8 +46,9 @@ export function MyIssuesPage() {
     () => ({
       sort_by: sortBy,
       sort_direction: sortBy !== "position" ? sortDirection : undefined,
+      parent_only: parentOnlyFilter || undefined,
     } as const),
-    [sortBy, sortDirection],
+    [parentOnlyFilter, sortBy, sortDirection],
   );
 
   // See issues-page.tsx for the rationale — derive a workspace-wide set
@@ -99,8 +100,9 @@ export function MyIssuesPage() {
       ...filter,
       statuses: statusFilters.length > 0 ? statusFilters : [...BOARD_STATUSES],
       priorities: priorityFilters,
+      parent_only: parentOnlyFilter || undefined,
     }),
-    [filter, priorityFilters, statusFilters],
+    [filter, parentOnlyFilter, priorityFilters, statusFilters],
   );
   const assigneeGroupsOptions = myIssueAssigneeGroupsOptions(
     wsId,

@@ -282,7 +282,7 @@ describe("useLoadMoreByAssigneeGroup", () => {
             assignee_id: "user-1",
           },
           queryKey,
-          { statuses: ["todo"] },
+          { statuses: ["todo"], parent_only: true },
           sort,
         ),
       { wrapper: createWrapper(qc) },
@@ -302,6 +302,7 @@ describe("useLoadMoreByAssigneeGroup", () => {
       sort_by: "priority",
       sort_direction: "desc",
       statuses: ["todo"],
+      parent_only: true,
       group_assignee_type: "member",
       group_assignee_id: "user-1",
     });

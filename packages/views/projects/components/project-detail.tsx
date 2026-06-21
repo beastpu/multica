@@ -351,6 +351,7 @@ function ProjectIssuesSurface({
   const grouping = useViewStore((s) => s.grouping);
   const sortBy = useViewStore((s) => s.sortBy);
   const sortDirection = useViewStore((s) => s.sortDirection);
+  const parentOnlyFilter = useViewStore((s) => s.parentOnlyFilter);
   const statusFilters = useViewStore((s) => s.statusFilters);
   const priorityFilters = useViewStore((s) => s.priorityFilters);
   const assigneeFilters = useViewStore((s) => s.assigneeFilters);
@@ -364,8 +365,9 @@ function ProjectIssuesSurface({
     () => ({
       sort_by: sortBy,
       sort_direction: sortBy !== "position" ? sortDirection : undefined,
+      parent_only: parentOnlyFilter || undefined,
     } as const),
-    [sortBy, sortDirection],
+    [parentOnlyFilter, sortBy, sortDirection],
   );
 
   const assigneeGroupFilter = useMemo<AssigneeGroupedIssuesFilter>(
@@ -377,8 +379,9 @@ function ProjectIssuesSurface({
       include_no_assignee: includeNoAssignee,
       creator_filters: creatorFilters,
       label_ids: labelFilters,
+      parent_only: parentOnlyFilter || undefined,
     }),
-    [assigneeFilters, creatorFilters, filter, includeNoAssignee, labelFilters, priorityFilters, statusFilters],
+    [assigneeFilters, creatorFilters, filter, includeNoAssignee, labelFilters, parentOnlyFilter, priorityFilters, statusFilters],
   );
   const assigneeGroupsOptions = myIssueAssigneeGroupsOptions(
     wsId,

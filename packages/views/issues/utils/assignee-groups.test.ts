@@ -73,7 +73,7 @@ describe("filterAssigneeGroups", () => {
     ]);
   });
 
-  it("keeps only parent issues and updates assignee group totals", () => {
+  it("does not treat parent-only as a client-side grouped filter", () => {
     const groups = [
       group("agent-1", [
         issue("parent-1"),
@@ -88,9 +88,6 @@ describe("filterAssigneeGroups", () => {
       parentOnlyFilter: true,
     });
 
-    expect(result!.map((g) => ({ id: g.id, issueIds: g.issues.map((i) => i.id), total: g.total }))).toEqual([
-      { id: "agent-1", issueIds: ["parent-1"], total: 1 },
-      { id: "none", issueIds: ["parent-2"], total: 1 },
-    ]);
+    expect(result).toBe(groups);
   });
 });
