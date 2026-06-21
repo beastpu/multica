@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MarkdownModeEditor } from "./markdown-mode-editor";
@@ -8,15 +8,30 @@ vi.mock("./content-editor", () => ({
     {
       defaultValue = "",
       placeholder,
+      onUpdate,
+      flushPendingOnUnmount,
     }: {
       defaultValue?: string;
       placeholder?: string;
+      onUpdate?: (value: string) => void;
+      flushPendingOnUnmount?: boolean;
     },
     ref,
   ) {
     const [value, setValue] = useState(defaultValue);
+    const valueRef = useRef(value);
+    valueRef.current = value;
+
+    useEffect(() => {
+      return () => {
+        if (!flushPendingOnUnmount) return;
+        if (valueRef.current === defaultValue) return;
+        onUpdate?.(valueRef.current);
+      };
+    }, []);
+
     useImperativeHandle(ref, () => ({
-      getMarkdown: () => value,
+      getMarkdown: () => `serialized:${value}`,
       clearContent: vi.fn(),
       focus: vi.fn(),
       blur: vi.fn(),
@@ -72,7 +87,17 @@ describe("MarkdownModeEditor", () => {
     expect(source).toHaveValue("# Role\n\n```ts\nconst exact = true;\n```");
   });
 
-  it("flushes rich editor markdown before switching to source mode", () => {
+  it("preserves the original markdown when switching to source without rich edits", () => {
+    const onChange = vi.fn();
+    render(<Harness initial={"# Role\n\n- exact spacing"} onChange={onChange} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Markdown source" }));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText("Write instructions")).toHaveValue("# Role\n\n- exact spacing");
+  });
+
+  it("flushes pending rich editor markdown when switching to source mode", () => {
     const onChange = vi.fn();
     render(<Harness initial="original" onChange={onChange} />);
 

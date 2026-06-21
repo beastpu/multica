@@ -50,12 +50,6 @@ export function MarkdownModeEditor({
 
   const switchMode = (nextMode: MarkdownEditorMode) => {
     if (nextMode === mode) return;
-    if (mode === "rich") {
-      const currentMarkdown = editorRef.current?.getMarkdown();
-      if (currentMarkdown !== undefined && currentMarkdown !== value) {
-        onChange(currentMarkdown);
-      }
-    }
     setMode(nextMode);
   };
 
@@ -101,6 +95,7 @@ export function MarkdownModeEditor({
             placeholder={placeholder}
             debounceMs={debounceMs}
             disableMentions={disableMentions}
+            flushPendingOnUnmount
             className={richEditorClassName}
           />
         ) : (
