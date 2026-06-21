@@ -142,6 +142,9 @@ func createProjectPermissionTestMember(t *testing.T, role string) string {
 
 	ctx := context.Background()
 	email := "project-delete-" + role + "@multica.test"
+	// The schema uses no foreign keys or cascades, so a leftover member from a
+	// prior run won't disappear when its user is deleted. Drop the member first.
+	_, _ = testPool.Exec(ctx, `DELETE FROM member WHERE user_id IN (SELECT id FROM "user" WHERE email = $1)`, email)
 	_, _ = testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, email)
 
 	var userID string
@@ -153,6 +156,9 @@ RETURNING id
 		t.Fatalf("create %s user: %v", role, err)
 	}
 	t.Cleanup(func() {
+		// No cascade in the schema: remove the member row before its user so the
+		// shared test workspace isn't left with an orphaned member record.
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE user_id = $1`, userID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 
