@@ -92,8 +92,8 @@ func tickScheduledAutopilots(ctx context.Context, queries *db.Queries, svc *serv
 			continue
 		}
 
-		// Dispatch the autopilot run.
-		if _, err := svc.DispatchAutopilot(ctx, autopilot, t.ID, "schedule", nil); err != nil {
+		// Dispatch the claimed schedule occurrence.
+		if _, err := svc.DispatchScheduledAutopilot(ctx, autopilot, t.ID, t.ScheduledFireAt); err != nil {
 			slog.Warn("autopilot scheduler: dispatch failed",
 				"autopilot_id", util.UUIDToString(autopilot.ID),
 				"trigger_id", util.UUIDToString(t.ID),
@@ -111,13 +111,19 @@ func advanceNextRun(ctx context.Context, queries *db.Queries, t db.ClaimDueSched
 	if !t.CronExpression.Valid || t.CronExpression.String == "" {
 		return
 	}
+	if !t.ScheduledFireAt.Valid {
+		slog.Warn("autopilot scheduler: claimed trigger missing scheduled fire time",
+			"trigger_id", util.UUIDToString(t.ID),
+		)
+		return
+	}
 
 	tz := service.DefaultAutopilotTriggerTimezone
 	if t.Timezone.Valid && t.Timezone.String != "" {
 		tz = t.Timezone.String
 	}
 
-	next, err := service.ComputeNextRun(t.CronExpression.String, tz)
+	next, err := service.ComputeNextRunAfter(t.CronExpression.String, tz, t.ScheduledFireAt.Time)
 	if err != nil {
 		slog.Warn("autopilot scheduler: failed to compute next run",
 			"trigger_id", util.UUIDToString(t.ID),

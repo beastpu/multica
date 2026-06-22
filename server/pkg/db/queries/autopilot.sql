@@ -187,10 +187,10 @@ RETURNING *;
 -- agent_id on agent_task_queue still records who actually ran the work
 -- (the squad leader); squad_id lets reports group by squad without a join.
 INSERT INTO autopilot_run (
-    autopilot_id, trigger_id, source, status, trigger_payload, squad_id
+    autopilot_id, trigger_id, source, status, trigger_payload, squad_id, scheduled_fire_at
 ) VALUES (
     $1, sqlc.narg('trigger_id'), $2, $3, sqlc.narg('trigger_payload'),
-    sqlc.narg('squad_id')
+    sqlc.narg('squad_id'), sqlc.narg('scheduled_fire_at')
 ) RETURNING *;
 
 -- name: GetAutopilotRun :one
@@ -255,16 +255,26 @@ RETURNING *;
 -- name: ClaimDueScheduleTriggers :many
 -- Atomically claim all due schedule triggers to prevent concurrent execution.
 -- Joins the autopilot table to ensure only active autopilots are fired.
+WITH due AS (
+    SELECT
+        t.id,
+        t.next_run_at AS scheduled_fire_at,
+        a.workspace_id AS autopilot_workspace_id
+    FROM autopilot_trigger t
+    JOIN autopilot a ON t.autopilot_id = a.id
+    WHERE t.kind = 'schedule'
+      AND t.enabled = true
+      AND t.next_run_at IS NOT NULL
+      AND t.next_run_at <= now()
+      AND a.status = 'active'
+    ORDER BY t.next_run_at ASC, t.id ASC
+    FOR UPDATE OF t SKIP LOCKED
+)
 UPDATE autopilot_trigger t
 SET next_run_at = NULL
-FROM autopilot a
-WHERE t.autopilot_id = a.id
-  AND t.kind = 'schedule'
-  AND t.enabled = true
-  AND t.next_run_at IS NOT NULL
-  AND t.next_run_at <= now()
-  AND a.status = 'active'
-RETURNING t.*, a.workspace_id AS autopilot_workspace_id;
+FROM due
+WHERE t.id = due.id
+RETURNING t.*, due.scheduled_fire_at, due.autopilot_workspace_id;
 
 -- =====================
 -- Task Queue (run_only mode)
@@ -373,4 +383,3 @@ ON CONFLICT (autopilot_id, user_type, user_id) DO NOTHING;
 -- Paired with a re-insert loop to implement full-replace PATCH semantics.
 DELETE FROM autopilot_subscriber
 WHERE autopilot_id = $1;
-

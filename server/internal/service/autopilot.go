@@ -39,6 +39,10 @@ type AutopilotService struct {
 // when computing next run times.
 const DefaultAutopilotTriggerTimezone = "UTC"
 
+type dispatchAutopilotOptions struct {
+	ScheduledFireAt pgtype.Timestamptz
+}
+
 func NewAutopilotService(q *db.Queries, tx TxStarter, bus *events.Bus, taskSvc *TaskService) *AutopilotService {
 	return &AutopilotService{Queries: q, TxStarter: tx, Bus: bus, TaskSvc: taskSvc}
 }
@@ -63,8 +67,31 @@ func (s *AutopilotService) DispatchAutopilot(
 	source string,
 	payload []byte,
 ) (*db.AutopilotRun, error) {
+	return s.dispatchAutopilot(ctx, autopilot, triggerID, source, payload, dispatchAutopilotOptions{})
+}
+
+// DispatchScheduledAutopilot dispatches one claimed schedule occurrence.
+func (s *AutopilotService) DispatchScheduledAutopilot(
+	ctx context.Context,
+	autopilot db.Autopilot,
+	triggerID pgtype.UUID,
+	scheduledFireAt pgtype.Timestamptz,
+) (*db.AutopilotRun, error) {
+	return s.dispatchAutopilot(ctx, autopilot, triggerID, "schedule", nil, dispatchAutopilotOptions{
+		ScheduledFireAt: scheduledFireAt,
+	})
+}
+
+func (s *AutopilotService) dispatchAutopilot(
+	ctx context.Context,
+	autopilot db.Autopilot,
+	triggerID pgtype.UUID,
+	source string,
+	payload []byte,
+	opts dispatchAutopilotOptions,
+) (*db.AutopilotRun, error) {
 	if reason, skip := s.shouldSkipDispatch(ctx, autopilot); skip {
-		return s.recordSkippedRun(ctx, autopilot, triggerID, source, payload, reason)
+		return s.recordSkippedRun(ctx, autopilot, triggerID, source, payload, reason, opts)
 	}
 
 	// Determine initial status based on execution mode.
@@ -74,12 +101,13 @@ func (s *AutopilotService) DispatchAutopilot(
 	}
 
 	run, err := s.Queries.CreateAutopilotRun(ctx, db.CreateAutopilotRunParams{
-		AutopilotID:    autopilot.ID,
-		TriggerID:      triggerID,
-		Source:         source,
-		Status:         initialStatus,
-		TriggerPayload: payload,
-		SquadID:        autopilotSquadAttribution(autopilot),
+		AutopilotID:     autopilot.ID,
+		TriggerID:       triggerID,
+		Source:          source,
+		Status:          initialStatus,
+		TriggerPayload:  payload,
+		SquadID:         autopilotSquadAttribution(autopilot),
+		ScheduledFireAt: opts.ScheduledFireAt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create run: %w", err)
@@ -859,14 +887,16 @@ func (s *AutopilotService) recordSkippedRun(
 	source string,
 	payload []byte,
 	reason string,
+	opts dispatchAutopilotOptions,
 ) (*db.AutopilotRun, error) {
 	run, err := s.Queries.CreateAutopilotRun(ctx, db.CreateAutopilotRunParams{
-		AutopilotID:    autopilot.ID,
-		TriggerID:      triggerID,
-		Source:         source,
-		Status:         "skipped",
-		TriggerPayload: payload,
-		SquadID:        autopilotSquadAttribution(autopilot),
+		AutopilotID:     autopilot.ID,
+		TriggerID:       triggerID,
+		Source:          source,
+		Status:          "skipped",
+		TriggerPayload:  payload,
+		SquadID:         autopilotSquadAttribution(autopilot),
+		ScheduledFireAt: opts.ScheduledFireAt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create skipped run: %w", err)

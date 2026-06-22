@@ -13,6 +13,12 @@ var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month 
 // ComputeNextRun parses a cron expression and returns the next fire time
 // in the given timezone.
 func ComputeNextRun(cronExpr, timezone string) (time.Time, error) {
+	return ComputeNextRunAfter(cronExpr, timezone, time.Now())
+}
+
+// ComputeNextRunAfter parses a cron expression and returns the next fire time
+// after the provided base instant in the given timezone.
+func ComputeNextRunAfter(cronExpr, timezone string, base time.Time) (time.Time, error) {
 	sched, err := cronParser.Parse(cronExpr)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parse cron: %w", err)
@@ -21,7 +27,7 @@ func ComputeNextRun(cronExpr, timezone string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, fmt.Errorf("invalid timezone %q: %w", timezone, err)
 	}
-	return sched.Next(time.Now().In(loc)), nil
+	return sched.Next(base.In(loc)), nil
 }
 
 // ValidateTimezone returns an error if the timezone string is not recognized.
