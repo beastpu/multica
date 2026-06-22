@@ -52,9 +52,10 @@ type IssueResponse struct {
 	// Metadata is the per-issue KV map (see issue_metadata.go). Always emitted
 	// (empty object when unset) so frontend code can `issue.metadata[key]`
 	// without nil-guarding the parent field.
-	Metadata    map[string]any          `json:"metadata"`
-	Reactions   []IssueReactionResponse `json:"reactions,omitempty"`
-	Attachments []AttachmentResponse    `json:"attachments,omitempty"`
+	Metadata       map[string]any          `json:"metadata"`
+	ExternalFields map[string]string       `json:"external_fields,omitempty"`
+	Reactions      []IssueReactionResponse `json:"reactions,omitempty"`
+	Attachments    []AttachmentResponse    `json:"attachments,omitempty"`
 	// Labels are bulk-attached by list/detail endpoints so the client can render
 	// chips without an N+1 round-trip per row. Pointer + omitempty so paths that
 	// don't load labels (e.g. UpdateIssue, batch UpdateIssues, the issue:updated
@@ -105,6 +106,49 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		UpdatedAt:     timestampToString(i.UpdatedAt),
 		Metadata:      parseIssueMetadata(i.Metadata),
 	}
+}
+
+func (h *Handler) attachIssueExternalFields(ctx context.Context, resp *IssueResponse, workspaceID, issueID pgtype.UUID) {
+	binding, err := h.Queries.GetFeishuProjectIssueBindingByIssue(ctx, db.GetFeishuProjectIssueBindingByIssueParams{
+		WorkspaceID: workspaceID,
+		IssueID:     issueID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return
+	}
+	if err != nil {
+		slog.Warn("load Feishu Project external fields failed",
+			"error", err,
+			"workspace_id", uuidToString(workspaceID),
+			"issue_id", uuidToString(issueID),
+		)
+		return
+	}
+	resp.ExternalFields = feishuProjectExternalFieldsToResponse(binding.ExternalFields)
+}
+
+func feishuProjectExternalFieldsToResponse(raw []byte) map[string]string {
+	var decoded map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &decoded) != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for key, value := range decoded {
+		key = strings.TrimSpace(key)
+		stringValue, ok := value.(string)
+		if !ok {
+			continue
+		}
+		stringValue = strings.TrimSpace(stringValue)
+		if key == "" || stringValue == "" {
+			continue
+		}
+		out[key] = stringValue
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // issueListRowToResponse converts a list-query row (no description) to an IssueResponse.
@@ -758,6 +802,7 @@ func (h *Handler) GetIssueByFeishuProjectWorkItem(w http.ResponseWriter, r *http
 
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
+	h.attachIssueExternalFields(r.Context(), &resp, issue.WorkspaceID, issue.ID)
 	detailLabels := h.labelsByIssue(r.Context(), issue.WorkspaceID, []pgtype.UUID{issue.ID})[uuidToString(issue.ID)]
 	if detailLabels == nil {
 		detailLabels = []LabelResponse{}
@@ -1639,6 +1684,7 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
+	h.attachIssueExternalFields(r.Context(), &resp, issue.WorkspaceID, issue.ID)
 	detailLabels := h.labelsByIssue(r.Context(), issue.WorkspaceID, []pgtype.UUID{issue.ID})[uuidToString(issue.ID)]
 	if detailLabels == nil {
 		detailLabels = []LabelResponse{}

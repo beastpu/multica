@@ -112,17 +112,18 @@ WHERE workspace_id = $1 AND issue_id = $2;
 INSERT INTO feishu_project_issue_binding (
     workspace_id, integration_id, issue_id, project_key, work_item_type,
     work_item_id, external_identifier, external_url, external_status_label,
-    last_external_updated_at
+    last_external_updated_at, external_fields
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, sqlc.narg('external_url'), sqlc.narg('external_status_label'),
-    sqlc.narg('last_external_updated_at')
+    sqlc.narg('last_external_updated_at'), sqlc.arg('external_fields')
 )
 ON CONFLICT (integration_id, work_item_type, work_item_id) DO UPDATE SET
     issue_id = EXCLUDED.issue_id,
     external_url = EXCLUDED.external_url,
     external_status_label = EXCLUDED.external_status_label,
     last_external_updated_at = EXCLUDED.last_external_updated_at,
+    external_fields = EXCLUDED.external_fields,
     last_synced_at = now(),
     updated_at = now()
 RETURNING *;

@@ -69,6 +69,25 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
     expect(parsed.issues[0]?.metadata).toEqual({});
   });
 
+  it("accepts and defaults Feishu Project external fields separately from metadata", () => {
+    const payload = {
+      issues: [
+        {
+          ...baseIssue,
+          external_fields: { "提交分支": "1.7.2(dev or rel)", "开发分支": "main, rel_1.1.0" },
+        },
+        baseIssue,
+      ],
+      total: 2,
+    };
+    const parsed = ListIssuesResponseSchema.parse(payload);
+    expect(parsed.issues[0]?.external_fields).toEqual({
+      "提交分支": "1.7.2(dev or rel)",
+      "开发分支": "main, rel_1.1.0",
+    });
+    expect(parsed.issues[1]?.external_fields).toEqual({});
+  });
+
   it("rejects metadata with non-primitive values (nested object)", () => {
     const payload = {
       issues: [{ ...baseIssue, metadata: { nested: { x: 1 } } }],
