@@ -31,6 +31,7 @@ export interface IssueReaction {
  */
 export type IssueMetadataValue = string | number | boolean;
 export type IssueMetadata = Record<string, IssueMetadataValue>;
+export type IssueExternalFields = Record<string, string>;
 
 export interface Issue {
   id: string;
@@ -54,6 +55,7 @@ export interface Issue {
   start_date: string | null;
   due_date: string | null;
   metadata: IssueMetadata;
+  external_fields?: IssueExternalFields;
   reactions?: IssueReaction[];
   labels?: Label[];
   created_at: string;

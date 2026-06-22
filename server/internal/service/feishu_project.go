@@ -618,6 +618,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		status = "todo"
 	}
 	mappedPriority := mapFeishuPriority(item.Priority)
+	externalFields := feishuProjectExternalFields(item)
 
 	phaseStarted := time.Now()
 	binding, bindingErr := s.Queries.GetFeishuProjectIssueBindingByExternal(ctx, db.GetFeishuProjectIssueBindingByExternalParams{
@@ -660,13 +661,14 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	}
 	if issueFound {
 		needsDefaultProject := projectID.Valid && issue.ProjectID != projectID
+		externalFieldsChanged := !sameFeishuProjectExternalFields(binding.ExternalFields, externalFields)
 		// Watermark short-circuit: if Meego hasn't touched the work item since
 		// the last sync, nothing downstream (fields, attachments, labels) can
 		// have changed either — skip the entire DB round-trip set. Cuts a 1k-
 		// item manual full-sync from minutes to ~30s when most items are quiet.
 		// The label-sync fields are derived from item.fields too, so they also
 		// bump item.UpdatedAt; safe to skip them here.
-		if !needsDefaultProject && !forceRefresh && !item.UpdatedAt.IsZero() && binding.LastExternalUpdatedAt.Valid &&
+		if !needsDefaultProject && !externalFieldsChanged && !forceRefresh && !item.UpdatedAt.IsZero() && binding.LastExternalUpdatedAt.Valid &&
 			!item.UpdatedAt.After(binding.LastExternalUpdatedAt.Time) {
 			s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 			return "skipped", 0, nil
@@ -736,9 +738,11 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 			s.reconcileSyncedIssueTasks(ctx, issue)
 			// Advance the binding watermark so the next sync's short-circuit fires.
 			phaseStarted = time.Now()
-			_, _ = s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
+			if _, err := s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item)); err != nil {
+				return "skipped", 0, err
+			}
 			timing.bindingUpsert += time.Since(phaseStarted)
-			if labelsChanged {
+			if labelsChanged || externalFieldsChanged {
 				s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 				return "updated", 0, nil
 			}
@@ -1453,7 +1457,105 @@ func bindingParams(cfg db.FeishuProjectIntegration, issueID pgtype.UUID, item Fe
 			Valid:  item.Status != "",
 		},
 		LastExternalUpdatedAt: pgtype.Timestamptz{Time: item.UpdatedAt, Valid: !item.UpdatedAt.IsZero()},
+		ExternalFields:        feishuProjectExternalFieldsJSON(item),
 	}
+}
+
+func feishuProjectExternalFieldsJSON(item FeishuProjectWorkItem) []byte {
+	b, err := json.Marshal(feishuProjectExternalFields(item))
+	if err != nil {
+		return []byte("{}")
+	}
+	return b
+}
+
+func sameFeishuProjectExternalFields(raw []byte, fields map[string]string) bool {
+	existing := map[string]string{}
+	if len(bytes.TrimSpace(raw)) > 0 {
+		if err := json.Unmarshal(raw, &existing); err != nil {
+			return false
+		}
+	}
+	if len(existing) != len(fields) {
+		return false
+	}
+	for k, v := range fields {
+		if existing[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func feishuProjectExternalFields(item FeishuProjectWorkItem) map[string]string {
+	collected := map[string][]string{}
+	for name, values := range item.FieldValues {
+		displayName := feishuProjectExternalFieldDisplayName(name)
+		if displayName == "" {
+			continue
+		}
+		collected[displayName] = append(collected[displayName], values...)
+	}
+	fields := map[string]string{}
+	for displayName, values := range collected {
+		value := feishuProjectExternalFieldValue(values)
+		if value == "" {
+			continue
+		}
+		fields[displayName] = value
+	}
+	return fields
+}
+
+func feishuProjectExternalFieldDisplayName(name string) string {
+	name = strings.TrimSpace(name)
+	switch {
+	case strings.Contains(name, "提交分支"):
+		return "提交分支"
+	case strings.Contains(name, "开发分支"):
+		return "开发分支"
+	default:
+		return ""
+	}
+}
+
+func feishuProjectExternalFieldValue(values []string) string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || value == "<nil>" || feishuProjectLooksLikeOptionID(value) || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return strings.Join(out, ", ")
+}
+
+func feishuProjectLooksLikeOptionID(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	switch lower {
+	case "main", "master", "develop", "development", "dev", "trunk", "release", "rel", "qa", "test", "staging", "stage", "prod", "production", "stable", "common":
+		return false
+	}
+	for _, marker := range []string{"feature", "bugfix", "hotfix", "release", "develop"} {
+		if strings.Contains(lower, marker) {
+			return false
+		}
+	}
+	if strings.HasPrefix(lower, "dev") || strings.HasPrefix(lower, "rel") {
+		return false
+	}
+	if strings.ContainsAny(value, "./- ()（）:：") {
+		return false
+	}
+	for _, r := range value {
+		if r > 127 {
+			return false
+		}
+	}
+	return len(value) >= 6 && feishuProjectOptionIDRe.MatchString(lower)
 }
 
 func externalIdentifier(item FeishuProjectWorkItem) string {
@@ -4318,6 +4420,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 var feishuProjectEmailRe = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+var feishuProjectOptionIDRe = regexp.MustCompile(`^[a-z0-9_]+$`)
 
 func extractEmail(s string) string {
 	return strings.ToLower(feishuProjectEmailRe.FindString(s))

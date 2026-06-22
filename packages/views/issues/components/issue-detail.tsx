@@ -818,6 +818,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       return cached?.description != null ? cached : undefined;
     },
   });
+  const issueExternalFieldEntries = useMemo(
+    () => Object.entries(issue?.external_fields ?? {})
+      .filter(([name, value]) => name.trim() !== "" && value.trim() !== "")
+      .sort(([a], [b]) => a.localeCompare(b, "zh-Hans-CN")),
+    [issue?.external_fields],
+  );
 
   // Record recent visit
   const recordVisit = useRecentIssuesStore((s) => s.recordVisit);
@@ -1879,6 +1885,20 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           )}
 
           <div {...descDropZoneProps} className="relative mt-5 rounded-lg">
+            {issueExternalFieldEntries.length > 0 && (
+              <div className="mb-4 space-y-1 text-sm leading-6">
+                {issueExternalFieldEntries.map(([name, value]) => (
+                  <div key={name} className="flex items-start gap-1.5">
+                    <span className="shrink-0 font-medium text-muted-foreground">
+                      {name}：
+                    </span>
+                    <span className="min-w-0 break-words text-foreground">
+                      {value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
             <ContentEditor
               ref={descEditorRef}
               key={id}

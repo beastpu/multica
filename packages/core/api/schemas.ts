@@ -23,6 +23,7 @@ import type {
   FeishuProjectStatusOptionsResponse,
   FeishuProjectSyncResponse,
   GroupedIssuesResponse,
+  Issue,
   ListIssuesResponse,
   ListWebhookDeliveriesResponse,
   Squad,
@@ -233,6 +234,7 @@ export const CommentTriggerPreviewSchema = z.object({
 // unknown keys land as `unknown` to a caller, but the field itself defaults
 // to {} so consumers never need to nil-guard `issue.metadata`.
 const IssueMetadataSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({});
+const IssueExternalFieldsSchema = z.record(z.string(), z.string()).default({});
 
 export const IssueSchema = z.object({
   id: z.string(),
@@ -253,11 +255,36 @@ export const IssueSchema = z.object({
   start_date: z.string().nullable(),
   due_date: z.string().nullable(),
   metadata: IssueMetadataSchema,
+  external_fields: IssueExternalFieldsSchema,
   reactions: z.array(z.unknown()).optional(),
   labels: z.array(z.unknown()).optional(),
   created_at: z.string(),
   updated_at: z.string(),
 }).loose();
+
+export const EMPTY_ISSUE: Issue = {
+  id: "",
+  workspace_id: "",
+  number: 0,
+  identifier: "",
+  title: "",
+  description: null,
+  status: "todo",
+  priority: "none",
+  assignee_type: null,
+  assignee_id: null,
+  creator_type: "member",
+  creator_id: "",
+  parent_issue_id: null,
+  project_id: null,
+  position: 0,
+  start_date: null,
+  due_date: null,
+  metadata: {},
+  external_fields: {},
+  created_at: "",
+  updated_at: "",
+};
 
 export const ListIssuesResponseSchema = z.object({
   issues: z.array(IssueSchema).default([]),

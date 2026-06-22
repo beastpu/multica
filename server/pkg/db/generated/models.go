@@ -336,6 +336,7 @@ type FeishuProjectIssueBinding struct {
 	LastSyncedAt          pgtype.Timestamptz `json:"last_synced_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	ExternalFields        []byte             `json:"external_fields"`
 }
 
 type FeishuProjectLabelSyncBinding struct {
