@@ -73,6 +73,8 @@
     },
     "no_reason": "—",
     "caption": "{{count}} records",
+    "resize_column": "Resize {{column}} column",
+    "reset_columns": "Reset columns",
     "empty": {
       "title": "No fixes yet",
       "body": "Once your agents start working issues, each one shows up here with its status and latest comment.",

@@ -73,6 +73,8 @@
     },
     "no_reason": "—",
     "caption": "{{count}} 条记录",
+    "resize_column": "调整{{column}}列宽",
+    "reset_columns": "重置列宽",
     "empty": {
       "title": "暂无修复记录",
       "body": "当智能体开始处理 issue 后，它们会显示在这里，并附带工单状态与最新评论。",

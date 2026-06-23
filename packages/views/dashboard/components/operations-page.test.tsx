@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useOperationsViewStore } from "@multica/core/dashboard";
 import { renderWithI18n } from "../../test/i18n";
 
 // One row per issue (the backend already collapses to the latest run). Each
@@ -135,7 +136,11 @@ vi.mock("../../common/actor-avatar", () => ({
 import { OperationsPage, splitHighlight } from "./operations-page";
 
 describe("OperationsPage", () => {
-  beforeEach(() => cleanup());
+  beforeEach(() => {
+    cleanup();
+    // Each test starts from the default column layout, regardless of prior runs.
+    useOperationsViewStore.getState().resetColumnWidths();
+  });
 
   it("renders one row per issue with agent, issue, status, and last comment", () => {
     renderWithI18n(<OperationsPage />);
@@ -162,6 +167,36 @@ describe("OperationsPage", () => {
     // By-day time column (UTC) renders the latest-run day per row.
     expect(screen.getByText("2026-06-01")).toBeTruthy();
     expect(screen.getByText("2026-06-02")).toBeTruthy();
+  });
+
+  it("renders a resize handle for each sizable column (agent, issue, status)", () => {
+    renderWithI18n(<OperationsPage />);
+    const handles = screen.getAllByRole("separator");
+    expect(handles.length).toBe(3);
+    // Reason (flex filler) and Date (fixed, last) are not resizable.
+    expect(
+      handles.map((h) => h.getAttribute("aria-label")).every(Boolean),
+    ).toBe(true);
+  });
+
+  it("shows the reset control only after a column is resized, then hides it again", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    // Default layout: no reset affordance.
+    expect(screen.queryByText("Reset columns")).toBeNull();
+
+    // Simulate a drag commit by writing a width to the store.
+    act(() => {
+      useOperationsViewStore.getState().setColumnWidth("issue", 480);
+    });
+    expect(screen.getByText("Reset columns")).toBeTruthy();
+
+    // Clicking it restores defaults and the control disappears.
+    await user.click(screen.getByText("Reset columns"));
+    await waitFor(() => {
+      expect(screen.queryByText("Reset columns")).toBeNull();
+    });
   });
 
   it("downgrades an unknown issue status to its raw string instead of crashing", () => {
