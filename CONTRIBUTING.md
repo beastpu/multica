@@ -786,7 +786,7 @@ multica-ai/multica#XXXX   (link the upstream issue / PR if this mirrors or inher
 
 ## Cutting a Release Tag (Release Owner Only)
 
-When you cut a release tag in semver form (`NN.NN.NN`) on `main`, GitLab CI runs `scripts/notify-feishu-release.sh`, which posts a card to the Feishu group via webhook. **The card content comes entirely from your tag annotation** — line 1 becomes the card title, the rest becomes the markdown body.
+When you cut a release tag in semver form (`NN.NN.NN` or `vNN.NN.NN`) on `main`, GitLab CI mirrors the tag to GitHub. The GitHub mirror then runs the desktop release workflow and publishes the release artifacts.
 
 ### Steps
 
@@ -795,93 +795,9 @@ When you cut a release tag in semver form (`NN.NN.NN`) on `main`, GitLab CI runs
 git checkout main
 git pull gitlab main
 git merge --no-ff gitlab/develop -m "Merge branch 'develop' into 'main'"
-
-# 2. Create an ANNOTATED tag (lightweight tags are skipped on purpose).
-git tag -a 0.0.2 -m "$(cat <<'EOF'
-<release headline — one short sentence summarizing the value, e.g. "Runtime 权限加固：防止他人借用你的 Token">
-
-**🐛 问题**
-
-<之前的状况，从用户视角，避免技术术语>
-
----
-
-**✅ 改动**
-
-- <要点 1>
-- <要点 2>
-
----
-
-**👀 你会看到的变化**
-
-- <UX 变化 1>
-- <UX 变化 2>
-EOF
-)"
-
-# 3. Push the tag — this is what triggers the notification.
 git push gitlab main
+
+# 2. Create and push the release tag.
+git tag 0.0.2
 git push gitlab 0.0.2
 ```
-
-### Authoring the Annotation
-
-The annotation IS the release card. Write it for the audience in the Feishu group, not for engineers reading commits.
-
-- **Line 1** — short, value-focused headline. Becomes the card's title bar (blue background). Avoid commit-message style (`feat(scope): ...`).
-- **Body** — supports full Feishu markdown: `**bold**`, `` `code` ``, bullet lists, `---` for visual section breaks, `<font color='grey'>...</font>` for muted notes. Recommended structure: 🐛 问题 → ✅ 改动 → 👀 你会看到的变化, with `---` between sections so the card visually breaks them up.
-- **Don't include** the tag number, "已上线 Ship", or the commit/tag URL — the script adds those automatically (subtitle and footer).
-- **Don't escape backticks** as `` \` `` — the single-quoted heredoc (`<<'EOF'`) already disables shell expansion, so plain `` `code` `` is what gets stored. Escaped backticks render literally as `\`` in the card, which looks broken.
-
-### Skip Behavior (No Notification)
-
-The script silently skips and exits 0 in these cases — useful for upstream sync tags or in-progress releases:
-
-- Tag is **lightweight** (created with `git tag X` instead of `git tag -a X`)
-- Annotation body is **empty** after stripping signatures
-- Tag commit is **not reachable from `origin/main`** (e.g. tag pushed on a side branch)
-
-If you want to ship without broadcasting, push a lightweight tag.
-
-### Local Dry Run
-
-Before pushing, you can preview the rendered card:
-
-```bash
-RELEASE_REMOTE=gitlab \
-CI_COMMIT_TAG=0.0.2 \
-CI_COMMIT_SHA=$(git rev-parse 0.0.2^{commit}) \
-CI_PROJECT_URL=https://gitlab.lilithgame.com/devops/multica \
-bash scripts/notify-feishu-release.sh --dry-run
-```
-
-To send a real test card to the group, add `FEISHU_WEBHOOK_URL=...` and drop `--dry-run`.
-
-### CI Variables Required
-
-The notification depends on one masked CI variable in GitLab project settings:
-
-- `FEISHU_WEBHOOK_URL` — the Feishu group's incoming-webhook URL. Mark **Masked** and **Protected**, and make sure the tag pattern is in **Protected tags** (Settings → Repository) so the variable is exposed during the tag pipeline.
-
-### Runner Host Requirements
-
-The current GitLab runner uses a **shell executor** on a Linux VM (set up out of band, not part of this repo). The runner host needs these tools available to the `gitlab-runner` user — the pipeline pre-flight check fails fast if any are missing:
-
-- `bash` (>= 4)
-- `git`
-- `curl`
-- `jq`
-
-Install via the host's package manager once:
-
-```bash
-# Debian / Ubuntu
-sudo apt-get install -y bash git curl jq
-# RHEL / CentOS
-sudo yum install -y bash git curl jq
-# Alpine
-sudo apk add --no-cache bash git curl jq
-```
-
-If we move the runner to a docker executor later, switch the `.gitlab-ci.yml` job back to `image: alpine:3.21` + `before_script: apk add --no-cache bash git curl jq` (the script itself is executor-agnostic).

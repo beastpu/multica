@@ -6,11 +6,6 @@
 #     `.github/workflows/lilith-desktop-release.yml` does the
 #     desktop build + Aliyun OSS publish on its own runners.
 #
-# Temporarily disabled (kept commented in place — search for
-# "TEMPORARILY DISABLED" to re-enable):
-#   - `notify-release` — would post a release card to the Feishu
-#     group so the team knows the tag shipped.
-#
 # Day-to-day testing / build / lint runs on the GitHub mirror's
 # `.github/workflows/ci.yml`, not here.
 #
@@ -19,12 +14,11 @@
 #   - bash >= 4
 #   - git
 #   - ssh + ssh-keyscan          (mirror-to-github)
-#   - curl + jq                  (notify-release, currently disabled)
-# (apt: `apt-get install -y curl jq git openssh-client`;
-#  yum/dnf: same; apk: `apk add bash curl jq git openssh-client`.)
+# (apt: `apt-get install -y bash git openssh-client`;
+#  yum/dnf: same; apk: `apk add bash git openssh-client`.)
 #
 # To switch to a docker executor later, add `image: alpine:3.21` to a
-# job and put `apk add --no-cache bash curl jq git openssh-client` in
+# job and put `apk add --no-cache bash git openssh-client` in
 # before_script — both are valid configs.
 
 workflow:
@@ -34,11 +28,6 @@ workflow:
 
 stages:
   - mirror
-  # TEMPORARILY DISABLED: Feishu notification stage. Re-enable
-  # together with the `notify-release` job at the bottom of this file.
-  # Sequential ordering (mirror → notify) keeps the Feishu card from
-  # firing for a release that failed to mirror to GitHub.
-  # - notify
 
 # Shared release-tag rule. Accepts three tag shapes, all routed to the
 # same mirror-to-github job:
@@ -65,9 +54,6 @@ stages:
 #     force-push GitLab's current main to the mirror (instead of
 #     whatever HEAD points at, which on a hotfix-tagged commit might
 #     not be main).
-#   - notify-release (disabled below) would use `git merge-base`
-#     against main and the previous-tag commit range when rendering
-#     the card.
 .full-clone-vars: &full_clone_vars
   GIT_DEPTH: "0"
   GIT_STRATEGY: "clone"
@@ -87,21 +73,3 @@ mirror-to-github:
     - test -n "${GITHUB_MIRROR_DEPLOY_KEY:-}" || { echo "❌ GITHUB_MIRROR_DEPLOY_KEY not set — see scripts/mirror-to-github.sh header."; exit 1; }
   script:
     - bash scripts/mirror-to-github.sh
-
-# TEMPORARILY DISABLED — uncomment this block (and the `- notify` line
-# in `stages:` above) to bring the Feishu release notification back.
-# scripts/notify-feishu-release.sh is left in the repo, ready to use.
-#
-# notify-release:
-#   stage: notify
-#   tags: *multica_runner
-#   rules: *semver_tag_rule
-#   variables:
-#     <<: *full_clone_vars
-#   before_script:
-#     # Fail fast with a readable message if the host is missing one of the
-#     # tools the script depends on. This is far less confusing than the
-#     # generic "command not found" the script would emit later.
-#     - for tool in bash git curl jq; do command -v "$tool" >/dev/null || { echo "❌ Runner host is missing '$tool' — install it (apt/yum/apk) and retry."; exit 1; }; done
-#   script:
-#     - bash scripts/notify-feishu-release.sh
