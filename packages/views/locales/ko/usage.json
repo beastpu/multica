@@ -73,6 +73,8 @@
     },
     "no_reason": "—",
     "caption": "{{count}}개 기록",
+    "resize_column": "{{column}} 열 너비 조정",
+    "reset_columns": "열 너비 초기화",
     "empty": {
       "title": "아직 수정 내역이 없습니다",
       "body": "에이전트가 issue를 처리하기 시작하면 상태 및 최신 댓글과 함께 여기에 표시됩니다.",
