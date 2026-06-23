@@ -12,6 +12,7 @@ Use this skill for Multica update notes, release notes, and Feishu announcement 
 Create a concise Feishu update document based on:
 
 - Previous Multica update note formatting and location.
+- The latest published update note date, metadata, and content when running in automation.
 - Official Multica changelog: `https://multica.ai/changelog`.
 - Local/internal GitLab repository changes and commits.
 
@@ -27,20 +28,103 @@ Never send to the group before explicit user confirmation.
 
 ## Required Inputs
 
-If the user did not provide these, infer carefully or ask:
+Prefer inferring these so the skill works in a fixed automation prompt. Ask only
+when the missing value cannot be discovered from the available document/Wiki
+context.
 
 - Release date or title date, for example `2026-06-18`.
-- Change range, usually from the previous update note date to today.
-- Previous update note URL, used for both format reference and target Wiki parent.
+  - Default: today's date in the user's timezone, unless a current draft
+    document title or metadata clearly provides a different date.
+- Change range.
+  - Default: from the previous published update note's timestamp/date to now.
+  - If the previous note has both a title date and document update timestamp,
+    use the later timestamp as the exclusive lower bound and mention this
+    inference in the working notes.
+- Previous update note URL or a stable Wiki parent/current note URL.
+  - Use it for format reference, target Wiki parent, and automatic range
+    discovery.
 - Target group chat ID, only used after preview approval.
 - Bot/profile to send the card.
 
 Known defaults for the current Multica workflow:
 
 - Official changelog: `https://multica.ai/changelog`
+- Release notes Wiki parent: `https://lilithgames.feishu.cn/wiki/Z2xJw3QuaiBtSMkjYTJcRt9Nntc`
+  - Title: `Multica 文档中心`
+  - `space_id`: `7067946713897517057`
+  - `node_token`: `Z2xJw3QuaiBtSMkjYTJcRt9Nntc`
+  - Release-note children are direct child docx nodes under this parent, for
+    example `Multica 更新说明 2026-06-18`.
 - Notification bot profile: `multica-notify`
 - Notification bot app id: `cli_aa8861f3c0bb9cde`
 - Default publish group: `oc_3bc000be3a30aadd8ba8042d8c015799`
+
+## Automation Mode
+
+When the user asks for an automated or recurring release-note task, assume the
+prompt should stay stable across runs. Do not require the user to edit dates,
+commit ranges, or "previous note" wording every time.
+
+Automation-friendly flow:
+
+1. Start from the provided current update-note document, latest previous note
+   URL, or Wiki parent. A Codex cron automation has no implicit "current
+   Feishu document" context, so the automation prompt must include one stable
+   Feishu Wiki parent URL or latest update note URL.
+2. Read the current/latest document metadata and content:
+   - document title;
+   - created/updated timestamps if exposed by Feishu/Wiki/Drive metadata;
+   - visible date in the title or first heading;
+   - body content, to reuse structure and avoid repeating already-published
+     items.
+3. Determine the previous published note:
+   - If a previous note URL is provided, use that document.
+   - If only a Wiki parent/current note is provided, inspect sibling update
+     notes under the same parent and pick the most recent published note before
+     the current run.
+   - Prefer documents whose title matches `Multica 更新说明`, `Multica Update`,
+     `更新说明`, or a dated release-note pattern.
+4. Set the change window:
+   - `start`: previous note update timestamp when available; otherwise the date
+     parsed from its title/heading/content.
+   - `end`: current run time; if updating an existing draft, use the draft's
+     latest update timestamp only as context, not as the upper bound.
+   - Treat `start` as exclusive and `end` as inclusive for changelog and Git log
+     collection.
+5. Generate the new changelog from official changelog entries and local GitLab
+   commits within that window.
+6. Report the inferred `start`, `end`, previous note URL/title, and source of
+   the dates before asking for document review.
+
+If multiple candidate previous notes have the same date, choose the one with the
+latest Feishu/Wiki update timestamp. If no reliable previous note can be found,
+ask once for either the previous update note URL or the Wiki parent; do not ask
+for a hand-written date range unless document discovery is impossible.
+
+Stable automation prompt example:
+
+```text
+Use the multica-release-notes skill to draft the next Multica update note.
+Use https://lilithgames.feishu.cn/wiki/Z2xJw3QuaiBtSMkjYTJcRt9Nntc as the
+source of truth for previous notes and formatting. Infer the change range
+automatically from the latest published note to the current run time. Create or
+update the Feishu document, then stop and ask me to review before sending any
+card.
+```
+
+Only this stable Wiki parent URL should need to stay in the automation prompt.
+Dates and commit ranges should be discovered during the run.
+
+Read locations:
+
+- Feishu document body: use the `lark-doc` workflow on the resolved docx token.
+- Feishu/Wiki node location and sibling notes: use the `lark-wiki` workflow to
+  resolve the node, parent, and sibling update-note documents.
+- Created/updated timestamps: prefer Feishu/Wiki/Drive metadata exposed for the
+  document or Wiki node; fall back to the visible date in the document title or
+  first heading only when metadata is unavailable.
+- Product changes: read `https://multica.ai/changelog` and local Git history for
+  the inferred `start`/`end` window.
 
 ## Content Rules
 
@@ -66,20 +150,31 @@ Useful feature categories for recent Multica notes:
 
 ## Research Workflow
 
-1. Read the previous update note.
+1. Resolve the date range.
+   - In automation mode, derive it from the previous published update note and
+     current run time as described above.
+   - In manual mode, use the user-provided dates when explicit.
+   - Keep a short note of the inferred range so the final answer can explain
+     what was included.
+
+2. Read the previous update note.
    - Use it as the format reference.
+   - Read its body content to avoid duplicating already-published items.
+   - Read document/Wiki/Drive metadata when available, especially created and
+     updated timestamps.
    - Resolve its Wiki node metadata to find `space_id` and `parent_node_token`.
 
-2. Read the official changelog.
+3. Read the official changelog.
    - Browse or fetch `https://multica.ai/changelog` because it changes over time.
    - Extract only relevant entries within the requested date range.
 
-3. Inspect local/internal repository changes.
+4. Inspect local/internal repository changes.
    - Check branches and remotes before assuming repository state.
-   - Use `git log --since=<date>` and focused `git show` / `rg` to identify user-facing features and fixes.
+   - Use `git log --after=<start> --until=<end>` and focused `git show` / `rg`
+     to identify user-facing features and fixes.
    - Group related commits into product themes.
 
-4. Reconcile sources.
+5. Reconcile sources.
    - Official changelog is the public baseline.
    - Local GitLab commits can add internal integrations, fixes, or not-yet-public work.
    - If a feature appears local-only or unmerged, call that out to the user before publishing it.
