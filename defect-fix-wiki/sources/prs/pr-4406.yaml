@@ -1,0 +1,38 @@
+id: source.github.pr.4406
+repo: multica-ai/multica
+pr_number: 4406
+url: https://github.com/multica-ai/multica/pull/4406
+state: merged
+title: "MUL-3514: update June 22 changelog"
+author: multica-eve
+base_ref: main
+head_ref: agent/gpt-boy/0cd56cde
+merged_at: 2026-06-22T09:30:31Z
+closed_at: 2026-06-22T09:30:31Z
+merge_commit: b5a180b21ef9093516667fd5877f6b74cadf23e0
+linked_issues:
+  - MUL-3514
+changed_files:
+  - path: apps/web/features/landing/i18n/en.ts
+    additions: 15
+    deletions: 7
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/ja.ts
+    additions: 15
+    deletions: 7
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/ko.ts
+    additions: 15
+    deletions: 7
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/zh.ts
+    additions: 15
+    deletions: 7
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "missing test diff"

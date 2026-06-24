@@ -1,0 +1,30 @@
+id: source.github.pr.4183
+repo: multica-ai/multica
+pr_number: 4183
+url: https://github.com/multica-ai/multica/pull/4183
+state: merged
+title: "fix(desktop): coerce commit-hash versions to valid semver (MUL-3314)"
+author: Bing2030
+base_ref: main
+head_ref: fix/desktop-version-semver
+merged_at: 2026-06-18T06:17:50Z
+closed_at: 2026-06-18T06:17:50Z
+merge_commit: dd9e7bf19d865d0eaa07caa295603c42df88a1da
+linked_issues:
+  - MUL-3314
+changed_files:
+  - path: apps/desktop/scripts/package.mjs
+    additions: 17
+    deletions: 4
+    change_type: MODIFIED
+  - path: apps/desktop/scripts/package.test.mjs
+    additions: 20
+    deletions: 4
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "missing test diff"

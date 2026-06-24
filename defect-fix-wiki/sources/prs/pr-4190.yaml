@@ -1,0 +1,65 @@
+id: source.github.pr.4190
+repo: multica-ai/multica
+pr_number: 4190
+url: https://github.com/multica-ai/multica/pull/4190
+state: merged
+title: "MUL-3310: disable bare issue key expansion in comments"
+author: NevilleQingNY
+base_ref: main
+head_ref: agent/walt/485668ca
+merged_at: 2026-06-16T08:28:38Z
+closed_at: 2026-06-16T08:28:38Z
+merge_commit: 79394ee057ee3fcaea772c95ca508d9af5ee3242
+linked_issues:
+  - MUL-3310
+changed_files:
+  - path: apps/docs/content/docs/comments.ja.mdx
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/comments.ko.mdx
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/comments.mdx
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/comments.zh.mdx
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/handler/comment.go
+    additions: 1
+    deletions: 8
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon_test.go
+    additions: 7
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/handler/handler_test.go
+    additions: 88
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/mention/expand.go
+    additions: 0
+    deletions: 196
+    change_type: DELETED
+  - path: server/internal/mention/expand_test.go
+    additions: 0
+    deletions: 119
+    change_type: DELETED
+  - path: server/internal/service/task.go
+    additions: 0
+    deletions: 3
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/handler/daemon_test.go
+  - path: server/internal/handler/handler_test.go
+  - path: server/internal/mention/expand_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

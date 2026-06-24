@@ -176,6 +176,7 @@ import {
   EMPTY_FEISHU_PROJECT_SYNC_RESPONSE,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_GROUPED_ISSUES_RESPONSE,
+  EMPTY_ISSUE,
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_SQUAD,
   EMPTY_SQUAD_LIST,
@@ -195,6 +196,7 @@ import {
   AppConfigSchema,
   type AppConfigResponse,
   GroupedIssuesResponseSchema,
+  IssueSchema,
   ListAutopilotsResponseSchema,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   ListIssuesResponseSchema,
@@ -647,7 +649,10 @@ export class ApiClient {
   }
 
   async getIssue(id: string): Promise<Issue> {
-    return this.fetch(`/api/issues/${id}`);
+    const raw = await this.fetch<unknown>(`/api/issues/${id}`);
+    return parseWithFallback(raw, IssueSchema, EMPTY_ISSUE, {
+      endpoint: "GET /api/issues/:id",
+    });
   }
 
   async createIssue(data: CreateIssueRequest): Promise<Issue> {

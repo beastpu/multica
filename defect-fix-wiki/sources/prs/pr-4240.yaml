@@ -1,0 +1,65 @@
+id: source.github.pr.4240
+repo: multica-ai/multica
+pr_number: 4240
+url: https://github.com/multica-ai/multica/pull/4240
+state: merged
+title: "fix(runtimes): re-enable Delete affordance for owners on self-healing runtimes (MUL-3352)"
+author: multica-eve
+base_ref: main
+head_ref: fix/MUL-3352-runtime-delete-disabled-for-owner
+merged_at: 2026-06-17T07:31:15Z
+closed_at: 2026-06-17T07:31:15Z
+merge_commit: af146b6dc7588a7be6e0d16bd998cf7a70312dde
+linked_issues:
+  - MUL-3352
+changed_files:
+  - path: packages/views/locales/en/runtimes.json
+    additions: 1
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/runtimes.json
+    additions: 1
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/runtimes.json
+    additions: 1
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/runtimes.json
+    additions: 1
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/delete-runtime-dialog.test.tsx
+    additions: 72
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/delete-runtime-dialog.tsx
+    additions: 32
+    deletions: 15
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-detail-visibility.test.tsx
+    additions: 31
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-detail.tsx
+    additions: 16
+    deletions: 37
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-list.tsx
+    additions: 13
+    deletions: 14
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-row-menu.test.tsx
+    additions: 5
+    deletions: 4
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/runtimes/components/delete-runtime-dialog.test.tsx
+  - path: packages/views/runtimes/components/runtime-detail-visibility.test.tsx
+  - path: packages/views/runtimes/components/runtime-row-menu.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

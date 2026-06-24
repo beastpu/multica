@@ -1,0 +1,60 @@
+id: source.github.pr.4214
+repo: multica-ai/multica
+pr_number: 4214
+url: https://github.com/multica-ai/multica/pull/4214
+state: closed
+title: "fix(desktop): Cmd+W closes the active tab instead of the window"
+author: forrestchang
+base_ref: main
+head_ref: agent/lambda/5825e31d
+merged_at: ""
+closed_at: 2026-06-17T06:39:24Z
+merge_commit: ""
+linked_issues:
+  - MUL-2987
+changed_files:
+  - path: apps/desktop/src/main/index.ts
+    additions: 7
+    deletions: 1
+    change_type: MODIFIED
+  - path: apps/desktop/src/main/keyboard-shortcuts.test.ts
+    additions: 38
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/main/keyboard-shortcuts.ts
+    additions: 23
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/preload/index.d.ts
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/preload/index.ts
+    additions: 9
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/renderer/src/components/desktop-layout.tsx
+    additions: 13
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/renderer/src/stores/tab-store.test.ts
+    additions: 48
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/renderer/src/stores/tab-store.ts
+    additions: 23
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/shared/window-shortcuts.ts
+    additions: 5
+    deletions: 0
+    change_type: ADDED
+test_files_changed:
+  - path: apps/desktop/src/main/keyboard-shortcuts.test.ts
+  - path: apps/desktop/src/renderer/src/stores/tab-store.test.ts
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

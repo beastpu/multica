@@ -1,0 +1,38 @@
+id: source.github.pr.4274
+repo: multica-ai/multica
+pr_number: 4274
+url: https://github.com/multica-ai/multica/pull/4274
+state: merged
+title: "test: enable -race detector in Go test pipeline (WOR-61)"
+author: Hzzzzzx
+base_ref: main
+head_ref: agent/opencode-5-2/9b04f782
+merged_at: 2026-06-18T07:50:24Z
+closed_at: 2026-06-18T07:50:24Z
+merge_commit: b4c9e4423cd67ef242c2063ca07b815498409af0
+linked_issues: []
+changed_files:
+  - path: .github/workflows/ci.yml
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: .github/workflows/release.yml
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: Makefile
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/execenv_test.go
+    additions: 1
+    deletions: 2
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/daemon/execenv/execenv_test.go
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "missing linked issue"
+    - "test file changed"

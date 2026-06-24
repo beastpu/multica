@@ -1,0 +1,52 @@
+id: source.github.pr.4463
+repo: multica-ai/multica
+pr_number: 4463
+url: https://github.com/multica-ai/multica/pull/4463
+state: merged
+title: "feat(comments): resolve-aware fold for agent comment reads (MUL-3555)"
+author: NevilleQingNY
+base_ref: main
+head_ref: agent/walt/c5c4b2e8
+merged_at: 2026-06-24T01:52:18Z
+closed_at: 2026-06-24T01:52:18Z
+merge_commit: b79777caece68b20548521bc70778c24c52baca0
+linked_issues:
+  - MUL-3555
+changed_files:
+  - path: server/cmd/multica/cmd_issue.go
+    additions: 14
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_issue_test.go
+    additions: 77
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/reply_instructions.go
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config.go
+    additions: 3
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/internal/daemon/prompt.go
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/handler/comment.go
+    additions: 201
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/comment_fold_test.go
+    additions: 249
+    deletions: 0
+    change_type: ADDED
+test_files_changed:
+  - path: server/cmd/multica/cmd_issue_test.go
+  - path: server/internal/handler/comment_fold_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

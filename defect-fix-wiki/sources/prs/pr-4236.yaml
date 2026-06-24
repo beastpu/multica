@@ -1,0 +1,46 @@
+id: source.github.pr.4236
+repo: multica-ai/multica
+pr_number: 4236
+url: https://github.com/multica-ai/multica/pull/4236
+state: closed
+title: "fix(composer): lock editor + button loading during send, clear only on success"
+author: NevilleQingNY
+base_ref: main
+head_ref: fix/composer-optimistic-submit
+merged_at: ""
+closed_at: 2026-06-17T09:28:01Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: packages/views/chat/components/chat-input.tsx
+    additions: 10
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-card.tsx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-composers.test.tsx
+    additions: 41
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-input.tsx
+    additions: 30
+    deletions: 9
+    change_type: MODIFIED
+  - path: packages/views/issues/components/reply-input.tsx
+    additions: 22
+    deletions: 9
+    change_type: MODIFIED
+  - path: packages/views/issues/hooks/use-issue-timeline.ts
+    additions: 12
+    deletions: 4
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/issues/components/comment-composers.test.tsx
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

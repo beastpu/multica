@@ -1,0 +1,25 @@
+id: source.github.pr.4218
+repo: multica-ai/multica
+pr_number: 4218
+url: https://github.com/multica-ai/multica/pull/4218
+state: closed
+title: "share skills from runningtime"
+author: exp-repair
+base_ref: main
+head_ref: main
+merged_at: ""
+closed_at: 2026-06-17T01:51:09Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: .github/workflows/sync-upstream.yml
+    additions: 36
+    deletions: 0
+    change_type: ADDED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "missing test diff"

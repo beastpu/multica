@@ -1,0 +1,37 @@
+id: source.github.pr.4327
+repo: multica-ai/multica
+pr_number: 4327
+url: https://github.com/multica-ai/multica/pull/4327
+state: merged
+title: "MUL-3438: fix(projects): require admin for project deletion"
+author: beastpu
+base_ref: main
+head_ref: codex/fix-4220-project-delete-permissions
+merged_at: 2026-06-21T15:54:58Z
+closed_at: 2026-06-21T15:54:58Z
+merge_commit: 31d942d010df9db84486268aaae70bd3522f892b
+linked_issues:
+  - "#4220"
+  - MUL-3438
+  - https://github.com/multica-ai/multica/issues/4220
+changed_files:
+  - path: packages/views/projects/components/project-detail.tsx
+    additions: 35
+    deletions: 24
+    change_type: MODIFIED
+  - path: server/internal/handler/project.go
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/handler/project_validation_test.go
+    additions: 101
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/handler/project_validation_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

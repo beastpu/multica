@@ -272,7 +272,7 @@ func (q *Queries) GetFeishuProjectIntegrationByID(ctx context.Context, id pgtype
 }
 
 const getFeishuProjectIssueBindingByExternal = `-- name: GetFeishuProjectIssueBindingByExternal :one
-SELECT id, workspace_id, integration_id, issue_id, project_key, work_item_type, work_item_id, external_identifier, external_url, external_status_label, last_external_updated_at, last_synced_at, created_at, updated_at FROM feishu_project_issue_binding
+SELECT id, workspace_id, integration_id, issue_id, project_key, work_item_type, work_item_id, external_identifier, external_url, external_status_label, last_external_updated_at, last_synced_at, created_at, updated_at, external_fields FROM feishu_project_issue_binding
 WHERE integration_id = $1 AND work_item_type = $2 AND work_item_id = $3
 `
 
@@ -300,12 +300,13 @@ func (q *Queries) GetFeishuProjectIssueBindingByExternal(ctx context.Context, ar
 		&i.LastSyncedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExternalFields,
 	)
 	return i, err
 }
 
 const getFeishuProjectIssueBindingByIssue = `-- name: GetFeishuProjectIssueBindingByIssue :one
-SELECT id, workspace_id, integration_id, issue_id, project_key, work_item_type, work_item_id, external_identifier, external_url, external_status_label, last_external_updated_at, last_synced_at, created_at, updated_at FROM feishu_project_issue_binding
+SELECT id, workspace_id, integration_id, issue_id, project_key, work_item_type, work_item_id, external_identifier, external_url, external_status_label, last_external_updated_at, last_synced_at, created_at, updated_at, external_fields FROM feishu_project_issue_binding
 WHERE workspace_id = $1 AND issue_id = $2
 `
 
@@ -332,6 +333,7 @@ func (q *Queries) GetFeishuProjectIssueBindingByIssue(ctx context.Context, arg G
 		&i.LastSyncedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExternalFields,
 	)
 	return i, err
 }
@@ -528,7 +530,7 @@ func (q *Queries) ListFeishuProjectBusinessLineRoutes(ctx context.Context, integ
 }
 
 const listFeishuProjectIssueBindingsByIntegration = `-- name: ListFeishuProjectIssueBindingsByIntegration :many
-SELECT id, workspace_id, integration_id, issue_id, project_key, work_item_type, work_item_id, external_identifier, external_url, external_status_label, last_external_updated_at, last_synced_at, created_at, updated_at FROM feishu_project_issue_binding
+SELECT id, workspace_id, integration_id, issue_id, project_key, work_item_type, work_item_id, external_identifier, external_url, external_status_label, last_external_updated_at, last_synced_at, created_at, updated_at, external_fields FROM feishu_project_issue_binding
 WHERE integration_id = $1 AND id > $2
 ORDER BY id ASC
 LIMIT $3
@@ -567,6 +569,7 @@ func (q *Queries) ListFeishuProjectIssueBindingsByIntegration(ctx context.Contex
 			&i.LastSyncedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ExternalFields,
 		); err != nil {
 			return nil, err
 		}
@@ -1086,20 +1089,21 @@ const upsertFeishuProjectIssueBinding = `-- name: UpsertFeishuProjectIssueBindin
 INSERT INTO feishu_project_issue_binding (
     workspace_id, integration_id, issue_id, project_key, work_item_type,
     work_item_id, external_identifier, external_url, external_status_label,
-    last_external_updated_at
+    last_external_updated_at, external_fields
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9,
-    $10
+    $10, $11
 )
 ON CONFLICT (integration_id, work_item_type, work_item_id) DO UPDATE SET
     issue_id = EXCLUDED.issue_id,
     external_url = EXCLUDED.external_url,
     external_status_label = EXCLUDED.external_status_label,
     last_external_updated_at = EXCLUDED.last_external_updated_at,
+    external_fields = EXCLUDED.external_fields,
     last_synced_at = now(),
     updated_at = now()
-RETURNING id, workspace_id, integration_id, issue_id, project_key, work_item_type, work_item_id, external_identifier, external_url, external_status_label, last_external_updated_at, last_synced_at, created_at, updated_at
+RETURNING id, workspace_id, integration_id, issue_id, project_key, work_item_type, work_item_id, external_identifier, external_url, external_status_label, last_external_updated_at, last_synced_at, created_at, updated_at, external_fields
 `
 
 type UpsertFeishuProjectIssueBindingParams struct {
@@ -1113,6 +1117,7 @@ type UpsertFeishuProjectIssueBindingParams struct {
 	ExternalUrl           pgtype.Text        `json:"external_url"`
 	ExternalStatusLabel   pgtype.Text        `json:"external_status_label"`
 	LastExternalUpdatedAt pgtype.Timestamptz `json:"last_external_updated_at"`
+	ExternalFields        []byte             `json:"external_fields"`
 }
 
 func (q *Queries) UpsertFeishuProjectIssueBinding(ctx context.Context, arg UpsertFeishuProjectIssueBindingParams) (FeishuProjectIssueBinding, error) {
@@ -1127,6 +1132,7 @@ func (q *Queries) UpsertFeishuProjectIssueBinding(ctx context.Context, arg Upser
 		arg.ExternalUrl,
 		arg.ExternalStatusLabel,
 		arg.LastExternalUpdatedAt,
+		arg.ExternalFields,
 	)
 	var i FeishuProjectIssueBinding
 	err := row.Scan(
@@ -1144,6 +1150,7 @@ func (q *Queries) UpsertFeishuProjectIssueBinding(ctx context.Context, arg Upser
 		&i.LastSyncedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExternalFields,
 	)
 	return i, err
 }

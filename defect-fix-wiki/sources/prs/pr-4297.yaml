@@ -1,0 +1,25 @@
+id: source.github.pr.4297
+repo: multica-ai/multica
+pr_number: 4297
+url: https://github.com/multica-ai/multica/pull/4297
+state: merged
+title: "fix(editor): stop chat @mention groups from overlapping"
+author: NevilleQingNY
+base_ref: main
+head_ref: fix/chat-mention-double-popup
+merged_at: 2026-06-18T06:58:00Z
+closed_at: 2026-06-18T06:58:00Z
+merge_commit: e4b53eb5c0e5202797977b0d509ff2dd551713e7
+linked_issues: []
+changed_files:
+  - path: packages/views/editor/extensions/mention-suggestion.tsx
+    additions: 16
+    deletions: 21
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "missing linked issue"
+    - "missing test diff"

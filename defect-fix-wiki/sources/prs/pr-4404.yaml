@@ -1,0 +1,42 @@
+id: source.github.pr.4404
+repo: multica-ai/multica
+pr_number: 4404
+url: https://github.com/multica-ai/multica/pull/4404
+state: merged
+title: "MUL-3511: add CLI comment resolve commands"
+author: Bohan-J
+base_ref: main
+head_ref: agent/niko/1c6a67aa
+merged_at: 2026-06-22T10:16:38Z
+closed_at: 2026-06-22T10:16:38Z
+merge_commit: 637b6ee43383f83cd7cc7017bfb7b4e777f23518
+linked_issues:
+  - "#4399"
+  - MUL-3511
+  - https://github.com/multica-ai/multica/issues/4399
+changed_files:
+  - path: server/cmd/multica/cmd_issue.go
+    additions: 58
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_issue_test.go
+    additions: 77
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/cli/client.go
+    additions: 8
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/cli/client_test.go
+    additions: 45
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/multica/cmd_issue_test.go
+  - path: server/internal/cli/client_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

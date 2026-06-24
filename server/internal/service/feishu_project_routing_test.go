@@ -249,6 +249,33 @@ func TestParseFeishuProjectSearchIndexesFieldValuesForLabelSync(t *testing.T) {
 	}
 }
 
+func TestFeishuProjectExternalFieldsKeepsUserFacingBranchNames(t *testing.T) {
+	item := FeishuProjectWorkItem{
+		FieldValues: map[string][]string{
+			"field_467c5f": {"1.7.2(dev or rel)", "f_8ckn0o_"},
+			"提交分支":         {"1.7.2(dev or rel)", "f_8ckn0o_"},
+			"field_d7788a": {"main", "qy_f3vu4a", "rel_1.1.0", "71jgpjjcp"},
+			"开发分支（QA不用手动改，这个字段QA不用维护）": {"main", "qy_f3vu4a", "rel_1.1.0", "71jgpjjcp"},
+			"优先级": {"P1"},
+		},
+	}
+
+	got := feishuProjectExternalFields(item)
+	want := map[string]string{
+		"提交分支": "1.7.2(dev or rel)",
+		"开发分支": "main, rel_1.1.0",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("external fields = %#v, want %#v", got, want)
+	}
+	if _, ok := got["field_467c5f"]; ok {
+		t.Fatalf("field keys must not be user-facing: %#v", got)
+	}
+	if _, ok := got["优先级"]; ok {
+		t.Fatalf("unrelated fields must not be synced: %#v", got)
+	}
+}
+
 func TestParseFeishuProjectSearchExtractsPriority(t *testing.T) {
 	payload := map[string]any{
 		"data": []any{
@@ -738,6 +765,23 @@ func TestResolveAssigneePreservesCurrentForNonAssignableStatus(t *testing.T) {
 	gotType, gotID := svc.resolveAssignee(t.Context(), cfg, item, "in_progress", currentType, currentID, fallbackAgent)
 	if gotType != currentType || gotID != currentID {
 		t.Fatalf("expected current preserved, got %v / %v", gotType, gotID)
+	}
+}
+
+func TestResolveAssigneePreservesCurrentAgentForAssignableStatus(t *testing.T) {
+	// A synced issue reassigned locally to an agent must stay agent-owned even
+	// while it is still in todo. Feishu only knows the human operator, so using
+	// that field as authoritative would demote the local agent on every sync.
+	svc := &FeishuProjectSyncService{Queries: nil}
+	cfg := db.FeishuProjectIntegration{AssignOpenItemsToOwnerAgent: false}
+	item := FeishuProjectWorkItem{OwnerEmail: "alice@example.com"}
+	currentType := pgtype.Text{String: "agent", Valid: true}
+	currentID := uuidLike(101)
+	fallbackAgent := uuidLike(20)
+
+	gotType, gotID := svc.resolveAssignee(t.Context(), cfg, item, "todo", currentType, currentID, fallbackAgent)
+	if gotType != currentType || gotID != currentID {
+		t.Fatalf("expected current agent preserved, got %v / %v", gotType, gotID)
 	}
 }
 

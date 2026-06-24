@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import { Radar, Search, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -15,7 +22,14 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { paths, useWorkspaceSlug } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
-import { operationsFixesOptions } from "@multica/core/dashboard";
+import {
+  operationsFixesOptions,
+  useOperationsViewStore,
+  clampOperationsColumnWidth,
+  OPERATIONS_DEFAULT_WIDTHS,
+  OPERATIONS_COLUMN_KEYS,
+  type OperationsColumnKey,
+} from "@multica/core/dashboard";
 import type { AgentFixRecord, IssueStatus } from "@multica/core/types";
 import { PageHeader } from "../../layout/page-header";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -59,6 +73,55 @@ function isKnownIssueStatus(s: string): s is IssueStatus {
 // Stable empty reference so the loading→data transition doesn't rebuild the
 // filtered memo on every render.
 const EMPTY: AgentFixRecord[] = [];
+
+// --- Resizable-column layout -------------------------------------------------
+// Column order: 智能体 · 关联 issue · 状态 · 原因/描述(flex) · 时间(fixed last).
+// agent/issue/status are user-resizable (widths held as CSS vars on the card,
+// persisted via the operations view store). 原因/描述 is the flex filler that
+// soaks up slack, and 时间 is a fixed slim date column pinned last.
+const REASON_MIN_PX = 220;
+const TIME_PX = 96;
+const COLUMN_GAP_PX = 12; // matches gap-3
+const CARD_PADDING_X_PX = 32; // px-4 on the header + each row (16 × 2)
+
+const COLUMN_VAR: Record<OperationsColumnKey, string> = {
+  agent: "--ops-col-agent",
+  issue: "--ops-col-issue",
+  status: "--ops-col-status",
+};
+
+// Resolved from the CSS vars the card carries; reason flexes, time is fixed.
+const GRID_TEMPLATE = `var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.issue}) var(${COLUMN_VAR.status}) minmax(${REASON_MIN_PX}px, 1fr) ${TIME_PX}px`;
+
+const GRID_STYLE: CSSProperties = { gridTemplateColumns: GRID_TEMPLATE };
+
+// Keep interactive resize handles clickable inside any desktop drag region.
+const NO_DRAG_STYLE = { WebkitAppRegion: "no-drag" } as CSSProperties;
+
+// Total intrinsic width below which the card must scroll horizontally rather
+// than crush its fixed columns — the sum of every track plus gaps and padding.
+function operationsMinWidth(w: Record<OperationsColumnKey, number>): number {
+  return (
+    w.agent +
+    w.issue +
+    w.status +
+    REASON_MIN_PX +
+    TIME_PX +
+    COLUMN_GAP_PX * 4 +
+    CARD_PADDING_X_PX
+  );
+}
+
+// Inline style for the card: seed each resizable column's CSS var from the
+// persisted width and set the scroll floor.
+function cardStyle(w: Record<OperationsColumnKey, number>): CSSProperties {
+  return {
+    [COLUMN_VAR.agent]: `${w.agent}px`,
+    [COLUMN_VAR.issue]: `${w.issue}px`,
+    [COLUMN_VAR.status]: `${w.status}px`,
+    minWidth: `${operationsMinWidth(w)}px`,
+  } as CSSProperties;
+}
 
 // Day-granularity label for a fix's time axis, in the viewer's timezone — the
 // same calendar the usage dashboard slices on, so "按天" lines up across both
@@ -133,6 +196,16 @@ export function OperationsPage() {
   const wsId = useWorkspaceId();
   const slug = useWorkspaceSlug();
   const viewTZ = useViewingTimezone();
+  // Persisted, user-draggable column widths. The card carries them as CSS vars
+  // so a drag updates the variable imperatively (no re-render of every row);
+  // the store is written only on drag end. `widthsModified` toggles the reset
+  // affordance once the user has tuned the layout away from the defaults.
+  const columnWidths = useOperationsViewStore((s) => s.columnWidths);
+  const resetColumnWidths = useOperationsViewStore((s) => s.resetColumnWidths);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const widthsModified = OPERATIONS_COLUMN_KEYS.some(
+    (k) => columnWidths[k] !== OPERATIONS_DEFAULT_WIDTHS[k],
+  );
   const [days, setDays] = useState<OpsRange>(30);
   const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS);
   const [statusFilter, setStatusFilter] = useState<string>(ALL_STATUSES);
@@ -202,16 +275,27 @@ export function OperationsPage() {
       </PageHeader>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl space-y-4 p-6">
+        <div className="mx-auto max-w-[1600px] space-y-4 p-6">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-muted-foreground">
               {t(($) => $.operations.subtitle)}
             </p>
-            {!fixesQuery.isLoading && rows.length > 0 ? (
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {t(($) => $.operations.caption, { count: rows.length })}
-              </span>
-            ) : null}
+            <div className="flex shrink-0 items-center gap-3">
+              {widthsModified ? (
+                <button
+                  type="button"
+                  onClick={resetColumnWidths}
+                  className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {t(($) => $.operations.reset_columns)}
+                </button>
+              ) : null}
+              {!fixesQuery.isLoading && rows.length > 0 ? (
+                <span className="text-xs text-muted-foreground">
+                  {t(($) => $.operations.caption, { count: rows.length })}
+                </span>
+              ) : null}
+            </div>
           </div>
 
           {fixesQuery.isLoading ? (
@@ -219,76 +303,209 @@ export function OperationsPage() {
           ) : rows.length === 0 ? (
             <OperationsEmpty search={search} />
           ) : (
-            <div className="rounded-lg border bg-card">
-              {/* Header row — Agent first, then Issue / Time (by day) / Status
-                  / Reason. Same grid language as the dashboard leaderboard. */}
-              <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,2fr)_6rem_7.5rem_minmax(0,2.4fr)] items-center gap-3 border-b px-4 py-2 text-xs font-medium text-muted-foreground">
-                <span>{t(($) => $.operations.table.agent)}</span>
-                <span>{t(($) => $.operations.table.issue)}</span>
-                <span>{t(($) => $.operations.table.time)}</span>
-                <span>{t(($) => $.operations.table.status)}</span>
-                <span>{t(($) => $.operations.table.reason)}</span>
-              </div>
-              <div className="divide-y">
-                {rows.map((f) => {
-                  const agent = agents.find((a) => a.id === f.agent_id);
-                  const comment = (f.last_comment ?? "").trim();
-                  // Day axis: latest run's completion day, falling back to
-                  // start/created when it has no completed_at (running/queued).
-                  const day = formatDay(
-                    f.completed_at ?? f.started_at ?? f.created_at,
-                    viewTZ,
-                  );
-                  return (
-                    <div
-                      key={f.issue_id || f.task_id}
-                      className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,2fr)_6rem_7.5rem_minmax(0,2.4fr)] items-center gap-3 px-4 py-2.5"
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <ActorAvatar
-                          actorType="agent"
-                          actorId={f.agent_id}
-                          size={22}
-                          enableHoverCard
-                        />
-                        <span className="truncate text-sm">
-                          {agent?.name ?? f.agent_name}
-                        </span>
-                      </div>
-                      <IssueCell fix={f} slug={slug} />
-                      <span className="text-xs text-muted-foreground tabular-nums">
-                        {day}
-                      </span>
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        {isKnownIssueStatus(f.issue_status) && (
-                          <StatusIcon
-                            status={f.issue_status}
-                            className="h-3.5 w-3.5"
-                          />
-                        )}
-                        <span className="truncate text-sm">
-                          {issueStatusLabel(f.issue_status)}
-                        </span>
-                      </div>
-                      <span
-                        className="truncate text-xs text-muted-foreground"
-                        title={comment || undefined}
+            // overflow-x-auto: when a dragged column outgrows the viewport the
+            // table scrolls horizontally instead of crushing its fixed columns.
+            <div className="overflow-x-auto">
+              <div
+                ref={cardRef}
+                className="rounded-lg border bg-card"
+                style={cardStyle(columnWidths)}
+              >
+                {/* Header — Agent · Issue · Status · Reason(flex) · Date(last).
+                    agent/issue/status carry a drag handle on their right edge. */}
+                <div
+                  className="grid items-center gap-3 border-b px-4 py-2 text-xs font-medium text-muted-foreground"
+                  style={GRID_STYLE}
+                >
+                  <HeaderCell
+                    columnKey="agent"
+                    cardRef={cardRef}
+                    label={t(($) => $.operations.table.agent)}
+                  />
+                  <HeaderCell
+                    columnKey="issue"
+                    cardRef={cardRef}
+                    label={t(($) => $.operations.table.issue)}
+                  />
+                  <HeaderCell
+                    columnKey="status"
+                    cardRef={cardRef}
+                    label={t(($) => $.operations.table.status)}
+                  />
+                  <span className="truncate">
+                    {t(($) => $.operations.table.reason)}
+                  </span>
+                  <span className="truncate">
+                    {t(($) => $.operations.table.time)}
+                  </span>
+                </div>
+                <div className="divide-y">
+                  {rows.map((f) => {
+                    const agent = agents.find((a) => a.id === f.agent_id);
+                    const comment = (f.last_comment ?? "").trim();
+                    // Day axis: latest run's completion day, falling back to
+                    // start/created when it has no completed_at (running/queued).
+                    const day = formatDay(
+                      f.completed_at ?? f.started_at ?? f.created_at,
+                      viewTZ,
+                    );
+                    return (
+                      <div
+                        key={f.issue_id || f.task_id}
+                        className="grid items-center gap-3 px-4 py-2.5"
+                        style={GRID_STYLE}
                       >
-                        {comment ? (
-                          <ReasonText text={comment} keyword={search} />
-                        ) : (
-                          t(($) => $.operations.no_reason)
-                        )}
-                      </span>
-                    </div>
-                  );
-                })}
+                        <div className="flex min-w-0 items-center gap-2">
+                          <ActorAvatar
+                            actorType="agent"
+                            actorId={f.agent_id}
+                            size={22}
+                            enableHoverCard
+                          />
+                          <span className="truncate text-sm">
+                            {agent?.name ?? f.agent_name}
+                          </span>
+                        </div>
+                        <IssueCell fix={f} slug={slug} />
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          {isKnownIssueStatus(f.issue_status) && (
+                            <StatusIcon
+                              status={f.issue_status}
+                              className="h-3.5 w-3.5"
+                            />
+                          )}
+                          <span className="truncate text-sm">
+                            {issueStatusLabel(f.issue_status)}
+                          </span>
+                        </div>
+                        <span
+                          className="truncate text-xs text-muted-foreground"
+                          title={comment || undefined}
+                        >
+                          {comment ? (
+                            <ReasonText text={comment} keyword={search} />
+                          ) : (
+                            t(($) => $.operations.no_reason)
+                          )}
+                        </span>
+                        <span className="whitespace-nowrap text-xs text-muted-foreground tabular-nums">
+                          {day}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+// A header label for a resizable column, with a drag handle pinned to its right
+// edge. The label truncates; the cell is `relative` so the handle can overhang
+// into the gap and stay grabbable.
+function HeaderCell({
+  columnKey,
+  cardRef,
+  label,
+}: {
+  columnKey: OperationsColumnKey;
+  cardRef: RefObject<HTMLDivElement | null>;
+  label: string;
+}) {
+  const { t } = useT("usage");
+  return (
+    <span className="relative flex min-w-0 items-center">
+      <span className="truncate">{label}</span>
+      <ColumnResizeHandle
+        columnKey={columnKey}
+        cardRef={cardRef}
+        label={t(($) => $.operations.resize_column, { column: label })}
+      />
+    </span>
+  );
+}
+
+// Drag handle for one resizable column. To keep ~185 rows from re-rendering on
+// every pointer move, the drag writes the column's CSS var (and the scroll
+// floor) straight onto the card element and only commits the final width to the
+// store on release. Double-click restores this column's default width.
+function ColumnResizeHandle({
+  columnKey,
+  cardRef,
+  label,
+}: {
+  columnKey: OperationsColumnKey;
+  cardRef: RefObject<HTMLDivElement | null>;
+  label: string;
+}) {
+  const drag = useRef<{ startX: number; baseW: number; lastW: number } | null>(
+    null,
+  );
+
+  const applyWidth = (width: number) => {
+    const card = cardRef.current;
+    if (!card) return;
+    card.style.setProperty(COLUMN_VAR[columnKey], `${width}px`);
+    const widths = useOperationsViewStore.getState().columnWidths;
+    card.style.minWidth = `${operationsMinWidth({
+      ...widths,
+      [columnKey]: width,
+    })}px`;
+  };
+
+  const onPointerDown = (e: React.PointerEvent<HTMLSpanElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const baseW = useOperationsViewStore.getState().columnWidths[columnKey];
+    drag.current = { startX: e.clientX, baseW, lastW: baseW };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLSpanElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    const next = clampOperationsColumnWidth(d.baseW + (e.clientX - d.startX));
+    d.lastW = next;
+    applyWidth(next);
+  };
+
+  const endDrag = (e: React.PointerEvent<HTMLSpanElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture may already be gone (e.g. pointercancel) — ignore.
+    }
+    useOperationsViewStore.getState().setColumnWidth(columnKey, d.lastW);
+  };
+
+  const onDoubleClick = () => {
+    const def = OPERATIONS_DEFAULT_WIDTHS[columnKey];
+    applyWidth(def);
+    useOperationsViewStore.getState().setColumnWidth(columnKey, def);
+  };
+
+  return (
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onDoubleClick={onDoubleClick}
+      className="group/handle absolute top-1/2 -right-1.5 z-10 flex h-5 w-3 -translate-y-1/2 cursor-col-resize touch-none select-none items-center justify-center"
+      style={NO_DRAG_STYLE}
+    >
+      <span className="h-3.5 w-px bg-border transition-colors group-hover/handle:bg-primary group-active/handle:bg-primary" />
+    </span>
   );
 }
 

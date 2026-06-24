@@ -618,6 +618,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		status = "todo"
 	}
 	mappedPriority := mapFeishuPriority(item.Priority)
+	externalFields := feishuProjectExternalFields(item)
 
 	phaseStarted := time.Now()
 	binding, bindingErr := s.Queries.GetFeishuProjectIssueBindingByExternal(ctx, db.GetFeishuProjectIssueBindingByExternalParams{
@@ -660,13 +661,14 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	}
 	if issueFound {
 		needsDefaultProject := projectID.Valid && issue.ProjectID != projectID
+		externalFieldsChanged := !sameFeishuProjectExternalFields(binding.ExternalFields, externalFields)
 		// Watermark short-circuit: if Meego hasn't touched the work item since
 		// the last sync, nothing downstream (fields, attachments, labels) can
 		// have changed either — skip the entire DB round-trip set. Cuts a 1k-
 		// item manual full-sync from minutes to ~30s when most items are quiet.
 		// The label-sync fields are derived from item.fields too, so they also
 		// bump item.UpdatedAt; safe to skip them here.
-		if !needsDefaultProject && !forceRefresh && !item.UpdatedAt.IsZero() && binding.LastExternalUpdatedAt.Valid &&
+		if !needsDefaultProject && !externalFieldsChanged && !forceRefresh && !item.UpdatedAt.IsZero() && binding.LastExternalUpdatedAt.Valid &&
 			!item.UpdatedAt.After(binding.LastExternalUpdatedAt.Time) {
 			s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 			return "skipped", 0, nil
@@ -706,27 +708,28 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		// is already external-id-keyed (commit 84fc2800d), so already-bound
 		// attachments are skipped without download/upload — just two cheap DB
 		// lookups. New Meego attachments land in the attachment table and get
-		// a binding row, but we deliberately ignore the returned markdown: the
-		// embedded-markdown-in-description design conflicts with letting users
-		// edit issue descriptions in Multica (the original reason for the now-
-		// removed lightUpdateExisting path). New attachments still surface in
-		// the issue's attachment panel.
+		// a binding row. Keep the returned markdown in the description too so
+		// rich-text images extracted from Feishu Project do not disappear after
+		// an otherwise unrelated status/assignee refresh.
 		phaseStarted = time.Now()
-		_, attachErr := s.syncExternalAttachments(ctx, cfg, issue.ID, item, timing)
+		attachmentMarkdown, attachErr := s.syncExternalAttachments(ctx, cfg, issue.ID, item, timing)
 		timing.attachments += time.Since(phaseStarted)
 		if attachErr != nil {
 			return "skipped", 0, attachErr
 		}
-		// Field-level diff. description is NOT compared and NOT updated below
-		// — we COALESCE on the DB side to preserve whatever's currently stored,
-		// so any manual edits the user made in Multica survive. title is treated
-		// as Meego-authoritative because users rarely rename synced issues.
+		attachmentMarkdown = mergeAttachmentMarkdown(attachmentMarkdown, s.existingExternalAttachmentMarkdown(ctx, cfg, issue.ID))
+		nextDescription := pgtype.Text{String: externalDescription(item, attachmentMarkdown), Valid: true}
+		// Field-level diff. Feishu Project is authoritative for synced issue
+		// descriptions, so a later Feishu edit must replace the Multica text.
+		// Title is also treated as Meego-authoritative because users rarely
+		// rename synced issues.
 		nextStatus := issue.Status
 		if hasMappedLocalStatus {
 			nextStatus = mappedStatus
 		}
 		if issue.Title == nextTitle && issue.Status == nextStatus &&
 			issue.Priority == nextPriority &&
+			sameNullableText(issue.Description, nextDescription) &&
 			sameNullableText(issue.AssigneeType, assigneeType) && sameNullableUUID(issue.AssigneeID, assigneeID) &&
 			issue.ProjectID == nextProjectID {
 			labelsChanged, err := s.syncIssueLabels(ctx, cfg, item, issue.ID)
@@ -736,9 +739,11 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 			s.reconcileSyncedIssueTasks(ctx, issue)
 			// Advance the binding watermark so the next sync's short-circuit fires.
 			phaseStarted = time.Now()
-			_, _ = s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
+			if _, err := s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item)); err != nil {
+				return "skipped", 0, err
+			}
 			timing.bindingUpsert += time.Since(phaseStarted)
-			if labelsChanged {
+			if labelsChanged || externalFieldsChanged {
 				s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 				return "updated", 0, nil
 			}
@@ -747,11 +752,9 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		}
 		phaseStarted = time.Now()
 		updatedIssue, err := s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
-			ID: issue.ID,
-			// Description left as invalid pgtype.Text on purpose — see comment
-			// above. UpdateIssue's COALESCE preserves the current value.
+			ID:            issue.ID,
 			Title:         pgtype.Text{String: nextTitle, Valid: true},
-			Description:   pgtype.Text{},
+			Description:   nextDescription,
 			Status:        pgtype.Text{String: nextStatus, Valid: true},
 			Priority:      pgtype.Text{String: nextPriority, Valid: true},
 			AssigneeType:  assigneeType,
@@ -1096,21 +1099,28 @@ func (s *FeishuProjectSyncService) enqueueSyncedIssueIfNeeded(ctx context.Contex
 
 // resolveAssignee picks the issue assignee for a synced work item. The chain is:
 //
-//  1. Owner's agent — only if cfg.AssignOpenItemsToOwnerAgent is on AND the local status
+//  1. Current local agent/squad assignee — existing Multica agent ownership is
+//     intentionally local-authoritative. Feishu has no equivalent agent assignee,
+//     so periodic syncs must not demote a manually assigned agent back to the
+//     external human owner.
+//  2. Owner's agent — only if cfg.AssignOpenItemsToOwnerAgent is on AND the local status
 //     is in an "assignable" state (currently "todo"). For non-assignable states (e.g.
 //     in_progress, done) we preserve currentType/currentID so we don't fight with a
 //     manual reassignment that happened in Multica.
-//  2. Owner as workspace member — the normal case when the Meego owner exists in
+//  3. Owner as workspace member — the normal case when the Meego owner exists in
 //     Multica as a workspace member.
-//  3. Route's fallback agent — last resort when the owner can't be resolved at all
+//  4. Route's fallback agent — last resort when the owner can't be resolved at all
 //     (left Meego / never joined Multica / typo'd email). Per-route so different
 //     business lines can have different triage handlers.
-//  4. Empty — nothing matched.
+//  5. Empty — nothing matched.
 //
 // The fallback is intentionally below member resolution: 兜底 means "use when nothing
 // else fits", so if the human owner is in the workspace they should still own the item
 // (otherwise the fallback would silently steal items that have a valid owner).
 func (s *FeishuProjectSyncService) resolveAssignee(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, localStatus string, currentType pgtype.Text, currentID pgtype.UUID, fallbackAgentID pgtype.UUID) (pgtype.Text, pgtype.UUID) {
+	if isLocalAgentLikeAssignee(currentType, currentID) {
+		return currentType, currentID
+	}
 	if cfg.AssignOpenItemsToOwnerAgent && !isFeishuProjectOwnerAgentAssignableStatus(item.Status, localStatus) {
 		return currentType, currentID
 	}
@@ -1126,6 +1136,11 @@ func (s *FeishuProjectSyncService) resolveAssignee(ctx context.Context, cfg db.F
 		return pgtype.Text{String: "agent", Valid: true}, fallbackAgentID
 	}
 	return pgtype.Text{}, pgtype.UUID{}
+}
+
+func isLocalAgentLikeAssignee(assigneeType pgtype.Text, assigneeID pgtype.UUID) bool {
+	return assigneeType.Valid && assigneeID.Valid &&
+		(assigneeType.String == "agent" || assigneeType.String == "squad")
 }
 
 // routeWorkItemProject decides which Multica project (inside the integration's workspace) a
@@ -1453,7 +1468,105 @@ func bindingParams(cfg db.FeishuProjectIntegration, issueID pgtype.UUID, item Fe
 			Valid:  item.Status != "",
 		},
 		LastExternalUpdatedAt: pgtype.Timestamptz{Time: item.UpdatedAt, Valid: !item.UpdatedAt.IsZero()},
+		ExternalFields:        feishuProjectExternalFieldsJSON(item),
 	}
+}
+
+func feishuProjectExternalFieldsJSON(item FeishuProjectWorkItem) []byte {
+	b, err := json.Marshal(feishuProjectExternalFields(item))
+	if err != nil {
+		return []byte("{}")
+	}
+	return b
+}
+
+func sameFeishuProjectExternalFields(raw []byte, fields map[string]string) bool {
+	existing := map[string]string{}
+	if len(bytes.TrimSpace(raw)) > 0 {
+		if err := json.Unmarshal(raw, &existing); err != nil {
+			return false
+		}
+	}
+	if len(existing) != len(fields) {
+		return false
+	}
+	for k, v := range fields {
+		if existing[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func feishuProjectExternalFields(item FeishuProjectWorkItem) map[string]string {
+	collected := map[string][]string{}
+	for name, values := range item.FieldValues {
+		displayName := feishuProjectExternalFieldDisplayName(name)
+		if displayName == "" {
+			continue
+		}
+		collected[displayName] = append(collected[displayName], values...)
+	}
+	fields := map[string]string{}
+	for displayName, values := range collected {
+		value := feishuProjectExternalFieldValue(values)
+		if value == "" {
+			continue
+		}
+		fields[displayName] = value
+	}
+	return fields
+}
+
+func feishuProjectExternalFieldDisplayName(name string) string {
+	name = strings.TrimSpace(name)
+	switch {
+	case strings.Contains(name, "提交分支"):
+		return "提交分支"
+	case strings.Contains(name, "开发分支"):
+		return "开发分支"
+	default:
+		return ""
+	}
+}
+
+func feishuProjectExternalFieldValue(values []string) string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || value == "<nil>" || feishuProjectLooksLikeOptionID(value) || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return strings.Join(out, ", ")
+}
+
+func feishuProjectLooksLikeOptionID(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	switch lower {
+	case "main", "master", "develop", "development", "dev", "trunk", "release", "rel", "qa", "test", "staging", "stage", "prod", "production", "stable", "common":
+		return false
+	}
+	for _, marker := range []string{"feature", "bugfix", "hotfix", "release", "develop"} {
+		if strings.Contains(lower, marker) {
+			return false
+		}
+	}
+	if strings.HasPrefix(lower, "dev") || strings.HasPrefix(lower, "rel") {
+		return false
+	}
+	if strings.ContainsAny(value, "./- ()（）:：") {
+		return false
+	}
+	for _, r := range value {
+		if r > 127 {
+			return false
+		}
+	}
+	return len(value) >= 6 && feishuProjectOptionIDRe.MatchString(lower)
 }
 
 func externalIdentifier(item FeishuProjectWorkItem) string {
@@ -1748,6 +1861,72 @@ func (s *FeishuProjectSyncService) syncExternalAttachments(ctx context.Context, 
 		lines = append(lines, attachmentMarkdown(att.Filename, feishuProjectAttachmentContentURL(att), att.ContentType))
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+func (s *FeishuProjectSyncService) existingExternalAttachmentMarkdown(ctx context.Context, cfg db.FeishuProjectIntegration, issueID pgtype.UUID) string {
+	if s == nil || s.Queries == nil {
+		return ""
+	}
+	existing, err := s.Queries.ListAttachmentsByIssue(ctx, db.ListAttachmentsByIssueParams{
+		IssueID:     issueID,
+		WorkspaceID: cfg.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("Feishu Project existing attachment markdown list failed",
+			"workspace_id", UUIDString(cfg.WorkspaceID),
+			"integration_id", UUIDString(cfg.ID),
+			"issue_id", UUIDString(issueID),
+			"error", err,
+		)
+		return ""
+	}
+	bindings, err := s.Queries.ListFeishuProjectAttachmentBindingsByIssue(ctx, db.ListFeishuProjectAttachmentBindingsByIssueParams{
+		IntegrationID: cfg.ID,
+		IssueID:       issueID,
+	})
+	if err != nil {
+		slog.Warn("Feishu Project existing attachment binding list failed",
+			"workspace_id", UUIDString(cfg.WorkspaceID),
+			"integration_id", UUIDString(cfg.ID),
+			"issue_id", UUIDString(issueID),
+			"error", err,
+		)
+		return ""
+	}
+	if len(existing) == 0 || len(bindings) == 0 {
+		return ""
+	}
+	bound := make(map[pgtype.UUID]struct{}, len(bindings))
+	for _, binding := range bindings {
+		bound[binding.AttachmentID] = struct{}{}
+	}
+	lines := make([]string, 0, len(existing))
+	for _, att := range existing {
+		if _, ok := bound[att.ID]; !ok {
+			continue
+		}
+		lines = append(lines, attachmentMarkdown(att.Filename, feishuProjectAttachmentContentURL(att), att.ContentType))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func mergeAttachmentMarkdown(primary, fallback string) string {
+	lines := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, block := range []string{primary, fallback} {
+		for _, raw := range strings.Split(block, "\n") {
+			line := strings.TrimSpace(raw)
+			if line == "" {
+				continue
+			}
+			if _, ok := seen[line]; ok {
+				continue
+			}
+			seen[line] = struct{}{}
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func feishuProjectAttachmentKey(cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, ext FeishuProjectAttachment, fallbackID, filename string) string {
@@ -4318,6 +4497,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 var feishuProjectEmailRe = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+var feishuProjectOptionIDRe = regexp.MustCompile(`^[a-z0-9_]+$`)
 
 func extractEmail(s string) string {
 	return strings.ToLower(feishuProjectEmailRe.FindString(s))

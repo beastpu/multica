@@ -1,0 +1,676 @@
+{
+  "repo": "multica-ai/multica",
+  "scanned": 150,
+  "source_records_written": 150,
+  "candidates_written": 77,
+  "candidate_pr_numbers": [
+    4489,
+    4488,
+    4487,
+    4463,
+    4462,
+    4456,
+    4454,
+    4452,
+    4451,
+    4448,
+    4445,
+    4426,
+    4416,
+    4415,
+    4414,
+    4410,
+    4408,
+    4405,
+    4404,
+    4403,
+    4400,
+    4395,
+    4392,
+    4391,
+    4390,
+    4389,
+    4387,
+    4386,
+    4383,
+    4366,
+    4360,
+    4334,
+    4327,
+    4322,
+    4307,
+    4304,
+    4300,
+    4290,
+    4289,
+    4288,
+    4287,
+    4286,
+    4267,
+    4262,
+    4259,
+    4258,
+    4257,
+    4254,
+    4252,
+    4251,
+    4249,
+    4245,
+    4244,
+    4240,
+    4233,
+    4231,
+    4229,
+    4228,
+    4225,
+    4217,
+    4215,
+    4207,
+    4206,
+    4200,
+    4198,
+    4196,
+    4195,
+    4193,
+    4192,
+    4191,
+    4190,
+    4187,
+    4177,
+    4167,
+    4165,
+    4162,
+    4161
+  ],
+  "skipped": [
+    {
+      "pr_number": 4486,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4471,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4466,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4465,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4461,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4460,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff",
+        "docs-only diff"
+      ]
+    },
+    {
+      "pr_number": 4459,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4455,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "missing test diff",
+        "docs-only diff"
+      ]
+    },
+    {
+      "pr_number": 4447,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4446,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4438,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4436,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4435,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4425,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4424,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff",
+        "docs-only diff"
+      ]
+    },
+    {
+      "pr_number": 4422,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4421,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4419,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4417,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4406,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4397,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4394,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4388,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4382,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4381,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4367,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4365,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4363,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4355,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4347,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4346,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4344,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4343,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4340,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4338,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4335,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4333,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "missing test diff",
+        "docs-only diff"
+      ]
+    },
+    {
+      "pr_number": 4331,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4330,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4329,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4328,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4305,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4297,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4295,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4294,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4292,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4279,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4274,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4265,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4255,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4253,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4250,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4248,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4247,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4236,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4234,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4227,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4224,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4219,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4218,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4214,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4208,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4201,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4194,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4188,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4183,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4179,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "missing test diff"
+      ]
+    },
+    {
+      "pr_number": 4175,
+      "reasons": [
+        "not merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4174,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4169,
+      "reasons": [
+        "merged",
+        "linked issue detected",
+        "missing test diff",
+        "docs-only diff"
+      ]
+    },
+    {
+      "pr_number": 4164,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4158,
+      "reasons": [
+        "not merged",
+        "linked issue detected",
+        "test file changed"
+      ]
+    },
+    {
+      "pr_number": 4157,
+      "reasons": [
+        "merged",
+        "missing linked issue",
+        "test file changed"
+      ]
+    }
+  ]
+}

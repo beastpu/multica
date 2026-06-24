@@ -73,6 +73,8 @@
     },
     "no_reason": "—",
     "caption": "{{count}} 件",
+    "resize_column": "{{column}}列の幅を調整",
+    "reset_columns": "列幅をリセット",
     "empty": {
       "title": "まだ修正はありません",
       "body": "エージェントが issue に着手すると、ステータスと最新コメントとともにここに表示されます。",

@@ -1,0 +1,45 @@
+id: source.github.pr.4167
+repo: multica-ai/multica
+pr_number: 4167
+url: https://github.com/multica-ai/multica/pull/4167
+state: merged
+title: "fix(web): preserve CLI callback params across Google OAuth redirect (MUL-3313)"
+author: Oxygen56
+base_ref: main
+head_ref: fix/wsl2-login-cli-callback
+merged_at: 2026-06-16T08:38:16Z
+closed_at: 2026-06-16T08:38:16Z
+merge_commit: 089832d6ec04671603da6edeae3c59b55956461e
+linked_issues:
+  - "#3049"
+  - MUL-3313
+  - https://github.com/multica-ai/multica/issues/3049
+changed_files:
+  - path: "apps/web/app/(auth)/login/page.tsx"
+    additions: 9
+    deletions: 2
+    change_type: MODIFIED
+  - path: apps/web/app/auth/callback/page.test.tsx
+    additions: 98
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/app/auth/callback/page.tsx
+    additions: 32
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/auth/index.ts
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/auth/login-page.tsx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: apps/web/app/auth/callback/page.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,31 @@
+id: source.github.pr.4228
+repo: multica-ai/multica
+pr_number: 4228
+url: https://github.com/multica-ai/multica/pull/4228
+state: merged
+title: "Fix: fail fast when Codex app-server exits MUL-2840"
+author: Bohan-J
+base_ref: main
+head_ref: agent/niko/49eac8f8
+merged_at: 2026-06-17T06:34:29Z
+closed_at: 2026-06-17T06:34:29Z
+merge_commit: 114a1ffb8fdc48f3b7f2d3cbba5d47d4ac1ef341
+linked_issues:
+  - MUL-2840
+changed_files:
+  - path: server/pkg/agent/codex.go
+    additions: 124
+    deletions: 24
+    change_type: MODIFIED
+  - path: server/pkg/agent/codex_test.go
+    additions: 177
+    deletions: 3
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/pkg/agent/codex_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,162 @@
+id: source.github.pr.4419
+repo: multica-ai/multica
+pr_number: 4419
+url: https://github.com/multica-ai/multica/pull/4419
+state: closed
+title: "[codex] Add per-runtime claim windows"
+author: Jakub-Mikolajczyk-pl
+base_ref: main
+head_ref: feat/runtime-claim-windows
+merged_at: ""
+closed_at: 2026-06-22T12:24:04Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: packages/core/api/client.test.ts
+    additions: 63
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/client.ts
+    additions: 20
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/core/api/schemas.test.ts
+    additions: 65
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/schemas.ts
+    additions: 33
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/runtimes/claim-window.test.ts
+    additions: 20
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/runtimes/claim-window.ts
+    additions: 12
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/runtimes/index.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/runtimes/mutations.ts
+    additions: 3
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/core/types/agent.ts
+    additions: 15
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/types/index.ts
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/en/runtimes.json
+    additions: 16
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/runtimes.json
+    additions: 16
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/runtimes.json
+    additions: 16
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/runtimes.json
+    additions: 16
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-claim-window-card.test.tsx
+    additions: 260
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/runtimes/components/runtime-claim-window-card.tsx
+    additions: 166
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/runtimes/components/runtime-detail-visibility.test.tsx
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-detail.tsx
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/server/runtime_sweeper.go
+    additions: 14
+    deletions: 19
+    change_type: MODIFIED
+  - path: server/cmd/server/runtime_sweeper_test.go
+    additions: 207
+    deletions: 8
+    change_type: MODIFIED
+  - path: server/internal/claimwindow/window.go
+    additions: 135
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/claimwindow/window_test.go
+    additions: 111
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/daemon_test.go
+    additions: 122
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime.go
+    additions: 139
+    deletions: 33
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_claim_window_test.go
+    additions: 322
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/task.go
+    additions: 106
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/migrations/122_runtime_claim_window.down.sql
+    additions: 4
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/122_runtime_claim_window.up.sql
+    additions: 9
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/agent.sql.go
+    additions: 149
+    deletions: 45
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/models.go
+    additions: 18
+    deletions: 16
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/runtime.sql.go
+    additions: 99
+    deletions: 56
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/agent.sql
+    additions: 51
+    deletions: 39
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/runtime.sql
+    additions: 15
+    deletions: 8
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/api/client.test.ts
+  - path: packages/core/api/schemas.test.ts
+  - path: packages/core/runtimes/claim-window.test.ts
+  - path: packages/views/runtimes/components/runtime-claim-window-card.test.tsx
+  - path: packages/views/runtimes/components/runtime-detail-visibility.test.tsx
+  - path: server/cmd/server/runtime_sweeper_test.go
+  - path: server/internal/claimwindow/window_test.go
+  - path: server/internal/handler/daemon_test.go
+  - path: server/internal/handler/runtime_claim_window_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

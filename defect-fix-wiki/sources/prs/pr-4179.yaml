@@ -1,0 +1,47 @@
+id: source.github.pr.4179
+repo: multica-ai/multica
+pr_number: 4179
+url: https://github.com/multica-ai/multica/pull/4179
+state: closed
+title: "feat(agent): add per-agent daily run budget guard (max_runs_per_day)"
+author: Oxygen56
+base_ref: main
+head_ref: feat/agent-daily-run-budget
+merged_at: ""
+closed_at: 2026-06-16T08:37:53Z
+merge_commit: ""
+linked_issues:
+  - "#4076"
+  - https://github.com/multica-ai/multica/issues/4076
+changed_files:
+  - path: server/internal/service/task.go
+    additions: 28
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/migrations/121_agent_max_runs_per_day.down.sql
+    additions: 1
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/121_agent_max_runs_per_day.up.sql
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/agent.sql.go
+    additions: 14
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/models.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/agent.sql
+    additions: 10
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "missing test diff"

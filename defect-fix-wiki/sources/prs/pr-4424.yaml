@@ -1,0 +1,57 @@
+id: source.github.pr.4424
+repo: multica-ai/multica
+pr_number: 4424
+url: https://github.com/multica-ai/multica/pull/4424
+state: merged
+title: "MUL-3528: clarify repo-scoped skills docs"
+author: Bohan-J
+base_ref: main
+head_ref: agent/niko/02e127bd
+merged_at: 2026-06-22T16:33:41Z
+closed_at: 2026-06-22T16:33:41Z
+merge_commit: 8122ee3bcd3bc852c120b17465f31b4504a84600
+linked_issues:
+  - "#4423"
+  - MUL-3528
+  - https://github.com/multica-ai/multica/issues/4423
+changed_files:
+  - path: apps/docs/content/docs/providers.ja.mdx
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/providers.ko.mdx
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/providers.mdx
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/providers.zh.mdx
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/skills.ja.mdx
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/skills.ko.mdx
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/skills.mdx
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/skills.zh.mdx
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "missing test diff"
+    - "docs-only diff"

@@ -550,6 +550,24 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getByDisplayValue("Add JWT auth to the backend")).toBeInTheDocument();
   });
 
+  it("renders Feishu Project external fields above the description", async () => {
+    mockApiObj.getIssue.mockResolvedValue({
+      ...mockIssue,
+      external_fields: {
+        "提交分支": "1.7.2(dev or rel)",
+      },
+    });
+
+    renderIssueDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText("提交分支：")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("1.7.2(dev or rel)")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Add JWT auth to the backend")).toBeInTheDocument();
+  });
+
   it("renders issue-level image attachments that are not embedded in the description", async () => {
     mockApiObj.listAttachments.mockResolvedValue([
       {

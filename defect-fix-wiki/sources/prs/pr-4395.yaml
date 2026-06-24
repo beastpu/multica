@@ -1,0 +1,108 @@
+id: source.github.pr.4395
+repo: multica-ai/multica
+pr_number: 4395
+url: https://github.com/multica-ai/multica/pull/4395
+state: merged
+title: "feat(daemon): inject project description into the agent brief (MUL-3465)"
+author: Bohan-J
+base_ref: main
+head_ref: agent/j/66f09815
+merged_at: 2026-06-22T15:39:27Z
+closed_at: 2026-06-22T15:39:27Z
+merge_commit: da72e2fa223064eb79edab8427c96b8af5aa81ce
+linked_issues:
+  - MUL-3465
+changed_files:
+  - path: packages/views/locales/en/modals.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/en/projects.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/modals.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/projects.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/modals.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/projects.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/modals.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/projects.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/modals/create-project.tsx
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/projects/components/project-detail.tsx
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/daemon.go
+    additions: 3
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/context.go
+    additions: 8
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/execenv.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/execenv_test.go
+    additions: 12
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config.go
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/types.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/agent.go
+    additions: 23
+    deletions: 22
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon.go
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon_test.go
+    additions: 124
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-projects-and-resources/SKILL.md
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-projects-and-resources/references/projects-and-resources-source-map.md
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/daemon/execenv/execenv_test.go
+  - path: server/internal/handler/daemon_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

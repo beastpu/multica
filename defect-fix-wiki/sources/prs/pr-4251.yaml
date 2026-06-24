@@ -1,0 +1,43 @@
+id: source.github.pr.4251
+repo: multica-ai/multica
+pr_number: 4251
+url: https://github.com/multica-ai/multica/pull/4251
+state: merged
+title: "MUL-3365: keep runtime provider arbiter during profile rollout"
+author: multica-eve
+base_ref: main
+head_ref: agent/gpt-boy/ff65dc30
+merged_at: 2026-06-17T09:51:47Z
+closed_at: 2026-06-17T09:51:47Z
+merge_commit: a08281a1b28738c450ce01f86f6d6c9d75445099
+linked_issues:
+  - MUL-3365
+changed_files:
+  - path: server/internal/migrations/runtime_profile_compat_test.go
+    additions: 34
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/121_agent_runtime_provider_partial_unique.down.sql
+    additions: 4
+    deletions: 11
+    change_type: MODIFIED
+  - path: server/migrations/121_agent_runtime_provider_partial_unique.up.sql
+    additions: 20
+    deletions: 22
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/runtime.sql.go
+    additions: 4
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/runtime.sql
+    additions: 4
+    deletions: 4
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/migrations/runtime_profile_compat_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

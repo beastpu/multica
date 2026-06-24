@@ -1,0 +1,30 @@
+id: source.github.pr.4333
+repo: multica-ai/multica
+pr_number: 4333
+url: https://github.com/multica-ai/multica/pull/4333
+state: merged
+title: "[codex] simplify agent guidance"
+author: forrestchang
+base_ref: main
+head_ref: codex/simplify-agent-guides
+merged_at: 2026-06-19T08:22:16Z
+closed_at: 2026-06-19T08:22:16Z
+merge_commit: 49e1c2a8af55793544e655ae11f4bc4b9ceb1b8e
+linked_issues: []
+changed_files:
+  - path: AGENTS.md
+    additions: 17
+    deletions: 15
+    change_type: MODIFIED
+  - path: CLAUDE.md
+    additions: 153
+    deletions: 354
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "missing linked issue"
+    - "missing test diff"
+    - "docs-only diff"

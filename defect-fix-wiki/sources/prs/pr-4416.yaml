@@ -1,0 +1,31 @@
+id: source.github.pr.4416
+repo: multica-ai/multica
+pr_number: 4416
+url: https://github.com/multica-ai/multica/pull/4416
+state: merged
+title: "fix(issues): add settle-lock to swimlane drag"
+author: NevilleQingNY
+base_ref: agent/walt/cd7fa810
+head_ref: agent/walt/swimlane-settle
+merged_at: 2026-06-22T12:27:59Z
+closed_at: 2026-06-22T12:27:59Z
+merge_commit: 42b4bc6af58a441bcb6c54262a004ceebe3ef54a
+linked_issues:
+  - MUL-3493
+changed_files:
+  - path: packages/views/issues/components/swimlane-view.test.tsx
+    additions: 32
+    deletions: 4
+    change_type: MODIFIED
+  - path: packages/views/issues/components/swimlane-view.tsx
+    additions: 27
+    deletions: 9
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/issues/components/swimlane-view.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

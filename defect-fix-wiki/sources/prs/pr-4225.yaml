@@ -1,0 +1,36 @@
+id: source.github.pr.4225
+repo: multica-ai/multica
+pr_number: 4225
+url: https://github.com/multica-ai/multica/pull/4225
+state: merged
+title: "MUL-3332: daemon picks up new custom runtime profiles without restart"
+author: multica-eve
+base_ref: main
+head_ref: bugfix/mul-3332-daemon-pickup-custom-runtime
+merged_at: 2026-06-17T04:36:31Z
+closed_at: 2026-06-17T04:36:31Z
+merge_commit: 6bb8cac9ea197bfbb6c16ba1984d561cbec9872f
+linked_issues:
+  - MUL-3332
+changed_files:
+  - path: server/internal/daemon/daemon.go
+    additions: 330
+    deletions: 24
+    change_type: MODIFIED
+  - path: server/internal/daemon/runtime_profile_drift_test.go
+    additions: 614
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/daemon/runtime_profile_test.go
+    additions: 14
+    deletions: 8
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/daemon/runtime_profile_drift_test.go
+  - path: server/internal/daemon/runtime_profile_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

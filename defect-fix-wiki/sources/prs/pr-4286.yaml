@@ -1,0 +1,55 @@
+id: source.github.pr.4286
+repo: multica-ai/multica
+pr_number: 4286
+url: https://github.com/multica-ai/multica/pull/4286
+state: merged
+title: "fix(workspace): derive workspace URL prefix from deployment host"
+author: Bohan-J
+base_ref: main
+head_ref: agent/j/fe0f9d7c
+merged_at: 2026-06-18T03:12:10Z
+closed_at: 2026-06-18T03:12:10Z
+merge_commit: 6f29a4c0a6ea2c8262c07c160bbcd6ffc7144e06
+linked_issues:
+  - "#4263"
+  - MUL-3400
+  - https://github.com/multica-ai/multica/issues/4263
+changed_files:
+  - path: packages/core/package.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/workspace/workspace-url.test.ts
+    additions: 37
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/workspace/workspace-url.ts
+    additions: 31
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/onboarding/steps/step-workspace.test.tsx
+    additions: 31
+    deletions: 6
+    change_type: MODIFIED
+  - path: packages/views/onboarding/steps/step-workspace.tsx
+    additions: 10
+    deletions: 4
+    change_type: MODIFIED
+  - path: packages/views/workspace/create-workspace-form.test.tsx
+    additions: 17
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/workspace/create-workspace-form.tsx
+    additions: 4
+    deletions: 2
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/workspace/workspace-url.test.ts
+  - path: packages/views/onboarding/steps/step-workspace.test.tsx
+  - path: packages/views/workspace/create-workspace-form.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

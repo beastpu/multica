@@ -766,6 +766,17 @@ func TestFeishuProjectExternalDescriptionIncludesAttachmentMarkdown(t *testing.T
 	}
 }
 
+func TestMergeAttachmentMarkdownKeepsCurrentOrderAndBackfillsExisting(t *testing.T) {
+	current := "![new.png](/api/attachments/new/content)\n![old.png](/api/attachments/old/content)"
+	existing := "![old.png](/api/attachments/old/content)\n![legacy.png](/api/attachments/legacy/content)"
+
+	got := mergeAttachmentMarkdown(current, existing)
+	want := "![new.png](/api/attachments/new/content)\n![old.png](/api/attachments/old/content)\n![legacy.png](/api/attachments/legacy/content)"
+	if got != want {
+		t.Fatalf("mergeAttachmentMarkdown = %q, want %q", got, want)
+	}
+}
+
 func TestNormalizeFeishuProjectDescriptionExtractsProtectedImages(t *testing.T) {
 	raw := "before\n\n![](https://project.feishu.cn/goapi/v5/platform/file/stream/download/token-a)<!-- 1D7DB00E-509C-4AD5-9F10-F59C6B6C1272 -->\n\n![](https://example.com/public.png)\n\nafter"
 	desc, attachments := normalizeFeishuProjectDescription(raw)
