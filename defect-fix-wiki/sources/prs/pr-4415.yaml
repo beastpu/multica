@@ -1,0 +1,87 @@
+id: source.github.pr.4415
+repo: multica-ai/multica
+pr_number: 4415
+url: https://github.com/multica-ai/multica/pull/4415
+state: merged
+title: "fix(issues): eliminate optimistic-update drag flicker (board, list, batch, WS)"
+author: NevilleQingNY
+base_ref: main
+head_ref: agent/walt/cd7fa810
+merged_at: 2026-06-23T01:20:02Z
+closed_at: 2026-06-23T01:20:02Z
+merge_commit: 45dae3185f01cdcd60967df82ca12c16917e566a
+linked_issues:
+  - MUL-3493
+changed_files:
+  - path: packages/core/issues/cache-helpers.test.ts
+    additions: 130
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/issues/cache-helpers.ts
+    additions: 35
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/core/issues/mutations.test.tsx
+    additions: 230
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/core/issues/mutations.ts
+    additions: 59
+    deletions: 6
+    change_type: MODIFIED
+  - path: packages/core/issues/ws-updaters.test.ts
+    additions: 61
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/issues/ws-updaters.ts
+    additions: 39
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/core/realtime/use-realtime-sync.ts
+    additions: 5
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/core/types/events.ts
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/components/board-view.tsx
+    additions: 44
+    deletions: 35
+    change_type: MODIFIED
+  - path: packages/views/issues/components/list-view.tsx
+    additions: 38
+    deletions: 29
+    change_type: MODIFIED
+  - path: packages/views/issues/components/swimlane-view.test.tsx
+    additions: 32
+    deletions: 4
+    change_type: MODIFIED
+  - path: packages/views/issues/components/swimlane-view.tsx
+    additions: 27
+    deletions: 9
+    change_type: MODIFIED
+  - path: packages/views/issues/components/use-drag-settle.ts
+    additions: 68
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/issues/utils/drag-utils.test.ts
+    additions: 71
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/issues/utils/drag-utils.ts
+    additions: 21
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/issues/cache-helpers.test.ts
+  - path: packages/core/issues/mutations.test.tsx
+  - path: packages/core/issues/ws-updaters.test.ts
+  - path: packages/views/issues/components/swimlane-view.test.tsx
+  - path: packages/views/issues/utils/drag-utils.test.ts
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

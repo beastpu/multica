@@ -1,0 +1,121 @@
+id: source.github.pr.4188
+repo: multica-ai/multica
+pr_number: 4188
+url: https://github.com/multica-ai/multica/pull/4188
+state: closed
+title: "feat: add UG wiki knowledge graph"
+author: yylou15
+base_ref: main
+head_ref: codex/ug-wiki-graph-d3
+merged_at: ""
+closed_at: 2026-06-16T07:12:47Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: "apps/web/app/[workspaceSlug]/(dashboard)/ug/graph/page.tsx"
+    additions: 13
+    deletions: 0
+    change_type: ADDED
+  - path: apps/web/app/ug/graph/page.tsx
+    additions: 12
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/chat/index.ts
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/core/chat/store.ts
+    additions: 25
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/paths/paths.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/paths/reserved-slugs.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-input.tsx
+    additions: 27
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-message-list.tsx
+    additions: 64
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-window.tsx
+    additions: 28
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/views/layout/app-sidebar.tsx
+    additions: 4
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/layout/dashboard-layout.tsx
+    additions: 56
+    deletions: 9
+    change_type: MODIFIED
+  - path: packages/views/package.json
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/ug-wiki-graph/components/filter-sidebar.tsx
+    additions: 76
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/ug-wiki-graph/components/graph-canvas.tsx
+    additions: 437
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/ug-wiki-graph/components/node-inspector.tsx
+    additions: 156
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/ug-wiki-graph/components/ug-wiki-graph-page.tsx
+    additions: 178
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/ug-wiki-graph/index.ts
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/ug-wiki-graph/mock-data.ts
+    additions: 2235
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/ug-wiki-graph/styles.css
+    additions: 608
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/ug-wiki-graph/types.ts
+    additions: 48
+    deletions: 0
+    change_type: ADDED
+  - path: pnpm-lock.yaml
+    additions: 12
+    deletions: 0
+    change_type: MODIFIED
+  - path: pnpm-workspace.yaml
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/reserved_slugs.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/outbound.go
+    additions: 591
+    deletions: 145
+    change_type: MODIFIED
+  - path: server/pkg/agent/codex.go
+    additions: 138
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "missing test diff"

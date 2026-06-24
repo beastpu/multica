@@ -1,0 +1,30 @@
+id: source.github.pr.4346
+repo: multica-ai/multica
+pr_number: 4346
+url: https://github.com/multica-ai/multica/pull/4346
+state: merged
+title: "fix(codex): handle app-server permission requests"
+author: YOMXXX
+base_ref: main
+head_ref: codex/fix-4341-codex-timeout
+merged_at: 2026-06-20T05:42:27Z
+closed_at: 2026-06-20T05:42:27Z
+merge_commit: 4bbaf5363c5ddf1e3087b50f587dfae06f113b34
+linked_issues: []
+changed_files:
+  - path: server/pkg/agent/codex.go
+    additions: 32
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/pkg/agent/codex_test.go
+    additions: 80
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/pkg/agent/codex_test.go
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "missing linked issue"
+    - "test file changed"

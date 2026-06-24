@@ -1,0 +1,31 @@
+id: source.github.pr.4387
+repo: multica-ai/multica
+pr_number: 4387
+url: https://github.com/multica-ai/multica/pull/4387
+state: merged
+title: "MUL-3446: keep chat output in chat"
+author: NevilleQingNY
+base_ref: main
+head_ref: agent/gus/48877720
+merged_at: 2026-06-22T07:51:04Z
+closed_at: 2026-06-22T07:51:04Z
+merge_commit: 4fe8b54e9bbb714aff9c6a5fefbca71d3f67077b
+linked_issues:
+  - MUL-3446
+changed_files:
+  - path: server/internal/daemon/execenv/runtime_config.go
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config_test.go
+    additions: 26
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/daemon/execenv/runtime_config_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

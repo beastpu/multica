@@ -1,0 +1,61 @@
+id: source.github.pr.4328
+repo: multica-ai/multica
+pr_number: 4328
+url: https://github.com/multica-ai/multica/pull/4328
+state: merged
+title: "[codex] Polish desktop sidebar motion"
+author: forrestchang
+base_ref: main
+head_ref: codex/desktop-sidebar-motion
+merged_at: 2026-06-19T04:26:15Z
+closed_at: 2026-06-19T04:26:15Z
+merge_commit: 27fcbb015ffa08f32c447d289927421424f18ae4
+linked_issues: []
+changed_files:
+  - path: apps/desktop/package.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/main/index.ts
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: apps/desktop/src/renderer/src/components/desktop-layout.tsx
+    additions: 73
+    deletions: 42
+    change_type: MODIFIED
+  - path: packages/ui/components/ui/sidebar.tsx
+    additions: 35
+    deletions: 11
+    change_type: MODIFIED
+  - path: packages/ui/package.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/ui/styles/base.css
+    additions: 19
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/components/issue-detail.tsx
+    additions: 19
+    deletions: 8
+    change_type: MODIFIED
+  - path: packages/views/layout/animated-right-sidebar.tsx
+    additions: 90
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/projects/components/project-detail.tsx
+    additions: 31
+    deletions: 17
+    change_type: MODIFIED
+  - path: pnpm-lock.yaml
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "missing linked issue"
+    - "missing test diff"

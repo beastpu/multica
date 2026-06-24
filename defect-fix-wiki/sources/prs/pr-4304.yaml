@@ -1,0 +1,44 @@
+id: source.github.pr.4304
+repo: multica-ai/multica
+pr_number: 4304
+url: https://github.com/multica-ai/multica/pull/4304
+state: merged
+title: "fix(realtime): guard WS frames without a string type + drop benign ResizeObserver noise (MUL-3418)"
+author: NevilleQingNY
+base_ref: main
+head_ref: agent/walt/2e8b91ac
+merged_at: 2026-06-18T09:24:48Z
+closed_at: 2026-06-18T09:24:48Z
+merge_commit: 9eaea31892f555e1f6cd81c4ea205fe97f369dbf
+linked_issues:
+  - MUL-3418
+changed_files:
+  - path: packages/core/analytics/benign-exceptions.test.ts
+    additions: 72
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/analytics/benign-exceptions.ts
+    additions: 52
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/analytics/index.ts
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/ws-client.test.ts
+    additions: 52
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/ws-client.ts
+    additions: 24
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/analytics/benign-exceptions.test.ts
+  - path: packages/core/api/ws-client.test.ts
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

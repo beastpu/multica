@@ -1,0 +1,75 @@
+id: source.github.pr.4169
+repo: multica-ai/multica
+pr_number: 4169
+url: https://github.com/multica-ai/multica/pull/4169
+state: merged
+title: "MUL-3319: Update Codex and Cursor resume docs"
+author: WAcry
+base_ref: main
+head_ref: docs/codex-cursor-resume
+merged_at: 2026-06-16T08:48:19Z
+closed_at: 2026-06-16T08:48:19Z
+merge_commit: 8ba1ef2dcedfc62d400e83bd37a9c716f7cdede4
+linked_issues:
+  - MUL-3319
+changed_files:
+  - path: apps/docs/content/docs/install-agent-runtime.ja.mdx
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/install-agent-runtime.ko.mdx
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/install-agent-runtime.mdx
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/install-agent-runtime.zh.mdx
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/providers.ja.mdx
+    additions: 5
+    deletions: 6
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/providers.ko.mdx
+    additions: 5
+    deletions: 6
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/providers.mdx
+    additions: 5
+    deletions: 6
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/providers.zh.mdx
+    additions: 5
+    deletions: 6
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/tasks.ja.mdx
+    additions: 1
+    deletions: 2
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/tasks.ko.mdx
+    additions: 1
+    deletions: 2
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/tasks.mdx
+    additions: 1
+    deletions: 2
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/tasks.zh.mdx
+    additions: 1
+    deletions: 2
+    change_type: MODIFIED
+  - path: docs/docs-outline.md
+    additions: 3
+    deletions: 5
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "missing test diff"
+    - "docs-only diff"

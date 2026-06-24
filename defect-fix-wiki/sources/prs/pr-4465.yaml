@@ -1,0 +1,73 @@
+id: source.github.pr.4465
+repo: multica-ai/multica
+pr_number: 4465
+url: https://github.com/multica-ai/multica/pull/4465
+state: closed
+title: "feat(projects): add AICTX project status endpoint"
+author: Djam36
+base_ref: main
+head_ref: codex/loc-181-aictx-project-status
+merged_at: ""
+closed_at: 2026-06-23T10:23:35Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: packages/core/api/client.test.ts
+    additions: 52
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/client.ts
+    additions: 10
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/schemas.test.ts
+    additions: 72
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/schemas.ts
+    additions: 75
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/projects/index.ts
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/core/projects/queries.test.ts
+    additions: 21
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/projects/queries.ts
+    additions: 9
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/types/index.ts
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/types/project.ts
+    additions: 55
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/server/router.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/project.go
+    additions: 166
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/project_validation_test.go
+    additions: 204
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/api/client.test.ts
+  - path: packages/core/api/schemas.test.ts
+  - path: packages/core/projects/queries.test.ts
+  - path: server/internal/handler/project_validation_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

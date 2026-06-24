@@ -1,0 +1,69 @@
+id: source.github.pr.4422
+repo: multica-ai/multica
+pr_number: 4422
+url: https://github.com/multica-ai/multica/pull/4422
+state: closed
+title: "Fix scheduled autopilot double-fire under clock skew"
+author: beastpu
+base_ref: main
+head_ref: codex/fix-4384-scheduled-autopilot-idempotency
+merged_at: ""
+closed_at: 2026-06-23T03:43:03Z
+merge_commit: ""
+linked_issues:
+  - "#4384"
+  - https://github.com/multica-ai/multica/issues/4384
+changed_files:
+  - path: server/cmd/server/autopilot_scheduler.go
+    additions: 51
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/cmd/server/autopilot_scheduler_test.go
+    additions: 303
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/autopilot.go
+    additions: 43
+    deletions: 13
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-autopilots/references/autopilots-source-map.md
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/cron.go
+    additions: 7
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/service/cron_test.go
+    additions: 20
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/123_autopilot_schedule_occurrence_idempotency.down.sql
+    additions: 4
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/123_autopilot_schedule_occurrence_idempotency.up.sql
+    additions: 8
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/autopilot.sql.go
+    additions: 72
+    deletions: 26
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/models.go
+    additions: 15
+    deletions: 14
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/autopilot.sql
+    additions: 29
+    deletions: 11
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/server/autopilot_scheduler_test.go
+  - path: server/internal/service/cron_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

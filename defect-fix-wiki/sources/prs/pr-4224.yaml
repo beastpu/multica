@@ -1,0 +1,47 @@
+id: source.github.pr.4224
+repo: multica-ai/multica
+pr_number: 4224
+url: https://github.com/multica-ai/multica/pull/4224
+state: closed
+title: "fix(composer): make chat send atomic and gate comment/reply submit on uploads"
+author: NevilleQingNY
+base_ref: main
+head_ref: fix/composer-send-clear-and-upload-gate
+merged_at: ""
+closed_at: 2026-06-17T06:40:02Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: packages/views/chat/components/chat-input.test.tsx
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-input.tsx
+    additions: 8
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/editor/content-editor.tsx
+    additions: 28
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-composers.test.tsx
+    additions: 33
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-input.tsx
+    additions: 20
+    deletions: 5
+    change_type: MODIFIED
+  - path: packages/views/issues/components/reply-input.tsx
+    additions: 17
+    deletions: 5
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/chat/components/chat-input.test.tsx
+  - path: packages/views/issues/components/comment-composers.test.tsx
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

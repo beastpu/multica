@@ -1,0 +1,26 @@
+id: source.github.pr.4279
+repo: multica-ai/multica
+pr_number: 4279
+url: https://github.com/multica-ai/multica/pull/4279
+state: merged
+title: "fix(runtimes): dedicated Tencent CodeBuddy provider logo (MUL-3394)"
+author: NevilleQingNY
+base_ref: main
+head_ref: agent/walt/05a04896
+merged_at: 2026-06-18T02:19:29Z
+closed_at: 2026-06-18T02:19:29Z
+merge_commit: d74a0cb34c8a445abf2e66ed5d3d82b9cbd63ffb
+linked_issues:
+  - MUL-3394
+changed_files:
+  - path: packages/views/runtimes/components/provider-logo.tsx
+    additions: 47
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "missing test diff"

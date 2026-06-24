@@ -1,0 +1,36 @@
+id: source.github.pr.4198
+repo: multica-ai/multica
+pr_number: 4198
+url: https://github.com/multica-ai/multica/pull/4198
+state: merged
+title: "MUL-3558 feat: add 'issue usage' CLI command for aggregated issue token usage"
+author: schnere
+base_ref: main
+head_ref: feat/cli-issue-usage
+merged_at: 2026-06-23T06:13:57Z
+closed_at: 2026-06-23T06:13:57Z
+merge_commit: 7008f4276d5a5803ca3397842815e03c17a14108
+linked_issues:
+  - MUL-139
+  - MUL-3558
+changed_files:
+  - path: CLI_AND_DAEMON.md
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_issue.go
+    additions: 49
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_issue_test.go
+    additions: 62
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/multica/cmd_issue_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

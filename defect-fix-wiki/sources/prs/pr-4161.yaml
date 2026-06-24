@@ -1,0 +1,33 @@
+id: source.github.pr.4161
+repo: multica-ai/multica
+pr_number: 4161
+url: https://github.com/multica-ai/multica/pull/4161
+state: merged
+title: "MUL-3322: Fix transcript actions on touch devices"
+author: beastpu
+base_ref: main
+head_ref: codex/fix-mobile-transcript-and-download
+merged_at: 2026-06-16T09:06:14Z
+closed_at: 2026-06-16T09:06:14Z
+merge_commit: 3aaca155e7ac07d82a0d98bc90d6b06517468a85
+linked_issues:
+  - "#4125"
+  - MUL-3322
+  - https://github.com/multica-ai/multica/issues/4125
+changed_files:
+  - path: packages/views/issues/components/execution-log-section.test.tsx
+    additions: 17
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/components/execution-log-section.tsx
+    additions: 4
+    deletions: 5
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/issues/components/execution-log-section.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

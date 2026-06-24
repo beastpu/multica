@@ -1,0 +1,47 @@
+id: source.github.pr.4338
+repo: multica-ai/multica
+pr_number: 4338
+url: https://github.com/multica-ai/multica/pull/4338
+state: closed
+title: "feat: add project issue creation entry"
+author: alanhe421
+base_ref: main
+head_ref: MUL-522-add-project-issue-entry
+merged_at: ""
+closed_at: 2026-06-19T09:01:27Z
+merge_commit: ""
+linked_issues:
+  - MUL-522
+changed_files:
+  - path: packages/views/locales/en/projects.json
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/projects.json
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/projects.json
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/projects.json
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/projects/components/projects-page.test.tsx
+    additions: 27
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/projects/components/projects-page.tsx
+    additions: 71
+    deletions: 10
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/projects/components/projects-page.test.tsx
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

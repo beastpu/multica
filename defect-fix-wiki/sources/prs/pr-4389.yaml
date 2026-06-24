@@ -1,0 +1,33 @@
+id: source.github.pr.4389
+repo: multica-ai/multica
+pr_number: 4389
+url: https://github.com/multica-ai/multica/pull/4389
+state: merged
+title: "MUL-3496: fix(skills): authenticate raw.githubusercontent.com downloads for private repo imports"
+author: Bohan-J
+base_ref: main
+head_ref: fix/skill-import-private-github-raw-auth
+merged_at: 2026-06-22T05:34:06Z
+closed_at: 2026-06-22T05:34:06Z
+merge_commit: 39ab35558569cf622269252a6c53b8b7e120465e
+linked_issues:
+  - "#4385"
+  - MUL-3496
+  - https://github.com/multica-ai/multica/issues/4385
+changed_files:
+  - path: server/internal/handler/skill.go
+    additions: 27
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/handler/skill_test.go
+    additions: 54
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/handler/skill_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

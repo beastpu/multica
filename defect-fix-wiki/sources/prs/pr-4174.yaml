@@ -1,0 +1,62 @@
+id: source.github.pr.4174
+repo: multica-ai/multica
+pr_number: 4174
+url: https://github.com/multica-ai/multica/pull/4174
+state: merged
+title: "refactor(comments): trim trigger preview copy and unify composer buttons"
+author: NevilleQingNY
+base_ref: main
+head_ref: fix/comment-composer-polish
+merged_at: 2026-06-16T01:44:05Z
+closed_at: 2026-06-16T01:44:05Z
+merge_commit: 7c71007e6ee94647e82350c964cd2f7a31ec0ce7
+linked_issues: []
+changed_files:
+  - path: packages/ui/components/common/file-upload-button.tsx
+    additions: 7
+    deletions: 8
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-card.tsx
+    additions: 17
+    deletions: 19
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-input.tsx
+    additions: 0
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-trigger-chips.test.tsx
+    additions: 1
+    deletions: 16
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-trigger-chips.tsx
+    additions: 1
+    deletions: 53
+    change_type: MODIFIED
+  - path: packages/views/issues/components/reply-input.tsx
+    additions: 5
+    deletions: 9
+    change_type: MODIFIED
+  - path: packages/views/locales/en/issues.json
+    additions: 0
+    deletions: 6
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/issues.json
+    additions: 0
+    deletions: 6
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/issues.json
+    additions: 0
+    deletions: 6
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/issues.json
+    additions: 0
+    deletions: 6
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/issues/components/comment-trigger-chips.test.tsx
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "missing linked issue"
+    - "test file changed"

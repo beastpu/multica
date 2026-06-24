@@ -1,0 +1,201 @@
+id: source.github.pr.4410
+repo: multica-ai/multica
+pr_number: 4410
+url: https://github.com/multica-ai/multica/pull/4410
+state: merged
+title: "MUL-3508: stage sub-issues so the parent wakes per stage, not per child"
+author: Bohan-J
+base_ref: main
+head_ref: feat/sub-issue-stages
+merged_at: 2026-06-22T16:14:43Z
+closed_at: 2026-06-22T16:14:43Z
+merge_commit: a123dfc2df753dde7a103610dc016a4aa18a393f
+linked_issues:
+  - MUL-3508
+changed_files:
+  - path: apps/mobile/data/schemas.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/schemas.test.ts
+    additions: 14
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/schemas.ts
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/issues/batch.test.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/issues/mutations.test.tsx
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/issues/queries.test.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/issues/ws-updaters.test.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/types/api.ts
+    additions: 4
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/types/issue.ts
+    additions: 4
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/components/batch-action-toolbar.test.tsx
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/components/index.ts
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/issue-detail.test.tsx
+    additions: 35
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/issue-detail.tsx
+    additions: 73
+    deletions: 11
+    change_type: MODIFIED
+  - path: packages/views/issues/components/issues-page.test.tsx
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/components/pickers/index.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/components/pickers/stage-picker.test.tsx
+    additions: 32
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/issues/components/pickers/stage-picker.tsx
+    additions: 104
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/issues/components/swimlane-view.test.tsx
+    additions: 12
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/hooks/issue-delete-mutations.test.tsx
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/utils/filter.test.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/en/issues.json
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/issues.json
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/issues.json
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/issues.json
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/modals/create-issue.test.tsx
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/modals/create-issue.tsx
+    additions: 28
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_issue.go
+    additions: 144
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/handler.go
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/issue.go
+    additions: 42
+    deletions: 5
+    change_type: MODIFIED
+  - path: server/internal/handler/issue_batch_test.go
+    additions: 35
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/issue_child_done.go
+    additions: 170
+    deletions: 8
+    change_type: MODIFIED
+  - path: server/internal/handler/issue_child_done_stage_test.go
+    additions: 190
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/builtin_skills/multica-working-on-issues/SKILL.md
+    additions: 44
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-working-on-issues/references/working-on-issues-source-map.md
+    additions: 15
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/service/issue.go
+    additions: 6
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/util/pgx.go
+    additions: 14
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/migrations/123_issue_stage.down.sql
+    additions: 1
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/123_issue_stage.up.sql
+    additions: 15
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/issue.sql.go
+    additions: 45
+    deletions: 19
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/models.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/issue.sql
+    additions: 9
+    deletions: 6
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/api/schemas.test.ts
+  - path: packages/core/issues/batch.test.ts
+  - path: packages/core/issues/mutations.test.tsx
+  - path: packages/core/issues/queries.test.ts
+  - path: packages/core/issues/ws-updaters.test.ts
+  - path: packages/views/issues/components/batch-action-toolbar.test.tsx
+  - path: packages/views/issues/components/issue-detail.test.tsx
+  - path: packages/views/issues/components/issues-page.test.tsx
+  - path: packages/views/issues/components/pickers/stage-picker.test.tsx
+  - path: packages/views/issues/components/swimlane-view.test.tsx
+  - path: packages/views/issues/hooks/issue-delete-mutations.test.tsx
+  - path: packages/views/issues/utils/filter.test.ts
+  - path: packages/views/modals/create-issue.test.tsx
+  - path: server/internal/handler/issue_batch_test.go
+  - path: server/internal/handler/issue_child_done_stage_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,118 @@
+id: source.github.pr.4177
+repo: multica-ai/multica
+pr_number: 4177
+url: https://github.com/multica-ai/multica/pull/4177
+state: merged
+title: "MUL-3284: Web UI + CLI (custom runtime PR3)"
+author: ldnvnbl
+base_ref: main
+head_ref: agent/mul-3284-pr3-web-cli
+merged_at: 2026-06-17T03:38:18Z
+closed_at: 2026-06-17T03:38:18Z
+merge_commit: 1f5cb51d4e713d5bf7f2795205103dc6ccd5c0ba
+linked_issues:
+  - MUL-3284
+changed_files:
+  - path: packages/core/api/client.ts
+    additions: 58
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/runtimes/index.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/runtimes/profiles.ts
+    additions: 103
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/types/agent.ts
+    additions: 84
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/types/index.ts
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/en/runtimes.json
+    additions: 66
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/runtimes.json
+    additions: 66
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/runtimes.json
+    additions: 66
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/runtimes.json
+    additions: 66
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/delete-runtime-profile-dialog.tsx
+    additions: 134
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/runtimes/components/runtime-list.tsx
+    additions: 23
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-profile-catalog.ts
+    additions: 90
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/runtimes/components/runtime-profiles-dialog.tsx
+    additions: 741
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/runtimes/components/runtimes-page.tsx
+    additions: 35
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_runtime_profile.go
+    additions: 368
+    deletions: 0
+    change_type: ADDED
+  - path: server/cmd/multica/cmd_runtime_profile_test.go
+    additions: 360
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/cli/config.go
+    additions: 13
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/cli/config_test.go
+    additions: 86
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/config.go
+    additions: 26
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/daemon/daemon.go
+    additions: 48
+    deletions: 8
+    change_type: MODIFIED
+  - path: server/internal/daemon/runtime_profile_test.go
+    additions: 75
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_profile.go
+    additions: 10
+    deletions: 23
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_profile_handler_test.go
+    additions: 48
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/multica/cmd_runtime_profile_test.go
+  - path: server/internal/cli/config_test.go
+  - path: server/internal/daemon/runtime_profile_test.go
+  - path: server/internal/handler/runtime_profile_handler_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

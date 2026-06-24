@@ -1,0 +1,38 @@
+id: source.github.pr.4461
+repo: multica-ai/multica
+pr_number: 4461
+url: https://github.com/multica-ai/multica/pull/4461
+state: merged
+title: "MUL-3577: add 2026-06-23 changelog entry"
+author: multica-eve
+base_ref: main
+head_ref: agent/gpt-boy/faf5e8a4
+merged_at: 2026-06-23T10:50:44Z
+closed_at: 2026-06-23T10:50:44Z
+merge_commit: be5fd7d3f05671db9df125ff4e5f3154223c3858
+linked_issues:
+  - MUL-3577
+changed_files:
+  - path: apps/web/features/landing/i18n/en.ts
+    additions: 25
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/ja.ts
+    additions: 25
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/ko.ts
+    additions: 25
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/zh.ts
+    additions: 25
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "missing test diff"

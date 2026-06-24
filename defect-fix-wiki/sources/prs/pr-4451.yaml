@@ -1,0 +1,35 @@
+id: source.github.pr.4451
+repo: multica-ai/multica
+pr_number: 4451
+url: https://github.com/multica-ai/multica/pull/4451
+state: merged
+title: "MUL-3568 feat(landing): show live GitHub star count on the header GitHub button"
+author: Bohan-J
+base_ref: main
+head_ref: feat/landing-github-stars
+merged_at: 2026-06-23T07:51:14Z
+closed_at: 2026-06-23T07:51:14Z
+merge_commit: 09f90abb70d361d7e2c0e1dde2cd244ad43c1737
+linked_issues:
+  - MUL-3568
+changed_files:
+  - path: apps/web/features/landing/components/landing-header.tsx
+    additions: 19
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/features/landing/utils/use-github-stars.test.ts
+    additions: 31
+    deletions: 0
+    change_type: ADDED
+  - path: apps/web/features/landing/utils/use-github-stars.ts
+    additions: 85
+    deletions: 0
+    change_type: ADDED
+test_files_changed:
+  - path: apps/web/features/landing/utils/use-github-stars.test.ts
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

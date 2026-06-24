@@ -1,0 +1,47 @@
+id: source.github.pr.4191
+repo: multica-ai/multica
+pr_number: 4191
+url: https://github.com/multica-ai/multica/pull/4191
+state: merged
+title: "MUL-3316: fix(execenv): switch agent prompt to --content-file to prevent heredoc flag swallowing (#4182)"
+author: multica-eve
+base_ref: main
+head_ref: bugfix/agent-prompt-content-file-migration
+merged_at: 2026-06-16T09:14:25Z
+closed_at: 2026-06-16T09:14:25Z
+merge_commit: 18a58e80c06096e2992dd7eb7e395a08fa0aef31
+linked_issues:
+  - "#4182"
+  - MUL-2904
+  - MUL-3316
+  - https://github.com/multica-ai/multica/issues/4182
+changed_files:
+  - path: server/internal/daemon/execenv/execenv_test.go
+    additions: 29
+    deletions: 17
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/reply_instructions.go
+    additions: 53
+    deletions: 34
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/reply_instructions_test.go
+    additions: 54
+    deletions: 26
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config.go
+    additions: 33
+    deletions: 14
+    change_type: MODIFIED
+  - path: server/internal/daemon/prompt.go
+    additions: 3
+    deletions: 3
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/daemon/execenv/execenv_test.go
+  - path: server/internal/daemon/execenv/reply_instructions_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

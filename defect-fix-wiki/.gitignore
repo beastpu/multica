@@ -1,0 +1,15 @@
+# This wiki is private by default. Track only rules, schemas, and placeholders.
+/sources/**/*.yaml
+/sources/**/*.yml
+/candidates/**/*.md
+/wiki/**/*.md
+/indexes/*.json
+/indexes/*.jsonl
+/reports/*.json
+/trials/*.jsonl
+/wiki-log.jsonl
+
+!.gitkeep
+!schema/*.json
+!AGENTS.md
+!.gitignore

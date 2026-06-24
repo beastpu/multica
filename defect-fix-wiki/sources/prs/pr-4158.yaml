@@ -1,0 +1,119 @@
+id: source.github.pr.4158
+repo: multica-ai/multica
+pr_number: 4158
+url: https://github.com/multica-ai/multica/pull/4158
+state: closed
+title: "fix(fe): restore live LLM quota gauge (MUL-3559)"
+author: karlkim1004
+base_ref: main
+head_ref: agent/fe/nex-543-llm-gauge
+merged_at: ""
+closed_at: 2026-06-23T06:08:33Z
+merge_commit: ""
+linked_issues:
+  - MUL-3559
+changed_files:
+  - path: "apps/web/app/[workspaceSlug]/(dashboard)/dashboard/page.tsx"
+    additions: 1
+    deletions: 0
+    change_type: ADDED
+  - path: apps/web/app/api/dashboard/llm-limit-status/route.test.ts
+    additions: 69
+    deletions: 0
+    change_type: ADDED
+  - path: apps/web/app/api/dashboard/llm-limit-status/route.ts
+    additions: 145
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/chat/queries.test.ts
+    additions: 13
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/core/chat/queries.ts
+    additions: 4
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/realtime/use-realtime-sync.test.ts
+    additions: 49
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/realtime/use-realtime-sync.ts
+    additions: 25
+    deletions: 6
+    change_type: MODIFIED
+  - path: packages/ui/components/common/submit-button.tsx
+    additions: 27
+    deletions: 4
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-fab.tsx
+    additions: 25
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-input.test.tsx
+    additions: 43
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-input.tsx
+    additions: 3
+    deletions: 10
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-window.tsx
+    additions: 67
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/dashboard/components/dashboard-page.test.tsx
+    additions: 20
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/dashboard/components/dashboard-page.tsx
+    additions: 142
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/layout/app-sidebar.tsx
+    additions: 4
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/locales/en/chat.json
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/en/usage.json
+    additions: 24
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/chat.json
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/usage.json
+    additions: 24
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/chat.json
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/usage.json
+    additions: 24
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/chat.json
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/usage.json
+    additions: 24
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: apps/web/app/api/dashboard/llm-limit-status/route.test.ts
+  - path: packages/core/chat/queries.test.ts
+  - path: packages/core/realtime/use-realtime-sync.test.ts
+  - path: packages/views/chat/components/chat-input.test.tsx
+  - path: packages/views/dashboard/components/dashboard-page.test.tsx
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

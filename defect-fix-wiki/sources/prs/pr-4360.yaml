@@ -1,0 +1,49 @@
+id: source.github.pr.4360
+repo: multica-ai/multica
+pr_number: 4360
+url: https://github.com/multica-ai/multica/pull/4360
+state: merged
+title: "fix(cli): guide remote setup callbacks"
+author: YOMXXX
+base_ref: main
+head_ref: codex/fix-4357-remote-setup-callback
+merged_at: 2026-06-21T16:06:14Z
+closed_at: 2026-06-21T16:06:14Z
+merge_commit: 737c976b0dc45e72742b663b8cad57e4ab37aab6
+linked_issues:
+  - "#4357"
+  - https://github.com/multica-ai/multica/issues/4357
+changed_files:
+  - path: server/cmd/multica/cmd_auth.go
+    additions: 55
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_auth_test.go
+    additions: 44
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_login.go
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_setup.go
+    additions: 15
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_setup_test.go
+    additions: 36
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/help.go
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/multica/cmd_auth_test.go
+  - path: server/cmd/multica/cmd_setup_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

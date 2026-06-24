@@ -1,0 +1,32 @@
+id: source.github.pr.4435
+repo: multica-ai/multica
+pr_number: 4435
+url: https://github.com/multica-ai/multica/pull/4435
+state: closed
+title: "fix(cli): prevent silent token fallback to config PAT in daemon-managed subprocesses"
+author: Oxygen56
+base_ref: main
+head_ref: fix/4204-agent-token-fallback-guard
+merged_at: ""
+closed_at: 2026-06-23T02:19:55Z
+merge_commit: ""
+linked_issues:
+  - "#4204"
+  - https://github.com/multica-ai/multica/issues/4204
+changed_files:
+  - path: server/cmd/multica/cmd_agent_test.go
+    additions: 59
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_auth.go
+    additions: 13
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/multica/cmd_agent_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,29 @@
+id: source.github.pr.4425
+repo: multica-ai/multica
+pr_number: 4425
+url: https://github.com/multica-ai/multica/pull/4425
+state: merged
+title: "fix(issues): refine Stage field icon and dropdown font"
+author: Bohan-J
+base_ref: main
+head_ref: fix/stage-field-icon-and-font
+merged_at: 2026-06-22T16:41:36Z
+closed_at: 2026-06-22T16:41:36Z
+merge_commit: 3a814bd74af7c926804ba8528f88463d3a7dc60e
+linked_issues: []
+changed_files:
+  - path: packages/views/issues/components/issue-detail.tsx
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/issues/components/pickers/stage-picker.tsx
+    additions: 5
+    deletions: 5
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "missing linked issue"
+    - "missing test diff"

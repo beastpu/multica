@@ -1,0 +1,74 @@
+id: source.github.pr.4388
+repo: multica-ai/multica
+pr_number: 4388
+url: https://github.com/multica-ai/multica/pull/4388
+state: merged
+title: "feat: add Discord community entry points"
+author: Bohan-J
+base_ref: main
+head_ref: agent/j/7a077129
+merged_at: 2026-06-22T06:00:37Z
+closed_at: 2026-06-22T06:00:37Z
+merge_commit: 8a9f15dbc911b68d58dd9b991652fd690a67e37d
+linked_issues:
+  - MUL-3492
+changed_files:
+  - path: README.md
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: README.zh-CN.md
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: apps/web/features/landing/components/landing-footer.tsx
+    additions: 17
+    deletions: 1
+    change_type: MODIFIED
+  - path: apps/web/features/landing/components/shared.tsx
+    additions: 14
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/en.ts
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/ja.ts
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/ko.ts
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/zh.ts
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/layout/help-launcher.tsx
+    additions: 25
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/en/layout.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/layout.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/layout.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/layout.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "missing test diff"

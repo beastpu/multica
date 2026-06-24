@@ -1,0 +1,115 @@
+id: source.github.pr.4249
+repo: multica-ai/multica
+pr_number: 4249
+url: https://github.com/multica-ai/multica/pull/4249
+state: merged
+title: "feat(chat): workspace-scoped attachment binding + fire-and-forget send"
+author: NevilleQingNY
+base_ref: main
+head_ref: fix/chat-input-commit-on-handoff
+merged_at: 2026-06-18T01:40:39Z
+closed_at: 2026-06-18T01:40:39Z
+merge_commit: b7857a6aa3d761bae330b56110999daf04807cb4
+linked_issues:
+  - MUL-3364
+changed_files:
+  - path: packages/core/api/schemas.ts
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/chat/store.test.ts
+    additions: 36
+    deletions: 22
+    change_type: MODIFIED
+  - path: packages/core/chat/store.ts
+    additions: 83
+    deletions: 27
+    change_type: MODIFIED
+  - path: packages/core/types/chat.ts
+    additions: 12
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-input.test.tsx
+    additions: 201
+    deletions: 8
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-input.tsx
+    additions: 128
+    deletions: 22
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-window.tsx
+    additions: 62
+    deletions: 59
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-card.tsx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-composers.test.tsx
+    additions: 41
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-input.tsx
+    additions: 30
+    deletions: 9
+    change_type: MODIFIED
+  - path: packages/views/issues/components/reply-input.tsx
+    additions: 22
+    deletions: 9
+    change_type: MODIFIED
+  - path: packages/views/issues/hooks/use-issue-timeline.ts
+    additions: 12
+    deletions: 4
+    change_type: MODIFIED
+  - path: packages/views/locales/en/chat.json
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/chat.json
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/chat.json
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/chat.json
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/handler/cancel_task_by_user_test.go
+    additions: 156
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/chat.go
+    additions: 42
+    deletions: 14
+    change_type: MODIFIED
+  - path: server/internal/handler/chat_test.go
+    additions: 75
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/task.go
+    additions: 12
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/attachment.sql.go
+    additions: 91
+    deletions: 8
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/attachment.sql
+    additions: 27
+    deletions: 4
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/chat/store.test.ts
+  - path: packages/views/chat/components/chat-input.test.tsx
+  - path: packages/views/issues/components/comment-composers.test.tsx
+  - path: server/internal/handler/cancel_task_by_user_test.go
+  - path: server/internal/handler/chat_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

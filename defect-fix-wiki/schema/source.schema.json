@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Defect Fix Wiki Source PR Record",
+  "type": "object",
+  "required": [
+    "id",
+    "repo",
+    "pr_number",
+    "url",
+    "state",
+    "title",
+    "merged_at",
+    "merge_commit",
+    "linked_issues",
+    "changed_files",
+    "test_files_changed",
+    "classification"
+  ],
+  "properties": {
+    "id": { "type": "string" },
+    "repo": { "type": "string" },
+    "pr_number": { "type": "integer" },
+    "url": { "type": "string" },
+    "state": { "enum": ["merged", "closed"] },
+    "classification": {
+      "type": "object",
+      "required": ["candidate", "reasons"],
+      "properties": {
+        "candidate": { "type": "boolean" },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

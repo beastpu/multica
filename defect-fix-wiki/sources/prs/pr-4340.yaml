@@ -1,0 +1,38 @@
+id: source.github.pr.4340
+repo: multica-ai/multica
+pr_number: 4340
+url: https://github.com/multica-ai/multica/pull/4340
+state: merged
+title: "MUL-3444: add 2026-06-19 changelog entry"
+author: multica-eve
+base_ref: main
+head_ref: agent/gpt-boy/64ce2cee
+merged_at: 2026-06-21T15:28:16Z
+closed_at: 2026-06-21T15:28:16Z
+merge_commit: 140a113c38ace98de68df01b5f12d09368536750
+linked_issues:
+  - MUL-3444
+changed_files:
+  - path: apps/web/features/landing/i18n/en.ts
+    additions: 15
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/ja.ts
+    additions: 15
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/ko.ts
+    additions: 15
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/zh.ts
+    additions: 15
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "missing test diff"

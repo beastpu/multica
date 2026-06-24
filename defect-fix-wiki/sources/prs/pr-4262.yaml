@@ -1,0 +1,99 @@
+id: source.github.pr.4262
+repo: multica-ai/multica
+pr_number: 4262
+url: https://github.com/multica-ai/multica/pull/4262
+state: merged
+title: "MUL-3378 feat(lark): reply inside the originating thread (话题) instead of the group"
+author: lethean-kun
+base_ref: main
+head_ref: feat/lark-thread-reply
+merged_at: 2026-06-22T05:34:41Z
+closed_at: 2026-06-22T05:34:41Z
+merge_commit: 0aa3b53c255a070d06e5688ab5913ded2c884445
+linked_issues:
+  - MUL-3378
+changed_files:
+  - path: server/internal/integrations/lark/chat.go
+    additions: 6
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/chat_service.go
+    additions: 19
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/client.go
+    additions: 28
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/dispatcher.go
+    additions: 10
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/dispatcher_test.go
+    additions: 42
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/http_client.go
+    additions: 83
+    deletions: 27
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/http_client_test.go
+    additions: 149
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/outbound.go
+    additions: 73
+    deletions: 19
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/outbound_test.go
+    additions: 168
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/outcome_replier.go
+    additions: 38
+    deletions: 15
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/outcome_replier_test.go
+    additions: 148
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/ws_frame_decoder.go
+    additions: 8
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/ws_frame_decoder_test.go
+    additions: 51
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/migrations/122_lark_chat_session_binding_thread_reply.down.sql
+    additions: 3
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/122_lark_chat_session_binding_thread_reply.up.sql
+    additions: 23
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/lark.sql.go
+    additions: 34
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/models.go
+    additions: 8
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/lark.sql
+    additions: 13
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/integrations/lark/dispatcher_test.go
+  - path: server/internal/integrations/lark/http_client_test.go
+  - path: server/internal/integrations/lark/outbound_test.go
+  - path: server/internal/integrations/lark/outcome_replier_test.go
+  - path: server/internal/integrations/lark/ws_frame_decoder_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

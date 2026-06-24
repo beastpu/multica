@@ -1,0 +1,49 @@
+id: source.github.pr.4456
+repo: multica-ai/multica
+pr_number: 4456
+url: https://github.com/multica-ai/multica/pull/4456
+state: merged
+title: "MUL-3571: fix custom runtime deletion"
+author: Bohan-J
+base_ref: main
+head_ref: agent/niko/76de5e74
+merged_at: 2026-06-23T08:52:46Z
+closed_at: 2026-06-23T08:52:46Z
+merge_commit: 294953ba379d0a9a24fd86693e95dbe5180ff8f5
+linked_issues:
+  - MUL-3571
+changed_files:
+  - path: packages/views/runtimes/components/runtime-detail-visibility.test.tsx
+    additions: 90
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-detail.tsx
+    additions: 48
+    deletions: 19
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-list.tsx
+    additions: 55
+    deletions: 21
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-row-menu.test.tsx
+    additions: 45
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime.go
+    additions: 17
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_cascade_test.go
+    additions: 105
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/runtimes/components/runtime-detail-visibility.test.tsx
+  - path: packages/views/runtimes/components/runtime-row-menu.test.tsx
+  - path: server/internal/handler/runtime_cascade_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

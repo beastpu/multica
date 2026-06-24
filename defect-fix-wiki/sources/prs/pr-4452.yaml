@@ -1,0 +1,46 @@
+id: source.github.pr.4452
+repo: multica-ai/multica
+pr_number: 4452
+url: https://github.com/multica-ai/multica/pull/4452
+state: merged
+title: "fix(transcript): live-update issue/agent transcript dialog from shared cache (#4440)"
+author: NevilleQingNY
+base_ref: main
+head_ref: agent/walt/b8008dd6
+merged_at: 2026-06-23T08:35:30Z
+closed_at: 2026-06-23T08:35:30Z
+merge_commit: 2857a4c64933e61fcfde6d3b458bb6e33c782e71
+linked_issues:
+  - "#4440"
+  - MUL-3554
+  - https://github.com/multica-ai/multica/issues/4440
+changed_files:
+  - path: packages/core/chat/queries.test.ts
+    additions: 43
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/core/chat/queries.ts
+    additions: 24
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/realtime/use-realtime-sync.ts
+    additions: 3
+    deletions: 6
+    change_type: MODIFIED
+  - path: packages/views/common/task-transcript/transcript-button.test.tsx
+    additions: 189
+    deletions: 15
+    change_type: MODIFIED
+  - path: packages/views/common/task-transcript/transcript-button.tsx
+    additions: 136
+    deletions: 18
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/chat/queries.test.ts
+  - path: packages/views/common/task-transcript/transcript-button.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,96 @@
+id: source.github.pr.4343
+repo: multica-ai/multica
+pr_number: 4343
+url: https://github.com/multica-ai/multica/pull/4343
+state: closed
+title: "fix: harden high-priority issue handling"
+author: YOMXXX
+base_ref: main
+head_ref: codex/high-priority-issue-fixes
+merged_at: ""
+closed_at: 2026-06-23T09:22:22Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: packages/core/permissions/index.ts
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/core/permissions/rules.test.ts
+    additions: 12
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/permissions/rules.ts
+    additions: 13
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/projects/components/project-detail.tsx
+    additions: 20
+    deletions: 10
+    change_type: MODIFIED
+  - path: scripts/check.sh
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_auth.go
+    additions: 8
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_auth_test.go
+    additions: 61
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/client.go
+    additions: 20
+    deletions: 8
+    change_type: MODIFIED
+  - path: server/internal/daemon/client_test.go
+    additions: 19
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/daemon.go
+    additions: 32
+    deletions: 11
+    change_type: MODIFIED
+  - path: server/internal/daemon/daemon_test.go
+    additions: 26
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/openclaw_config.go
+    additions: 79
+    deletions: 12
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/openclaw_config_test.go
+    additions: 39
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/project.go
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/handler/project_permission_test.go
+    additions: 64
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/agent/codex.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/agent/codex_test.go
+    additions: 17
+    deletions: 2
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/permissions/rules.test.ts
+  - path: server/cmd/multica/cmd_auth_test.go
+  - path: server/internal/daemon/client_test.go
+  - path: server/internal/daemon/daemon_test.go
+  - path: server/internal/daemon/execenv/openclaw_config_test.go
+  - path: server/internal/handler/project_permission_test.go
+  - path: server/pkg/agent/codex_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

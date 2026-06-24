@@ -1,0 +1,33 @@
+id: source.github.pr.4417
+repo: multica-ai/multica
+pr_number: 4417
+url: https://github.com/multica-ai/multica/pull/4417
+state: closed
+title: "fix(issue): add timeline summary parameter to reduce payload size"
+author: Oxygen56
+base_ref: main
+head_ref: agent/agent/d095393b
+merged_at: ""
+closed_at: 2026-06-22T16:39:27Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: server/cmd/server/router.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/activity.go
+    additions: 35
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/handler/comment.go
+    additions: 30
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "missing test diff"

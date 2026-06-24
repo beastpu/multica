@@ -1,0 +1,31 @@
+id: source.github.pr.4334
+repo: multica-ai/multica
+pr_number: 4334
+url: https://github.com/multica-ai/multica/pull/4334
+state: merged
+title: "[codex] hide issue numbers in sidebar pins"
+author: forrestchang
+base_ref: main
+head_ref: codex/sidebar-pin-hide-issue-number
+merged_at: 2026-06-19T08:23:10Z
+closed_at: 2026-06-19T08:23:10Z
+merge_commit: 06ae9b2a0cd07feffd6e9fb85e8e985d4f85504e
+linked_issues:
+  - MUL-123
+changed_files:
+  - path: packages/views/layout/app-sidebar.test.tsx
+    additions: 3
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/layout/app-sidebar.tsx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/layout/app-sidebar.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

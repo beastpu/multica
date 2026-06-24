@@ -1,0 +1,77 @@
+id: source.github.pr.4355
+repo: multica-ai/multica
+pr_number: 4355
+url: https://github.com/multica-ai/multica/pull/4355
+state: closed
+title: "fix(runtimes): launch custom runtime command args"
+author: YOMXXX
+base_ref: main
+head_ref: codex/fix-4351-custom-runtime-args
+merged_at: ""
+closed_at: 2026-06-23T06:35:41Z
+merge_commit: ""
+linked_issues:
+  - "#4351"
+  - https://github.com/multica-ai/multica/issues/4351
+changed_files:
+  - path: packages/views/runtimes/components/pending-runtime.test.ts
+    additions: 12
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/pending-runtime.ts
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-profile-catalog.test.ts
+    additions: 20
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-profile-catalog.ts
+    additions: 17
+    deletions: 6
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-profiles-dialog.test.tsx
+    additions: 14
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-profiles-dialog.tsx
+    additions: 11
+    deletions: 7
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_runtime_profile.go
+    additions: 6
+    deletions: 7
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_runtime_profile_test.go
+    additions: 3
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/daemon/daemon.go
+    additions: 59
+    deletions: 22
+    change_type: MODIFIED
+  - path: server/internal/daemon/runtime_profile_test.go
+    additions: 49
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_profile.go
+    additions: 103
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_profile_handler_test.go
+    additions: 92
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/runtimes/components/pending-runtime.test.ts
+  - path: packages/views/runtimes/components/runtime-profile-catalog.test.ts
+  - path: packages/views/runtimes/components/runtime-profiles-dialog.test.tsx
+  - path: server/cmd/multica/cmd_runtime_profile_test.go
+  - path: server/internal/daemon/runtime_profile_test.go
+  - path: server/internal/handler/runtime_profile_handler_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

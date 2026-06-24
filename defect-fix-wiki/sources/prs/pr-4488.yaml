@@ -1,0 +1,31 @@
+id: source.github.pr.4488
+repo: multica-ai/multica
+pr_number: 4488
+url: https://github.com/multica-ai/multica/pull/4488
+state: merged
+title: "fix(editor): track @mention selection by identity, not slot index (MUL-3607)"
+author: NevilleQingNY
+base_ref: main
+head_ref: fix/mention-selection-by-identity
+merged_at: 2026-06-24T02:53:51Z
+closed_at: 2026-06-24T02:53:51Z
+merge_commit: 8a0934c7411cd4c7bb38fbdffe5eb22235a0bf71
+linked_issues:
+  - MUL-3607
+changed_files:
+  - path: packages/views/editor/extensions/mention-suggestion.test.tsx
+    additions: 50
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/editor/extensions/mention-suggestion.tsx
+    additions: 38
+    deletions: 19
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/editor/extensions/mention-suggestion.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

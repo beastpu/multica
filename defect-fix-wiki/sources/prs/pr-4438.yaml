@@ -1,0 +1,44 @@
+id: source.github.pr.4438
+repo: multica-ai/multica
+pr_number: 4438
+url: https://github.com/multica-ai/multica/pull/4438
+state: merged
+title: "feat(cli): STR-208 오토파일럿 구독자 플래그 추가"
+author: honki12345
+base_ref: main
+head_ref: agent/builder/STR-208-local-image-watcher-ko
+merged_at: 2026-06-23T03:56:09Z
+closed_at: 2026-06-23T03:56:09Z
+merge_commit: 467921758690b2c6e5d10fa3d115005a84ab4388
+linked_issues: []
+changed_files:
+  - path: CLI_AND_DAEMON.md
+    additions: 5
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/core/issues/cache-helpers.test.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/utils/drag-utils.test.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_autopilot.go
+    additions: 51
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_autopilot_test.go
+    additions: 173
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/issues/cache-helpers.test.ts
+  - path: packages/views/issues/utils/drag-utils.test.ts
+  - path: server/cmd/multica/cmd_autopilot_test.go
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "missing linked issue"
+    - "test file changed"

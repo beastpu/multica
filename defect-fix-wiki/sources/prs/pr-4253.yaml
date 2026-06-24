@@ -1,0 +1,26 @@
+id: source.github.pr.4253
+repo: multica-ai/multica
+pr_number: 4253
+url: https://github.com/multica-ai/multica/pull/4253
+state: merged
+title: "style(runtimes): unify header action buttons to match Add a computer (MUL-3368)"
+author: multica-eve
+base_ref: main
+head_ref: agent/eve/da43bbe7
+merged_at: 2026-06-17T09:56:40Z
+closed_at: 2026-06-17T09:56:40Z
+merge_commit: c27d35b7fe183754861f90d0393720ac9b6b382c
+linked_issues:
+  - MUL-3368
+changed_files:
+  - path: packages/views/runtimes/components/runtimes-page.tsx
+    additions: 15
+    deletions: 5
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "missing test diff"
