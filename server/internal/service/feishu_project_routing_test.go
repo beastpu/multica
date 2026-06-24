@@ -768,6 +768,23 @@ func TestResolveAssigneePreservesCurrentForNonAssignableStatus(t *testing.T) {
 	}
 }
 
+func TestResolveAssigneePreservesCurrentAgentForAssignableStatus(t *testing.T) {
+	// A synced issue reassigned locally to an agent must stay agent-owned even
+	// while it is still in todo. Feishu only knows the human operator, so using
+	// that field as authoritative would demote the local agent on every sync.
+	svc := &FeishuProjectSyncService{Queries: nil}
+	cfg := db.FeishuProjectIntegration{AssignOpenItemsToOwnerAgent: false}
+	item := FeishuProjectWorkItem{OwnerEmail: "alice@example.com"}
+	currentType := pgtype.Text{String: "agent", Valid: true}
+	currentID := uuidLike(101)
+	fallbackAgent := uuidLike(20)
+
+	gotType, gotID := svc.resolveAssignee(t.Context(), cfg, item, "todo", currentType, currentID, fallbackAgent)
+	if gotType != currentType || gotID != currentID {
+		t.Fatalf("expected current agent preserved, got %v / %v", gotType, gotID)
+	}
+}
+
 func TestFindFeishuProjectFieldByKey(t *testing.T) {
 	payload := map[string]any{
 		"data": []any{

@@ -162,8 +162,167 @@ func TestReconcileLocalStatusDriftSkipsWhenRunStartUnknown(t *testing.T) {
 	}
 }
 
+func TestSyncWorkItemUpdatesDescriptionWhenLocalIssueUntouched(t *testing.T) {
+	if driftTestPool == nil {
+		t.Skip("DATABASE_URL not reachable; skipping DB-backed Feishu sync test")
+	}
+	ctx := context.Background()
+	queries := db.New(driftTestPool)
+	svc := &FeishuProjectSyncService{Queries: queries}
+
+	suffix := uuid.NewString()[:8]
+	ws := createDriftWorkspace(t, ctx, queries, "desc-"+suffix, "DS")
+	var integrationID pgtype.UUID
+	if err := driftTestPool.QueryRow(ctx,
+		`INSERT INTO feishu_project_integration (workspace_id, project_key, plugin_id, plugin_secret)
+		 VALUES ($1, $2, 'pid', 'psecret') RETURNING id`,
+		ws.ID, "pk-"+suffix,
+	).Scan(&integrationID); err != nil {
+		t.Fatalf("insert integration: %v", err)
+	}
+
+	oldItem := FeishuProjectWorkItem{ID: "desc-" + suffix, Type: "issue", Title: "description drift", Description: "**实际结果：**\n\n\n**预期结果：**\n"}
+	newItem := oldItem
+	newItem.Description = "**实际结果：**\n\n有今日主题和对决战况页签，页签显示异常\n\n**预期结果：**\n\n只保留对决联赛页签\n"
+	newItem.UpdatedAt = time.Now()
+	issue := createDriftIssueWithDescription(t, ctx, queries, ws.ID, newDriftUUID(), "todo", 1, externalTitle(oldItem), externalDescription(oldItem, ""))
+	lastSync := time.Now()
+	setDriftIssueUpdatedAt(t, ctx, issue.ID, lastSync.Add(-time.Minute))
+	insertDriftBinding(t, ctx, ws.ID, integrationID, issue.ID, oldItem.ID, "OPEN", lastSync)
+
+	cfg := db.FeishuProjectIntegration{
+		ID:            integrationID,
+		WorkspaceID:   ws.ID,
+		ProjectKey:    "pk-" + suffix,
+		WorkItemTypes: feishuTestIssueTypes(`{"OPEN": "todo"}`),
+	}
+	result, _, err := svc.syncWorkItem(ctx, cfg, newItem, true, pgtype.UUID{})
+	if err != nil {
+		t.Fatalf("syncWorkItem: %v", err)
+	}
+	if result != "updated" {
+		t.Fatalf("result = %q, want updated", result)
+	}
+	got := driftIssueDescription(t, ctx, queries, ws.ID, issue.ID)
+	if want := externalDescription(newItem, ""); got != want {
+		t.Fatalf("description not refreshed\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestSyncWorkItemOverwritesDescriptionAfterLocalEdit(t *testing.T) {
+	if driftTestPool == nil {
+		t.Skip("DATABASE_URL not reachable; skipping DB-backed Feishu sync test")
+	}
+	ctx := context.Background()
+	queries := db.New(driftTestPool)
+	svc := &FeishuProjectSyncService{Queries: queries}
+
+	suffix := uuid.NewString()[:8]
+	ws := createDriftWorkspace(t, ctx, queries, "desc-local-"+suffix, "DL")
+	var integrationID pgtype.UUID
+	if err := driftTestPool.QueryRow(ctx,
+		`INSERT INTO feishu_project_integration (workspace_id, project_key, plugin_id, plugin_secret)
+		 VALUES ($1, $2, 'pid', 'psecret') RETURNING id`,
+		ws.ID, "pk-"+suffix,
+	).Scan(&integrationID); err != nil {
+		t.Fatalf("insert integration: %v", err)
+	}
+
+	item := FeishuProjectWorkItem{
+		ID:          "desc-local-" + suffix,
+		Type:        "issue",
+		Title:       "external description wins",
+		Description: "**实际结果：**\n\n外部新内容\n\n**预期结果：**\n\n外部新预期\n",
+		UpdatedAt:   time.Now(),
+	}
+	localDescription := "local edit should be overwritten"
+	issue := createDriftIssueWithDescription(t, ctx, queries, ws.ID, newDriftUUID(), "todo", 1, externalTitle(item), localDescription)
+	lastSync := time.Now().Add(-time.Minute)
+	insertDriftBinding(t, ctx, ws.ID, integrationID, issue.ID, item.ID, "OPEN", lastSync)
+	setDriftIssueUpdatedAt(t, ctx, issue.ID, lastSync.Add(time.Minute))
+
+	cfg := db.FeishuProjectIntegration{
+		ID:            integrationID,
+		WorkspaceID:   ws.ID,
+		ProjectKey:    "pk-" + suffix,
+		WorkItemTypes: feishuTestIssueTypes(`{"OPEN": "todo"}`),
+	}
+	if _, _, err := svc.syncWorkItem(ctx, cfg, item, true, pgtype.UUID{}); err != nil {
+		t.Fatalf("syncWorkItem: %v", err)
+	}
+	if got, want := driftIssueDescription(t, ctx, queries, ws.ID, issue.ID), externalDescription(item, ""); got != want {
+		t.Fatalf("description not overwritten by Feishu\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestSyncWorkItemPreservesExistingAttachmentMarkdownWhenPayloadOmitsAttachments(t *testing.T) {
+	if driftTestPool == nil {
+		t.Skip("DATABASE_URL not reachable; skipping DB-backed Feishu sync test")
+	}
+	ctx := context.Background()
+	queries := db.New(driftTestPool)
+	svc := &FeishuProjectSyncService{Queries: queries}
+
+	suffix := uuid.NewString()[:8]
+	ws := createDriftWorkspace(t, ctx, queries, "desc-attach-"+suffix, "DA")
+	var integrationID pgtype.UUID
+	if err := driftTestPool.QueryRow(ctx,
+		`INSERT INTO feishu_project_integration (workspace_id, project_key, plugin_id, plugin_secret)
+		 VALUES ($1, $2, 'pid', 'psecret') RETURNING id`,
+		ws.ID, "pk-"+suffix,
+	).Scan(&integrationID); err != nil {
+		t.Fatalf("insert integration: %v", err)
+	}
+
+	oldItem := FeishuProjectWorkItem{
+		ID:          "desc-attach-" + suffix,
+		Type:        "issue",
+		Title:       "description image survives",
+		Description: "old external body",
+	}
+	newItem := oldItem
+	newItem.Description = "new external body"
+	newItem.UpdatedAt = time.Now()
+	creator := newDriftUUID()
+	issue := createDriftIssueWithDescription(t, ctx, queries, ws.ID, creator, "todo", 1, externalTitle(oldItem), externalDescription(oldItem, ""))
+	attachment := createDriftFeishuAttachment(t, ctx, queries, ws.ID, integrationID, issue.ID, creator, "shot.png", "image/png", "img-"+suffix)
+	attachmentMarkdown := attachmentMarkdown(attachment.Filename, feishuProjectAttachmentContentURL(attachment), attachment.ContentType)
+	setDriftIssueDescription(t, ctx, issue.ID, externalDescription(oldItem, attachmentMarkdown))
+	lastSync := time.Now().Add(-time.Minute)
+	insertDriftBinding(t, ctx, ws.ID, integrationID, issue.ID, oldItem.ID, "OPEN", lastSync)
+
+	cfg := db.FeishuProjectIntegration{
+		ID:            integrationID,
+		WorkspaceID:   ws.ID,
+		ProjectKey:    "pk-" + suffix,
+		WorkItemTypes: feishuTestIssueTypes(`{"OPEN": "todo"}`),
+	}
+	if _, _, err := svc.syncWorkItem(ctx, cfg, newItem, true, pgtype.UUID{}); err != nil {
+		t.Fatalf("syncWorkItem: %v", err)
+	}
+	if got, want := driftIssueDescription(t, ctx, queries, ws.ID, issue.ID), externalDescription(newItem, attachmentMarkdown); got != want {
+		t.Fatalf("description lost attachment markdown\n got: %q\nwant: %q", got, want)
+	}
+}
+
 func newDriftUUID() pgtype.UUID {
 	return pgtype.UUID{Bytes: uuid.New(), Valid: true}
+}
+
+func createDriftWorkspace(t *testing.T, ctx context.Context, queries *db.Queries, slug, prefix string) db.Workspace {
+	t.Helper()
+	ws, err := queries.CreateWorkspace(ctx, db.CreateWorkspaceParams{
+		Name:        slug,
+		Slug:        slug,
+		IssuePrefix: prefix,
+	})
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = driftTestPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, ws.ID)
+	})
+	return ws
 }
 
 func createDriftIssue(t *testing.T, ctx context.Context, queries *db.Queries, wsID, creator pgtype.UUID, status string, number int32) db.Issue {
@@ -181,6 +340,67 @@ func createDriftIssue(t *testing.T, ctx context.Context, queries *db.Queries, ws
 		t.Fatalf("create issue (status=%s): %v", status, err)
 	}
 	return issue
+}
+
+func createDriftIssueWithDescription(t *testing.T, ctx context.Context, queries *db.Queries, wsID, creator pgtype.UUID, status string, number int32, title, description string) db.Issue {
+	t.Helper()
+	issue, err := queries.CreateIssue(ctx, db.CreateIssueParams{
+		WorkspaceID: wsID,
+		Title:       title,
+		Description: pgtype.Text{String: description, Valid: true},
+		Status:      status,
+		Priority:    "none",
+		CreatorType: "member",
+		CreatorID:   creator,
+		Number:      number,
+	})
+	if err != nil {
+		t.Fatalf("create issue (status=%s): %v", status, err)
+	}
+	return issue
+}
+
+func setDriftIssueUpdatedAt(t *testing.T, ctx context.Context, issueID pgtype.UUID, updatedAt time.Time) {
+	t.Helper()
+	if _, err := driftTestPool.Exec(ctx, `UPDATE issue SET updated_at = $2 WHERE id = $1`, issueID, updatedAt); err != nil {
+		t.Fatalf("set issue updated_at: %v", err)
+	}
+}
+
+func setDriftIssueDescription(t *testing.T, ctx context.Context, issueID pgtype.UUID, description string) {
+	t.Helper()
+	if _, err := driftTestPool.Exec(ctx, `UPDATE issue SET description = $2 WHERE id = $1`, issueID, description); err != nil {
+		t.Fatalf("set issue description: %v", err)
+	}
+}
+
+func createDriftFeishuAttachment(t *testing.T, ctx context.Context, queries *db.Queries, wsID, integrationID, issueID, uploaderID pgtype.UUID, filename, contentType, externalID string) db.Attachment {
+	t.Helper()
+	att, err := queries.CreateAttachment(ctx, db.CreateAttachmentParams{
+		ID:           newDriftUUID(),
+		WorkspaceID:  wsID,
+		IssueID:      issueID,
+		UploaderType: "member",
+		UploaderID:   uploaderID,
+		Filename:     filename,
+		Url:          "s3://feishu-project-test/" + externalID,
+		ContentType:  contentType,
+		SizeBytes:    123,
+	})
+	if err != nil {
+		t.Fatalf("create attachment: %v", err)
+	}
+	if _, err := queries.CreateFeishuProjectAttachmentBinding(ctx, db.CreateFeishuProjectAttachmentBindingParams{
+		WorkspaceID:          wsID,
+		IntegrationID:        integrationID,
+		IssueID:              issueID,
+		AttachmentID:         att.ID,
+		ExternalAttachmentID: externalID,
+		ExternalFilename:     filename,
+	}); err != nil {
+		t.Fatalf("create attachment binding: %v", err)
+	}
+	return att
 }
 
 func insertDriftBinding(t *testing.T, ctx context.Context, wsID, integrationID, issueID pgtype.UUID, workItemID, statusLabel string, lastSyncedAt time.Time) {
@@ -203,4 +423,16 @@ func driftIssueStatus(t *testing.T, ctx context.Context, queries *db.Queries, ws
 		t.Fatalf("get issue: %v", err)
 	}
 	return issue.Status
+}
+
+func driftIssueDescription(t *testing.T, ctx context.Context, queries *db.Queries, wsID, issueID pgtype.UUID) string {
+	t.Helper()
+	issue, err := queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: wsID})
+	if err != nil {
+		t.Fatalf("get issue: %v", err)
+	}
+	if !issue.Description.Valid {
+		return ""
+	}
+	return issue.Description.String
 }
