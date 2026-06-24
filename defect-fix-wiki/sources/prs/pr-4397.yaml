@@ -1,0 +1,42 @@
+id: source.github.pr.4397
+repo: multica-ai/multica
+pr_number: 4397
+url: https://github.com/multica-ai/multica/pull/4397
+state: closed
+title: "fix(server): compute scheduled autopilot next run from claimed planned_at"
+author: LucasM4r
+base_ref: main
+head_ref: fix/double-fire-scheduler
+merged_at: ""
+closed_at: 2026-06-22T07:58:38Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: server/cmd/server/autopilot_scheduler.go
+    additions: 18
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/cmd/server/autopilot_scheduler_test.go
+    additions: 109
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/cron.go
+    additions: 11
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/autopilot.sql.go
+    additions: 28
+    deletions: 11
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/autopilot.sql
+    additions: 26
+    deletions: 11
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/server/autopilot_scheduler_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

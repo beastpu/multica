@@ -1,0 +1,40 @@
+id: source.github.pr.4208
+repo: multica-ai/multica
+pr_number: 4208
+url: https://github.com/multica-ai/multica/pull/4208
+state: closed
+title: "Expose agent thinking level in CLI"
+author: beastpu
+base_ref: main
+head_ref: codex/agent-thinking-level-cli
+merged_at: ""
+closed_at: 2026-06-16T15:16:17Z
+merge_commit: ""
+linked_issues:
+  - "#4170"
+  - https://github.com/multica-ai/multica/issues/4170
+changed_files:
+  - path: server/cmd/multica/cmd_agent.go
+    additions: 11
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_agent_test.go
+    additions: 123
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-creating-agents/SKILL.md
+    additions: 6
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-creating-agents/references/creating-agents-source-map.md
+    additions: 3
+    deletions: 3
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/multica/cmd_agent_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

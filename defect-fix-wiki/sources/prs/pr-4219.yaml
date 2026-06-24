@@ -1,0 +1,252 @@
+id: source.github.pr.4219
+repo: multica-ai/multica
+pr_number: 4219
+url: https://github.com/multica-ai/multica/pull/4219
+state: closed
+title: "Adds automatic synchronization of **shared runtime skill directories** into workspace skills."
+author: exp-repair
+base_ref: main
+head_ref: dev
+merged_at: ""
+closed_at: 2026-06-17T01:55:31Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: .env.example
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: .gitignore
+    additions: 4
+    deletions: 0
+    change_type: MODIFIED
+  - path: "apps/web/app/[workspaceSlug]/(dashboard)/channels/page.tsx"
+    additions: 1
+    deletions: 0
+    change_type: ADDED
+  - path: apps/web/proxy.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: docker-compose.selfhost.yml
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/core/api/client.ts
+    additions: 59
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/channels/index.ts
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/channels/mutations.ts
+    additions: 49
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/channels/queries.ts
+    additions: 33
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/package.json
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/paths/consistency.test.ts
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/paths/paths.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/paths/reserved-slugs.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/realtime/use-realtime-sync-ws-instance.test.tsx
+    additions: 9
+    deletions: 4
+    change_type: MODIFIED
+  - path: packages/core/realtime/use-realtime-sync.ts
+    additions: 34
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/types/channel.ts
+    additions: 39
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/types/events.ts
+    additions: 7
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/types/index.ts
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/channels/components/channels-page.tsx
+    additions: 417
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/channels/index.ts
+    additions: 1
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/editor/utils/link-handler.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/layout/app-sidebar.tsx
+    additions: 4
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/en/layout.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/en/skills.json
+    additions: 7
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/layout.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/layout.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/skills.json
+    additions: 7
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/modals/create-squad.tsx
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/package.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/skills/components/skill-columns.tsx
+    additions: 14
+    deletions: 7
+    change_type: MODIFIED
+  - path: packages/views/skills/components/skill-detail-page.tsx
+    additions: 17
+    deletions: 8
+    change_type: MODIFIED
+  - path: packages/views/skills/components/skills-page.tsx
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/skills/lib/origin.ts
+    additions: 12
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_setup.go
+    additions: 25
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_setup_test.go
+    additions: 21
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/server/router.go
+    additions: 17
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/client.go
+    additions: 10
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/daemon/config.go
+    additions: 22
+    deletions: 10
+    change_type: MODIFIED
+  - path: server/internal/daemon/daemon.go
+    additions: 6
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/daemon/local_skills.go
+    additions: 62
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/shared_skills.go
+    additions: 204
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/daemon/shared_skills_test.go
+    additions: 58
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/daemon/types.go
+    additions: 39
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/channel.go
+    additions: 1000
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/channel_test.go
+    additions: 86
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/reserved_slugs.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_shared_skills.go
+    additions: 426
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/runtime_shared_skills_test.go
+    additions: 52
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/112_channels.down.sql
+    additions: 4
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/112_channels.up.sql
+    additions: 58
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/119_channel_thread_context.down.sql
+    additions: 9
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/119_channel_thread_context.up.sql
+    additions: 11
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/agent/pi.go
+    additions: 38
+    deletions: 15
+    change_type: MODIFIED
+  - path: server/pkg/agent/pi_test.go
+    additions: 42
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/protocol/events.go
+    additions: 12
+    deletions: 9
+    change_type: MODIFIED
+  - path: server/pkg/protocol/messages.go
+    additions: 11
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/paths/consistency.test.ts
+  - path: packages/core/realtime/use-realtime-sync-ws-instance.test.tsx
+  - path: server/cmd/multica/cmd_setup_test.go
+  - path: server/internal/daemon/shared_skills_test.go
+  - path: server/internal/handler/channel_test.go
+  - path: server/internal/handler/runtime_shared_skills_test.go
+  - path: server/pkg/agent/pi_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

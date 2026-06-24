@@ -1,0 +1,31 @@
+id: source.github.pr.4448
+repo: multica-ai/multica
+pr_number: 4448
+url: https://github.com/multica-ai/multica/pull/4448
+state: merged
+title: "MUL-3567: add copy button to readonly code blocks"
+author: Bohan-J
+base_ref: main
+head_ref: agent/niko/a0d6fb30
+merged_at: 2026-06-23T07:01:34Z
+closed_at: 2026-06-23T07:01:35Z
+merge_commit: a5636f0ff42acecadcce874fed629aba4abf442e
+linked_issues:
+  - MUL-3567
+changed_files:
+  - path: packages/views/editor/readonly-content.test.tsx
+    additions: 18
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/editor/readonly-content.tsx
+    additions: 57
+    deletions: 3
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/editor/readonly-content.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,108 @@
+id: source.github.pr.4234
+repo: multica-ai/multica
+pr_number: 4234
+url: https://github.com/multica-ai/multica/pull/4234
+state: merged
+title: "Make custom runtimes appear immediately"
+author: ldnvnbl
+base_ref: main
+head_ref: fix/custom-runtime-immediate-visibility
+merged_at: 2026-06-17T08:00:22Z
+closed_at: 2026-06-17T08:00:22Z
+merge_commit: 77ac17ef498caf01ba4d588b1e3c031e06bea930
+linked_issues: []
+changed_files:
+  - path: packages/views/locales/en/runtimes.json
+    additions: 7
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/runtimes.json
+    additions: 7
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/runtimes.json
+    additions: 7
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/runtimes.json
+    additions: 7
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/pending-runtime.test.ts
+    additions: 123
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/runtimes/components/pending-runtime.ts
+    additions: 125
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/runtimes/components/runtime-list.tsx
+    additions: 130
+    deletions: 54
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-profiles-dialog.tsx
+    additions: 37
+    deletions: 11
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtimes-page.tsx
+    additions: 54
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/cmd/server/router.go
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/wakeup.go
+    additions: 23
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemonws/hub.go
+    additions: 174
+    deletions: 22
+    change_type: MODIFIED
+  - path: server/internal/daemonws/hub_test.go
+    additions: 207
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemonws/notifier.go
+    additions: 27
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon.go
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon_test.go
+    additions: 45
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon_ws.go
+    additions: 16
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/handler/handler.go
+    additions: 10
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_profile.go
+    additions: 16
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/pkg/protocol/events.go
+    additions: 14
+    deletions: 13
+    change_type: MODIFIED
+  - path: server/pkg/protocol/messages.go
+    additions: 9
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/runtimes/components/pending-runtime.test.ts
+  - path: server/internal/daemonws/hub_test.go
+  - path: server/internal/handler/daemon_test.go
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "missing linked issue"
+    - "test file changed"

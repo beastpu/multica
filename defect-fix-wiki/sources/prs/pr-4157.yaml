@@ -1,0 +1,30 @@
+id: source.github.pr.4157
+repo: multica-ai/multica
+pr_number: 4157
+url: https://github.com/multica-ai/multica/pull/4157
+state: merged
+title: "Fix Office 365 SMTP auth fallback"
+author: taogejiang
+base_ref: main
+head_ref: pr-smtp-fix-Office365-auth-fallback
+merged_at: 2026-06-17T03:27:49Z
+closed_at: 2026-06-17T03:27:49Z
+merge_commit: 1f8f3e80377741bb398497a1bbdcff0db87d36bb
+linked_issues: []
+changed_files:
+  - path: server/internal/service/email.go
+    additions: 142
+    deletions: 48
+    change_type: MODIFIED
+  - path: server/internal/service/email_test.go
+    additions: 406
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/service/email_test.go
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "missing linked issue"
+    - "test file changed"

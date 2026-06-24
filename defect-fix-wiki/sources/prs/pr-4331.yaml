@@ -1,0 +1,30 @@
+id: source.github.pr.4331
+repo: multica-ai/multica
+pr_number: 4331
+url: https://github.com/multica-ai/multica/pull/4331
+state: closed
+title: "Fix skill import 502 for multi-skill GitHub repos"
+author: saheljalal
+base_ref: main
+head_ref: fix/skill-import-multi-skill-400
+merged_at: ""
+closed_at: 2026-06-19T05:30:28Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: server/internal/handler/skill.go
+    additions: 90
+    deletions: 9
+    change_type: MODIFIED
+  - path: server/internal/handler/skill_test.go
+    additions: 57
+    deletions: 2
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/handler/skill_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

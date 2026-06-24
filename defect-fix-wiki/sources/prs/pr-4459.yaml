@@ -1,0 +1,215 @@
+id: source.github.pr.4459
+repo: multica-ai/multica
+pr_number: 4459
+url: https://github.com/multica-ai/multica/pull/4459
+state: closed
+title: "feat(eidetix): project-scoped shared-context (knowledge-graph MCP) integration"
+author: naman485
+base_ref: main
+head_ref: feat/eidetix-context-integration
+merged_at: ""
+closed_at: 2026-06-23T09:09:05Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: .gitignore
+    additions: 8
+    deletions: 0
+    change_type: MODIFIED
+  - path: docs/superpowers/handoffs/2026-06-23-eidetix-integration-handoff.md
+    additions: 117
+    deletions: 0
+    change_type: ADDED
+  - path: docs/superpowers/plans/2026-06-14-eidetix-context-integration.md
+    additions: 1830
+    deletions: 0
+    change_type: ADDED
+  - path: docs/superpowers/plans/2026-06-16-eidetix-frontend.md
+    additions: 647
+    deletions: 0
+    change_type: ADDED
+  - path: docs/superpowers/runbooks/2026-06-14-eidetix-provider-verification.md
+    additions: 38
+    deletions: 0
+    change_type: ADDED
+  - path: docs/superpowers/specs/2026-06-13-eidetix-context-design.md
+    additions: 281
+    deletions: 0
+    change_type: ADDED
+  - path: docs/superpowers/specs/2026-06-15-eidetix-eval-design.md
+    additions: 170
+    deletions: 0
+    change_type: ADDED
+  - path: docs/superpowers/specs/2026-06-16-eidetix-eval-results.md
+    additions: 127
+    deletions: 0
+    change_type: ADDED
+  - path: docs/superpowers/specs/2026-06-16-eidetix-frontend-design.md
+    additions: 107
+    deletions: 0
+    change_type: ADDED
+  - path: evals/eidetix/README.md
+    additions: 54
+    deletions: 0
+    change_type: ADDED
+  - path: evals/eidetix/judge.py
+    additions: 262
+    deletions: 0
+    change_type: ADDED
+  - path: evals/eidetix/probe_graph.py
+    additions: 110
+    deletions: 0
+    change_type: ADDED
+  - path: evals/eidetix/run_eval.py
+    additions: 219
+    deletions: 0
+    change_type: ADDED
+  - path: evals/eidetix/tasks.json
+    additions: 74
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/api/client.ts
+    additions: 38
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/eidetix-schema.test.ts
+    additions: 27
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/api/schemas.ts
+    additions: 13
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/permissions/index.ts
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/projects/index.ts
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/core/projects/mutations.ts
+    additions: 46
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/projects/queries.ts
+    additions: 9
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/en/projects.json
+    additions: 22
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/projects.json
+    additions: 22
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/projects.json
+    additions: 22
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/projects.json
+    additions: 22
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/projects/components/eidetix-section.test.tsx
+    additions: 103
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/projects/components/eidetix-section.tsx
+    additions: 189
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/projects/components/project-detail.tsx
+    additions: 4
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_project_eidetix.go
+    additions: 240
+    deletions: 0
+    change_type: ADDED
+  - path: server/cmd/multica/cmd_project_eidetix_test.go
+    additions: 55
+    deletions: 0
+    change_type: ADDED
+  - path: server/cmd/server/router.go
+    additions: 22
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon.go
+    additions: 4
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/eidetix.go
+    additions: 226
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/eidetix_merge.go
+    additions: 77
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/eidetix_merge_test.go
+    additions: 90
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/eidetix_test.go
+    additions: 402
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/handler.go
+    additions: 7
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-projects-and-resources/references/projects-and-resources-source-map.md
+    additions: 12
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/eidetix_skill.go
+    additions: 53
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/eidetix_skill/multica-eidetix/SKILL.md
+    additions: 70
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/eidetix_skill/multica-eidetix/references/eidetix-tools-source-map.md
+    additions: 35
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/eidetix_skill_test.go
+    additions: 84
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/120_eidetix_project_config.down.sql
+    additions: 1
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/120_eidetix_project_config.up.sql
+    additions: 17
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/eidetix.sql.go
+    additions: 117
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/models.go
+    additions: 10
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/eidetix.sql
+    additions: 31
+    deletions: 0
+    change_type: ADDED
+test_files_changed:
+  - path: packages/core/api/eidetix-schema.test.ts
+  - path: packages/views/projects/components/eidetix-section.test.tsx
+  - path: server/cmd/multica/cmd_project_eidetix_test.go
+  - path: server/internal/handler/eidetix_merge_test.go
+  - path: server/internal/handler/eidetix_test.go
+  - path: server/internal/service/eidetix_skill_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

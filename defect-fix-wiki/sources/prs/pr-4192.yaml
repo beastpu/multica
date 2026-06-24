@@ -1,0 +1,36 @@
+id: source.github.pr.4192
+repo: multica-ai/multica
+pr_number: 4192
+url: https://github.com/multica-ai/multica/pull/4192
+state: merged
+title: "MUL-3312: Gate chat uploads on active agent"
+author: NevilleQingNY
+base_ref: main
+head_ref: agent/walt/82b52d27
+merged_at: 2026-06-16T08:43:55Z
+closed_at: 2026-06-16T08:43:55Z
+merge_commit: 097064ed0e7268420e1ff99b5ececdd04b380598
+linked_issues:
+  - MUL-3312
+changed_files:
+  - path: packages/views/chat/components/chat-input.test.tsx
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-window.tsx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-window.upload-readiness.test.tsx
+    additions: 360
+    deletions: 0
+    change_type: ADDED
+test_files_changed:
+  - path: packages/views/chat/components/chat-input.test.tsx
+  - path: packages/views/chat/components/chat-window.upload-readiness.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

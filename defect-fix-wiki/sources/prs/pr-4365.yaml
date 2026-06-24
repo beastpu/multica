@@ -1,0 +1,35 @@
+id: source.github.pr.4365
+repo: multica-ai/multica
+pr_number: 4365
+url: https://github.com/multica-ai/multica/pull/4365
+state: closed
+title: "AOL-546: keep autopilot list order stable"
+author: alanhe421
+base_ref: main
+head_ref: MUL-546-autopilot-stable-sort
+merged_at: ""
+closed_at: 2026-06-20T13:52:15Z
+merge_commit: ""
+linked_issues:
+  - MUL-546
+changed_files:
+  - path: packages/core/autopilots/stores/view-store.test.ts
+    additions: 12
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/autopilots/stores/view-store.ts
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/autopilots/components/autopilots-page.tsx
+    additions: 5
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/autopilots/stores/view-store.test.ts
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

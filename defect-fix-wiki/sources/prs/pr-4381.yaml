@@ -1,0 +1,29 @@
+id: source.github.pr.4381
+repo: multica-ai/multica
+pr_number: 4381
+url: https://github.com/multica-ai/multica/pull/4381
+state: merged
+title: "feat: add opt-in react-grab dev element inspector (web + desktop)"
+author: NevilleQingNY
+base_ref: main
+head_ref: feat/react-grab-dev-overlay
+merged_at: 2026-06-22T01:49:24Z
+closed_at: 2026-06-22T01:49:24Z
+merge_commit: 6d0e875dbbecc37d091f79a3677d360e5ae71a5c
+linked_issues: []
+changed_files:
+  - path: apps/desktop/src/renderer/src/main.tsx
+    additions: 14
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/app/layout.tsx
+    additions: 19
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "missing linked issue"
+    - "missing test diff"

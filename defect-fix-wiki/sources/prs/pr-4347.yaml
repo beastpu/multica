@@ -1,0 +1,76 @@
+id: source.github.pr.4347
+repo: multica-ai/multica
+pr_number: 4347
+url: https://github.com/multica-ai/multica/pull/4347
+state: closed
+title: "LB-28: add issue skill embedding API"
+author: loonghao
+base_ref: main
+head_ref: lb-28-issue-skill-embeddings
+merged_at: ""
+closed_at: 2026-06-20T06:40:50Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: server/cmd/server/router.go
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/go.mod
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/go.sum
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/agent_access_test.go
+    additions: 10
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/internal/handler/issue.go
+    additions: 16
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/issue_batch_test.go
+    additions: 67
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/issue_skill_test.go
+    additions: 334
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/skill.go
+    additions: 291
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/migrations/122_issue_skill_embeddings.down.sql
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/122_issue_skill_embeddings.up.sql
+    additions: 27
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/models.go
+    additions: 18
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/skill.sql.go
+    additions: 158
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/skill.sql
+    additions: 39
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/handler/agent_access_test.go
+  - path: server/internal/handler/issue_batch_test.go
+  - path: server/internal/handler/issue_skill_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

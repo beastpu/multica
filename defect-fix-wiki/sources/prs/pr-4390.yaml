@@ -1,0 +1,31 @@
+id: source.github.pr.4390
+repo: multica-ai/multica
+pr_number: 4390
+url: https://github.com/multica-ai/multica/pull/4390
+state: merged
+title: "refactor(codex): make permission approval auto-grant observable (MUL-3451)"
+author: Bohan-J
+base_ref: main
+head_ref: fix/codex-permission-approval-observability
+merged_at: 2026-06-22T05:43:42Z
+closed_at: 2026-06-22T05:43:42Z
+merge_commit: b13e1808a426541ad48b3f34145c276a4afe3baf
+linked_issues:
+  - MUL-3451
+changed_files:
+  - path: server/pkg/agent/codex.go
+    additions: 28
+    deletions: 9
+    change_type: MODIFIED
+  - path: server/pkg/agent/codex_test.go
+    additions: 50
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/pkg/agent/codex_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

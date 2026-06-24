@@ -1,0 +1,41 @@
+id: source.github.pr.4162
+repo: multica-ai/multica
+pr_number: 4162
+url: https://github.com/multica-ai/multica/pull/4162
+state: merged
+title: "MUL-3321: Add runtime delete CLI command"
+author: beastpu
+base_ref: main
+head_ref: codex/runtime-delete-cli
+merged_at: 2026-06-16T08:58:11Z
+closed_at: 2026-06-16T08:58:11Z
+merge_commit: 4f1797598e436b55edfcd89e7f370d83ece0fae5
+linked_issues:
+  - "#3909"
+  - MUL-3321
+  - https://github.com/multica-ai/multica/issues/3909
+changed_files:
+  - path: server/cmd/multica/cmd_runtime.go
+    additions: 125
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_runtime_test.go
+    additions: 181
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/builtin_skills/multica-runtimes-and-repos/SKILL.md
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-runtimes-and-repos/references/runtimes-and-repos-source-map.md
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/multica/cmd_runtime_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

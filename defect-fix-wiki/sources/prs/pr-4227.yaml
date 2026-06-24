@@ -1,0 +1,28 @@
+id: source.github.pr.4227
+repo: multica-ai/multica
+pr_number: 4227
+url: https://github.com/multica-ai/multica/pull/4227
+state: merged
+title: "fix(scripts): fix version comparison to prevent unnecessary CLI upgrades (MUL-3335)"
+author: adam3q
+base_ref: main
+head_ref: fix/install-script-update
+merged_at: 2026-06-17T05:27:24Z
+closed_at: 2026-06-17T05:27:24Z
+merge_commit: 3030c803bfcad359df748afe4ac498b130c894b8
+linked_issues:
+  - "#4226"
+  - MUL-3335
+  - https://github.com/multica-ai/multica/issues/4226
+changed_files:
+  - path: scripts/install.sh
+    additions: 3
+    deletions: 3
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "missing test diff"

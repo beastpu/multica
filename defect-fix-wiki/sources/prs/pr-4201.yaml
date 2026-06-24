@@ -1,0 +1,65 @@
+id: source.github.pr.4201
+repo: multica-ai/multica
+pr_number: 4201
+url: https://github.com/multica-ai/multica/pull/4201
+state: closed
+title: "feat: route project description to agents"
+author: lishouxian
+base_ref: main
+head_ref: codex/project-description-context
+merged_at: ""
+closed_at: 2026-06-23T05:52:35Z
+merge_commit: ""
+linked_issues:
+  - "#4052"
+changed_files:
+  - path: server/internal/daemon/daemon.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/execenv.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/execenv_test.go
+    additions: 6
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config.go
+    additions: 12
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/daemon/prompt.go
+    additions: 20
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/prompt_test.go
+    additions: 42
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/types.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/agent.go
+    additions: 23
+    deletions: 22
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon.go
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon_test.go
+    additions: 34
+    deletions: 5
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/daemon/execenv/execenv_test.go
+  - path: server/internal/daemon/prompt_test.go
+  - path: server/internal/handler/daemon_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

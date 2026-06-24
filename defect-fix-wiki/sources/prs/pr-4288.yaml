@@ -1,0 +1,35 @@
+id: source.github.pr.4288
+repo: multica-ai/multica
+pr_number: 4288
+url: https://github.com/multica-ai/multica/pull/4288
+state: merged
+title: "MUL-3405: constrain issue mention chips in chat"
+author: Bohan-J
+base_ref: main
+head_ref: agent/niko/3e73ad2c
+merged_at: 2026-06-18T03:26:05Z
+closed_at: 2026-06-18T03:26:05Z
+merge_commit: 02c0298c18cf673f421c49aa9a44a99b522e466a
+linked_issues:
+  - MUL-3405
+changed_files:
+  - path: packages/views/issues/components/issue-chip.test.tsx
+    additions: 68
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/issues/components/issue-chip.tsx
+    additions: 4
+    deletions: 4
+    change_type: MODIFIED
+  - path: packages/views/issues/components/issue-mention-card.tsx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/issues/components/issue-chip.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

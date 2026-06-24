@@ -1,0 +1,32 @@
+id: source.github.pr.4300
+repo: multica-ai/multica
+pr_number: 4300
+url: https://github.com/multica-ai/multica/pull/4300
+state: merged
+title: "MUL-3173: cover Hermes custom model IDs with colons"
+author: multica-eve
+base_ref: main
+head_ref: fix/mul-3173-hermes-custom-model-id
+merged_at: 2026-06-18T07:51:14Z
+closed_at: 2026-06-18T07:51:14Z
+merge_commit: 8b3b054d17440c53f1dd8d4a1a7c465e004b488b
+linked_issues:
+  - MUL-3173
+changed_files:
+  - path: server/pkg/agent/hermes_test.go
+    additions: 50
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/agent/models_test.go
+    additions: 25
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/pkg/agent/hermes_test.go
+  - path: server/pkg/agent/models_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

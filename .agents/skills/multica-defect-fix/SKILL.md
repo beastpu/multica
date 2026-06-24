@@ -25,6 +25,15 @@ Before planning or implementing, read:
 
 - Start with product validity: decide whether this is a real product problem,
   an enhancement, a duplicate, already fixed, or not worth fixing now.
+- Before editing, run an internal defect-case lookup when
+  `defect-fix-wiki/indexes/cases.index.jsonl` exists. Use:
+  `pnpm defect-fix-wiki query --text "<symptoms and errors>" --module <module>`
+  and add `--file <path>` when the report already points at specific files.
+  Record only the internal working note:
+  - which cases were checked,
+  - why each case is or is not similar,
+  - which fix pattern or gotcha is reusable,
+  - what still must be verified in the current code.
 - Verify current `main` or the PR branch before assuming the report is still
   valid.
 - State a root-cause hypothesis before code changes.
@@ -39,6 +48,10 @@ Before planning or implementing, read:
 - Run targeted checks that match the touched surface; run broader checks when
   the blast radius is high.
 - After pushing a PR, watch CI and inspect failures before guessing.
+- Do not cite private defect-fix wiki case IDs, private wiki links, or internal
+  case-library contents in public PR descriptions, GitHub issue comments, or
+  Multica issue comments. Public output should explain only the current issue's
+  root cause, fix, and verification.
 
 ## Regression Test Coverage Rules
 

@@ -1,0 +1,245 @@
+{
+  "agent": [
+    "pattern.agent.antigravity_print_timeout",
+    "pattern.agent.assignment_comment_catch_up",
+    "pattern.agent.chat_output_context_boundary",
+    "pattern.agent.codex_app_server_exit_fail_fast",
+    "pattern.agent.codex_permission_auto_grant_observability",
+    "pattern.agent.sub_issue_stages_runtime_brief",
+    "pattern.comments.resolve_aware_agent_reads"
+  ],
+  "agent-trigger": [
+    "pattern.issues.child_done_backlog_parent_wake"
+  ],
+  "async-results": [
+    "pattern.editor.mention_selection_identity"
+  ],
+  "auth": [
+    "pattern.cli.remote_setup_callback_host",
+    "pattern.skills.private_github_raw_download_auth"
+  ],
+  "autopilot": [
+    "pattern.daemon.autopilot_workdir_gc_terminal"
+  ],
+  "backlog": [
+    "pattern.issues.child_done_backlog_parent_wake"
+  ],
+  "batch": [
+    "pattern.issues.batch_toolbar_common_values"
+  ],
+  "chat": [
+    "pattern.agent.chat_output_context_boundary",
+    "pattern.editor.inflight_upload_external_sync_guard"
+  ],
+  "cli": [
+    "pattern.cli.remote_setup_callback_host"
+  ],
+  "codex": [
+    "pattern.agent.codex_app_server_exit_fail_fast",
+    "pattern.agent.codex_permission_auto_grant_observability"
+  ],
+  "comments": [
+    "pattern.agent.assignment_comment_catch_up",
+    "pattern.comments.resolve_aware_agent_reads"
+  ],
+  "compatibility": [
+    "pattern.issues.timeline_unknown_status_fallback",
+    "pattern.runtimes.clear_incompatible_model_on_switch",
+    "pattern.runtimes.custom_runtime_args_registration_errors"
+  ],
+  "daemon": [
+    "pattern.daemon.autopilot_workdir_gc_terminal",
+    "pattern.daemon.claim_slow_log_observability",
+    "pattern.runtimes.custom_runtime_args_registration_errors",
+    "pattern.runtimes.profile_drift_sync"
+  ],
+  "drag": [
+    "pattern.issues.swimlane_drag_settle_lock"
+  ],
+  "editor": [
+    "pattern.editor.inflight_upload_external_sync_guard",
+    "pattern.editor.mention_selection_identity",
+    "pattern.markdown.bare_filename_linkify"
+  ],
+  "enum-drift": [
+    "pattern.issues.timeline_unknown_status_fallback"
+  ],
+  "gc": [
+    "pattern.daemon.autopilot_workdir_gc_terminal"
+  ],
+  "github": [
+    "pattern.github.webhook_route_by_repo_registry",
+    "pattern.skills.private_github_raw_download_auth"
+  ],
+  "integrations": [
+    "pattern.lark.originating_thread_reply"
+  ],
+  "issues": [
+    "pattern.agent.sub_issue_stages_runtime_brief",
+    "pattern.issues.batch_toolbar_common_values",
+    "pattern.issues.child_done_backlog_parent_wake",
+    "pattern.issues.optimistic_drag_flicker_refetch",
+    "pattern.issues.sub_issue_stage_barrier",
+    "pattern.issues.swimlane_drag_settle_lock",
+    "pattern.issues.timeline_unknown_status_fallback"
+  ],
+  "lark": [
+    "pattern.lark.originating_thread_reply"
+  ],
+  "linkify": [
+    "pattern.markdown.bare_filename_linkify"
+  ],
+  "markdown": [
+    "pattern.markdown.bare_filename_linkify"
+  ],
+  "mentions": [
+    "pattern.editor.mention_selection_identity"
+  ],
+  "models": [
+    "pattern.runtimes.clear_incompatible_model_on_switch"
+  ],
+  "observability": [
+    "pattern.agent.codex_permission_auto_grant_observability",
+    "pattern.daemon.claim_slow_log_observability"
+  ],
+  "optimistic-update": [
+    "pattern.issues.optimistic_drag_flicker_refetch"
+  ],
+  "packages-core": [
+    "pattern.editor.inflight_upload_external_sync_guard",
+    "pattern.issues.batch_toolbar_common_values",
+    "pattern.issues.optimistic_drag_flicker_refetch",
+    "pattern.issues.sub_issue_stage_barrier",
+    "pattern.realtime.ws_frame_type_guard",
+    "pattern.transcript.live_task_messages_shared_cache",
+    "pattern.workspace.deployment_host_url_prefix"
+  ],
+  "packages-ui": [
+    "pattern.markdown.bare_filename_linkify"
+  ],
+  "packages-views": [
+    "pattern.editor.inflight_upload_external_sync_guard",
+    "pattern.editor.mention_selection_identity",
+    "pattern.issues.batch_toolbar_common_values",
+    "pattern.issues.optimistic_drag_flicker_refetch",
+    "pattern.issues.sub_issue_stage_barrier",
+    "pattern.issues.swimlane_drag_settle_lock",
+    "pattern.issues.timeline_unknown_status_fallback",
+    "pattern.markdown.bare_filename_linkify",
+    "pattern.projects.delete_requires_admin",
+    "pattern.runtimes.custom_runtime_args_registration_errors",
+    "pattern.runtimes.custom_runtime_profile_delete",
+    "pattern.transcript.live_task_messages_shared_cache",
+    "pattern.workspace.deployment_host_url_prefix"
+  ],
+  "permissions": [
+    "pattern.agent.codex_permission_auto_grant_observability",
+    "pattern.projects.delete_requires_admin",
+    "pattern.runtimes.custom_runtime_profile_delete"
+  ],
+  "profile-drift": [
+    "pattern.runtimes.profile_drift_sync"
+  ],
+  "projects": [
+    "pattern.projects.delete_requires_admin"
+  ],
+  "prompt": [
+    "pattern.agent.assignment_comment_catch_up"
+  ],
+  "react-query": [
+    "pattern.issues.optimistic_drag_flicker_refetch",
+    "pattern.transcript.live_task_messages_shared_cache"
+  ],
+  "realtime": [
+    "pattern.realtime.ws_frame_type_guard",
+    "pattern.transcript.live_task_messages_shared_cache"
+  ],
+  "revert-followup": [
+    "pattern.daemon.claim_slow_log_observability"
+  ],
+  "runtime": [
+    "pattern.agent.antigravity_print_timeout",
+    "pattern.runtimes.clear_incompatible_model_on_switch",
+    "pattern.runtimes.custom_runtime_args_registration_errors",
+    "pattern.runtimes.custom_runtime_profile_delete",
+    "pattern.runtimes.profile_drift_sync"
+  ],
+  "runtime-brief": [
+    "pattern.agent.chat_output_context_boundary",
+    "pattern.agent.sub_issue_stages_runtime_brief"
+  ],
+  "self-host": [
+    "pattern.workspace.deployment_host_url_prefix"
+  ],
+  "server": [
+    "pattern.agent.antigravity_print_timeout",
+    "pattern.agent.assignment_comment_catch_up",
+    "pattern.agent.chat_output_context_boundary",
+    "pattern.agent.codex_app_server_exit_fail_fast",
+    "pattern.agent.codex_permission_auto_grant_observability",
+    "pattern.agent.sub_issue_stages_runtime_brief",
+    "pattern.cli.remote_setup_callback_host",
+    "pattern.comments.resolve_aware_agent_reads",
+    "pattern.daemon.autopilot_workdir_gc_terminal",
+    "pattern.daemon.claim_slow_log_observability",
+    "pattern.github.webhook_route_by_repo_registry",
+    "pattern.issues.child_done_backlog_parent_wake",
+    "pattern.issues.sub_issue_stage_barrier",
+    "pattern.lark.originating_thread_reply",
+    "pattern.projects.delete_requires_admin",
+    "pattern.runtimes.clear_incompatible_model_on_switch",
+    "pattern.runtimes.custom_runtime_args_registration_errors",
+    "pattern.runtimes.custom_runtime_profile_delete",
+    "pattern.runtimes.profile_drift_sync",
+    "pattern.skills.private_github_raw_download_auth"
+  ],
+  "setup": [
+    "pattern.cli.remote_setup_callback_host"
+  ],
+  "skills": [
+    "pattern.skills.private_github_raw_download_auth"
+  ],
+  "stages": [
+    "pattern.agent.sub_issue_stages_runtime_brief",
+    "pattern.issues.sub_issue_stage_barrier"
+  ],
+  "sub-issues": [
+    "pattern.issues.sub_issue_stage_barrier"
+  ],
+  "swimlane": [
+    "pattern.issues.swimlane_drag_settle_lock"
+  ],
+  "telemetry": [
+    "pattern.realtime.ws_frame_type_guard"
+  ],
+  "threads": [
+    "pattern.lark.originating_thread_reply"
+  ],
+  "timeout": [
+    "pattern.agent.antigravity_print_timeout"
+  ],
+  "token-budget": [
+    "pattern.comments.resolve_aware_agent_reads"
+  ],
+  "transcript": [
+    "pattern.transcript.live_task_messages_shared_cache"
+  ],
+  "transport": [
+    "pattern.agent.codex_app_server_exit_fail_fast"
+  ],
+  "uploads": [
+    "pattern.editor.inflight_upload_external_sync_guard"
+  ],
+  "webhooks": [
+    "pattern.github.webhook_route_by_repo_registry"
+  ],
+  "websocket": [
+    "pattern.realtime.ws_frame_type_guard"
+  ],
+  "workspace": [
+    "pattern.workspace.deployment_host_url_prefix"
+  ],
+  "workspace-scope": [
+    "pattern.github.webhook_route_by_repo_registry"
+  ]
+}

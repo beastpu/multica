@@ -1,0 +1,30 @@
+id: source.github.pr.4466
+repo: multica-ai/multica
+pr_number: 4466
+url: https://github.com/multica-ai/multica/pull/4466
+state: closed
+title: "MUL-3591: fix(issues): sort child issues by number"
+author: CJHDYY
+base_ref: main
+head_ref: fix/sub-issues-sort-by-number
+merged_at: ""
+closed_at: 2026-06-23T11:11:16Z
+merge_commit: ""
+linked_issues:
+  - MUL-3591
+changed_files:
+  - path: server/pkg/db/generated/issue.sql.go
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/issue.sql
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "missing test diff"

@@ -1,0 +1,99 @@
+id: source.github.pr.4454
+repo: multica-ai/multica
+pr_number: 4454
+url: https://github.com/multica-ai/multica/pull/4454
+state: merged
+title: "fix(issues): pre-trigger preview + run-confirm + handoff UX polish (MUL-3375)"
+author: NevilleQingNY
+base_ref: main
+head_ref: fix/issue-trigger-preview-flicker
+merged_at: 2026-06-23T08:15:45Z
+closed_at: 2026-06-23T08:15:45Z
+merge_commit: 3ce97453b3eebe2aed8af4109d506d723e2a6ce3
+linked_issues:
+  - MUL-3375
+changed_files:
+  - path: packages/core/api/schemas.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/realtime/use-realtime-sync.ts
+    additions: 9
+    deletions: 5
+    change_type: MODIFIED
+  - path: packages/core/types/agent.ts
+    additions: 7
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/actions/__tests__/use-issue-actions.test.tsx
+    additions: 18
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/actions/use-issue-actions.ts
+    additions: 9
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/issues/components/batch-action-toolbar.tsx
+    additions: 17
+    deletions: 7
+    change_type: MODIFIED
+  - path: packages/views/issues/components/execution-log-section.tsx
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/hooks/use-issue-trigger-preview.ts
+    additions: 20
+    deletions: 4
+    change_type: MODIFIED
+  - path: packages/views/locales/en/issues.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/en/modals.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/issues.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/modals.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/issues.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/modals.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/issues.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/modals.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/modals/run-confirm.tsx
+    additions: 35
+    deletions: 11
+    change_type: MODIFIED
+  - path: server/internal/handler/agent.go
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon.go
+    additions: 3
+    deletions: 6
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/issues/actions/__tests__/use-issue-actions.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

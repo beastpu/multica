@@ -1,0 +1,53 @@
+id: source.github.pr.4193
+repo: multica-ai/multica
+pr_number: 4193
+url: https://github.com/multica-ai/multica/pull/4193
+state: merged
+title: "MUL-3318: fix GitHub installation account race"
+author: Bohan-J
+base_ref: main
+head_ref: agent/niko/0601446f
+merged_at: 2026-06-17T04:26:25Z
+closed_at: 2026-06-17T04:26:25Z
+merge_commit: 64ce459e303ae426df4c596f6868bee5bff3ffd6
+linked_issues:
+  - "#4186"
+  - MUL-3318
+  - https://github.com/multica-ai/multica/issues/4186
+changed_files:
+  - path: server/internal/handler/github.go
+    additions: 75
+    deletions: 8
+    change_type: MODIFIED
+  - path: server/internal/handler/github_test.go
+    additions: 112
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/migrations/120_github_pending_installation.down.sql
+    additions: 1
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/120_github_pending_installation.up.sql
+    additions: 13
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/github.sql.go
+    additions: 67
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/models.go
+    additions: 9
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/github.sql
+    additions: 20
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/handler/github_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

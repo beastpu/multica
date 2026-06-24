@@ -1,0 +1,31 @@
+id: source.github.pr.4267
+repo: multica-ai/multica
+pr_number: 4267
+url: https://github.com/multica-ai/multica/pull/4267
+state: merged
+title: "MUL-3384 refactor(editor): dedupe upload-node scan and markdown normalization (WOR-59)"
+author: Hzzzzzx
+base_ref: main
+head_ref: agent/cc/5ad265ac
+merged_at: 2026-06-18T02:43:26Z
+closed_at: 2026-06-18T02:43:26Z
+merge_commit: e9e97ee6d2f1d79e007511c0258e2005df95ad2a
+linked_issues:
+  - MUL-3384
+changed_files:
+  - path: packages/views/editor/content-editor.test.tsx
+    additions: 18
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/editor/content-editor.tsx
+    additions: 38
+    deletions: 22
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/editor/content-editor.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

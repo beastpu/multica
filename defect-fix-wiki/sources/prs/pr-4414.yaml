@@ -1,0 +1,39 @@
+id: source.github.pr.4414
+repo: multica-ai/multica
+pr_number: 4414
+url: https://github.com/multica-ai/multica/pull/4414
+state: merged
+title: "MUL-3523: fix(github): route PR/check_suite webhooks by repo, not installation"
+author: ifokeev
+base_ref: main
+head_ref: fix/github-webhook-route-by-repo
+merged_at: 2026-06-22T15:44:46Z
+closed_at: 2026-06-22T15:44:46Z
+merge_commit: ca43c83abc1035834951dbe15ed177b31f36197c
+linked_issues:
+  - MUL-3523
+changed_files:
+  - path: server/internal/handler/github.go
+    additions: 108
+    deletions: 15
+    change_type: MODIFIED
+  - path: server/internal/handler/github_test.go
+    additions: 248
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/workspace.sql.go
+    additions: 39
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/workspace.sql
+    additions: 7
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/handler/github_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

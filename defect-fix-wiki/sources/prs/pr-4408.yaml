@@ -1,0 +1,113 @@
+id: source.github.pr.4408
+repo: multica-ai/multica
+pr_number: 4408
+url: https://github.com/multica-ai/multica/pull/4408
+state: merged
+title: "MUL-3495: support custom runtime args and registration errors"
+author: multica-eve
+base_ref: main
+head_ref: agent/gpt-boy/bc1cfc36
+merged_at: 2026-06-23T06:20:18Z
+closed_at: 2026-06-23T06:20:18Z
+merge_commit: 12ea1f6a8c70f0334929eeee8fce758c8916e4d6
+linked_issues:
+  - MUL-3495
+changed_files:
+  - path: docs/custom-runtimes.md
+    additions: 61
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/en/runtimes.json
+    additions: 8
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/runtimes.json
+    additions: 8
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/runtimes.json
+    additions: 8
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/runtimes.json
+    additions: 8
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/pending-runtime.ts
+    additions: 8
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-list.tsx
+    additions: 34
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-profile-catalog.test.ts
+    additions: 76
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-profile-catalog.ts
+    additions: 110
+    deletions: 10
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-profiles-dialog.test.tsx
+    additions: 59
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-profiles-dialog.tsx
+    additions: 70
+    deletions: 16
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_runtime_profile.go
+    additions: 4
+    deletions: 5
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_runtime_profile_test.go
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/daemon/client.go
+    additions: 3
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/daemon/daemon.go
+    additions: 64
+    deletions: 43
+    change_type: MODIFIED
+  - path: server/internal/daemon/runtime_profile_drift_test.go
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/daemon/runtime_profile_test.go
+    additions: 42
+    deletions: 28
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon.go
+    additions: 61
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon_test.go
+    additions: 52
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_profile.go
+    additions: 22
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_profile_handler_test.go
+    additions: 59
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/runtimes/components/runtime-profile-catalog.test.ts
+  - path: packages/views/runtimes/components/runtime-profiles-dialog.test.tsx
+  - path: server/cmd/multica/cmd_runtime_profile_test.go
+  - path: server/internal/daemon/runtime_profile_drift_test.go
+  - path: server/internal/daemon/runtime_profile_test.go
+  - path: server/internal/handler/daemon_test.go
+  - path: server/internal/handler/runtime_profile_handler_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

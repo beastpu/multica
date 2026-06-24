@@ -1,0 +1,57 @@
+id: source.github.pr.4196
+repo: multica-ai/multica
+pr_number: 4196
+url: https://github.com/multica-ai/multica/pull/4196
+state: merged
+title: "fix(editor): don't wipe in-flight uploads on external content sync"
+author: NevilleQingNY
+base_ref: main
+head_ref: fix/chat-upload-wiped-by-session-create
+merged_at: 2026-06-16T09:57:17Z
+closed_at: 2026-06-16T09:57:17Z
+merge_commit: f46b929ebc7b306a0f7ba1d0e840f485e471c90d
+linked_issues:
+  - MUL-3312
+changed_files:
+  - path: packages/core/chat/index.ts
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/core/chat/store.test.ts
+    additions: 59
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/chat/store.ts
+    additions: 31
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-input.test.tsx
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-input.tsx
+    additions: 2
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-window.tsx
+    additions: 22
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/editor/content-editor.test.tsx
+    additions: 31
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/editor/content-editor.tsx
+    additions: 15
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/chat/store.test.ts
+  - path: packages/views/chat/components/chat-input.test.tsx
+  - path: packages/views/editor/content-editor.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

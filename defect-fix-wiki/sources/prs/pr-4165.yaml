@@ -1,0 +1,33 @@
+id: source.github.pr.4165
+repo: multica-ai/multica
+pr_number: 4165
+url: https://github.com/multica-ai/multica/pull/4165
+state: merged
+title: "MUL-3320: feat(lark): add proxy support for WebSocket connections"
+author: Oxygen56
+base_ref: main
+head_ref: agent/agent/f4421807
+merged_at: 2026-06-16T09:13:40Z
+closed_at: 2026-06-16T09:13:40Z
+merge_commit: 2c0f6edca80fa8b01ed881e57464235ba79c28bb
+linked_issues:
+  - "#4032"
+  - MUL-3320
+  - https://github.com/multica-ai/multica/issues/4032
+changed_files:
+  - path: server/internal/integrations/lark/ws_connector.go
+    additions: 18
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/ws_connector_test.go
+    additions: 65
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/integrations/lark/ws_connector_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

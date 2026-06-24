@@ -1,0 +1,43 @@
+id: source.github.pr.4250
+repo: multica-ai/multica
+pr_number: 4250
+url: https://github.com/multica-ai/multica/pull/4250
+state: closed
+title: "docs(agent): STR-161 add PR URL handoff guidance"
+author: honki12345
+base_ref: main
+head_ref: agent/builder/STR-161-pr-url-issue-body
+merged_at: ""
+closed_at: 2026-06-17T10:11:32Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: server/internal/daemon/execenv/runtime_config.go
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config_test.go
+    additions: 67
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-working-on-issues/SKILL.md
+    additions: 7
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-working-on-issues/references/working-on-issues-source-map.md
+    additions: 16
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills_test.go
+    additions: 4
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/daemon/execenv/runtime_config_test.go
+  - path: server/internal/service/builtin_skills_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

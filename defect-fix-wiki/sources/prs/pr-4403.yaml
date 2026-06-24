@@ -1,0 +1,76 @@
+id: source.github.pr.4403
+repo: multica-ai/multica
+pr_number: 4403
+url: https://github.com/multica-ai/multica/pull/4403
+state: merged
+title: "fix(issues): reflect real common value in batch toolbar pickers (MUL-3510)"
+author: NevilleQingNY
+base_ref: main
+head_ref: agent/walt/f96d5f7f
+merged_at: 2026-06-22T10:23:05Z
+closed_at: 2026-06-22T10:23:05Z
+merge_commit: 149cc9bd0a592d75001ba5ebfcd6e0d2aab15d15
+linked_issues:
+  - MUL-3510
+changed_files:
+  - path: packages/core/issues/batch.test.ts
+    additions: 115
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/issues/batch.ts
+    additions: 72
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/package.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/common/actor-issues-panel.tsx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/batch-action-toolbar.test.tsx
+    additions: 136
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/issues/components/batch-action-toolbar.tsx
+    additions: 24
+    deletions: 6
+    change_type: MODIFIED
+  - path: packages/views/issues/components/issue-detail.tsx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/issues-page.tsx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/pickers/assignee-picker.tsx
+    additions: 9
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/pickers/priority-picker.tsx
+    additions: 10
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/views/issues/components/pickers/status-picker.tsx
+    additions: 10
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/views/my-issues/components/my-issues-page.tsx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/projects/components/project-detail.tsx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/issues/batch.test.ts
+  - path: packages/views/issues/components/batch-action-toolbar.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

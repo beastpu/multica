@@ -1,0 +1,55 @@
+id: source.github.pr.4247
+repo: multica-ai/multica
+pr_number: 4247
+url: https://github.com/multica-ai/multica/pull/4247
+state: closed
+title: "fix(markdown): STR-158 highlight review status badges"
+author: honki12345
+base_ref: main
+head_ref: agent/builder/STR-158-status-badges
+merged_at: ""
+closed_at: 2026-06-18T01:32:52Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: packages/ui/markdown/Markdown.tsx
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/ui/markdown/index.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/ui/markdown/markdown.css
+    additions: 30
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/ui/markdown/status-badges.ts
+    additions: 91
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/common/markdown.test.tsx
+    additions: 11
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/editor/readonly-content.test.tsx
+    additions: 69
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/editor/readonly-content.tsx
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/editor/styles/prose.css
+    additions: 31
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/common/markdown.test.tsx
+  - path: packages/views/editor/readonly-content.test.tsx
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

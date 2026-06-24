@@ -1,0 +1,41 @@
+id: source.github.pr.4206
+repo: multica-ai/multica
+pr_number: 4206
+url: https://github.com/multica-ai/multica/pull/4206
+state: merged
+title: "Fix issue timeline crash on unknown status values"
+author: beastpu
+base_ref: main
+head_ref: codex/status-icon-fallback
+merged_at: 2026-06-17T06:56:10Z
+closed_at: 2026-06-17T06:56:10Z
+merge_commit: d26cac0008342bcc60b809e0288565c72601e770
+linked_issues:
+  - "#4202"
+  - https://github.com/multica-ai/multica/issues/4202
+changed_files:
+  - path: packages/views/issues/components/issue-detail.test.tsx
+    additions: 20
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/components/priority-icon.tsx
+    additions: 3
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/views/issues/components/status-icon.test.tsx
+    additions: 22
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/issues/components/status-icon.tsx
+    additions: 5
+    deletions: 4
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/issues/components/issue-detail.test.tsx
+  - path: packages/views/issues/components/status-icon.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

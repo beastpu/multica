@@ -1,0 +1,31 @@
+id: source.github.pr.4426
+repo: multica-ai/multica
+pr_number: 4426
+url: https://github.com/multica-ai/multica/pull/4426
+state: merged
+title: "MUL-3508: surface sub-issue stages in the always-on runtime brief"
+author: Bohan-J
+base_ref: main
+head_ref: feat/brief-stage-guidance
+merged_at: 2026-06-22T17:08:10Z
+closed_at: 2026-06-22T17:08:10Z
+merge_commit: 48b8dbf43971e5ea974bf827220cd212a1240c72
+linked_issues:
+  - MUL-3508
+changed_files:
+  - path: server/internal/daemon/execenv/runtime_config.go
+    additions: 4
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config_test.go
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/daemon/execenv/runtime_config_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

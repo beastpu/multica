@@ -1,0 +1,31 @@
+id: source.github.pr.4405
+repo: multica-ai/multica
+pr_number: 4405
+url: https://github.com/multica-ai/multica/pull/4405
+state: merged
+title: "feat(issues): open agent activity chip on hover (MUL-3507)"
+author: forrestchang
+base_ref: main
+head_ref: agent/lambda/6b4a961b
+merged_at: 2026-06-22T09:06:15Z
+closed_at: 2026-06-22T09:06:15Z
+merge_commit: 916cee5c5dfad1a78b527dc89462408dce7d048e
+linked_issues:
+  - MUL-3507
+changed_files:
+  - path: packages/views/issues/components/issue-agent-header-chip.test.tsx
+    additions: 23
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/issue-agent-header-chip.tsx
+    additions: 15
+    deletions: 3
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/issues/components/issue-agent-header-chip.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

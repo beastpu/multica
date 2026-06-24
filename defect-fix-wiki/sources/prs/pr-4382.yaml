@@ -1,0 +1,59 @@
+id: source.github.pr.4382
+repo: multica-ai/multica
+pr_number: 4382
+url: https://github.com/multica-ai/multica/pull/4382
+state: closed
+title: "feat(issues): \"go to new comments\" affordance on issue detail (MUL-3468)"
+author: NevilleQingNY
+base_ref: main
+head_ref: agent/walt/c397b168
+merged_at: ""
+closed_at: 2026-06-22T06:47:36Z
+merge_commit: ""
+linked_issues:
+  - MUL-3468
+changed_files:
+  - path: packages/views/issues/components/issue-detail.tsx
+    additions: 40
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/hooks/index.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/hooks/use-new-comments-indicator.test.tsx
+    additions: 160
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/issues/hooks/use-new-comments-indicator.ts
+    additions: 194
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/en/issues.json
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/issues.json
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/issues.json
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/issues.json
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/test/setup.ts
+    additions: 17
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/issues/hooks/use-new-comments-indicator.test.tsx
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

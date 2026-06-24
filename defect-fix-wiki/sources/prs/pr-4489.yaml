@@ -1,0 +1,31 @@
+id: source.github.pr.4489
+repo: multica-ai/multica
+pr_number: 4489
+url: https://github.com/multica-ai/multica/pull/4489
+state: merged
+title: "Revert \"fix(editor): index @mention selection by rendered order (MUL-3607)\""
+author: NevilleQingNY
+base_ref: main
+head_ref: revert-4487-agent/walt/104a81ed
+merged_at: 2026-06-24T02:50:53Z
+closed_at: 2026-06-24T02:50:53Z
+merge_commit: d43840f3220a82021445ebd7ba85a9da4cdccb3d
+linked_issues:
+  - MUL-3607
+changed_files:
+  - path: packages/views/editor/extensions/mention-suggestion.test.tsx
+    additions: 1
+    deletions: 56
+    change_type: MODIFIED
+  - path: packages/views/editor/extensions/mention-suggestion.tsx
+    additions: 11
+    deletions: 25
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/editor/extensions/mention-suggestion.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

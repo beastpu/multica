@@ -1,0 +1,46 @@
+id: source.github.pr.4175
+repo: multica-ai/multica
+pr_number: 4175
+url: https://github.com/multica-ai/multica/pull/4175
+state: closed
+title: "fix: link assigned skills to detail pages"
+author: lishouxian
+base_ref: main
+head_ref: codex/agent-skill-detail-links
+merged_at: ""
+closed_at: 2026-06-16T07:09:56Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: packages/views/agents/components/tabs/skills-tab.test.tsx
+    additions: 67
+    deletions: 8
+    change_type: MODIFIED
+  - path: packages/views/agents/components/tabs/skills-tab.tsx
+    additions: 25
+    deletions: 11
+    change_type: MODIFIED
+  - path: packages/views/locales/en/agents.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/agents.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/agents.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/agents.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/agents/components/tabs/skills-tab.test.tsx
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

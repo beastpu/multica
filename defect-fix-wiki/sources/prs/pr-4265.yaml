@@ -1,0 +1,29 @@
+id: source.github.pr.4265
+repo: multica-ai/multica
+pr_number: 4265
+url: https://github.com/multica-ai/multica/pull/4265
+state: closed
+title: "feat(s3): add S3_FORCE_PATH_STYLE config"
+author: exherb
+base_ref: main
+head_ref: main
+merged_at: ""
+closed_at: 2026-06-18T12:02:03Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: SELF_HOSTING_ADVANCED.md
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/storage/s3.go
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "missing test diff"

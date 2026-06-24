@@ -1,0 +1,26 @@
+id: source.github.pr.4255
+repo: multica-ai/multica
+pr_number: 4255
+url: https://github.com/multica-ai/multica/pull/4255
+state: closed
+title: "fix(runtimes): align header action button heights to h-8 (MUL-3369)"
+author: Bohan-J
+base_ref: main
+head_ref: agent/j/c0c683a2
+merged_at: ""
+closed_at: 2026-06-17T09:57:51Z
+merge_commit: ""
+linked_issues:
+  - MUL-3369
+changed_files:
+  - path: packages/views/runtimes/components/runtimes-page.tsx
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "missing test diff"
