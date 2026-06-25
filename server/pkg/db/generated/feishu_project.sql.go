@@ -582,7 +582,7 @@ func (q *Queries) ListFeishuProjectIssueBindingsByIntegration(ctx context.Contex
 }
 
 const listFeishuProjectIssueBindingsSyncedSince = `-- name: ListFeishuProjectIssueBindingsSyncedSince :many
-SELECT id, workspace_id, integration_id, issue_id, project_key, work_item_type, work_item_id, external_identifier, external_url, external_status_label, last_external_updated_at, last_synced_at, created_at, updated_at FROM feishu_project_issue_binding
+SELECT id, workspace_id, integration_id, issue_id, project_key, work_item_type, work_item_id, external_identifier, external_url, external_status_label, last_external_updated_at, last_synced_at, created_at, updated_at, external_fields FROM feishu_project_issue_binding
 WHERE integration_id = $1 AND id > $2 AND last_synced_at >= $3
 ORDER BY id ASC
 LIMIT $4
@@ -631,6 +631,7 @@ func (q *Queries) ListFeishuProjectIssueBindingsSyncedSince(ctx context.Context,
 			&i.LastSyncedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ExternalFields,
 		); err != nil {
 			return nil, err
 		}

@@ -7,7 +7,10 @@ import { useAuthStore } from "@multica/core/auth";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
-import { useFileUpload } from "@multica/core/hooks/use-file-upload";
+import {
+  persistentUploadUrl,
+  useFileUpload,
+} from "@multica/core/hooks/use-file-upload";
 import { isImeComposing } from "@multica/core/utils";
 import { useTimeAgo } from "../../i18n";
 import { agentListOptions, memberListOptions, squadMemberStatusOptions, workspaceKeys } from "@multica/core/workspace/queries";
@@ -409,7 +412,7 @@ function SquadAvatarEditor({
     try {
       const result = await upload(file);
       if (!result) return;
-      await onUpload(result.link);
+      await onUpload(persistentUploadUrl(result));
       toast.success("Avatar updated");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to upload avatar");

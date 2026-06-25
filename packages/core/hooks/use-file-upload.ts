@@ -12,15 +12,11 @@ import { MAX_FILE_SIZE } from "../constants/upload";
 //
 //   `link`         — the same value as `att.url`. Short-lived for the
 //                    LocalStorage backend (HMAC-signed `/uploads/<key>`)
-//                    and a long-lived CDN URL on S3 / CloudFront. This
-//                    is what avatar / logo callers persist into
-//                    `avatar_url` style fields, and what URL-only
-//                    consumers (Markdown renderers without a record
-//                    in hand) get to load directly. Keeping it
-//                    semantically equal to `att.url` preserves the
-//                    pre-MUL-3130 contract for non-markdown callers
-//                    so avatar uploads do not get rerouted through
-//                    the workspace-membership-gated download endpoint.
+//                    and a long-lived CDN URL only on public-storage
+//                    deployments. Keeping it semantically equal to
+//                    `att.url` preserves the pre-MUL-3130 contract for
+//                    URL-only consumers that intentionally want the raw
+//                    storage URL.
 //
 //   `markdownLink` — the URL the editor writes into markdown bodies.
 //                    Source: `att.markdown_url` from the server, which
@@ -54,6 +50,15 @@ export type UploadResult = Attachment & {
   markdownLink: string;
 };
 
+// Use this for long-lived avatar/logo fields. In private/proxy storage
+// deployments the raw storage URL can 403 in an <img>, while markdownLink
+// points at the server-mediated URL that keeps working across reloads.
+export function persistentUploadUrl(
+  result: Pick<UploadResult, "link" | "markdownLink">,
+): string {
+  return result.markdownLink || result.link;
+}
+
 export interface UploadContext {
   issueId?: string;
   commentId?: string;
@@ -84,7 +89,20 @@ export function useFileUpload(
   api: ApiClient,
   onError?: (error: Error) => void,
 ) {
-  const [uploading, setUploading] = useState(false);
+  // In-flight counter, NOT a single boolean. Callers fire multiple uploads
+  // concurrently (drag-drop of N files, paste with multiple images) and the
+  // boolean shape would flip false as soon as the FIRST upload's finally ran
+  // — even though N-1 are still mid-request. Surfaces consuming `uploading`
+  // (the quick-create submit gate, the editor's "Uploading…" button label)
+  // would then unblock submit while uploads are still in flight, causing
+  // `stripBlobUrls` to erase the still-pending images from the markdown and
+  // their attachment ids never to be bound (MUL-3339).
+  //
+  // The exposed `uploading: boolean` keeps the existing call-site contract
+  // (`{ uploading } = useFileUpload(api)` everywhere); only the internal
+  // tracking shape changes.
+  const [inFlight, setInFlight] = useState(0);
+  const uploading = inFlight > 0;
 
   const upload = useCallback(
     async (file: File, ctx?: UploadContext): Promise<UploadResult | null> => {
@@ -92,7 +110,7 @@ export function useFileUpload(
         throw new Error("File exceeds 100 MB limit");
       }
 
-      setUploading(true);
+      setInFlight((n) => n + 1);
       try {
         const att: Attachment = await api.uploadFile(file, {
           issueId: ctx?.issueId,
@@ -101,7 +119,7 @@ export function useFileUpload(
         });
         return { ...att, link: att.url, markdownLink: pickMarkdownLink(att) };
       } finally {
-        setUploading(false);
+        setInFlight((n) => n - 1);
       }
     },
     [api],

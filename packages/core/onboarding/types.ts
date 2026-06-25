@@ -1,6 +1,5 @@
 export type OnboardingStep =
   | "welcome"
-  | "source"
   | "role"
   | "use_case"
   | "workspace"
