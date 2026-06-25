@@ -263,7 +263,7 @@ INSERT INTO lark_chat_session_binding (
 ) VALUES (
     $1, $2, $3, $4
 )
-RETURNING id, chat_session_id, installation_id, lark_chat_id, lark_chat_type, created_at
+RETURNING id, chat_session_id, installation_id, lark_chat_id, lark_chat_type, created_at, last_lark_message_id, last_lark_thread_id
 `
 
 type CreateLarkChatSessionBindingParams struct {
@@ -291,6 +291,8 @@ func (q *Queries) CreateLarkChatSessionBinding(ctx context.Context, arg CreateLa
 		&i.LarkChatID,
 		&i.LarkChatType,
 		&i.CreatedAt,
+		&i.LastLarkMessageID,
+		&i.LastLarkThreadID,
 	)
 	return i, err
 }
@@ -501,7 +503,7 @@ func (q *Queries) DeleteLarkUserBinding(ctx context.Context, id pgtype.UUID) err
 }
 
 const getLarkChatSessionBinding = `-- name: GetLarkChatSessionBinding :one
-SELECT id, chat_session_id, installation_id, lark_chat_id, lark_chat_type, created_at FROM lark_chat_session_binding
+SELECT id, chat_session_id, installation_id, lark_chat_id, lark_chat_type, created_at, last_lark_message_id, last_lark_thread_id FROM lark_chat_session_binding
 WHERE installation_id = $1 AND lark_chat_id = $2
 `
 
@@ -524,12 +526,14 @@ func (q *Queries) GetLarkChatSessionBinding(ctx context.Context, arg GetLarkChat
 		&i.LarkChatID,
 		&i.LarkChatType,
 		&i.CreatedAt,
+		&i.LastLarkMessageID,
+		&i.LastLarkThreadID,
 	)
 	return i, err
 }
 
 const getLarkChatSessionBindingBySession = `-- name: GetLarkChatSessionBindingBySession :one
-SELECT id, chat_session_id, installation_id, lark_chat_id, lark_chat_type, created_at FROM lark_chat_session_binding
+SELECT id, chat_session_id, installation_id, lark_chat_id, lark_chat_type, created_at, last_lark_message_id, last_lark_thread_id FROM lark_chat_session_binding
 WHERE chat_session_id = $1
 `
 
@@ -546,6 +550,8 @@ func (q *Queries) GetLarkChatSessionBindingBySession(ctx context.Context, chatSe
 		&i.LarkChatID,
 		&i.LarkChatType,
 		&i.CreatedAt,
+		&i.LastLarkMessageID,
+		&i.LastLarkThreadID,
 	)
 	return i, err
 }

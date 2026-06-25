@@ -14,13 +14,13 @@ import type { OnboardingStep } from "./types";
  * for the same reason — users shouldn't think of reading the intro
  * as progress toward completing setup.
  *
- * Note: "teammate" (the old "Create your first agent" step) is no longer
- * part of the in-flow sequence. Helper agent creation now happens after
- * onboarding exits, via the workspace OnboardingHelperModal — see
+ * Note: "source" (the old acquisition survey) and "teammate" (the old
+ * "Create your first agent" step) are no longer part of the in-flow
+ * sequence. Helper agent creation now happens after onboarding exits, via
+ * the workspace OnboardingHelperModal — see
  * `packages/views/workspace/onboarding-helper-modal.tsx`.
  */
 export const ONBOARDING_STEP_ORDER: readonly OnboardingStep[] = [
-  "source",
   "role",
   "use_case",
   "workspace",

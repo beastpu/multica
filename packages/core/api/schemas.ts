@@ -158,6 +158,7 @@ const TimelineEntrySchema = z.object({
   comment_type: z.string().optional(),
   reactions: z.array(ReactionSchema).optional(),
   attachments: z.array(AttachmentSchema).optional(),
+  source_task_id: z.string().nullable().optional(),
   coalesced_count: z.number().optional(),
 }).loose();
 
@@ -214,6 +215,7 @@ export const CommentSchema = z.object({
   attachments: z.array(AttachmentSchema).default([]),
   created_at: z.string(),
   updated_at: z.string(),
+  source_task_id: z.string().nullable().optional(),
 }).loose();
 
 export const CommentsListSchema = z.array(CommentSchema);
@@ -228,6 +230,18 @@ const CommentTriggerPreviewAgentSchema = z.object({
 
 export const CommentTriggerPreviewSchema = z.object({
   agents: z.array(CommentTriggerPreviewAgentSchema).default([]),
+}).loose();
+
+const IssueTriggerPreviewItemSchema = z.object({
+  issue_id: z.string(),
+  agent_id: z.string().default(""),
+  source: z.string().default(""),
+  handoff_supported: z.boolean().default(false),
+}).loose();
+
+export const IssueTriggerPreviewSchema = z.object({
+  triggers: z.array(IssueTriggerPreviewItemSchema).default([]),
+  total_count: z.number().default(0),
 }).loose();
 
 // Metadata is primitive-only by API/DB contract. Stay lenient on shape:
@@ -252,6 +266,9 @@ export const IssueSchema = z.object({
   parent_issue_id: z.string().nullable(),
   project_id: z.string().nullable(),
   position: z.number(),
+  // Older backends predate `stage`; default to null so a missing field parses
+  // cleanly into the non-optional Issue.stage (number | null).
+  stage: z.number().nullable().default(null),
   start_date: z.string().nullable(),
   due_date: z.string().nullable(),
   metadata: IssueMetadataSchema,
@@ -278,6 +295,7 @@ export const EMPTY_ISSUE: Issue = {
   parent_issue_id: null,
   project_id: null,
   position: 0,
+  stage: null,
   start_date: null,
   due_date: null,
   metadata: {},
@@ -564,6 +582,7 @@ export const EMPTY_CLOUD_RUNTIME_NODE: CloudRuntimeNode = {
 
 const DashboardUsageDailySchema = z.object({
   date: z.string().default(""),
+  provider: z.string().default(""),
   model: z.string().default(""),
   input_tokens: z.number().default(0),
   output_tokens: z.number().default(0),
@@ -576,6 +595,7 @@ export const DashboardUsageDailyListSchema = z.array(DashboardUsageDailySchema);
 
 const DashboardUsageByAgentSchema = z.object({
   agent_id: z.string().default(""),
+  provider: z.string().default(""),
   model: z.string().default(""),
   input_tokens: z.number().default(0),
   output_tokens: z.number().default(0),
@@ -655,6 +675,7 @@ export const RuntimeHourlyActivityListSchema = z.array(RuntimeHourlyActivitySche
 
 const RuntimeUsageByAgentSchema = z.object({
   agent_id: z.string().default(""),
+  provider: z.string().default(""),
   model: z.string().default(""),
   input_tokens: z.number().default(0),
   output_tokens: z.number().default(0),
@@ -706,6 +727,7 @@ const AgentTaskResponseSchema = z.object({
   attempt: z.number().optional(),
   trigger_comment_id: z.string().optional(),
   trigger_summary: z.string().optional(),
+  handoff_note: z.string().optional(),
   kind: z.string().optional(),
   work_dir: z.string().optional(),
   relative_work_dir: z.string().optional(),
@@ -716,6 +738,9 @@ const CancelledChatMessageSchema = z.object({
   message_id: z.string(),
   content: z.string(),
   restore_to_input: z.boolean().default(false),
+  // Attachments detached from the deleted message so a restored draft can
+  // re-bind them on re-send. Absent on servers that predate the field.
+  attachments: z.array(AttachmentSchema).optional(),
 }).loose();
 
 export const CancelTaskResponseSchema = AgentTaskResponseSchema.extend({
