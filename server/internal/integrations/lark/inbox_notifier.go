@@ -144,7 +144,25 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 }
 
 func (n *InboxNotifier) installationCredentials(inst db.LarkInstallation) (InstallationCredentials, error) {
-	secret, err := n.credentials.DecryptAppSecret(inst)
+	domainInst := Installation{
+		ID:                 inst.ID,
+		WorkspaceID:        inst.WorkspaceID,
+		AgentID:            inst.AgentID,
+		AppID:              inst.AppID,
+		AppSecretEncrypted: inst.AppSecretEncrypted,
+		TenantKey:          inst.TenantKey,
+		BotOpenID:          inst.BotOpenID,
+		InstallerUserID:    inst.InstallerUserID,
+		Status:             inst.Status,
+		WsLeaseToken:       inst.WsLeaseToken,
+		WsLeaseExpiresAt:   inst.WsLeaseExpiresAt,
+		InstalledAt:        inst.InstalledAt,
+		CreatedAt:          inst.CreatedAt,
+		UpdatedAt:          inst.UpdatedAt,
+		BotUnionID:         inst.BotUnionID,
+		Region:             inst.Region,
+	}
+	secret, err := n.credentials.DecryptAppSecret(domainInst)
 	if err != nil {
 		return InstallationCredentials{}, fmt.Errorf("decrypt app_secret: %w", err)
 	}
