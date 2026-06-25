@@ -43,31 +43,8 @@
     "cancel": "취소",
     "close": "닫기"
   },
-  "source_backfill": {
-    "eyebrow": "간단한 질문 하나",
-    "lede": "가입할 때 선택하지 않으셨더라고요. 어떤 사용자에게 Multica가 유용한지 파악하는 데 도움이 됩니다. 답하시면 바로 작업으로 돌아가실 수 있어요.",
-    "submit": "제출",
-    "hint_ready": "좋습니다. 준비되면 제출을 눌러주세요."
-  },
   "questions": {
     "eyebrow_about_you": "내 정보",
-    "source": {
-      "question": "Multica를 어디서 알게 되셨나요?",
-      "friends_colleagues": "친구 또는 동료",
-      "search": "Google / 검색",
-      "social_x": "X / Twitter",
-      "social_linkedin": "LinkedIn",
-      "social_youtube": "YouTube",
-      "social_github": "GitHub",
-      "social_misc": "기타 소셜",
-      "blog_newsletter": "블로그 / 뉴스레터",
-      "ai_assistant": "ChatGPT / Claude / Cursor",
-      "from_work": "직장에서",
-      "event_conference": "컨퍼런스 / 밋업",
-      "dont_remember": "기억나지 않음",
-      "other": "기타",
-      "other_placeholder": "예: 자주 듣는 팟캐스트"
-    },
     "role": {
       "question": "어떤 역할에 가장 가까우신가요?",
       "engineer": "엔지니어 / 개발자",

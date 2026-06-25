@@ -29,7 +29,10 @@ import {
 } from "@multica/core/workspace/queries";
 import { issueKeys } from "@multica/core/issues/queries";
 import { api } from "@multica/core/api";
-import { useFileUpload } from "@multica/core/hooks/use-file-upload";
+import {
+  persistentUploadUrl,
+  useFileUpload,
+} from "@multica/core/hooks/use-file-upload";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import {
   resolvePostAuthDestination,
@@ -204,7 +207,9 @@ export function WorkspaceTab() {
     try {
       const result = await upload(file);
       if (!result) return;
-      const updated = await api.updateWorkspace(workspace.id, { avatar_url: result.link });
+      const updated = await api.updateWorkspace(workspace.id, {
+        avatar_url: persistentUploadUrl(result),
+      });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
         old?.map((ws) => (ws.id === updated.id ? updated : ws)),
       );
