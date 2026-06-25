@@ -18,7 +18,10 @@ import {
   type AgentPresenceDetail,
 } from "@multica/core/agents";
 import { api } from "@multica/core/api";
-import { useFileUpload } from "@multica/core/hooks/use-file-upload";
+import {
+  persistentUploadUrl,
+  useFileUpload,
+} from "@multica/core/hooks/use-file-upload";
 import { isImeComposing } from "@multica/core/utils";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { ActorAvatar as BaseActorAvatar } from "@multica/ui/components/common/actor-avatar";
@@ -300,7 +303,7 @@ function AvatarEditor({
     try {
       const result = await upload(file);
       if (!result) return;
-      await onUpdate({ avatar_url: result.link });
+      await onUpdate({ avatar_url: persistentUploadUrl(result) });
       toast.success(t(($) => $.inspector.avatar_updated_toast));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t(($) => $.inspector.avatar_upload_failed_toast));

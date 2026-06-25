@@ -1,21 +1,28 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent } from "@multica/core/types";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import enAgents from "../../locales/en/agents.json";
 import enCommon from "../../locales/en/common.json";
 
 const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
+const fileUploadMock = vi.hoisted(() => ({
+  upload: vi.fn(),
+}));
 
 vi.mock("@multica/core/api", () => ({
   api: { getBaseUrl: () => "" },
 }));
 
-vi.mock("@multica/core/hooks/use-file-upload", () => ({
-  useFileUpload: () => ({ upload: vi.fn(), uploading: false }),
-}));
+vi.mock("@multica/core/hooks/use-file-upload", async () => {
+  const actual = await vi.importActual("@multica/core/hooks/use-file-upload");
+  return {
+    ...actual,
+    useFileUpload: () => ({ upload: fileUploadMock.upload, uploading: false }),
+  };
+});
 
 vi.mock("../../common/actor-avatar", () => ({
   ActorAvatar: () => (
@@ -73,8 +80,8 @@ const baseAgent: Agent = {
   archived_by: null,
 };
 
-function renderInspector(canEdit: boolean) {
-  render(
+function renderInspector(canEdit: boolean, onUpdate = vi.fn().mockResolvedValue(undefined)) {
+  const view = render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <AgentDetailInspector
         agent={baseAgent}
@@ -85,14 +92,19 @@ function renderInspector(canEdit: boolean) {
         members={[]}
         currentUserId={null}
         canEdit={canEdit}
-        onUpdate={vi.fn().mockResolvedValue(undefined)}
+        onUpdate={onUpdate}
         onShowIntegrations={vi.fn()}
       />
     </I18nProvider>,
   );
+  return { ...view, onUpdate };
 }
 
 describe("AgentDetailInspector avatar preview", () => {
+  beforeEach(() => {
+    fileUploadMock.upload.mockReset();
+  });
+
   it.each([true, false])(
     "renders the latest agent avatar from the detail record when canEdit=%s",
     (canEdit) => {
@@ -105,4 +117,27 @@ describe("AgentDetailInspector avatar preview", () => {
       expect(screen.queryByAltText("Stale Agent")).not.toBeInTheDocument();
     },
   );
+
+  it("persists the upload's durable URL instead of the raw storage URL", async () => {
+    fileUploadMock.upload.mockResolvedValue({
+      link: "https://multica-bucket.example.com/workspaces/ws-1/private.png",
+      markdownLink: "/api/attachments/att-1/download",
+    });
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    const { container } = renderInspector(true, onUpdate);
+
+    const input = container.querySelector<HTMLInputElement>("input[type='file']");
+    expect(input).not.toBeNull();
+    fireEvent.change(input!, {
+      target: {
+        files: [new File(["avatar"], "avatar.png", { type: "image/png" })],
+      },
+    });
+
+    await waitFor(() => {
+      expect(onUpdate).toHaveBeenCalledWith("agent-1", {
+        avatar_url: "/api/attachments/att-1/download",
+      });
+    });
+  });
 });

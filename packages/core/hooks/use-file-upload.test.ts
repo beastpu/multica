@@ -59,8 +59,8 @@ describe("useFileUpload — markdownLink picks the durable URL with three-layer 
     });
     const upload = await runUpload(makeApi(att));
     expect(upload?.markdownLink).toBe("https://cdn.multica.test/uploads/abc.png");
-    // `link` keeps its legacy semantics — same as att.url, used by avatar /
-    // logo callers that persist into long-lived fields.
+    // `link` keeps its legacy semantics — same as att.url. Long-lived avatar /
+    // logo fields use persistentUploadUrl so private/proxy storage works.
     expect(upload?.link).toBe(att.url);
   });
 
