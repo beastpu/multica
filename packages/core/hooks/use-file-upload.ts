@@ -12,15 +12,11 @@ import { MAX_FILE_SIZE } from "../constants/upload";
 //
 //   `link`         — the same value as `att.url`. Short-lived for the
 //                    LocalStorage backend (HMAC-signed `/uploads/<key>`)
-//                    and a long-lived CDN URL on S3 / CloudFront. This
-//                    is what avatar / logo callers persist into
-//                    `avatar_url` style fields, and what URL-only
-//                    consumers (Markdown renderers without a record
-//                    in hand) get to load directly. Keeping it
-//                    semantically equal to `att.url` preserves the
-//                    pre-MUL-3130 contract for non-markdown callers
-//                    so avatar uploads do not get rerouted through
-//                    the workspace-membership-gated download endpoint.
+//                    and a long-lived CDN URL only on public-storage
+//                    deployments. Keeping it semantically equal to
+//                    `att.url` preserves the pre-MUL-3130 contract for
+//                    URL-only consumers that intentionally want the raw
+//                    storage URL.
 //
 //   `markdownLink` — the URL the editor writes into markdown bodies.
 //                    Source: `att.markdown_url` from the server, which
@@ -53,6 +49,15 @@ export type UploadResult = Attachment & {
   link: string;
   markdownLink: string;
 };
+
+// Use this for long-lived avatar/logo fields. In private/proxy storage
+// deployments the raw storage URL can 403 in an <img>, while markdownLink
+// points at the server-mediated URL that keeps working across reloads.
+export function persistentUploadUrl(
+  result: Pick<UploadResult, "link" | "markdownLink">,
+): string {
+  return result.markdownLink || result.link;
+}
 
 export interface UploadContext {
   issueId?: string;

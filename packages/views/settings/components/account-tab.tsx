@@ -11,7 +11,10 @@ import { toast } from "sonner";
 import { useAuthStore } from "@multica/core/auth";
 import { api } from "@multica/core/api";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
-import { useFileUpload } from "@multica/core/hooks/use-file-upload";
+import {
+  persistentUploadUrl,
+  useFileUpload,
+} from "@multica/core/hooks/use-file-upload";
 import { useT } from "../../i18n";
 
 // Mirror server/internal/handler/auth.go:MaxProfileDescriptionLen. Counted in
@@ -55,7 +58,9 @@ export function AccountTab() {
     try {
       const result = await upload(file);
       if (!result) return;
-      const updated = await api.updateMe({ avatar_url: result.link });
+      const updated = await api.updateMe({
+        avatar_url: persistentUploadUrl(result),
+      });
       setUser(updated);
       toast.success(t(($) => $.account.toast_avatar_updated));
     } catch (err) {
