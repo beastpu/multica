@@ -1,0 +1,108 @@
+// @vitest-environment jsdom
+
+import { render, screen } from "@testing-library/react";
+import { I18nProvider } from "@multica/core/i18n/react";
+import type { Agent } from "@multica/core/types";
+import { describe, expect, it, vi } from "vitest";
+import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales/en/common.json";
+
+const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
+
+vi.mock("@multica/core/api", () => ({
+  api: { getBaseUrl: () => "" },
+}));
+
+vi.mock("@multica/core/hooks/use-file-upload", () => ({
+  useFileUpload: () => ({ upload: vi.fn(), uploading: false }),
+}));
+
+vi.mock("../../common/actor-avatar", () => ({
+  ActorAvatar: () => (
+    <img
+      alt="Stale Agent"
+      src="https://cdn.example.com/old-agent.png"
+    />
+  ),
+}));
+
+vi.mock("./inspector/concurrency-picker", () => ({
+  ConcurrencyPicker: () => <span>concurrency-picker</span>,
+}));
+vi.mock("./inspector/model-picker", () => ({
+  ModelPicker: () => <span>model-picker</span>,
+}));
+vi.mock("./inspector/runtime-picker", () => ({
+  RuntimePicker: () => <span>runtime-picker</span>,
+}));
+vi.mock("./inspector/skill-attach", () => ({
+  SkillAttach: () => <span>skill-attach</span>,
+}));
+vi.mock("./inspector/thinking-prop-row", () => ({
+  ThinkingPropRow: () => <span>thinking-prop-row</span>,
+}));
+vi.mock("./inspector/visibility-picker", () => ({
+  VisibilityPicker: () => <span>visibility-picker</span>,
+}));
+vi.mock("../../settings/components/lark-tab", () => ({
+  LarkAgentBindButton: () => null,
+}));
+
+import { AgentDetailInspector } from "./agent-detail-inspector";
+
+const baseAgent: Agent = {
+  id: "agent-1",
+  workspace_id: "ws-1",
+  runtime_id: "runtime-1",
+  name: "Fresh Agent",
+  description: "",
+  instructions: "",
+  avatar_url: "https://cdn.example.com/new-agent.png",
+  runtime_mode: "local",
+  runtime_config: {},
+  custom_args: [],
+  visibility: "workspace",
+  status: "idle",
+  max_concurrent_tasks: 1,
+  model: "",
+  owner_id: "user-1",
+  skills: [],
+  created_at: "2026-05-28T00:00:00Z",
+  updated_at: "2026-05-28T00:00:00Z",
+  archived_at: null,
+  archived_by: null,
+};
+
+function renderInspector(canEdit: boolean) {
+  render(
+    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <AgentDetailInspector
+        agent={baseAgent}
+        runtime={null}
+        owner={null}
+        presence={null}
+        runtimes={[]}
+        members={[]}
+        currentUserId={null}
+        canEdit={canEdit}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+        onShowIntegrations={vi.fn()}
+      />
+    </I18nProvider>,
+  );
+}
+
+describe("AgentDetailInspector avatar preview", () => {
+  it.each([true, false])(
+    "renders the latest agent avatar from the detail record when canEdit=%s",
+    (canEdit) => {
+      renderInspector(canEdit);
+
+      expect(screen.getByAltText("Fresh Agent")).toHaveAttribute(
+        "src",
+        "https://cdn.example.com/new-agent.png",
+      );
+      expect(screen.queryByAltText("Stale Agent")).not.toBeInTheDocument();
+    },
+  );
+});
