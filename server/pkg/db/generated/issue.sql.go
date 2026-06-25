@@ -499,7 +499,7 @@ func (q *Queries) GetIssue(ctx context.Context, id pgtype.UUID) (Issue, error) {
 }
 
 const getIssueByFeishuProjectWorkItem = `-- name: GetIssueByFeishuProjectWorkItem :one
-SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata
+SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage
 FROM issue i
 JOIN feishu_project_issue_binding b ON b.issue_id = i.id
 WHERE i.workspace_id = $1
@@ -544,6 +544,7 @@ func (q *Queries) GetIssueByFeishuProjectWorkItem(ctx context.Context, arg GetIs
 		&i.FirstExecutedAt,
 		&i.StartDate,
 		&i.Metadata,
+		&i.Stage,
 	)
 	return i, err
 }
