@@ -38,6 +38,7 @@
     "no_assignee": "担当者なし",
     "no_project": "プロジェクトなし",
     "parent_only": "親イシューのみ",
+    "section_hierarchy": "階層",
     "section_status": "ステータス",
     "section_priority": "優先度",
     "section_assignee": "担当者",

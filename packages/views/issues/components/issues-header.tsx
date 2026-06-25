@@ -883,18 +883,27 @@ export function IssueDisplayControls({
             <TooltipContent side="bottom">{t(($) => $.filters.tooltip)}</TooltipContent>
           </Tooltip>
           <DropdownMenuContent align="end" className="w-auto">
-            {/* Parent issue */}
-            <DropdownMenuCheckboxItem
-              checked={parentOnlyFilter}
-              onCheckedChange={() => act.toggleParentOnlyFilter()}
-              className={FILTER_ITEM_CLASS}
-            >
-              <HoverCheck checked={parentOnlyFilter} />
-              <ListTree className="size-3.5" />
-              {t(($) => $.filters.parent_only)}
-            </DropdownMenuCheckboxItem>
-
-            <DropdownMenuSeparator />
+            {/* Hierarchy */}
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <ListTree className="size-3.5" />
+                <span className="flex-1">{t(($) => $.filters.section_hierarchy)}</span>
+                {parentOnlyFilter && (
+                  <span className="text-xs text-primary font-medium">1</span>
+                )}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-auto min-w-48">
+                <DropdownMenuCheckboxItem
+                  checked={parentOnlyFilter}
+                  onCheckedChange={() => act.toggleParentOnlyFilter()}
+                  className={FILTER_ITEM_CLASS}
+                >
+                  <HoverCheck checked={parentOnlyFilter} />
+                  <ListTree className="size-3.5" />
+                  {t(($) => $.filters.parent_only)}
+                </DropdownMenuCheckboxItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
 
             {/* Status */}
             <DropdownMenuSub>
