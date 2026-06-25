@@ -43,31 +43,8 @@
     "cancel": "キャンセル",
     "close": "閉じる"
   },
-  "source_backfill": {
-    "eyebrow": "ちょっと質問",
-    "lede": "登録時にお答えいただかなかった項目です。Multica がどんな方に役立っているかを把握するのに役立ちます。一問だけ、終わればすぐ作業に戻れます。",
-    "submit": "送信",
-    "hint_ready": "OK です。準備ができたら送信を押してください。"
-  },
   "questions": {
     "eyebrow_about_you": "あなたについて",
-    "source": {
-      "question": "Multica をどこで知りましたか?",
-      "friends_colleagues": "友人または同僚",
-      "search": "Google / 検索",
-      "social_x": "X / Twitter",
-      "social_linkedin": "LinkedIn",
-      "social_youtube": "YouTube",
-      "social_misc": "その他の SNS",
-      "blog_newsletter": "ブログ / ニュースレター",
-      "ai_assistant": "ChatGPT / Claude / Cursor",
-      "from_work": "職場で",
-      "event_conference": "カンファレンス / ミートアップ",
-      "dont_remember": "覚えていない",
-      "other": "その他",
-      "other_placeholder": "例: よく聴くポッドキャスト",
-      "social_github": "GitHub"
-    },
     "role": {
       "question": "あなたに最も近いのはどれですか?",
       "engineer": "エンジニア / 開発者",

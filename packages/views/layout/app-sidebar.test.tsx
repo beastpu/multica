@@ -177,6 +177,11 @@ describe("PinRow", () => {
     expect(screen.queryByText("MUL-123 Keep this pin")).not.toBeInTheDocument();
   });
 
+  it("does not render the Discord promo card", () => {
+    render(<AppSidebar />);
+    expect(screen.queryByText(/join our discord/i)).not.toBeInTheDocument();
+  });
+
   it("does not also highlight the parent workspace nav for an active pin", async () => {
     navigation.current.pathname = "/acme/issues/issue-1";
     detail.current = {
