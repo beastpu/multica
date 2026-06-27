@@ -5,6 +5,7 @@ import {
   issueKeys,
   ISSUE_PAGE_SIZE,
   type AssigneeGroupedIssuesFilter,
+  type IssueListFilter,
   type IssueSortParam,
   type MyIssuesFilter,
 } from "./queries";
@@ -72,6 +73,7 @@ export function useLoadMoreByStatus(
   status: IssueStatus,
   myIssues?: { scope: string; filter: MyIssuesFilter },
   sort?: IssueSortParam,
+  listFilter?: IssueListFilter,
 ) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
@@ -79,7 +81,7 @@ export function useLoadMoreByStatus(
 
   const activeKey = myIssues
     ? issueKeys.myListSorted(wsId, myIssues.scope, myIssues.filter, sort)
-    : issueKeys.listSorted(wsId, sort);
+    : issueKeys.listSorted(wsId, sort, listFilter);
   const cache = qc.getQueryData<ListIssuesCache>(activeKey);
   const bucket = cache?.byStatus[status];
   const loaded = bucket?.issues.length ?? 0;
@@ -95,6 +97,7 @@ export function useLoadMoreByStatus(
         limit: ISSUE_PAGE_SIZE,
         offset: loaded,
         ...sort,
+        ...listFilter,
         ...myIssues?.filter,
       });
       qc.setQueryData<ListIssuesCache>(activeKey, (old) => {
@@ -110,7 +113,7 @@ export function useLoadMoreByStatus(
     } finally {
       setIsLoading(false);
     }
-  }, [qc, activeKey, status, loaded, hasMore, isLoading, myIssues?.filter, sort]);
+  }, [qc, activeKey, status, loaded, hasMore, isLoading, listFilter, myIssues?.filter, sort]);
 
   return { loadMore, hasMore, isLoading, total };
 }
