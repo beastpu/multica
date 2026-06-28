@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -15,12 +16,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -314,11 +317,12 @@ type AgentTaskResponse struct {
 	// per-person privacy / access rules instead of seeing every requester as
 	// the owner. The agent's effective Multica credentials stay owner-scoped —
 	// this is an attested identity, not a credential. See MUL-2645.
-	InitiatorType  string `json:"initiator_type,omitempty"`  // "member" or "agent"
-	InitiatorID    string `json:"initiator_id,omitempty"`    // user UUID (member) or agent UUID
-	InitiatorName  string `json:"initiator_name,omitempty"`  // display name of the initiator
-	InitiatorEmail string `json:"initiator_email,omitempty"` // member email; empty for agent initiators
-	Kind           string `json:"kind"`                      // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
+	InitiatorType         string `json:"initiator_type,omitempty"`  // "member" or "agent"
+	InitiatorID           string `json:"initiator_id,omitempty"`    // user UUID (member) or agent UUID
+	InitiatorName         string `json:"initiator_name,omitempty"`  // display name of the initiator
+	InitiatorEmail        string `json:"initiator_email,omitempty"` // member email; empty for agent initiators
+	Kind                  string `json:"kind"`                      // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
+	P4AssessmentBindingID string `json:"p4_assessment_binding_id,omitempty"`
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -386,7 +390,7 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	if t.HandoffNote.Valid {
 		handoffNote = t.HandoffNote.String
 	}
-	return AgentTaskResponse{
+	resp := AgentTaskResponse{
 		ID:               uuidToString(t.ID),
 		AgentID:          uuidToString(t.AgentID),
 		RuntimeID:        uuidToString(t.RuntimeID),
@@ -416,6 +420,13 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		AutopilotRunID: uuidToString(t.AutopilotRunID),
 		Kind:           computeTaskKind(t),
 	}
+	if service.IsP4AssessmentTask(t) {
+		var ctx agentFixP4AssessmentContext
+		if json.Unmarshal(t.Context, &ctx) == nil {
+			resp.P4AssessmentBindingID = ctx.FeishuBindingID
+		}
+	}
+	return resp
 }
 
 // relativeWorkDir produces a privacy-safe display form of the daemon-reported
@@ -524,6 +535,9 @@ func basename(p string) string {
 // (no linked source — the agent is creating the issue itself) / direct
 // (assignee-driven task on an existing issue).
 func computeTaskKind(t db.AgentTaskQueue) string {
+	if service.IsP4AssessmentTask(t) {
+		return service.P4AssessmentTaskType
+	}
 	if uuidToString(t.ChatSessionID) != "" {
 		return "chat"
 	}
@@ -1573,11 +1587,67 @@ type AgentFixResponse struct {
 	// the match (so the matched keyword is always visible for the frontend to
 	// highlight); otherwise it's the leading excerpt. Empty when the agent left
 	// no comment.
-	LastComment           string  `json:"last_comment,omitempty"`
-	LastCommentAuthorType string  `json:"last_comment_author_type,omitempty"` // always "agent" (or "" when none)
-	StartedAt             *string `json:"started_at"`
-	CompletedAt           *string `json:"completed_at"`
-	CreatedAt             string  `json:"created_at"`
+	LastComment           string                        `json:"last_comment,omitempty"`
+	LastCommentAuthorType string                        `json:"last_comment_author_type,omitempty"` // always "agent" (or "" when none)
+	StartedAt             *string                       `json:"started_at"`
+	CompletedAt           *string                       `json:"completed_at"`
+	CreatedAt             string                        `json:"created_at"`
+	External              *AgentFixExternalResponse     `json:"external,omitempty"`
+	P4Assessment          *AgentFixP4AssessmentResponse `json:"p4_assessment,omitempty"`
+	HumanReview           *AgentFixHumanReviewResponse  `json:"human_review,omitempty"`
+	DisplayResultStatus   string                        `json:"display_result_status,omitempty"`
+	AIJudgementEval       string                        `json:"ai_judgement_eval,omitempty"`
+}
+
+type AgentFixExternalResponse struct {
+	BindingID    string  `json:"binding_id,omitempty"`
+	WorkItemID   string  `json:"work_item_id,omitempty"`
+	Status       string  `json:"status,omitempty"`
+	MappedStatus string  `json:"mapped_status,omitempty"`
+	Done         bool    `json:"done,omitempty"`
+	Project      string  `json:"project,omitempty"`
+	URL          *string `json:"url,omitempty"`
+}
+
+type AgentFixP4AssessmentResponse struct {
+	AssessmentStatus              string          `json:"assessment_status,omitempty"`
+	DeliveryAttributionPrediction string          `json:"delivery_attribution_prediction,omitempty"`
+	QualityPrediction             string          `json:"quality_prediction,omitempty"`
+	PredictionReasons             []string        `json:"prediction_reasons,omitempty"`
+	Confidence                    *float64        `json:"confidence,omitempty"`
+	Workstream                    string          `json:"workstream,omitempty"`
+	SwarmReviews                  json.RawMessage `json:"swarm_reviews,omitempty"`
+	AIShelvedCLs                  []int32         `json:"ai_shelved_cls,omitempty"`
+	SwarmChangeCLs                []int32         `json:"swarm_change_cls,omitempty"`
+	SwarmCommittedCLs             []int32         `json:"swarm_committed_cls,omitempty"`
+	ExternalCommittedCLs          []int32         `json:"external_committed_cls,omitempty"`
+	Summary                       string          `json:"summary,omitempty"`
+	Warnings                      json.RawMessage `json:"warnings,omitempty"`
+}
+
+type AgentFixHumanReviewResponse struct {
+	Outcome    string   `json:"outcome,omitempty"`
+	Reasons    []string `json:"reasons,omitempty"`
+	Note       string   `json:"note,omitempty"`
+	ReviewerID string   `json:"reviewer_id,omitempty"`
+	ReviewedAt *string  `json:"reviewed_at"`
+}
+
+type updateAgentFixReviewRequest struct {
+	Outcome string   `json:"outcome"`
+	Reasons []string `json:"reasons"`
+	Note    string   `json:"note"`
+}
+
+type triggerAgentFixP4AssessmentRequest struct {
+	BindingID string `json:"binding_id"`
+	Force     bool   `json:"force"`
+}
+
+type agentFixP4AssessmentContext struct {
+	Type            string `json:"type"`
+	WorkspaceID     string `json:"workspace_id"`
+	FeishuBindingID string `json:"feishu_binding_id"`
 }
 
 // commentSnippetMaxRunes bounds the "原因/描述" text so the table column stays a
@@ -1630,6 +1700,112 @@ func commentSnippetAround(s, keyword string) string {
 		end = len(r)
 	}
 	return prefix + string(r[start:end]) + suffix
+}
+
+func textValue(t pgtype.Text) string {
+	if !t.Valid {
+		return ""
+	}
+	return t.String
+}
+
+func numericPtr(n pgtype.Numeric) *float64 {
+	if !n.Valid || n.Int == nil {
+		return nil
+	}
+	base, _ := n.Int.Float64()
+	v := base * math.Pow10(int(n.Exp))
+	return &v
+}
+
+func jsonArrayOrNil(raw []byte) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	return json.RawMessage(raw)
+}
+
+func int32SliceOrNil(xs []int32) []int32 {
+	if len(xs) == 0 {
+		return nil
+	}
+	return xs
+}
+
+func buildAgentFixExternal(row db.ListWorkspaceAgentFixesRow) *AgentFixExternalResponse {
+	if !row.ExternalBindingID.Valid && !row.ExternalWorkItemID.Valid && !row.ExternalStatus.Valid && !row.ExternalProject.Valid && !row.ExternalUrl.Valid {
+		return nil
+	}
+	status := textValue(row.ExternalStatus)
+	mappedStatus := service.P4AssessmentMappedStatus(textValue(row.ExternalWorkItemType), status, row.ExternalStatusMapping, row.ExternalWorkItemTypes)
+	return &AgentFixExternalResponse{
+		BindingID:    uuidToString(row.ExternalBindingID),
+		WorkItemID:   textValue(row.ExternalWorkItemID),
+		Status:       status,
+		MappedStatus: mappedStatus,
+		Done:         mappedStatus == "done",
+		Project:      textValue(row.ExternalProject),
+		URL:          textToPtr(row.ExternalUrl),
+	}
+}
+
+func buildAgentFixP4(row db.ListWorkspaceAgentFixesRow) *AgentFixP4AssessmentResponse {
+	if !row.P4AssessmentStatus.Valid &&
+		!row.P4DeliveryAttributionPrediction.Valid &&
+		!row.P4QualityPrediction.Valid &&
+		!row.P4Workstream.Valid &&
+		len(row.P4SwarmReviews) == 0 {
+		return nil
+	}
+	return &AgentFixP4AssessmentResponse{
+		AssessmentStatus:              textValue(row.P4AssessmentStatus),
+		DeliveryAttributionPrediction: textValue(row.P4DeliveryAttributionPrediction),
+		QualityPrediction:             textValue(row.P4QualityPrediction),
+		PredictionReasons:             row.P4PredictionReasons,
+		Confidence:                    numericPtr(row.P4Confidence),
+		Workstream:                    textValue(row.P4Workstream),
+		SwarmReviews:                  jsonArrayOrNil(row.P4SwarmReviews),
+		AIShelvedCLs:                  int32SliceOrNil(row.P4AiShelvedCls),
+		SwarmChangeCLs:                int32SliceOrNil(row.P4SwarmChangeCls),
+		SwarmCommittedCLs:             int32SliceOrNil(row.P4SwarmCommittedCls),
+		ExternalCommittedCLs:          int32SliceOrNil(row.P4ExternalCommittedCls),
+		Summary:                       textValue(row.P4Summary),
+		Warnings:                      jsonArrayOrNil(row.P4Warnings),
+	}
+}
+
+func buildAgentFixHumanReview(row db.ListWorkspaceAgentFixesRow) *AgentFixHumanReviewResponse {
+	if !row.ReviewOutcome.Valid {
+		return nil
+	}
+	return &AgentFixHumanReviewResponse{
+		Outcome:    row.ReviewOutcome.String,
+		Reasons:    row.ReviewReasons,
+		Note:       textValue(row.ReviewNote),
+		ReviewerID: uuidToString(row.ReviewReviewerID),
+		ReviewedAt: timestampToPtr(row.ReviewReviewedAt),
+	}
+}
+
+func deriveAgentFixEval(p4 *AgentFixP4AssessmentResponse, review *AgentFixHumanReviewResponse) string {
+	if review == nil || review.Outcome == "" || review.Outcome == "unreviewed" {
+		return "pending"
+	}
+	if review.Outcome == "not_applicable" || p4 == nil || p4.QualityPrediction == "" || p4.QualityPrediction == "unknown" {
+		return "not_comparable"
+	}
+	switch {
+	case p4.QualityPrediction == "likely_correct" && review.Outcome == "accepted":
+		return "match"
+	case p4.QualityPrediction == "likely_correct" && (review.Outcome == "needs_changes" || review.Outcome == "rejected"):
+		return "overestimated"
+	case p4.QualityPrediction == "likely_wrong" && review.Outcome == "accepted":
+		return "underestimated"
+	case p4.DeliveryAttributionPrediction == "conflict" && (review.Outcome == "needs_changes" || review.Outcome == "rejected"):
+		return "accurate"
+	default:
+		return "mismatch"
+	}
 }
 
 // ListWorkspaceAgentFixes returns the Operations-tab feed for the Usage page:
@@ -1696,8 +1872,176 @@ func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request
 			CompletedAt:           timestampToPtr(row.CompletedAt),
 			CreatedAt:             timestampToString(row.CreatedAt),
 		}
+		fix.External = buildAgentFixExternal(row)
+		fix.P4Assessment = buildAgentFixP4(row)
+		fix.HumanReview = buildAgentFixHumanReview(row)
+		fix.AIJudgementEval = deriveAgentFixEval(fix.P4Assessment, fix.HumanReview)
+		fix.DisplayResultStatus = fix.AIJudgementEval
 		resp = append(resp, fix)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) UpdateAgentFixReview(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+
+	issueID := chi.URLParam(r, "issueId")
+	if issueID == "" {
+		writeError(w, http.StatusBadRequest, "missing issue id")
+		return
+	}
+
+	var req updateAgentFixReviewRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Outcome = strings.TrimSpace(req.Outcome)
+	if req.Outcome == "" {
+		req.Outcome = "unreviewed"
+	}
+	allowedOutcome := map[string]bool{
+		"unreviewed":     true,
+		"accepted":       true,
+		"needs_changes":  true,
+		"rejected":       true,
+		"not_applicable": true,
+	}
+	if !allowedOutcome[req.Outcome] {
+		writeError(w, http.StatusBadRequest, "invalid review outcome")
+		return
+	}
+
+	reasons := make([]string, 0, len(req.Reasons))
+	for _, reason := range req.Reasons {
+		reason = strings.TrimSpace(reason)
+		if reason != "" {
+			reasons = append(reasons, reason)
+		}
+	}
+
+	reviewerID := parseUUID(requestUserID(r))
+	review, err := h.Queries.UpsertAgentFixReview(r.Context(), db.UpsertAgentFixReviewParams{
+		WorkspaceID: parseUUID(workspaceID),
+		IssueID:     parseUUID(issueID),
+		Outcome:     req.Outcome,
+		Reasons:     reasons,
+		Note:        strings.TrimSpace(req.Note),
+		ReviewerID:  reviewerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "agent fix review target not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to save agent fix review")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, AgentFixHumanReviewResponse{
+		Outcome:    review.Outcome,
+		Reasons:    review.Reasons,
+		Note:       review.Note,
+		ReviewerID: uuidToString(review.ReviewerID),
+		ReviewedAt: timestampToPtr(review.ReviewedAt),
+	})
+}
+
+func (h *Handler) TriggerAgentFixP4Assessment(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+	if h.P4AssessmentService == nil {
+		writeError(w, http.StatusServiceUnavailable, "P4 assessment service unavailable")
+		return
+	}
+	var req triggerAgentFixP4AssessmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	bindingID, ok := parseUUIDOrBadRequest(w, req.BindingID, "binding_id")
+	if !ok {
+		return
+	}
+	result, err := h.P4AssessmentService.Trigger(r.Context(), parseUUID(workspaceID), bindingID, req.Force)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "P4 assessment target not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to trigger P4 assessment")
+		return
+	}
+	resp := map[string]any{
+		"created": result.Created,
+		"reason":  result.Reason,
+	}
+	if result.Assessment.ID.Valid {
+		resp["assessment_id"] = uuidToString(result.Assessment.ID)
+		resp["assessment_status"] = result.Assessment.AssessmentStatus
+	}
+	if result.Task != nil {
+		resp["task_id"] = uuidToString(result.Task.ID)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) GetAgentFixP4Evidence(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	bindingID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "bindingId"), "binding_id")
+	if !ok {
+		return
+	}
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	if actorType == "agent" {
+		if !h.requestTaskCanReadP4Evidence(r, workspaceID, actorID, bindingID) {
+			writeError(w, http.StatusForbidden, "P4 evidence access denied")
+			return
+		}
+	} else if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+	if h.P4AssessmentService == nil {
+		writeError(w, http.StatusServiceUnavailable, "P4 assessment service unavailable")
+		return
+	}
+	evidence, err := h.P4AssessmentService.Evidence(r.Context(), parseUUID(workspaceID), bindingID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "P4 evidence target not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load P4 evidence")
+		return
+	}
+	writeJSON(w, http.StatusOK, evidence)
+}
+
+func (h *Handler) requestTaskCanReadP4Evidence(r *http.Request, workspaceID, actorID string, bindingID pgtype.UUID) bool {
+	taskID := r.Header.Get("X-Task-ID")
+	if taskID == "" {
+		return false
+	}
+	taskUUID, err := util.ParseUUID(taskID)
+	if err != nil {
+		return false
+	}
+	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
+	if err != nil {
+		return false
+	}
+	if uuidToString(task.AgentID) != actorID {
+		return false
+	}
+	var ctx agentFixP4AssessmentContext
+	if json.Unmarshal(task.Context, &ctx) != nil || ctx.Type != service.P4AssessmentTaskType {
+		return false
+	}
+	return ctx.WorkspaceID == workspaceID && ctx.FeishuBindingID == uuidToString(bindingID)
 }

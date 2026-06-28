@@ -27,6 +27,7 @@ import { IssueActionsContextMenu } from "../actions";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { useT } from "../../i18n";
+import { IssueP4AssessmentTags } from "./p4-assessment-entry";
 
 function formatDate(date: string): string {
   return formatDateOnly(date, { month: "short", day: "numeric" }, "en-US");
@@ -218,6 +219,7 @@ export const BoardCardContent = memo(function BoardCardContent({
           ))}
         </div>
       )}
+      <IssueP4AssessmentTags issue={issue} className="mt-1.5" />
 
       {/* Meta row: assignee (left), start date, due date, child progress (right) */}
       {showMetaRow && (

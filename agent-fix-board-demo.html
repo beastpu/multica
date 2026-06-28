@@ -1,0 +1,1737 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Multica P4 AI 修单评估 Demo</title>
+  <style>
+    :root {
+      --page: #f6f7f9;
+      --surface: #ffffff;
+      --surface-2: #f2f4f7;
+      --line: #d9dee7;
+      --line-soft: #e8ebf0;
+      --text: #171a1f;
+      --muted: #667085;
+      --soft: #98a2b3;
+      --blue: #2563eb;
+      --green: #16803c;
+      --amber: #b54708;
+      --red: #b42318;
+      --teal: #0f766e;
+      --purple: #7c3aed;
+      --shadow: 0 14px 38px rgba(16, 24, 40, .08);
+      --small-shadow: 0 1px 2px rgba(16, 24, 40, .08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--text);
+      font: 14px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+
+    .shell {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 22px;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 12px;
+      z-index: 10;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, .94);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      overflow: hidden;
+    }
+
+    .top-main {
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) auto;
+      gap: 16px;
+      align-items: end;
+      padding: 18px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .crumb {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    h1 {
+      margin: 4px 0 0;
+      font-size: 28px;
+      line-height: 1.1;
+      font-weight: 780;
+    }
+
+    .subtitle {
+      margin-top: 6px;
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .control {
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      outline: none;
+      box-shadow: var(--small-shadow);
+    }
+
+    input.control { width: 220px; padding: 0 11px; }
+    select.control { padding: 0 28px 0 10px; }
+    button.control { padding: 0 11px; color: var(--muted); }
+
+    .tabs {
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      background: var(--surface-2);
+    }
+
+    .page-tabs { margin-top: 14px; }
+
+    .tab {
+      height: 32px;
+      min-width: 102px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 640;
+    }
+
+    .tab.active {
+      background: #fff;
+      color: var(--text);
+      box-shadow: var(--small-shadow);
+    }
+
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 18px;
+      background: #fbfcfd;
+    }
+
+    main {
+      display: grid;
+      gap: 16px;
+      padding-top: 16px;
+    }
+
+    .page, .view { display: none; }
+    .page.active, .view.active { display: grid; gap: 16px; }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) minmax(0, 3.4fr);
+      gap: 0;
+    }
+
+    .hero {
+      padding: 20px;
+      border-right: 1px solid var(--line-soft);
+      background: #fbfcfd;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 680;
+    }
+
+    .hero .value {
+      margin-top: 9px;
+      font-size: 48px;
+      line-height: 1;
+      font-weight: 790;
+    }
+
+    .hint {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      gap: 0;
+    }
+
+    .stat {
+      min-height: 112px;
+      padding: 17px 15px;
+      border-right: 1px solid var(--line-soft);
+    }
+
+    .stat:last-child { border-right: 0; }
+
+    .stat .value {
+      margin-top: 9px;
+      font-size: 24px;
+      line-height: 1;
+      font-weight: 760;
+    }
+
+    .subhead {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line-soft);
+      background: #fbfcfd;
+    }
+
+    .subhead h2 {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 740;
+    }
+
+    .subcaption {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .board {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(250px, 1fr));
+      gap: 12px;
+      overflow-x: auto;
+    }
+
+    .lane {
+      min-width: 250px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .lane-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 13px;
+      border-bottom: 1px solid var(--line-soft);
+      background: #fbfcfd;
+    }
+
+    .lane-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--soft);
+    }
+    .dot.blue { background: var(--blue); }
+    .dot.green { background: var(--green); }
+    .dot.amber { background: var(--amber); }
+    .dot.red { background: var(--red); }
+    .dot.purple { background: var(--purple); }
+
+    .count {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 680;
+    }
+
+    .cards {
+      display: grid;
+      gap: 10px;
+      min-height: 280px;
+      padding: 12px;
+      background: var(--surface-2);
+    }
+
+    .card {
+      border: 1px solid var(--line-soft);
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: var(--small-shadow);
+      padding: 12px;
+    }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .issue-key {
+      color: var(--muted);
+      font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    .title {
+      margin-top: 8px;
+      line-height: 1.36;
+      font-weight: 700;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .note {
+      margin-top: 10px;
+      color: #475467;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      max-width: 100%;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #eef2f6;
+      color: #475467;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .badge.green { background: #dcfae6; color: var(--green); }
+    .badge.amber { background: #fef0c7; color: var(--amber); }
+    .badge.red { background: #fee4e2; color: var(--red); }
+    .badge.blue { background: #dbeafe; color: #1d4ed8; }
+    .badge.teal { background: #ccfbef; color: var(--teal); }
+    .badge.purple { background: #ede9fe; color: var(--purple); }
+
+    .empty {
+      display: grid;
+      place-items: center;
+      min-height: 90px;
+      color: var(--soft);
+      font-size: 12px;
+    }
+
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      min-width: 1120px;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 11px 12px;
+      border-top: 1px solid var(--line-soft);
+      text-align: left;
+      vertical-align: top;
+      font-size: 13px;
+    }
+
+    th {
+      color: var(--muted);
+      background: #fbfcfd;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    td { background: #fff; }
+
+    .stack {
+      display: grid;
+      gap: 5px;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .analysis-grid {
+      display: grid;
+      grid-template-columns: minmax(420px, 1fr) minmax(360px, .86fr);
+      gap: 16px;
+    }
+
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .chart-card {
+      min-height: 250px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-title {
+      font-size: 14px;
+      font-weight: 740;
+    }
+
+    .chart-caption {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .donut {
+      width: 132px;
+      height: 132px;
+      margin: 18px auto 12px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: conic-gradient(var(--green) 0deg 90deg, var(--amber) 90deg 180deg, var(--red) 180deg 245deg, #eaecf0 245deg 360deg);
+    }
+
+    .donut::after {
+      content: attr(data-center);
+      display: grid;
+      place-items: center;
+      width: 82px;
+      height: 82px;
+      border-radius: 999px;
+      background: #fff;
+      color: var(--text);
+      font-weight: 780;
+      box-shadow: inset 0 0 0 1px var(--line-soft);
+    }
+
+    .legend {
+      display: grid;
+      gap: 7px;
+      margin-top: 8px;
+    }
+
+    .legend-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend-name {
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
+      gap: 7px;
+    }
+
+    .swatch {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: #eaecf0;
+      flex: 0 0 auto;
+    }
+    .swatch.green { background: var(--green); }
+    .swatch.amber { background: var(--amber); }
+    .swatch.red { background: var(--red); }
+    .swatch.blue { background: var(--blue); }
+    .swatch.teal { background: var(--teal); }
+    .swatch.purple { background: var(--purple); }
+
+    .stack-bars {
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .stack-bar-row {
+      display: grid;
+      gap: 6px;
+    }
+
+    .stack-bar-head {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .stack-bar {
+      display: flex;
+      height: 12px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: #eaecf0;
+    }
+
+    .seg { min-width: 1px; }
+    .seg.green { background: var(--green); }
+    .seg.amber { background: var(--amber); }
+    .seg.red { background: var(--red); }
+    .seg.gray { background: #d0d5dd; }
+
+    .trend {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(20px, 1fr));
+      align-items: end;
+      gap: 8px;
+      height: 150px;
+      margin-top: 18px;
+      padding: 0 2px;
+    }
+
+    .trend-col {
+      display: grid;
+      align-items: end;
+      gap: 4px;
+      height: 100%;
+      text-align: center;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .trend-bar {
+      width: 100%;
+      min-height: 4px;
+      border-radius: 5px 5px 0 0;
+      background: var(--blue);
+      opacity: .9;
+    }
+
+    .report-list {
+      display: grid;
+      padding: 0 16px 16px;
+    }
+
+    .report-row {
+      display: grid;
+      grid-template-columns: 144px 1fr 62px;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 0;
+      border-top: 1px solid var(--line-soft);
+    }
+
+    .bar {
+      height: 8px;
+      border-radius: 999px;
+      background: #eaecf0;
+      overflow: hidden;
+    }
+
+    .bar span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--teal);
+    }
+
+    .right-num {
+      color: var(--muted);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: none;
+      place-items: center;
+      padding: 24px;
+      background: rgba(16, 24, 40, .28);
+      backdrop-filter: blur(10px);
+    }
+
+    .modal-backdrop.active { display: grid; }
+
+    .modal {
+      width: min(820px, 100%);
+      max-height: min(760px, calc(100vh - 48px));
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 28px 80px rgba(16, 24, 40, .24);
+      overflow: auto;
+    }
+
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--line-soft);
+      background: #fbfcfd;
+    }
+
+    .modal-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 760;
+    }
+
+    .modal-body {
+      display: grid;
+      gap: 16px;
+      padding: 18px 20px 20px;
+    }
+
+    .evidence-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .evidence {
+      min-height: 76px;
+      padding: 10px;
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      background: #fbfcfd;
+    }
+
+    .evidence .value {
+      margin-top: 6px;
+      font-weight: 720;
+      line-height: 1.3;
+    }
+
+    .field {
+      display: grid;
+      gap: 9px;
+    }
+
+    .choice-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .choice {
+      min-height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      padding: 0 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .choice.active {
+      border-color: #93c5fd;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-weight: 700;
+    }
+    .choice.green { border-color: #bbf7d0; background: #dcfae6; color: var(--green); font-weight: 700; }
+    .choice.amber { border-color: #fedf89; background: #fef0c7; color: var(--amber); font-weight: 700; }
+    .choice.red { border-color: #fecdca; background: #fee4e2; color: var(--red); font-weight: 700; }
+
+    textarea {
+      width: 100%;
+      min-height: 88px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 11px;
+      outline: none;
+      font: inherit;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding-top: 2px;
+    }
+
+    .primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #fff;
+    }
+
+    @media (max-width: 1180px) {
+      .top-main, .summary, .analysis-grid { grid-template-columns: 1fr; }
+      .toolbar { justify-content: flex-start; }
+      .hero { border-right: 0; border-bottom: 1px solid var(--line-soft); }
+      .stat-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+      .stat { border-right: 0; border-bottom: 1px solid var(--line-soft); }
+      .evidence-grid { grid-template-columns: 1fr; }
+      .chart-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="top-main">
+        <div>
+          <div class="crumb">Multica / warpath3 / P4 修单评估</div>
+          <h1 id="pageTitle">Issues</h1>
+          <div class="subtitle" id="pageSubtitle">原 issue 工作流保留，只在卡片里融合外部完成态、P4 证据、AI 前置判断和人工验收结果。</div>
+          <nav class="tabs page-tabs" aria-label="主页面">
+            <button class="tab active" id="issuesPageTab" type="button">Issues</button>
+            <button class="tab" id="operationsPageTab" type="button">Operations</button>
+          </nav>
+        </div>
+        <div class="toolbar">
+          <input class="control" id="search" placeholder="搜索 issue / CL / agent" />
+          <button class="control" id="exportCsv" type="button">导出</button>
+          <button class="control" id="reset" type="button">重置 demo</button>
+        </div>
+      </div>
+      <div class="filters">
+        <select class="control" id="agentFilter"><option value="all">全部 Agent</option></select>
+        <select class="control" id="projectFilter"><option value="all">全部项目</option></select>
+        <select class="control" id="assessmentFilter">
+          <option value="all">全部 AI 判断</option>
+          <option value="needs_ai_assessment">待 AI 预判</option>
+          <option value="ai_assessing">AI 预判中</option>
+          <option value="ai_assessment_failed">AI 失败</option>
+          <option value="needs_review_conflict">归因冲突</option>
+          <option value="needs_human_review">待人工验收</option>
+        </select>
+        <select class="control" id="outcomeFilter">
+          <option value="all">全部人工结果</option>
+          <option value="unreviewed">待验收</option>
+          <option value="accepted">通过</option>
+          <option value="needs_changes">需返工</option>
+          <option value="rejected">拒绝</option>
+          <option value="not_applicable">不适用</option>
+        </select>
+        <select class="control" id="rangeFilter">
+          <option value="7">7 天</option>
+          <option value="30" selected>30 天</option>
+          <option value="90">90 天</option>
+        </select>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel summary" id="summary"></section>
+
+      <section class="page active" id="issuesPage">
+        <section class="board" id="workflowBoard"></section>
+      </section>
+
+      <section class="page" id="operationsPage">
+        <nav class="tabs" aria-label="Operations 视图">
+          <button class="tab active" id="detailTab" type="button">P4 明细</button>
+          <button class="tab" id="analysisTab" type="button">分析报告</button>
+        </nav>
+
+        <section class="view active" id="detailView">
+          <section class="panel">
+            <div class="subhead">
+              <div>
+                <h2>P4/Swarm 修单明细</h2>
+                <div class="subcaption">主轴是外部已完成工单，展示 AI 前置判断、P4 证据和人工验收。</div>
+              </div>
+              <span class="badge" id="detailCount"></span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Issue / 工单</th>
+                    <th>外部状态</th>
+                    <th>Agent</th>
+                    <th>P4 证据</th>
+                    <th>AI 归因</th>
+                    <th>AI 质量预判</th>
+                    <th>人工验收</th>
+                    <th>判断偏差</th>
+                  </tr>
+                </thead>
+                <tbody id="rows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="analysisView">
+          <section class="chart-grid" id="analysisCharts"></section>
+          <section class="analysis-grid">
+            <div class="panel">
+              <div class="subhead">
+                <div>
+                  <h2>项目维度</h2>
+                  <div class="subcaption">按项目统计外部完成、AI 覆盖、冲突和人工结果。</div>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>项目</th>
+                      <th>外部完成</th>
+                      <th>AI 已判断</th>
+                      <th>冲突</th>
+                      <th>人工通过</th>
+                      <th>返工/拒绝</th>
+                    </tr>
+                  </thead>
+                  <tbody id="projectRows"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="subhead">
+                <div>
+                  <h2>AI 判断准确性</h2>
+                  <div class="subcaption">以人工验收为对照，unknown 不进入准确率分母。</div>
+                </div>
+              </div>
+              <div class="report-list" id="rank"></div>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="reviewModal">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="reviewTitle">
+      <div class="modal-head">
+        <div>
+          <h2 class="modal-title" id="reviewTitle">人工验收 AI 修单结果</h2>
+          <div class="subtitle" id="reviewIssue"></div>
+        </div>
+        <button class="control" type="button" onclick="closeReviewModal()">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="evidence-grid" id="modalEvidence"></div>
+        <div class="field">
+          <div class="label">人工结果</div>
+          <div class="choice-grid" id="outcomeChoices"></div>
+        </div>
+        <div class="field">
+          <div class="label">原因</div>
+          <div class="choice-grid" id="reasonChoices"></div>
+          <div class="hint">人工结果是最终事实；AI 判断保留为前置预测，用来分析 AI 判断是否准确。</div>
+        </div>
+        <div class="field">
+          <div class="label">备注</div>
+          <textarea id="reviewNote" placeholder="补充判断依据，例如：AI shelve 未被采用，最终 CL 是开发同学手动提交。"></textarea>
+        </div>
+        <div class="modal-actions">
+          <button class="control" type="button" onclick="closeReviewModal()">取消</button>
+          <button class="control primary" type="button" onclick="saveReviewDraft()">保存</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const initialItems = [
+      {
+        id: "WP3-12841",
+        workItem: "BUG-93218",
+        title: "军团科技升级后客户端显示旧等级",
+        project: "Warpath3",
+        workstream: "rel_1.7.2/server",
+        version: "1.7.2",
+        agent: "Codex-P4",
+        issueStatus: "in_review",
+        externalDone: true,
+        externalStatus: "已完成",
+        taskStatus: "completed",
+        assessmentStatus: "completed",
+        attribution: "ai_delivered",
+        quality: "likely_correct",
+        confidence: 0.86,
+        review: "accepted",
+        reasons: ["complete_usable"],
+        swarm: "SW-11872",
+        shelve: "282941",
+        finalCl: "283006",
+        finalOwner: "agent",
+        mismatch: "match",
+        comment: "AI 产出的 shelve 282941 已经通过 Swarm 提交为 CL 283006，飞书最终 CL 一致。",
+        daysAgo: 1
+      },
+      {
+        id: "WP3-12796",
+        workItem: "BUG-92877",
+        title: "PVP 战报偶发丢失防守方增益",
+        project: "Battle",
+        workstream: "rel_1.7.2/battle",
+        version: "1.7.2",
+        agent: "Codex-P4",
+        issueStatus: "in_review",
+        externalDone: true,
+        externalStatus: "已完成",
+        taskStatus: "completed",
+        assessmentStatus: "completed",
+        attribution: "conflict",
+        quality: "likely_needs_changes",
+        confidence: 0.71,
+        review: "needs_changes",
+        reasons: ["coverage_incomplete", "test_insufficient"],
+        swarm: "SW-11845",
+        shelve: "282620",
+        finalCl: "282811",
+        finalOwner: "human",
+        mismatch: "accurate",
+        comment: "Multica 里有 AI shelve 282620，但飞书最终 CL 是 282811；AI 识别为冲突，人工确认 AI 漏了战斗回放入口。",
+        daysAgo: 3
+      },
+      {
+        id: "WP3-12688",
+        workItem: "BUG-92301",
+        title: "雷达任务奖励重复领取",
+        project: "Activity",
+        workstream: "rel_1.7.1/activity",
+        version: "1.7.1",
+        agent: "Codex-P4",
+        issueStatus: "done",
+        externalDone: true,
+        externalStatus: "已完成",
+        taskStatus: "completed",
+        assessmentStatus: "completed",
+        attribution: "ai_assisted",
+        quality: "likely_correct",
+        confidence: 0.78,
+        review: "accepted",
+        reasons: ["human_assisted"],
+        swarm: "SW-11791",
+        shelve: "281990",
+        finalCl: "282104",
+        finalOwner: "mixed",
+        mismatch: "match",
+        comment: "AI 修了幂等检查，人工补了补偿脚本和线上验证；最终 CL 仍基于 AI shelve。",
+        daysAgo: 6
+      },
+      {
+        id: "WP3-12577",
+        workItem: "BUG-91740",
+        title: "联盟商店刷新时间跨时区错误",
+        project: "Economy",
+        workstream: "rel_1.7.1/server",
+        version: "1.7.1",
+        agent: "Claude-P4",
+        issueStatus: "done",
+        externalDone: true,
+        externalStatus: "已完成",
+        taskStatus: "completed",
+        assessmentStatus: "completed",
+        attribution: "human_delivered",
+        quality: "likely_correct",
+        confidence: 0.64,
+        review: "rejected",
+        reasons: ["wrong_direction"],
+        swarm: "SW-11760",
+        shelve: "",
+        finalCl: "281776",
+        finalOwner: "human",
+        mismatch: "overestimated",
+        comment: "AI 判断最终人工 CL 看起来正确，但人工验收发现修的是 UI 显示，服务端刷新根因未解决。",
+        daysAgo: 8
+      },
+      {
+        id: "WP3-12452",
+        workItem: "BUG-91062",
+        title: "新手引导任务链断在第二阶段",
+        project: "Quest",
+        workstream: "rel_1.7.0/quest",
+        version: "1.7.0",
+        agent: "Codex-P4",
+        issueStatus: "in_progress",
+        externalDone: true,
+        externalStatus: "已完成",
+        taskStatus: "running",
+        assessmentStatus: "running",
+        attribution: "unknown",
+        quality: "unknown",
+        confidence: null,
+        review: "unreviewed",
+        reasons: [],
+        swarm: "SW-11698",
+        shelve: "280992",
+        finalCl: "281032",
+        finalOwner: "unknown",
+        mismatch: "pending",
+        comment: "AI 正在核对 Swarm review 和飞书最终 CL 是否来自同一条链路。",
+        daysAgo: 9
+      },
+      {
+        id: "WP3-12386",
+        workItem: "BUG-90519",
+        title: "地图事件刷怪数量低于配置",
+        project: "World",
+        workstream: "rel_1.6.9/world",
+        version: "1.6.9",
+        agent: "Codex-P4",
+        issueStatus: "blocked",
+        externalDone: true,
+        externalStatus: "已完成",
+        taskStatus: "failed",
+        assessmentStatus: "failed",
+        attribution: "unknown",
+        quality: "unknown",
+        confidence: null,
+        review: "unreviewed",
+        reasons: [],
+        swarm: "",
+        shelve: "",
+        finalCl: "280771",
+        finalOwner: "human",
+        mismatch: "pending",
+        comment: "assessment 失败：飞书字段里的 CL 能读到，但当前 issue 没有关联 Swarm review，需要人工补充线索。",
+        daysAgo: 12
+      },
+      {
+        id: "WP3-12290",
+        workItem: "BUG-89970",
+        title: "军官技能升级材料扣除异常",
+        project: "Hero",
+        workstream: "rel_1.6.9/server",
+        version: "1.6.9",
+        agent: "Kimi-P4",
+        issueStatus: "todo",
+        externalDone: true,
+        externalStatus: "已完成",
+        taskStatus: "completed",
+        assessmentStatus: "missing",
+        attribution: "unknown",
+        quality: "unknown",
+        confidence: null,
+        review: "unreviewed",
+        reasons: [],
+        swarm: "",
+        shelve: "",
+        finalCl: "280402",
+        finalOwner: "human",
+        mismatch: "pending",
+        comment: "外部工单已完成但还没有跑 AI P4 前置判断。",
+        daysAgo: 14
+      },
+      {
+        id: "WP3-12110",
+        workItem: "BUG-88731",
+        title: "赛季结算邮件重复发送",
+        project: "Season",
+        workstream: "rel_1.6.8/season",
+        version: "1.6.8",
+        agent: "Claude-P4",
+        issueStatus: "done",
+        externalDone: true,
+        externalStatus: "已完成",
+        taskStatus: "completed",
+        assessmentStatus: "completed",
+        attribution: "unattributed",
+        quality: "unknown",
+        confidence: 0.39,
+        review: "not_applicable",
+        reasons: ["environment_data"],
+        swarm: "SW-11602",
+        shelve: "",
+        finalCl: "",
+        finalOwner: "unknown",
+        mismatch: "not_comparable",
+        comment: "线上数据修复单，没有代码提交；人工标注为不适用。",
+        daysAgo: 18
+      },
+      {
+        id: "WP3-11984",
+        workItem: "BUG-87422",
+        title: "战役章节解锁条件未及时刷新",
+        project: "Campaign",
+        workstream: "rel_1.6.7/campaign",
+        version: "1.6.7",
+        agent: "Codex-P4",
+        issueStatus: "done",
+        externalDone: false,
+        externalStatus: "待验证",
+        taskStatus: "completed",
+        assessmentStatus: "completed",
+        attribution: "ai_delivered",
+        quality: "likely_correct",
+        confidence: 0.91,
+        review: "unreviewed",
+        reasons: [],
+        swarm: "SW-11540",
+        shelve: "279880",
+        finalCl: "279914",
+        finalOwner: "agent",
+        mismatch: "out_of_scope",
+        comment: "AI 已修完，但飞书未完成，不进入统计。",
+        daysAgo: 20
+      }
+    ];
+
+    const workflowColumns = [
+      { key: "todo", title: "Todo", dot: "", match: (x) => x.issueStatus === "todo" },
+      { key: "in_progress", title: "In Progress", dot: "blue", match: (x) => x.issueStatus === "in_progress" },
+      { key: "in_review", title: "In Review", dot: "amber", match: (x) => x.issueStatus === "in_review" },
+      { key: "blocked", title: "Blocked", dot: "red", match: (x) => x.issueStatus === "blocked" },
+      { key: "done", title: "Done / Cancelled", dot: "green", match: (x) => x.issueStatus === "done" || x.issueStatus === "cancelled" }
+    ];
+
+    const issueLabel = {
+      todo: ["Todo", ""],
+      in_progress: ["In Progress", "blue"],
+      in_review: ["In Review", "amber"],
+      blocked: ["Blocked", "red"],
+      done: ["Done", "green"],
+      cancelled: ["Cancelled", ""]
+    };
+
+    const reviewLabel = {
+      unreviewed: ["待验收", "amber"],
+      accepted: ["通过", "green"],
+      needs_changes: ["需返工", "amber"],
+      rejected: ["拒绝", "red"],
+      not_applicable: ["不适用", ""]
+    };
+
+    const attributionLabel = {
+      ai_delivered: ["AI 提交", "green"],
+      ai_assisted: ["AI 辅助", "teal"],
+      human_delivered: ["人工提交", "blue"],
+      conflict: ["归因冲突", "red"],
+      unattributed: ["无法归因", "amber"],
+      unknown: ["证据不足", ""]
+    };
+
+    const qualityLabel = {
+      likely_correct: ["大概率正确", "green"],
+      likely_needs_changes: ["可能返工", "amber"],
+      likely_wrong: ["可能错误", "red"],
+      unknown: ["不判断", ""]
+    };
+
+    const assessmentLabel = {
+      missing: ["待 AI 预判", "amber"],
+      running: ["AI 预判中", "blue"],
+      failed: ["AI 失败", "red"],
+      completed: ["AI 已判断", "green"],
+      stale: ["已过期", "amber"]
+    };
+
+    const mismatchLabel = {
+      match: ["判断准确", "green"],
+      accurate: ["冲突识别准确", "green"],
+      overestimated: ["AI 高估", "red"],
+      underestimated: ["AI 低估", "amber"],
+      wrong_attribution: ["归因错误", "red"],
+      not_comparable: ["不计准确率", ""],
+      out_of_scope: ["未进统计", ""],
+      pending: ["待人工确认", "amber"]
+    };
+
+    const outcomeOptions = [
+      ["unreviewed", "待验收"],
+      ["accepted", "通过"],
+      ["needs_changes", "需返工"],
+      ["rejected", "拒绝"],
+      ["not_applicable", "不适用"]
+    ];
+
+    const reasonOptions = {
+      accepted: [
+        ["complete_usable", "完整可用"],
+        ["small_fix", "小修小补"],
+        ["human_assisted", "人工补充后通过"]
+      ],
+      needs_changes: [
+        ["coverage_incomplete", "覆盖不全"],
+        ["edge_case_missing", "边界遗漏"],
+        ["test_insufficient", "测试不足"],
+        ["wrong_location", "位置不对"],
+        ["integration_incomplete", "接口/集成不完整"],
+        ["quality_insufficient", "代码质量不足"],
+        ["compatibility", "兼容性问题"]
+      ],
+      rejected: [
+        ["wrong_direction", "修复方向错误"],
+        ["root_cause_missing", "未解决根因"],
+        ["regression", "引入回归"],
+        ["risk_high", "改动风险过高"],
+        ["unusable_output", "输出不可用"],
+        ["unverifiable", "无法验证"],
+        ["architecture_violation", "破坏架构约束"]
+      ],
+      not_applicable: [
+        ["not_fix_task", "非修复任务"],
+        ["duplicate", "重复单"],
+        ["environment_data", "环境/数据问题"],
+        ["cancelled_requirement", "需求取消"],
+        ["no_change_needed", "无需修改"],
+        ["misfire", "误触发"]
+      ],
+      unreviewed: []
+    };
+
+    const reasonLabel = Object.fromEntries(Object.values(reasonOptions).flat().map(([key, label]) => [key, label]));
+
+    let items = loadItems();
+    let page = "issues";
+    let operationsView = "detail";
+    let reviewDraft = null;
+
+    function loadItems() {
+      try {
+        const raw = localStorage.getItem("agent-fix-p4-assessment-demo");
+        return raw ? JSON.parse(raw) : structuredClone(initialItems);
+      } catch {
+        return structuredClone(initialItems);
+      }
+    }
+
+    function saveItems() {
+      localStorage.setItem("agent-fix-p4-assessment-demo", JSON.stringify(items));
+    }
+
+    function displayStatus(x) {
+      if (!x.externalDone) return "not_in_stats";
+      if (x.review && x.review !== "unreviewed") return x.review;
+      if (x.assessmentStatus === "missing") return "needs_ai_assessment";
+      if (x.assessmentStatus === "running") return "ai_assessing";
+      if (x.assessmentStatus === "failed") return "ai_assessment_failed";
+      if (x.attribution === "conflict") return "needs_review_conflict";
+      return "needs_human_review";
+    }
+
+    function displayLabel(x) {
+      const status = displayStatus(x);
+      const map = {
+        not_in_stats: ["未进统计", ""],
+        needs_ai_assessment: ["待 AI 预判", "amber"],
+        ai_assessing: ["AI 预判中", "blue"],
+        ai_assessment_failed: ["AI 失败", "red"],
+        needs_review_conflict: ["冲突待确认", "red"],
+        needs_human_review: ["待人工验收", "amber"],
+        accepted: ["通过", "green"],
+        needs_changes: ["需返工", "amber"],
+        rejected: ["拒绝", "red"],
+        not_applicable: ["不适用", ""]
+      };
+      return map[status] || [status, ""];
+    }
+
+    function filteredItems() {
+      const q = document.querySelector("#search").value.trim().toLowerCase();
+      const agent = document.querySelector("#agentFilter").value;
+      const project = document.querySelector("#projectFilter").value;
+      const assessment = document.querySelector("#assessmentFilter").value;
+      const outcome = document.querySelector("#outcomeFilter").value;
+      const range = Number(document.querySelector("#rangeFilter").value);
+      return items.filter((x) => {
+        const hay = [x.id, x.workItem, x.title, x.agent, x.project, x.workstream, x.swarm, x.shelve, x.finalCl, x.comment].join(" ").toLowerCase();
+        return (!q || hay.includes(q))
+          && (agent === "all" || x.agent === agent)
+          && (project === "all" || x.project === project)
+          && (assessment === "all" || displayStatus(x) === assessment)
+          && (outcome === "all" || x.review === outcome)
+          && x.daysAgo <= range;
+      });
+    }
+
+    function renderFilters() {
+      const agents = Array.from(new Set(items.map((x) => x.agent))).sort();
+      const projects = Array.from(new Set(items.map((x) => x.project))).sort();
+      document.querySelector("#agentFilter").innerHTML = '<option value="all">全部 Agent</option>' + agents.map((a) => `<option>${a}</option>`).join("");
+      document.querySelector("#projectFilter").innerHTML = '<option value="all">全部项目</option>' + projects.map((p) => `<option>${p}</option>`).join("");
+    }
+
+    function statisticalItems(list) {
+      return list.filter((x) => x.externalDone);
+    }
+
+    function comparableItems(list) {
+      return statisticalItems(list).filter((x) => !["pending", "not_comparable", "out_of_scope"].includes(x.mismatch));
+    }
+
+    function renderSummary(list) {
+      const stat = statisticalItems(list);
+      const assessed = stat.filter((x) => x.assessmentStatus === "completed").length;
+      const reviewed = stat.filter((x) => x.review !== "unreviewed").length;
+      const accepted = stat.filter((x) => x.review === "accepted").length;
+      const conflict = stat.filter((x) => x.attribution === "conflict").length;
+      const comparable = comparableItems(list);
+      const accurate = comparable.filter((x) => x.mismatch === "match" || x.mismatch === "accurate").length;
+      const assessmentRate = stat.length ? Math.round((assessed / stat.length) * 100) : 0;
+      const humanRate = reviewed ? Math.round((accepted / reviewed) * 100) : 0;
+      const judgementRate = comparable.length ? Math.round((accurate / comparable.length) * 100) : 0;
+      const stats = [
+        ["外部完成", stat.length, "统计分母只看飞书/Meego done"],
+        ["AI 覆盖率", assessmentRate + "%", `${assessed}/${stat.length} 已完成 P4 判断`],
+        ["待人工", stat.filter((x) => displayStatus(x) === "needs_human_review" || displayStatus(x) === "needs_review_conflict").length, "AI 已给证据，待确认"],
+        ["冲突", conflict, "AI shelve 与最终 CL 不一致"],
+        ["人工通过率", humanRate + "%", `${accepted}/${reviewed} 已验收`],
+        ["AI 判断准确率", judgementRate + "%", `${accurate}/${comparable.length} 可比较样本`]
+      ];
+      document.querySelector("#summary").innerHTML = `
+        <div class="hero">
+          <div class="label">${page === "issues" ? "Issues · P4 AI 判断" : "Operations · P4 修单评估"}</div>
+          <div class="value">${stat.length}</div>
+          <div class="hint">${page === "issues" ? "issue 工作流不变，只融合轻量 P4 评估字段。" : "主轴是外部已完成工单，AI 判断和人工验收分开统计。"}</div>
+        </div>
+        <div class="stat-grid">
+          ${stats.map(([label, value, hint]) => `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div><div class="hint">${hint}</div></div>`).join("")}
+        </div>
+      `;
+    }
+
+    function renderBoard(target, columns, list) {
+      document.querySelector(target).innerHTML = columns.map((col) => {
+        const rows = list.filter(col.match);
+        return `
+          <div class="lane">
+            <div class="lane-head">
+              <div class="lane-title"><span class="dot ${col.dot}"></span>${col.title}</div>
+              <span class="count">${rows.length}</span>
+            </div>
+            <div class="cards">${rows.map(renderCard).join("") || '<div class="empty">没有符合条件的单子</div>'}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderCard(x) {
+      const [issueText, issueColor] = issueLabel[x.issueStatus] || [x.issueStatus, ""];
+      const [displayText, displayColor] = displayLabel(x);
+      const [attrText, attrColor] = attributionLabel[x.attribution] || [x.attribution, ""];
+      const [qualityText, qualityColor] = qualityLabel[x.quality] || [x.quality, ""];
+      const [reviewText, reviewColor] = reviewLabel[x.review] || [x.review, ""];
+      return `
+        <article class="card">
+          <div class="card-top">
+            <span class="issue-key">${x.id}</span>
+            <span class="badge ${displayColor}">${displayText}</span>
+          </div>
+          <div class="title">${x.title}</div>
+          <div class="meta">
+            <span class="badge ${issueColor}">${issueText}</span>
+            <span class="badge">${x.workItem}</span>
+            <span class="badge purple">${x.project}</span>
+          </div>
+          <div class="meta">
+            <span class="badge ${x.externalDone ? "green" : "amber"}">飞书 ${x.externalStatus}</span>
+            <span class="badge ${attrColor}">${attrText}</span>
+            <span class="badge ${qualityColor}">${qualityText}</span>
+            <span class="badge ${reviewColor}">人工 ${reviewText}${formatReasons(x) ? " · " + formatReasons(x) : ""}</span>
+          </div>
+          <div class="note">${x.comment}</div>
+          <div class="meta mono">
+            ${x.swarm ? `<span>${x.swarm}</span>` : ""}
+            ${x.workstream ? `<span>${x.workstream}</span>` : ""}
+            ${x.shelve ? `<span>shelve ${x.shelve}</span>` : ""}
+            ${x.finalCl ? `<span>CL ${x.finalCl}</span>` : ""}
+            ${x.confidence == null ? "" : `<span>conf ${(x.confidence * 100).toFixed(0)}%</span>`}
+          </div>
+          <div class="meta">
+            <button class="control" onclick="openReviewModal('${x.id}')">编辑人工验收</button>
+          </div>
+        </article>
+      `;
+    }
+
+    function renderRows(list) {
+      document.querySelector("#detailCount").textContent = `${list.length} 条`;
+      document.querySelector("#rows").innerHTML = list.map((x) => {
+        const [displayText, displayColor] = displayLabel(x);
+        const [assessmentText, assessmentColor] = assessmentLabel[x.assessmentStatus] || [x.assessmentStatus, ""];
+        const [attrText, attrColor] = attributionLabel[x.attribution] || [x.attribution, ""];
+        const [qualityText, qualityColor] = qualityLabel[x.quality] || [x.quality, ""];
+        const [reviewText, reviewColor] = reviewLabel[x.review] || [x.review, ""];
+        const [mismatchText, mismatchColor] = mismatchLabel[x.mismatch] || [x.mismatch, ""];
+        return `<tr>
+          <td>
+            <div class="stack">
+              <strong>${x.id}</strong>
+              <span>${x.title}</span>
+              <span class="mono">${x.workItem} · ${x.project} · ${x.version}</span>
+            </div>
+          </td>
+          <td><span class="badge ${x.externalDone ? "green" : "amber"}">${x.externalStatus}</span><div class="hint">${x.externalDone ? "进入统计" : "不进入统计"}</div></td>
+          <td><div class="stack"><span>${x.agent}</span><span class="badge ${assessmentColor}">${assessmentText}</span></div></td>
+          <td>
+            <div class="stack mono">
+              <span>stream ${x.workstream || "-"}</span>
+              <span>${x.swarm || "无 Swarm"}</span>
+              <span>shelve ${x.shelve || "-"}</span>
+              <span>final CL ${x.finalCl || "-"}</span>
+            </div>
+          </td>
+          <td><span class="badge ${attrColor}">${attrText}</span><div class="hint">最终来源：${ownerText(x.finalOwner)}</div></td>
+          <td><span class="badge ${qualityColor}">${qualityText}</span><div class="hint">${x.confidence == null ? "无置信度" : "置信度 " + (x.confidence * 100).toFixed(0) + "%"}</div></td>
+          <td><button class="choice ${reviewColor}" type="button" onclick="openReviewModal('${x.id}')">${reviewText}${formatReasons(x) ? " · " + formatReasons(x) : ""}</button></td>
+          <td><span class="badge ${mismatchColor}">${mismatchText}</span><div class="hint">由 AI 预判与人工验收自动派生 · ${displayText}</div></td>
+        </tr>`;
+      }).join("");
+    }
+
+    function renderProjectRows(list) {
+      const byProject = new Map();
+      for (const x of statisticalItems(list)) {
+        if (!byProject.has(x.project)) byProject.set(x.project, []);
+        byProject.get(x.project).push(x);
+      }
+      document.querySelector("#projectRows").innerHTML = Array.from(byProject.entries()).map(([project, xs]) => {
+        const assessed = xs.filter((x) => x.assessmentStatus === "completed").length;
+        const conflict = xs.filter((x) => x.attribution === "conflict").length;
+        const accepted = xs.filter((x) => x.review === "accepted").length;
+        const bad = xs.filter((x) => x.review === "needs_changes" || x.review === "rejected").length;
+        return `<tr><td>${project}</td><td>${xs.length}</td><td>${assessed}</td><td>${conflict}</td><td>${accepted}</td><td>${bad}</td></tr>`;
+      }).join("");
+    }
+
+    function pct(part, total) {
+      return total ? Math.round((part / total) * 100) : 0;
+    }
+
+    function countBy(list, keyFn) {
+      const out = new Map();
+      for (const x of list) {
+        const key = keyFn(x);
+        out.set(key, (out.get(key) || 0) + 1);
+      }
+      return out;
+    }
+
+    function donutGradient(entries) {
+      const total = entries.reduce((sum, item) => sum + item.value, 0);
+      if (!total) return "#eaecf0 0deg 360deg";
+      let start = 0;
+      return entries.map((item) => {
+        const end = start + (item.value / total) * 360;
+        const seg = `${item.color} ${start.toFixed(2)}deg ${end.toFixed(2)}deg`;
+        start = end;
+        return seg;
+      }).join(", ");
+    }
+
+    function renderLegend(entries) {
+      return `<div class="legend">${entries.map((x) => `
+        <div class="legend-row">
+          <span class="legend-name"><span class="swatch ${x.tone}"></span>${x.label}</span>
+          <strong>${x.value}</strong>
+        </div>
+      `).join("")}</div>`;
+    }
+
+    function renderAnalysisCharts(list) {
+      const stat = statisticalItems(list);
+      const reviewed = stat.filter((x) => x.review !== "unreviewed");
+      const outcomeCounts = countBy(reviewed, (x) => x.review);
+      const attributionCounts = countBy(stat, (x) => x.attribution);
+      const outcomeEntries = [
+        { key: "accepted", label: "通过", value: outcomeCounts.get("accepted") || 0, tone: "green", color: "var(--green)" },
+        { key: "needs_changes", label: "需返工", value: outcomeCounts.get("needs_changes") || 0, tone: "amber", color: "var(--amber)" },
+        { key: "rejected", label: "拒绝", value: outcomeCounts.get("rejected") || 0, tone: "red", color: "var(--red)" },
+        { key: "not_applicable", label: "不适用", value: outcomeCounts.get("not_applicable") || 0, tone: "", color: "#d0d5dd" }
+      ];
+      const attrEntries = [
+        { key: "ai_delivered", label: "AI 提交", value: attributionCounts.get("ai_delivered") || 0, tone: "green", color: "var(--green)" },
+        { key: "ai_assisted", label: "AI 辅助", value: attributionCounts.get("ai_assisted") || 0, tone: "teal", color: "var(--teal)" },
+        { key: "human_delivered", label: "人工提交", value: attributionCounts.get("human_delivered") || 0, tone: "blue", color: "var(--blue)" },
+        { key: "conflict", label: "归因冲突", value: attributionCounts.get("conflict") || 0, tone: "red", color: "var(--red)" },
+        { key: "unknown", label: "证据不足", value: (attributionCounts.get("unknown") || 0) + (attributionCounts.get("unattributed") || 0), tone: "", color: "#d0d5dd" }
+      ];
+
+      const byProject = Array.from(countBy(stat, (x) => x.project).keys()).map((project) => {
+        const xs = stat.filter((x) => x.project === project);
+        return {
+          project,
+          total: xs.length,
+          accepted: xs.filter((x) => x.review === "accepted").length,
+          needs: xs.filter((x) => x.review === "needs_changes").length,
+          rejected: xs.filter((x) => x.review === "rejected").length,
+          pending: xs.filter((x) => x.review === "unreviewed" || x.review === "not_applicable").length
+        };
+      }).sort((a, b) => b.total - a.total).slice(0, 5);
+
+      const buckets = [25, 20, 15, 10, 5, 0].map((from, idx, arr) => {
+        const to = idx === arr.length - 1 ? -1 : arr[idx + 1];
+        const xs = stat.filter((x) => x.daysAgo <= from && x.daysAgo > to);
+        return {
+          label: from === 0 ? "now" : `${from}d`,
+          total: xs.length,
+          assessed: xs.filter((x) => x.assessmentStatus === "completed").length
+        };
+      });
+      const maxBucket = Math.max(1, ...buckets.map((x) => x.total));
+
+      document.querySelector("#analysisCharts").innerHTML = `
+        <article class="chart-card">
+          <div class="chart-title">人工结果分布</div>
+          <div class="chart-caption">只统计已人工验收样本，待验收不进入占比。</div>
+          <div class="donut" data-center="${reviewed.length} 条" style="background: conic-gradient(${donutGradient(outcomeEntries)})"></div>
+          ${renderLegend(outcomeEntries)}
+        </article>
+        <article class="chart-card">
+          <div class="chart-title">AI 归因分布</div>
+          <div class="chart-caption">AI 前置判断的归因预测，用于看 AI 是否真的交付。</div>
+          <div class="donut" data-center="${stat.length} 条" style="background: conic-gradient(${donutGradient(attrEntries)})"></div>
+          ${renderLegend(attrEntries)}
+        </article>
+        <article class="chart-card">
+          <div class="chart-title">项目结果堆叠</div>
+          <div class="chart-caption">按项目展示通过、返工、拒绝和未验收规模。</div>
+          <div class="stack-bars">
+            ${byProject.map((x) => `
+              <div class="stack-bar-row">
+                <div class="stack-bar-head"><span>${x.project}</span><span>${x.total}</span></div>
+                <div class="stack-bar">
+                  <span class="seg green" style="width:${pct(x.accepted, x.total)}%"></span>
+                  <span class="seg amber" style="width:${pct(x.needs, x.total)}%"></span>
+                  <span class="seg red" style="width:${pct(x.rejected, x.total)}%"></span>
+                  <span class="seg gray" style="width:${pct(x.pending, x.total)}%"></span>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        </article>
+        <article class="chart-card">
+          <div class="chart-title">完成趋势</div>
+          <div class="chart-caption">外部完成数与 AI assessment 覆盖趋势。</div>
+          <div class="trend">
+            ${buckets.map((x) => `
+              <div class="trend-col">
+                <div class="trend-bar" title="完成 ${x.total}，AI 已判断 ${x.assessed}" style="height:${Math.max(6, pct(x.total, maxBucket))}%"></div>
+                <span>${x.label}</span>
+              </div>
+            `).join("")}
+          </div>
+          <div class="hint">正式实现可用 Recharts 堆叠柱状图展示完成/已判断/已验收。</div>
+        </article>
+      `;
+    }
+
+    function renderRank(list) {
+      const groups = [
+        ["AI 判断准确", comparableItems(list).filter((x) => x.mismatch === "match" || x.mismatch === "accurate").length, comparableItems(list).length],
+        ["AI 高估", statisticalItems(list).filter((x) => x.mismatch === "overestimated").length, comparableItems(list).length],
+        ["归因冲突", statisticalItems(list).filter((x) => x.attribution === "conflict").length, statisticalItems(list).length],
+        ["人工通过", statisticalItems(list).filter((x) => x.review === "accepted").length, statisticalItems(list).filter((x) => x.review !== "unreviewed").length],
+        ["证据不足", statisticalItems(list).filter((x) => x.quality === "unknown").length, statisticalItems(list).length]
+      ];
+      document.querySelector("#rank").innerHTML = groups.map(([label, value, total]) => {
+        const rate = total ? Math.round((value / total) * 100) : 0;
+        return `<div class="report-row"><strong>${label}</strong><div class="bar"><span style="width:${rate}%"></span></div><span class="right-num">${rate}%</span></div>`;
+      }).join("");
+    }
+
+    function ownerText(owner) {
+      return { agent: "AI", human: "人工", mixed: "AI + 人工", unknown: "未知" }[owner] || owner;
+    }
+
+    function formatReasons(item) {
+      const labels = (item.reasons || []).map((key) => reasonLabel[key]).filter(Boolean);
+      if (labels.length === 0) return "";
+      if (labels.length === 1) return labels[0];
+      return `${labels[0]} +${labels.length - 1}`;
+    }
+
+    function openReviewModal(id) {
+      const item = items.find((x) => x.id === id);
+      if (!item) return;
+      reviewDraft = {
+        id,
+        outcome: item.review || "unreviewed",
+        reasons: [...(item.reasons || [])],
+        note: item.reviewNote || ""
+      };
+      document.querySelector("#reviewIssue").textContent = `${item.id} · ${item.title}`;
+      document.querySelector("#reviewNote").value = reviewDraft.note;
+      document.querySelector("#modalEvidence").innerHTML = renderModalEvidence(item);
+      document.querySelector("#reviewModal").classList.add("active");
+      renderReviewModal();
+    }
+
+    function renderModalEvidence(item) {
+      const [attrText, attrColor] = attributionLabel[item.attribution] || [item.attribution, ""];
+      const [qualityText, qualityColor] = qualityLabel[item.quality] || [item.quality, ""];
+      return `
+        <div class="evidence"><div class="label">P4 证据</div><div class="value mono">${item.workstream || "-"}<br>${item.swarm || "无 Swarm"}<br>shelve ${item.shelve || "-"} / CL ${item.finalCl || "-"}</div></div>
+        <div class="evidence"><div class="label">AI 归因预判</div><div class="value"><span class="badge ${attrColor}">${attrText}</span></div><div class="hint">最终来源：${ownerText(item.finalOwner)}</div></div>
+        <div class="evidence"><div class="label">AI 质量预判</div><div class="value"><span class="badge ${qualityColor}">${qualityText}</span></div><div class="hint">${item.confidence == null ? "证据不足" : "置信度 " + (item.confidence * 100).toFixed(0) + "%"}</div></div>
+      `;
+    }
+
+    function closeReviewModal() {
+      reviewDraft = null;
+      document.querySelector("#reviewModal").classList.remove("active");
+    }
+
+    function setDraftOutcome(outcome) {
+      if (!reviewDraft) return;
+      reviewDraft.outcome = outcome;
+      reviewDraft.reasons = [];
+      renderReviewModal();
+    }
+
+    function toggleDraftReason(reason) {
+      if (!reviewDraft) return;
+      const set = new Set(reviewDraft.reasons);
+      if (set.has(reason)) set.delete(reason);
+      else set.add(reason);
+      reviewDraft.reasons = [...set];
+      renderReviewModal();
+    }
+
+    function renderReviewModal() {
+      if (!reviewDraft) return;
+      document.querySelector("#outcomeChoices").innerHTML = outcomeOptions.map(([key, label]) => `
+        <button class="choice ${reviewDraft.outcome === key ? "active" : ""}" type="button" onclick="setDraftOutcome('${key}')">${label}</button>
+      `).join("");
+      const reasons = reasonOptions[reviewDraft.outcome] || [];
+      document.querySelector("#reasonChoices").innerHTML = reasons.length
+        ? reasons.map(([key, label]) => `<button class="choice ${reviewDraft.reasons.includes(key) ? "active" : ""}" type="button" onclick="toggleDraftReason('${key}')">${label}</button>`).join("")
+        : '<span class="hint">待验收状态无需选择原因。</span>';
+    }
+
+    function saveReviewDraft() {
+      if (!reviewDraft) return;
+      reviewDraft.note = document.querySelector("#reviewNote").value.trim();
+      items = items.map((x) => x.id === reviewDraft.id ? {
+        ...x,
+        review: reviewDraft.outcome,
+        reasons: [...reviewDraft.reasons],
+        reviewNote: reviewDraft.note,
+        mismatch: deriveMismatch({ ...x, review: reviewDraft.outcome })
+      } : x);
+      saveItems();
+      closeReviewModal();
+      render();
+    }
+
+    function deriveMismatch(x) {
+      if (!x.externalDone) return "out_of_scope";
+      if (x.review === "unreviewed") return "pending";
+      if (x.review === "not_applicable" || x.quality === "unknown") return "not_comparable";
+      if (x.quality === "likely_correct" && x.review === "accepted") return "match";
+      if (x.quality === "likely_correct" && (x.review === "needs_changes" || x.review === "rejected")) return "overestimated";
+      if (x.quality === "likely_wrong" && x.review === "accepted") return "underestimated";
+      if (x.attribution === "conflict" && (x.review === "needs_changes" || x.review === "rejected")) return "accurate";
+      return "pending";
+    }
+
+    function csvCell(value) {
+      return `"${String(value ?? "").replaceAll('"', '""')}"`;
+    }
+
+    function exportCsv() {
+      const list = filteredItems();
+      const header = ["Issue", "Work Item", "Title", "Project", "Workstream", "Agent", "External Status", "Assessment", "Attribution", "Quality", "Confidence", "Swarm", "Shelve", "Final CL", "Human Review", "Reasons", "Mismatch", "Summary"];
+      const rows = list.map((x) => [x.id, x.workItem, x.title, x.project, x.workstream || "", x.agent, x.externalStatus, x.assessmentStatus, x.attribution, x.quality, x.confidence ?? "", x.swarm, x.shelve, x.finalCl, x.review, (x.reasons || []).map((r) => reasonLabel[r] || r).join("; "), x.mismatch, x.comment]);
+      const csv = [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+      const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `p4-ai-assessment-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function setPage(next) {
+      page = next;
+      if (page === "issues") {
+        document.querySelector("#pageTitle").textContent = "Issues";
+        document.querySelector("#pageSubtitle").textContent = "原 issue 工作流保留，只在卡片里融合外部完成态、P4 证据、AI 前置判断和人工验收结果。";
+      } else {
+        document.querySelector("#pageTitle").textContent = "Operations";
+        document.querySelector("#pageSubtitle").textContent = "P4/Swarm 修单明细、AI 判断准确性、人工验收和导出集中在这里。";
+      }
+      render();
+    }
+
+    function render() {
+      const list = filteredItems();
+      document.querySelector("#issuesPageTab").classList.toggle("active", page === "issues");
+      document.querySelector("#operationsPageTab").classList.toggle("active", page === "operations");
+      document.querySelector("#issuesPage").classList.toggle("active", page === "issues");
+      document.querySelector("#operationsPage").classList.toggle("active", page === "operations");
+      document.querySelector("#detailTab").classList.toggle("active", operationsView === "detail");
+      document.querySelector("#analysisTab").classList.toggle("active", operationsView === "analysis");
+      document.querySelector("#detailView").classList.toggle("active", operationsView === "detail");
+      document.querySelector("#analysisView").classList.toggle("active", operationsView === "analysis");
+      renderSummary(list);
+      renderBoard("#workflowBoard", workflowColumns, list);
+      renderRows(list);
+      renderAnalysisCharts(list);
+      renderProjectRows(list);
+      renderRank(list);
+    }
+
+    document.querySelector("#search").addEventListener("input", render);
+    document.querySelector("#agentFilter").addEventListener("change", render);
+    document.querySelector("#projectFilter").addEventListener("change", render);
+    document.querySelector("#assessmentFilter").addEventListener("change", render);
+    document.querySelector("#outcomeFilter").addEventListener("change", render);
+    document.querySelector("#rangeFilter").addEventListener("change", render);
+    document.querySelector("#exportCsv").addEventListener("click", exportCsv);
+    document.querySelector("#reset").addEventListener("click", () => {
+      items = structuredClone(initialItems);
+      saveItems();
+      renderFilters();
+      render();
+    });
+    document.querySelector("#issuesPageTab").addEventListener("click", () => setPage("issues"));
+    document.querySelector("#operationsPageTab").addEventListener("click", () => setPage("operations"));
+    document.querySelector("#detailTab").addEventListener("click", () => { operationsView = "detail"; render(); });
+    document.querySelector("#analysisTab").addEventListener("click", () => { operationsView = "analysis"; render(); });
+
+    renderFilters();
+    render();
+  </script>
+</body>
+</html>

@@ -2208,6 +2208,9 @@ func (h *Handler) emitIssueExecutedOnFirstCompletion(r *http.Request, task *db.A
 	if task == nil {
 		return
 	}
+	if service.IsP4AssessmentTask(*task) {
+		return
+	}
 	marked, err := h.Queries.MarkIssueFirstExecuted(r.Context(), task.IssueID)
 	if err != nil {
 		if !isNotFound(err) {

@@ -18,6 +18,7 @@ import {
   SquadListSchema,
   SquadSchema,
   TimelineEntriesSchema,
+  TriggerAgentFixP4AssessmentResponseSchema,
   UserSchema,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
@@ -462,6 +463,50 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
     expect(parsed[0]?.last_comment_author_type).toBe("agent");
   });
 
+  it("keeps optional P4 assessment fields while tolerating unknown enum strings", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      {
+        task_id: "t1",
+        external: {
+          binding_id: "binding-1",
+          work_item_id: "BUG-93218",
+          status: "Done",
+          mapped_status: "done",
+          done: true,
+          project: "Warpath3",
+        },
+        p4_assessment: {
+          assessment_status: "completed",
+          delivery_attribution_prediction: "future_attribution",
+          quality_prediction: "future_quality",
+          confidence: 0.86,
+          workstream: "rel_1.7.2/server",
+          swarm_reviews: [{ id: 11872, review_id: "SW-11872", changes: [282941] }],
+          ai_shelved_cls: [282941],
+          external_committed_cls: [283006],
+        },
+        human_review: {
+          outcome: "future_outcome",
+          reasons: ["future_reason"],
+        },
+        display_result_status: "future_display_status",
+        ai_judgement_eval: "future_eval",
+      },
+    ]);
+    expect(parsed[0]?.external?.binding_id).toBe("binding-1");
+    expect(parsed[0]?.external?.work_item_id).toBe("BUG-93218");
+    expect(parsed[0]?.p4_assessment?.workstream).toBe("rel_1.7.2/server");
+    expect(parsed[0]?.p4_assessment?.delivery_attribution_prediction).toBe(
+      "future_attribution",
+    );
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.review_id).toBe(
+      "SW-11872",
+    );
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.id).toBe(11872);
+    expect(parsed[0]?.human_review?.outcome).toBe("future_outcome");
+    expect(parsed[0]?.ai_judgement_eval).toBe("future_eval");
+  });
+
   it("returns the fallback (never throws) when a field has the wrong type", () => {
     // issue_status arriving as a number is a hard schema violation; the UI
     // path must degrade to the fallback rather than throw a white-screen.
@@ -472,6 +517,32 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
       { endpoint: "GET /api/operations/agent-fixes (test)" },
     );
     expect(parsed).toEqual([]);
+  });
+
+  it("parses the P4 assessment trigger response with drift-tolerant defaults", () => {
+    const parsed = TriggerAgentFixP4AssessmentResponseSchema.parse({
+      created: true,
+      assessment_id: "assessment-1",
+      task_id: "task-1",
+    });
+    expect(parsed).toEqual({
+      created: true,
+      reason: "",
+      assessment_id: "assessment-1",
+      assessment_status: "",
+      task_id: "task-1",
+    });
+    const fallback = parseWithFallback(
+      { created: "yes" },
+      TriggerAgentFixP4AssessmentResponseSchema,
+      { created: false, reason: "", assessment_status: "" },
+      { endpoint: "POST /api/operations/agent-fixes/p4-assessments (test)" },
+    );
+    expect(fallback).toEqual({
+      created: false,
+      reason: "",
+      assessment_status: "",
+    });
   });
 });
 

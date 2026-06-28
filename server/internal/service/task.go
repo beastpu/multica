@@ -26,13 +26,14 @@ import (
 )
 
 type TaskService struct {
-	Queries   *db.Queries
-	TxStarter TxStarter
-	Hub       *realtime.Hub
-	Bus       *events.Bus
-	Analytics analytics.Client
-	Metrics   *obsmetrics.BusinessMetrics
-	Wakeup    TaskWakeupNotifier
+	Queries      *db.Queries
+	TxStarter    TxStarter
+	Hub          *realtime.Hub
+	Bus          *events.Bus
+	Analytics    analytics.Client
+	Metrics      *obsmetrics.BusinessMetrics
+	Wakeup       TaskWakeupNotifier
+	P4Assessment *P4AssessmentService
 	// EmptyClaim caches "this runtime has no queued task" so the daemon
 	// poll path can skip a Postgres scan on the steady-state empty case.
 	// Optional — a nil cache disables the fast path and every claim
@@ -1319,6 +1320,17 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
 
+	if IsP4AssessmentTask(task) {
+		if s.P4Assessment != nil {
+			if err := s.P4Assessment.CompleteTask(ctx, task, result); err != nil {
+				slog.Warn("P4 assessment parse failed", "task_id", util.UUIDToString(task.ID), "error", err)
+			}
+		}
+		s.ReconcileAgentStatus(ctx, task.AgentID)
+		s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
+		return &task, nil
+	}
+
 	// Invariant: every completed issue task must have at least one agent
 	// comment on the issue, so the user always sees something when a run
 	// ends. If the agent posted a comment during execution (result, progress
@@ -1508,6 +1520,20 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
 	s.captureTaskFailed(ctx, task)
+
+	if IsP4AssessmentTask(task) {
+		if s.P4Assessment != nil {
+			warnings, _ := json.Marshal([]string{"task_failed: " + failureReason})
+			_, _ = s.Queries.FailP4AssessmentFromTask(ctx, db.FailP4AssessmentFromTaskParams{
+				WorkspaceID:      s.P4Assessment.taskWorkspaceID(task),
+				AssessmentTaskID: task.ID,
+				Warnings:         warnings,
+			})
+		}
+		s.ReconcileAgentStatus(ctx, task.AgentID)
+		s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, task)
+		return &task, nil
+	}
 
 	// Auto-retry eligible failures (orphan, timeout, runtime_offline,
 	// runtime_recovery). The helper itself enforces attempt < max_attempts

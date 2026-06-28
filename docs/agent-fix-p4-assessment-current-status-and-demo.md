@@ -1,0 +1,458 @@
+# AI 修单 P4/Swarm Assessment 当前状态与 Demo 指南
+
+> Status: In progress
+> Last updated: 2026-06-29
+> Static demo reference: `/home/wangtengfei/multica/agent-fix-board-demo.html`
+> Related plan: `docs/agent-fix-p4-assessment-plan.md`
+
+## 目标
+
+把静态 demo HTML 中的 P4/Swarm Assessment 信息架构产品化接入真实系统，而不是保留 standalone HTML。
+
+第一版重点是让 `/operations` 从旧的最小 agent fix 表格，升级成“AI 修单评估视图”：
+
+- 能看到外部/Meego 工单状态。
+- 能看到 workstream、Swarm review、shelved CL、final CL 等 P4 evidence。
+- 能看到 AI delivery attribution prediction。
+- 能看到 AI quality prediction 和 confidence。
+- 能看到人工验收 outcome、reasons、note。
+- 能看到 AI 判断和人工验收之间的 match/mismatch 派生结果。
+- 能在真实页面里编辑人工验收，不再只停留在 summary。
+
+## 已接入内容
+
+### 后端与数据链路
+
+已新增/扩展：
+
+- `agent_fix_p4_assessment` 表：保存 AI assessment 结果和 P4 evidence。
+- `agent_fix_review` 表：保存人工验收结果。
+- `GET /api/operations/agent-fixes`
+  - 返回旧表格字段。
+  - 增加 `external`，包括 `external.binding_id`。
+  - 增加 `p4_assessment`。
+  - 增加 `human_review`。
+  - 增加 `display_result_status` / `ai_judgement_eval`。
+- `POST /api/operations/agent-fixes/p4-assessments`
+  - 支持按 `binding_id` 单条触发或重跑 AI assessment。
+  - `force=false` 用于首次/幂等触发。
+  - completed 行的手动重跑使用 `force=true`。
+- `GET /api/operations/agent-fixes/{binding_id}/p4-evidence`
+  - 已有基础只读 evidence API。
+  - 当前主要返回 binding、issue、external fields 等 DB 证据；深度聚合仍待后续增强。
+- `PUT /api/operations/agent-fixes/{issueId}/review`
+  - 支持写入人工 review outcome、reasons、note。
+
+当前第一版仍以 operations feed 中的 issue/agent fix 行为主轴，已经能展示 demo P4 数据。
+Operations 主轴还没有完全切到“外部 done binding 统计分母”，当前仍兼容旧的 agent fix feed 主轴；普通 latest run 查询继续排除 `context.type = agent_fix_p4_assessment`。
+
+### Core
+
+已扩展：
+
+- `AgentFixRecord` 类型。
+- P4 assessment / external / human review 类型。
+- `AgentFixRecordListSchema` zod schema。
+- `TriggerAgentFixP4AssessmentResponseSchema` zod schema。
+- `updateAgentFixReview` API client。
+- `useUpdateAgentFixReview` React Query mutation。
+- `triggerAgentFixP4Assessment` API client。
+- `useTriggerAgentFixP4Assessment` React Query mutation。
+
+重要修复：
+
+- `p4_assessment.swarm_reviews[].id` 真实数据可能是数字，例如 `123`。
+- schema 已改为接受 `string | number`，避免 `parseWithFallback` 把整组 operations 数据 fallback 成空数组。
+- `external.binding_id` 已从后端 feed 补出，前端触发 assessment 不再依赖 issue id 或 metadata 兼容信号。
+
+### Operations 页面
+
+已在 `packages/views/dashboard/components/operations-page.tsx` 接入：
+
+- 顶部 P4 assessment summary。
+- `P4 details` / `Analysis report` tab。
+- 表格列：
+  - issue
+  - external status
+  - agent
+  - P4 evidence
+  - AI attribution
+  - AI quality
+  - human review
+  - eval
+  - time
+- P4 evidence 标签：
+  - workstream
+  - Swarm review
+  - shelved CL
+  - final CL
+  - warnings
+- 人工 review 弹窗：
+  - 展示 P4 evidence、AI attribution、AI quality。
+  - 可编辑 outcome。
+  - 可选择 reasons。
+  - 可填写 note。
+  - 保存后走真实 API mutation。
+- 分析报告页签：
+  - attribution 分布。
+  - human review 分布。
+  - eval 分布。
+  - workstream outcome 分组。
+  - 人工 review reasons 排行。
+  - AI prediction reasons 排行。
+- 顶部轻量筛选：
+  - workstream。
+  - AI attribution。
+  - AI quality。
+  - mismatch-only。
+- CSV 导出：
+  - 基于当前筛选后的 rows 导出，不新增后端接口。
+  - 文件名形如 `multica-p4-assessment-YYYY-MM-DD.csv`。
+  - CSV 前置 UTF-8 BOM，方便 Excel 直接打开。
+  - 数组字段用 `; ` 连接，空字段输出为空字符串。
+  - 字段包含 issue、外部工单、Project、Version、Workstream、Agent、AI assessment status、AI attribution、AI quality、confidence、Swarm review、AI shelve CL、Swarm change CL、final CL、human outcome、reasons、note、judgement eval、summary、warnings。
+- 手动 assessment 触发：
+  - 只对 `external.mapped_status === "done"` 且存在 `external.binding_id` 的行展示。
+  - 未完成或无 binding id 的行不展示触发入口。
+  - 无 completed assessment 的 done 行展示 `Run assessment`，请求体为 `{ binding_id, force: false }`。
+  - completed 行展示 `Rerun assessment`，请求体为 `{ binding_id, force: true }`。
+  - pending/running 行展示轻量进行中状态并禁用按钮。
+- 历史 done binding scanner：
+  - 已接入 Feishu Project sync worker，在每个 integration 的 sync/orphan reconcile 后、同一 advisory lock 内扫描一批历史 binding。
+  - 候选从 `feishu_project_issue_binding` 出发，使用 integration `status_mapping/work_item_types` 判断 mapped done。
+  - 只补没有 `agent_fix_p4_assessment` 记录的 binding，并调用 `Trigger(..., force=false)`。
+  - 不使用 `metadata.p4_assessment`、demo 或 title 关键词作为触发事实。
+  - 不自动重跑 failed/stale/completed，避免后台周期性重复烧 agent。
+
+当前筛选都在 `packages/views/dashboard/components/operations-page.tsx` 内基于 React Query 返回的 rows 前端派生，不新增 API 参数，不把 server 数据复制进 Zustand。筛选选项从当前返回数据中提取，unknown enum 仍按原始字符串降级显示。
+手动触发入口只按 external done binding 展示，不读取 `metadata.p4_assessment`、`metadata.demo` 或 title 关键词作为真实触发条件。
+
+### Issues 轻量融合
+
+已在 issues 列表/卡片接入轻量 P4 assessment 入口：
+
+- 检测 P4/demo 信号。
+- 展示 AI/P4/human review 相关标签。
+- human review 标签可点击，直接打开与 Operations 相同字段、枚举和保存接口的人工 review 弹窗。
+- 对 test1/test2 这类初始未验收状态，若已有 P4/demo 信号或能从 Operations assessment feed 匹配到 issue 记录，也会显示 `Human review` 入口，不需要先在 Operations 页写入 outcome。
+- Issues 列表行、看板卡片、Issue 详情页标题下方都会挂载同一套入口；组件内部自行判断是否显示，避免 record-only 的 assessment 被外层条件挡住。
+- 提供跳转 `/operations` 的 assessment 入口。
+
+## 尚未处理或未完整处理
+
+以下是静态 demo 或完整方案里有，但当前第一版还没有完整落地的内容：
+
+- 没有实现复杂图表；当前只做了不引入新图表库的轻量分析卡片、workstream 分组和 reasons 排行。
+- 没有新增后端聚合/筛选 API；当前 workstream / attribution / quality / mismatch-only 都是当前结果集的前端轻量筛选。
+- 没有批量操作。
+- 历史 done binding scanner 已实现保守版；当前只补缺失 assessment 的 mapped done binding。
+- failed/stale/completed 的产品化批量重跑还没做；当前只有单行手动入口，completed 行可 rerun。
+- P4/Swarm 服务端聚合还没做；Evidence API 第一版仍主要返回 DB 证据，没有受控查询真实 P4/Swarm。
+- Evidence 深度内容还没聚合相关 agent task/comment/perforce_review/issue_perforce_review。
+- 真实 final CL 校验还没完成；`提交记录` 已同步，但还没用真实 done 样本验证字段格式和 CL 提取稳定性。
+- binding-id review API 还没迁完；当前仍是 `PUT /api/operations/agent-fixes/{issueId}/review`，设计里的 `PATCH /api/operations/agent-fixes/{binding_id}/review` 未落。
+- 没有接 GitHub PR。
+- 没有自动修改飞书/Meego 状态。
+- 没有自动提交或修改 P4。
+- 没有 review history/audit，仅保存最新人工 review。
+- Operations 主轴还没有完全切到“外部 done binding 统计分母”，当前仍兼容旧的 agent fix feed 主轴。
+
+## 本阶段验证
+
+本阶段未启动新的 dev server，也没有改变部署/启动方式。
+
+已通过：
+
+```bash
+corepack pnpm --filter @multica/views exec vitest run dashboard/components/operations-page.test.tsx
+corepack pnpm --filter @multica/core exec vitest run api/schemas.test.ts
+corepack pnpm --filter @multica/views exec vitest run locales/parity.test.ts
+corepack pnpm --filter @multica/views typecheck
+corepack pnpm --filter @multica/core typecheck
+corepack pnpm --filter @multica/views exec vitest run issues/components/p4-assessment-entry.test.tsx
+corepack pnpm --filter @multica/views exec vitest run issues/components/pickers/label-picker.test.tsx
+corepack pnpm --filter @multica/views exec vitest run issues/components/pickers/stage-picker.test.tsx
+corepack pnpm --filter @multica/views typecheck
+corepack pnpm --filter @multica/core exec vitest run api/schemas.test.ts api/client.test.ts
+corepack pnpm --filter @multica/views exec vitest run dashboard/components/operations-page.test.tsx locales/parity.test.ts
+make sqlc
+cd server && go test ./internal/service -run 'TestP4AssessmentBackfillScansBindingsWithStatusMapping|TestP4AssessmentTaskIsolationSQLInvariants|TestP4AssessmentTriggerUsesBindingRowLock|TestAgentFixExternalDoneUsesStatusMappingInputs|TestTriggerP4AssessmentForDoneBinding'
+cd server && go test -c ./cmd/server -o /tmp/multica-cmd-server.test
+git diff --check
+```
+
+新增/补充覆盖：
+
+- CSV 纯函数测试：BOM、稳定表头、CSV 转义、数组字段、稀疏旧 rows。
+- Operations DOM 测试：先按 workstream 筛选，再点击 `Export CSV`，确认导出内容只包含当前筛选 rows。
+- Operations DOM 测试：done binding 行展示 `Run assessment`，非 done 行不展示；点击 `Run assessment` 调用 `{ binding_id, force: false }`；completed 行 `Rerun assessment` 调用 `{ binding_id, force: true }`。
+- Core schema/client 测试：`external.binding_id` 保留；`POST /api/operations/agent-fixes/p4-assessments` response 走 zod parseWithFallback；client 使用 `binding_id` 和 `force` 请求体。
+- P4 assessment scanner 结构测试：历史补跑 SQL 从 binding 出发，使用 status mapping 输入，不读取 metadata/demo/title 作为触发信号。
+- Issues DOM 测试：展示 Operations 共享人工 review outcome；从 Issues 直接打开人工 review 弹窗并通过 Operations mutation 保存；未标注初始状态显示 `Human review` 入口；Issue 缺 P4 metadata 但 assessment feed 能匹配时仍显示入口。
+- Label picker DOM 测试：覆盖已有 label chip 触发器，避免 Base UI `nativeButton` warning。
+- 继续保留 unknown enum 降级展示、analysis report、筛选、review 弹窗相关测试。
+
+验证限制：
+
+- Go handler / cmd server 测试在本地 fixture 初始化阶段失败：测试数据库缺少 `workspace` 表（未迁移/未初始化），不是本次 UI 改动的断言失败。
+- `cd server && go test ./internal/service ./cmd/server` 还暴露一个既有失败：`TestResolveAttachmentContentType/log_file_stays_text/plain` 期望 `text/plain`，实际为 `text/x-log; charset=utf-8`。
+
+## Demo 数据
+
+当前本地 demo DB 已 seed 一条可见数据：
+
+- Workspace slug: `test`
+- Issue: `P4 assessment demo - visible summary`
+- Identifier: `TES-3`
+- Agent: `P4 Demo Agent`
+- External work item: `P4-DEMO-1`
+- Workstream: `server`
+- Swarm review: `123`
+- AI shelved CL: `1001`
+- Swarm change CL: `1002`
+- Swarm committed CL: `1003`
+- External committed CL: `1004`
+- AI attribution prediction: `ai_delivered`
+- AI quality prediction: `likely_correct`
+- Human review outcome: `needs_changes`
+- Eval: `overestimated`
+
+另有三条用于手动体验人工标注流程的未标注样例：
+
+- `TES-4`: `P4 assessment manual review demo - unreviewed AI likely correct`
+  - External work item: `P4-DEMO-UNREVIEWED-1`
+  - AI attribution prediction: `ai_delivered`
+  - AI quality prediction: `likely_correct`
+  - Human review outcome: 空，等待用户从 Issues 或 Operations 页面手动填写。
+- `TES-5`: `P4 assessment manual review demo - unreviewed needs changes`
+  - External work item: `P4-DEMO-UNREVIEWED-2`
+  - AI attribution prediction: `ai_assisted`
+  - AI quality prediction: `likely_needs_changes`
+  - Human review outcome: 空，等待用户从 Issues 或 Operations 页面手动填写。
+- `TES-6`: `P4 assessment manual review demo - unreviewed uncertain attribution`
+  - External work item: `P4-DEMO-UNREVIEWED-3`
+  - AI attribution prediction: `conflict`
+  - AI quality prediction: `unknown`
+  - Human review outcome: 空，等待用户从 Issues 或 Operations 页面手动填写。
+
+可用测试账号：
+
+```text
+email: 13@aa
+verification code: 888888
+workspace: test
+```
+
+## 本地启动方式
+
+当前推荐让后端只作为 Web 的同源代理目标，外部用户只访问 Web。
+
+### Backend
+
+后端端口：
+
+```text
+http://localhost:18918
+```
+
+关键环境变量：
+
+```bash
+DATABASE_URL='postgres://multica:multica@localhost:5432/multica_multica_agent_fix_p4_assessment_v1_838?sslmode=disable'
+PORT=18918
+JWT_SECRET=change-me-in-production
+MULTICA_DEV_VERIFICATION_CODE=888888
+FRONTEND_ORIGIN=http://localhost:13838
+MULTICA_APP_URL=http://localhost:13838
+CORS_ALLOWED_ORIGINS=http://localhost:13838,http://10.1.24.179:13838
+```
+
+启动：
+
+```bash
+go run ./cmd/server
+```
+
+### Web
+
+Web 端口：
+
+```text
+http://localhost:13838
+http://10.1.24.179:13838
+```
+
+推荐启动命令：
+
+```bash
+FRONTEND_PORT=13838 \
+REMOTE_API_URL=http://localhost:18918 \
+NEXT_PUBLIC_API_URL= \
+NEXT_PUBLIC_WS_URL= \
+COREPACK_HOME=/tmp/corepack \
+corepack pnpm --filter @multica/web dev
+```
+
+关键点：
+
+- 必须设置 `REMOTE_API_URL=http://localhost:18918`。
+- 不要把 `NEXT_PUBLIC_API_URL` 指向后端，否则浏览器会直接跨域访问后端。
+- 让浏览器访问 Web，再由 Next rewrite 代理：
+  - `/api/*` -> `http://localhost:18918/api/*`
+  - `/auth/*` -> `http://localhost:18918/auth/*`
+  - `/ws` -> `http://localhost:18918/ws`
+
+## 外部访问方式
+
+对外只给 Web 地址：
+
+```text
+http://10.1.24.179:13838/test/operations
+```
+
+登录：
+
+```text
+email: 13@aa
+code: 888888
+```
+
+外部用户不需要直接访问 backend `18918`。
+
+如果希望后端不对外暴露，应让后端只监听 `127.0.0.1:18918`，Web 继续监听 `0.0.0.0:13838`。当前验证链路是外部访问 Web，Web 同源代理到后端。
+
+## 部署/调试中遇到的问题
+
+### 1. Web 代理打回自己，导致页面空或 500
+
+现象：
+
+- `/test/operations` 页面返回 200，但登录和 API 失败。
+- Next dev server 日志出现类似：
+
+```text
+Failed to proxy http://localhost:13838/api/workspaces
+Failed to proxy http://localhost:13838/api/operations/agent-fixes
+```
+
+原因：
+
+- Web 启动时没有设置 `REMOTE_API_URL=http://localhost:18918`。
+- `apps/web/next.config.ts` 的 rewrite 目标回退到了错误地址，导致 `/api/*` 代理回 Web 自己。
+
+处理：
+
+```bash
+kill -TERM <old-next-pids>
+
+FRONTEND_PORT=13838 \
+REMOTE_API_URL=http://localhost:18918 \
+NEXT_PUBLIC_API_URL= \
+NEXT_PUBLIC_WS_URL= \
+COREPACK_HOME=/tmp/corepack \
+corepack pnpm --filter @multica/web dev
+```
+
+### 2. API 有数据，但 Operations 页面显示空
+
+现象：
+
+- 后端 `/api/operations/agent-fixes` 返回 demo row。
+- Web 页面仍显示空态。
+- 浏览器/Next 日志出现：
+
+```text
+API response failed schema validation: GET /api/operations/agent-fixes
+invalid_type expected string received number
+```
+
+原因：
+
+- `p4_assessment.swarm_reviews[].id` 真实返回数字。
+- 前端 schema 原先只接受 string。
+- `parseWithFallback` 按 API 边界规则返回 fallback `[]`，所以 UI 没数据。
+
+处理：
+
+- `AgentFixSwarmReviewSchema.id` 改成 `string | number`。
+- `AgentFixSwarmReview.id` 类型同步。
+- 增加 schema regression test。
+
+### 3. Playwright 无法截图
+
+现象：
+
+```text
+browserType.launch: Executable doesn't exist
+Please run: npx playwright install
+```
+
+原因：
+
+- repo 有 Playwright 包，但本机未下载浏览器二进制。
+
+当前处理：
+
+- 没有下载新依赖。
+- 使用 Next dev server browser logs、curl、后端日志验证。
+
+## 快速验证命令
+
+页面入口：
+
+```bash
+curl -sS -o /tmp/multica_ops.html -w '%{http_code}\n' \
+  http://10.1.24.179:13838/test/operations
+```
+
+通过 Web 同源代理验证 operations API：
+
+```bash
+curl -sS -c /tmp/multica_demo.cookies \
+  -H 'content-type: application/json' \
+  -d '{"email":"13@aa"}' \
+  http://10.1.24.179:13838/auth/send-code
+
+curl -sS -b /tmp/multica_demo.cookies -c /tmp/multica_demo.cookies \
+  -H 'content-type: application/json' \
+  -d '{"email":"13@aa","code":"888888"}' \
+  http://10.1.24.179:13838/auth/verify-code
+
+curl -sS -b /tmp/multica_demo.cookies \
+  -H 'x-workspace-slug: test' \
+  'http://10.1.24.179:13838/api/operations/agent-fixes?days=30'
+```
+
+期望返回包含：
+
+```text
+P4 assessment demo - visible summary
+P4-DEMO-1
+ai_delivered
+likely_correct
+needs_changes
+overestimated
+```
+
+## 已跑验证
+
+```bash
+./node_modules/.bin/vitest run packages/views/dashboard/components/operations-page.test.tsx --environment jsdom
+./node_modules/.bin/vitest run packages/core/api/schemas.test.ts
+./node_modules/.bin/tsc --noEmit -p packages/views/tsconfig.json
+./node_modules/.bin/tsc --noEmit -p packages/core/tsconfig.json
+corepack pnpm --filter @multica/core exec vitest run api/schemas.test.ts api/client.test.ts
+corepack pnpm --filter @multica/views exec vitest run dashboard/components/operations-page.test.tsx locales/parity.test.ts
+corepack pnpm --filter @multica/core typecheck
+corepack pnpm --filter @multica/views typecheck
+git diff --check
+```
+
+当前结果：
+
+- core schema test: pass
+- core API client test: pass
+- core typecheck: pass
+- operations page test: pass
+- locale parity test: pass
+- views typecheck: pass

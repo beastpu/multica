@@ -650,6 +650,74 @@ export interface AgentFixRecord {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  external?: AgentFixExternalRecord;
+  p4_assessment?: AgentFixP4Assessment;
+  human_review?: AgentFixHumanReview;
+  display_result_status?: string;
+  ai_judgement_eval?: string;
+}
+
+export interface AgentFixExternalRecord {
+  binding_id?: string;
+  work_item_id?: string;
+  status?: string;
+  mapped_status?: string;
+  done?: boolean;
+  project?: string;
+  version?: string;
+  url?: string;
+}
+
+export interface AgentFixP4Assessment {
+  assessment_status?: string;
+  delivery_attribution_prediction?: string;
+  quality_prediction?: string;
+  prediction_reasons?: string[];
+  confidence?: number | null;
+  workstream?: string;
+  swarm_reviews?: AgentFixSwarmReview[];
+  ai_shelved_cls?: Array<string | number>;
+  swarm_change_cls?: Array<string | number>;
+  swarm_committed_cls?: Array<string | number>;
+  external_committed_cls?: Array<string | number>;
+  summary?: string;
+  warnings?: string[];
+}
+
+export interface AgentFixSwarmReview {
+  id?: string | number;
+  review_id?: string | number;
+  state?: string;
+  url?: string;
+  changes?: Array<string | number>;
+  commits?: Array<string | number>;
+}
+
+export interface AgentFixHumanReview {
+  outcome?: string;
+  reasons?: string[];
+  note?: string;
+  reviewer_id?: string;
+  reviewed_at?: string | null;
+}
+
+export interface UpdateAgentFixReviewRequest {
+  outcome: string;
+  reasons?: string[];
+  note?: string;
+}
+
+export interface TriggerAgentFixP4AssessmentRequest {
+  binding_id: string;
+  force?: boolean;
+}
+
+export interface TriggerAgentFixP4AssessmentResponse {
+  created: boolean;
+  reason: string;
+  assessment_id?: string;
+  assessment_status?: string;
+  task_id?: string;
 }
 
 export type RuntimeUpdateStatus =

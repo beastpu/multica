@@ -57,22 +57,180 @@
   },
   "operations": {
     "title": "Operations",
-    "subtitle": "Issues your agents have worked on — the latest run, the issue's status, and the agent's most recent comment.",
+    "assessment_title": "AI fix assessment",
+    "subtitle": "P4/Swarm evidence, AI delivery predictions, human review, and judgement drift for issues your agents worked on.",
     "search_placeholder": "Search comments",
     "search_clear": "Clear search",
     "filter": {
       "all_agents": "All agents",
-      "status_all": "All statuses"
+      "status_all": "All statuses",
+      "workstream": "Workstream",
+      "workstream_all": "All workstreams",
+      "attribution": "AI attribution",
+      "attribution_all": "All attribution",
+      "quality": "AI quality",
+      "quality_all": "All quality",
+      "mismatch_only": "Mismatch only"
+    },
+    "tabs": {
+      "detail": "P4 details",
+      "analysis": "Analysis report",
+      "detail_hint": "External completion, P4 evidence, AI predictions, and human review.",
+      "analysis_hint": "Lightweight rollups from the current filtered rows."
+    },
+    "summary": {
+      "hero_label": "Operations · P4 assessment",
+      "hero_hint": "Current filtered issues",
+      "external_done": "External done",
+      "external_done_hint": "Feishu/Meego done as the stats base",
+      "p4_coverage": "P4 coverage",
+      "p4_coverage_hint": "Rows with P4/Swarm evidence",
+      "ai_delivery": "AI delivered",
+      "ai_delivery_hint": "AI delivered or assisted prediction",
+      "human_reviewed": "Human reviewed",
+      "human_reviewed_hint": "Outcome confirmed by a person",
+      "accepted": "Accepted",
+      "accepted_hint": "Human review accepted",
+      "drift": "Judgement drift",
+      "drift_hint": "Mismatch or over/under-estimate"
+    },
+    "analysis": {
+      "attribution_title": "AI delivery attribution",
+      "review_title": "Human review outcome",
+      "eval_title": "AI judgement eval",
+      "workstream_title": "Workstream outcome",
+      "workstream_counts": "{{total}} total · {{reviewed}} reviewed · {{accepted}} accepted · {{mismatches}} drift",
+      "human_reason_title": "Top human reasons",
+      "prediction_reason_title": "Top AI reasons",
+      "no_reasons": "No reasons yet"
     },
     "table": {
       "issue": "Issue",
       "agent": "Agent",
       "time": "Date",
       "status": "Status",
-      "reason": "Reason / description"
+      "reason": "Reason / description",
+      "external_status": "External status",
+      "p4_evidence": "P4 evidence",
+      "ai_attribution": "AI delivery",
+      "ai_quality": "AI quality",
+      "human_review": "Human review",
+      "eval": "Eval"
+    },
+    "external": {
+      "in_stats": "In stats",
+      "out_of_stats": "Out of stats"
+    },
+    "p4": {
+      "workstream": "stream",
+      "swarm_value": "Swarm {{value}}",
+      "no_swarm": "No Swarm",
+      "shelve": "shelve",
+      "final_cl": "final CL",
+      "confidence": "confidence {{value}}",
+      "no_evidence": "No P4 evidence"
+    },
+    "assessment_action": {
+      "run": "Run assessment",
+      "rerun": "Rerun assessment",
+      "starting": "Starting...",
+      "in_progress": "Assessment running",
+      "run_started": "Assessment started",
+      "rerun_started": "Assessment rerun started",
+      "failed": "Failed to start assessment"
+    },
+    "enums": {
+      "assessment": {
+        "missing": "Needs AI assessment",
+        "running": "AI assessing",
+        "failed": "AI failed",
+        "completed": "AI assessed",
+        "stale": "Stale"
+      },
+      "attribution": {
+        "ai_delivered": "AI delivered",
+        "ai_assisted": "AI assisted",
+        "human_delivered": "Human delivered",
+        "conflict": "Attribution conflict",
+        "unattributed": "Unattributed",
+        "unknown": "Insufficient evidence"
+      },
+      "quality": {
+        "likely_correct": "Likely correct",
+        "likely_needs_changes": "May need changes",
+        "likely_wrong": "Likely wrong",
+        "unknown": "No judgement"
+      },
+      "review": {
+        "unreviewed": "Pending",
+        "accepted": "Accepted",
+        "needs_changes": "Needs changes",
+        "rejected": "Rejected",
+        "not_applicable": "N/A"
+      },
+      "review_reason": {
+        "complete_usable": "Complete",
+        "small_fix": "Small fix",
+        "human_assisted": "Human assisted",
+        "coverage_incomplete": "Incomplete coverage",
+        "edge_case_missing": "Missing edge case",
+        "test_insufficient": "Insufficient tests",
+        "wrong_location": "Wrong location",
+        "integration_incomplete": "Integration incomplete",
+        "quality_insufficient": "Quality insufficient",
+        "compatibility": "Compatibility issue",
+        "wrong_direction": "Wrong direction",
+        "root_cause_missing": "Root cause missing",
+        "regression": "Regression",
+        "risk_high": "High risk",
+        "unusable_output": "Unusable output",
+        "unverifiable": "Unverifiable",
+        "architecture_violation": "Architecture violation",
+        "not_fix_task": "Not a fix task",
+        "duplicate": "Duplicate",
+        "environment_data": "Env/data issue",
+        "cancelled_requirement": "Requirement cancelled",
+        "no_change_needed": "No change needed",
+        "misfire": "Misfire"
+      },
+      "eval": {
+        "match": "Accurate",
+        "accurate": "Conflict accurate",
+        "overestimated": "AI overestimated",
+        "underestimated": "AI underestimated",
+        "wrong_attribution": "Wrong attribution",
+        "not_comparable": "Not comparable",
+        "out_of_scope": "Out of scope",
+        "pending": "Pending review",
+        "needs_ai_assessment": "Needs AI assessment",
+        "ai_assessing": "AI assessing",
+        "ai_assessment_failed": "AI failed",
+        "needs_review_conflict": "Conflict pending",
+        "needs_human_review": "Needs human review"
+      }
+    },
+    "review_modal": {
+      "title": "Human review AI fix result",
+      "empty_issue": "No issue selected",
+      "evidence_p4": "P4 evidence",
+      "evidence_attribution": "AI attribution prediction",
+      "evidence_quality": "AI quality prediction",
+      "insufficient_evidence": "Insufficient evidence",
+      "outcome": "Human outcome",
+      "reasons": "Reasons",
+      "no_reasons": "No reason needed for this outcome.",
+      "reason_hint": "Human outcome is the final fact; AI predictions remain for accuracy analysis.",
+      "note": "Note",
+      "note_placeholder": "Add judgement details, for example: the AI shelve was not used and the final CL was manually submitted.",
+      "cancel": "Cancel",
+      "save": "Save",
+      "saving": "Saving...",
+      "save_failed": "Failed to save review"
     },
     "no_reason": "—",
+    "export_csv": "Export CSV",
     "caption": "{{count}} records",
+    "assessment_caption": "{{p4Rows}} P4 · {{reviewed}} reviewed · {{mismatches}} drift",
     "resize_column": "Resize {{column}} column",
     "reset_columns": "Reset columns",
     "empty": {

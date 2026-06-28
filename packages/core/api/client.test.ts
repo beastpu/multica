@@ -33,6 +33,44 @@ describe("ApiClient", () => {
     }
   });
 
+  it("uses binding_id and force for the P4 assessment trigger endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          created: true,
+          reason: "created",
+          assessment_status: "pending",
+          task_id: "task-1",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    const result = await client.triggerAgentFixP4Assessment({
+      binding_id: "binding-1",
+      force: false,
+    });
+
+    expect(result).toMatchObject({
+      created: true,
+      reason: "created",
+      assessment_status: "pending",
+      task_id: "task-1",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/operations/agent-fixes/p4-assessments",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ binding_id: "binding-1", force: false }),
+      }),
+    );
+  });
+
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ autopilots: [], runs: [], total: 0 }), {
