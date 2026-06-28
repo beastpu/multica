@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -44,8 +45,11 @@ type P4AssessmentBackfillResult struct {
 }
 
 type P4AssessmentEvidence struct {
-	Binding map[string]any `json:"binding"`
-	Issue   map[string]any `json:"issue"`
+	Binding         map[string]any   `json:"binding"`
+	Issue           map[string]any   `json:"issue"`
+	Tasks           []map[string]any `json:"tasks"`
+	Comments        []map[string]any `json:"comments"`
+	PerforceReviews []map[string]any `json:"perforce_reviews"`
 }
 
 type p4AssessmentContext struct {
@@ -237,6 +241,24 @@ func (s *P4AssessmentService) Evidence(ctx context.Context, workspaceID, binding
 	}
 	fields := map[string]any{}
 	_ = json.Unmarshal(row.ExternalFields, &fields)
+	tasks, err := s.Queries.ListP4EvidenceTasksByIssue(ctx, db.ListP4EvidenceTasksByIssueParams{
+		IssueID:     row.IssueID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return P4AssessmentEvidence{}, err
+	}
+	comments, err := s.Queries.ListP4EvidenceCommentsByIssue(ctx, db.ListP4EvidenceCommentsByIssueParams{
+		IssueID:     row.IssueID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return P4AssessmentEvidence{}, err
+	}
+	reviews, err := s.Queries.ListReviewsByIssue(ctx, row.IssueID)
+	if err != nil {
+		return P4AssessmentEvidence{}, err
+	}
 	return P4AssessmentEvidence{
 		Binding: map[string]any{
 			"id":                    util.UUIDToString(row.BindingID),
@@ -254,7 +276,63 @@ func (s *P4AssessmentService) Evidence(ctx context.Context, workspaceID, binding
 			"status":      row.IssueStatus,
 			"description": textString(row.IssueDescription),
 		},
+		Tasks:           p4EvidenceTaskMaps(tasks),
+		Comments:        p4EvidenceCommentMaps(comments),
+		PerforceReviews: p4EvidenceReviewMaps(reviews),
 	}, nil
+}
+
+func p4EvidenceTaskMaps(tasks []db.ListP4EvidenceTasksByIssueRow) []map[string]any {
+	out := make([]map[string]any, 0, len(tasks))
+	for _, task := range tasks {
+		out = append(out, map[string]any{
+			"id":               util.UUIDToString(task.ID),
+			"agent_id":         util.UUIDToString(task.AgentID),
+			"status":           task.Status,
+			"is_p4_assessment": task.IsP4Assessment,
+			"failure_reason":   textString(task.FailureReason),
+			"error":            textString(task.Error),
+			"created_at":       timeString(task.CreatedAt),
+			"started_at":       timeString(task.StartedAt),
+			"completed_at":     timeString(task.CompletedAt),
+		})
+	}
+	return out
+}
+
+func p4EvidenceCommentMaps(comments []db.ListP4EvidenceCommentsByIssueRow) []map[string]any {
+	out := make([]map[string]any, 0, len(comments))
+	for _, comment := range comments {
+		out = append(out, map[string]any{
+			"id":             util.UUIDToString(comment.ID),
+			"author_type":    comment.AuthorType,
+			"author_id":      util.UUIDToString(comment.AuthorID),
+			"type":           comment.Type,
+			"content":        comment.Content,
+			"source_task_id": uuidStringOrEmpty(comment.SourceTaskID),
+			"created_at":     timeString(comment.CreatedAt),
+		})
+	}
+	return out
+}
+
+func p4EvidenceReviewMaps(reviews []db.PerforceReview) []map[string]any {
+	out := make([]map[string]any, 0, len(reviews))
+	for _, review := range reviews {
+		out = append(out, map[string]any{
+			"id":                util.UUIDToString(review.ID),
+			"review_id":         review.ReviewID,
+			"title":             review.Title,
+			"state":             review.State,
+			"html_url":          review.HtmlUrl,
+			"author":            textString(review.Author),
+			"shelved_cl":        int32OrNil(review.ShelvedCl),
+			"committed_cl":      int32OrNil(review.CommittedCl),
+			"review_created_at": timeString(review.ReviewCreatedAt),
+			"review_updated_at": timeString(review.ReviewUpdatedAt),
+		})
+	}
+	return out
 }
 
 func (s *P4AssessmentService) CompleteTask(ctx context.Context, task db.AgentTaskQueue, result []byte) error {
@@ -390,4 +468,25 @@ func textString(t pgtype.Text) string {
 		return ""
 	}
 	return t.String
+}
+
+func uuidStringOrEmpty(id pgtype.UUID) string {
+	if !id.Valid {
+		return ""
+	}
+	return util.UUIDToString(id)
+}
+
+func int32OrNil(v pgtype.Int4) any {
+	if !v.Valid {
+		return nil
+	}
+	return v.Int32
+}
+
+func timeString(t pgtype.Timestamptz) string {
+	if !t.Valid {
+		return ""
+	}
+	return t.Time.UTC().Format(time.RFC3339Nano)
 }

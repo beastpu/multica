@@ -110,6 +110,48 @@ func TestP4AssessmentBackfillScansBindingsWithStatusMapping(t *testing.T) {
 	}
 }
 
+func TestP4EvidenceQueriesAreScopedAndBounded(t *testing.T) {
+	sql, err := os.ReadFile("../../pkg/db/queries/agent.sql")
+	if err != nil {
+		t.Fatalf("read agent.sql: %v", err)
+	}
+	taskChunk := sqlSection(t, string(sql), "ListP4EvidenceTasksByIssue")
+	for _, want := range []string{
+		"JOIN agent a ON a.id = atq.agent_id",
+		"atq.issue_id = sqlc.arg('issue_id')",
+		"a.workspace_id = sqlc.arg('workspace_id')",
+		"COALESCE(atq.context->>'type', '') = 'agent_fix_p4_assessment' AS is_p4_assessment",
+		"LIMIT 20",
+	} {
+		if !strings.Contains(taskChunk, want) {
+			t.Fatalf("ListP4EvidenceTasksByIssue missing %q\n---\n%s", want, taskChunk)
+		}
+	}
+	for _, forbidden := range []string{
+		"atq.result",
+		"atq.context,",
+		"atq.work_dir",
+		"atq.session_id",
+	} {
+		if strings.Contains(taskChunk, forbidden) {
+			t.Fatalf("ListP4EvidenceTasksByIssue must not expose %q\n---\n%s", forbidden, taskChunk)
+		}
+	}
+
+	commentChunk := sqlSection(t, string(sql), "ListP4EvidenceCommentsByIssue")
+	for _, want := range []string{
+		"c.issue_id = sqlc.arg('issue_id')",
+		"c.workspace_id = sqlc.arg('workspace_id')",
+		"c.type = 'comment'",
+		"c.author_type = 'agent'",
+		"LIMIT 20",
+	} {
+		if !strings.Contains(commentChunk, want) {
+			t.Fatalf("ListP4EvidenceCommentsByIssue missing %q\n---\n%s", want, commentChunk)
+		}
+	}
+}
+
 func sqlSection(t *testing.T, sql, name string) string {
 	t.Helper()
 	marker := "-- name: " + name + " "

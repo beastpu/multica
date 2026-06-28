@@ -1087,6 +1087,45 @@ SELECT * FROM agent_task_queue
 WHERE issue_id = $1
 ORDER BY created_at DESC;
 
+-- name: ListP4EvidenceTasksByIssue :many
+SELECT
+  atq.id,
+  atq.agent_id,
+  atq.issue_id,
+  atq.status,
+  atq.created_at,
+  atq.started_at,
+  atq.completed_at,
+  atq.failure_reason,
+  atq.error,
+  COALESCE(atq.context->>'type', '') = 'agent_fix_p4_assessment' AS is_p4_assessment
+FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+WHERE atq.issue_id = sqlc.arg('issue_id')
+  AND a.workspace_id = sqlc.arg('workspace_id')
+ORDER BY COALESCE(atq.completed_at, atq.started_at, atq.created_at) DESC, atq.id DESC
+LIMIT 20;
+
+-- name: ListP4EvidenceCommentsByIssue :many
+SELECT
+  c.id,
+  c.author_type,
+  c.author_id,
+  c.type,
+  c.content,
+  c.source_task_id,
+  c.created_at
+FROM comment c
+WHERE c.issue_id = sqlc.arg('issue_id')
+  AND c.workspace_id = sqlc.arg('workspace_id')
+  AND c.type = 'comment'
+  AND (
+    c.author_type = 'agent'
+    OR c.content ~* '(shelved[[:space:]]+cl|swarm[[:space:]]+review|review/[0-9]+|cl[[:space:]]*[:#]?[[:space:]]*[0-9]{4,})'
+  )
+ORDER BY c.created_at DESC, c.id DESC
+LIMIT 20;
+
 -- name: UpdateAgentStatus :one
 UPDATE agent SET status = $2, updated_at = now()
 WHERE id = $1

@@ -4,6 +4,11 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestParseP4AssessmentTaskOutputStrictJSON(t *testing.T) {
@@ -72,4 +77,82 @@ func TestFeishuProjectExternalFieldsKeepsSubmitRecord(t *testing.T) {
 	if fields["开发分支"] != "rel_1.7.2" {
 		t.Fatalf("开发分支 = %q", fields["开发分支"])
 	}
+}
+
+func TestP4EvidenceTaskProjectionDoesNotExposeRawTaskInternals(t *testing.T) {
+	taskID := mustTestUUID(t, "00000000-0000-0000-0000-000000000001")
+	agentID := mustTestUUID(t, "00000000-0000-0000-0000-000000000002")
+	issueID := mustTestUUID(t, "00000000-0000-0000-0000-000000000003")
+	ts := pgtype.Timestamptz{Time: time.Date(2026, 6, 29, 3, 4, 5, 0, time.UTC), Valid: true}
+
+	rows := []db.ListP4EvidenceTasksByIssueRow{{
+		ID:             taskID,
+		AgentID:        agentID,
+		IssueID:        issueID,
+		Status:         "failed",
+		CreatedAt:      ts,
+		StartedAt:      ts,
+		CompletedAt:    ts,
+		FailureReason:  pgtype.Text{String: "agent_error", Valid: true},
+		Error:          pgtype.Text{String: "short failure", Valid: true},
+		IsP4Assessment: true,
+	}}
+
+	got := p4EvidenceTaskMaps(rows)
+	if len(got) != 1 {
+		t.Fatalf("len = %d", len(got))
+	}
+	task := got[0]
+	for _, key := range []string{"result", "context", "work_dir", "session_id", "runtime_id"} {
+		if _, ok := task[key]; ok {
+			t.Fatalf("task projection leaked %q: %#v", key, task)
+		}
+	}
+	if task["id"] != util.UUIDToString(taskID) || task["agent_id"] != util.UUIDToString(agentID) {
+		t.Fatalf("task ids = %#v", task)
+	}
+	if task["is_p4_assessment"] != true || task["failure_reason"] != "agent_error" || task["error"] != "short failure" {
+		t.Fatalf("task summary = %#v", task)
+	}
+	if task["completed_at"] != "2026-06-29T03:04:05Z" {
+		t.Fatalf("completed_at = %#v", task["completed_at"])
+	}
+}
+
+func TestP4EvidenceReviewProjectionKeepsSwarmAndCLFields(t *testing.T) {
+	reviewID := mustTestUUID(t, "00000000-0000-0000-0000-000000000004")
+	ts := pgtype.Timestamptz{Time: time.Date(2026, 6, 29, 4, 5, 6, 0, time.UTC), Valid: true}
+	rows := []db.PerforceReview{{
+		ID:              reviewID,
+		ReviewID:        267641,
+		Title:           "WAR-7512 fix",
+		State:           "needsReview",
+		HtmlUrl:         "https://swarm/reviews/267641",
+		Author:          pgtype.Text{String: "svr_ci", Valid: true},
+		ShelvedCl:       pgtype.Int4{Int32: 267639, Valid: true},
+		CommittedCl:     pgtype.Int4{},
+		ReviewCreatedAt: ts,
+		ReviewUpdatedAt: ts,
+	}}
+
+	got := p4EvidenceReviewMaps(rows)
+	if len(got) != 1 {
+		t.Fatalf("len = %d", len(got))
+	}
+	review := got[0]
+	if review["review_id"] != int64(267641) || review["state"] != "needsReview" || review["shelved_cl"] != int32(267639) {
+		t.Fatalf("review evidence = %#v", review)
+	}
+	if review["committed_cl"] != nil {
+		t.Fatalf("committed_cl = %#v, want nil", review["committed_cl"])
+	}
+}
+
+func mustTestUUID(t *testing.T, s string) pgtype.UUID {
+	t.Helper()
+	id, err := util.ParseUUID(s)
+	if err != nil {
+		t.Fatalf("parse uuid %s: %v", s, err)
+	}
+	return id
 }

@@ -38,8 +38,11 @@
   - `force=false` 用于首次/幂等触发。
   - completed 行的手动重跑使用 `force=true`。
 - `GET /api/operations/agent-fixes/{binding_id}/p4-evidence`
-  - 已有基础只读 evidence API。
-  - 当前主要返回 binding、issue、external fields 等 DB 证据；深度聚合仍待后续增强。
+  - 已有只读 evidence API。
+  - 返回 binding、issue、external fields、相关 agent task 摘要、相关 comment 线索、已入库的 `perforce_review` / `issue_perforce_review` Swarm evidence。
+  - task evidence 只返回受控摘要：task id、agent id、status、是否 P4 assessment、failure reason、error、时间戳；不暴露 `result`、`context`、`session_id`、`work_dir` 等运行内部信息。
+  - comment evidence 只返回 agent comment 或命中 CL/Swarm 关键词的普通 comment，最多 20 条。
+  - Perforce evidence 复用已入库 Swarm review 状态、review id、URL、author、shelved CL、committed CL 和 review 时间。
 - `PUT /api/operations/agent-fixes/{issueId}/review`
   - 支持写入人工 review outcome、reasons、note。
 
@@ -147,8 +150,8 @@ Operations 主轴还没有完全切到“外部 done binding 统计分母”，�
 - 没有批量操作。
 - 历史 done binding scanner 已实现保守版；当前只补缺失 assessment 的 mapped done binding。
 - failed/stale/completed 的产品化批量重跑还没做；当前只有单行手动入口，completed 行可 rerun。
-- P4/Swarm 服务端聚合还没做；Evidence API 第一版仍主要返回 DB 证据，没有受控查询真实 P4/Swarm。
-- Evidence 深度内容还没聚合相关 agent task/comment/perforce_review/issue_perforce_review。
+- P4/Swarm 服务端外部查询还没做；Evidence API 当前只聚合 Multica DB 内已有证据，没有实时查询真实 P4/Swarm。
+- Evidence 已聚合相关 agent task/comment/perforce_review/issue_perforce_review 的受控只读摘要；后续仍可补 P4 change describe、Swarm review commits[] 等外部深度字段。
 - 真实 final CL 校验还没完成；`提交记录` 已同步，但还没用真实 done 样本验证字段格式和 CL 提取稳定性。
 - binding-id review API 还没迁完；当前仍是 `PUT /api/operations/agent-fixes/{issueId}/review`，设计里的 `PATCH /api/operations/agent-fixes/{binding_id}/review` 未落。
 - 没有接 GitHub PR。
@@ -177,6 +180,7 @@ corepack pnpm --filter @multica/core exec vitest run api/schemas.test.ts api/cli
 corepack pnpm --filter @multica/views exec vitest run dashboard/components/operations-page.test.tsx locales/parity.test.ts
 make sqlc
 cd server && go test ./internal/service -run 'TestP4AssessmentBackfillScansBindingsWithStatusMapping|TestP4AssessmentTaskIsolationSQLInvariants|TestP4AssessmentTriggerUsesBindingRowLock|TestAgentFixExternalDoneUsesStatusMappingInputs|TestTriggerP4AssessmentForDoneBinding'
+cd server && go test ./internal/service -run 'TestP4Evidence|TestP4Assessment|TestParseP4Assessment|TestFeishuProjectExternalFieldsKeepsSubmitRecord'
 cd server && go test -c ./cmd/server -o /tmp/multica-cmd-server.test
 git diff --check
 ```
@@ -188,6 +192,7 @@ git diff --check
 - Operations DOM 测试：done binding 行展示 `Run assessment`，非 done 行不展示；点击 `Run assessment` 调用 `{ binding_id, force: false }`；completed 行 `Rerun assessment` 调用 `{ binding_id, force: true }`。
 - Core schema/client 测试：`external.binding_id` 保留；`POST /api/operations/agent-fixes/p4-assessments` response 走 zod parseWithFallback；client 使用 `binding_id` 和 `force` 请求体。
 - P4 assessment scanner 结构测试：历史补跑 SQL 从 binding 出发，使用 status mapping 输入，不读取 metadata/demo/title 作为触发信号。
+- Evidence API 深度 DB 证据测试：task/comment 查询必须按 workspace + issue 限定并限制 20 条；task 查询只返回受控摘要，不选择 `result/context/session_id/work_dir`；service projection 不泄露 raw task internals；Swarm review projection 保留 review id/state/shelved CL/committed CL。
 - Issues DOM 测试：展示 Operations 共享人工 review outcome；从 Issues 直接打开人工 review 弹窗并通过 Operations mutation 保存；未标注初始状态显示 `Human review` 入口；Issue 缺 P4 metadata 但 assessment feed 能匹配时仍显示入口。
 - Label picker DOM 测试：覆盖已有 label chip 触发器，避免 Base UI `nativeButton` warning。
 - 继续保留 unknown enum 降级展示、analysis report、筛选、review 弹窗相关测试。

@@ -2789,6 +2789,139 @@ func (q *Queries) ListP4AssessmentBackfillBindings(ctx context.Context, arg List
 	return items, nil
 }
 
+const listP4EvidenceCommentsByIssue = `-- name: ListP4EvidenceCommentsByIssue :many
+SELECT
+  c.id,
+  c.author_type,
+  c.author_id,
+  c.type,
+  c.content,
+  c.source_task_id,
+  c.created_at
+FROM comment c
+WHERE c.issue_id = $1
+  AND c.workspace_id = $2
+  AND c.type = 'comment'
+  AND (
+    c.author_type = 'agent'
+    OR c.content ~* '(shelved[[:space:]]+cl|swarm[[:space:]]+review|review/[0-9]+|cl[[:space:]]*[:#]?[[:space:]]*[0-9]{4,})'
+  )
+ORDER BY c.created_at DESC, c.id DESC
+LIMIT 20
+`
+
+type ListP4EvidenceCommentsByIssueParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type ListP4EvidenceCommentsByIssueRow struct {
+	ID           pgtype.UUID        `json:"id"`
+	AuthorType   string             `json:"author_type"`
+	AuthorID     pgtype.UUID        `json:"author_id"`
+	Type         string             `json:"type"`
+	Content      string             `json:"content"`
+	SourceTaskID pgtype.UUID        `json:"source_task_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListP4EvidenceCommentsByIssue(ctx context.Context, arg ListP4EvidenceCommentsByIssueParams) ([]ListP4EvidenceCommentsByIssueRow, error) {
+	rows, err := q.db.Query(ctx, listP4EvidenceCommentsByIssue, arg.IssueID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListP4EvidenceCommentsByIssueRow{}
+	for rows.Next() {
+		var i ListP4EvidenceCommentsByIssueRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AuthorType,
+			&i.AuthorID,
+			&i.Type,
+			&i.Content,
+			&i.SourceTaskID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listP4EvidenceTasksByIssue = `-- name: ListP4EvidenceTasksByIssue :many
+SELECT
+  atq.id,
+  atq.agent_id,
+  atq.issue_id,
+  atq.status,
+  atq.created_at,
+  atq.started_at,
+  atq.completed_at,
+  atq.failure_reason,
+  atq.error,
+  COALESCE(atq.context->>'type', '') = 'agent_fix_p4_assessment' AS is_p4_assessment
+FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+WHERE atq.issue_id = $1
+  AND a.workspace_id = $2
+ORDER BY COALESCE(atq.completed_at, atq.started_at, atq.created_at) DESC, atq.id DESC
+LIMIT 20
+`
+
+type ListP4EvidenceTasksByIssueParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type ListP4EvidenceTasksByIssueRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	AgentID        pgtype.UUID        `json:"agent_id"`
+	IssueID        pgtype.UUID        `json:"issue_id"`
+	Status         string             `json:"status"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
+	FailureReason  pgtype.Text        `json:"failure_reason"`
+	Error          pgtype.Text        `json:"error"`
+	IsP4Assessment bool               `json:"is_p4_assessment"`
+}
+
+func (q *Queries) ListP4EvidenceTasksByIssue(ctx context.Context, arg ListP4EvidenceTasksByIssueParams) ([]ListP4EvidenceTasksByIssueRow, error) {
+	rows, err := q.db.Query(ctx, listP4EvidenceTasksByIssue, arg.IssueID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListP4EvidenceTasksByIssueRow{}
+	for rows.Next() {
+		var i ListP4EvidenceTasksByIssueRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.FailureReason,
+			&i.Error,
+			&i.IsP4Assessment,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingTasksByRuntime = `-- name: ListPendingTasksByRuntime :many
 SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at FROM agent_task_queue
 WHERE runtime_id = $1 AND status IN ('queued', 'dispatched')
