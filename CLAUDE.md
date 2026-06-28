@@ -164,6 +164,8 @@ make setup-worktree     # Setup using .env.worktree
 make start-worktree     # Start using .env.worktree
 ```
 
+`pnpm dev:desktop` additionally self-isolates per worktree (its own renderer port + app name) automatically, independent of `.env.worktree`.
+
 ## Coding Rules
 
 - TypeScript strict mode is enabled; keep types explicit.
