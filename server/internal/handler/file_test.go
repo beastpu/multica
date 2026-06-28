@@ -611,6 +611,7 @@ func TestDownloadAttachment_CloudFrontRedirectSignsAttachmentDisposition(t *test
 	origSigner := testHandler.CFSigner
 	testHandler.Storage = &mockStorage{}
 	testHandler.cfg.AttachmentDownloadMode = "cloudfront"
+	testHandler.cfg.AttachmentFrameAncestors = []string{"https://app.example.test"}
 	testHandler.CFSigner = testCloudFrontSigner(t)
 	t.Cleanup(func() {
 		testHandler.Storage = origStorage
@@ -621,6 +622,7 @@ func TestDownloadAttachment_CloudFrontRedirectSignsAttachmentDisposition(t *test
 	id := seedAttachmentURL(t, "https://static.example.test/downloads/cloudfront.md", "cloud front.md", "text/markdown", 10)
 
 	req, w := newDownloadRequest(t, id, testWorkspaceID)
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
 	testHandler.DownloadAttachment(w, req)
 
 	if w.Code != http.StatusFound {
@@ -637,6 +639,7 @@ func TestDownloadAttachment_CloudFrontRedirectSignsAttachmentDisposition(t *test
 	if got := parsed.Query().Get("Key-Pair-Id"); got != "KTEST" {
 		t.Fatalf("Key-Pair-Id = %q", got)
 	}
+	requireAttachmentPreviewCSP(t, w.Header(), "https://app.example.test")
 }
 
 func TestDownloadAttachment_BareNavigationWithWorkspaceSlugQueryPassesMiddleware(t *testing.T) {
@@ -838,6 +841,7 @@ func TestDownloadAttachment_AutoPublicEndpointPresigns(t *testing.T) {
 	origSigner := testHandler.CFSigner
 	testHandler.Storage = store
 	testHandler.cfg.AttachmentDownloadMode = "auto"
+	testHandler.cfg.AttachmentFrameAncestors = []string{"https://app.example.test"}
 	testHandler.CFSigner = nil
 	t.Cleanup(func() {
 		testHandler.Storage = origStorage
@@ -849,6 +853,7 @@ func TestDownloadAttachment_AutoPublicEndpointPresigns(t *testing.T) {
 	id := seedAttachmentURL(t, "https://s3.example.com/test-bucket/"+key, "public.txt", "text/plain", 10)
 
 	req, w := newDownloadRequest(t, id, testWorkspaceID)
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
 	testHandler.DownloadAttachment(w, req)
 
 	if w.Code != http.StatusFound {
@@ -871,6 +876,7 @@ func TestDownloadAttachment_AutoPublicEndpointPresigns(t *testing.T) {
 	if len(store.presignDispositions) != 1 || store.presignDispositions[0] != `attachment; filename="public.txt"` {
 		t.Fatalf("presign dispositions = %v", store.presignDispositions)
 	}
+	requireAttachmentPreviewCSP(t, w.Header(), "https://app.example.test")
 }
 
 func TestDownloadAttachment_ExplicitProxyStreamsPublicEndpoint(t *testing.T) {
