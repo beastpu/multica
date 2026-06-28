@@ -10,6 +10,7 @@ created: 2026-06-27
 > 实施计划：`docs/agent-fix-p4-assessment-plan.md`
 > 数据与限制：`docs/agent-fix-evidence-data-limitations.md`
 > 外部依赖：`docs/agent-fix-p4-external-dependencies.md`
+> API 与工作流：`docs/agent-fix-p4-assessment-api-workflow.md`
 
 ## 背景
 

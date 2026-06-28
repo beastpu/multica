@@ -4,6 +4,7 @@
 > Last updated: 2026-06-29
 > Static demo reference: `/home/wangtengfei/multica/agent-fix-board-demo.html`
 > Related plan: `docs/agent-fix-p4-assessment-plan.md`
+> API/workflow: `docs/agent-fix-p4-assessment-api-workflow.md`
 
 ## 目标
 
@@ -70,6 +71,12 @@ Operations 主轴还没有完全切到“外部 done binding 统计分母”，�
 - `updateAgentFixReview` 已优先走 `PATCH /api/operations/agent-fixes/{binding_id}/review`，并对 response 使用 `AgentFixHumanReviewSchema` + `parseWithFallback`；缺 binding id 时 fallback 旧 `PUT /api/operations/agent-fixes/{issueId}/review`。
 - `triggerAgentFixP4Assessment` API client。
 - `useTriggerAgentFixP4Assessment` React Query mutation。
+- 人工 review UI 共享边界已收敛到 `packages/views/dashboard/components/agent-fix-review.tsx`：
+  - outcome/reasons 枚举。
+  - review/eval/quality/attribution label 和 tone helper。
+  - `AgentFixReviewDialog`。
+  - `ToneBadge`。
+  - Operations 和 Issues 共用同一套人工 review 编辑器，避免可选原因、文案和保存行为漂移。
 
 重要修复：
 
@@ -105,6 +112,7 @@ Operations 主轴还没有完全切到“外部 done binding 统计分母”，�
   - 可选择 reasons。
   - 可填写 note。
   - 保存后走真实 API mutation；有 `external.binding_id` 时使用 binding-id 主路径，缺 binding 时 fallback 旧 issueId 兼容路径。
+  - outcome/reasons/note 编辑器复用共享 `AgentFixReviewDialog`；Operations 只负责注入 P4/AI evidence slot。
 - 分析报告页签：
   - attribution 分布。
   - human review 分布。
@@ -143,12 +151,14 @@ Operations 主轴还没有完全切到“外部 done binding 统计分母”，�
 
 已在 issues 列表/卡片接入轻量 P4 assessment 入口：
 
-- 检测 P4/demo 信号。
+- 优先从 Operations assessment feed 匹配 `agent_fix_p4_assessment` / `agent_fix_review` record。
+- 若没有 record，仅将 `metadata.demo`、`metadata.p4_assessment`、`metadata.swarm_review`、`metadata.p4_status` 或 title 中的 `p4 assessment/swarm` 作为 legacy/demo fallback 显示信号。
 - 展示 AI/P4/human review 相关标签。
-- human review 标签可点击，直接打开与 Operations 相同字段、枚举和保存接口的人工 review 弹窗。
+- human review 标签可点击，直接打开与 Operations 共用的人工 review 弹窗。
 - 对 test1/test2 这类初始未验收状态，若已有 P4/demo 信号或能从 Operations assessment feed 匹配到 issue 记录，也会显示 `Human review` 入口，不需要先在 Operations 页写入 outcome。
 - Issues 列表行、看板卡片、Issue 详情页标题下方都会挂载同一套入口；组件内部自行判断是否显示，避免 record-only 的 assessment 被外层条件挡住。
 - 提供跳转 `/operations` 的 assessment 入口。
+- legacy/demo fallback 只影响轻量入口显示，不触发 assessment、不参与统计、不作为 review 写入事实；review 保存仍优先使用 record 的 `external.binding_id`，缺 binding 时才走旧 issueId 兼容路径。
 
 ## 尚未处理或未完整处理
 
@@ -204,6 +214,13 @@ corepack pnpm --filter @multica/core typecheck
 corepack pnpm --filter @multica/views typecheck
 ```
 
+本次清理阶段新增通过：
+
+```bash
+corepack pnpm --filter @multica/views exec vitest run dashboard/components/operations-page.test.tsx issues/components/p4-assessment-entry.test.tsx
+corepack pnpm --filter @multica/views typecheck
+```
+
 新增/补充覆盖：
 
 - CSV 纯函数测试：BOM、稳定表头、CSV 转义、数组字段、稀疏旧 rows。
@@ -215,6 +232,7 @@ corepack pnpm --filter @multica/views typecheck
 - Evidence API 深度 DB 证据测试：task/comment 查询必须按 workspace + issue 限定并限制 20 条；task 查询只返回受控摘要，不选择 `result/context/session_id/work_dir`；service projection 不泄露 raw task internals；Swarm review projection 保留 review id/state/shelved CL/committed CL。
 - Issues DOM 测试：展示 Operations 共享人工 review outcome；从 Issues 直接打开人工 review 弹窗并通过 Operations mutation 保存；未标注初始状态显示 `Human review` 入口；Issue 缺 P4 metadata 但 assessment feed 能匹配时仍显示入口。
 - Operations / Issues DOM 测试：人工 review 保存会把 `external.binding_id` 传入 mutation，优先使用 binding-id 主路径。
+- Operations / Issues DOM 测试：共用 `AgentFixReviewDialog` 后，人审保存和 legacy/demo fallback 入口行为保持不变。
 - Label picker DOM 测试：覆盖已有 label chip 触发器，避免 Base UI `nativeButton` warning。
 - 继续保留 unknown enum 降级展示、analysis report、筛选、review 弹窗相关测试。
 

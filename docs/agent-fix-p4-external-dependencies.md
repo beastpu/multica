@@ -3,6 +3,7 @@
 > Status: Draft
 > Last updated: 2026-06-29
 > Related design: `docs/agent-fix-prefill-flow.md`
+> API/workflow: `docs/agent-fix-p4-assessment-api-workflow.md`
 
 This document tracks external-system facts and open questions for the AI fix
 P4/Swarm assessment flow. The main backend flow should not depend on unverified
@@ -131,6 +132,24 @@ Open questions:
   recorded in the task context.
 - Cross-workspace or cross-binding access must fail closed without leaking target
   existence.
+
+## Internal-only API/UI Work
+
+The binding-id human review API and review UI consolidation do not add external
+Feishu, Meego, P4, or Swarm dependencies.
+
+- `PATCH /api/operations/agent-fixes/{binding_id}/review` writes only Multica
+  `agent_fix_review`.
+- The handler validates workspace membership and binding workspace scope through
+  Multica DB rows.
+- The API does not call Feishu/Meego, P4, or Swarm and must not mutate those
+  systems.
+- Operations and Issues share the same human review editor. This is a frontend
+  DRY cleanup over existing Multica API responses, not a new external data
+  source.
+- Issue metadata/title fallback is only a legacy/demo display signal. It must
+  not be used to trigger assessment, write review facts, or decide the
+  statistical denominator.
 
 ## Verification Checklist
 

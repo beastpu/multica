@@ -6,6 +6,7 @@
 > Design: `docs/agent-fix-prefill-flow.md`
 > Data limits: `docs/agent-fix-evidence-data-limitations.md`
 > External dependencies: `docs/agent-fix-p4-external-dependencies.md`
+> API/workflow: `docs/agent-fix-p4-assessment-api-workflow.md`
 
 ## TL;DR
 

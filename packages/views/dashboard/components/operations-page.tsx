@@ -14,17 +14,8 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@multica/ui/components/ui/dialog";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Input } from "@multica/ui/components/ui/input";
-import { Textarea } from "@multica/ui/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -48,15 +39,21 @@ import {
 import type {
   AgentFixRecord,
   IssueStatus,
-  UpdateAgentFixReviewRequest,
 } from "@multica/core/types";
-import { cn } from "@multica/ui/lib/utils";
 import { PageHeader } from "../../layout/page-header";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { StatusIcon } from "../../issues/components/status-icon";
 import { AppLink } from "../../navigation";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { useT } from "../../i18n";
+import {
+  AgentFixReviewDialog,
+  ToneBadge,
+  agentFixEnumLabel,
+  agentFixEnumTone,
+  type Tone,
+  type UsageT,
+} from "./agent-fix-review";
 import { Segmented } from "./segmented";
 
 const ALL_AGENTS = "__all__";
@@ -68,45 +65,6 @@ const DETAIL_TAB = "detail";
 const ANALYSIS_TAB = "analysis";
 type OperationsTab = typeof DETAIL_TAB | typeof ANALYSIS_TAB;
 type SelectOption = { value: string; label: string };
-
-const REVIEW_OUTCOMES = [
-  "unreviewed",
-  "accepted",
-  "needs_changes",
-  "rejected",
-  "not_applicable",
-] as const;
-
-const REVIEW_REASONS: Record<string, string[]> = {
-  accepted: ["complete_usable", "small_fix", "human_assisted"],
-  needs_changes: [
-    "coverage_incomplete",
-    "edge_case_missing",
-    "test_insufficient",
-    "wrong_location",
-    "integration_incomplete",
-    "quality_insufficient",
-    "compatibility",
-  ],
-  rejected: [
-    "wrong_direction",
-    "root_cause_missing",
-    "regression",
-    "risk_high",
-    "unusable_output",
-    "unverifiable",
-    "architecture_violation",
-  ],
-  not_applicable: [
-    "not_fix_task",
-    "duplicate",
-    "environment_data",
-    "cancelled_requirement",
-    "no_change_needed",
-    "misfire",
-  ],
-  unreviewed: [],
-};
 
 // Trailing window. `1d` is the last 24h; the rest mirror the Usage dashboard's
 // daily-dimension options (a flat record list has no weekly chart grain). 30d
@@ -220,18 +178,6 @@ function formatDay(iso: string | null, tz: string): string {
 // Debounce delay before a typed search term hits the server. Long enough to
 // coalesce a burst of keystrokes, short enough to feel responsive.
 const SEARCH_DEBOUNCE_MS = 300;
-
-type Tone = "default" | "success" | "warning" | "danger" | "info" | "muted";
-type UsageT = (selector: (resource: any) => string) => string;
-
-const TONE_CLASS: Record<Tone, string> = {
-  default: "border-border bg-background text-foreground",
-  success: "border-primary/20 bg-primary/10 text-primary",
-  warning: "border-foreground/15 bg-muted text-foreground",
-  danger: "border-destructive/20 bg-destructive/10 text-destructive",
-  info: "border-primary/20 bg-primary/10 text-primary",
-  muted: "border-border bg-muted text-muted-foreground",
-};
 
 function compactList(values: Array<string | number> | undefined): string {
   return (values ?? [])
@@ -549,7 +495,7 @@ export function OperationsPage() {
       compactKey(f.p4_assessment?.delivery_attribution_prediction, "unknown"),
     ).map((value) => ({
       value,
-      label: enumLabel(tx, "attribution", value),
+      label: agentFixEnumLabel(tx, "attribution", value),
     }));
   }, [fixes, tx]);
 
@@ -558,7 +504,7 @@ export function OperationsPage() {
       compactKey(f.p4_assessment?.quality_prediction, "unknown"),
     ).map((value) => ({
       value,
-      label: enumLabel(tx, "quality", value),
+      label: agentFixEnumLabel(tx, "quality", value),
     }));
   }, [fixes, tx]);
 
@@ -940,9 +886,18 @@ export function OperationsPage() {
         </div>
       </div>
       <AgentFixReviewDialog
-        fix={reviewFix}
         open={!!reviewFix}
+        description={
+          reviewFix
+            ? `${reviewFix.issue_identifier} · ${reviewFix.issue_title}`
+            : t(($) => $.operations.review_modal.empty_issue)
+        }
+        initialReview={reviewFix?.human_review}
         saving={updateReview.isPending}
+        canSave={!!reviewFix}
+        evidenceSlot={
+          reviewFix ? <AgentFixReviewEvidence fix={reviewFix} /> : null
+        }
         onOpenChange={(open) => {
           if (!open && !updateReview.isPending) setReviewFix(null);
         }}
@@ -1090,37 +1045,37 @@ function OperationsAnalysis({ rows }: { rows: AgentFixRecord[] }) {
   const humanReasons = topReasons(
     rows,
     (f) => f.human_review?.reasons,
-    (key) => enumLabel(tx, "review_reason", key),
+    (key) => agentFixEnumLabel(tx, "review_reason", key),
   );
   const predictionReasons = topReasons(
     rows,
     (f) => f.p4_assessment?.prediction_reasons,
-    (key) => enumLabel(tx, "review_reason", key),
+    (key) => agentFixEnumLabel(tx, "review_reason", key),
   );
   return (
     <div className="grid gap-4 xl:grid-cols-3">
       <AnalysisCard
         title={t(($) => $.operations.analysis.attribution_title)}
         rows={Array.from(attribution.entries()).map(([key, count]) => ({
-          label: enumLabel(tx, "attribution", key),
+          label: agentFixEnumLabel(tx, "attribution", key),
           count,
-          tone: enumTone("attribution", key),
+          tone: agentFixEnumTone("attribution", key),
         }))}
       />
       <AnalysisCard
         title={t(($) => $.operations.analysis.review_title)}
         rows={Array.from(review.entries()).map(([key, count]) => ({
-          label: enumLabel(tx, "review", key),
+          label: agentFixEnumLabel(tx, "review", key),
           count,
-          tone: enumTone("review", key),
+          tone: agentFixEnumTone("review", key),
         }))}
       />
       <AnalysisCard
         title={t(($) => $.operations.analysis.eval_title)}
         rows={Array.from(evals.entries()).map(([key, count]) => ({
-          label: enumLabel(tx, "eval", key),
+          label: agentFixEnumLabel(tx, "eval", key),
           count,
-          tone: enumTone("eval", key),
+          tone: agentFixEnumTone("eval", key),
         }))}
       />
       <WorkstreamAnalysisCard
@@ -1496,7 +1451,7 @@ function AssessmentStatusBadge({ value }: { value?: string }) {
   const tx = t as unknown as UsageT;
   return (
     <ToneBadge tone={assessmentTone(value)}>
-      {enumLabel(tx, "assessment", value || "missing")}
+      {agentFixEnumLabel(tx, "assessment", value || "missing")}
     </ToneBadge>
   );
 }
@@ -1567,10 +1522,10 @@ function PredictionCell({
 }) {
   const { t } = useT("usage");
   const tx = t as unknown as UsageT;
-  const label = enumLabel(tx, kind, value);
+  const label = agentFixEnumLabel(tx, kind, value);
   return (
     <div className="grid min-w-0 gap-1">
-      <ToneBadge tone={enumTone(kind, value)}>{label}</ToneBadge>
+      <ToneBadge tone={agentFixEnumTone(kind, value)}>{label}</ToneBadge>
       {detail ? (
         <span className="truncate text-xs text-muted-foreground">
           {t(($) => $.operations.p4.confidence, { value: detail })}
@@ -1592,7 +1547,7 @@ function HumanReviewCell({
   const outcome = fix.human_review?.outcome;
   const reasons = fix.human_review?.reasons ?? [];
   const reasonText = reasons
-    .map((r) => enumLabel(tx, "review_reason", r))
+    .map((r) => agentFixEnumLabel(tx, "review_reason", r))
     .filter(Boolean)
     .join(", ");
   return (
@@ -1602,8 +1557,8 @@ function HumanReviewCell({
         onClick={onEdit}
         className="inline-flex min-w-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <ToneBadge tone={enumTone("review", outcome)}>
-          {enumLabel(tx, "review", outcome)}
+        <ToneBadge tone={agentFixEnumTone("review", outcome)}>
+          {agentFixEnumLabel(tx, "review", outcome)}
         </ToneBadge>
       </button>
       {reasonText ? (
@@ -1615,193 +1570,54 @@ function HumanReviewCell({
   );
 }
 
-function AgentFixReviewDialog({
-  fix,
-  open,
-  saving,
-  onOpenChange,
-  onSave,
-}: {
-  fix: AgentFixRecord | null;
-  open: boolean;
-  saving: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSave: (data: UpdateAgentFixReviewRequest) => void;
-}) {
+function AgentFixReviewEvidence({ fix }: { fix: AgentFixRecord }) {
   const { t } = useT("usage");
   const tx = t as unknown as UsageT;
-  const [outcome, setOutcome] = useState("unreviewed");
-  const [reasons, setReasons] = useState<string[]>([]);
-  const [note, setNote] = useState("");
-
-  useEffect(() => {
-    if (!fix) return;
-    setOutcome(fix.human_review?.outcome || "unreviewed");
-    setReasons(fix.human_review?.reasons ?? []);
-    setNote(fix.human_review?.note ?? "");
-  }, [fix]);
-
-  const evidence = fix ? derivedEvidence(fix) : null;
-  const reasonOptions = REVIEW_REASONS[outcome] ?? [];
-
-  const toggleReason = (reason: string) => {
-    setReasons((prev) =>
-      prev.includes(reason)
-        ? prev.filter((r) => r !== reason)
-        : [...prev, reason],
-    );
-  };
+  const evidence = derivedEvidence(fix);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>{t(($) => $.operations.review_modal.title)}</DialogTitle>
-          <DialogDescription>
-            {fix
-              ? `${fix.issue_identifier} · ${fix.issue_title}`
-              : t(($) => $.operations.review_modal.empty_issue)}
-          </DialogDescription>
-        </DialogHeader>
-
-        {fix ? (
-          <div className="grid gap-4">
-            <div className="grid gap-3 md:grid-cols-3">
-              <EvidencePanel
-                label={t(($) => $.operations.review_modal.evidence_p4)}
-                value={[
-                  fix.p4_assessment?.workstream || t(($) => $.operations.no_reason),
-                  evidence?.swarm
-                    ? t(($) => $.operations.p4.swarm_value, { value: evidence.swarm })
-                    : t(($) => $.operations.p4.no_swarm),
-                  `${t(($) => $.operations.p4.shelve)} ${
-                    evidence?.shelve || t(($) => $.operations.no_reason)
-                  } / ${t(($) => $.operations.p4.final_cl)} ${
-                    evidence?.finalCl || t(($) => $.operations.no_reason)
-                  }`,
-                ]}
-              />
-              <EvidencePanel
-                label={t(($) => $.operations.review_modal.evidence_attribution)}
-                value={[
-                  enumLabel(
-                    tx,
-                    "attribution",
-                    fix.p4_assessment?.delivery_attribution_prediction,
-                  ),
-                ]}
-                badgeTone={enumTone(
-                  "attribution",
-                  fix.p4_assessment?.delivery_attribution_prediction,
-                )}
-              />
-              <EvidencePanel
-                label={t(($) => $.operations.review_modal.evidence_quality)}
-                value={[
-                  enumLabel(tx, "quality", fix.p4_assessment?.quality_prediction),
-                  fix.p4_assessment?.confidence != null
-                    ? t(($) => $.operations.p4.confidence, {
-                        value: confidenceLabel(fix.p4_assessment.confidence),
-                      })
-                    : t(($) => $.operations.review_modal.insufficient_evidence),
-                ]}
-                badgeTone={enumTone("quality", fix.p4_assessment?.quality_prediction)}
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <div className="text-xs font-medium text-muted-foreground">
-                {t(($) => $.operations.review_modal.outcome)}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {REVIEW_OUTCOMES.map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => {
-                      setOutcome(value);
-                      setReasons([]);
-                    }}
-                    className={cn(
-                      "rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors",
-                      outcome === value
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "border-border bg-background hover:bg-muted",
-                    )}
-                  >
-                    {enumLabel(tx, "review", value)}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid gap-2">
-              <div className="text-xs font-medium text-muted-foreground">
-                {t(($) => $.operations.review_modal.reasons)}
-              </div>
-              {reasonOptions.length ? (
-                <div className="flex flex-wrap gap-2">
-                  {reasonOptions.map((reason) => (
-                    <button
-                      key={reason}
-                      type="button"
-                      onClick={() => toggleReason(reason)}
-                      className={cn(
-                        "rounded-lg border px-3 py-1.5 text-sm transition-colors",
-                        reasons.includes(reason)
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border bg-background hover:bg-muted",
-                      )}
-                    >
-                      {enumLabel(tx, "review_reason", reason)}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-sm text-muted-foreground">
-                  {t(($) => $.operations.review_modal.no_reasons)}
-                </div>
-              )}
-              <div className="text-xs text-muted-foreground">
-                {t(($) => $.operations.review_modal.reason_hint)}
-              </div>
-            </div>
-
-            <div className="grid gap-2">
-              <div className="text-xs font-medium text-muted-foreground">
-                {t(($) => $.operations.review_modal.note)}
-              </div>
-              <Textarea
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder={t(($) => $.operations.review_modal.note_placeholder)}
-                className="min-h-24"
-              />
-            </div>
-          </div>
-        ) : null}
-
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={saving}
-          >
-            {t(($) => $.operations.review_modal.cancel)}
-          </Button>
-          <Button
-            type="button"
-            disabled={!fix || saving}
-            onClick={() => onSave({ outcome, reasons, note })}
-          >
-            {saving
-              ? t(($) => $.operations.review_modal.saving)
-              : t(($) => $.operations.review_modal.save)}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <div className="grid gap-3 md:grid-cols-3">
+      <EvidencePanel
+        label={t(($) => $.operations.review_modal.evidence_p4)}
+        value={[
+          fix.p4_assessment?.workstream || t(($) => $.operations.no_reason),
+          evidence.swarm
+            ? t(($) => $.operations.p4.swarm_value, { value: evidence.swarm })
+            : t(($) => $.operations.p4.no_swarm),
+          `${t(($) => $.operations.p4.shelve)} ${
+            evidence.shelve || t(($) => $.operations.no_reason)
+          } / ${t(($) => $.operations.p4.final_cl)} ${
+            evidence.finalCl || t(($) => $.operations.no_reason)
+          }`,
+        ]}
+      />
+      <EvidencePanel
+        label={t(($) => $.operations.review_modal.evidence_attribution)}
+        value={[
+          agentFixEnumLabel(
+            tx,
+            "attribution",
+            fix.p4_assessment?.delivery_attribution_prediction,
+          ),
+        ]}
+        badgeTone={agentFixEnumTone(
+          "attribution",
+          fix.p4_assessment?.delivery_attribution_prediction,
+        )}
+      />
+      <EvidencePanel
+        label={t(($) => $.operations.review_modal.evidence_quality)}
+        value={[
+          agentFixEnumLabel(tx, "quality", fix.p4_assessment?.quality_prediction),
+          fix.p4_assessment?.confidence != null
+            ? t(($) => $.operations.p4.confidence, {
+                value: confidenceLabel(fix.p4_assessment.confidence),
+              })
+            : t(($) => $.operations.review_modal.insufficient_evidence),
+        ]}
+        badgeTone={agentFixEnumTone("quality", fix.p4_assessment?.quality_prediction)}
+      />
+    </div>
   );
 }
 
@@ -1836,162 +1652,10 @@ function EvalCell({ fix }: { fix: AgentFixRecord }) {
   const tx = t as unknown as UsageT;
   const value = fix.ai_judgement_eval || fix.display_result_status;
   return (
-    <ToneBadge tone={enumTone("eval", value)}>
-      {enumLabel(tx, "eval", value)}
+    <ToneBadge tone={agentFixEnumTone("eval", value)}>
+      {agentFixEnumLabel(tx, "eval", value)}
     </ToneBadge>
   );
-}
-
-function ToneBadge({
-  tone,
-  children,
-}: {
-  tone: Tone;
-  children: ReactNode;
-}) {
-  return (
-    <Badge
-      variant="outline"
-      className={cn("max-w-full justify-start truncate", TONE_CLASS[tone])}
-    >
-      <span className="truncate">{children}</span>
-    </Badge>
-  );
-}
-
-function enumLabel(
-  t: UsageT,
-  group:
-    | "assessment"
-    | "attribution"
-    | "quality"
-    | "review"
-    | "review_reason"
-    | "eval",
-  value?: string,
-): string {
-  const key = value?.trim();
-  if (!key) return t(($) => $.operations.no_reason);
-  const labels: Record<string, string> =
-    group === "assessment"
-      ? {
-          missing: t(($) => $.operations.enums.assessment.missing),
-          running: t(($) => $.operations.enums.assessment.running),
-          failed: t(($) => $.operations.enums.assessment.failed),
-          completed: t(($) => $.operations.enums.assessment.completed),
-          stale: t(($) => $.operations.enums.assessment.stale),
-        }
-      : group === "attribution"
-      ? {
-          ai_delivered: t(($) => $.operations.enums.attribution.ai_delivered),
-          ai_assisted: t(($) => $.operations.enums.attribution.ai_assisted),
-          human_delivered: t(($) => $.operations.enums.attribution.human_delivered),
-          conflict: t(($) => $.operations.enums.attribution.conflict),
-          unattributed: t(($) => $.operations.enums.attribution.unattributed),
-          unknown: t(($) => $.operations.enums.attribution.unknown),
-        }
-      : group === "quality"
-        ? {
-            likely_correct: t(($) => $.operations.enums.quality.likely_correct),
-            likely_needs_changes: t(
-              ($) => $.operations.enums.quality.likely_needs_changes,
-            ),
-            likely_wrong: t(($) => $.operations.enums.quality.likely_wrong),
-            unknown: t(($) => $.operations.enums.quality.unknown),
-          }
-        : group === "review"
-          ? {
-              unreviewed: t(($) => $.operations.enums.review.unreviewed),
-              accepted: t(($) => $.operations.enums.review.accepted),
-              needs_changes: t(($) => $.operations.enums.review.needs_changes),
-              rejected: t(($) => $.operations.enums.review.rejected),
-              not_applicable: t(($) => $.operations.enums.review.not_applicable),
-            }
-          : group === "review_reason"
-            ? {
-                complete_usable: t(
-                  ($) => $.operations.enums.review_reason.complete_usable,
-                ),
-                human_assisted: t(
-                  ($) => $.operations.enums.review_reason.human_assisted,
-                ),
-                coverage_incomplete: t(
-                  ($) => $.operations.enums.review_reason.coverage_incomplete,
-                ),
-                test_insufficient: t(
-                  ($) => $.operations.enums.review_reason.test_insufficient,
-                ),
-                wrong_direction: t(
-                  ($) => $.operations.enums.review_reason.wrong_direction,
-                ),
-                environment_data: t(
-                  ($) => $.operations.enums.review_reason.environment_data,
-                ),
-              }
-            : {
-                match: t(($) => $.operations.enums.eval.match),
-                accurate: t(($) => $.operations.enums.eval.accurate),
-                overestimated: t(($) => $.operations.enums.eval.overestimated),
-                underestimated: t(($) => $.operations.enums.eval.underestimated),
-                wrong_attribution: t(
-                  ($) => $.operations.enums.eval.wrong_attribution,
-                ),
-                not_comparable: t(($) => $.operations.enums.eval.not_comparable),
-                out_of_scope: t(($) => $.operations.enums.eval.out_of_scope),
-                pending: t(($) => $.operations.enums.eval.pending),
-                needs_ai_assessment: t(
-                  ($) => $.operations.enums.eval.needs_ai_assessment,
-                ),
-                ai_assessing: t(($) => $.operations.enums.eval.ai_assessing),
-                ai_assessment_failed: t(
-                  ($) => $.operations.enums.eval.ai_assessment_failed,
-                ),
-                needs_review_conflict: t(
-                  ($) => $.operations.enums.eval.needs_review_conflict,
-                ),
-                needs_human_review: t(
-                  ($) => $.operations.enums.eval.needs_human_review,
-                ),
-              };
-  return labels?.[key] ?? key;
-}
-
-function enumTone(
-  group: "attribution" | "quality" | "review" | "eval",
-  value?: string,
-): Tone {
-  const key = value?.trim();
-  if (!key || key === "unknown" || key === "unreviewed") return "muted";
-  if (
-    key === "accepted" ||
-    key === "ai_delivered" ||
-    key === "ai_assisted" ||
-    key === "likely_correct" ||
-    key === "match" ||
-    key === "accurate"
-  ) {
-    return "success";
-  }
-  if (
-    key === "conflict" ||
-    key === "likely_wrong" ||
-    key === "rejected" ||
-    key === "overestimated" ||
-    key === "wrong_attribution" ||
-    key === "mismatch"
-  ) {
-    return "danger";
-  }
-  if (
-    key === "likely_needs_changes" ||
-    key === "needs_changes" ||
-    key === "underestimated" ||
-    key === "pending"
-  ) {
-    return "warning";
-  }
-  if (group === "attribution" && key === "human_delivered") return "info";
-  return "default";
 }
 
 function assessmentTone(value?: string): Tone {
