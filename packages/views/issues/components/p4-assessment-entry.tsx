@@ -265,6 +265,7 @@ function IssueP4ReviewDialog({
 
   const reasonOptions = REVIEW_REASONS[outcome] ?? [];
   const fixIssueId = record?.issue_id || issue.id;
+  const fixBindingId = record?.external?.binding_id;
 
   const toggleReason = (reason: string) => {
     setReasons((prev) =>
@@ -276,7 +277,7 @@ function IssueP4ReviewDialog({
 
   const save = (data: UpdateAgentFixReviewRequest) => {
     updateReview.mutate(
-      { issueId: fixIssueId, data },
+      { issueId: fixIssueId, bindingId: fixBindingId, data },
       {
         onSuccess: () => onOpenChange(false),
         onError: (err) => {

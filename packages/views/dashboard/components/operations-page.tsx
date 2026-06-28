@@ -949,7 +949,11 @@ export function OperationsPage() {
         onSave={(data) => {
           if (!reviewFix) return;
           updateReview.mutate(
-            { issueId: reviewFix.issue_id, data },
+            {
+              issueId: reviewFix.issue_id,
+              bindingId: reviewFix.external?.binding_id,
+              data,
+            },
             {
               onSuccess: () => {
                 setReviewFix(null);

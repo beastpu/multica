@@ -8,6 +8,9 @@ import { IssueP4AssessmentTags } from "./p4-assessment-entry";
 const defaultRecord = vi.hoisted(() => ({
     issue_id: "issue-1",
     issue_identifier: "TES-3",
+    external: {
+      binding_id: "binding-1",
+    },
     human_review: {
       outcome: "needs_changes",
       reasons: ["coverage_incomplete"],
@@ -102,6 +105,7 @@ describe("IssueP4AssessmentTags", () => {
     expect(mutate).toHaveBeenCalledWith(
       {
         issueId: "issue-1",
+        bindingId: "binding-1",
         data: {
           outcome: "accepted",
           reasons: ["complete_usable"],

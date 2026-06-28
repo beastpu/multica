@@ -1894,11 +1894,74 @@ func (h *Handler) UpdateAgentFixReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing issue id")
 		return
 	}
+	issueUUID, ok := parseUUIDOrBadRequest(w, issueID, "issue id")
+	if !ok {
+		return
+	}
 
+	req, ok := decodeAgentFixReviewRequest(w, r)
+	if !ok {
+		return
+	}
+
+	review, err := h.Queries.UpsertAgentFixReview(r.Context(), db.UpsertAgentFixReviewParams{
+		WorkspaceID: parseUUID(workspaceID),
+		IssueID:     issueUUID,
+		Outcome:     req.Outcome,
+		Reasons:     req.Reasons,
+		Note:        req.Note,
+		ReviewerID:  parseUUID(requestUserID(r)),
+	})
+	if err != nil {
+		writeAgentFixReviewError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, agentFixHumanReviewResponse(review))
+}
+
+func (h *Handler) PatchAgentFixReviewByBinding(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return
+	}
+
+	bindingID := chi.URLParam(r, "bindingId")
+	if bindingID == "" {
+		writeError(w, http.StatusBadRequest, "missing binding id")
+		return
+	}
+	bindingUUID, ok := parseUUIDOrBadRequest(w, bindingID, "binding id")
+	if !ok {
+		return
+	}
+
+	req, ok := decodeAgentFixReviewRequest(w, r)
+	if !ok {
+		return
+	}
+
+	review, err := h.Queries.UpsertAgentFixReviewByBinding(r.Context(), db.UpsertAgentFixReviewByBindingParams{
+		WorkspaceID:     parseUUID(workspaceID),
+		FeishuBindingID: bindingUUID,
+		Outcome:         req.Outcome,
+		Reasons:         req.Reasons,
+		Note:            req.Note,
+		ReviewerID:      parseUUID(requestUserID(r)),
+	})
+	if err != nil {
+		writeAgentFixReviewError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, agentFixHumanReviewResponse(review))
+}
+
+func decodeAgentFixReviewRequest(w http.ResponseWriter, r *http.Request) (updateAgentFixReviewRequest, bool) {
 	var req updateAgentFixReviewRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
+		return req, false
 	}
 	req.Outcome = strings.TrimSpace(req.Outcome)
 	if req.Outcome == "" {
@@ -1913,7 +1976,7 @@ func (h *Handler) UpdateAgentFixReview(w http.ResponseWriter, r *http.Request) {
 	}
 	if !allowedOutcome[req.Outcome] {
 		writeError(w, http.StatusBadRequest, "invalid review outcome")
-		return
+		return req, false
 	}
 
 	reasons := make([]string, 0, len(req.Reasons))
@@ -1923,32 +1986,27 @@ func (h *Handler) UpdateAgentFixReview(w http.ResponseWriter, r *http.Request) {
 			reasons = append(reasons, reason)
 		}
 	}
+	req.Reasons = reasons
+	req.Note = strings.TrimSpace(req.Note)
+	return req, true
+}
 
-	reviewerID := parseUUID(requestUserID(r))
-	review, err := h.Queries.UpsertAgentFixReview(r.Context(), db.UpsertAgentFixReviewParams{
-		WorkspaceID: parseUUID(workspaceID),
-		IssueID:     parseUUID(issueID),
-		Outcome:     req.Outcome,
-		Reasons:     reasons,
-		Note:        strings.TrimSpace(req.Note),
-		ReviewerID:  reviewerID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "agent fix review target not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to save agent fix review")
+func writeAgentFixReviewError(w http.ResponseWriter, err error) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "agent fix review target not found")
 		return
 	}
+	writeError(w, http.StatusInternalServerError, "failed to save agent fix review")
+}
 
-	writeJSON(w, http.StatusOK, AgentFixHumanReviewResponse{
+func agentFixHumanReviewResponse(review db.AgentFixReview) AgentFixHumanReviewResponse {
+	return AgentFixHumanReviewResponse{
 		Outcome:    review.Outcome,
 		Reasons:    review.Reasons,
 		Note:       review.Note,
 		ReviewerID: uuidToString(review.ReviewerID),
 		ReviewedAt: timestampToPtr(review.ReviewedAt),
-	})
+	}
 }
 
 func (h *Handler) TriggerAgentFixP4Assessment(w http.ResponseWriter, r *http.Request) {

@@ -166,6 +166,15 @@ const AGENTS = vi.hoisted(() => [
 ]);
 
 const TRIGGER_ASSESSMENT = vi.hoisted(() => vi.fn());
+const UPDATE_REVIEW = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({
+    outcome: "accepted",
+    reasons: [],
+    note: "",
+    reviewer_id: "u-1",
+    reviewed_at: "2026-06-01T01:00:00Z",
+  }),
+);
 
 // useQuery is keyed: the operations-fixes options carry "operations-fixes" in
 // their key, with the debounced search term as the last key segment; the agent
@@ -221,13 +230,7 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("@multica/core/api", () => ({
   api: {
-    updateAgentFixReview: vi.fn().mockResolvedValue({
-      outcome: "accepted",
-      reasons: [],
-      note: "",
-      reviewer_id: "u-1",
-      reviewed_at: "2026-06-01T01:00:00Z",
-    }),
+    updateAgentFixReview: UPDATE_REVIEW,
     triggerAgentFixP4Assessment: vi.fn().mockResolvedValue({
       created: true,
       reason: "created",
@@ -290,6 +293,7 @@ describe("OperationsPage", () => {
     // Each test starts from the default column layout, regardless of prior runs.
     useOperationsViewStore.getState().resetColumnWidths();
     TRIGGER_ASSESSMENT.mockClear();
+    UPDATE_REVIEW.mockClear();
     exportedBlob = null;
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
@@ -359,6 +363,26 @@ describe("OperationsPage", () => {
     expect(screen.getByText("confidence 86%")).toBeTruthy();
     expect(screen.getAllByText("Accepted").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Accurate")).toBeTruthy();
+  });
+
+  it("saves human review through the binding_id path when available", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    await user.click(screen.getAllByRole("button", { name: "Accepted" })[0]!);
+    await user.click(screen.getByText("Save"));
+
+    await waitFor(() => {
+      expect(UPDATE_REVIEW).toHaveBeenCalledWith(
+        "i-1",
+        {
+          outcome: "accepted",
+          reasons: ["complete_usable"],
+          note: "",
+        },
+        "binding-1",
+      );
+    });
   });
 
   it("shows assessment trigger actions only for external done bindings", () => {

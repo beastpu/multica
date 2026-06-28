@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AgentFixHumanReviewSchema,
   AgentFixRecordListSchema,
   AppConfigSchema,
   DashboardAgentRunTimeListSchema,
@@ -542,6 +543,34 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
       created: false,
       reason: "",
       assessment_status: "",
+    });
+  });
+
+  it("parses the human review response with drift-tolerant defaults", () => {
+    const parsed = AgentFixHumanReviewSchema.parse({
+      outcome: "accepted",
+      reasons: ["complete_usable"],
+    });
+    expect(parsed).toEqual({
+      outcome: "accepted",
+      reasons: ["complete_usable"],
+      note: "",
+      reviewer_id: "",
+      reviewed_at: null,
+    });
+
+    const fallback = parseWithFallback(
+      { outcome: "accepted", reasons: "complete_usable" },
+      AgentFixHumanReviewSchema,
+      { outcome: "", reasons: [], note: "", reviewer_id: "", reviewed_at: null },
+      { endpoint: "PATCH /api/operations/agent-fixes/:bindingId/review (test)" },
+    );
+    expect(fallback).toEqual({
+      outcome: "",
+      reasons: [],
+      note: "",
+      reviewer_id: "",
+      reviewed_at: null,
     });
   });
 });

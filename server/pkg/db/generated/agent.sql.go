@@ -4062,6 +4062,91 @@ func (q *Queries) UpsertAgentFixReview(ctx context.Context, arg UpsertAgentFixRe
 	return i, err
 }
 
+const upsertAgentFixReviewByBinding = `-- name: UpsertAgentFixReviewByBinding :one
+WITH binding AS (
+  SELECT fib.id, fib.issue_id, fib.workspace_id
+  FROM feishu_project_issue_binding fib
+  WHERE fib.workspace_id = $5
+    AND fib.id = $6
+),
+assessment AS (
+  SELECT p4.id, p4.feishu_binding_id
+  FROM agent_fix_p4_assessment p4
+  JOIN binding b ON b.id = p4.feishu_binding_id
+)
+INSERT INTO agent_fix_review (
+  workspace_id,
+  issue_id,
+  feishu_binding_id,
+  p4_assessment_id,
+  outcome,
+  reasons,
+  note,
+  reviewer_id,
+  reviewed_at,
+  updated_at
+)
+SELECT
+  b.workspace_id,
+  b.issue_id,
+  b.id,
+  a.id,
+  $1,
+  $2,
+  $3,
+  $4,
+  CASE WHEN $1 = 'unreviewed' THEN NULL ELSE now() END,
+  now()
+FROM binding b
+LEFT JOIN assessment a ON a.feishu_binding_id = b.id
+ON CONFLICT (workspace_id, feishu_binding_id) DO UPDATE SET
+  issue_id = EXCLUDED.issue_id,
+  p4_assessment_id = EXCLUDED.p4_assessment_id,
+  outcome = EXCLUDED.outcome,
+  reasons = EXCLUDED.reasons,
+  note = EXCLUDED.note,
+  reviewer_id = EXCLUDED.reviewer_id,
+  reviewed_at = EXCLUDED.reviewed_at,
+  updated_at = now()
+RETURNING id, workspace_id, issue_id, feishu_binding_id, p4_assessment_id, outcome, reasons, note, reviewer_id, reviewed_at, created_at, updated_at
+`
+
+type UpsertAgentFixReviewByBindingParams struct {
+	Outcome         string      `json:"outcome"`
+	Reasons         []string    `json:"reasons"`
+	Note            string      `json:"note"`
+	ReviewerID      pgtype.UUID `json:"reviewer_id"`
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	FeishuBindingID pgtype.UUID `json:"feishu_binding_id"`
+}
+
+func (q *Queries) UpsertAgentFixReviewByBinding(ctx context.Context, arg UpsertAgentFixReviewByBindingParams) (AgentFixReview, error) {
+	row := q.db.QueryRow(ctx, upsertAgentFixReviewByBinding,
+		arg.Outcome,
+		arg.Reasons,
+		arg.Note,
+		arg.ReviewerID,
+		arg.WorkspaceID,
+		arg.FeishuBindingID,
+	)
+	var i AgentFixReview
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.FeishuBindingID,
+		&i.P4AssessmentID,
+		&i.Outcome,
+		&i.Reasons,
+		&i.Note,
+		&i.ReviewerID,
+		&i.ReviewedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const upsertP4AssessmentPending = `-- name: UpsertP4AssessmentPending :one
 INSERT INTO agent_fix_p4_assessment (
   workspace_id,

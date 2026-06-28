@@ -43,8 +43,16 @@
   - task evidence 只返回受控摘要：task id、agent id、status、是否 P4 assessment、failure reason、error、时间戳；不暴露 `result`、`context`、`session_id`、`work_dir` 等运行内部信息。
   - comment evidence 只返回 agent comment 或命中 CL/Swarm 关键词的普通 comment，最多 20 条。
   - Perforce evidence 复用已入库 Swarm review 状态、review id、URL、author、shelved CL、committed CL 和 review 时间。
+- `PATCH /api/operations/agent-fixes/{binding_id}/review`
+  - 已作为人工 review 主写入 API。
+  - 以 `workspace_id + feishu_binding_id` 为写入主键语义。
+  - handler 验证当前用户是 workspace member，SQL 从 `feishu_project_issue_binding` 按 workspace + binding 校验归属并取得 issue。
+  - request/response 沿用现有人审 `outcome/reasons/note` 语义。
+  - 不依赖 `metadata.p4_assessment`、demo 或 title 作为写入事实。
+  - 不修改 assessment、不修改 issue status、不修改 Feishu/Meego、不修改 P4/Swarm。
 - `PUT /api/operations/agent-fixes/{issueId}/review`
-  - 支持写入人工 review outcome、reasons、note。
+  - 继续保留兼容旧前端/旧入口。
+  - 新 Core / Operations / Issues 调用会优先使用 binding id；缺少 binding id 时才 fallback 到旧 issue id 路径。
 
 当前第一版仍以 operations feed 中的 issue/agent fix 行为主轴，已经能展示 demo P4 数据。
 Operations 主轴还没有完全切到“外部 done binding 统计分母”，当前仍兼容旧的 agent fix feed 主轴；普通 latest run 查询继续排除 `context.type = agent_fix_p4_assessment`。
@@ -59,6 +67,7 @@ Operations 主轴还没有完全切到“外部 done binding 统计分母”，�
 - `TriggerAgentFixP4AssessmentResponseSchema` zod schema。
 - `updateAgentFixReview` API client。
 - `useUpdateAgentFixReview` React Query mutation。
+- `updateAgentFixReview` 已优先走 `PATCH /api/operations/agent-fixes/{binding_id}/review`，并对 response 使用 `AgentFixHumanReviewSchema` + `parseWithFallback`；缺 binding id 时 fallback 旧 `PUT /api/operations/agent-fixes/{issueId}/review`。
 - `triggerAgentFixP4Assessment` API client。
 - `useTriggerAgentFixP4Assessment` React Query mutation。
 
@@ -95,7 +104,7 @@ Operations 主轴还没有完全切到“外部 done binding 统计分母”，�
   - 可编辑 outcome。
   - 可选择 reasons。
   - 可填写 note。
-  - 保存后走真实 API mutation。
+  - 保存后走真实 API mutation；有 `external.binding_id` 时使用 binding-id 主路径，缺 binding 时 fallback 旧 issueId 兼容路径。
 - 分析报告页签：
   - attribution 分布。
   - human review 分布。
@@ -153,12 +162,11 @@ Operations 主轴还没有完全切到“外部 done binding 统计分母”，�
 - P4/Swarm 服务端外部查询还没做；Evidence API 当前只聚合 Multica DB 内已有证据，没有实时查询真实 P4/Swarm。
 - Evidence 已聚合相关 agent task/comment/perforce_review/issue_perforce_review 的受控只读摘要；后续仍可补 P4 change describe、Swarm review commits[] 等外部深度字段。
 - 真实 final CL 校验还没完成；`提交记录` 已同步，但还没用真实 done 样本验证字段格式和 CL 提取稳定性。
-- binding-id review API 还没迁完；当前仍是 `PUT /api/operations/agent-fixes/{issueId}/review`，设计里的 `PATCH /api/operations/agent-fixes/{binding_id}/review` 未落。
+- Operations 主轴还没有完全切到“外部 done binding 统计分母”，当前仍兼容旧的 agent fix feed 主轴。
 - 没有接 GitHub PR。
 - 没有自动修改飞书/Meego 状态。
 - 没有自动提交或修改 P4。
 - 没有 review history/audit，仅保存最新人工 review。
-- Operations 主轴还没有完全切到“外部 done binding 统计分母”，当前仍兼容旧的 agent fix feed 主轴。
 
 ## 本阶段验证
 
@@ -185,15 +193,28 @@ cd server && go test -c ./cmd/server -o /tmp/multica-cmd-server.test
 git diff --check
 ```
 
+本次 binding-id review API 阶段新增通过：
+
+```bash
+make sqlc
+corepack pnpm --filter @multica/core exec vitest run api/client.test.ts api/schemas.test.ts
+corepack pnpm --filter @multica/views exec vitest run dashboard/components/operations-page.test.tsx issues/components/p4-assessment-entry.test.tsx
+cd server && go test ./internal/service -run 'TestAgentFixReviewByBindingUsesBindingAsWriteSpine|TestP4AssessmentTaskIsolationSQLInvariants|TestP4AssessmentBackfillScansBindingsWithStatusMapping|TestP4Evidence'
+corepack pnpm --filter @multica/core typecheck
+corepack pnpm --filter @multica/views typecheck
+```
+
 新增/补充覆盖：
 
 - CSV 纯函数测试：BOM、稳定表头、CSV 转义、数组字段、稀疏旧 rows。
 - Operations DOM 测试：先按 workstream 筛选，再点击 `Export CSV`，确认导出内容只包含当前筛选 rows。
 - Operations DOM 测试：done binding 行展示 `Run assessment`，非 done 行不展示；点击 `Run assessment` 调用 `{ binding_id, force: false }`；completed 行 `Rerun assessment` 调用 `{ binding_id, force: true }`。
 - Core schema/client 测试：`external.binding_id` 保留；`POST /api/operations/agent-fixes/p4-assessments` response 走 zod parseWithFallback；client 使用 `binding_id` 和 `force` 请求体。
+- Core schema/client 测试：human review response 走 zod `parseWithFallback` 并覆盖 schema drift；client 优先调用 binding-id `PATCH`，缺 binding id 时 fallback 旧 issue-id `PUT`。
 - P4 assessment scanner 结构测试：历史补跑 SQL 从 binding 出发，使用 status mapping 输入，不读取 metadata/demo/title 作为触发信号。
 - Evidence API 深度 DB 证据测试：task/comment 查询必须按 workspace + issue 限定并限制 20 条；task 查询只返回受控摘要，不选择 `result/context/session_id/work_dir`；service projection 不泄露 raw task internals；Swarm review projection 保留 review id/state/shelved CL/committed CL。
 - Issues DOM 测试：展示 Operations 共享人工 review outcome；从 Issues 直接打开人工 review 弹窗并通过 Operations mutation 保存；未标注初始状态显示 `Human review` 入口；Issue 缺 P4 metadata 但 assessment feed 能匹配时仍显示入口。
+- Operations / Issues DOM 测试：人工 review 保存会把 `external.binding_id` 传入 mutation，优先使用 binding-id 主路径。
 - Label picker DOM 测试：覆盖已有 label chip 触发器，避免 Base UI `nativeButton` warning。
 - 继续保留 unknown enum 降级展示、analysis report、筛选、review 弹窗相关测试。
 

@@ -1451,11 +1451,15 @@ export class ApiClient {
   async updateAgentFixReview(
     issueId: string,
     data: UpdateAgentFixReviewRequest,
+    bindingId?: string,
   ): Promise<AgentFixHumanReview> {
+    const path = bindingId
+      ? `/api/operations/agent-fixes/${encodeURIComponent(bindingId)}/review`
+      : `/api/operations/agent-fixes/${encodeURIComponent(issueId)}/review`;
     const raw = await this.fetch<unknown>(
-      `/api/operations/agent-fixes/${issueId}/review`,
+      path,
       {
-        method: "PUT",
+        method: bindingId ? "PATCH" : "PUT",
         body: JSON.stringify(data),
       },
     );
@@ -1463,7 +1467,11 @@ export class ApiClient {
       raw,
       AgentFixHumanReviewSchema,
       { outcome: "", reasons: [], note: "", reviewer_id: "", reviewed_at: null },
-      { endpoint: "PUT /api/operations/agent-fixes/:issueId/review" },
+      {
+        endpoint: bindingId
+          ? "PATCH /api/operations/agent-fixes/:bindingId/review"
+          : "PUT /api/operations/agent-fixes/:issueId/review",
+      },
     );
   }
 

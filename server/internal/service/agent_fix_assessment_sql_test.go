@@ -110,6 +110,35 @@ func TestP4AssessmentBackfillScansBindingsWithStatusMapping(t *testing.T) {
 	}
 }
 
+func TestAgentFixReviewByBindingUsesBindingAsWriteSpine(t *testing.T) {
+	sql, err := os.ReadFile("../../pkg/db/queries/agent.sql")
+	if err != nil {
+		t.Fatalf("read agent.sql: %v", err)
+	}
+	chunk := sqlSection(t, string(sql), "UpsertAgentFixReviewByBinding")
+	for _, want := range []string{
+		"FROM feishu_project_issue_binding fib",
+		"fib.workspace_id = sqlc.arg('workspace_id')",
+		"fib.id = sqlc.arg('feishu_binding_id')",
+		"ON CONFLICT (workspace_id, feishu_binding_id)",
+		"agent_fix_review",
+	} {
+		if !strings.Contains(chunk, want) {
+			t.Fatalf("UpsertAgentFixReviewByBinding missing %q\n---\n%s", want, chunk)
+		}
+	}
+	for _, forbidden := range []string{
+		"metadata",
+		"demo",
+		"title",
+		"issue_id = sqlc.arg('issue_id')",
+	} {
+		if strings.Contains(chunk, forbidden) {
+			t.Fatalf("UpsertAgentFixReviewByBinding must not use %q as a write signal\n---\n%s", forbidden, chunk)
+		}
+	}
+}
+
 func TestP4EvidenceQueriesAreScopedAndBounded(t *testing.T) {
 	sql, err := os.ReadFile("../../pkg/db/queries/agent.sql")
 	if err != nil {

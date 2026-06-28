@@ -14,11 +14,13 @@ export function useUpdateAgentFixReview() {
   return useMutation({
     mutationFn: ({
       issueId,
+      bindingId,
       data,
     }: {
       issueId: string;
+      bindingId?: string;
       data: UpdateAgentFixReviewRequest;
-    }) => api.updateAgentFixReview(issueId, data),
+    }) => api.updateAgentFixReview(issueId, data, bindingId),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: dashboardKeys.all(wsId) });
     },
