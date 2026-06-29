@@ -16,7 +16,7 @@ const FIXES = vi.hoisted(() => [
     issue_id: "i-1",
     issue_identifier: "MUL-7",
     issue_title: "Login broke",
-    issue_status: "in_review",
+    issue_status: "done",
     last_comment: "looks good, ready for review",
     last_comment_author_type: "agent",
     started_at: null,
@@ -423,6 +423,68 @@ describe("OperationsPage", () => {
     });
   });
 
+  it("uses the shared human review editor reason choices and note behavior", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    await user.click(screen.getAllByRole("button", { name: "Needs changes" })[0]!);
+    expect(screen.getByText("Human review AI fix result")).toBeTruthy();
+    expect(screen.getByText("Incomplete coverage")).toBeTruthy();
+    expect(screen.getByText("Missing edge case")).toBeTruthy();
+    expect(screen.queryByText("Complete")).toBeNull();
+
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Accepted" }));
+    expect(screen.getByText("Complete")).toBeTruthy();
+    expect(screen.queryByText("Incomplete coverage")).toBeNull();
+
+    await user.click(within(dialog).getByRole("button", { name: "Small fix" }));
+    const note = screen.getByPlaceholderText(/Add judgement details/i);
+    await user.clear(note);
+    await user.type(note, "Accepted after manual smoke test.");
+    await user.click(screen.getByText("Save"));
+
+    await waitFor(() => {
+      expect(UPDATE_REVIEW).toHaveBeenCalledWith(
+        "i-4",
+        {
+          outcome: "accepted",
+          reasons: ["small_fix"],
+          note: "Accepted after manual smoke test.",
+        },
+        "binding-4",
+      );
+    });
+  });
+
+  it("renders human review outcome and reason copy in Chinese locale", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />, { locale: "zh-Hans" });
+
+    expect(screen.getAllByText("通过").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("完整可用")).toBeNull();
+
+    await user.click(screen.getAllByRole("button", { name: "详情" })[1]!);
+    expect(screen.getByText("完整可用")).toBeTruthy();
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getAllByRole("button", { name: "需返工" })[0]!);
+    expect(screen.getByText("人工验收 AI 修单结果")).toBeTruthy();
+    expect(screen.getByText("覆盖不全")).toBeTruthy();
+    expect(screen.getByText("边界遗漏")).toBeTruthy();
+    expect(screen.getByPlaceholderText(/补充判断依据/)).toBeTruthy();
+  });
+
+  it("keeps human review reasons out of the compact main table", () => {
+    const { container } = renderWithI18n(<OperationsPage />);
+
+    expect(screen.getAllByText("Accepted").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("Complete")).toBeNull();
+    expect(
+      container.querySelector('[style*="grid-template-columns"]'),
+    ).not.toBeNull();
+  });
+
   it("shows assessment trigger actions only for external done bindings", () => {
     renderWithI18n(<OperationsPage />);
 
@@ -516,6 +578,22 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Client crash")).toBeTruthy();
     expect(screen.getByText("AI overestimated")).toBeTruthy();
     expect(screen.queryByText("Login broke")).toBeNull();
+  });
+
+  it("does not substitute total rows for a zero external-done summary", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    await user.click(screen.getByLabelText("Workstream"));
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText("rel_future/server"),
+    );
+
+    expect(screen.getByText("Future work")).toBeTruthy();
+    expect(screen.queryByText("Login broke")).toBeNull();
+    expect(screen.getByText("External done").parentElement?.textContent).toContain(
+      "0",
+    );
   });
 
   it("exports the current filtered P4 assessment rows as CSV", async () => {

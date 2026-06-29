@@ -55,6 +55,7 @@ import {
   AgentFixReviewDialog,
   ToneBadge,
   agentFixEnumLabel,
+  agentFixReviewReasonLabels,
   agentFixEnumTone,
   type Tone,
   type UsageT,
@@ -1026,7 +1027,7 @@ function OperationsSummary({
   const stats = [
     {
       label: t(($) => $.operations.summary.external_done),
-      value: summary.externalDone || summary.total,
+      value: summary.externalDone,
       hint: t(($) => $.operations.summary.external_done_hint),
     },
     {
@@ -1661,11 +1662,10 @@ function HumanReviewCell({
   const { t } = useT("usage");
   const tx = t as unknown as UsageT;
   const outcome = fix.human_review?.outcome;
-  const reasons = fix.human_review?.reasons ?? [];
-  const reasonText = reasons
-    .map((r) => agentFixEnumLabel(tx, "review_reason", r))
-    .filter(Boolean)
-    .join(", ");
+  const reasonText = agentFixReviewReasonLabels(
+    tx,
+    fix.human_review?.reasons,
+  ).join(", ");
   const note = fix.human_review?.note ?? "";
   const reviewedAt = fix.human_review?.reviewed_at ?? "";
   const detailRows = [

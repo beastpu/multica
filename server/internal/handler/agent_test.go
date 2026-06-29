@@ -226,6 +226,134 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	}
 	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, reviewIssue) })
 
+	var integrationID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO feishu_project_integration (
+			workspace_id,
+			project_key,
+			plugin_id,
+			plugin_secret,
+			status_mapping,
+			work_item_types,
+			created_by_id
+		)
+		VALUES (
+			$1,
+			'OperationsFixture',
+			'plugin-demo',
+			'secret-demo',
+			'{"Done":"done"}'::jsonb,
+			'[{"type_key":"issue","api_name":"issue","name":"Defect","identifier_prefix":"BUG","status_mapping":{"Done":"done"},"reverse_status_mapping":{}}]'::jsonb,
+			$2
+		)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&integrationID); err != nil {
+		t.Fatalf("insert feishu integration: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM feishu_project_integration WHERE id = $1`, integrationID) })
+
+	var bindingID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO feishu_project_issue_binding (
+			workspace_id,
+			integration_id,
+			issue_id,
+			project_key,
+			work_item_type,
+			work_item_id,
+			external_identifier,
+			external_url,
+			external_status_label,
+			external_fields
+		)
+		VALUES (
+			$1,
+			$2,
+			$3,
+			'OperationsFixture',
+			'issue',
+			'BUG-93218',
+			'BUG-93218',
+			'https://meego.example.test/BUG-93218',
+			'Done',
+			'{"version":"1.7.2"}'::jsonb
+		)
+		RETURNING id
+	`, testWorkspaceID, integrationID, reviewIssue).Scan(&bindingID); err != nil {
+		t.Fatalf("insert feishu binding: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM feishu_project_issue_binding WHERE id = $1`, bindingID) })
+
+	var p4AssessmentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_fix_p4_assessment (
+			workspace_id,
+			issue_id,
+			feishu_binding_id,
+			assessment_status,
+			delivery_attribution_prediction,
+			quality_prediction,
+			prediction_reasons,
+			confidence,
+			workstream,
+			swarm_reviews,
+			ai_shelved_cls,
+			external_committed_cls,
+			summary,
+			warnings,
+			assessed_at
+		)
+		VALUES (
+			$1,
+			$2,
+			$3,
+			'completed',
+			'ai_delivered',
+			'likely_correct',
+			ARRAY['complete_usable']::text[],
+			0.86,
+			'rel_1.7.2/server',
+			'[{"review_id":"SW-11872","changes":[282941],"commits":[283006],"swarm_branch":"main","event_type":"review.committed","sent_at":"2026-06-01T00:30:00Z"}]'::jsonb,
+			ARRAY[282941]::int[],
+			ARRAY[283006]::int[],
+			'AI shelve was submitted as the final CL.',
+			'[]'::jsonb,
+			now()
+		)
+		RETURNING id
+	`, testWorkspaceID, reviewIssue, bindingID).Scan(&p4AssessmentID); err != nil {
+		t.Fatalf("insert p4 assessment: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_fix_p4_assessment WHERE id = $1`, p4AssessmentID) })
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_fix_review (
+			workspace_id,
+			issue_id,
+			feishu_binding_id,
+			p4_assessment_id,
+			outcome,
+			reasons,
+			note,
+			reviewer_id,
+			reviewed_at
+		)
+		VALUES (
+			$1,
+			$2,
+			$3,
+			$4,
+			'accepted',
+			ARRAY['complete_usable']::text[],
+			'Reviewed against the same binding as the P4 assessment.',
+			$5,
+			now()
+		)
+	`, testWorkspaceID, reviewIssue, bindingID, p4AssessmentID, testUserID); err != nil {
+		t.Fatalf("insert human review: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_fix_review WHERE feishu_binding_id = $1`, bindingID) })
+
 	// No issue_id — must be excluded by the INNER JOIN on issue.
 	issuelessTaskID := mkTask(`
 		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, completed_at)
@@ -292,6 +420,39 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	}
 	if review.LastCommentAuthorType != "agent" {
 		t.Errorf("review.LastCommentAuthorType = %q, want agent", review.LastCommentAuthorType)
+	}
+	if review.External == nil {
+		t.Fatalf("review.External = nil, want Feishu binding data")
+	}
+	if review.External.BindingID != bindingID {
+		t.Errorf("review.External.BindingID = %q, want %q", review.External.BindingID, bindingID)
+	}
+	if review.External.WorkItemID != "BUG-93218" {
+		t.Errorf("review.External.WorkItemID = %q, want BUG-93218", review.External.WorkItemID)
+	}
+	if review.External.MappedStatus != "done" || !review.External.Done {
+		t.Errorf("review.External mapped status = %q done=%v, want done/true", review.External.MappedStatus, review.External.Done)
+	}
+	if review.P4Assessment == nil {
+		t.Fatalf("review.P4Assessment = nil, want assessment joined by binding")
+	}
+	if review.P4Assessment.Workstream != "rel_1.7.2/server" {
+		t.Errorf("review.P4Assessment.Workstream = %q", review.P4Assessment.Workstream)
+	}
+	if review.P4Assessment.DeliveryAttributionPrediction != "ai_delivered" {
+		t.Errorf("review.P4Assessment.DeliveryAttributionPrediction = %q", review.P4Assessment.DeliveryAttributionPrediction)
+	}
+	if review.HumanReview == nil {
+		t.Fatalf("review.HumanReview = nil, want human review joined by same binding")
+	}
+	if review.HumanReview.Outcome != "accepted" {
+		t.Errorf("review.HumanReview.Outcome = %q, want accepted", review.HumanReview.Outcome)
+	}
+	if !reflect.DeepEqual(review.HumanReview.Reasons, []string{"complete_usable"}) {
+		t.Errorf("review.HumanReview.Reasons = %#v", review.HumanReview.Reasons)
+	}
+	if review.AIJudgementEval != "match" {
+		t.Errorf("review.AIJudgementEval = %q, want match", review.AIJudgementEval)
 	}
 
 	for _, f := range fixes {

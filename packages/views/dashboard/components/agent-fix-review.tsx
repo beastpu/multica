@@ -245,6 +245,15 @@ export function agentFixEnumTone(
   return "default";
 }
 
+export function agentFixReviewReasonLabels(
+  t: UsageT,
+  reasons: string[] | undefined,
+): string[] {
+  return (reasons ?? [])
+    .map((reason) => agentFixEnumLabel(t, "review_reason", reason))
+    .filter(Boolean);
+}
+
 export function ToneBadge({
   tone,
   children,
