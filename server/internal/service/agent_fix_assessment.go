@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"time"
@@ -328,6 +329,12 @@ func p4EvidenceReviewMaps(reviews []db.PerforceReview) []map[string]any {
 			"author":            textString(review.Author),
 			"shelved_cl":        int32OrNil(review.ShelvedCl),
 			"committed_cl":      int32OrNil(review.CommittedCl),
+			"changes":           review.Changes,
+			"commits":           review.Commits,
+			"swarm_branch":      textString(review.SwarmBranch),
+			"event_type":        textString(review.EventType),
+			"sent_at":           timeString(review.SentAt),
+			"raw_payload":       jsonObjectMap(review.RawPayload),
 			"review_created_at": timeString(review.ReviewCreatedAt),
 			"review_updated_at": timeString(review.ReviewUpdatedAt),
 		})
@@ -422,6 +429,9 @@ func parseP4AssessmentTaskOutput(result []byte) (p4AssessmentOutput, error) {
 		if len(matches) != 1 {
 			return p4AssessmentOutput{}, fmt.Errorf("expected a JSON object or one fenced json block")
 		}
+		if raw != matches[0][0] {
+			return p4AssessmentOutput{}, fmt.Errorf("fenced json block must be the entire output")
+		}
 		payload = []byte(matches[0][1])
 	}
 	var out p4AssessmentOutput
@@ -430,25 +440,64 @@ func parseP4AssessmentTaskOutput(result []byte) (p4AssessmentOutput, error) {
 	if err := dec.Decode(&out); err != nil {
 		return p4AssessmentOutput{}, err
 	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return p4AssessmentOutput{}, fmt.Errorf("unexpected trailing json")
+	}
 	if out.DeliveryAttributionPrediction == "" {
 		out.DeliveryAttributionPrediction = "unknown"
 	}
 	if out.QualityPrediction == "" {
 		out.QualityPrediction = "unknown"
 	}
+	if !validP4DeliveryPrediction(out.DeliveryAttributionPrediction) {
+		return p4AssessmentOutput{}, fmt.Errorf("invalid delivery_attribution_prediction")
+	}
+	if !validP4QualityPrediction(out.QualityPrediction) {
+		return p4AssessmentOutput{}, fmt.Errorf("invalid quality_prediction")
+	}
 	if out.Confidence != nil && (*out.Confidence < 0 || *out.Confidence > 1) {
 		return p4AssessmentOutput{}, fmt.Errorf("confidence out of range")
 	}
 	if len(out.SwarmReviews) == 0 {
 		out.SwarmReviews = []byte("[]")
+	} else if !jsonRawHasShape(out.SwarmReviews, []byte("[")) {
+		return p4AssessmentOutput{}, fmt.Errorf("swarm_reviews must be an array")
 	}
 	if len(out.Evidence) == 0 {
 		out.Evidence = []byte("{}")
+	} else if !jsonRawHasShape(out.Evidence, []byte("{")) {
+		return p4AssessmentOutput{}, fmt.Errorf("evidence must be an object")
 	}
 	if len(out.Warnings) == 0 {
 		out.Warnings = []byte("[]")
+	} else if !jsonRawHasShape(out.Warnings, []byte("[")) {
+		return p4AssessmentOutput{}, fmt.Errorf("warnings must be an array")
 	}
 	return out, nil
+}
+
+func validP4DeliveryPrediction(v string) bool {
+	switch v {
+	case "ai_delivered", "ai_assisted", "human_delivered", "conflict", "unattributed", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func validP4QualityPrediction(v string) bool {
+	switch v {
+	case "likely_correct", "likely_needs_changes", "likely_wrong", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func jsonRawHasShape(raw json.RawMessage, prefix []byte) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return bytes.HasPrefix(trimmed, prefix) && json.Valid(trimmed)
 }
 
 func P4AssessmentMappedStatus(workItemType, externalStatus string, statusMapping, workItemTypes []byte) string {
@@ -489,4 +538,13 @@ func timeString(t pgtype.Timestamptz) string {
 		return ""
 	}
 	return t.Time.UTC().Format(time.RFC3339Nano)
+}
+
+func jsonObjectMap(raw []byte) map[string]any {
+	out := map[string]any{}
+	if len(raw) == 0 {
+		return out
+	}
+	_ = json.Unmarshal(raw, &out)
+	return out
 }

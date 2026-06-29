@@ -61,6 +61,62 @@ func TestParseP4AssessmentTaskOutputAcceptsSingleFencedJSONBlock(t *testing.T) {
 	}
 }
 
+func TestParseP4AssessmentTaskOutputRejectsInvalidShape(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{
+			name:   "prose around fenced block",
+			output: "Here is the result:\n```json\n{\"delivery_attribution_prediction\":\"unknown\",\"quality_prediction\":\"unknown\"}\n```",
+		},
+		{
+			name:   "multiple fenced blocks",
+			output: "```json\n{\"delivery_attribution_prediction\":\"unknown\"}\n```\n```json\n{\"quality_prediction\":\"unknown\"}\n```",
+		},
+		{
+			name:   "trailing prose after object",
+			output: "{\"delivery_attribution_prediction\":\"unknown\",\"quality_prediction\":\"unknown\"}\nDone.",
+		},
+		{
+			name:   "bad delivery enum",
+			output: "{\"delivery_attribution_prediction\":\"sure\",\"quality_prediction\":\"unknown\"}",
+		},
+		{
+			name:   "bad quality enum",
+			output: "{\"delivery_attribution_prediction\":\"unknown\",\"quality_prediction\":\"fine\"}",
+		},
+		{
+			name:   "swarm reviews not array",
+			output: "{\"delivery_attribution_prediction\":\"unknown\",\"quality_prediction\":\"unknown\",\"swarm_reviews\":{}}",
+		},
+		{
+			name:   "evidence not object",
+			output: "{\"delivery_attribution_prediction\":\"unknown\",\"quality_prediction\":\"unknown\",\"evidence\":[]}",
+		},
+		{
+			name:   "warnings not array",
+			output: "{\"delivery_attribution_prediction\":\"unknown\",\"quality_prediction\":\"unknown\",\"warnings\":{}}",
+		},
+		{
+			name:   "non integer cl",
+			output: "{\"delivery_attribution_prediction\":\"unknown\",\"quality_prediction\":\"unknown\",\"ai_shelved_cls\":[1.5]}",
+		},
+		{
+			name:   "confidence out of range",
+			output: "{\"delivery_attribution_prediction\":\"unknown\",\"quality_prediction\":\"unknown\",\"confidence\":1.5}",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _ := json.Marshal(map[string]string{"output": tt.output})
+			if _, err := parseP4AssessmentTaskOutput(result); err == nil {
+				t.Fatalf("expected parse error for %s", tt.name)
+			}
+		})
+	}
+}
+
 func TestFeishuProjectExternalFieldsKeepsSubmitRecord(t *testing.T) {
 	item := FeishuProjectWorkItem{
 		FieldValues: map[string][]string{
@@ -131,6 +187,12 @@ func TestP4EvidenceReviewProjectionKeepsSwarmAndCLFields(t *testing.T) {
 		Author:          pgtype.Text{String: "svr_ci", Valid: true},
 		ShelvedCl:       pgtype.Int4{Int32: 267639, Valid: true},
 		CommittedCl:     pgtype.Int4{},
+		Changes:         []int32{267639, 267642},
+		Commits:         []int32{},
+		SwarmBranch:     pgtype.Text{String: "main", Valid: true},
+		EventType:       pgtype.Text{String: "review.updated", Valid: true},
+		SentAt:          ts,
+		RawPayload:      []byte(`{"event_type":"review.updated","review":{"id":267641,"changes":[267639,267642],"commits":[]}}`),
 		ReviewCreatedAt: ts,
 		ReviewUpdatedAt: ts,
 	}}
@@ -145,6 +207,16 @@ func TestP4EvidenceReviewProjectionKeepsSwarmAndCLFields(t *testing.T) {
 	}
 	if review["committed_cl"] != nil {
 		t.Fatalf("committed_cl = %#v, want nil", review["committed_cl"])
+	}
+	if got, ok := review["changes"].([]int32); !ok || len(got) != 2 || got[0] != 267639 || got[1] != 267642 {
+		t.Fatalf("changes = %#v", review["changes"])
+	}
+	if review["swarm_branch"] != "main" || review["event_type"] != "review.updated" || review["sent_at"] != "2026-06-29T04:05:06Z" {
+		t.Fatalf("complete review evidence missing: %#v", review)
+	}
+	raw, ok := review["raw_payload"].(map[string]any)
+	if !ok || raw["event_type"] != "review.updated" {
+		t.Fatalf("raw_payload = %#v", review["raw_payload"])
 	}
 }
 

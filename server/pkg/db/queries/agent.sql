@@ -823,10 +823,11 @@ SELECT t.* FROM (
 ) t;
 
 -- name: ListWorkspaceAgentFixes :many
--- One row per issue that an agent has worked on, carrying ONLY the latest
--- agent run for that issue, for the Usage page's Operations tab. An issue may
--- have many runs (several agents, or one agent retried) — DISTINCT ON
--- (issue_id) keeps just the newest (by completion, then created_at). Columns:
+-- One row per issue that either has a recent normal agent run or a recent
+-- Feishu/Meego binding. The binding spine lets Operations show external done
+-- work items even when no normal issue task exists. An issue may have many
+-- runs (several agents, or one agent retried) — DISTINCT ON (issue_id) keeps
+-- just the newest normal task (by completion, then created_at). Columns:
 --   - agent_name  → who ran the latest attempt (the "智能体" column)
 --   - issue_*     → the linked issue + its workflow status (the "状态" column)
 --   - last_comment→ the AGENT's most recent comment/reply on the issue, the
@@ -841,17 +842,64 @@ SELECT t.* FROM (
 -- JOINs agent because agent_task_queue has no workspace_id; INNER JOIN issue so
 -- only issue-linked runs count. The window filters on the latest run's recency.
 -- Per-agent access filtering happens in the handler against accessibleAgentIDs.
+WITH latest AS (
+  SELECT DISTINCT ON (atq.issue_id)
+    atq.id AS task_id, atq.agent_id, atq.issue_id,
+    atq.started_at, atq.completed_at, atq.created_at
+  FROM agent_task_queue atq
+  JOIN agent ag ON ag.id = atq.agent_id
+  WHERE ag.workspace_id = sqlc.arg('workspace_id')
+    AND atq.issue_id IS NOT NULL
+    AND COALESCE(atq.context->>'type', '') <> 'agent_fix_p4_assessment'
+  -- "Latest run" = most recent activity overall: completion if finished, else
+  -- start, else when it was queued. So a fresh queued/running attempt outranks
+  -- an older finished one. atq.id is a final deterministic tiebreaker.
+  ORDER BY atq.issue_id,
+    COALESCE(atq.completed_at, atq.started_at, atq.created_at) DESC, atq.id DESC
+),
+spine AS (
+  SELECT
+    latest.task_id,
+    latest.agent_id,
+    latest.issue_id,
+    latest.started_at,
+    latest.completed_at,
+    latest.created_at,
+    true AS has_normal_task
+  FROM latest
+  WHERE COALESCE(latest.completed_at, latest.started_at, latest.created_at) > now() - make_interval(days => sqlc.arg('days')::int)
+
+  UNION ALL
+
+  SELECT
+    NULL::uuid AS task_id,
+    i.assignee_id AS agent_id,
+    fib.issue_id,
+    NULL::timestamptz AS started_at,
+    NULL::timestamptz AS completed_at,
+    fib.last_synced_at AS created_at,
+    false AS has_normal_task
+  FROM feishu_project_issue_binding fib
+  JOIN issue i ON i.id = fib.issue_id AND i.workspace_id = fib.workspace_id
+  LEFT JOIN latest ON latest.issue_id = fib.issue_id
+  WHERE fib.workspace_id = sqlc.arg('workspace_id')
+    AND i.assignee_type = 'agent'
+    AND i.assignee_id IS NOT NULL
+    AND latest.issue_id IS NULL
+    AND fib.last_synced_at > now() - make_interval(days => sqlc.arg('days')::int)
+)
 SELECT
-  latest.task_id,
-  latest.agent_id,
+  spine.task_id,
+  spine.agent_id,
   a.name AS agent_name,
   i.id AS issue_id,
   i.number AS issue_number,
   i.title AS issue_title,
   i.status AS issue_status,
-  latest.started_at,
-  latest.completed_at,
-  latest.created_at,
+  spine.started_at,
+  spine.completed_at,
+  spine.created_at,
+  spine.has_normal_task,
   COALESCE(lc.content, '') AS last_comment,
   COALESCE(lc.author_type, '') AS last_comment_author_type,
   fib.id AS external_binding_id,
@@ -880,23 +928,9 @@ SELECT
   afr.note AS review_note,
   afr.reviewer_id AS review_reviewer_id,
   afr.reviewed_at AS review_reviewed_at
-FROM (
-  SELECT DISTINCT ON (atq.issue_id)
-    atq.id AS task_id, atq.agent_id, atq.issue_id,
-    atq.started_at, atq.completed_at, atq.created_at
-  FROM agent_task_queue atq
-  JOIN agent ag ON ag.id = atq.agent_id
-  WHERE ag.workspace_id = sqlc.arg('workspace_id')
-    AND atq.issue_id IS NOT NULL
-    AND COALESCE(atq.context->>'type', '') <> 'agent_fix_p4_assessment'
-  -- "Latest run" = most recent activity overall: completion if finished, else
-  -- start, else when it was queued. So a fresh queued/running attempt outranks
-  -- an older finished one. atq.id is a final deterministic tiebreaker.
-  ORDER BY atq.issue_id,
-    COALESCE(atq.completed_at, atq.started_at, atq.created_at) DESC, atq.id DESC
-) latest
-JOIN agent a ON a.id = latest.agent_id
-JOIN issue i ON i.id = latest.issue_id
+FROM spine
+JOIN agent a ON a.id = spine.agent_id
+JOIN issue i ON i.id = spine.issue_id
 LEFT JOIN LATERAL (
   SELECT c.content, c.author_type
   FROM comment c
@@ -912,13 +946,13 @@ LEFT JOIN agent_fix_p4_assessment p4
   ON p4.workspace_id = i.workspace_id AND p4.feishu_binding_id = fib.id
 LEFT JOIN agent_fix_review afr
   ON afr.workspace_id = i.workspace_id AND afr.feishu_binding_id = fib.id
-WHERE COALESCE(latest.completed_at, latest.started_at, latest.created_at) > now() - make_interval(days => sqlc.arg('days')::int)
+WHERE
   -- Literal case-insensitive substring on the agent comment (no LIKE wildcard
   -- semantics, so a user-typed % or _ matches itself). NULL content (no agent
   -- comment) yields NULL > 0 → excluded, which is the desired "drop unmatched".
-  AND (sqlc.narg('search')::text IS NULL
+  (sqlc.narg('search')::text IS NULL
        OR position(lower(sqlc.narg('search')::text) IN lower(lc.content)) > 0)
-ORDER BY COALESCE(latest.completed_at, latest.started_at, latest.created_at) DESC
+ORDER BY COALESCE(spine.completed_at, spine.started_at, spine.created_at) DESC
 LIMIT 500;
 
 -- name: UpsertAgentFixReview :one

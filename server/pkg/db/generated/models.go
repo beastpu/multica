@@ -816,6 +816,12 @@ type PerforceReview struct {
 	ReviewUpdatedAt pgtype.Timestamptz `json:"review_updated_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	Changes         []int32            `json:"changes"`
+	Commits         []int32            `json:"commits"`
+	SwarmBranch     pgtype.Text        `json:"swarm_branch"`
+	EventType       pgtype.Text        `json:"event_type"`
+	SentAt          pgtype.Timestamptz `json:"sent_at"`
+	RawPayload      []byte             `json:"raw_payload"`
 }
 
 type PersonalAccessToken struct {

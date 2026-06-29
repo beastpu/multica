@@ -38,7 +38,17 @@ const FIXES = vi.hoisted(() => [
       prediction_reasons: ["complete_usable"],
       confidence: 0.86,
       workstream: "rel_1.7.2/server",
-      swarm_reviews: [{ review_id: "SW-11872", state: "approved" }],
+      swarm_reviews: [
+        {
+          review_id: "SW-11872",
+          state: "approved",
+          changes: [282941, 282944],
+          commits: [283006],
+          swarm_branch: "main",
+          event_type: "review.committed",
+          sent_at: "2026-06-01T00:30:00Z",
+        },
+      ],
       ai_shelved_cls: [282941],
       external_committed_cls: [283006],
       summary: "AI shelve was submitted as the final CL.",
@@ -144,7 +154,17 @@ const FIXES = vi.hoisted(() => [
       prediction_reasons: ["wrong_direction"],
       confidence: 0.64,
       workstream: "rel_1.7.3/client",
-      swarm_reviews: [{ review_id: "SW-11900", state: "needsReview" }],
+      swarm_reviews: [
+        {
+          review_id: "SW-11900",
+          state: "needsReview",
+          changes: [283111, 283112],
+          commits: [],
+          swarm_branch: "release/client",
+          event_type: "review.updated",
+          sent_at: "2026-06-04T00:30:00Z",
+        },
+      ],
       ai_shelved_cls: [283111],
       external_committed_cls: [283222],
       warnings: ["final CL differs from AI shelve"],
@@ -356,6 +376,11 @@ describe("OperationsPage", () => {
     expect(screen.getAllByText("AI assessed").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("stream rel_1.7.2/server")).toBeTruthy();
     expect(screen.getByText("Swarm SW-11872")).toBeTruthy();
+    expect(screen.getByText("changes 282941, 282944")).toBeTruthy();
+    expect(screen.getByText("commits 283006")).toBeTruthy();
+    expect(screen.getByText("branch main")).toBeTruthy();
+    expect(screen.getByText("event review.committed")).toBeTruthy();
+    expect(screen.getByText("sent 2026-06-01T00:30:00Z")).toBeTruthy();
     expect(screen.getByText("shelve 282941")).toBeTruthy();
     expect(screen.getByText("final CL 283006")).toBeTruthy();
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
@@ -493,9 +518,16 @@ describe("OperationsPage", () => {
     expect(exportedBlob).not.toBeNull();
     const csv = await exportedBlob!.text();
     expect(csv).toContain("Issue,Issue Title,External Work Item ID");
+    expect(csv).toContain(
+      "Swarm Review,Swarm Changes,Swarm Commits,Swarm Branch,Swarm Event Type,Swarm Sent At",
+    );
     expect(csv).toContain("MUL-10,Client crash,BUG-10000");
     expect(csv).toContain("rel_1.7.3/client");
     expect(csv).toContain("SW-11900");
+    expect(csv).toContain("283111; 283112");
+    expect(csv).toContain("release/client");
+    expect(csv).toContain("review.updated");
+    expect(csv).toContain("2026-06-04T00:30:00Z");
     expect(csv).toContain("283111");
     expect(csv).toContain("283222");
     expect(csv).toContain("needs_changes");

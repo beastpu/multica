@@ -517,6 +517,67 @@ func TestProjectsAndResourcesSkillCoversDurableContext(t *testing.T) {
 	}
 }
 
+func TestAgentFixP4AssessmentSkillCoversReadOnlyAssessmentContract(t *testing.T) {
+	skill, ok := findSkill(t, "multica-agent-fix-p4-assessment")
+	if !ok {
+		return
+	}
+	fm, body, _ := splitFrontmatter(skill.Content)
+
+	if got := strings.TrimSpace(fm["user-invocable"]); got != "false" {
+		t.Errorf("user-invocable = %q, want false", got)
+	}
+	if got := strings.TrimSpace(fm["allowed-tools"]); !strings.Contains(got, "Bash(multica *)") || !strings.Contains(got, "Bash(p4 *)") {
+		t.Errorf("allowed-tools = %q, want multica and read-only P4 access", got)
+	}
+
+	mustContain := []string{
+		"multica api get /api/operations/agent-fixes/<binding_id>/p4-evidence",
+		"Read-only inner-network lookup",
+		"Do not write Multica issue comments",
+		"Do not change issue status",
+		"Do not write `agent_fix_review`",
+		"Do not mutate Feishu or Meego",
+		"Do not mutate P4 or Swarm",
+		"AI shelve CL",
+		"Swarm companion CL",
+		"human continuation CL",
+		"final submitted CL",
+		"external_fields are compatibility evidence",
+		"`changes[]` only proves review",
+		"Swarm `commits[]`",
+		"`swarm_branch`, `event_type`, and `sent_at` as supporting context only",
+		"restricted `raw_payload`",
+		"Do not include fields outside this schema",
+		"does not introduce GitHub PR support",
+		"delivery_attribution_prediction",
+		"quality_prediction",
+		"unknown",
+		"warnings",
+		"references/p4-assessment-source-map.md",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(body, want) {
+			t.Errorf("agent-fix-p4-assessment skill missing %q", want)
+		}
+	}
+
+	mustNotContain := []string{
+		"p4 submit",
+		"p4 shelve",
+		"multica issue comment add",
+	}
+	for _, forbidden := range mustNotContain {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("agent-fix-p4-assessment skill should not include executable write path %q", forbidden)
+		}
+	}
+
+	if !skillHasFile(skill, "references/p4-assessment-source-map.md") {
+		t.Errorf("agent-fix-p4-assessment skill missing supporting file references/p4-assessment-source-map.md")
+	}
+}
+
 func findSkill(t *testing.T, name string) (AgentSkillData, bool) {
 	t.Helper()
 	for _, s := range loadBuiltinSkills() {

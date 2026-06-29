@@ -10,6 +10,8 @@
 
 把静态 demo HTML 中的 P4/Swarm Assessment 信息架构产品化接入真实系统，而不是保留 standalone HTML。
 
+整体运行流程、接口字段、页面串联和 server/client state 边界见 `docs/agent-fix-p4-assessment-api-workflow.md`。外部系统依赖、已经收窄的边界和仍待验证事项见 `docs/agent-fix-p4-external-dependencies.md`。
+
 第一版重点是让 `/operations` 从旧的最小 agent fix 表格，升级成“AI 修单评估视图”：
 
 - 能看到外部/Meego 工单状态。
@@ -43,7 +45,24 @@
   - 返回 binding、issue、external fields、相关 agent task 摘要、相关 comment 线索、已入库的 `perforce_review` / `issue_perforce_review` Swarm evidence。
   - task evidence 只返回受控摘要：task id、agent id、status、是否 P4 assessment、failure reason、error、时间戳；不暴露 `result`、`context`、`session_id`、`work_dir` 等运行内部信息。
   - comment evidence 只返回 agent comment 或命中 CL/Swarm 关键词的普通 comment，最多 20 条。
-  - Perforce evidence 复用已入库 Swarm review 状态、review id、URL、author、shelved CL、committed CL 和 review 时间。
+  - Perforce evidence 复用已入库 Swarm review 状态、review id、URL、author、shelved CL、committed CL、`changes[]`、`commits[]`、Swarm branch、event type、sent_at、受限 raw payload 和 review 时间。
+- Built-in P4/Swarm assessment skill：
+  - 新增 `server/internal/service/builtin_skills/multica-agent-fix-p4-assessment/SKILL.md`。
+  - 新增 `references/p4-assessment-source-map.md`。
+  - skill 明确要求先读取 `multica api get /api/operations/agent-fixes/<binding_id>/p4-evidence`。
+  - skill 明确只允许内网只读查询 Swarm/P4，禁止写 issue/comment/status、Feishu/Meego、P4/Swarm 和 `agent_fix_review`。
+  - skill 内沉淀 AI shelve CL、Swarm companion CL、human continuation CL、final submitted CL、unrelated CL 的区分规则，以及 evidence 不足时输出 `unknown` + `warnings` 的策略。
+- Assessment daemon prompt：
+  - `server/internal/daemon/prompt.go` 的 assessment prompt 已保持短提示，明确要求使用内置 `multica-agent-fix-p4-assessment` skill。
+  - prompt 只保留 task id、binding id、evidence API、只读边界和最终 JSON 输出约束；详细判断流程放在 skill 内。
+- Assessment parser：
+  - 只从 `agent_task_queue.result.output` 读取。
+  - 只接受纯 JSON object 或整个输出为唯一 fenced `json` block。
+  - 拒绝 prose wrapper、多个 fenced block、JSON object 后的尾随文本、未知字段、非法 attribution/quality enum、非整数 CL、越界 confidence，以及 `swarm_reviews` / `evidence` / `warnings` shape 错误。
+- P4/Swarm webhook evidence persistence：
+  - migration `128_perforce_review_complete_evidence` 扩展 `perforce_review`：`changes[]`、`commits[]`、`swarm_branch`、`event_type`、`sent_at`、`raw_payload`。
+  - webhook handler 从 inbound payload 入库这些完整 evidence；不主动回查 Swarm/P4。
+  - 旧事件仍按 `review.updated` 水位提前返回，不覆盖已保存的新 evidence。
 - `PATCH /api/operations/agent-fixes/{binding_id}/review`
   - 已作为人工 review 主写入 API。
   - 以 `workspace_id + feishu_binding_id` 为写入主键语义。
@@ -57,6 +76,7 @@
 
 当前第一版仍以 operations feed 中的 issue/agent fix 行为主轴，已经能展示 demo P4 数据。
 Operations 主轴还没有完全切到“外部 done binding 统计分母”，当前仍兼容旧的 agent fix feed 主轴；普通 latest run 查询继续排除 `context.type = agent_fix_p4_assessment`。
+当前后端 feed 已开始切换主轴：`ListWorkspaceAgentFixes` 会把最新普通 issue task 与近期 Feishu/Meego binding 行合并；无普通 task 的 binding-only 行只有在 status mapping 计算为 local `done` 时才进入 Operations response。旧的普通 task 行继续作为兼容 display/evidence 来源。
 
 ### Core
 
@@ -130,7 +150,12 @@ Operations 主轴还没有完全切到“外部 done binding 统计分母”，�
   - 文件名形如 `multica-p4-assessment-YYYY-MM-DD.csv`。
   - CSV 前置 UTF-8 BOM，方便 Excel 直接打开。
   - 数组字段用 `; ` 连接，空字段输出为空字符串。
-  - 字段包含 issue、外部工单、Project、Version、Workstream、Agent、AI assessment status、AI attribution、AI quality、confidence、Swarm review、AI shelve CL、Swarm change CL、final CL、human outcome、reasons、note、judgement eval、summary、warnings。
+  - 字段包含 issue、外部工单、Project、Version、Workstream、Agent、AI assessment status、AI attribution、AI quality、confidence、Swarm review、Swarm changes、Swarm commits、Swarm branch、Swarm event type、Swarm sent_at、AI shelve CL、Swarm change CL、final CL、human outcome、reasons、note、judgement eval、summary、warnings。
+  - `changes[]` / `commits[]` 数组使用 `; ` 稳定拼接；缺失或空数组导出为空字段。
+- P4 evidence 展示：
+  - Operations P4 evidence cell 已展示 assessment 中的 `changes[]`、`commits[]`、`swarm_branch`、`event_type`、`sent_at`。
+  - Review 弹窗的 P4 evidence slot 同步展示这些字段，方便人工验收时查看细节。
+  - raw payload 不进入主表和 CSV；如后续需要，只应放在 debug/详情路径。
 - 手动 assessment 触发：
   - 只对 `external.mapped_status === "done"` 且存在 `external.binding_id` 的行展示。
   - 未完成或无 binding id 的行不展示触发入口。
@@ -170,7 +195,7 @@ Operations 主轴还没有完全切到“外部 done binding 统计分母”，�
 - 历史 done binding scanner 已实现保守版；当前只补缺失 assessment 的 mapped done binding。
 - failed/stale/completed 的产品化批量重跑还没做；当前只有单行手动入口，completed 行可 rerun。
 - P4/Swarm 服务端外部查询还没做；Evidence API 当前只聚合 Multica DB 内已有证据，没有实时查询真实 P4/Swarm。
-- Evidence 已聚合相关 agent task/comment/perforce_review/issue_perforce_review 的受控只读摘要；后续仍可补 P4 change describe、Swarm review commits[] 等外部深度字段。
+- Evidence 已聚合相关 agent task/comment/perforce_review/issue_perforce_review 的受控只读摘要；当前已补入 webhook 已入库的 `changes[]`、`commits[]`、branch/event/sent_at，后续仍可补 P4 change describe 等 agent 内网只读查询得到的外部深度字段。
 - 真实 final CL 校验还没完成；`提交记录` 已同步，但还没用真实 done 样本验证字段格式和 CL 提取稳定性。
 - Operations 主轴还没有完全切到“外部 done binding 统计分母”，当前仍兼容旧的 agent fix feed 主轴。
 - 没有接 GitHub PR。
@@ -221,6 +246,36 @@ corepack pnpm --filter @multica/views exec vitest run dashboard/components/opera
 corepack pnpm --filter @multica/views typecheck
 ```
 
+本次 UI / Export follow-up 阶段新增通过：
+
+```bash
+corepack pnpm --filter @multica/core exec vitest run api/schemas.test.ts
+corepack pnpm --filter @multica/views exec vitest run dashboard/components/operations-page.test.tsx
+corepack pnpm --filter @multica/views exec vitest run issues/components/p4-assessment-entry.test.tsx
+corepack pnpm --filter @multica/core exec vitest run api/client.test.ts api/schemas.test.ts
+corepack pnpm --filter @multica/views exec vitest run locales/parity.test.ts
+corepack pnpm --filter @multica/core typecheck
+corepack pnpm --filter @multica/views typecheck
+git diff --check
+```
+
+本次 Agent skill / P4 evidence persistence 阶段新增通过：
+
+```bash
+cd server && go test ./internal/service -run TestAgentFixP4AssessmentSkillCoversReadOnlyAssessmentContract
+cd server && go test ./internal/daemon -run TestBuildP4AssessmentPrompt
+cd server && go test ./internal/service -run 'Test.*Skill'
+cd server && go test ./internal/daemon
+make sqlc
+cd server && go test ./internal/service -run TestP4EvidenceReviewProjectionKeepsSwarmAndCLFields
+cd server && go test ./internal/service -run 'TestParseP4Assessment|TestP4EvidenceReviewProjectionKeepsSwarmAndCLFields|TestAgentFixP4AssessmentSkillCoversReadOnlyAssessmentContract'
+cd server && go test ./internal/service -run 'TestP4Evidence|TestParseP4Assessment|TestAgentFixP4AssessmentSkillCoversReadOnlyAssessmentContract'
+cd server && go test ./internal/service -run 'TestOperationsFeedUsesBindingSpineWithoutAssessmentTaskPollution|TestAgentFixExternalDoneUsesStatusMappingInputs|TestP4AssessmentTaskIsolationSQLInvariants|TestP4Evidence|TestParseP4Assessment'
+cd server && go test -c ./internal/handler -o /tmp/multica-handler.test
+corepack pnpm --filter @multica/core exec vitest run api/schemas.test.ts api/client.test.ts
+git diff --check
+```
+
 新增/补充覆盖：
 
 - CSV 纯函数测试：BOM、稳定表头、CSV 转义、数组字段、稀疏旧 rows。
@@ -230,6 +285,11 @@ corepack pnpm --filter @multica/views typecheck
 - Core schema/client 测试：human review response 走 zod `parseWithFallback` 并覆盖 schema drift；client 优先调用 binding-id `PATCH`，缺 binding id 时 fallback 旧 issue-id `PUT`。
 - P4 assessment scanner 结构测试：历史补跑 SQL 从 binding 出发，使用 status mapping 输入，不读取 metadata/demo/title 作为触发信号。
 - Evidence API 深度 DB 证据测试：task/comment 查询必须按 workspace + issue 限定并限制 20 条；task 查询只返回受控摘要，不选择 `result/context/session_id/work_dir`；service projection 不泄露 raw task internals；Swarm review projection 保留 review id/state/shelved CL/committed CL。
+- Built-in skill 结构测试：P4 assessment skill 必须不可用户直接调用，必须包含 evidence API、只读边界、禁止写入边界、CL 角色区分、unknown/warnings 策略和 source-map reference。
+- Daemon prompt 测试：assessment prompt 必须明确引用内置 P4 assessment skill，同时不能把 CL 角色判断和完整 schema 细节塞回 prompt。
+- P4 evidence persistence / Evidence API 测试：service projection 保留 webhook 已入库的 `changes[]`、`commits[]`、Swarm branch、event type、sent_at 和受限 raw payload；handler 编译测试覆盖新增 sqlc/generated 类型；结构测试固定 agent evidence auth 必须校验 task id、task agent、assessment context type、workspace 和 binding。
+- Parser hardening 测试：覆盖纯 JSON、唯一 fenced JSON、prose wrapper、多 fenced block、尾随文本、非法 enum、错误 JSON shape、非整数 CL、越界 confidence。
+- Operations feed 主轴结构测试：SQL 必须有 binding 主轴、继续排除 assessment task；handler 必须过滤无普通 task 且 mapped status 非 done 的 binding-only 行；Core schema/client 测试确认 API response 兼容。
 - Issues DOM 测试：展示 Operations 共享人工 review outcome；从 Issues 直接打开人工 review 弹窗并通过 Operations mutation 保存；未标注初始状态显示 `Human review` 入口；Issue 缺 P4 metadata 但 assessment feed 能匹配时仍显示入口。
 - Operations / Issues DOM 测试：人工 review 保存会把 `external.binding_id` 传入 mutation，优先使用 binding-id 主路径。
 - Operations / Issues DOM 测试：共用 `AgentFixReviewDialog` 后，人审保存和 legacy/demo fallback 入口行为保持不变。
@@ -239,6 +299,7 @@ corepack pnpm --filter @multica/views typecheck
 验证限制：
 
 - Go handler / cmd server 测试在本地 fixture 初始化阶段失败：测试数据库缺少 `workspace` 表（未迁移/未初始化），不是本次 UI 改动的断言失败。
+- P4 webhook / Evidence auth handler 运行态测试同样受本地 handler fixture 缺 `workspace` 表影响；本阶段已用 `go test -c ./internal/handler` 覆盖编译，并保留运行态测试用例/结构测试待可用测试 DB 执行更完整验证。
 - `cd server && go test ./internal/service ./cmd/server` 还暴露一个既有失败：`TestResolveAttachmentContentType/log_file_stays_text/plain` 期望 `text/plain`，实际为 `text/x-log; charset=utf-8`。
 
 ## Demo 数据

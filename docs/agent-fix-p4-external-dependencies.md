@@ -7,6 +7,42 @@
 
 本文档记录 AI 修单 P4/Swarm assessment 依赖的外部系统事实、已落地边界和仍待验证的问题。主流程不能依赖未验证的外部假设；如果必须先兼容，应在这里明确标成“待验证”或“兼容兜底”。
 
+## 外部依赖状态总览
+
+外部依赖没有完全消失，但第一版依赖面已经收窄：
+
+| 外部系统 | 当前是否是主流程依赖 | Multica server 是否主动调用 | 当前用途 |
+|---|---:|---:|---|
+| Feishu/Meego Project sync | 是 | 是，沿用既有同步链路 | 写入 binding、外部状态、external fields；提供 mapped done 候选 |
+| Feishu/Meego comments/activity | 否 | 否 | 第一版不依赖；若 final CL 只在评论里，当前只能作为 evidence 缺口 |
+| P4/Swarm webhook | 是，作为已入库 evidence | 被动接收 webhook，不回查 | 保存 review state、`changes[]`、`commits[]`、branch/event/sent_at、受限 raw payload |
+| P4/Swarm 实时查询 | 是，但只在 agent 侧 | 否 | assessment agent 在内网只读查询，用于补齐 server 无法访问的判断 |
+| GitHub PR | 否 | 否 | 本阶段不接入、不抽象成统一 PR/CL 模型 |
+
+因此当前依赖模型是：
+
+1. Multica server 依赖既有 Feishu/Meego sync 产出的 DB binding。
+2. Multica server 只被动接收 P4/Swarm webhook，不主动访问内网 Swarm/P4。
+3. assessment agent 依赖内网只读 P4/Swarm 访问能力。
+4. 人工 review 和 UI/export 都只依赖 Multica API response，不新增外部写入。
+
+### 变化点
+
+相比早期方案，以下外部依赖已经被移出主流程：
+
+- 不主动拉 Feishu/Meego comments/activity。
+- 不靠 Feishu/Meego 外部状态文案猜测 done，只使用 integration status mapping。
+- 不要求 Multica server 访问内网 P4/Swarm。
+- 不把 GitHub PR 纳入 P4/Swarm assessment。
+- 不由 AI assessment 写 `agent_fix_review` 或修改 issue status。
+
+以下外部事实仍需要验证或持续观察：
+
+- 真实 done work item 的 `提交记录` 是否稳定包含 final CL。
+- Swarm webhook 的 `review.commits[]` 是否稳定完整。
+- Swarm `changes[]` 中 AI shelve CL、companion CL、人类继续修改 CL 的区分是否足够稳定。
+- assessment runtime 是否具备内网只读 Swarm/P4 查询能力。
+
 ## 当前设计边界
 
 - 真实主流程从 Feishu/Meego external done binding 出发。
@@ -122,8 +158,8 @@ warpath3 生产 workspace 已知字段：
 - Swarm review state 必须保存原始 Swarm state，例如 `needsReview`。
 - 不能虚构 `committed` 这类 pseudo state。是否提交必须来自 `commits[]`、`committed_cl` 或其他 submitted CL evidence。
 - `swarm_reviews[].changes` 可能包含 Swarm companion CL，不能把每个 change 都当成 AI shelved CL。
-- 当前 Multica `perforce_review` 只保存单个 `shelved_cl` 和 `committed_cl`，可能丢失多 CL 细节。
-- 当前 Evidence API 只聚合 DB 内已有 `perforce_review` / `issue_perforce_review`，还没有实时 P4/Swarm 查询。
+- 当前 Multica `perforce_review` 已保留兼容投影 `shelved_cl` / `committed_cl`，并新增保存 webhook payload 中的 `changes[]`、`commits[]`、Swarm branch、event type、sent_at 和受限 raw payload。
+- 当前 Evidence API 只聚合 DB 内已有 `perforce_review` / `issue_perforce_review`，不会由 server 实时查询 P4/Swarm；实时 P4/Swarm 判断由 assessment agent 在内网只读完成。
 
 已确认样本：
 

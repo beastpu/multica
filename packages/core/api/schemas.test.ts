@@ -482,7 +482,17 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
           quality_prediction: "future_quality",
           confidence: 0.86,
           workstream: "rel_1.7.2/server",
-          swarm_reviews: [{ id: 11872, review_id: "SW-11872", changes: [282941] }],
+          swarm_reviews: [
+            {
+              id: 11872,
+              review_id: "SW-11872",
+              changes: [282941],
+              commits: [283006],
+              swarm_branch: "main",
+              event_type: "review.committed",
+              sent_at: "2026-06-29T04:05:06Z",
+            },
+          ],
           ai_shelved_cls: [282941],
           external_committed_cls: [283006],
         },
@@ -504,8 +514,60 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
       "SW-11872",
     );
     expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.id).toBe(11872);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.changes).toEqual([
+      282941,
+    ]);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.commits).toEqual([
+      283006,
+    ]);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.swarm_branch).toBe("main");
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.event_type).toBe(
+      "review.committed",
+    );
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.sent_at).toBe(
+      "2026-06-29T04:05:06Z",
+    );
     expect(parsed[0]?.human_review?.outcome).toBe("future_outcome");
     expect(parsed[0]?.ai_judgement_eval).toBe("future_eval");
+  });
+
+  it("normalizes missing and null P4 evidence arrays to stable empty arrays", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      {
+        task_id: "t1",
+        p4_assessment: {
+          swarm_reviews: [
+            {
+              review_id: "SW-11872",
+              changes: null,
+              commits: null,
+              swarm_branch: null,
+              event_type: null,
+              sent_at: null,
+            },
+          ],
+          ai_shelved_cls: null,
+          swarm_change_cls: null,
+          swarm_committed_cls: null,
+          external_committed_cls: null,
+          prediction_reasons: null,
+          warnings: null,
+        },
+      },
+    ]);
+
+    const p4 = parsed[0]?.p4_assessment;
+    expect(p4?.swarm_reviews?.[0]?.changes).toEqual([]);
+    expect(p4?.swarm_reviews?.[0]?.commits).toEqual([]);
+    expect(p4?.swarm_reviews?.[0]?.swarm_branch).toBe("");
+    expect(p4?.swarm_reviews?.[0]?.event_type).toBe("");
+    expect(p4?.swarm_reviews?.[0]?.sent_at).toBe("");
+    expect(p4?.ai_shelved_cls).toEqual([]);
+    expect(p4?.swarm_change_cls).toEqual([]);
+    expect(p4?.swarm_committed_cls).toEqual([]);
+    expect(p4?.external_committed_cls).toEqual([]);
+    expect(p4?.prediction_reasons).toEqual([]);
+    expect(p4?.warnings).toEqual([]);
   });
 
   it("returns the fallback (never throws) when a field has the wrong type", () => {

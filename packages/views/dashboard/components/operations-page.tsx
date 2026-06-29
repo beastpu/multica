@@ -197,6 +197,12 @@ function extractToken(text: string, patterns: RegExp[]): string {
 function derivedEvidence(fix: AgentFixRecord) {
   const comment = fix.last_comment ?? "";
   const p4 = fix.p4_assessment;
+  const reviewChanges = compactList(
+    (p4?.swarm_reviews ?? []).flatMap((review) => review.changes ?? []),
+  );
+  const reviewCommits = compactList(
+    (p4?.swarm_reviews ?? []).flatMap((review) => review.commits ?? []),
+  );
   const swarm =
     firstSwarmReview(fix) ||
     extractToken(comment, [
@@ -221,6 +227,11 @@ function derivedEvidence(fix: AgentFixRecord) {
     workstream: p4?.workstream ?? "",
     swarm,
     shelve,
+    swarmChanges: compactList(p4?.swarm_change_cls) || reviewChanges,
+    swarmCommits: compactList(p4?.swarm_committed_cls) || reviewCommits,
+    swarmBranch: firstSwarmReviewField(fix, "swarm_branch"),
+    eventType: firstSwarmReviewField(fix, "event_type"),
+    sentAt: firstSwarmReviewField(fix, "sent_at"),
     finalCl,
   };
 }
@@ -230,6 +241,16 @@ function firstSwarmReview(fix: AgentFixRecord): string {
     (r) => String(r.review_id ?? r.id ?? "").trim().length > 0,
   );
   return String(review?.review_id ?? review?.id ?? "").trim();
+}
+
+function firstSwarmReviewField(
+  fix: AgentFixRecord,
+  field: "swarm_branch" | "event_type" | "sent_at",
+): string {
+  const review = fix.p4_assessment?.swarm_reviews?.find(
+    (r) => String(r[field] ?? "").trim().length > 0,
+  );
+  return String(review?.[field] ?? "").trim();
 }
 
 function hasP4Assessment(fix: AgentFixRecord): boolean {
@@ -298,6 +319,11 @@ export const OPERATIONS_P4_CSV_HEADERS = [
   "AI Quality Prediction",
   "Confidence",
   "Swarm Review",
+  "Swarm Changes",
+  "Swarm Commits",
+  "Swarm Branch",
+  "Swarm Event Type",
+  "Swarm Sent At",
   "AI Shelve CL",
   "Swarm Change CL",
   "Final CL",
@@ -351,6 +377,13 @@ export function buildOperationsP4AssessmentCsv(rows: AgentFixRecord[]): string {
         p4?.quality_prediction,
         confidenceLabel(p4?.confidence),
         csvSwarmReviews(fix) || evidence.swarm,
+        csvList(p4?.swarm_reviews?.flatMap((review) => review.changes ?? [])) ||
+          csvList(p4?.swarm_change_cls),
+        csvList(p4?.swarm_reviews?.flatMap((review) => review.commits ?? [])) ||
+          csvList(p4?.swarm_committed_cls),
+        evidence.swarmBranch,
+        evidence.eventType,
+        evidence.sentAt,
         csvList(p4?.ai_shelved_cls) || evidence.shelve,
         csvList(p4?.swarm_change_cls),
         evidence.finalCl,
@@ -1429,6 +1462,31 @@ function P4EvidenceCell({ fix }: { fix: AgentFixRecord }) {
           {t(($) => $.operations.p4.swarm_value, { value: evidence.swarm })}
         </EvidenceBadge>
       ) : null}
+      {evidence.swarmChanges ? (
+        <EvidenceBadge>
+          {t(($) => $.operations.p4.changes)} {evidence.swarmChanges}
+        </EvidenceBadge>
+      ) : null}
+      {evidence.swarmCommits ? (
+        <EvidenceBadge>
+          {t(($) => $.operations.p4.commits)} {evidence.swarmCommits}
+        </EvidenceBadge>
+      ) : null}
+      {evidence.swarmBranch ? (
+        <EvidenceBadge>
+          {t(($) => $.operations.p4.branch)} {evidence.swarmBranch}
+        </EvidenceBadge>
+      ) : null}
+      {evidence.eventType ? (
+        <EvidenceBadge>
+          {t(($) => $.operations.p4.event)} {evidence.eventType}
+        </EvidenceBadge>
+      ) : null}
+      {evidence.sentAt ? (
+        <EvidenceBadge>
+          {t(($) => $.operations.p4.sent_at)} {evidence.sentAt}
+        </EvidenceBadge>
+      ) : null}
       {evidence.shelve ? (
         <EvidenceBadge>
           {t(($) => $.operations.p4.shelve)} {evidence.shelve}
@@ -1584,6 +1642,21 @@ function AgentFixReviewEvidence({ fix }: { fix: AgentFixRecord }) {
           evidence.swarm
             ? t(($) => $.operations.p4.swarm_value, { value: evidence.swarm })
             : t(($) => $.operations.p4.no_swarm),
+          evidence.swarmChanges
+            ? `${t(($) => $.operations.p4.changes)} ${evidence.swarmChanges}`
+            : "",
+          evidence.swarmCommits
+            ? `${t(($) => $.operations.p4.commits)} ${evidence.swarmCommits}`
+            : "",
+          evidence.swarmBranch
+            ? `${t(($) => $.operations.p4.branch)} ${evidence.swarmBranch}`
+            : "",
+          evidence.eventType
+            ? `${t(($) => $.operations.p4.event)} ${evidence.eventType}`
+            : "",
+          evidence.sentAt
+            ? `${t(($) => $.operations.p4.sent_at)} ${evidence.sentAt}`
+            : "",
           `${t(($) => $.operations.p4.shelve)} ${
             evidence.shelve || t(($) => $.operations.no_reason)
           } / ${t(($) => $.operations.p4.final_cl)} ${

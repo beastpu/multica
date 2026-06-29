@@ -50,12 +50,11 @@ func buildP4AssessmentPrompt(task Task) string {
 	b.WriteString("You are running a read-only P4/Swarm assessment for a completed external work item.\n\n")
 	fmt.Fprintf(&b, "Multica issue ID: %s\n", task.IssueID)
 	fmt.Fprintf(&b, "Feishu/Meego binding ID: %s\n\n", task.P4AssessmentBindingID)
-	b.WriteString("Fetch evidence with:\n\n")
+	b.WriteString("Use the built-in `multica-agent-fix-p4-assessment` skill for the full workflow, safety boundaries, CL role classification, and output schema.\n\n")
+	b.WriteString("First fetch task-scoped Multica evidence with:\n\n")
 	fmt.Fprintf(&b, "multica api get /api/operations/agent-fixes/%s/p4-evidence\n\n", task.P4AssessmentBindingID)
-	b.WriteString("Use only read-only Multica APIs and local reasoning. Do not change the issue, comments, Feishu/Meego, P4, or Swarm.\n\n")
-	b.WriteString("Your final output must be exactly one JSON object, or one fenced ```json block containing exactly one JSON object. Do not add natural-language text outside the JSON.\n\n")
-	b.WriteString("Required fields: delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, summary, warnings.\n")
-	b.WriteString("Use unknown and warnings when evidence is missing. Do not guess from natural language.\n")
+	b.WriteString("You may inspect inner-network Swarm/P4 only with read-only commands or APIs. Do not change the issue, comments, status, Feishu/Meego, P4, Swarm, or `agent_fix_review`.\n\n")
+	b.WriteString("Your final output must satisfy the assessment parser: exactly one JSON object, or one fenced ```json block containing exactly one JSON object. Do not add natural-language text outside the JSON. Use `unknown` and warnings when evidence is missing.\n")
 	return b.String()
 }
 

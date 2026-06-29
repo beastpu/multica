@@ -81,6 +81,42 @@ func TestAgentFixExternalDoneUsesStatusMappingInputs(t *testing.T) {
 	}
 }
 
+func TestOperationsFeedUsesBindingSpineWithoutAssessmentTaskPollution(t *testing.T) {
+	sql, err := os.ReadFile("../../pkg/db/queries/agent.sql")
+	if err != nil {
+		t.Fatalf("read agent.sql: %v", err)
+	}
+	chunk := sqlSection(t, string(sql), "ListWorkspaceAgentFixes")
+	for _, want := range []string{
+		"WITH latest AS",
+		"spine AS",
+		"FROM feishu_project_issue_binding fib",
+		"fib.last_synced_at",
+		"false AS has_normal_task",
+		"COALESCE(atq.context->>'type', '') <> 'agent_fix_p4_assessment'",
+	} {
+		if !strings.Contains(chunk, want) {
+			t.Fatalf("ListWorkspaceAgentFixes missing binding spine invariant %q\n---\n%s", want, chunk)
+		}
+	}
+
+	src, err := os.ReadFile("../handler/agent.go")
+	if err != nil {
+		t.Fatalf("read handler agent.go: %v", err)
+	}
+	handlerChunk := sourceFunction(t, string(src), "ListWorkspaceAgentFixes")
+	for _, want := range []string{
+		"external := buildAgentFixExternal(row)",
+		"!row.HasNormalTask",
+		`external.MappedStatus != "done"`,
+		"continue",
+	} {
+		if !strings.Contains(handlerChunk, want) {
+			t.Fatalf("ListWorkspaceAgentFixes handler missing no-task done filter %q\n---\n%s", want, handlerChunk)
+		}
+	}
+}
+
 func TestP4AssessmentBackfillScansBindingsWithStatusMapping(t *testing.T) {
 	sql, err := os.ReadFile("../../pkg/db/queries/agent.sql")
 	if err != nil {
@@ -181,6 +217,27 @@ func TestP4EvidenceQueriesAreScopedAndBounded(t *testing.T) {
 	}
 }
 
+func TestP4EvidenceHandlerRequiresTaskScopedBindingForAgents(t *testing.T) {
+	src, err := os.ReadFile("../handler/agent.go")
+	if err != nil {
+		t.Fatalf("read handler agent.go: %v", err)
+	}
+	chunk := sourceFunction(t, string(src), "requestTaskCanReadP4Evidence")
+	for _, want := range []string{
+		`r.Header.Get("X-Task-ID")`,
+		"util.ParseUUID(taskID)",
+		"h.Queries.GetAgentTask",
+		"uuidToString(task.AgentID) != actorID",
+		"ctx.Type != service.P4AssessmentTaskType",
+		"ctx.WorkspaceID == workspaceID",
+		"ctx.FeishuBindingID == uuidToString(bindingID)",
+	} {
+		if !strings.Contains(chunk, want) {
+			t.Fatalf("requestTaskCanReadP4Evidence missing %q\n---\n%s", want, chunk)
+		}
+	}
+}
+
 func sqlSection(t *testing.T, sql, name string) string {
 	t.Helper()
 	marker := "-- name: " + name + " "
@@ -194,4 +251,18 @@ func sqlSection(t *testing.T, sql, name string) string {
 		return rest
 	}
 	return rest[:end]
+}
+
+func sourceFunction(t *testing.T, src, name string) string {
+	t.Helper()
+	start := strings.Index(src, "func (h *Handler) "+name)
+	if start < 0 {
+		t.Fatalf("function %s not found", name)
+	}
+	rest := src[start:]
+	next := strings.Index(rest[len("func "):], "\nfunc ")
+	if next < 0 {
+		return rest
+	}
+	return rest[:next+len("func ")]
 }

@@ -625,14 +625,25 @@ const DashboardRunTimeDailySchema = z.object({
 export const DashboardRunTimeDailyListSchema = z.array(DashboardRunTimeDailySchema);
 
 const AgentFixClSchema = z.union([z.string(), z.number()]);
+const AgentFixClListSchema = z.preprocess(
+  (value) => (value == null ? [] : value),
+  z.array(AgentFixClSchema).default([]),
+);
+const AgentFixStringSchema = z
+  .union([z.string(), z.null()])
+  .default("")
+  .transform((value) => value ?? "");
 
 const AgentFixSwarmReviewSchema = z.object({
   id: AgentFixClSchema.optional(),
   review_id: AgentFixClSchema.optional(),
-  state: z.string().default(""),
-  url: z.string().default(""),
-  changes: z.array(AgentFixClSchema).default([]),
-  commits: z.array(AgentFixClSchema).default([]),
+  state: AgentFixStringSchema,
+  url: AgentFixStringSchema,
+  changes: AgentFixClListSchema,
+  commits: AgentFixClListSchema,
+  swarm_branch: AgentFixStringSchema,
+  event_type: AgentFixStringSchema,
+  sent_at: AgentFixStringSchema,
 }).loose();
 
 const AgentFixExternalRecordSchema = z.object({
@@ -650,16 +661,22 @@ const AgentFixP4AssessmentSchema = z.object({
   assessment_status: z.string().default(""),
   delivery_attribution_prediction: z.string().default(""),
   quality_prediction: z.string().default(""),
-  prediction_reasons: z.array(z.string()).default([]),
+  prediction_reasons: z.preprocess(
+    (value) => (value == null ? [] : value),
+    z.array(z.string()).default([]),
+  ),
   confidence: z.number().nullable().optional(),
   workstream: z.string().default(""),
   swarm_reviews: z.array(AgentFixSwarmReviewSchema).default([]),
-  ai_shelved_cls: z.array(AgentFixClSchema).default([]),
-  swarm_change_cls: z.array(AgentFixClSchema).default([]),
-  swarm_committed_cls: z.array(AgentFixClSchema).default([]),
-  external_committed_cls: z.array(AgentFixClSchema).default([]),
+  ai_shelved_cls: AgentFixClListSchema,
+  swarm_change_cls: AgentFixClListSchema,
+  swarm_committed_cls: AgentFixClListSchema,
+  external_committed_cls: AgentFixClListSchema,
   summary: z.string().default(""),
-  warnings: z.array(z.string()).default([]),
+  warnings: z.preprocess(
+    (value) => (value == null ? [] : value),
+    z.array(z.string()).default([]),
+  ),
 }).loose();
 
 export const AgentFixHumanReviewSchema = z.object({

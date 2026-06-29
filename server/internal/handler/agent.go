@@ -1858,6 +1858,10 @@ func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request
 		if _, ok := allowed[uuidToString(row.AgentID)]; !ok {
 			continue
 		}
+		external := buildAgentFixExternal(row)
+		if !row.HasNormalTask && (external == nil || external.MappedStatus != "done") {
+			continue
+		}
 		fix := AgentFixResponse{
 			TaskID:                uuidToString(row.TaskID),
 			AgentID:               uuidToString(row.AgentID),
@@ -1872,7 +1876,7 @@ func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request
 			CompletedAt:           timestampToPtr(row.CompletedAt),
 			CreatedAt:             timestampToString(row.CreatedAt),
 		}
-		fix.External = buildAgentFixExternal(row)
+		fix.External = external
 		fix.P4Assessment = buildAgentFixP4(row)
 		fix.HumanReview = buildAgentFixHumanReview(row)
 		fix.AIJudgementEval = deriveAgentFixEval(fix.P4Assessment, fix.HumanReview)

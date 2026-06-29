@@ -101,6 +101,12 @@ func (h *Handler) HandleP4SwarmWebhook(w http.ResponseWriter, r *http.Request) {
 		Description: p.Review.Description,
 		ShelvedCL:   maxChangelist(p.Review.Changes),
 		CommittedCL: maxChangelist(p.Review.Commits),
+		Changes:     append([]int64(nil), p.Review.Changes...),
+		Commits:     append([]int64(nil), p.Review.Commits...),
+		SwarmBranch: p.Swarm.Branch,
+		EventType:   p.EventType,
+		SentAt:      parseOptionalRFC3339(p.SentAt),
+		RawPayload:  body,
 		CreatedAt:   time.Unix(p.Review.Created, 0).UTC(),
 		UpdatedAt:   time.Unix(p.Review.Updated, 0).UTC(),
 	}
@@ -196,4 +202,15 @@ func maxChangelist(xs []int64) *int64 {
 		}
 	}
 	return &m
+}
+
+func parseOptionalRFC3339(s string) time.Time {
+	if strings.TrimSpace(s) == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }

@@ -691,6 +691,9 @@ export interface AgentFixSwarmReview {
   url?: string;
   changes?: Array<string | number>;
   commits?: Array<string | number>;
+  swarm_branch?: string;
+  event_type?: string;
+  sent_at?: string;
 }
 
 export interface AgentFixHumanReview {
