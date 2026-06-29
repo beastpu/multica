@@ -361,7 +361,8 @@ describe("OperationsPage", () => {
     expect(screen.getByText("2026-06-02")).toBeTruthy();
   });
 
-  it("renders demo-like P4 assessment evidence and review outcomes", () => {
+  it("renders demo-like P4 assessment evidence and review outcomes", async () => {
+    const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
     expect(screen.getByText("AI fix assessment")).toBeTruthy();
@@ -376,17 +377,29 @@ describe("OperationsPage", () => {
     expect(screen.getAllByText("AI assessed").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("stream rel_1.7.2/server")).toBeTruthy();
     expect(screen.getByText("Swarm SW-11872")).toBeTruthy();
-    expect(screen.getByText("changes 282941, 282944")).toBeTruthy();
-    expect(screen.getByText("commits 283006")).toBeTruthy();
-    expect(screen.getByText("branch main")).toBeTruthy();
-    expect(screen.getByText("event review.committed")).toBeTruthy();
-    expect(screen.getByText("sent 2026-06-01T00:30:00Z")).toBeTruthy();
     expect(screen.getByText("shelve 282941")).toBeTruthy();
     expect(screen.getByText("final CL 283006")).toBeTruthy();
+    expect(screen.queryByText("changes 282941, 282944")).toBeNull();
+    expect(screen.queryByText("commits 283006")).toBeNull();
+    expect(screen.queryByText("branch main")).toBeNull();
+    expect(screen.queryByText("event review.committed")).toBeNull();
+    expect(screen.queryByText("sent 2026-06-01T00:30:00Z")).toBeNull();
+
+    await user.click(screen.getAllByRole("button", { name: "Details" })[0]!);
+    expect(screen.getByText("282941, 282944")).toBeTruthy();
+    expect(screen.getByText("283006")).toBeTruthy();
+    expect(screen.getByText("main")).toBeTruthy();
+    expect(screen.getByText("review.committed")).toBeTruthy();
+    expect(screen.getByText("2026-06-01T00:30:00Z")).toBeTruthy();
+    await user.keyboard("{Escape}");
+
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Likely correct")).toBeTruthy();
     expect(screen.getByText("confidence 86%")).toBeTruthy();
     expect(screen.getAllByText("Accepted").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("Complete")).toBeNull();
+    await user.click(screen.getAllByRole("button", { name: "Details" })[1]!);
+    expect(screen.getByText("Complete")).toBeTruthy();
     expect(screen.getByText("Accurate")).toBeTruthy();
   });
 
@@ -536,13 +549,24 @@ describe("OperationsPage", () => {
     expect(csv).not.toContain("Login broke");
   });
 
-  it("renders a resize handle for each sizable column (agent, issue, status)", () => {
+  it("renders a resize handle for each sizable column", () => {
     renderWithI18n(<OperationsPage />);
     const handles = screen.getAllByRole("separator");
-    expect(handles.length).toBe(3);
-    // Reason (flex filler) and Date (fixed, last) are not resizable.
+    expect(handles.length).toBe(8);
     expect(
-      handles.map((h) => h.getAttribute("aria-label")).every(Boolean),
+      handles.map((h) => h.getAttribute("aria-label")),
+    ).toEqual([
+      "Resize Issue column",
+      "Resize Agent column",
+      "Resize P4 evidence column",
+      "Resize AI delivery column",
+      "Resize AI quality column",
+      "Resize Human review column",
+      "Resize Eval column",
+      "Resize Date column",
+    ]);
+    expect(
+      handles.every((h) => h.getAttribute("aria-label") !== "External status"),
     ).toBe(true);
   });
 

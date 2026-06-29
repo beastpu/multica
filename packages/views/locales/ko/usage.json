@@ -132,6 +132,9 @@
       "sent_at": "sent",
       "shelve": "shelve",
       "final_cl": "final CL",
+      "details": "상세",
+      "warnings": "warnings",
+      "warning_count": "{{count}}개 warning",
       "confidence": "신뢰도 {{value}}",
       "no_evidence": "P4 증거 없음"
     },

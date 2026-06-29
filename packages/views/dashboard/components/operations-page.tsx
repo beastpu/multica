@@ -9,11 +9,16 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Download, Play, Radar, RefreshCw, Search, X } from "lucide-react";
+import { Download, List, Play, Radar, RefreshCw, Search, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@multica/ui/components/ui/popover";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Input } from "@multica/ui/components/ui/input";
 import {
@@ -100,15 +105,10 @@ const EMPTY: AgentFixRecord[] = [];
 
 // --- Resizable-column layout -------------------------------------------------
 // Column order: Issue, external state, agent, P4 evidence, AI attribution,
-// AI quality, human review, eval, date. issue/agent/P4 evidence are
-// user-resizable (the existing `status` width slot now backs the P4 evidence
-// column so stored preferences remain scoped to this page).
+// AI quality, human review, eval, date. The external status column stays fixed;
+// the rest are user-resizable. The legacy `status` width slot backs the P4
+// evidence column so stored preferences remain scoped to this page.
 const EXTERNAL_PX = 138;
-const ATTRIBUTION_PX = 148;
-const QUALITY_PX = 146;
-const REVIEW_PX = 150;
-const EVAL_PX = 150;
-const TIME_PX = 96;
 const COLUMN_GAP_PX = 12; // matches gap-3
 const CARD_PADDING_X_PX = 32; // px-4 on the header + each row (16 × 2)
 
@@ -116,10 +116,14 @@ const COLUMN_VAR: Record<OperationsColumnKey, string> = {
   agent: "--ops-col-agent",
   issue: "--ops-col-issue",
   status: "--ops-col-status",
+  attribution: "--ops-col-attribution",
+  quality: "--ops-col-quality",
+  review: "--ops-col-review",
+  eval: "--ops-col-eval",
+  time: "--ops-col-time",
 };
 
-// Resolved from the CSS vars the card carries; reason flexes, time is fixed.
-const GRID_TEMPLATE = `var(${COLUMN_VAR.issue}) ${EXTERNAL_PX}px var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.status}) ${ATTRIBUTION_PX}px ${QUALITY_PX}px ${REVIEW_PX}px ${EVAL_PX}px ${TIME_PX}px`;
+const GRID_TEMPLATE = `var(${COLUMN_VAR.issue}) ${EXTERNAL_PX}px var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.status}) var(${COLUMN_VAR.attribution}) var(${COLUMN_VAR.quality}) var(${COLUMN_VAR.review}) var(${COLUMN_VAR.eval}) var(${COLUMN_VAR.time})`;
 
 const GRID_STYLE: CSSProperties = { gridTemplateColumns: GRID_TEMPLATE };
 
@@ -133,12 +137,12 @@ function operationsMinWidth(w: Record<OperationsColumnKey, number>): number {
     w.agent +
     w.issue +
     w.status +
+    w.attribution +
+    w.quality +
+    w.review +
+    w.eval +
+    w.time +
     EXTERNAL_PX +
-    ATTRIBUTION_PX +
-    QUALITY_PX +
-    REVIEW_PX +
-    EVAL_PX +
-    TIME_PX +
     COLUMN_GAP_PX * 8 +
     CARD_PADDING_X_PX
   );
@@ -151,6 +155,11 @@ function cardStyle(w: Record<OperationsColumnKey, number>): CSSProperties {
     [COLUMN_VAR.agent]: `${w.agent}px`,
     [COLUMN_VAR.issue]: `${w.issue}px`,
     [COLUMN_VAR.status]: `${w.status}px`,
+    [COLUMN_VAR.attribution]: `${w.attribution}px`,
+    [COLUMN_VAR.quality]: `${w.quality}px`,
+    [COLUMN_VAR.review]: `${w.review}px`,
+    [COLUMN_VAR.eval]: `${w.eval}px`,
+    [COLUMN_VAR.time]: `${w.time}px`,
     minWidth: `${operationsMinWidth(w)}px`,
   } as CSSProperties;
 }
@@ -790,21 +799,31 @@ export function OperationsPage() {
                     cardRef={cardRef}
                     label={t(($) => $.operations.table.p4_evidence)}
                   />
-                  <span className="truncate">
-                    {t(($) => $.operations.table.ai_attribution)}
-                  </span>
-                  <span className="truncate">
-                    {t(($) => $.operations.table.ai_quality)}
-                  </span>
-                  <span className="truncate">
-                    {t(($) => $.operations.table.human_review)}
-                  </span>
-                  <span className="truncate">
-                    {t(($) => $.operations.table.eval)}
-                  </span>
-                  <span className="truncate">
-                    {t(($) => $.operations.table.time)}
-                  </span>
+                  <HeaderCell
+                    columnKey="attribution"
+                    cardRef={cardRef}
+                    label={t(($) => $.operations.table.ai_attribution)}
+                  />
+                  <HeaderCell
+                    columnKey="quality"
+                    cardRef={cardRef}
+                    label={t(($) => $.operations.table.ai_quality)}
+                  />
+                  <HeaderCell
+                    columnKey="review"
+                    cardRef={cardRef}
+                    label={t(($) => $.operations.table.human_review)}
+                  />
+                  <HeaderCell
+                    columnKey="eval"
+                    cardRef={cardRef}
+                    label={t(($) => $.operations.table.eval)}
+                  />
+                  <HeaderCell
+                    columnKey="time"
+                    cardRef={cardRef}
+                    label={t(($) => $.operations.table.time)}
+                  />
                 </div>
                 <div className="divide-y">
                   {rows.map((f) => {
@@ -828,63 +847,67 @@ export function OperationsPage() {
                           issueStatusLabel={issueStatusLabel(f.issue_status)}
                         />
                         <ExternalStatusCell fix={f} />
-                        <div className="flex min-w-0 items-center gap-2">
-                          <ActorAvatar
-                            actorType="agent"
-                            actorId={f.agent_id}
-                            size={22}
-                            enableHoverCard
-                          />
-                          <span className="truncate text-sm">
-                            {agent?.name ?? f.agent_name}
-                          </span>
-                          <AssessmentStatusBadge
-                            value={f.p4_assessment?.assessment_status}
-                          />
-                          <AssessmentTriggerButton
-                            fix={f}
-                            pending={
-                              triggerAssessment.isPending &&
-                              triggeringBindingId === f.external?.binding_id
-                            }
-                            onTrigger={(bindingId, force) => {
-                              setTriggeringBindingId(bindingId);
-                              triggerAssessment.mutate(
-                                { binding_id: bindingId, force },
-                                {
-                                  onSuccess: () => {
-                                    toast.success(
-                                      force
-                                        ? t(
-                                            ($) =>
-                                              $.operations.assessment_action
-                                                .rerun_started,
-                                          )
-                                        : t(
-                                            ($) =>
-                                              $.operations.assessment_action
-                                                .run_started,
-                                          ),
-                                    );
+                        <div className="grid min-w-0 gap-1 overflow-hidden">
+                          <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                            <ActorAvatar
+                              actorType="agent"
+                              actorId={f.agent_id}
+                              size={22}
+                              enableHoverCard
+                            />
+                            <span className="min-w-0 truncate text-sm">
+                              {agent?.name ?? f.agent_name}
+                            </span>
+                          </div>
+                          <div className="flex min-w-0 flex-wrap items-center gap-1.5 overflow-hidden">
+                            <AssessmentStatusBadge
+                              value={f.p4_assessment?.assessment_status}
+                            />
+                            <AssessmentTriggerButton
+                              fix={f}
+                              pending={
+                                triggerAssessment.isPending &&
+                                triggeringBindingId === f.external?.binding_id
+                              }
+                              onTrigger={(bindingId, force) => {
+                                setTriggeringBindingId(bindingId);
+                                triggerAssessment.mutate(
+                                  { binding_id: bindingId, force },
+                                  {
+                                    onSuccess: () => {
+                                      toast.success(
+                                        force
+                                          ? t(
+                                              ($) =>
+                                                $.operations.assessment_action
+                                                  .rerun_started,
+                                            )
+                                          : t(
+                                              ($) =>
+                                                $.operations.assessment_action
+                                                  .run_started,
+                                            ),
+                                      );
+                                    },
+                                    onError: (err) => {
+                                      toast.error(
+                                        err instanceof Error && err.message
+                                          ? err.message
+                                          : t(
+                                              ($) =>
+                                                $.operations.assessment_action
+                                                  .failed,
+                                            ),
+                                      );
+                                    },
+                                    onSettled: () => {
+                                      setTriggeringBindingId(null);
+                                    },
                                   },
-                                  onError: (err) => {
-                                    toast.error(
-                                      err instanceof Error && err.message
-                                        ? err.message
-                                        : t(
-                                            ($) =>
-                                              $.operations.assessment_action
-                                                .failed,
-                                          ),
-                                    );
-                                  },
-                                  onSettled: () => {
-                                    setTriggeringBindingId(null);
-                                  },
-                                },
-                              );
-                            }}
-                          />
+                                );
+                              }}
+                            />
+                          </div>
                         </div>
                         <P4EvidenceCell fix={f} />
                         <PredictionCell
@@ -898,7 +921,7 @@ export function OperationsPage() {
                         />
                         <HumanReviewCell fix={f} onEdit={() => setReviewFix(f)} />
                         <EvalCell fix={f} />
-                        <span className="whitespace-nowrap text-xs text-muted-foreground tabular-nums">
+                        <span className="min-w-0 overflow-hidden truncate whitespace-nowrap text-xs text-muted-foreground tabular-nums">
                           {day}
                         </span>
                         {comment ? (
@@ -1359,7 +1382,7 @@ function IssueCell({
   issueStatusLabel: string;
 }) {
   const inner = (
-    <div className="grid min-w-0 gap-1">
+    <div className="grid min-w-0 gap-1 overflow-hidden">
       <div className="flex min-w-0 items-center gap-2">
         <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
           {fix.issue_identifier || "—"}
@@ -1408,13 +1431,13 @@ function IssueCell({
     return (
       <AppLink
         href={paths.workspace(slug).issueDetail(fix.issue_identifier)}
-        className="block min-w-0 hover:underline"
+        className="block min-w-0 overflow-hidden hover:underline"
       >
         {inner}
       </AppLink>
     );
   }
-  return <div className="min-w-0">{inner}</div>;
+  return <div className="min-w-0 overflow-hidden">{inner}</div>;
 }
 
 function ExternalStatusCell({ fix }: { fix: AgentFixRecord }) {
@@ -1443,6 +1466,26 @@ function P4EvidenceCell({ fix }: { fix: AgentFixRecord }) {
   const { t } = useT("usage");
   const p4 = fix.p4_assessment;
   const evidence = derivedEvidence(fix);
+  const detailRows = [
+    evidence.swarmChanges
+      ? [t(($) => $.operations.p4.changes), evidence.swarmChanges]
+      : null,
+    evidence.swarmCommits
+      ? [t(($) => $.operations.p4.commits), evidence.swarmCommits]
+      : null,
+    evidence.swarmBranch
+      ? [t(($) => $.operations.p4.branch), evidence.swarmBranch]
+      : null,
+    evidence.eventType
+      ? [t(($) => $.operations.p4.event), evidence.eventType]
+      : null,
+    evidence.sentAt
+      ? [t(($) => $.operations.p4.sent_at), evidence.sentAt]
+      : null,
+    p4?.warnings?.length
+      ? [t(($) => $.operations.p4.warnings), p4.warnings.join(", ")]
+      : null,
+  ].filter(Boolean) as Array<[string, string]>;
   if (!hasP4Signal(fix)) {
     return (
       <span className="text-xs text-muted-foreground">
@@ -1451,54 +1494,69 @@ function P4EvidenceCell({ fix }: { fix: AgentFixRecord }) {
     );
   }
   return (
-    <div className="flex min-w-0 flex-wrap gap-1.5">
-      {evidence.workstream ? (
-        <EvidenceBadge>
-          {t(($) => $.operations.p4.workstream)} {evidence.workstream}
-        </EvidenceBadge>
-      ) : null}
-      {evidence.swarm ? (
-        <EvidenceBadge>
-          {t(($) => $.operations.p4.swarm_value, { value: evidence.swarm })}
-        </EvidenceBadge>
-      ) : null}
-      {evidence.swarmChanges ? (
-        <EvidenceBadge>
-          {t(($) => $.operations.p4.changes)} {evidence.swarmChanges}
-        </EvidenceBadge>
-      ) : null}
-      {evidence.swarmCommits ? (
-        <EvidenceBadge>
-          {t(($) => $.operations.p4.commits)} {evidence.swarmCommits}
-        </EvidenceBadge>
-      ) : null}
-      {evidence.swarmBranch ? (
-        <EvidenceBadge>
-          {t(($) => $.operations.p4.branch)} {evidence.swarmBranch}
-        </EvidenceBadge>
-      ) : null}
-      {evidence.eventType ? (
-        <EvidenceBadge>
-          {t(($) => $.operations.p4.event)} {evidence.eventType}
-        </EvidenceBadge>
-      ) : null}
-      {evidence.sentAt ? (
-        <EvidenceBadge>
-          {t(($) => $.operations.p4.sent_at)} {evidence.sentAt}
-        </EvidenceBadge>
-      ) : null}
-      {evidence.shelve ? (
-        <EvidenceBadge>
-          {t(($) => $.operations.p4.shelve)} {evidence.shelve}
-        </EvidenceBadge>
-      ) : null}
-      {evidence.finalCl ? (
-        <EvidenceBadge>
-          {t(($) => $.operations.p4.final_cl)} {evidence.finalCl}
-        </EvidenceBadge>
-      ) : null}
-      {p4?.warnings?.length ? (
-        <ToneBadge tone="warning">{p4.warnings[0]}</ToneBadge>
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5 overflow-hidden">
+      <div className="flex min-w-0 flex-wrap gap-1.5 overflow-hidden">
+        {evidence.workstream ? (
+          <EvidenceBadge>
+            {t(($) => $.operations.p4.workstream)} {evidence.workstream}
+          </EvidenceBadge>
+        ) : null}
+        {evidence.swarm ? (
+          <EvidenceBadge>
+            {t(($) => $.operations.p4.swarm_value, { value: evidence.swarm })}
+          </EvidenceBadge>
+        ) : null}
+        {evidence.shelve ? (
+          <EvidenceBadge>
+            {t(($) => $.operations.p4.shelve)} {evidence.shelve}
+          </EvidenceBadge>
+        ) : null}
+        {evidence.finalCl ? (
+          <EvidenceBadge>
+            {t(($) => $.operations.p4.final_cl)} {evidence.finalCl}
+          </EvidenceBadge>
+        ) : null}
+        {p4?.warnings?.length ? (
+          <ToneBadge tone="warning">
+            {t(($) => $.operations.p4.warning_count, {
+              count: p4.warnings.length,
+            })}
+          </ToneBadge>
+        ) : null}
+      </div>
+      {detailRows.length > 0 ? (
+        <Popover>
+          <PopoverTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 min-w-0 max-w-full gap-1 px-2 text-xs"
+              >
+                <List className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">
+                  {t(($) => $.operations.p4.details)}
+                </span>
+              </Button>
+            }
+          />
+          <PopoverContent align="end" className="w-80 gap-2">
+            <div className="text-xs font-medium">
+              {t(($) => $.operations.p4.details)}
+            </div>
+            <div className="grid gap-2">
+              {detailRows.map(([label, value]) => (
+                <div key={label} className="grid gap-0.5">
+                  <div className="text-[11px] uppercase text-muted-foreground">
+                    {label}
+                  </div>
+                  <div className="break-words text-xs">{value}</div>
+                </div>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
       ) : null}
     </div>
   );
@@ -1550,10 +1608,10 @@ function AssessmentTriggerButton({
       size="sm"
       disabled={disabled}
       onClick={() => onTrigger(bindingId, force)}
-      className="h-7 px-2 text-xs"
+      className="h-7 min-w-0 max-w-full px-2 text-xs"
     >
-      <Icon className="h-3.5 w-3.5" />
-      <span className="max-w-28 truncate">{label}</span>
+      <Icon className="h-3.5 w-3.5 shrink-0" />
+      <span className="min-w-0 max-w-28 truncate">{label}</span>
     </Button>
   );
 }
@@ -1582,7 +1640,7 @@ function PredictionCell({
   const tx = t as unknown as UsageT;
   const label = agentFixEnumLabel(tx, kind, value);
   return (
-    <div className="grid min-w-0 gap-1">
+    <div className="grid min-w-0 gap-1 justify-items-start overflow-hidden">
       <ToneBadge tone={agentFixEnumTone(kind, value)}>{label}</ToneBadge>
       {detail ? (
         <span className="truncate text-xs text-muted-foreground">
@@ -1608,21 +1666,57 @@ function HumanReviewCell({
     .map((r) => agentFixEnumLabel(tx, "review_reason", r))
     .filter(Boolean)
     .join(", ");
+  const note = fix.human_review?.note ?? "";
+  const reviewedAt = fix.human_review?.reviewed_at ?? "";
+  const detailRows = [
+    reasonText ? [t(($) => $.operations.review_modal.reasons), reasonText] : null,
+    note ? [t(($) => $.operations.review_modal.note), note] : null,
+    reviewedAt ? [t(($) => $.operations.table.time), reviewedAt] : null,
+  ].filter(Boolean) as Array<[string, string]>;
   return (
-    <div className="grid min-w-0 gap-1 justify-items-start">
+    <div className="grid min-w-0 gap-1 justify-items-start overflow-hidden">
       <button
         type="button"
         onClick={onEdit}
-        className="inline-flex min-w-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="inline-flex min-w-0 max-w-full rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <ToneBadge tone={agentFixEnumTone("review", outcome)}>
           {agentFixEnumLabel(tx, "review", outcome)}
         </ToneBadge>
       </button>
-      {reasonText ? (
-        <span className="truncate text-xs text-muted-foreground">
-          {reasonText}
-        </span>
+      {detailRows.length > 0 ? (
+        <Popover>
+          <PopoverTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 min-w-0 max-w-full gap-1 px-2 text-xs"
+              >
+                <List className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">
+                  {t(($) => $.operations.p4.details)}
+                </span>
+              </Button>
+            }
+          />
+          <PopoverContent align="end" className="w-80 gap-2">
+            <div className="text-xs font-medium">
+              {t(($) => $.operations.review_modal.title)}
+            </div>
+            <div className="grid gap-2">
+              {detailRows.map(([label, value]) => (
+                <div key={label} className="grid gap-0.5">
+                  <div className="text-[11px] uppercase text-muted-foreground">
+                    {label}
+                  </div>
+                  <div className="break-words text-xs">{value}</div>
+                </div>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
       ) : null}
     </div>
   );
@@ -1725,9 +1819,11 @@ function EvalCell({ fix }: { fix: AgentFixRecord }) {
   const tx = t as unknown as UsageT;
   const value = fix.ai_judgement_eval || fix.display_result_status;
   return (
-    <ToneBadge tone={agentFixEnumTone("eval", value)}>
-      {agentFixEnumLabel(tx, "eval", value)}
-    </ToneBadge>
+    <div className="min-w-0 overflow-hidden">
+      <ToneBadge tone={agentFixEnumTone("eval", value)}>
+        {agentFixEnumLabel(tx, "eval", value)}
+      </ToneBadge>
+    </div>
   );
 }
 

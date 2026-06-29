@@ -132,6 +132,9 @@
       "sent_at": "sent",
       "shelve": "shelve",
       "final_cl": "final CL",
+      "details": "Details",
+      "warnings": "warnings",
+      "warning_count": "{{count}} warning",
       "confidence": "confidence {{value}}",
       "no_evidence": "No P4 evidence"
     },

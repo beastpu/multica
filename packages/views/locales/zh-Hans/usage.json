@@ -132,6 +132,9 @@
       "sent_at": "sent",
       "shelve": "shelve",
       "final_cl": "final CL",
+      "details": "详情",
+      "warnings": "warnings",
+      "warning_count": "{{count}} 条 warning",
       "confidence": "置信度 {{value}}",
       "no_evidence": "暂无 P4 证据"
     },

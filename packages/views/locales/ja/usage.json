@@ -132,6 +132,9 @@
       "sent_at": "sent",
       "shelve": "shelve",
       "final_cl": "final CL",
+      "details": "詳細",
+      "warnings": "warnings",
+      "warning_count": "{{count}} 件の warning",
       "confidence": "信頼度 {{value}}",
       "no_evidence": "P4 証跡なし"
     },
