@@ -1,0 +1,40 @@
+id: source.github.pr.4287
+repo: multica-ai/multica
+pr_number: 4287
+url: https://github.com/multica-ai/multica/pull/4287
+state: merged
+title: "fix(daemon): reclaim autopilot_run workdir on terminal status (MUL-3403)"
+author: Bohan-J
+base_ref: main
+head_ref: agent/j/19022999
+merged_at: 2026-06-18T03:18:00Z
+closed_at: 2026-06-18T03:18:00Z
+merge_commit: e7daf876bdc7b75e1c9f1768daf7185bce24916e
+linked_issues:
+  - MUL-3392
+  - MUL-3403
+changed_files:
+  - path: server/internal/daemon/client.go
+    additions: 4
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/internal/daemon/gc.go
+    additions: 17
+    deletions: 17
+    change_type: MODIFIED
+  - path: server/internal/daemon/gc_test.go
+    additions: 33
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon.go
+    additions: 4
+    deletions: 3
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/daemon/gc_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

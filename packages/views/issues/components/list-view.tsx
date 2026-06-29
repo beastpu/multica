@@ -19,12 +19,13 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/
 import { Button } from "@multica/ui/components/ui/button";
 import type { Issue, IssueStatus } from "@multica/core/types";
 import { useLoadMoreByStatus } from "@multica/core/issues/mutations";
-import type { IssueSortParam, MyIssuesFilter } from "@multica/core/issues/queries";
+import type { IssueListFilter, IssueSortParam, MyIssuesFilter } from "@multica/core/issues/queries";
 import { useModalStore } from "@multica/core/modals";
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
 import { StatusHeading } from "./status-heading";
 import { ListRow, DraggableListRow, type ChildProgress } from "./list-row";
+import { useDragSettle } from "./use-drag-settle";
 import { InfiniteScrollSentinel } from "./infinite-scroll-sentinel";
 import { useT } from "../../i18n";
 import {
@@ -34,6 +35,7 @@ import {
   buildColumns,
   computePosition,
   findColumn,
+  insertIdByPosition,
   issueMatchesGroup,
   getMoveUpdates,
 } from "../utils/drag-utils";
@@ -57,6 +59,7 @@ export function ListView({
   childProgressMap = EMPTY_PROGRESS_MAP,
   myIssuesScope,
   myIssuesFilter,
+  listFilter,
   projectId,
   onMoveIssue,
   sort,
@@ -66,6 +69,7 @@ export function ListView({
   childProgressMap?: Map<string, ChildProgress>;
   myIssuesScope?: string;
   myIssuesFilter?: MyIssuesFilter;
+  listFilter?: IssueListFilter;
   projectId?: string;
   onMoveIssue?: (issueId: string, updates: DragMoveUpdates, onSettled?: () => void) => void;
   sort?: IssueSortParam;
@@ -113,29 +117,24 @@ export function ListView({
 
   // --- Drag state ---
   const [activeIssue, setActiveIssue] = useState<Issue | null>(null);
-  const isDraggingRef = useRef(false);
-  const isSettlingRef = useRef(false);
-  const [settleVersion, setSettleVersion] = useState(0);
-
-  const [columns, setColumns] = useState<Record<string, string[]>>(() =>
-    buildColumns(issues, groups, "status"),
-  );
-  const columnsRef = useRef(columns);
-  columnsRef.current = columns;
+  // Shared drag/settle primitive (see use-drag-settle) — same machine as
+  // board-view, so the two surfaces can't drift apart.
+  const {
+    columns,
+    setColumns,
+    columnsRef,
+    isDraggingRef,
+    isSettlingRef,
+    recentlyMovedRef,
+    settleVersion,
+    beginSettle,
+  } = useDragSettle(() => buildColumns(issues, groups, "status"));
 
   useEffect(() => {
     if (!isDraggingRef.current && !isSettlingRef.current) {
       setColumns(buildColumns(issues, groups, "status"));
     }
-  }, [issues, groups, settleVersion]);
-
-  const recentlyMovedRef = useRef(false);
-  useEffect(() => {
-    const id = requestAnimationFrame(() => {
-      recentlyMovedRef.current = false;
-    });
-    return () => cancelAnimationFrame(id);
-  }, [columns]);
+  }, [issues, groups, settleVersion, setColumns, isDraggingRef, isSettlingRef]);
 
   const issueMap = useMemo(() => {
     const map = new Map<string, Issue>();
@@ -165,7 +164,7 @@ export function ListView({
       const issue = issueMapRef.current.get(event.active.id as string) ?? null;
       setActiveIssue(issue);
     },
-    [],
+    [isDraggingRef],
   );
 
   const handleDragOver = useCallback(
@@ -192,7 +191,7 @@ export function ListView({
         return { ...prev, [activeCol]: oldIds, [overCol]: newIds };
       });
     },
-    [groupIds, sortBy],
+    [groupIds, sortBy, recentlyMovedRef, setColumns],
   );
 
   const handleDragEnd = useCallback(
@@ -253,11 +252,23 @@ export function ListView({
           resetColumns();
           return;
         }
-        isSettlingRef.current = true;
-        onMoveIssue(activeId, getMoveUpdates(finalGroup, currentIssue.position), () => {
-          isSettlingRef.current = false;
-          setSettleVersion((v) => v + 1);
+        // Optimistically move the row into the target group *now*. Without this
+        // the sortBy != "position" branch never touched local columns on drop,
+        // so the row sat in its origin group for the whole request and only
+        // jumped across when the mutation settled — the same "snaps back, then
+        // moves" glitch the board view had. Placement mirrors the cache
+        // (insertIdByPosition) so the settle rebuild is a visual no-op.
+        setColumns((prev) => {
+          const fromIds = (prev[activeCol] ?? []).filter((cid) => cid !== activeId);
+          const toIds = insertIdByPosition(
+            prev[finalCol] ?? [],
+            activeId,
+            currentIssue.position,
+            map,
+          );
+          return { ...prev, [activeCol]: fromIds, [finalCol]: toIds };
         });
+        onMoveIssue(activeId, getMoveUpdates(finalGroup, currentIssue.position), beginSettle());
         return;
       }
 
@@ -273,12 +284,12 @@ export function ListView({
         return;
       }
 
-      isSettlingRef.current = true;
-      onMoveIssue(activeId, getMoveUpdates(finalGroup, newPosition), () => {
-        isSettlingRef.current = false;
-      });
+      // beginSettle() also bumps settleVersion on settle (board-view did, this
+      // branch did not) so a failed position move reverts instead of stranding
+      // the row at the drop target.
+      onMoveIssue(activeId, getMoveUpdates(finalGroup, newPosition), beginSettle());
     },
-    [issues, groups, onMoveIssue, groupIds, groupMap, sortBy],
+    [issues, groups, onMoveIssue, groupIds, groupMap, sortBy, beginSettle, setColumns, columnsRef, isDraggingRef],
   );
 
   const content = (
@@ -307,6 +318,7 @@ export function ListView({
             issueMap={issueMapRef.current}
             childProgressMap={childProgressMap}
             myIssuesOpts={myIssuesOpts}
+            listFilter={listFilter}
             projectId={projectId}
             dragEnabled={dragEnabled}
             isExpanded={isExpanded}
@@ -356,6 +368,7 @@ function StatusAccordionItem({
   issueMap,
   childProgressMap,
   myIssuesOpts,
+  listFilter,
   projectId,
   dragEnabled,
   isExpanded,
@@ -367,6 +380,7 @@ function StatusAccordionItem({
   issueMap: Map<string, Issue>;
   childProgressMap: Map<string, ChildProgress>;
   myIssuesOpts?: { scope: string; filter: MyIssuesFilter };
+  listFilter?: IssueListFilter;
   projectId?: string;
   dragEnabled: boolean;
   isExpanded: boolean;
@@ -381,6 +395,7 @@ function StatusAccordionItem({
     status,
     myIssuesOpts,
     sort,
+    listFilter,
   );
 
   const issues = useMemo(

@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronRight, ListChevronsDownUp, Copy, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronRight, ListChevronsDownUp, Copy, Loader2, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -103,7 +103,7 @@ interface CommentCardProps {
    * `CommentRow` has to rerun the rule per row.
    */
   canModerate?: boolean;
-  onReply: (parentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[]) => Promise<void>;
+  onReply: (parentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[]) => Promise<boolean>;
   onEdit: (commentId: string, content: string, attachmentIds: string[], suppressAgentIds?: string[]) => Promise<void>;
   onDelete: (commentId: string) => void;
   onToggleReaction: (commentId: string, emoji: string) => void;
@@ -248,6 +248,60 @@ function initialStandaloneAttachmentIds(entry: TimelineEntry): Set<string> {
   );
 }
 
+function retryableAgentFailureComment(entry: TimelineEntry): entry is TimelineEntry & { source_task_id: string } {
+  return (
+    entry.actor_type === "agent" &&
+    entry.comment_type === "system" &&
+    typeof entry.source_task_id === "string" &&
+    entry.source_task_id.length > 0
+  );
+}
+
+function TaskCommentRetryButton({
+  issueId,
+  taskId,
+  className,
+}: {
+  issueId: string;
+  taskId: string;
+  className?: string;
+}) {
+  const { t } = useT("issues");
+  const [retrying, setRetrying] = useState(false);
+
+  const handleRetry = async () => {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      await api.rerunIssue(issueId, taskId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t(($) => $.execution_log.retry_failed));
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <div className={cn("flex", className)}>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={handleRetry}
+        disabled={retrying}
+        aria-label={t(($) => $.execution_log.retry_task_aria)}
+      >
+        {retrying ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <RotateCcw className="h-3.5 w-3.5" />
+        )}
+        {t(($) => $.execution_log.retry_task_tooltip)}
+      </Button>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Shared edit-attachment state hook
 // ---------------------------------------------------------------------------
@@ -260,8 +314,10 @@ function useEditAttachmentState(
   const { t } = useT("issues");
   const { uploadWithToast } = useFileUpload(api);
   const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const editorRef = useRef<ContentEditorRef>(null);
   const cancelledRef = useRef(false);
+  const savingRef = useRef(false);
   const [content, setContent] = useState(entry.content ?? "");
   const [suppressedAgentIds, setSuppressedAgentIds] = useState<Set<string>>(() => new Set());
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
@@ -344,7 +400,7 @@ function useEditAttachmentState(
   };
 
   const saveEdit = async () => {
-    if (cancelledRef.current) return;
+    if (cancelledRef.current || savingRef.current) return;
     const trimmed = editorRef.current
       ?.getMarkdown()
       ?.replace(/(\n\s*)+$/, "")
@@ -363,6 +419,8 @@ function useEditAttachmentState(
     const suppressAgentIds = triggerPreview.agents
       .filter((agent) => suppressedAgentIds.has(agent.id))
       .map((agent) => agent.id);
+    savingRef.current = true;
+    setSaving(true);
     try {
       await onEdit(
         entry.id,
@@ -377,11 +435,15 @@ function useEditAttachmentState(
           ? err.message
           : t(($) => $.comment.update_failed),
       );
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
   return {
     editing,
+    saving,
     editorRef,
     editorAttachments,
     handleUpload,
@@ -591,8 +653,11 @@ function CommentRow({
                 multiple
                 onSelect={(file) => edit.editorRef.current?.uploadFile(file)}
               />
-              <Button size="sm" variant="ghost" onClick={edit.cancelEdit}>{t(($) => $.comment.cancel_edit)}</Button>
-              <Button size="sm" variant="outline" onClick={edit.saveEdit}>{t(($) => $.comment.save_action)}</Button>
+              <Button size="sm" variant="ghost" onClick={edit.cancelEdit} disabled={edit.saving}>{t(($) => $.comment.cancel_edit)}</Button>
+              <Button size="sm" variant="outline" onClick={edit.saveEdit} disabled={edit.saving}>
+                {edit.saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {t(($) => $.comment.save_action)}
+              </Button>
             </div>
           </div>
           {edit.isDragOver && <FileDropOverlay />}
@@ -603,6 +668,13 @@ function CommentRow({
             <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
           </div>
           <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-12 pr-4" />
+          {retryableAgentFailureComment(entry) && (
+            <TaskCommentRetryButton
+              issueId={issueId}
+              taskId={entry.source_task_id}
+              className="mt-2 pl-12 pr-4"
+            />
+          )}
           <ReactionBar
             reactions={reactions}
             currentUserId={currentUserId}
@@ -871,8 +943,11 @@ function CommentCardImpl({
                     />
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button size="sm" variant="ghost" onClick={edit.cancelEdit}>{t(($) => $.comment.cancel_edit)}</Button>
-                    <Button size="sm" variant="outline" onClick={edit.saveEdit}>{t(($) => $.comment.save_action)}</Button>
+                    <Button size="sm" variant="ghost" onClick={edit.cancelEdit} disabled={edit.saving}>{t(($) => $.comment.cancel_edit)}</Button>
+                    <Button size="sm" variant="outline" onClick={edit.saveEdit} disabled={edit.saving}>
+                      {edit.saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      {t(($) => $.comment.save_action)}
+                    </Button>
                   </div>
                 </div>
                 {edit.isDragOver && <FileDropOverlay />}
@@ -883,6 +958,13 @@ function CommentCardImpl({
                   <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
                 </div>
                 <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-10" />
+                {retryableAgentFailureComment(entry) && (
+                  <TaskCommentRetryButton
+                    issueId={issueId}
+                    taskId={entry.source_task_id}
+                    className="mt-2 pl-10"
+                  />
+                )}
                 <ReactionBar
                   reactions={reactions}
                   currentUserId={currentUserId}

@@ -31,6 +31,7 @@ export interface IssueReaction {
  */
 export type IssueMetadataValue = string | number | boolean;
 export type IssueMetadata = Record<string, IssueMetadataValue>;
+export type IssueExternalFields = Record<string, string>;
 
 export interface Issue {
   id: string;
@@ -48,12 +49,17 @@ export interface Issue {
   parent_issue_id: string | null;
   project_id: string | null;
   position: number;
+  // Ordered barrier group among sibling sub-issues (null = unstaged). The
+  // parent assignee is notified/woken only when every sub-issue in a stage
+  // finishes; see server/internal/handler/issue_child_done.go.
+  stage: number | null;
   // Calendar days as date-only "YYYY-MM-DD" (no time, no timezone). Use the
   // helpers in @multica/core/issues/date to format/compare — never `new Date()`
   // + local formatting, which shifts the day by the viewer's offset.
   start_date: string | null;
   due_date: string | null;
   metadata: IssueMetadata;
+  external_fields?: IssueExternalFields;
   reactions?: IssueReaction[];
   labels?: Label[];
   created_at: string;

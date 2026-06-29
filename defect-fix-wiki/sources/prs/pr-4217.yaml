@@ -1,0 +1,92 @@
+id: source.github.pr.4217
+repo: multica-ai/multica
+pr_number: 4217
+url: https://github.com/multica-ai/multica/pull/4217
+state: merged
+title: "MUL-3328: add retry button for failed agent comments"
+author: forrestchang
+base_ref: main
+head_ref: agent/emacs/d0de9909
+merged_at: 2026-06-17T13:18:45Z
+closed_at: 2026-06-17T13:18:45Z
+merge_commit: 63b9b10df5b82169998cd37e4513ffd57a04f2ac
+linked_issues:
+  - MUL-3328
+changed_files:
+  - path: apps/mobile/data/realtime/issue-ws-updaters.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/mobile/data/schemas.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/schemas.test.ts
+    additions: 20
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/schemas.ts
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/types/activity.ts
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/core/types/comment.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/components/comment-card.tsx
+    additions: 69
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/issues/components/issue-detail.test.tsx
+    additions: 96
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/hooks/use-issue-timeline.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/activity.go
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/comment.go
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/task.go
+    additions: 20
+    deletions: 18
+    change_type: MODIFIED
+  - path: server/migrations/120_comment_source_task_id.down.sql
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/120_comment_source_task_id.up.sql
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/comment.sql.go
+    additions: 31
+    deletions: 19
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/models.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/comment.sql
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/api/schemas.test.ts
+  - path: packages/views/issues/components/issue-detail.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

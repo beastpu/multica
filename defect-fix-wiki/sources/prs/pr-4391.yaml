@@ -1,0 +1,31 @@
+id: source.github.pr.4391
+repo: multica-ai/multica
+pr_number: 4391
+url: https://github.com/multica-ai/multica/pull/4391
+state: merged
+title: "fix(issue): skip child-done notification when parent is in backlog"
+author: Bohan-J
+base_ref: main
+head_ref: fix/child-done-skip-backlog-parent
+merged_at: 2026-06-22T05:56:48Z
+closed_at: 2026-06-22T05:56:48Z
+merge_commit: 5556f4570b9d4a9c3108350a1fd73eae2532790e
+linked_issues:
+  - MUL-3497
+changed_files:
+  - path: server/internal/handler/issue_child_done.go
+    additions: 13
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/issue_child_done_test.go
+    additions: 16
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/handler/issue_child_done_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

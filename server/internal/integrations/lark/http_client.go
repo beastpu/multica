@@ -228,6 +228,30 @@ func (c *httpAPIClient) invalidateToken(appID string) {
 	c.mu.Unlock()
 }
 
+// outboundMessageRequest builds the (path, body) the send methods share.
+// When target.IsSet() the message is routed through Lark's reply
+// endpoint (POST /im/v1/messages/{message_id}/reply) so it threads back
+// into the originating 话题 — reply_in_thread carries the target's
+// InThread flag (Lark also keeps the reply in-thread automatically when
+// the parent message already belongs to a thread). Otherwise the message
+// goes to the chat-level send endpoint keyed by receive_id_type.
+func outboundMessageRequest(receiveIDType, receiveID, msgType, content string, target ReplyTarget) (string, map[string]any) {
+	if target.IsSet() {
+		return "/open-apis/im/v1/messages/" + url.PathEscape(target.MessageID) + "/reply", map[string]any{
+			"msg_type":        msgType,
+			"content":         content,
+			"reply_in_thread": target.InThread,
+		}
+	}
+	q := url.Values{}
+	q.Set("receive_id_type", receiveIDType)
+	return "/open-apis/im/v1/messages?" + q.Encode(), map[string]any{
+		"receive_id": receiveID,
+		"msg_type":   msgType,
+		"content":    content,
+	}
+}
+
 // SendInteractiveCard posts a fresh interactive card into a chat and
 // returns Lark's message_id so the Patcher can target subsequent
 // patches at the same card.
@@ -238,7 +262,7 @@ func (c *httpAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParam
 	if p.CardJSON == "" {
 		return "", errors.New("lark http client: missing card json")
 	}
-	return c.sendInteractiveCard(ctx, p.InstallationID, "chat_id", string(p.ChatID), p.CardJSON)
+	return c.sendMessage(ctx, p.InstallationID, "chat_id", string(p.ChatID), "interactive", p.CardJSON, p.ReplyTarget, "send interactive card")
 }
 
 func (c *httpAPIClient) SendDirectInteractiveCard(ctx context.Context, p SendDirectCardParams) (string, error) {
@@ -248,21 +272,15 @@ func (c *httpAPIClient) SendDirectInteractiveCard(ctx context.Context, p SendDir
 	if p.CardJSON == "" {
 		return "", errors.New("lark http client: missing card json")
 	}
-	return c.sendInteractiveCard(ctx, p.InstallationID, "open_id", string(p.OpenID), p.CardJSON)
+	return c.sendMessage(ctx, p.InstallationID, "open_id", string(p.OpenID), "interactive", p.CardJSON, ReplyTarget{}, "send interactive card")
 }
 
-func (c *httpAPIClient) sendInteractiveCard(ctx context.Context, creds InstallationCredentials, receiveIDType, receiveID, cardJSON string) (string, error) {
+func (c *httpAPIClient) sendMessage(ctx context.Context, creds InstallationCredentials, receiveIDType, receiveID, msgType, content string, target ReplyTarget, op string) (string, error) {
 	token, err := c.tenantAccessToken(ctx, creds)
 	if err != nil {
 		return "", err
 	}
-	q := url.Values{}
-	q.Set("receive_id_type", receiveIDType)
-	body := map[string]string{
-		"receive_id": receiveID,
-		"msg_type":   "interactive",
-		"content":    cardJSON,
-	}
+	path, body := outboundMessageRequest(receiveIDType, receiveID, msgType, content, target)
 	var resp struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
@@ -270,15 +288,14 @@ func (c *httpAPIClient) sendInteractiveCard(ctx context.Context, creds Installat
 			MessageID string `json:"message_id"`
 		} `json:"data"`
 	}
-	path := "/open-apis/im/v1/messages?" + q.Encode()
 	if err := c.doJSON(ctx, c.resolveBaseURL(creds), http.MethodPost, path, token, body, &resp); err != nil {
-		return "", fmt.Errorf("lark http client: send interactive card: %w", err)
+		return "", fmt.Errorf("lark http client: %s: %w", op, err)
 	}
 	if resp.Code != 0 || resp.Data.MessageID == "" {
 		if isTokenError(resp.Code) {
 			c.invalidateToken(creds.AppID)
 		}
-		return "", fmt.Errorf("lark http client: send interactive card: code=%d msg=%q", resp.Code, resp.Msg)
+		return "", &APIError{Op: op, Code: resp.Code, Msg: resp.Msg}
 	}
 	return resp.Data.MessageID, nil
 }
@@ -296,7 +313,7 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	if p.Text == "" {
 		return "", errors.New("lark http client: missing text")
 	}
-	return c.sendText(ctx, p.InstallationID, "chat_id", string(p.ChatID), p.Text)
+	return c.sendText(ctx, p.InstallationID, "chat_id", string(p.ChatID), p.Text, p.ReplyTarget)
 }
 
 func (c *httpAPIClient) SendDirectTextMessage(ctx context.Context, p SendDirectTextParams) (string, error) {
@@ -306,14 +323,10 @@ func (c *httpAPIClient) SendDirectTextMessage(ctx context.Context, p SendDirectT
 	if p.Text == "" {
 		return "", errors.New("lark http client: missing text")
 	}
-	return c.sendText(ctx, p.InstallationID, "open_id", string(p.OpenID), p.Text)
+	return c.sendText(ctx, p.InstallationID, "open_id", string(p.OpenID), p.Text, ReplyTarget{})
 }
 
-func (c *httpAPIClient) sendText(ctx context.Context, creds InstallationCredentials, receiveIDType, receiveID, text string) (string, error) {
-	token, err := c.tenantAccessToken(ctx, creds)
-	if err != nil {
-		return "", err
-	}
+func (c *httpAPIClient) sendText(ctx context.Context, creds InstallationCredentials, receiveIDType, receiveID, text string, target ReplyTarget) (string, error) {
 	// Lark's `text` msg_type expects content = JSON-encoded {"text": "..."}.
 	// json.Marshal handles the escape of newlines / quotes / unicode so
 	// the agent's reply round-trips intact.
@@ -321,31 +334,7 @@ func (c *httpAPIClient) sendText(ctx context.Context, creds InstallationCredenti
 	if err != nil {
 		return "", fmt.Errorf("lark http client: encode text content: %w", err)
 	}
-	q := url.Values{}
-	q.Set("receive_id_type", receiveIDType)
-	body := map[string]string{
-		"receive_id": receiveID,
-		"msg_type":   "text",
-		"content":    string(contentBytes),
-	}
-	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			MessageID string `json:"message_id"`
-		} `json:"data"`
-	}
-	path := "/open-apis/im/v1/messages?" + q.Encode()
-	if err := c.doJSON(ctx, c.resolveBaseURL(creds), http.MethodPost, path, token, body, &resp); err != nil {
-		return "", fmt.Errorf("lark http client: send text message: %w", err)
-	}
-	if resp.Code != 0 || resp.Data.MessageID == "" {
-		if isTokenError(resp.Code) {
-			c.invalidateToken(creds.AppID)
-		}
-		return "", fmt.Errorf("lark http client: send text message: code=%d msg=%q", resp.Code, resp.Msg)
-	}
-	return resp.Data.MessageID, nil
+	return c.sendMessage(ctx, creds, receiveIDType, receiveID, "text", string(contentBytes), target, "send text message")
 }
 
 // SendMarkdownCard posts the agent's reply as an interactive card
@@ -391,13 +380,7 @@ func (c *httpAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCard
 	if err != nil {
 		return "", fmt.Errorf("lark http client: encode markdown card: %w", err)
 	}
-	q := url.Values{}
-	q.Set("receive_id_type", "chat_id")
-	body := map[string]string{
-		"receive_id": string(p.ChatID),
-		"msg_type":   "interactive",
-		"content":    string(cardBytes),
-	}
+	path, body := outboundMessageRequest("chat_id", string(p.ChatID), "interactive", string(cardBytes), p.ReplyTarget)
 	var resp struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
@@ -405,7 +388,6 @@ func (c *httpAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCard
 			MessageID string `json:"message_id"`
 		} `json:"data"`
 	}
-	path := "/open-apis/im/v1/messages?" + q.Encode()
 	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, path, token, body, &resp); err != nil {
 		return "", fmt.Errorf("lark http client: send markdown card: %w", err)
 	}
@@ -413,7 +395,7 @@ func (c *httpAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCard
 		if isTokenError(resp.Code) {
 			c.invalidateToken(p.InstallationID.AppID)
 		}
-		return "", fmt.Errorf("lark http client: send markdown card: code=%d msg=%q", resp.Code, resp.Msg)
+		return "", &APIError{Op: "send markdown card", Code: resp.Code, Msg: resp.Msg}
 	}
 	return resp.Data.MessageID, nil
 }
@@ -940,6 +922,57 @@ func (c *httpAPIClient) doJSON(ctx context.Context, baseURL, method, path, token
 
 func isTokenError(code int) bool {
 	return code == codeTokenExpired || code == codeTokenInvalid
+}
+
+// APIError is a structured Lark business error: the request reached
+// Lark, returned HTTP 200, but Lark rejected it with a non-zero
+// `code`. This is distinct from the transport-level errors doJSON
+// surfaces (network failure, 5xx, timeout), which are returned as
+// plain wrapped errors. The distinction matters for the threaded-reply
+// fallback: a business code is definitive ("nothing was sent, and here
+// is exactly why"), whereas a transport error is ambiguous ("the
+// message may or may not have been delivered") and must NOT trigger a
+// chat-level retry that could duplicate or leak the reply.
+type APIError struct {
+	Op   string
+	Code int
+	Msg  string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("lark http client: %s: code=%d msg=%q", e.Op, e.Code, e.Msg)
+}
+
+// threadReplyUnsupportedCodes are the reply-endpoint business codes
+// that definitively mean "this specific trigger message / topic cannot
+// receive a threaded reply" AND nothing was sent, while a plain
+// chat-level send to the same chat is unaffected. Only these justify
+// the chat-level fallback. Rate limits (230020), "message is being
+// sent" (230049, ambiguous), permission/content errors (which would
+// also fail at chat level), and all transport/5xx/timeout failures are
+// deliberately excluded: those stay failures so we never duplicate a
+// reply or leak a thread-only reply into the main group chat.
+// Codes are from the IM reply-message endpoint error table.
+var threadReplyUnsupportedCodes = map[int]struct{}{
+	230011: {}, // the trigger message has been recalled
+	230019: {}, // the topic does not exist
+	230050: {}, // the trigger message is invisible to the operator
+	230071: {}, // the group does not support reply in thread
+	230072: {}, // aggregated messages do not support reply in thread
+	230111: {}, // cannot reply to a self-destructing message
+}
+
+// isThreadReplyUnsupported reports whether err is a Lark APIError whose
+// code means the threaded reply cannot land on this target. Only such
+// errors are safe to retry at the chat level. Transport errors and
+// other business codes return false.
+func isThreadReplyUnsupported(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		_, ok := threadReplyUnsupportedCodes[apiErr.Code]
+		return ok
+	}
+	return false
 }
 
 func truncate(s string, n int) string {

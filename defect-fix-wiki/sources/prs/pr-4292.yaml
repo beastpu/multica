@@ -1,0 +1,56 @@
+id: source.github.pr.4292
+repo: multica-ai/multica
+pr_number: 4292
+url: https://github.com/multica-ai/multica/pull/4292
+state: closed
+title: "fix: drop migration FKs/cascades + verify all migrations in readiness check (MUL-3404)"
+author: Bohan-J
+base_ref: main
+head_ref: fix/migration-fk-cascade-readiness
+merged_at: ""
+closed_at: 2026-06-18T04:07:31Z
+merge_commit: ""
+linked_issues:
+  - MUL-3404
+changed_files:
+  - path: server/cmd/server/health.go
+    additions: 24
+    deletions: 16
+    change_type: MODIFIED
+  - path: server/cmd/server/health_test.go
+    additions: 48
+    deletions: 18
+    change_type: MODIFIED
+  - path: server/internal/handler/autopilot.go
+    additions: 21
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/handler/autopilot_subscriber_test.go
+    additions: 71
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/migrations/migrations.go
+    additions: 13
+    deletions: 5
+    change_type: MODIFIED
+  - path: server/migrations/120_autopilot_subscriber.down.sql
+    additions: 6
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/migrations/120_autopilot_subscriber.up.sql
+    additions: 6
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/migrations/120_comment_source_task_id.up.sql
+    additions: 7
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/server/health_test.go
+  - path: server/internal/handler/autopilot_subscriber_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

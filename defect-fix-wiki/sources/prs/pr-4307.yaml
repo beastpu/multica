@@ -1,0 +1,44 @@
+id: source.github.pr.4307
+repo: multica-ai/multica
+pr_number: 4307
+url: https://github.com/multica-ai/multica/pull/4307
+state: merged
+title: "Revert \"MUL-3374: gzip daemon claim responses\""
+author: ldnvnbl
+base_ref: main
+head_ref: revert-4259-agent/niko/2c726134
+merged_at: 2026-06-18T09:58:43Z
+closed_at: 2026-06-18T09:58:43Z
+merge_commit: e1c6754304ac5d7ae5f8af7717f4f217c04cda3a
+linked_issues:
+  - MUL-3374
+changed_files:
+  - path: server/cmd/server/router.go
+    additions: 0
+    deletions: 15
+    change_type: MODIFIED
+  - path: server/cmd/server/router_compression_test.go
+    additions: 0
+    deletions: 92
+    change_type: DELETED
+  - path: server/internal/handler/daemon.go
+    additions: 5
+    deletions: 21
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon_test.go
+    additions: 0
+    deletions: 24
+    change_type: MODIFIED
+  - path: server/internal/handler/handler.go
+    additions: 0
+    deletions: 15
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/server/router_compression_test.go
+  - path: server/internal/handler/daemon_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,96 @@
+id: source.github.pr.4330
+repo: multica-ai/multica
+pr_number: 4330
+url: https://github.com/multica-ai/multica/pull/4330
+state: closed
+title: "feat(labels): STR-188 오토파일럿 기반 자동 라벨링"
+author: honki12345
+base_ref: main
+head_ref: agent/builder/STR-188-agent-auto-label
+merged_at: ""
+closed_at: 2026-06-19T05:48:52Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: CLAUDE.md
+    additions: 4
+    deletions: 0
+    change_type: MODIFIED
+  - path: CUSTOMIZATIONS.md
+    additions: 59
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/package.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/workspace/index.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/workspace/settings.test.ts
+    additions: 22
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/workspace/settings.ts
+    additions: 17
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/en/settings.json
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/settings.json
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/settings.json
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/settings.json
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/settings/components/workspace-tab.test.tsx
+    additions: 34
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/views/settings/components/workspace-tab.tsx
+    additions: 38
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/cmd/server/issue_auto_label_listeners.go
+    additions: 52
+    deletions: 0
+    change_type: ADDED
+  - path: server/cmd/server/main.go
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/issue_auto_label.go
+    additions: 640
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/issue_auto_label_test.go
+    additions: 358
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/issue_label.sql.go
+    additions: 25
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/issue_label.sql
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/workspace/settings.test.ts
+  - path: packages/views/settings/components/workspace-tab.test.tsx
+  - path: server/internal/service/issue_auto_label_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

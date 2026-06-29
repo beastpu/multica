@@ -1,0 +1,44 @@
+id: source.github.pr.4289
+repo: multica-ai/multica
+pr_number: 4289
+url: https://github.com/multica-ai/multica/pull/4289
+state: merged
+title: "MUL-3264: add Codex usage cache backfill"
+author: Bohan-J
+base_ref: main
+head_ref: agent/niko/mul-3264-codex-usage-backfill
+merged_at: 2026-06-18T05:34:11Z
+closed_at: 2026-06-18T05:34:11Z
+merge_commit: 2d1313c5a48e81ec5f2ffa181b4de5fd686eab87
+linked_issues:
+  - MUL-3264
+changed_files:
+  - path: Dockerfile
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: docs/codex-usage-cache-backfill.md
+    additions: 91
+    deletions: 0
+    change_type: ADDED
+  - path: server/cmd/backfill_codex_usage_cache/integration_test.go
+    additions: 332
+    deletions: 0
+    change_type: ADDED
+  - path: server/cmd/backfill_codex_usage_cache/main.go
+    additions: 329
+    deletions: 0
+    change_type: ADDED
+  - path: server/cmd/backfill_codex_usage_cache/main_test.go
+    additions: 82
+    deletions: 0
+    change_type: ADDED
+test_files_changed:
+  - path: server/cmd/backfill_codex_usage_cache/integration_test.go
+  - path: server/cmd/backfill_codex_usage_cache/main_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

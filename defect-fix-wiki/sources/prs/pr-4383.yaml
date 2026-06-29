@@ -1,0 +1,257 @@
+id: source.github.pr.4383
+repo: multica-ai/multica
+pr_number: 4383
+url: https://github.com/multica-ai/multica/pull/4383
+state: merged
+title: "MUL-3416: Issue pre-trigger preview + Handoff Note"
+author: NevilleQingNY
+base_ref: main
+head_ref: agent/walt/9bcb374d
+merged_at: 2026-06-23T05:17:14Z
+closed_at: 2026-06-23T05:17:14Z
+merge_commit: 4ab335b8a5e584e39e15a27034bb5ad72d0ce8f7
+linked_issues:
+  - MUL-3375
+  - MUL-3416
+changed_files:
+  - path: packages/core/api/client.ts
+    additions: 23
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/schemas.test.ts
+    additions: 75
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/schemas.ts
+    additions: 12
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/issues/cache-helpers.test.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/issues/mutations.ts
+    additions: 14
+    deletions: 5
+    change_type: MODIFIED
+  - path: packages/core/issues/queries.ts
+    additions: 8
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/modals/store.ts
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/core/realtime/use-realtime-sync.ts
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/types/api.ts
+    additions: 34
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/issues/actions/__tests__/use-issue-actions.test.tsx
+    additions: 16
+    deletions: 11
+    change_type: MODIFIED
+  - path: packages/views/issues/actions/use-issue-actions.ts
+    additions: 18
+    deletions: 15
+    change_type: MODIFIED
+  - path: packages/views/issues/components/backlog-agent-hint-dialog.tsx
+    additions: 0
+    deletions: 125
+    change_type: DELETED
+  - path: packages/views/issues/components/batch-action-toolbar.tsx
+    additions: 34
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/issues/hooks/use-issue-trigger-preview.ts
+    additions: 79
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/issues/utils/drag-utils.test.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/en/issues.json
+    additions: 1
+    deletions: 4
+    change_type: MODIFIED
+  - path: packages/views/locales/en/modals.json
+    additions: 19
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/issues.json
+    additions: 1
+    deletions: 4
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/modals.json
+    additions: 19
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/issues.json
+    additions: 1
+    deletions: 4
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/modals.json
+    additions: 19
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/issues.json
+    additions: 1
+    deletions: 4
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/modals.json
+    additions: 19
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/modals/backlog-agent-hint.tsx
+    additions: 0
+    deletions: 46
+    change_type: DELETED
+  - path: packages/views/modals/create-issue-dialog.tsx
+    additions: 4
+    deletions: 8
+    change_type: MODIFIED
+  - path: packages/views/modals/create-issue.test.tsx
+    additions: 23
+    deletions: 8
+    change_type: MODIFIED
+  - path: packages/views/modals/create-issue.tsx
+    additions: 110
+    deletions: 60
+    change_type: MODIFIED
+  - path: packages/views/modals/registry.tsx
+    additions: 3
+    deletions: 3
+    change_type: MODIFIED
+  - path: packages/views/modals/run-confirm.test.tsx
+    additions: 144
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/modals/run-confirm.tsx
+    additions: 197
+    deletions: 0
+    change_type: ADDED
+  - path: server/cmd/server/router.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/daemon.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/context.go
+    additions: 8
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/execenv.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/handoff_context_test.go
+    additions: 33
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/daemon/handoff_prompt_test.go
+    additions: 38
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/daemon/prompt.go
+    additions: 7
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/types.go
+    additions: 6
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/handler/agent.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon.go
+    additions: 7
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/issue.go
+    additions: 39
+    deletions: 51
+    change_type: MODIFIED
+  - path: server/internal/handler/issue_trigger.go
+    additions: 225
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/issue_trigger_preview_test.go
+    additions: 278
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/squad.go
+    additions: 19
+    deletions: 46
+    change_type: MODIFIED
+  - path: server/internal/service/issue_trigger.go
+    additions: 173
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/task.go
+    additions: 24
+    deletions: 7
+    change_type: MODIFIED
+  - path: server/migrations/122_task_handoff_note.down.sql
+    additions: 1
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/122_task_handoff_note.up.sql
+    additions: 6
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/agent/handoff_version_test.go
+    additions: 26
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/agent/version.go
+    additions: 32
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/agent.sql.go
+    additions: 59
+    deletions: 30
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/autopilot.sql.go
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/chat.sql.go
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/models.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/runtime.sql.go
+    additions: 4
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/agent.sql
+    additions: 3
+    deletions: 2
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/api/schemas.test.ts
+  - path: packages/core/issues/cache-helpers.test.ts
+  - path: packages/views/issues/actions/__tests__/use-issue-actions.test.tsx
+  - path: packages/views/issues/utils/drag-utils.test.ts
+  - path: packages/views/modals/create-issue.test.tsx
+  - path: packages/views/modals/run-confirm.test.tsx
+  - path: server/internal/daemon/execenv/handoff_context_test.go
+  - path: server/internal/daemon/handoff_prompt_test.go
+  - path: server/internal/handler/issue_trigger_preview_test.go
+  - path: server/pkg/agent/handoff_version_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

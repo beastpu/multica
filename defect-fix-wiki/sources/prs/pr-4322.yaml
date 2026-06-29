@@ -1,0 +1,40 @@
+id: source.github.pr.4322
+repo: multica-ai/multica
+pr_number: 4322
+url: https://github.com/multica-ai/multica/pull/4322
+state: merged
+title: "MUL-3433: fix(daemon): restore claim slow-log payload observability without gzip"
+author: Hzzzzzx
+base_ref: main
+head_ref: agent/cc/99399fc8
+merged_at: 2026-06-21T15:41:06Z
+closed_at: 2026-06-21T15:41:06Z
+merge_commit: 745832b5366d8b4a55deabd3feb5485633412990
+linked_issues:
+  - MUL-3433
+changed_files:
+  - path: server/internal/handler/daemon.go
+    additions: 21
+    deletions: 5
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon_test.go
+    additions: 24
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/handler.go
+    additions: 18
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/handler_writejson_test.go
+    additions: 99
+    deletions: 0
+    change_type: ADDED
+test_files_changed:
+  - path: server/internal/handler/daemon_test.go
+  - path: server/internal/handler/handler_writejson_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

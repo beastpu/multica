@@ -1,0 +1,63 @@
+id: source.github.pr.4386
+repo: multica-ai/multica
+pr_number: 4386
+url: https://github.com/multica-ai/multica/pull/4386
+state: merged
+title: "MUL-3467: batch load squad roster skills"
+author: Bohan-J
+base_ref: main
+head_ref: agent/niko/39163e64
+merged_at: 2026-06-22T05:14:23Z
+closed_at: 2026-06-22T05:14:23Z
+merge_commit: 81bde585baa1adb15793622c4fb2b665a54ab198
+linked_issues:
+  - MUL-3467
+changed_files:
+  - path: server/internal/auth/pat_cache_test.go
+    additions: 7
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_local_skills_redis_store_test.go
+    additions: 7
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/handler/squad_briefing.go
+    additions: 45
+    deletions: 17
+    change_type: MODIFIED
+  - path: server/internal/handler/squad_briefing_test.go
+    additions: 10
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/middleware/auth_test.go
+    additions: 7
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-squads/references/squad-source-map.md
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/service/empty_claim_cache_test.go
+    additions: 6
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/skill.sql.go
+    additions: 33
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/skill.sql
+    additions: 7
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/auth/pat_cache_test.go
+  - path: server/internal/handler/runtime_local_skills_redis_store_test.go
+  - path: server/internal/handler/squad_briefing_test.go
+  - path: server/internal/middleware/auth_test.go
+  - path: server/internal/service/empty_claim_cache_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,28 @@
+id: source.github.pr.4394
+repo: multica-ai/multica
+pr_number: 4394
+url: https://github.com/multica-ai/multica/pull/4394
+state: merged
+title: "MUL-3499: chore(makefile): expand clean target to remove build caches"
+author: yyclaw
+base_ref: main
+head_ref: chore/makefile-clean-build-caches
+merged_at: 2026-06-22T09:20:43Z
+closed_at: 2026-06-22T09:20:43Z
+merge_commit: 329384f05241f9a4f62d63dc26f7d79e204f30b9
+linked_issues:
+  - "#4393"
+  - MUL-3499
+  - https://github.com/multica-ai/multica/issues/4393
+changed_files:
+  - path: Makefile
+    additions: 6
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "missing test diff"

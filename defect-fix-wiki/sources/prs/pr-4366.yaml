@@ -1,0 +1,49 @@
+id: source.github.pr.4366
+repo: multica-ai/multica
+pr_number: 4366
+url: https://github.com/multica-ai/multica/pull/4366
+state: merged
+title: "MUL-3420: fix(runtimes): clarify custom runtime deletion"
+author: YOMXXX
+base_ref: main
+head_ref: codex/fix-4303-custom-runtime-delete-ux
+merged_at: 2026-06-22T07:01:22Z
+closed_at: 2026-06-22T07:01:22Z
+merge_commit: 9d053c57f940fd0ec72b3e8c6e0fb067ce63a384
+linked_issues:
+  - "#4303"
+  - MUL-3420
+  - https://github.com/multica-ai/multica/issues/4303
+changed_files:
+  - path: packages/views/locales/en/runtimes.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/runtimes.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/runtimes.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/runtimes.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/delete-runtime-dialog.test.tsx
+    additions: 35
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/delete-runtime-dialog.tsx
+    additions: 18
+    deletions: 9
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/runtimes/components/delete-runtime-dialog.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

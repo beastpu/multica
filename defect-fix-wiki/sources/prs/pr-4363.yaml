@@ -1,0 +1,38 @@
+id: source.github.pr.4363
+repo: multica-ai/multica
+pr_number: 4363
+url: https://github.com/multica-ai/multica/pull/4363
+state: merged
+title: "feat(squad): surface member skills in leader briefing roster"
+author: hal9000botagent
+base_ref: main
+head_ref: feat/squad-roster-skills
+merged_at: 2026-06-22T04:33:13Z
+closed_at: 2026-06-22T04:33:13Z
+merge_commit: 91e6c779d61851082a0052601107110f1e52c2e2
+linked_issues: []
+changed_files:
+  - path: server/internal/handler/squad_briefing.go
+    additions: 36
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/internal/handler/squad_briefing_test.go
+    additions: 153
+    deletions: 95
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-squads/SKILL.md
+    additions: 6
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-squads/references/squad-source-map.md
+    additions: 5
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/handler/squad_briefing_test.go
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "missing linked issue"
+    - "test file changed"

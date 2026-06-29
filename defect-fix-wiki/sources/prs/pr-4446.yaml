@@ -1,0 +1,39 @@
+id: source.github.pr.4446
+repo: multica-ai/multica
+pr_number: 4446
+url: https://github.com/multica-ai/multica/pull/4446
+state: closed
+title: "MUL-3560: refactor buildMetaSkillContent into kind-driven dispatcher"
+author: multica-eve
+base_ref: main
+head_ref: feature/runtime-brief-task-kind-switch
+merged_at: ""
+closed_at: 2026-06-23T06:54:34Z
+merge_commit: ""
+linked_issues:
+  - MUL-3560
+changed_files:
+  - path: server/internal/daemon/execenv/runtime_config.go
+    additions: 84
+    deletions: 428
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config_kind.go
+    additions: 97
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/daemon/execenv/runtime_config_kind_test.go
+    additions: 287
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/daemon/execenv/runtime_config_sections.go
+    additions: 462
+    deletions: 0
+    change_type: ADDED
+test_files_changed:
+  - path: server/internal/daemon/execenv/runtime_config_kind_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

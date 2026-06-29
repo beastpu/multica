@@ -1,0 +1,4 @@
+interface:
+  display_name: "Multica Release"
+  short_description: "Multica test/prod release SOP"
+  default_prompt: "Use $multica-release to build, tag, deploy, or verify a Multica release safely."

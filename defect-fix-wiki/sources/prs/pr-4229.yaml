@@ -1,0 +1,56 @@
+id: source.github.pr.4229
+repo: multica-ai/multica
+pr_number: 4229
+url: https://github.com/multica-ai/multica/pull/4229
+state: merged
+title: "MUL-3332: prioritize custom runtime profiles"
+author: multica-eve
+base_ref: main
+head_ref: feat/mul-3332-runtime-profile-dialog
+merged_at: 2026-06-17T05:39:48Z
+closed_at: 2026-06-17T05:39:49Z
+merge_commit: 6e010320f880ff435ca8361c19baef9de83213d8
+linked_issues:
+  - MUL-3332
+changed_files:
+  - path: packages/views/locales/en/runtimes.json
+    additions: 14
+    deletions: 5
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/runtimes.json
+    additions: 14
+    deletions: 5
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/runtimes.json
+    additions: 14
+    deletions: 5
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/runtimes.json
+    additions: 14
+    deletions: 5
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-profile-catalog.test.ts
+    additions: 62
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/runtimes/components/runtime-profile-catalog.ts
+    additions: 20
+    deletions: 14
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/runtime-profiles-dialog.test.tsx
+    additions: 145
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/runtimes/components/runtime-profiles-dialog.tsx
+    additions: 184
+    deletions: 61
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/runtimes/components/runtime-profile-catalog.test.ts
+  - path: packages/views/runtimes/components/runtime-profiles-dialog.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,33 @@
+id: source.github.pr.4164
+repo: multica-ai/multica
+pr_number: 4164
+url: https://github.com/multica-ai/multica/pull/4164
+state: closed
+title: "MUL-3360 feat(daemon): retry rate-limited tasks with exponential backoff"
+author: Oxygen56
+base_ref: main
+head_ref: feat/daemon-retry-rate-limit-429
+merged_at: ""
+closed_at: 2026-06-23T06:24:27Z
+merge_commit: ""
+linked_issues:
+  - "#3681"
+  - MUL-3360
+  - https://github.com/multica-ai/multica/issues/3681
+changed_files:
+  - path: server/internal/service/task.go
+    additions: 86
+    deletions: 22
+    change_type: MODIFIED
+  - path: server/internal/service/task_backoff_test.go
+    additions: 37
+    deletions: 0
+    change_type: ADDED
+test_files_changed:
+  - path: server/internal/service/task_backoff_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

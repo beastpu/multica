@@ -1,0 +1,64 @@
+id: source.github.pr.4400
+repo: multica-ai/multica
+pr_number: 4400
+url: https://github.com/multica-ai/multica/pull/4400
+state: merged
+title: "MUL-3505 feat(sidebar): add dismissible Join Discord card"
+author: forrestchang
+base_ref: main
+head_ref: agent/lambda/b67a7593
+merged_at: 2026-06-22T07:35:41Z
+closed_at: 2026-06-22T07:35:41Z
+merge_commit: cf30991f9132f666a31369f2998e9bee56c3a36e
+linked_issues:
+  - MUL-3492
+  - MUL-3505
+changed_files:
+  - path: packages/views/layout/app-sidebar.tsx
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/layout/discord.tsx
+    additions: 17
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/layout/help-launcher.tsx
+    additions: 1
+    deletions: 16
+    change_type: MODIFIED
+  - path: packages/views/layout/join-discord-card.test.tsx
+    additions: 65
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/layout/join-discord-card.tsx
+    additions: 51
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/layout/use-discord-card-dismissed.ts
+    additions: 78
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/en/layout.json
+    additions: 6
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/layout.json
+    additions: 6
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/layout.json
+    additions: 6
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/locales/zh-Hans/layout.json
+    additions: 6
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/layout/join-discord-card.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,33 @@
+id: source.github.pr.4245
+repo: multica-ai/multica
+pr_number: 4245
+url: https://github.com/multica-ai/multica/pull/4245
+state: merged
+title: "fix(markdown): don't auto-link bare filenames as external URLs"
+author: Bohan-J
+base_ref: main
+head_ref: agent/j/43e76060
+merged_at: 2026-06-17T09:06:10Z
+closed_at: 2026-06-17T09:06:10Z
+merge_commit: 0f36c888559c3902252222763fe82e26b4ee0d68
+linked_issues:
+  - "#4222"
+  - MUL-3359
+  - https://github.com/multica-ai/multica/issues/4222
+changed_files:
+  - path: packages/ui/markdown/linkify.ts
+    additions: 35
+    deletions: 13
+    change_type: MODIFIED
+  - path: packages/views/editor/utils/preprocess-links.test.ts
+    additions: 43
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/views/editor/utils/preprocess-links.test.ts
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

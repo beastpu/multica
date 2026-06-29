@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Defect Fix Wiki Case",
+  "type": "object",
+  "required": [
+    "id",
+    "kind",
+    "title",
+    "status",
+    "confidence",
+    "visibility",
+    "repo",
+    "source_pr",
+    "source_pr_number",
+    "source_issue_refs",
+    "merge_commit",
+    "modules",
+    "signals",
+    "code_refs",
+    "fix_pattern",
+    "verification",
+    "gotchas",
+    "tags"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z]+(\\.[a-z0-9_]+){2,}$"
+    },
+    "kind": {
+      "enum": ["pattern", "antipattern", "concept", "playbook", "synthesis"]
+    },
+    "status": {
+      "enum": ["active", "needs_review", "deprecated"]
+    },
+    "confidence": {
+      "enum": ["low", "medium", "high"]
+    },
+    "visibility": {
+      "const": "private"
+    },
+    "source_pr_number": {
+      "type": "integer"
+    },
+    "code_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["repo", "path", "ref_kind", "verified_commit", "content_hash"],
+        "properties": {
+          "repo": { "type": "string" },
+          "path": { "type": "string" },
+          "line_hint": { "type": ["integer", "string"] },
+          "ref_kind": { "enum": ["root_cause", "touched", "verification", "related"] },
+          "verified_commit": { "type": "string" },
+          "content_hash": { "type": "string" }
+        }
+      }
+    }
+  }
+}

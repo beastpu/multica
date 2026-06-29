@@ -1,0 +1,36 @@
+id: source.github.pr.4195
+repo: multica-ai/multica
+pr_number: 4195
+url: https://github.com/multica-ai/multica/pull/4195
+state: merged
+title: "Revert \"MUL-3312: Gate chat uploads on active agent\""
+author: NevilleQingNY
+base_ref: main
+head_ref: revert-4192-agent/walt/82b52d27
+merged_at: 2026-06-16T09:23:35Z
+closed_at: 2026-06-16T09:23:35Z
+merge_commit: 1272311ebe994ed89490cd6399cb986169cfeb99
+linked_issues:
+  - MUL-3312
+changed_files:
+  - path: packages/views/chat/components/chat-input.test.tsx
+    additions: 0
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-window.tsx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/views/chat/components/chat-window.upload-readiness.test.tsx
+    additions: 0
+    deletions: 360
+    change_type: DELETED
+test_files_changed:
+  - path: packages/views/chat/components/chat-input.test.tsx
+  - path: packages/views/chat/components/chat-window.upload-readiness.test.tsx
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,27 @@
+id: source.github.pr.4455
+repo: multica-ai/multica
+pr_number: 4455
+url: https://github.com/multica-ai/multica/pull/4455
+state: closed
+title: "MUL-3576: Add loop小组测试 section to README"
+author: jiangtaoNuc
+base_ref: main
+head_ref: add-loop-team-note
+merged_at: ""
+closed_at: 2026-06-23T11:12:52Z
+merge_commit: ""
+linked_issues:
+  - MUL-3576
+changed_files:
+  - path: README.md
+    additions: 4
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "missing test diff"
+    - "docs-only diff"

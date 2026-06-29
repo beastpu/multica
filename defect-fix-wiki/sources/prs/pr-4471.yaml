@@ -1,0 +1,42 @@
+id: source.github.pr.4471
+repo: multica-ai/multica
+pr_number: 4471
+url: https://github.com/multica-ai/multica/pull/4471
+state: closed
+title: "feat(issue): enforce squad-parent ownership and active-dependency guards (UMC-288)"
+author: IvanMMM
+base_ref: main
+head_ref: agent/backend-developer/fda713ed
+merged_at: ""
+closed_at: 2026-06-23T11:33:45Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: server/internal/handler/daemon.go
+    additions: 12
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/handler/issue.go
+    additions: 95
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/issue_metadata.go
+    additions: 8
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/issue_parent_guard.go
+    additions: 170
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/issue_parent_guard_test.go
+    additions: 418
+    deletions: 0
+    change_type: ADDED
+test_files_changed:
+  - path: server/internal/handler/issue_parent_guard_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

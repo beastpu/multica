@@ -1,0 +1,88 @@
+id: source.github.pr.4200
+repo: multica-ai/multica
+pr_number: 4200
+url: https://github.com/multica-ai/multica/pull/4200
+state: merged
+title: "fix(usage): disambiguate model pricing by provider (MUL-3346)"
+author: yyclaw
+base_ref: main
+head_ref: feat/usage-provider-pricing
+merged_at: 2026-06-18T03:10:06Z
+closed_at: 2026-06-18T03:10:06Z
+merge_commit: da4f278330fb1cc0f8f8f9cdee0c594682ad618c
+linked_issues:
+  - "#4199"
+  - MUL-3346
+  - https://github.com/multica-ai/multica/issues/4199
+changed_files:
+  - path: packages/core/api/schemas.test.ts
+    additions: 14
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/api/schemas.ts
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/types/agent.ts
+    additions: 14
+    deletions: 8
+    change_type: MODIFIED
+  - path: packages/views/dashboard/utils.test.ts
+    additions: 8
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/runtimes/components/custom-pricing-dialog.tsx
+    additions: 18
+    deletions: 18
+    change_type: MODIFIED
+  - path: packages/views/runtimes/utils.test.ts
+    additions: 66
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/views/runtimes/utils.ts
+    additions: 127
+    deletions: 29
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon.go
+    additions: 29
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/internal/handler/dashboard.go
+    additions: 11
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime.go
+    additions: 7
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_test.go
+    additions: 81
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/runtime_usage.sql.go
+    additions: 14
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/task_usage.sql.go
+    additions: 17
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/runtime_usage.sql
+    additions: 12
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/task_usage.sql
+    additions: 13
+    deletions: 6
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/api/schemas.test.ts
+  - path: packages/views/dashboard/utils.test.ts
+  - path: packages/views/runtimes/utils.test.ts
+  - path: server/internal/handler/runtime_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

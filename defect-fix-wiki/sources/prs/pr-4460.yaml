@@ -1,0 +1,55 @@
+id: source.github.pr.4460
+repo: multica-ai/multica
+pr_number: 4460
+url: https://github.com/multica-ai/multica/pull/4460
+state: merged
+title: "MUL-3574: update runtime and CLI docs"
+author: Bohan-J
+base_ref: main
+head_ref: agent/niko/46c08d12
+merged_at: 2026-06-23T09:26:12Z
+closed_at: 2026-06-23T09:26:12Z
+merge_commit: cfc488769be632469e5fb73ac9824d2ab93c4baa
+linked_issues:
+  - MUL-3574
+changed_files:
+  - path: apps/docs/content/docs/cli.ja.mdx
+    additions: 20
+    deletions: 3
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/cli.ko.mdx
+    additions: 20
+    deletions: 3
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/cli.mdx
+    additions: 22
+    deletions: 3
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/cli.zh.mdx
+    additions: 20
+    deletions: 3
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/daemon-runtimes.ja.mdx
+    additions: 23
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/daemon-runtimes.ko.mdx
+    additions: 23
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/daemon-runtimes.mdx
+    additions: 38
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/daemon-runtimes.zh.mdx
+    additions: 23
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed: []
+classification:
+  candidate: false
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "missing test diff"
+    - "docs-only diff"

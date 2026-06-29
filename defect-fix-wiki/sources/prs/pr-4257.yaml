@@ -1,0 +1,45 @@
+id: source.github.pr.4257
+repo: multica-ai/multica
+pr_number: 4257
+url: https://github.com/multica-ai/multica/pull/4257
+state: merged
+title: "MUL-3325: add background task safety brief"
+author: Bohan-J
+base_ref: main
+head_ref: agent/niko/04632fa2
+merged_at: 2026-06-18T02:45:51Z
+closed_at: 2026-06-18T02:45:51Z
+merge_commit: 1279f22d1c3f13994b7b1740e808cbafe87805f7
+linked_issues:
+  - MUL-3325
+changed_files:
+  - path: server/internal/daemon/execenv/execenv_test.go
+    additions: 41
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config.go
+    additions: 11
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/agent/claude.go
+    additions: 65
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/pkg/agent/claude_deadlock_test.go
+    additions: 153
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/agent/claude_test.go
+    additions: 109
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/daemon/execenv/execenv_test.go
+  - path: server/pkg/agent/claude_deadlock_test.go
+  - path: server/pkg/agent/claude_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

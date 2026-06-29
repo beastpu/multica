@@ -1,0 +1,131 @@
+id: source.github.pr.4445
+repo: multica-ai/multica
+pr_number: 4445
+url: https://github.com/multica-ai/multica/pull/4445
+state: merged
+title: "MUL-3281: Add daemon skill bundle refs"
+author: Bohan-J
+base_ref: main
+head_ref: agent/niko/4ea48496
+merged_at: 2026-06-23T08:19:16Z
+closed_at: 2026-06-23T08:19:16Z
+merge_commit: 5038c983c07657d461367970a4c42ab7d8fc9f1c
+linked_issues:
+  - MUL-3281
+changed_files:
+  - path: server/cmd/server/router.go
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/client.go
+    additions: 17
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/daemon.go
+    additions: 151
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/internal/daemon/skill_cache.go
+    additions: 173
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/daemon/skill_cache_test.go
+    additions: 59
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/daemon/types.go
+    additions: 26
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/internal/daemon/workdir_race_test.go
+    additions: 80
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/handler/agent.go
+    additions: 10
+    deletions: 9
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon.go
+    additions: 127
+    deletions: 9
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon_test.go
+    additions: 243
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/skill_bundle_test.go
+    additions: 38
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/task.go
+    additions: 126
+    deletions: 7
+    change_type: MODIFIED
+  - path: server/migrations/124_task_prepare_lease.down.sql
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/124_task_prepare_lease.up.sql
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/125_agent_task_queue_dispatched_prepare_index.down.sql
+    additions: 1
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/125_agent_task_queue_dispatched_prepare_index.up.sql
+    additions: 8
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/agent.sql.go
+    additions: 161
+    deletions: 51
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/autopilot.sql.go
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/chat.sql.go
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/models.go
+    additions: 29
+    deletions: 28
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/runtime.sql.go
+    additions: 4
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/workspace.sql.go
+    additions: 2
+    deletions: 8
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/agent.sql
+    additions: 49
+    deletions: 16
+    change_type: MODIFIED
+  - path: server/pkg/protocol/messages.go
+    additions: 4
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/skillbundle/hash.go
+    additions: 82
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/skillbundle/hash_test.go
+    additions: 37
+    deletions: 0
+    change_type: ADDED
+test_files_changed:
+  - path: server/internal/daemon/skill_cache_test.go
+  - path: server/internal/daemon/workdir_race_test.go
+  - path: server/internal/handler/daemon_test.go
+  - path: server/internal/service/skill_bundle_test.go
+  - path: server/pkg/skillbundle/hash_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

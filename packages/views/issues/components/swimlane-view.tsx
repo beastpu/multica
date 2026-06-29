@@ -35,7 +35,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useLoadMoreByStatus } from "@multica/core/issues/mutations";
-import { childrenByParentsOptions, issueKeys, type IssueSortParam, type MyIssuesFilter } from "@multica/core/issues/queries";
+import { childrenByParentsOptions, issueKeys, type IssueListFilter, type IssueSortParam, type MyIssuesFilter } from "@multica/core/issues/queries";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -451,6 +451,7 @@ export function SwimLaneView({
   childProgressMap = EMPTY_PROGRESS_MAP,
   myIssuesScope,
   myIssuesFilter,
+  listFilter,
   sort,
   projectId,
 }: {
@@ -467,10 +468,15 @@ export function SwimLaneView({
   activeFilters?: Omit<IssueFilters, "statusFilters" | "runningIssueIds">;
   visibleStatuses?: IssueStatus[];
   hiddenStatuses?: IssueStatus[];
-  onMoveIssue: (issueId: string, updates: SwimLaneMoveUpdates) => void;
+  onMoveIssue: (
+    issueId: string,
+    updates: SwimLaneMoveUpdates,
+    onSettled?: () => void,
+  ) => void;
   childProgressMap?: Map<string, ChildProgress>;
   myIssuesScope?: string;
   myIssuesFilter?: MyIssuesFilter;
+  listFilter?: IssueListFilter;
   /** Must match the sort the page queried with — embedded in the cache key. */
   sort?: IssueSortParam;
   /** Pre-fills `project_id` on the create form for the in-cell "+" button. */
@@ -782,6 +788,12 @@ export function SwimLaneView({
 
   const [activeIssue, setActiveIssue] = useState<Issue | null>(null);
   const isDraggingRef = useRef(false);
+  // Settle lock: held from drop until the move mutation settles, so a cache
+  // change that lands mid-flight (e.g. a membership refetch) does not rebuild
+  // localCells out from under the optimistic move. Mirrors board-view /
+  // list-view. settleVersion forces the resync once the lock releases.
+  const isSettlingRef = useRef(false);
+  const [settleVersion, setSettleVersion] = useState(0);
 
   const issueMap = useMemo(() => {
     const map = new Map<string, Issue>();
@@ -790,7 +802,7 @@ export function SwimLaneView({
   }, [mergedIssues]);
 
   const issueMapRef = useRef(issueMap);
-  if (!isDraggingRef.current) {
+  if (!isDraggingRef.current && !isSettlingRef.current) {
     issueMapRef.current = issueMap;
   }
 
@@ -799,10 +811,10 @@ export function SwimLaneView({
   localCellsRef.current = localCells;
 
   useEffect(() => {
-    if (!isDraggingRef.current) {
+    if (!isDraggingRef.current && !isSettlingRef.current) {
       setLocalCells(cells);
     }
-  }, [cells]);
+  }, [cells, settleVersion]);
 
   const recentlyMovedRef = useRef(false);
   useEffect(() => {
@@ -1062,11 +1074,19 @@ export function SwimLaneView({
         return;
       }
 
-      onMoveIssue(activeId, {
-        ...targetLane.moveUpdates,
-        status: finalOverCell.status as IssueStatus,
-        position: newPosition,
-      });
+      isSettlingRef.current = true;
+      onMoveIssue(
+        activeId,
+        {
+          ...targetLane.moveUpdates,
+          status: finalOverCell.status as IssueStatus,
+          position: newPosition,
+        },
+        () => {
+          isSettlingRef.current = false;
+          setSettleVersion((v) => v + 1);
+        },
+      );
     },
     [cells, cellSet, laneByKey, laneGroups, onMoveIssue, swimlaneGrouping, viewStoreApi],
   );
@@ -1188,6 +1208,7 @@ export function SwimLaneView({
             sortedStatuses={sortedStatuses}
             gridStyle={gridStyle}
             myIssuesOpts={myIssuesOpts}
+            listFilter={listFilter}
             sort={sort}
           />
         </div>
@@ -1481,11 +1502,13 @@ function SwimLaneLoadMoreRow({
   sortedStatuses,
   gridStyle,
   myIssuesOpts,
+  listFilter,
   sort,
 }: {
   sortedStatuses: IssueStatus[];
   gridStyle: React.CSSProperties;
   myIssuesOpts?: { scope: string; filter: MyIssuesFilter };
+  listFilter?: IssueListFilter;
   sort?: IssueSortParam;
 }) {
   return (
@@ -1495,6 +1518,7 @@ function SwimLaneLoadMoreRow({
           key={status}
           status={status}
           myIssuesOpts={myIssuesOpts}
+          listFilter={listFilter}
           sort={sort}
         />
       ))}
@@ -1505,13 +1529,15 @@ function SwimLaneLoadMoreRow({
 function SwimLaneLoadMoreCell({
   status,
   myIssuesOpts,
+  listFilter,
   sort,
 }: {
   status: IssueStatus;
   myIssuesOpts?: { scope: string; filter: MyIssuesFilter };
+  listFilter?: IssueListFilter;
   sort?: IssueSortParam;
 }) {
-  const { loadMore, hasMore, isLoading } = useLoadMoreByStatus(status, myIssuesOpts, sort);
+  const { loadMore, hasMore, isLoading } = useLoadMoreByStatus(status, myIssuesOpts, sort, listFilter);
   if (!hasMore) return <div />;
   return <InfiniteScrollSentinel onVisible={loadMore} loading={isLoading} />;
 }

@@ -1,0 +1,44 @@
+id: source.github.pr.4447
+repo: multica-ai/multica
+pr_number: 4447
+url: https://github.com/multica-ai/multica/pull/4447
+state: closed
+title: "MUL-3560: gate runtime brief sections per task kind (PR 0.6)"
+author: multica-eve
+base_ref: feature/runtime-brief-task-kind-switch
+head_ref: feature/runtime-brief-kind-section-gating
+merged_at: ""
+closed_at: 2026-06-23T06:54:38Z
+merge_commit: ""
+linked_issues:
+  - MUL-3560
+changed_files:
+  - path: server/internal/daemon/execenv/execenv_test.go
+    additions: 31
+    deletions: 11
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config.go
+    additions: 92
+    deletions: 21
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config_kind.go
+    additions: 15
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config_kind_test.go
+    additions: 113
+    deletions: 31
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/runtime_config_sections.go
+    additions: 20
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/daemon/execenv/execenv_test.go
+  - path: server/internal/daemon/execenv/runtime_config_kind_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "linked issue detected"
+    - "test file changed"

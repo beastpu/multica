@@ -1,0 +1,268 @@
+id: source.github.pr.4367
+repo: multica-ai/multica
+pr_number: 4367
+url: https://github.com/multica-ai/multica/pull/4367
+state: closed
+title: "fix(selfhost): pass S3/R2 credentials to backend container (fixes file upload 500)"
+author: saucevn
+base_ref: main
+head_ref: claude/charming-ptolemy-1b842c
+merged_at: ""
+closed_at: 2026-06-20T14:59:47Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: .gitattributes
+    additions: 10
+    deletions: 0
+    change_type: MODIFIED
+  - path: AGENTS.md
+    additions: 46
+    deletions: 0
+    change_type: MODIFIED
+  - path: BRANDING.md
+    additions: 140
+    deletions: 0
+    change_type: ADDED
+  - path: CLAUDE.md
+    additions: 25
+    deletions: 0
+    change_type: MODIFIED
+  - path: README.md
+    additions: 13
+    deletions: 1
+    change_type: MODIFIED
+  - path: README.vi.md
+    additions: 192
+    deletions: 0
+    change_type: ADDED
+  - path: apps/desktop/src/renderer/src/App.tsx
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/renderer/src/globals.css
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/app/globals.css
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/app/layout.tsx
+    additions: 9
+    deletions: 13
+    change_type: MODIFIED
+  - path: apps/web/features/landing/i18n/types.ts
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: apps/web/lib/use-cases-i18n.ts
+    additions: 10
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/web/public/favicon.svg
+    additions: 19
+    deletions: 7
+    change_type: MODIFIED
+  - path: docker-compose.selfhost.yml
+    additions: 8
+    deletions: 0
+    change_type: MODIFIED
+  - path: docs/brand/BRAND-GUIDELINE.md
+    additions: 220
+    deletions: 0
+    change_type: ADDED
+  - path: docs/brand/LOCALIZE-REPORT.md
+    additions: 340
+    deletions: 0
+    change_type: ADDED
+  - path: docs/fork/MIGRATION.md
+    additions: 167
+    deletions: 0
+    change_type: ADDED
+  - path: docs/superpowers/plans/2026-06-13-viet-hoa-multica.md
+    additions: 900
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/i18n/pick-locale.test.ts
+    additions: 6
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/i18n/types.ts
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/ui/package.json
+    additions: 2
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/ui/styles/brand.css
+    additions: 55
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/en/settings.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/index.ts
+    additions: 52
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ja/settings.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/ko/settings.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/locales/vi/agents.json
+    additions: 469
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/auth.json
+    additions: 48
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/autopilots.json
+    additions: 351
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/billing.json
+    additions: 75
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/chat.json
+    additions: 124
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/common.json
+    additions: 28
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/editor.json
+    additions: 88
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/inbox.json
+    additions: 71
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/invite.json
+    additions: 54
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/issues.json
+    additions: 485
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/labels.json
+    additions: 3
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/layout.json
+    additions: 41
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/members.json
+    additions: 21
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/modals.json
+    additions: 192
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/my-issues.json
+    additions: 45
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/onboarding.json
+    additions: 384
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/projects.json
+    additions: 120
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/runtimes.json
+    additions: 328
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/search.json
+    additions: 44
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/settings.json
+    additions: 381
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/skills.json
+    additions: 266
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/squads.json
+    additions: 76
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/ui.json
+    additions: 8
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/usage.json
+    additions: 58
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/vi/workspace.json
+    additions: 34
+    deletions: 0
+    change_type: ADDED
+  - path: packages/views/locales/zh-Hans/settings.json
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/onboarding/templates/index.ts
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/views/settings/components/preferences-tab.tsx
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: scripts/local-env.sh
+    additions: 11
+    deletions: 0
+    change_type: MODIFIED
+  - path: scripts/migrate-v1-data.sh
+    additions: 114
+    deletions: 0
+    change_type: ADDED
+  - path: scripts/sync-upstream.sh
+    additions: 153
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/handler/auth.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/user_language_test.go
+    additions: 17
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/email.go
+    additions: 12
+    deletions: 12
+    change_type: MODIFIED
+  - path: server/internal/service/email_test.go
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: packages/core/i18n/pick-locale.test.ts
+  - path: server/internal/handler/user_language_test.go
+  - path: server/internal/service/email_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

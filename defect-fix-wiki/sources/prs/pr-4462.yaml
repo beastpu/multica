@@ -1,0 +1,33 @@
+id: source.github.pr.4462
+repo: multica-ai/multica
+pr_number: 4462
+url: https://github.com/multica-ai/multica/pull/4462
+state: merged
+title: "MUL-3570: fix(agent): stop Antigravity turns dying at agy's hidden 5m print-timeout"
+author: Bohan-J
+base_ref: main
+head_ref: agent/j/b48829ab
+merged_at: 2026-06-23T10:57:51Z
+closed_at: 2026-06-23T10:57:51Z
+merge_commit: ac84b8c70c94299b4e0a3ccb003b800bacac867d
+linked_issues:
+  - "#4453"
+  - MUL-3570
+  - https://github.com/multica-ai/multica/issues/4453
+changed_files:
+  - path: server/pkg/agent/antigravity.go
+    additions: 66
+    deletions: 8
+    change_type: MODIFIED
+  - path: server/pkg/agent/antigravity_test.go
+    additions: 137
+    deletions: 6
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/pkg/agent/antigravity_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

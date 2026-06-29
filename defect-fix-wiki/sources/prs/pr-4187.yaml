@@ -1,0 +1,95 @@
+id: source.github.pr.4187
+repo: multica-ai/multica
+pr_number: 4187
+url: https://github.com/multica-ai/multica/pull/4187
+state: merged
+title: "feat: client failure telemetry (JS errors + freeze/crash) to PostHog"
+author: NevilleQingNY
+base_ref: main
+head_ref: feat/client-failure-telemetry
+merged_at: 2026-06-16T08:31:39Z
+closed_at: 2026-06-16T08:31:39Z
+merge_commit: c2220882626b8b11c40d858589e7f90eea34447f
+linked_issues:
+  - MUL-3311
+changed_files:
+  - path: apps/desktop/src/main/freeze-breadcrumb.test.ts
+    additions: 90
+    deletions: 0
+    change_type: ADDED
+  - path: apps/desktop/src/main/freeze-breadcrumb.ts
+    additions: 76
+    deletions: 0
+    change_type: ADDED
+  - path: apps/desktop/src/main/index.ts
+    additions: 35
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/main/renderer-recovery.test.ts
+    additions: 94
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/main/renderer-recovery.ts
+    additions: 43
+    deletions: 7
+    change_type: MODIFIED
+  - path: apps/desktop/src/preload/index.d.ts
+    additions: 4
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/preload/index.ts
+    additions: 11
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/renderer/src/App.tsx
+    additions: 21
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/desktop/src/shared/freeze-breadcrumb.ts
+    additions: 16
+    deletions: 0
+    change_type: ADDED
+  - path: apps/web/app/global-error.tsx
+    additions: 58
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/analytics/index.test.ts
+    additions: 33
+    deletions: 0
+    change_type: MODIFIED
+  - path: packages/core/analytics/index.ts
+    additions: 49
+    deletions: 2
+    change_type: MODIFIED
+  - path: packages/core/analytics/redact-exception.test.ts
+    additions: 68
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/analytics/redact-exception.ts
+    additions: 61
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/diagnostics/freeze-watchdog.test.ts
+    additions: 99
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/diagnostics/freeze-watchdog.ts
+    additions: 57
+    deletions: 0
+    change_type: ADDED
+  - path: packages/core/platform/core-provider.tsx
+    additions: 8
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: apps/desktop/src/main/freeze-breadcrumb.test.ts
+  - path: apps/desktop/src/main/renderer-recovery.test.ts
+  - path: packages/core/analytics/index.test.ts
+  - path: packages/core/analytics/redact-exception.test.ts
+  - path: packages/core/diagnostics/freeze-watchdog.test.ts
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

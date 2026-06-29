@@ -1,0 +1,40 @@
+id: source.github.pr.4233
+repo: multica-ai/multica
+pr_number: 4233
+url: https://github.com/multica-ai/multica/pull/4233
+state: merged
+title: "MUL-3341: clear incompatible model on runtime switch"
+author: forrestchang
+base_ref: main
+head_ref: agent/lambda/1f139171
+merged_at: 2026-06-17T06:23:20Z
+closed_at: 2026-06-17T06:23:20Z
+merge_commit: eb6dffdbc6fac93f810f910b2d0415b23ad6fb6c
+linked_issues:
+  - MUL-3341
+changed_files:
+  - path: server/internal/handler/agent.go
+    additions: 25
+    deletions: 8
+    change_type: MODIFIED
+  - path: server/internal/handler/agent_thinking_test.go
+    additions: 132
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/agent/models.go
+    additions: 61
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/agent/models_test.go
+    additions: 72
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/handler/agent_thinking_test.go
+  - path: server/pkg/agent/models_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,41 @@
+id: source.github.pr.4207
+repo: multica-ai/multica
+pr_number: 4207
+url: https://github.com/multica-ai/multica/pull/4207
+state: merged
+title: "feat(cli): add --thinking-level to agent create and update"
+author: voska
+base_ref: main
+head_ref: feat/cli-agent-thinking-level
+merged_at: 2026-06-17T06:48:00Z
+closed_at: 2026-06-17T06:48:00Z
+merge_commit: 6f2e9aa7a8e829e99e4b7e8cee6923f7111b004a
+linked_issues:
+  - "#4170"
+  - MUL-2339
+  - https://github.com/multica-ai/multica/issues/4170
+changed_files:
+  - path: server/cmd/multica/cmd_agent.go
+    additions: 18
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_agent_test.go
+    additions: 198
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-creating-agents/SKILL.md
+    additions: 12
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/service/builtin_skills/multica-creating-agents/references/creating-agents-source-map.md
+    additions: 14
+    deletions: 13
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/multica/cmd_agent_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

@@ -1,0 +1,35 @@
+id: source.github.pr.4436
+repo: multica-ai/multica
+pr_number: 4436
+url: https://github.com/multica-ai/multica/pull/4436
+state: closed
+title: "fix(cli): resolveToken() daemon 信号守护，防止静默回退到用户 PAT"
+author: Oxygen56
+base_ref: main
+head_ref: agent/agent/43188214
+merged_at: ""
+closed_at: 2026-06-23T02:19:58Z
+merge_commit: ""
+linked_issues: []
+changed_files:
+  - path: server/cmd/multica/cmd_agent_test.go
+    additions: 11
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_auth.go
+    additions: 9
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_auth_test.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/multica/cmd_agent_test.go
+  - path: server/cmd/multica/cmd_auth_test.go
+classification:
+  candidate: false
+  reasons:
+    - "not merged"
+    - "missing linked issue"
+    - "test file changed"

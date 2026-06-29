@@ -1,0 +1,55 @@
+id: source.github.pr.4244
+repo: multica-ai/multica
+pr_number: 4244
+url: https://github.com/multica-ai/multica/pull/4244
+state: merged
+title: "feat(daemon): discover local skills from ~/.agents/skills (MUL-3333)"
+author: ldnvnbl
+base_ref: main
+head_ref: agent/agent/d87d7b47
+merged_at: 2026-06-18T07:24:42Z
+closed_at: 2026-06-18T07:24:42Z
+merge_commit: 0d0edac32fb28d3f9044dc2457c48d598330ec06
+linked_issues:
+  - MUL-3333
+changed_files:
+  - path: apps/docs/content/docs/skills.ja.mdx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/skills.ko.mdx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/skills.mdx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/skills.zh.mdx
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: packages/core/types/agent.ts
+    additions: 8
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/local_skills.go
+    additions: 174
+    deletions: 58
+    change_type: MODIFIED
+  - path: server/internal/daemon/local_skills_test.go
+    additions: 400
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/runtime_local_skills.go
+    additions: 7
+    deletions: 1
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/internal/daemon/local_skills_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"
