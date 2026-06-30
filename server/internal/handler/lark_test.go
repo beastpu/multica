@@ -53,7 +53,7 @@ func TestRevokeLarkInstallation_AllowsAgentOwnerMember(t *testing.T) {
 
 	var status string
 	if err := testPool.QueryRow(context.Background(),
-		`SELECT status FROM lark_installation WHERE id = $1`, instID).Scan(&status); err != nil {
+		`SELECT status FROM channel_installation WHERE id = $1`, instID).Scan(&status); err != nil {
 		t.Fatalf("load installation status: %v", err)
 	}
 	if status != string(lark.InstallationRevoked) {
@@ -83,7 +83,7 @@ func TestRevokeLarkInstallation_ForbidsPlainMemberForSomeoneElsesAgent(t *testin
 
 	var status string
 	if err := testPool.QueryRow(context.Background(),
-		`SELECT status FROM lark_installation WHERE id = $1`, instID).Scan(&status); err != nil {
+		`SELECT status FROM channel_installation WHERE id = $1`, instID).Scan(&status); err != nil {
 		t.Fatalf("load installation status: %v", err)
 	}
 	if status != string(lark.InstallationActive) {
