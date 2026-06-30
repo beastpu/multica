@@ -102,6 +102,7 @@ type FeishuProjectSyncService struct {
 type FeishuProjectTaskService interface {
 	CancelTasksForIssue(ctx context.Context, issueID pgtype.UUID) error
 	EnqueueTaskForIssue(ctx context.Context, issue db.Issue, triggerCommentID ...pgtype.UUID) (db.AgentTaskQueue, error)
+	EnqueueTaskForSquadLeader(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, squadID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error)
 }
 
 type FeishuProjectStorage interface {
@@ -1078,7 +1079,14 @@ func (s *FeishuProjectSyncService) reconcileSyncedIssueTasks(ctx context.Context
 }
 
 func (s *FeishuProjectSyncService) enqueueSyncedIssueIfNeeded(ctx context.Context, issue db.Issue) {
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
+	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
+		return
+	}
+	if issue.AssigneeType.String == "squad" {
+		s.enqueueSyncedSquadIssueIfNeeded(ctx, issue)
+		return
+	}
+	if issue.AssigneeType.String != "agent" {
 		return
 	}
 	hasTask, err := s.Queries.HasTaskForIssueAndAgent(ctx, db.HasTaskForIssueAndAgentParams{
@@ -1097,22 +1105,52 @@ func (s *FeishuProjectSyncService) enqueueSyncedIssueIfNeeded(ctx context.Contex
 	}
 }
 
+func (s *FeishuProjectSyncService) enqueueSyncedSquadIssueIfNeeded(ctx context.Context, issue db.Issue) {
+	squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+		ID:          issue.AssigneeID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("Feishu Project sync squad lookup failed", "issue_id", UUIDString(issue.ID), "squad_id", UUIDString(issue.AssigneeID), "error", err)
+		return
+	}
+	if squad.ArchivedAt.Valid {
+		return
+	}
+	hasTask, err := s.Queries.HasTaskForIssueAndAgent(ctx, db.HasTaskForIssueAndAgentParams{
+		IssueID: issue.ID,
+		AgentID: squad.LeaderID,
+	})
+	if err != nil {
+		slog.Warn("Feishu Project sync squad task dedup check failed", "issue_id", UUIDString(issue.ID), "squad_id", UUIDString(squad.ID), "leader_id", UUIDString(squad.LeaderID), "error", err)
+		return
+	}
+	if hasTask {
+		return
+	}
+	if _, err := s.TaskService.EnqueueTaskForSquadLeader(ctx, issue, squad.LeaderID, squad.ID, pgtype.UUID{}); err != nil {
+		slog.Warn("Feishu Project sync squad leader task enqueue failed", "issue_id", UUIDString(issue.ID), "squad_id", UUIDString(squad.ID), "leader_id", UUIDString(squad.LeaderID), "error", err)
+	}
+}
+
 // resolveAssignee picks the issue assignee for a synced work item. The chain is:
 //
 //  1. Current local agent/squad assignee — existing Multica agent ownership is
 //     intentionally local-authoritative. Feishu has no equivalent agent assignee,
 //     so periodic syncs must not demote a manually assigned agent back to the
 //     external human owner.
-//  2. Owner's agent — only if cfg.AssignOpenItemsToOwnerAgent is on AND the local status
-//     is in an "assignable" state (currently "todo"). For non-assignable states (e.g.
-//     in_progress, done) we preserve currentType/currentID so we don't fight with a
-//     manual reassignment that happened in Multica.
-//  3. Owner as workspace member — the normal case when the Meego owner exists in
+//  2. Owner-created squad — only if cfg.AssignOpenItemsToOwnerAgent is on AND the
+//     local status is in an "assignable" state (currently "todo"). For non-assignable
+//     states (e.g. in_progress, done) we preserve currentType/currentID so we don't
+//     fight with a manual reassignment that happened in Multica.
+//  3. Owner's agent — same gate as owner squad. This is the single-agent fallback
+//     for users who have not created a squad in this workspace.
+//  4. Owner as workspace member — the normal case when the Meego owner exists in
 //     Multica as a workspace member.
-//  4. Route's fallback agent — last resort when the owner can't be resolved at all
+//  5. Route's fallback agent — last resort when the owner can't be resolved at all
 //     (left Meego / never joined Multica / typo'd email). Per-route so different
 //     business lines can have different triage handlers.
-//  5. Empty — nothing matched.
+//  6. Empty — nothing matched.
 //
 // The fallback is intentionally below member resolution: 兜底 means "use when nothing
 // else fits", so if the human owner is in the workspace they should still own the item
@@ -1125,6 +1163,9 @@ func (s *FeishuProjectSyncService) resolveAssignee(ctx context.Context, cfg db.F
 		return currentType, currentID
 	}
 	if cfg.AssignOpenItemsToOwnerAgent {
+		if t, id := s.resolveOwnerCreatedSquad(ctx, cfg.WorkspaceID, item.OwnerEmail); id.Valid {
+			return t, id
+		}
 		if t, id := s.resolveOwnerAgent(ctx, cfg.WorkspaceID, item.OwnerEmail); id.Valid {
 			return t, id
 		}
@@ -1320,6 +1361,27 @@ func (s *FeishuProjectSyncService) resolveOwnerMember(ctx context.Context, works
 		return pgtype.Text{}, pgtype.UUID{}
 	}
 	return pgtype.Text{String: "member", Valid: true}, user.ID
+}
+
+func (s *FeishuProjectSyncService) resolveOwnerCreatedSquad(ctx context.Context, workspaceID pgtype.UUID, email string) (pgtype.Text, pgtype.UUID) {
+	if strings.TrimSpace(email) == "" {
+		return pgtype.Text{}, pgtype.UUID{}
+	}
+	user, err := s.Queries.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(email)))
+	if err != nil {
+		return pgtype.Text{}, pgtype.UUID{}
+	}
+	if _, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: user.ID, WorkspaceID: workspaceID}); err != nil {
+		return pgtype.Text{}, pgtype.UUID{}
+	}
+	squad, err := s.Queries.GetFirstSquadByCreatorInWorkspace(ctx, db.GetFirstSquadByCreatorInWorkspaceParams{
+		WorkspaceID: workspaceID,
+		CreatorID:   user.ID,
+	})
+	if err != nil {
+		return pgtype.Text{}, pgtype.UUID{}
+	}
+	return pgtype.Text{String: "squad", Valid: true}, squad.ID
 }
 
 func (s *FeishuProjectSyncService) ensureExternalAssigneeSubscriber(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, issueID pgtype.UUID) {

@@ -722,7 +722,8 @@ func TestFeishuProjectOwnerEmailChineseNameFallback(t *testing.T) {
 	}
 }
 
-// resolveAssignee priority chain — owner agent → owner member → fallback agent → empty.
+// resolveAssignee priority chain — owner-created squad → owner agent →
+// owner member → fallback agent → empty.
 // Hitting these branches end-to-end needs a DB; here we cover the deterministic shape
 // (return values for valid/invalid inputs) without exercising the DB-dependent owner
 // lookup methods. The "owner found as member" / "owner found as agent" branches are

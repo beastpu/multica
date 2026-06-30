@@ -98,6 +98,12 @@ JOIN squad_member sm ON sm.squad_id = s.id
 WHERE s.workspace_id = $1 AND sm.member_type = $2 AND sm.member_id = $3
 ORDER BY s.created_at ASC;
 
+-- name: GetFirstSquadByCreatorInWorkspace :one
+SELECT * FROM squad
+WHERE workspace_id = $1 AND creator_id = $2 AND archived_at IS NULL
+ORDER BY created_at ASC
+LIMIT 1;
+
 -- name: TransferSquadAssignees :exec
 -- Transfer all issues assigned to a squad to the squad's leader agent.
 UPDATE issue SET assignee_type = 'agent', assignee_id = $2, updated_at = now()
