@@ -51,12 +51,6 @@ func (h *Handler) processPerforceReview(
 		CommittedCl:     pgInt4OrNull(review.CommittedCL),
 		ReviewCreatedAt: pgTimestamptz(review.CreatedAt),
 		ReviewUpdatedAt: pgTimestamptz(review.UpdatedAt),
-		Changes:         int64SliceToInt32(review.Changes),
-		Commits:         int64SliceToInt32(review.Commits),
-		SwarmBranch:     pgTextOrNull(review.SwarmBranch),
-		EventType:       pgTextOrNull(review.EventType),
-		SentAt:          pgTimestamptz(review.SentAt),
-		RawPayload:      jsonObjectOrRaw(review.RawPayload),
 	})
 	if err != nil {
 		return false, err
@@ -140,21 +134,6 @@ func pgTimestamptz(t time.Time) pgtype.Timestamptz {
 		return pgtype.Timestamptz{}
 	}
 	return pgtype.Timestamptz{Time: t, Valid: true}
-}
-
-func int64SliceToInt32(xs []int64) []int32 {
-	out := make([]int32, 0, len(xs))
-	for _, x := range xs {
-		out = append(out, int32(x))
-	}
-	return out
-}
-
-func jsonObjectOrRaw(raw []byte) []byte {
-	if len(raw) == 0 {
-		return []byte("{}")
-	}
-	return raw
 }
 
 // ── HTTP: connection config ──────────────────────────────────────────────────

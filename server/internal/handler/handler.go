@@ -111,7 +111,6 @@ type Handler struct {
 	DaemonProfileRefresh  RuntimeProfileRefreshNotifier
 	Bus                   *events.Bus
 	TaskService           *service.TaskService
-	P4AssessmentService   *service.P4AssessmentService
 	IssueService          *service.IssueService
 	AutopilotService      *service.AutopilotService
 	EmailService          *service.EmailService
@@ -216,8 +215,6 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
-	p4AssessmentSvc := service.NewP4AssessmentService(queries, txStarter, taskSvc)
-	taskSvc.P4Assessment = p4AssessmentSvc
 	return &Handler{
 		Queries:               queries,
 		DB:                    executor,
@@ -227,7 +224,6 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		DaemonProfileRefresh:  daemonProfileRefresh,
 		Bus:                   bus,
 		TaskService:           taskSvc,
-		P4AssessmentService:   p4AssessmentSvc,
 		IssueService:          service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
 		AutopilotService:      service.NewAutopilotService(queries, txStarter, bus, taskSvc),
 		EmailService:          emailService,

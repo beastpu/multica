@@ -1116,10 +1116,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// identifier/title/status, the task's execution status, and the
 			// failure reason / trigger context.
 			r.Get("/api/operations/agent-fixes", h.ListWorkspaceAgentFixes)
-			r.Post("/api/operations/agent-fixes/p4-assessments", h.TriggerAgentFixP4Assessment)
-			r.Get("/api/operations/agent-fixes/{bindingId}/p4-evidence", h.GetAgentFixP4Evidence)
-			r.Patch("/api/operations/agent-fixes/{bindingId}/review", h.PatchAgentFixReviewByBinding)
-			r.Put("/api/operations/agent-fixes/{issueId}/review", h.UpdateAgentFixReview)
 
 			r.Route("/api/chat/sessions", func(r chi.Router) {
 				r.Post("/", h.CreateChatSession)

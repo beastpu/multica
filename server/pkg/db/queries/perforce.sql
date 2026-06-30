@@ -38,13 +38,10 @@ RETURNING *;
 -- already-committed review must not erase the recorded submitted changelist.
 INSERT INTO perforce_review (
     workspace_id, review_id, title, state, html_url, author,
-    shelved_cl, committed_cl, review_created_at, review_updated_at,
-    changes, commits, swarm_branch, event_type, sent_at, raw_payload
+    shelved_cl, committed_cl, review_created_at, review_updated_at
 ) VALUES (
     $1, $2, $3, $4, $5, sqlc.narg('author'),
-    sqlc.narg('shelved_cl'), sqlc.narg('committed_cl'), $6, $7,
-    $8, $9, sqlc.narg('swarm_branch'), sqlc.narg('event_type'),
-    sqlc.narg('sent_at'), $10
+    sqlc.narg('shelved_cl'), sqlc.narg('committed_cl'), $6, $7
 )
 ON CONFLICT (workspace_id, review_id) DO UPDATE SET
     title = EXCLUDED.title,
@@ -54,15 +51,6 @@ ON CONFLICT (workspace_id, review_id) DO UPDATE SET
     shelved_cl = EXCLUDED.shelved_cl,
     committed_cl = COALESCE(EXCLUDED.committed_cl, perforce_review.committed_cl),
     review_updated_at = EXCLUDED.review_updated_at,
-    changes = EXCLUDED.changes,
-    commits = CASE
-        WHEN cardinality(EXCLUDED.commits) > 0 THEN EXCLUDED.commits
-        ELSE perforce_review.commits
-    END,
-    swarm_branch = EXCLUDED.swarm_branch,
-    event_type = EXCLUDED.event_type,
-    sent_at = EXCLUDED.sent_at,
-    raw_payload = EXCLUDED.raw_payload,
     updated_at = now()
 RETURNING *;
 

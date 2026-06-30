@@ -185,57 +185,6 @@ func TestP4SwarmWebhook_CommittedAdvancesIssue(t *testing.T) {
 	}
 }
 
-func TestP4SwarmWebhook_PersistsCompleteEvidence(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("handler test fixture not initialized (no DB?)")
-	}
-	ctx := context.Background()
-	t.Setenv("MULTICA_P4_SWARM_WEBHOOK_TOKEN", p4WebhookTestToken)
-	seedP4Connection(ctx, t, "http://swarm.test")
-	enablePerforce(ctx, t)
-	issue := seedP4Issue(ctx, t)
-
-	payload := p4WebhookPayload("http://swarm.test", "fix "+issue.Identifier, 1700000500, []int64{500125, 500126})
-	payload["event_type"] = "review.committed"
-	payload["sent_at"] = "2026-06-15T12:34:56Z"
-	payload["swarm"] = map[string]any{"url": "http://swarm.test", "branch": "release/war"}
-	payload["review"].(map[string]any)["changes"] = []int64{500120, 500121}
-	if w := postP4Webhook(t, p4WebhookTestToken, payload); w.Code != http.StatusAccepted {
-		t.Fatalf("post code = %d; body=%s", w.Code, w.Body.String())
-	}
-
-	row := testHandler.Queries
-	review, err := row.GetPerforceReviewByWorkspaceReviewID(ctx, db.GetPerforceReviewByWorkspaceReviewIDParams{
-		WorkspaceID: parseUUID(testWorkspaceID),
-		ReviewID:    500123,
-	})
-	if err != nil {
-		t.Fatalf("GetPerforceReviewByWorkspaceReviewID: %v", err)
-	}
-	if got, want := review.Changes, []int32{500120, 500121}; !int32SlicesEqual(got, want) {
-		t.Fatalf("changes = %#v, want %#v", got, want)
-	}
-	if got, want := review.Commits, []int32{500125, 500126}; !int32SlicesEqual(got, want) {
-		t.Fatalf("commits = %#v, want %#v", got, want)
-	}
-	if review.SwarmBranch.String != "release/war" || !review.SwarmBranch.Valid {
-		t.Fatalf("swarm_branch = %#v, want release/war", review.SwarmBranch)
-	}
-	if review.EventType.String != "review.committed" || !review.EventType.Valid {
-		t.Fatalf("event_type = %#v, want review.committed", review.EventType)
-	}
-	if !review.SentAt.Valid || review.SentAt.Time.UTC().Format("2006-01-02T15:04:05Z") != "2026-06-15T12:34:56Z" {
-		t.Fatalf("sent_at = %#v, want 2026-06-15T12:34:56Z", review.SentAt)
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(review.RawPayload, &raw); err != nil {
-		t.Fatalf("raw_payload invalid json: %v", err)
-	}
-	if raw["event_type"] != "review.committed" {
-		t.Fatalf("raw_payload event_type = %#v", raw["event_type"])
-	}
-}
-
 func TestP4SwarmWebhook_NotCommittedDoesNotAdvance(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("handler test fixture not initialized (no DB?)")
@@ -321,16 +270,4 @@ func TestP4SwarmWebhook_StaleEventDoesNotClobber(t *testing.T) {
 	if got := issueStatus(ctx, t, issue.ID); got != "done" {
 		t.Errorf("issue status = %q, want done (stale event must not regress)", got)
 	}
-}
-
-func int32SlicesEqual(a, b []int32) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

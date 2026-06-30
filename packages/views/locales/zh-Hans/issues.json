@@ -26,12 +26,6 @@
     "none": "无阶段",
     "value": "阶段 {{n}}"
   },
-  "p4_assessment": {
-    "p4": "P4",
-    "ai": "AI 评估",
-    "review": "人工验收",
-    "open": "评估视图"
-  },
   "scope": {
     "all_label": "全部",
     "all_description": "工作区内的全部 issue",

@@ -676,75 +676,11 @@ const DashboardRunTimeDailySchema = z.object({
 
 export const DashboardRunTimeDailyListSchema = z.array(DashboardRunTimeDailySchema);
 
-const AgentFixClSchema = z.union([z.string(), z.number()]);
-const AgentFixClListSchema = z.preprocess(
-  (value) => (value == null ? [] : value),
-  z.array(AgentFixClSchema).default([]),
-);
-const AgentFixStringSchema = z
-  .union([z.string(), z.null()])
-  .default("")
-  .transform((value) => value ?? "");
-
-const AgentFixSwarmReviewSchema = z.object({
-  id: AgentFixClSchema.optional(),
-  review_id: AgentFixClSchema.optional(),
-  state: AgentFixStringSchema,
-  url: AgentFixStringSchema,
-  changes: AgentFixClListSchema,
-  commits: AgentFixClListSchema,
-  swarm_branch: AgentFixStringSchema,
-  event_type: AgentFixStringSchema,
-  sent_at: AgentFixStringSchema,
-}).loose();
-
-const AgentFixExternalRecordSchema = z.object({
-  binding_id: z.string().default(""),
-  work_item_id: z.string().default(""),
-  status: z.string().default(""),
-  mapped_status: z.string().default(""),
-  done: z.boolean().optional(),
-  project: z.string().default(""),
-  version: z.string().default(""),
-  url: z.string().default(""),
-}).loose();
-
-const AgentFixP4AssessmentSchema = z.object({
-  assessment_status: z.string().default(""),
-  delivery_attribution_prediction: z.string().default(""),
-  quality_prediction: z.string().default(""),
-  prediction_reasons: z.preprocess(
-    (value) => (value == null ? [] : value),
-    z.array(z.string()).default([]),
-  ),
-  confidence: z.number().nullable().optional(),
-  workstream: z.string().default(""),
-  swarm_reviews: z.array(AgentFixSwarmReviewSchema).default([]),
-  ai_shelved_cls: AgentFixClListSchema,
-  swarm_change_cls: AgentFixClListSchema,
-  swarm_committed_cls: AgentFixClListSchema,
-  external_committed_cls: AgentFixClListSchema,
-  summary: z.string().default(""),
-  warnings: z.preprocess(
-    (value) => (value == null ? [] : value),
-    z.array(z.string()).default([]),
-  ),
-}).loose();
-
-export const AgentFixHumanReviewSchema = z.object({
-  outcome: z.string().default(""),
-  reasons: z.array(z.string()).default([]),
-  note: z.string().default(""),
-  reviewer_id: z.string().default(""),
-  reviewed_at: z.string().nullable().default(null),
-}).loose();
-
 // Operations-tab feed (GET /api/operations/agent-fixes). Same leniency rules
 // as the dashboard schemas: strings default to "" (no enum narrowing —
-// server-side enum drift renders a generic fallback downstream), nullable
-// timestamps default to null, `.loose()` keeps unknown fields. P4 assessment
-// fields are optional so older rows and sparse external bindings keep the old
-// table usable.
+// `issue_status` survives server-side enum drift and renders a generic
+// fallback downstream), nullable timestamps default to null, `.loose()` keeps
+// unknown fields. A single malformed row degrades that field, not the array.
 const AgentFixRecordSchema = z.object({
   task_id: z.string().default(""),
   agent_id: z.string().default(""),
@@ -758,22 +694,9 @@ const AgentFixRecordSchema = z.object({
   started_at: z.string().nullable().default(null),
   completed_at: z.string().nullable().default(null),
   created_at: z.string().default(""),
-  external: AgentFixExternalRecordSchema.optional(),
-  p4_assessment: AgentFixP4AssessmentSchema.optional(),
-  human_review: AgentFixHumanReviewSchema.optional(),
-  display_result_status: z.string().default(""),
-  ai_judgement_eval: z.string().default(""),
 }).loose();
 
 export const AgentFixRecordListSchema = z.array(AgentFixRecordSchema);
-
-export const TriggerAgentFixP4AssessmentResponseSchema = z.object({
-  created: z.boolean().default(false),
-  reason: z.string().default(""),
-  assessment_id: z.string().optional(),
-  assessment_status: z.string().default(""),
-  task_id: z.string().optional(),
-}).loose();
 
 // ---------------------------------------------------------------------------
 // Runtime usage schemas — the runtime-detail page's four usage endpoints
