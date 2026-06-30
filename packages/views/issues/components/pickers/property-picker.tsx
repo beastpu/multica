@@ -35,6 +35,7 @@ export function PropertyPicker({
   onSearchChange,
   header,
   tooltip,
+  triggerNativeButton = true,
   children,
   footer,
 }: {
@@ -57,6 +58,11 @@ export function PropertyPicker({
    *  the popover is closed. Suppressed automatically when the popover is
    *  open (otherwise tooltip + popover would stack on the same anchor). */
   tooltip?: React.ReactNode;
+  /** Set false when `triggerRender` is not a native <button>. Base UI's
+   *  default button semantics are correct for the built-in trigger, but
+   *  custom composed triggers such as label chips can be non-button elements
+   *  and must opt out explicitly to avoid invalid native-button semantics. */
+  triggerNativeButton?: boolean;
   children: React.ReactNode;
   /**
    * Optional footer rendered below the listbox. Unlike items rendered as
@@ -147,6 +153,7 @@ export function PropertyPicker({
     <PopoverTrigger
       className={triggerRender ? undefined : "flex items-center gap-1.5 cursor-pointer rounded px-1 -mx-1 hover:bg-accent/30 transition-colors overflow-hidden"}
       render={triggerRender}
+      nativeButton={triggerRender ? triggerNativeButton : true}
     >
       {trigger}
     </PopoverTrigger>

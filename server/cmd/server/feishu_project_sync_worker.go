@@ -35,7 +35,11 @@ func runFeishuProjectSyncOnce(ctx context.Context, queries *db.Queries, pool *pg
 		slog.Warn("Feishu Project sync scan failed", "error", err)
 		return
 	}
-	svc := &service.FeishuProjectSyncService{Queries: queries, Tx: pool, Client: service.NewFeishuProjectClient(), Storage: store, TaskService: taskSvc, Events: bus}
+	var p4Assessment service.FeishuProjectP4AssessmentTrigger
+	if taskSvc != nil {
+		p4Assessment = taskSvc.P4Assessment
+	}
+	svc := &service.FeishuProjectSyncService{Queries: queries, Tx: pool, Client: service.NewFeishuProjectClient(), Storage: store, TaskService: taskSvc, P4Assessment: p4Assessment, Events: bus}
 	now := time.Now()
 	for _, cfg := range configs {
 		locked, unlock, err := service.TryAcquireFeishuProjectSyncLock(ctx, pool, cfg.ID)
@@ -57,6 +61,14 @@ func runFeishuProjectSyncOnce(ctx context.Context, queries *db.Queries, pool *pg
 				slog.Warn("Feishu Project orphan reconcile failed", "integration_id", service.UUIDString(cfg.ID), "project_key", cfg.ProjectKey, "error", err)
 			} else if err := queries.MarkFeishuProjectIntegrationOrphanReconciled(ctx, cfg.ID); err != nil {
 				slog.Warn("Feishu Project mark orphan-reconciled failed", "integration_id", service.UUIDString(cfg.ID), "error", err)
+			}
+		}
+		if p4Assessment != nil {
+			result, err := p4Assessment.BackfillDoneBindings(ctx, cfg.WorkspaceID, cfg.ID, service.P4AssessmentBackfillLimit)
+			if err != nil {
+				slog.Warn("P4 assessment historical binding backfill failed", "integration_id", service.UUIDString(cfg.ID), "project_key", cfg.ProjectKey, "error", err)
+			} else if result.Triggered > 0 || result.Failed > 0 {
+				slog.Info("P4 assessment historical binding backfill finished", "integration_id", service.UUIDString(cfg.ID), "project_key", cfg.ProjectKey, "scanned", result.Scanned, "eligible", result.Eligible, "triggered", result.Triggered, "skipped", result.Skipped, "failed", result.Failed, "last_reason", result.LastReason)
 			}
 		}
 		unlock()

@@ -60,6 +60,7 @@ import { CommentInput } from "./comment-input";
 import { ResolvedThreadBar } from "./resolved-thread-bar";
 import { collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
+import { IssueP4AssessmentTags } from "./p4-assessment-entry";
 import { ExecutionLogSection } from "./execution-log-section";
 import { PullRequestList } from "./pull-request-list";
 import { useGitHubSettings } from "@multica/core/github";
@@ -1937,6 +1938,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               if (trimmed && trimmed !== issue.title) handleUpdateField({ title: trimmed });
             }}
           />
+
+          <IssueP4AssessmentTags issue={issue} className="mt-3" />
 
           {parentIssue && (
             <AppLink

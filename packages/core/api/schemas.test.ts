@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AgentFixHumanReviewSchema,
   AgentFixRecordListSchema,
   AppConfigSchema,
   DashboardAgentRunTimeListSchema,
@@ -20,6 +21,7 @@ import {
   SquadListSchema,
   SquadSchema,
   TimelineEntriesSchema,
+  TriggerAgentFixP4AssessmentResponseSchema,
   UserSchema,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
@@ -464,6 +466,112 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
     expect(parsed[0]?.last_comment_author_type).toBe("agent");
   });
 
+  it("keeps optional P4 assessment fields while tolerating unknown enum strings", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      {
+        task_id: "t1",
+        external: {
+          binding_id: "binding-1",
+          work_item_id: "BUG-93218",
+          status: "Done",
+          mapped_status: "done",
+          done: true,
+          project: "Warpath3",
+        },
+        p4_assessment: {
+          assessment_status: "completed",
+          delivery_attribution_prediction: "future_attribution",
+          quality_prediction: "future_quality",
+          confidence: 0.86,
+          workstream: "rel_1.7.2/server",
+          swarm_reviews: [
+            {
+              id: 11872,
+              review_id: "SW-11872",
+              changes: [282941],
+              commits: [283006],
+              swarm_branch: "main",
+              event_type: "review.committed",
+              sent_at: "2026-06-29T04:05:06Z",
+            },
+          ],
+          ai_shelved_cls: [282941],
+          external_committed_cls: [283006],
+        },
+        human_review: {
+          outcome: "future_outcome",
+          reasons: ["future_reason"],
+        },
+        display_result_status: "future_display_status",
+        ai_judgement_eval: "future_eval",
+      },
+    ]);
+    expect(parsed[0]?.external?.binding_id).toBe("binding-1");
+    expect(parsed[0]?.external?.work_item_id).toBe("BUG-93218");
+    expect(parsed[0]?.p4_assessment?.workstream).toBe("rel_1.7.2/server");
+    expect(parsed[0]?.p4_assessment?.delivery_attribution_prediction).toBe(
+      "future_attribution",
+    );
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.review_id).toBe(
+      "SW-11872",
+    );
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.id).toBe(11872);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.changes).toEqual([
+      282941,
+    ]);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.commits).toEqual([
+      283006,
+    ]);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.swarm_branch).toBe("main");
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.event_type).toBe(
+      "review.committed",
+    );
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.sent_at).toBe(
+      "2026-06-29T04:05:06Z",
+    );
+    expect(parsed[0]?.human_review?.outcome).toBe("future_outcome");
+    expect(parsed[0]?.ai_judgement_eval).toBe("future_eval");
+  });
+
+  it("normalizes missing and null P4 evidence arrays to stable empty arrays", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      {
+        task_id: "t1",
+        p4_assessment: {
+          swarm_reviews: [
+            {
+              review_id: "SW-11872",
+              changes: null,
+              commits: null,
+              swarm_branch: null,
+              event_type: null,
+              sent_at: null,
+            },
+          ],
+          ai_shelved_cls: null,
+          swarm_change_cls: null,
+          swarm_committed_cls: null,
+          external_committed_cls: null,
+          prediction_reasons: null,
+          warnings: null,
+        },
+      },
+    ]);
+
+    const p4 = parsed[0]?.p4_assessment;
+    expect(p4?.swarm_reviews?.[0]?.changes).toEqual([]);
+    expect(p4?.swarm_reviews?.[0]?.commits).toEqual([]);
+    expect(p4?.swarm_reviews?.[0]?.swarm_branch).toBe("");
+    expect(p4?.swarm_reviews?.[0]?.event_type).toBe("");
+    expect(p4?.swarm_reviews?.[0]?.sent_at).toBe("");
+    expect(p4?.ai_shelved_cls).toEqual([]);
+    expect(p4?.swarm_change_cls).toEqual([]);
+    expect(p4?.swarm_committed_cls).toEqual([]);
+    expect(p4?.external_committed_cls).toEqual([]);
+    expect(p4?.prediction_reasons).toEqual([]);
+    expect(p4?.warnings).toEqual([]);
+  });
+
   it("returns the fallback (never throws) when a field has the wrong type", () => {
     // issue_status arriving as a number is a hard schema violation; the UI
     // path must degrade to the fallback rather than throw a white-screen.
@@ -474,6 +582,60 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
       { endpoint: "GET /api/operations/agent-fixes (test)" },
     );
     expect(parsed).toEqual([]);
+  });
+
+  it("parses the P4 assessment trigger response with drift-tolerant defaults", () => {
+    const parsed = TriggerAgentFixP4AssessmentResponseSchema.parse({
+      created: true,
+      assessment_id: "assessment-1",
+      task_id: "task-1",
+    });
+    expect(parsed).toEqual({
+      created: true,
+      reason: "",
+      assessment_id: "assessment-1",
+      assessment_status: "",
+      task_id: "task-1",
+    });
+    const fallback = parseWithFallback(
+      { created: "yes" },
+      TriggerAgentFixP4AssessmentResponseSchema,
+      { created: false, reason: "", assessment_status: "" },
+      { endpoint: "POST /api/operations/agent-fixes/p4-assessments (test)" },
+    );
+    expect(fallback).toEqual({
+      created: false,
+      reason: "",
+      assessment_status: "",
+    });
+  });
+
+  it("parses the human review response with drift-tolerant defaults", () => {
+    const parsed = AgentFixHumanReviewSchema.parse({
+      outcome: "accepted",
+      reasons: ["complete_usable"],
+    });
+    expect(parsed).toEqual({
+      outcome: "accepted",
+      reasons: ["complete_usable"],
+      note: "",
+      reviewer_id: "",
+      reviewed_at: null,
+    });
+
+    const fallback = parseWithFallback(
+      { outcome: "accepted", reasons: "complete_usable" },
+      AgentFixHumanReviewSchema,
+      { outcome: "", reasons: [], note: "", reviewer_id: "", reviewed_at: null },
+      { endpoint: "PATCH /api/operations/agent-fixes/:bindingId/review (test)" },
+    );
+    expect(fallback).toEqual({
+      outcome: "",
+      reasons: [],
+      note: "",
+      reviewer_id: "",
+      reviewed_at: null,
+    });
   });
 });
 

@@ -26,6 +26,12 @@
     "none": "단계 없음",
     "value": "{{n}}단계"
   },
+  "p4_assessment": {
+    "p4": "P4",
+    "ai": "AI 평가",
+    "review": "사람 검토",
+    "open": "평가"
+  },
   "scope": {
     "all_label": "전체",
     "all_description": "이 워크스페이스의 모든 이슈",
