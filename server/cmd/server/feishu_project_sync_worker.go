@@ -29,16 +29,27 @@ func runFeishuProjectSyncWorker(ctx context.Context, queries *db.Queries, pool *
 	}
 }
 
+// feishuP4AssessmentTrigger resolves the P4 assessment trigger from a
+// TaskService, guarding on the concrete *P4AssessmentService pointer rather than
+// the interface. Assigning a nil *P4AssessmentService straight into the
+// FeishuProjectP4AssessmentTrigger interface would yield a non-nil "typed nil"
+// that passes `!= nil` checks and then panics on a nil-receiver method call —
+// the startup crash this guards against. Returning a true nil interface keeps
+// the downstream backfill/trigger guards honest.
+func feishuP4AssessmentTrigger(taskSvc *service.TaskService) service.FeishuProjectP4AssessmentTrigger {
+	if taskSvc == nil || taskSvc.P4Assessment == nil {
+		return nil
+	}
+	return taskSvc.P4Assessment
+}
+
 func runFeishuProjectSyncOnce(ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, store service.FeishuProjectStorage, taskSvc *service.TaskService, bus *events.Bus) {
 	configs, err := queries.ListEnabledFeishuProjectIntegrations(ctx)
 	if err != nil {
 		slog.Warn("Feishu Project sync scan failed", "error", err)
 		return
 	}
-	var p4Assessment service.FeishuProjectP4AssessmentTrigger
-	if taskSvc != nil {
-		p4Assessment = taskSvc.P4Assessment
-	}
+	p4Assessment := feishuP4AssessmentTrigger(taskSvc)
 	svc := &service.FeishuProjectSyncService{Queries: queries, Tx: pool, Client: service.NewFeishuProjectClient(), Storage: store, TaskService: taskSvc, P4Assessment: p4Assessment, Events: bus}
 	now := time.Now()
 	for _, cfg := range configs {

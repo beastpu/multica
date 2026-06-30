@@ -58,3 +58,22 @@ func TestFeishuProjectOrphanReconcileDue(t *testing.T) {
 		})
 	}
 }
+
+// TestFeishuP4AssessmentTriggerAvoidsTypedNil locks the fix for the new-image
+// startup panic. main.go now wires taskSvc.P4Assessment, but the worker must
+// also refuse to box a nil *P4AssessmentService into the trigger interface: a
+// typed-nil interface passes the downstream `!= nil` guards and then nil-derefs
+// inside BackfillDoneBindings on the first done binding.
+func TestFeishuP4AssessmentTriggerAvoidsTypedNil(t *testing.T) {
+	t.Parallel()
+	if got := feishuP4AssessmentTrigger(nil); got != nil {
+		t.Fatalf("nil taskSvc: want nil trigger, got non-nil interface")
+	}
+	if got := feishuP4AssessmentTrigger(&service.TaskService{}); got != nil {
+		t.Fatalf("nil P4Assessment pointer must not box into a typed-nil interface")
+	}
+	wired := &service.TaskService{P4Assessment: service.NewP4AssessmentService(nil, nil, nil)}
+	if got := feishuP4AssessmentTrigger(wired); got == nil {
+		t.Fatalf("wired service: want non-nil trigger, got nil")
+	}
+}
