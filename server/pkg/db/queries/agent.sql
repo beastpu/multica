@@ -237,8 +237,11 @@ VALUES ($1, $2, NULL, 'queued', $3, $4)
 RETURNING *;
 
 -- name: CreateP4AssessmentTask :one
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session)
-VALUES ($1, $2, $3, 'queued', $4, $5, TRUE)
+-- task_category='analysis' is the single place P4 assessment tasks opt out of
+-- the normal issue-fix workflow; every isolation query filters on it instead of
+-- re-checking context->>'type'.
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, task_category)
+VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, 'analysis')
 RETURNING *;
 
 -- name: LinkTaskToIssue :exec
@@ -268,7 +271,7 @@ INSERT INTO agent_task_queue (
     status, priority, trigger_comment_id, trigger_summary, context,
     session_id, work_dir,
     attempt, max_attempts, parent_task_id, force_fresh_session, is_leader_task,
-    squad_id
+    squad_id, task_category
 )
 SELECT
     p.agent_id, p.runtime_id, p.issue_id, p.chat_session_id, p.autopilot_run_id,
@@ -278,7 +281,7 @@ SELECT
     p.attempt + 1, p.max_attempts, p.id,
     p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity',
     p.is_leader_task,
-    p.squad_id
+    p.squad_id, p.task_category
 FROM agent_task_queue p
 WHERE p.id = $1
 RETURNING *;
@@ -293,7 +296,7 @@ UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE issue_id = $1
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-  AND COALESCE(context->>'type', '') <> 'agent_fix_p4_assessment'
+  AND task_category = 'fix'
 RETURNING *;
 
 -- name: CancelAgentTasksByIssueAndAgent :many
@@ -306,7 +309,7 @@ SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE issue_id = $1
   AND agent_id = $2
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-  AND COALESCE(context->>'type', '') <> 'agent_fix_p4_assessment'
+  AND task_category = 'fix'
 RETURNING *;
 
 -- name: CancelAgentTasksByAgent :many
@@ -382,7 +385,7 @@ WHERE id = (
             AND (
               (atq.issue_id IS NOT NULL
                 AND active.issue_id = atq.issue_id
-                AND COALESCE(active.context->>'type', '') = COALESCE(atq.context->>'type', ''))
+                AND active.task_category = atq.task_category)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
               OR (
                 atq.issue_id IS NULL
@@ -508,7 +511,7 @@ RETURNING *;
 -- never picks up a bad session even when failure_reason hasn't caught up.
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
-  AND COALESCE(context->>'type', '') <> 'agent_fix_p4_assessment'
+  AND task_category = 'fix'
   AND (
     status = 'completed'
     OR (
@@ -532,7 +535,7 @@ SELECT started_at FROM agent_task_queue
 WHERE agent_id = $1
   AND issue_id = $2
   AND started_at IS NOT NULL
-  AND COALESCE(context->>'type', '') <> 'agent_fix_p4_assessment'
+  AND task_category = 'fix'
 ORDER BY started_at DESC
 LIMIT 1;
 
@@ -672,7 +675,7 @@ FOR UPDATE;
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
 WHERE issue_id = $1
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-  AND COALESCE(context->>'type', '') <> 'agent_fix_p4_assessment';
+  AND task_category = 'fix';
 
 -- name: HasPendingTaskForIssue :one
 -- Returns true if there is a queued or dispatched (but not yet running) task for the issue.
@@ -682,7 +685,7 @@ WHERE issue_id = $1
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = $1
   AND status IN ('queued', 'dispatched')
-  AND COALESCE(context->>'type', '') <> 'agent_fix_p4_assessment';
+  AND task_category = 'fix';
 
 -- name: HasPendingTaskForIssueAndAgent :one
 -- Returns true if a specific agent already has a queued or dispatched task
@@ -691,14 +694,14 @@ SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = $1
   AND agent_id = $2
   AND status IN ('queued', 'dispatched')
-  AND COALESCE(context->>'type', '') <> 'agent_fix_p4_assessment';
+  AND task_category = 'fix';
 
 -- name: HasTaskForIssueAndAgent :one
 -- Returns true if a specific agent has ever had a task for the given issue.
 SELECT count(*) > 0 AS has_task FROM agent_task_queue
 WHERE issue_id = $1
   AND agent_id = $2
-  AND COALESCE(context->>'type', '') <> 'agent_fix_p4_assessment';
+  AND task_category = 'fix';
 
 -- name: HasPendingTaskForIssueAndAgentExcludingTriggerComment :one
 -- Same as HasPendingTaskForIssueAndAgent, but ignores tasks triggered by the
@@ -708,7 +711,7 @@ SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = @issue_id
   AND agent_id = @agent_id
   AND status IN ('queued', 'dispatched')
-  AND COALESCE(context->>'type', '') <> 'agent_fix_p4_assessment'
+  AND task_category = 'fix'
   AND trigger_comment_id IS DISTINCT FROM @exclude_trigger_comment_id::uuid;
 
 -- name: GetLatestTaskIsLeaderForIssueAndAgent :one
@@ -720,7 +723,7 @@ WHERE issue_id = @issue_id
 -- the role-blind authorID == leaderID check).
 SELECT is_leader_task FROM agent_task_queue
 WHERE issue_id = $1 AND agent_id = $2
-  AND COALESCE(context->>'type', '') <> 'agent_fix_p4_assessment'
+  AND task_category = 'fix'
 ORDER BY created_at DESC
 LIMIT 1;
 
@@ -855,7 +858,7 @@ WITH latest AS (
   JOIN agent ag ON ag.id = atq.agent_id
   WHERE ag.workspace_id = sqlc.arg('workspace_id')
     AND atq.issue_id IS NOT NULL
-    AND COALESCE(atq.context->>'type', '') <> 'agent_fix_p4_assessment'
+    AND atq.task_category = 'fix'
   -- "Latest run" = most recent activity overall: completion if finished, else
   -- start, else when it was queued. So a fresh queued/running attempt outranks
   -- an older finished one. atq.id is a final deterministic tiebreaker.

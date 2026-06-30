@@ -26,8 +26,8 @@ func TestP4AssessmentTaskIsolationSQLInvariants(t *testing.T) {
 		"ListWorkspaceAgentFixes",
 	} {
 		chunk := sqlSection(t, sql, section)
-		if !strings.Contains(chunk, "agent_fix_p4_assessment") {
-			t.Fatalf("%s must explicitly exclude P4 assessment tasks\n---\n%s", section, chunk)
+		if !strings.Contains(chunk, "task_category = 'fix'") {
+			t.Fatalf("%s must restrict to fix tasks via task_category\n---\n%s", section, chunk)
 		}
 	}
 }
@@ -40,7 +40,7 @@ func TestClaimSerializationSeparatesP4AssessmentFromNormalIssueTasks(t *testing.
 	chunk := sqlSection(t, string(sql), "ClaimAgentTask")
 	for _, want := range []string{
 		"active.issue_id = atq.issue_id",
-		"COALESCE(active.context->>'type', '') = COALESCE(atq.context->>'type', '')",
+		"active.task_category = atq.task_category",
 	} {
 		if !strings.Contains(chunk, want) {
 			t.Fatalf("ClaimAgentTask missing %q\n---\n%s", want, chunk)
@@ -93,7 +93,7 @@ func TestOperationsFeedUsesBindingSpineWithoutAssessmentTaskPollution(t *testing
 		"FROM feishu_project_issue_binding fib",
 		"fib.last_synced_at",
 		"false AS has_normal_task",
-		"COALESCE(atq.context->>'type', '') <> 'agent_fix_p4_assessment'",
+		"atq.task_category = 'fix'",
 	} {
 		if !strings.Contains(chunk, want) {
 			t.Fatalf("ListWorkspaceAgentFixes missing binding spine invariant %q\n---\n%s", want, chunk)
