@@ -4,18 +4,11 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { defaultStorage } from "../platform/storage";
 
-// Resizable columns of the operations table. "status" is the legacy persisted
-// key for the P4 evidence column; keep the name so existing local layouts carry
-// forward instead of resetting.
-export type OperationsColumnKey =
-  | "agent"
-  | "issue"
-  | "status"
-  | "attribution"
-  | "quality"
-  | "review"
-  | "eval"
-  | "time";
+// Resizable columns of the operations table. "原因/描述" is the flex filler
+// (absorbs slack) and "时间" is a fixed slim date column pinned last, so only
+// these three leading columns carry an explicit, user-draggable width. Widths
+// persist per device (localStorage) so a tuned layout survives reloads.
+export type OperationsColumnKey = "agent" | "issue" | "status";
 
 // A column can't shrink into nothing or run away and bury the others.
 export const OPERATIONS_COLUMN_MIN = 80;
@@ -35,11 +28,6 @@ export const OPERATIONS_DEFAULT_WIDTHS: Record<OperationsColumnKey, number> = {
   agent: 200,
   issue: 340,
   status: 120,
-  attribution: 148,
-  quality: 146,
-  review: 150,
-  eval: 150,
-  time: 96,
 };
 
 export const OPERATIONS_COLUMN_KEYS = Object.keys(

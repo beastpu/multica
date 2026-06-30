@@ -26,12 +26,6 @@
     "none": "No stage",
     "value": "Stage {{n}}"
   },
-  "p4_assessment": {
-    "p4": "P4",
-    "ai": "AI assessment",
-    "review": "Human review",
-    "open": "Assessment"
-  },
   "scope": {
     "all_label": "All",
     "all_description": "All issues in this workspace",

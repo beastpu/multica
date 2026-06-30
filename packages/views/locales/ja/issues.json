@@ -26,12 +26,6 @@
     "none": "ステージなし",
     "value": "ステージ {{n}}"
   },
-  "p4_assessment": {
-    "p4": "P4",
-    "ai": "AI 評価",
-    "review": "人手レビュー",
-    "open": "評価"
-  },
   "scope": {
     "all_label": "すべて",
     "all_description": "このワークスペースのすべてのイシュー",

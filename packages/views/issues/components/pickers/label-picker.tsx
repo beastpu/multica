@@ -159,7 +159,6 @@ export function LabelPicker({
             <div className="flex flex-wrap items-center gap-1 cursor-pointer rounded px-1 -mx-1 hover:bg-accent/30 transition-colors" />
           ) : undefined
         }
-        triggerNativeButton={!hasLabels}
         trigger={
           hasLabels ? (
             <>

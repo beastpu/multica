@@ -335,13 +335,6 @@ migrate-down: ## Create the target DB if needed, then roll back database migrati
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
 	cd server && go run ./cmd/migrate down
 
-seed: ## Seed the current database with the Operations/P4 assessment demo workspace
-	$(REQUIRE_ENV)
-	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	cd server && go run ./cmd/migrate up
-	@$(COMPOSE) exec -T postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -v ON_ERROR_STOP=1 < scripts/seed-operations-demo.sql
-	@echo "✓ Seeded Operations demo data. Open workspace slug: operations-demo"
-
 sqlc: ## Regenerate sqlc code
 	cd server && sqlc generate
 

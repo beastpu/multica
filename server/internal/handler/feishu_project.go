@@ -521,7 +521,7 @@ func (h *Handler) SyncFeishuProjectIntegration(w http.ResponseWriter, r *http.Re
 		defer unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 		defer cancel()
-		svc := &service.FeishuProjectSyncService{Queries: h.Queries, Tx: h.TxStarter, Client: service.NewFeishuProjectClient(), Storage: h.Storage, TaskService: h.TaskService, P4Assessment: h.P4AssessmentService}
+		svc := &service.FeishuProjectSyncService{Queries: h.Queries, Tx: h.TxStarter, Client: service.NewFeishuProjectClient(), Storage: h.Storage, TaskService: h.TaskService}
 		if _, err := svc.SyncWithRunAndOptions(ctx, cfg, "manual", run, service.FeishuProjectSyncOptions{WorkItemID: req.WorkItemID, SinceUnixMilli: sinceUnixMilli}); err != nil {
 			slog.Warn("Feishu Project manual sync failed", "workspace_id", workspaceID, "integration_id", uuidToString(cfg.ID), "run_id", uuidToString(run.ID), "error", err)
 		}

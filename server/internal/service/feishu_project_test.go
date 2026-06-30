@@ -1562,23 +1562,6 @@ func (f *fakeFeishuTaskService) EnqueueTaskForIssue(_ context.Context, issue db.
 	return db.AgentTaskQueue{}, nil
 }
 
-type fakeP4AssessmentTrigger struct {
-	calls []pgtype.UUID
-	err   error
-}
-
-func (f *fakeP4AssessmentTrigger) Trigger(_ context.Context, _ pgtype.UUID, bindingID pgtype.UUID, force bool) (P4AssessmentTriggerResult, error) {
-	if force {
-		return P4AssessmentTriggerResult{}, errors.New("sync trigger must use force=false")
-	}
-	f.calls = append(f.calls, bindingID)
-	return P4AssessmentTriggerResult{}, f.err
-}
-
-func (f *fakeP4AssessmentTrigger) BackfillDoneBindings(_ context.Context, _, _ pgtype.UUID, _ int32) (P4AssessmentBackfillResult, error) {
-	return P4AssessmentBackfillResult{}, nil
-}
-
 func issueWithID(seed byte) pgtype.UUID {
 	var u pgtype.UUID
 	for i := range u.Bytes {
@@ -1604,45 +1587,6 @@ func TestReconcileSyncedIssueTasksCancelsOnTerminalStatus(t *testing.T) {
 				t.Fatalf("terminal status %q: enqueued %d times, want 0", status, len(fake.enqueued))
 			}
 		})
-	}
-}
-
-func TestTriggerP4AssessmentForDoneBindingOnlyMappedDone(t *testing.T) {
-	cfg := db.FeishuProjectIntegration{
-		WorkspaceID: issueWithID(10),
-		WorkItemTypes: []byte(`[
-			{"type_key":"issue","status_mapping":{"DONE_KEY":"done","OPEN_KEY":"todo"}}
-		]`),
-	}
-	binding := db.FeishuProjectIssueBinding{ID: issueWithID(11)}
-
-	trigger := &fakeP4AssessmentTrigger{}
-	svc := &FeishuProjectSyncService{P4Assessment: trigger}
-	svc.triggerP4AssessmentForDoneBinding(context.Background(), cfg, FeishuProjectWorkItem{Type: "issue", ID: "BUG-1", Status: "OPEN_KEY"}, binding)
-	if len(trigger.calls) != 0 {
-		t.Fatalf("non-done status triggered assessment %d times", len(trigger.calls))
-	}
-
-	svc.triggerP4AssessmentForDoneBinding(context.Background(), cfg, FeishuProjectWorkItem{Type: "issue", ID: "BUG-1", Status: "DONE_KEY"}, binding)
-	if len(trigger.calls) != 1 || trigger.calls[0] != binding.ID {
-		t.Fatalf("done status trigger calls = %#v, want binding %s", trigger.calls, UUIDString(binding.ID))
-	}
-}
-
-func TestTriggerP4AssessmentForDoneBindingBestEffort(t *testing.T) {
-	cfg := db.FeishuProjectIntegration{
-		WorkspaceID: issueWithID(12),
-		WorkItemTypes: []byte(`[
-			{"type_key":"issue","status_mapping":{"DONE_KEY":"done"}}
-		]`),
-	}
-	trigger := &fakeP4AssessmentTrigger{err: errors.New("temporary trigger failure")}
-	svc := &FeishuProjectSyncService{P4Assessment: trigger}
-
-	svc.triggerP4AssessmentForDoneBinding(context.Background(), cfg, FeishuProjectWorkItem{Type: "issue", ID: "BUG-2", Status: "DONE_KEY"}, db.FeishuProjectIssueBinding{ID: issueWithID(13)})
-
-	if len(trigger.calls) != 1 {
-		t.Fatalf("best-effort trigger calls = %d, want 1", len(trigger.calls))
 	}
 }
 

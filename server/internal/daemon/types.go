@@ -112,9 +112,7 @@ type Task struct {
 	// agent never sees the daemon's own (often workspace-owner) credential.
 	// Empty or non-task-scoped values are fatal for writable agent tasks; the
 	// daemon must not fall back to its own token. See MUL-3292.
-	AuthToken             string `json:"auth_token,omitempty"`
-	Kind                  string `json:"kind,omitempty"`
-	P4AssessmentBindingID string `json:"p4_assessment_binding_id,omitempty"`
+	AuthToken string `json:"auth_token,omitempty"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon
