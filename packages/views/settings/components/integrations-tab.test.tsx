@@ -28,6 +28,7 @@ const statusesRef = vi.hoisted(() => ({
     ],
   },
 }));
+const statusTypeRequests = vi.hoisted(() => ({ current: [] as string[] }));
 
 // A saved integration whose credentials are complete. work_item_types carries
 // one mapped type so the collapse-by-default behavior is observable.
@@ -117,11 +118,14 @@ vi.mock("@multica/core/feishu-project/queries", () => ({
     queryFn: vi.fn(),
     enabled,
   }),
-  feishuProjectIssueStatusesOptions: (_ws: string, enabled: boolean, _typeKey: string) => ({
-    queryKey: ["fp-statuses"],
-    queryFn: vi.fn(),
-    enabled,
-  }),
+  feishuProjectIssueStatusesOptions: (_ws: string, enabled: boolean, typeKey: string) => {
+    statusTypeRequests.current.push(typeKey);
+    return {
+      queryKey: ["fp-statuses", typeKey],
+      queryFn: vi.fn(),
+      enabled,
+    };
+  },
   feishuProjectBusinessLinesOptions: (
     _ws: string,
     _field: string,
@@ -192,6 +196,7 @@ function resetFixtures() {
   membersRef.current = [{ user_id: "user-1", role: "admin" }];
   integrationRef.current = configuredIntegration();
   routesRef.current = { routes: [] };
+  statusTypeRequests.current = [];
   mockUpdateIntegration.mockResolvedValue(undefined);
   mockReplaceRoutes.mockResolvedValue(undefined);
   mockInvalidate.mockResolvedValue(undefined);
@@ -367,5 +372,27 @@ describe("IntegrationsTab (Feishu Project panel)", () => {
 
     await user.click(summary);
     expect(screen.getByText(STR.feishu_project_type_identifier_prefix)).toBeTruthy();
+  });
+
+  it("loads status metadata with api_name for custom work-item types", () => {
+    integrationRef.current = {
+      ...configuredIntegration(),
+      work_item_types: [
+        {
+          type_key: "637c83ce54b03d5198e2d1cb",
+          api_name: "gd_task",
+          name: "策划任务",
+          identifier_prefix: "GD_TASK",
+          project_id: "",
+          status_mapping: {},
+          reverse_status_mapping: {},
+        },
+      ],
+    };
+
+    render(<IntegrationsTab />, { wrapper: I18nWrapper });
+
+    expect(statusTypeRequests.current).toContain("gd_task");
+    expect(statusTypeRequests.current).not.toContain("637c83ce54b03d5198e2d1cb");
   });
 });
