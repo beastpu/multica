@@ -1787,24 +1787,72 @@ func buildAgentFixHumanReview(row db.ListWorkspaceAgentFixesRow) *AgentFixHumanR
 	}
 }
 
+// deriveAgentFixEval scores the AI quality prediction against the human review
+// outcome on a shared severity axis: likely_correct/accepted (0) <
+// likely_needs_changes/needs_changes (1) < likely_wrong/rejected (2). Equal
+// severity means the AI was accurate ("match"); predicting a lower severity
+// than the human verdict means the AI was too optimistic ("overestimated");
+// predicting a higher severity means it was too pessimistic ("underestimated").
+//
+// Every comparable (quality, outcome) pair maps to exactly one of those three —
+// including the diagonal matches likely_needs_changes+needs_changes and
+// likely_wrong+rejected, which the earlier hand-rolled switch wrongly dropped
+// into a catch-all. The result is therefore always one of pending /
+// not_comparable / match / overestimated / underestimated, all of which have
+// locale labels, so no untranslated value can reach the UI.
 func deriveAgentFixEval(p4 *AgentFixP4AssessmentResponse, review *AgentFixHumanReviewResponse) string {
 	if review == nil || review.Outcome == "" || review.Outcome == "unreviewed" {
 		return "pending"
 	}
-	if review.Outcome == "not_applicable" || p4 == nil || p4.QualityPrediction == "" || p4.QualityPrediction == "unknown" {
+	if review.Outcome == "not_applicable" || p4 == nil {
+		return "not_comparable"
+	}
+	predRank, predOK := agentFixQualityRank(p4.QualityPrediction)
+	actualRank, actualOK := agentFixOutcomeRank(review.Outcome)
+	if !predOK || !actualOK {
 		return "not_comparable"
 	}
 	switch {
-	case p4.QualityPrediction == "likely_correct" && review.Outcome == "accepted":
+	case predRank == actualRank:
 		return "match"
-	case p4.QualityPrediction == "likely_correct" && (review.Outcome == "needs_changes" || review.Outcome == "rejected"):
+	case predRank < actualRank:
 		return "overestimated"
-	case p4.QualityPrediction == "likely_wrong" && review.Outcome == "accepted":
-		return "underestimated"
-	case p4.DeliveryAttributionPrediction == "conflict" && (review.Outcome == "needs_changes" || review.Outcome == "rejected"):
-		return "accurate"
 	default:
-		return "mismatch"
+		return "underestimated"
+	}
+}
+
+// agentFixQualityRank ranks an AI quality prediction by how problematic it
+// claims the fix is. ok=false for "unknown"/"" or any unrecognized value, which
+// the caller treats as not-comparable (and which keeps enum drift from
+// silently miscounting as a match).
+func agentFixQualityRank(prediction string) (int, bool) {
+	switch prediction {
+	case "likely_correct":
+		return 0, true
+	case "likely_needs_changes":
+		return 1, true
+	case "likely_wrong":
+		return 2, true
+	default:
+		return 0, false
+	}
+}
+
+// agentFixOutcomeRank ranks a human review outcome on the same severity axis as
+// agentFixQualityRank. "unreviewed"/"not_applicable" are handled by the caller
+// before this is reached, so only the three comparable outcomes map; anything
+// else returns ok=false and downgrades to not-comparable.
+func agentFixOutcomeRank(outcome string) (int, bool) {
+	switch outcome {
+	case "accepted":
+		return 0, true
+	case "needs_changes":
+		return 1, true
+	case "rejected":
+		return 2, true
+	default:
+		return 0, false
 	}
 }
 

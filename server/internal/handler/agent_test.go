@@ -13,6 +13,57 @@ import (
 	"unicode/utf8"
 )
 
+// TestDeriveAgentFixEval locks the AI-vs-human accuracy scoring. The earlier
+// switch only treated likely_correct+accepted as a match and dumped every other
+// combination — including the genuinely-accurate likely_needs_changes+needs_changes
+// and likely_wrong+rejected — into an untranslated "mismatch" bucket, inflating
+// the deviation metric the feature exists to produce. This covers the full
+// 3x3 quality/outcome grid plus the pending / not_comparable downgrades.
+func TestDeriveAgentFixEval(t *testing.T) {
+	p4 := func(quality string) *AgentFixP4AssessmentResponse {
+		return &AgentFixP4AssessmentResponse{QualityPrediction: quality}
+	}
+	review := func(outcome string) *AgentFixHumanReviewResponse {
+		return &AgentFixHumanReviewResponse{Outcome: outcome}
+	}
+
+	cases := []struct {
+		name   string
+		p4     *AgentFixP4AssessmentResponse
+		review *AgentFixHumanReviewResponse
+		want   string
+	}{
+		// No review yet → pending.
+		{"no review", p4("likely_correct"), nil, "pending"},
+		{"empty outcome", p4("likely_correct"), review(""), "pending"},
+		{"unreviewed", p4("likely_correct"), review("unreviewed"), "pending"},
+		// Not comparable: not_applicable, missing assessment, or unknown quality.
+		{"not applicable", p4("likely_correct"), review("not_applicable"), "not_comparable"},
+		{"nil assessment", nil, review("accepted"), "not_comparable"},
+		{"unknown quality", p4("unknown"), review("accepted"), "not_comparable"},
+		{"empty quality", p4(""), review("accepted"), "not_comparable"},
+		// Diagonal = accurate prediction.
+		{"correct+accepted", p4("likely_correct"), review("accepted"), "match"},
+		{"needs+needs", p4("likely_needs_changes"), review("needs_changes"), "match"},
+		{"wrong+rejected", p4("likely_wrong"), review("rejected"), "match"},
+		// AI too optimistic (predicted better than the verdict) → overestimated.
+		{"correct+needs", p4("likely_correct"), review("needs_changes"), "overestimated"},
+		{"correct+rejected", p4("likely_correct"), review("rejected"), "overestimated"},
+		{"needs+rejected", p4("likely_needs_changes"), review("rejected"), "overestimated"},
+		// AI too pessimistic (predicted worse than the verdict) → underestimated.
+		{"needs+accepted", p4("likely_needs_changes"), review("accepted"), "underestimated"},
+		{"wrong+accepted", p4("likely_wrong"), review("accepted"), "underestimated"},
+		{"wrong+needs", p4("likely_wrong"), review("needs_changes"), "underestimated"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := deriveAgentFixEval(tc.p4, tc.review); got != tc.want {
+				t.Errorf("deriveAgentFixEval = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestListWorkspaceAgentTaskSnapshot covers the agent presence snapshot endpoint:
 // every active task (queued/dispatched/running) PLUS each agent's most recent
 // OUTCOME task (completed/failed only). Cancelled tasks are excluded by design
