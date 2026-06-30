@@ -374,7 +374,7 @@ describe("IntegrationsTab (Feishu Project panel)", () => {
     expect(screen.getByText(STR.feishu_project_type_identifier_prefix)).toBeTruthy();
   });
 
-  it("loads status metadata with api_name for custom work-item types", () => {
+  it("loads status metadata with type_key for custom work-item types", () => {
     integrationRef.current = {
       ...configuredIntegration(),
       work_item_types: [
@@ -392,7 +392,7 @@ describe("IntegrationsTab (Feishu Project panel)", () => {
 
     render(<IntegrationsTab />, { wrapper: I18nWrapper });
 
-    expect(statusTypeRequests.current).toContain("gd_task");
-    expect(statusTypeRequests.current).not.toContain("637c83ce54b03d5198e2d1cb");
+    expect(statusTypeRequests.current).toContain("637c83ce54b03d5198e2d1cb");
+    expect(statusTypeRequests.current).not.toContain("gd_task");
   });
 });

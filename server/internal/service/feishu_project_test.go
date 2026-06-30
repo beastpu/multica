@@ -187,6 +187,78 @@ func TestFeishuProjectIssueStatusOptionsFallsBackToFieldMetadata(t *testing.T) {
 	}
 }
 
+func TestFeishuProjectIssueStatusOptionsFallsBackToScopedFieldAll(t *testing.T) {
+	const customType = "6a13bb3ce220420f55e6429d"
+	var sawFieldAll bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/template_list/" + customType:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":[{"template_id":"template-1"}]}`))
+		case "/open_api/project-key/template_detail/template-1":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"state_flow_confs":[]}}`))
+		case "/open_api/project-key/work_item/" + customType + "/meta":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"fields":[]}}`))
+		case "/open_api/project-key/field/all":
+			sawFieldAll = true
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": [
+					{
+						"field_key": "work_item_status",
+						"field_type_key": "work_item_status",
+						"work_item_scopes": ["issue"],
+						"option": [
+							{"option_id": "OPEN", "option_name": "新建"}
+						]
+					},
+					{
+						"field_key": "work_item_status",
+						"field_type_key": "work_item_status",
+						"work_item_scopes": ["` + customType + `"],
+						"option": [
+							{"option_id": "started", "option_name": "开始"},
+							{"option_id": "_g3pyz3q3", "option_name": "进行中"}
+						]
+					}
+				]
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{
+		HTTPClient: server.Client(),
+		BaseURL:    server.URL,
+	}
+	statuses, err := client.WorkItemStatusOptions(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+	}, customType)
+	if err != nil {
+		t.Fatalf("IssueStatusOptions: %v", err)
+	}
+	if !sawFieldAll {
+		t.Fatal("field/all API was not called")
+	}
+	if len(statuses) != 2 || statuses[0].Key != "started" || statuses[1].Key != "_g3pyz3q3" {
+		t.Fatalf("statuses = %#v", statuses)
+	}
+}
+
 func TestFeishuProjectQueryWorkItemsRequiresMappedStatusScope(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("QueryWorkItems must not call remote search without mapped statuses: %s", r.URL.Path)

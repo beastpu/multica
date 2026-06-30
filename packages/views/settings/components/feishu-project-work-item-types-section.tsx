@@ -185,10 +185,9 @@ function WorkItemTypeCard({
   onRemove: () => void;
 }) {
   const { t } = useT("settings");
-  const metadataType = entry.api_name || entry.type_key;
 
   const { data: statusesData } = useQuery({
-    ...feishuProjectIssueStatusesOptions(workspaceId, integrationReady, metadataType),
+    ...feishuProjectIssueStatusesOptions(workspaceId, integrationReady, entry.type_key),
   });
   const statuses = statusesData?.statuses ?? [];
 
