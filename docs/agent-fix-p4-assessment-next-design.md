@@ -935,7 +935,7 @@ Mitigation:
 - Run `make sqlc`.
 - Add handler/service tests for arrays and stale event behavior.
 
-状态：主体已实现。migration `128_perforce_review_complete_evidence` 已新增上述字段；P4/Swarm webhook 会从入站 payload 写入完整 evidence；旧事件仍会在 upsert 前按 `review.updated` 水位提前返回，不能覆盖已保存的新 evidence。
+状态：主体已实现。migration `129_perforce_review_complete_evidence` 已新增上述字段；P4/Swarm webhook 会从入站 payload 写入完整 evidence；旧事件仍会在 upsert 前按 `review.updated` 水位提前返回，不能覆盖已保存的新 evidence。
 
 ### 阶段 4：Evidence API 增强
 

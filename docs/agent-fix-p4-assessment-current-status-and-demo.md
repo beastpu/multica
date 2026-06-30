@@ -60,7 +60,7 @@
   - 只接受纯 JSON object 或整个输出为唯一 fenced `json` block。
   - 拒绝 prose wrapper、多个 fenced block、JSON object 后的尾随文本、未知字段、非法 attribution/quality enum、非整数 CL、越界 confidence，以及 `swarm_reviews` / `evidence` / `warnings` shape 错误。
 - P4/Swarm webhook evidence persistence：
-  - migration `128_perforce_review_complete_evidence` 扩展 `perforce_review`：`changes[]`、`commits[]`、`swarm_branch`、`event_type`、`sent_at`、`raw_payload`。
+  - migration `129_perforce_review_complete_evidence` 扩展 `perforce_review`：`changes[]`、`commits[]`、`swarm_branch`、`event_type`、`sent_at`、`raw_payload`。
   - webhook handler 从 inbound payload 入库这些完整 evidence；不主动回查 Swarm/P4。
   - 旧事件仍按 `review.updated` 水位提前返回，不覆盖已保存的新 evidence。
 - `PATCH /api/operations/agent-fixes/{binding_id}/review`
