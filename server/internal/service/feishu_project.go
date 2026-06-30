@@ -2424,6 +2424,14 @@ func (c *FeishuProjectClient) WorkItemStatusOptions(ctx context.Context, cfg db.
 		return nil, err
 	}
 	statuses = parseFeishuProjectStatusOptions(payload)
+	if len(statuses) > 0 {
+		return statuses, nil
+	}
+	fieldAllPayload, err := c.openAPI(ctx, cfg, http.MethodPost, fmt.Sprintf("/open_api/%s/field/all", cfg.ProjectKey), map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+	statuses = parseFeishuProjectScopedStatusOptions(fieldAllPayload, workItemType)
 	if len(statuses) == 0 {
 		return nil, fmt.Errorf("Feishu Project %s status metadata is empty", workItemType)
 	}
@@ -3867,20 +3875,8 @@ func parseFeishuProjectStatusOptions(payload map[string]any) []FeishuProjectStat
 	walk = func(v any) bool {
 		switch x := v.(type) {
 		case map[string]any:
-			if fmt.Sprint(x["field_key"]) == "work_item_status" || fmt.Sprint(x["field_type"]) == "_work_item_status" || fmt.Sprint(x["field_type_key"]) == "_work_item_status" {
-				options, _ := x["option"].([]any)
-				if len(options) == 0 {
-					options, _ = x["options"].([]any)
-				}
-				for _, optionAny := range options {
-					option, _ := optionAny.(map[string]any)
-					key := firstNonEmpty(fmt.Sprint(option["option_id"]), fmt.Sprint(option["value"]))
-					name := firstNonEmpty(fmt.Sprint(option["option_name"]), fmt.Sprint(option["label"]))
-					if key == "" || key == "<nil>" {
-						continue
-					}
-					out = append(out, FeishuProjectStatusOption{Key: key, Name: firstNonEmpty(name, key)})
-				}
+			if feishuProjectIsStatusField(x) {
+				out = append(out, feishuProjectStatusOptionsFromField(x)...)
 				return true
 			}
 			for _, child := range x {
@@ -3898,6 +3894,60 @@ func parseFeishuProjectStatusOptions(payload map[string]any) []FeishuProjectStat
 		return false
 	}
 	walk(payload)
+	return out
+}
+
+func parseFeishuProjectScopedStatusOptions(payload map[string]any, workItemType string) []FeishuProjectStatusOption {
+	workItemType = strings.TrimSpace(workItemType)
+	if workItemType == "" {
+		return nil
+	}
+	var out []FeishuProjectStatusOption
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if feishuProjectIsStatusField(x) {
+				if feishuProjectFieldScopeMatches(x["work_item_scopes"], workItemType) {
+					out = append(out, feishuProjectStatusOptionsFromField(x)...)
+				}
+				return
+			}
+			for _, child := range x {
+				walk(child)
+			}
+		case []any:
+			for _, child := range x {
+				walk(child)
+			}
+		}
+	}
+	walk(payload)
+	return appendFeishuProjectStatuses(nil, out...)
+}
+
+func feishuProjectIsStatusField(field map[string]any) bool {
+	return fmt.Sprint(field["field_key"]) == "work_item_status" ||
+		fmt.Sprint(field["field_type"]) == "_work_item_status" ||
+		fmt.Sprint(field["field_type_key"]) == "_work_item_status" ||
+		fmt.Sprint(field["field_type_key"]) == "work_item_status"
+}
+
+func feishuProjectStatusOptionsFromField(field map[string]any) []FeishuProjectStatusOption {
+	options, _ := field["option"].([]any)
+	if len(options) == 0 {
+		options, _ = field["options"].([]any)
+	}
+	out := make([]FeishuProjectStatusOption, 0, len(options))
+	for _, optionAny := range options {
+		option, _ := optionAny.(map[string]any)
+		key := firstNonEmpty(fmt.Sprint(option["option_id"]), fmt.Sprint(option["value"]), fmt.Sprint(option["key"]), fmt.Sprint(option["id"]))
+		name := firstNonEmpty(fmt.Sprint(option["option_name"]), fmt.Sprint(option["label"]), fmt.Sprint(option["name"]))
+		if key == "" {
+			continue
+		}
+		out = append(out, FeishuProjectStatusOption{Key: key, Name: firstNonEmpty(name, key)})
+	}
 	return out
 }
 
