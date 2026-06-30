@@ -1548,8 +1548,9 @@ func TestListFieldOptionsReturnsNilWhenNoInlineOptionsAnywhere(t *testing.T) {
 // fakeFeishuTaskService records reconcileSyncedIssueTasks side effects so the
 // cancel-only-on-terminal-status contract can be verified without a database.
 type fakeFeishuTaskService struct {
-	cancelled []pgtype.UUID
-	enqueued  []pgtype.UUID
+	cancelled       []pgtype.UUID
+	enqueued        []pgtype.UUID
+	enqueuedLeaders []pgtype.UUID
 }
 
 func (f *fakeFeishuTaskService) CancelTasksForIssue(_ context.Context, issueID pgtype.UUID) error {
@@ -1559,6 +1560,12 @@ func (f *fakeFeishuTaskService) CancelTasksForIssue(_ context.Context, issueID p
 
 func (f *fakeFeishuTaskService) EnqueueTaskForIssue(_ context.Context, issue db.Issue, _ ...pgtype.UUID) (db.AgentTaskQueue, error) {
 	f.enqueued = append(f.enqueued, issue.ID)
+	return db.AgentTaskQueue{}, nil
+}
+
+func (f *fakeFeishuTaskService) EnqueueTaskForSquadLeader(_ context.Context, issue db.Issue, leaderID pgtype.UUID, _ pgtype.UUID, _ pgtype.UUID) (db.AgentTaskQueue, error) {
+	f.enqueued = append(f.enqueued, issue.ID)
+	f.enqueuedLeaders = append(f.enqueuedLeaders, leaderID)
 	return db.AgentTaskQueue{}, nil
 }
 

@@ -127,6 +127,38 @@ func (q *Queries) CreateSquad(ctx context.Context, arg CreateSquadParams) (Squad
 	return i, err
 }
 
+const getFirstSquadByCreatorInWorkspace = `-- name: GetFirstSquadByCreatorInWorkspace :one
+SELECT id, workspace_id, name, description, leader_id, creator_id, created_at, updated_at, archived_at, archived_by, avatar_url, instructions FROM squad
+WHERE workspace_id = $1 AND creator_id = $2 AND archived_at IS NULL
+ORDER BY created_at ASC
+LIMIT 1
+`
+
+type GetFirstSquadByCreatorInWorkspaceParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	CreatorID   pgtype.UUID `json:"creator_id"`
+}
+
+func (q *Queries) GetFirstSquadByCreatorInWorkspace(ctx context.Context, arg GetFirstSquadByCreatorInWorkspaceParams) (Squad, error) {
+	row := q.db.QueryRow(ctx, getFirstSquadByCreatorInWorkspace, arg.WorkspaceID, arg.CreatorID)
+	var i Squad
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Description,
+		&i.LeaderID,
+		&i.CreatorID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+		&i.AvatarUrl,
+		&i.Instructions,
+	)
+	return i, err
+}
+
 const getSquad = `-- name: GetSquad :one
 SELECT id, workspace_id, name, description, leader_id, creator_id, created_at, updated_at, archived_at, archived_by, avatar_url, instructions FROM squad WHERE id = $1
 `
