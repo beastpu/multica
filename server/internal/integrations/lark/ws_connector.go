@@ -393,7 +393,7 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 			cancelEnrich()
 		}
 
-		_, emitErr := emit(ctx, msg)
+		res, emitErr := emit(ctx, msg)
 		if emitErr != nil {
 			// Infra failure from Dispatcher (DB down, etc.). NACK so
 			// Lark retries this event on a healthy replica; then
@@ -407,7 +407,11 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst Installation, emit E
 			)
 			return fmt.Errorf("dispatch: %w", emitErr)
 		}
-		if werr := c.writeFrame(&writeMu, conn, NewAckFrame(frame, true)); werr != nil {
+		ack := NewAckFrame(frame, true)
+		if res.CardActionResponseJSON != "" {
+			ack = NewAckFrameWithData(frame, true, []byte(res.CardActionResponseJSON))
+		}
+		if werr := c.writeFrame(&writeMu, conn, ack); werr != nil {
 			log.Warn("lark ws connector: ack write failed", "err", werr.Error())
 			return fmt.Errorf("write ack: %w", werr)
 		}

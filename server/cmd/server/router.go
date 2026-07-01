@@ -78,6 +78,13 @@ func appURLFromEnv() string {
 	return strings.TrimRight(strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")), "/")
 }
 
+func larkInboxURLFromEnv() string {
+	if v := appURLFromEnv(); v != "" {
+		return v
+	}
+	return strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/")
+}
+
 // parseTrustedProxies parses a comma-separated list of CIDR prefixes from the
 // MULTICA_TRUSTED_PROXIES env var. Invalid entries are dropped with a single
 // warn-line per entry rather than crashing the server — a typo in one CIDR
@@ -273,7 +280,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				patcher.Register(bus)
 				inboxNotifier := lark.NewInboxNotifier(cs, installSvc, larkClient, lark.InboxNotifierConfig{
 					Logger:    slog.Default(),
-					PublicURL: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+					PublicURL: larkInboxURLFromEnv(),
 				})
 				inboxNotifier.Register(bus)
 
@@ -339,6 +346,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					Connector:   connector,
 					APIClient:   larkClient,
 					Credentials: installSvc,
+					CardActions: h,
 					Logger:      slog.Default(),
 				})
 				channelRouter.Register(channel.TypeFeishu, lark.NewFeishuResolverSet(

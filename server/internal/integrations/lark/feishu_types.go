@@ -54,6 +54,30 @@ type InboundMessage struct {
 	// enricher prepends quoted/forwarded context). `/issue` is parsed from
 	// THIS, not the enriched Body.
 	CommandBody string
+
+	// CardAction is populated for Multica-owned interactive-card callbacks
+	// whose business semantics should not be routed as ordinary chat text.
+	CardAction *InboundCardAction
+}
+
+type InboundCardAction struct {
+	// CardMessageID is the Lark message_id of the interactive card that
+	// emitted the action callback. Handlers can patch that card after a
+	// successful action so stale buttons disappear from the chat.
+	CardMessageID     string
+	IssueConfirmation *IssueConfirmationCardAction
+}
+
+type IssueConfirmationCardAction struct {
+	Action          string
+	Message         string
+	WorkspaceID     string
+	IssueID         string
+	ParentCommentID string
+	RecipientID     string
+	AllowedOpenID   string
+	IssuedAtUnix    int64
+	ExpiresAtUnix   int64
 }
 
 // Outcome categorizes what the inbound pipeline decided. The OutcomeReplier
@@ -90,4 +114,10 @@ type DispatchResult struct {
 	IssueIdentifier string
 	// IssueTitle is the title supplied on /issue, echoed in the confirmation.
 	IssueTitle string
+	// CardActionResponseJSON is the JSON-encoded callback response returned
+	// inside the long-connection ACK for card.action.trigger. Lark expects
+	// card updates for interactive callbacks on this ACK path; ordinary
+	// message PATCH calls can return success without updating the clicked
+	// card in the user's client.
+	CardActionResponseJSON string
 }

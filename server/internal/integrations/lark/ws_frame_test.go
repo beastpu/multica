@@ -2,6 +2,7 @@ package lark
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"testing"
 )
@@ -95,7 +96,7 @@ func TestFrameMarshalIsSDKByteCompatible(t *testing.T) {
 			expected: "08001000182a20002a0c0a04747970651204706f6e6732003a004a00",
 		},
 		{
-			name:  "ack_data_frame",
+			name: "ack_data_frame",
 			frame: NewAckFrame(&Frame{
 				Method:  FrameMethodData,
 				Service: 7,
@@ -220,6 +221,30 @@ func TestNewAckFrameReusesInboundHeaders(t *testing.T) {
 	nack := NewAckFrame(inbound, false)
 	if !bytes.Contains(nack.Payload, []byte(`"code":500`)) {
 		t.Errorf("nack payload missing code=500: %s", string(nack.Payload))
+	}
+}
+
+func TestNewAckFrameWithDataEncodesCallbackResponseLikeSDK(t *testing.T) {
+	t.Parallel()
+	inbound := &Frame{
+		Method:  FrameMethodData,
+		Service: 7,
+		Headers: []FrameHeader{
+			{Key: FrameHeaderTypeKey, Value: FrameHeaderTypeCard},
+			{Key: FrameHeaderMessageIDKey, Value: "om-card"},
+		},
+	}
+	response := []byte(`{"card":{"type":"raw","data":{"config":{"wide_screen_mode":true}}}}`)
+	ack := NewAckFrameWithData(inbound, true, response)
+	if !bytes.Contains(ack.Payload, []byte(`"code":200`)) {
+		t.Fatalf("ack payload missing code=200: %s", string(ack.Payload))
+	}
+	wantData := `"data":"` + base64.StdEncoding.EncodeToString(response) + `"`
+	if !bytes.Contains(ack.Payload, []byte(wantData)) {
+		t.Fatalf("ack payload should SDK-encode []byte data as base64 %s, got %s", wantData, string(ack.Payload))
+	}
+	if bytes.Contains(ack.Payload, response) {
+		t.Fatalf("ack payload must not inline raw callback JSON: %s", string(ack.Payload))
 	}
 }
 
