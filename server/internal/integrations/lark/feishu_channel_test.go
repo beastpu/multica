@@ -27,6 +27,27 @@ type fakeCreds struct{ secret string }
 
 func (f fakeCreds) DecryptAppSecret(_ Installation) (string, error) { return f.secret, nil }
 
+type emitOnceConnector struct {
+	msg InboundMessage
+}
+
+func (c emitOnceConnector) Run(ctx context.Context, inst Installation, emit EventEmitter) error {
+	_, err := emit(ctx, c.msg)
+	return err
+}
+
+type recordingCardActionHandler struct {
+	calls    int
+	msg      InboundMessage
+	response DispatchResult
+}
+
+func (h *recordingCardActionHandler) HandleLarkCardAction(_ context.Context, msg InboundMessage) (DispatchResult, error) {
+	h.calls++
+	h.msg = msg
+	return h.response, nil
+}
+
 // feishuConfigJSON builds a channel_installation.config blob like migration 124
 // backfills — the shape the Feishu factory decodes.
 func feishuConfigJSON(t *testing.T, appID, region string) []byte {
@@ -130,6 +151,53 @@ func TestFeishuChannel_SendMapsTextAndReplyTarget(t *testing.T) {
 	// ReplyTo present -> route through the reply endpoint, threaded.
 	if sender.last.ReplyTarget.MessageID != "om_parent" || !sender.last.ReplyTarget.InThread {
 		t.Fatalf("reply target mapping wrong: %+v", sender.last.ReplyTarget)
+	}
+}
+
+func TestFeishuChannel_RoutesCardActionOutsideChatHandler(t *testing.T) {
+	cardHandler := &recordingCardActionHandler{}
+	chatCalls := 0
+	msg := InboundMessage{
+		EventID:      "evt-card",
+		AppID:        "cli",
+		ChatID:       "oc_dm",
+		ChatType:     ChatTypeP2P,
+		MessageID:    "card_action:multica.issue.confirmation:comment:ou_user",
+		SenderOpenID: "ou_user",
+		MessageType:  "interactive",
+		CardAction: &InboundCardAction{
+			IssueConfirmation: &IssueConfirmationCardAction{
+				Action:          confirmationActionConfirm,
+				Message:         confirmationMessageConfirm,
+				WorkspaceID:     "11111111-1111-1111-1111-111111111111",
+				IssueID:         "22222222-2222-2222-2222-222222222222",
+				ParentCommentID: "33333333-3333-3333-3333-333333333333",
+				RecipientID:     "44444444-4444-4444-4444-444444444444",
+				AllowedOpenID:   "ou_user",
+			},
+		},
+	}
+	fc := &feishuChannel{
+		inst:        Installation{AppID: "cli", Region: "feishu"},
+		conn:        emitOnceConnector{msg: msg},
+		cardActions: cardHandler,
+		handler: func(context.Context, channel.InboundMessage) error {
+			chatCalls++
+			return nil
+		},
+	}
+
+	if err := fc.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if cardHandler.calls != 1 {
+		t.Fatalf("card action handler calls = %d, want 1", cardHandler.calls)
+	}
+	if chatCalls != 0 {
+		t.Fatalf("chat handler should not receive card actions, got %d calls", chatCalls)
+	}
+	if cardHandler.msg.MessageID != msg.MessageID {
+		t.Fatalf("card handler message mismatch: %+v", cardHandler.msg)
 	}
 }
 
