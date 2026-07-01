@@ -12,7 +12,7 @@ import (
 // Layout:
 //
 //   - buildMetaSkillContentSlim is the entry point.
-//   - It calls classifyTask (runtime_config_kind.go) to pick one of five
+//   - It calls classifyTask (runtime_config_kind.go) to pick one of six
 //     task kinds, then composes the brief from the per-section writers
 //     below.
 //   - Each section is its own writer so the matrix of "which kind gets
@@ -413,6 +413,17 @@ func writeAttachments(b *strings.Builder) {
 	b.WriteString("When a task includes attachment IDs and you need the files, inspect `multica attachment --help` and use the authenticated CLI path. Do not open Multica resource URLs directly.\n\n")
 }
 
+func writeWorkflowP4Assessment(b *strings.Builder, ctx TaskContextForEnv) {
+	b.WriteString("**This task is a read-only P4/Swarm assessment.** Do not repair code, update the issue, post comments, change issue status, or mutate Feishu/Meego, P4, Swarm, or human review state.\n\n")
+	if ctx.IssueID != "" {
+		fmt.Fprintf(b, "- Multica issue ID: `%s`\n", ctx.IssueID)
+	}
+	fmt.Fprintf(b, "- Feishu/Meego binding ID: `%s`\n", ctx.P4AssessmentBindingID)
+	fmt.Fprintf(b, "- Fetch assessment evidence with `multica api get /api/operations/agent-fixes/%s/p4-evidence`\n", ctx.P4AssessmentBindingID)
+	b.WriteString("- Use the `multica-agent-fix-p4-assessment` skill for the classification rules and final JSON schema.\n")
+	b.WriteString("- If evidence is missing or P4/Swarm lookup is unavailable, return conservative `unknown` values with warnings instead of guessing.\n\n")
+}
+
 // writeAlwaysUseCLI emits the "must go through the multica CLI" guardrail
 // (compressed).
 func writeAlwaysUseCLI(b *strings.Builder) {
@@ -424,6 +435,9 @@ func writeAlwaysUseCLI(b *strings.Builder) {
 func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 	b.WriteString("## Output\n\n")
 	switch kind {
+	case kindP4Assessment:
+		b.WriteString("This is a P4/Swarm assessment task. Your final assistant output is parsed by Multica and written to `agent_fix_p4_assessment`; it is not delivered as an issue comment.\n\n")
+		b.WriteString("Return exactly one strict JSON object, or one fenced `json` block containing exactly one JSON object. Do not write prose before or after it.\n")
 	case kindAutopilotRunOnly:
 		b.WriteString("This is a run-only autopilot task, so there may be no issue comment to post. Your final assistant output is captured automatically as the autopilot run result. Keep it concise and state the outcome.\n")
 	case kindQuickCreate:
@@ -451,18 +465,18 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 // The Section × Kind matrix encoded below (skip = elide section, keep
 // = always emit, △ = data-driven inside the helper):
 //
-//	Section               | comment | assign | autopilot | quick_create | chat
-//	----------------------+---------+--------+-----------+--------------+------
-//	Available Commands    |   full  |  full  |   full    |   minimal    | full
-//	Comment Formatting    |    ✓    |   ✓    |     —     |      —       |  —
-//	Repositories          |    △    |   △    |     △     |      —       |  △
-//	Project Context       |    △    |   △    |     —     |      —       |  —
-//	Issue Metadata        |    ✓    |   ✓    |     —     |      —       |  —
-//	Instruction Precedence|    —    |   ✓    |     —     |      —       |  —
-//	Sub-issue Creation    |    ✓    |   ✓    |     —     |      —       |  —
-//	Skills                |    ✓    |   ✓    |     ✓    |      —       |  ✓
-//	Mentions              |    ✓    |   ✓    |     —     |      —       |  —
-//	Attachments           |    ✓    |   ✓    |     —     |      —       |  —
+//	Section               | p4 assess | comment | assign | autopilot | quick_create | chat
+//	----------------------+-----------+---------+--------+-----------+--------------+------
+//	Available Commands    |   full    |   full  |  full  |   full    |   minimal    | full
+//	Comment Formatting    |     —     |    ✓    |   ✓    |     —     |      —       |  —
+//	Repositories          |     —     |    △    |   △    |     △     |      —       |  △
+//	Project Context       |     —     |    △    |   △    |     —     |      —       |  —
+//	Issue Metadata        |     —     |    ✓    |   ✓    |     —     |      —       |  —
+//	Instruction Precedence|     —     |    —    |   ✓    |     —     |      —       |  —
+//	Sub-issue Creation    |     —     |    ✓    |   ✓    |     —     |      —       |  —
+//	Skills                |     ✓     |    ✓    |   ✓    |     ✓     |      —       |  ✓
+//	Mentions              |     —     |    ✓    |   ✓    |     —     |      —       |  —
+//	Attachments           |     —     |    ✓    |   ✓    |     —     |      —       |  —
 //
 // Always-on rows — Header, Background Task Safety, Agent Identity,
 // Requesting User, Task Initiator, Workspace Context, Workflow, Always
@@ -490,7 +504,7 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 		writeCommentFormatting(&b)
 	}
 
-	if kind != kindQuickCreate {
+	if kind != kindQuickCreate && kind != kindP4Assessment {
 		writeRepositories(&b, ctx)
 	}
 
@@ -505,6 +519,8 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 
 	writeWorkflowHeader(&b)
 	switch kind {
+	case kindP4Assessment:
+		writeWorkflowP4Assessment(&b, ctx)
 	case kindChat:
 		writeWorkflowChat(&b)
 	case kindQuickCreate:

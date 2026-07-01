@@ -8,14 +8,16 @@ package execenv
 // branches inline from raw ctx fields, the way it has shipped to
 // production for the last two years.
 //
-// Five kinds, mutually exclusive in practice. classifyTask documents the
+// Six kinds, mutually exclusive in practice. classifyTask documents the
 // tiebreak rule that applies if a future caller accidentally violates the
 // mutex.
 type taskKind int
 
 const (
+	// kindP4Assessment: read-only P4/Swarm assessment for an external binding.
+	kindP4Assessment taskKind = iota
 	// kindCommentTriggered: a NEW comment on an issue triggered this run.
-	kindCommentTriggered taskKind = iota
+	kindCommentTriggered
 	// kindAssignmentTriggered: an assignee was set / changed on an issue
 	// and the daemon fired a fresh run for the new assignee.
 	kindAssignmentTriggered
@@ -32,10 +34,12 @@ const (
 // classifyTask maps a TaskContextForEnv to the single taskKind the slim
 // brief should be assembled for. Precedence (documented for the tiebreak
 // case, although the daemon never sets two specific-kind flags at once):
-// chat → quick-create → autopilot run-only → comment-triggered →
+// p4-assessment → chat → quick-create → autopilot run-only → comment-triggered →
 // assignment-triggered.
 func classifyTask(ctx TaskContextForEnv) taskKind {
 	switch {
+	case ctx.P4AssessmentBindingID != "":
+		return kindP4Assessment
 	case ctx.ChatSessionID != "":
 		return kindChat
 	case ctx.QuickCreatePrompt != "":

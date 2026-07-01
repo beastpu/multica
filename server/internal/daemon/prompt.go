@@ -15,7 +15,7 @@ import (
 // post with `--content-file`) because the shell-layer corruption it guards
 // against is not specific to any one provider or host (MUL-2904, #4182).
 func BuildPrompt(task Task, provider string) string {
-	if task.Kind == "agent_fix_p4_assessment" {
+	if isP4AssessmentTask(task) {
 		return buildP4AssessmentPrompt(task)
 	}
 	if task.ChatSessionID != "" {
@@ -43,6 +43,10 @@ func BuildPrompt(task Task, provider string) string {
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Start with `multica issue comment list %s --recent 10 --output json` to read the 10 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. Resolved threads come back folded — `--full` to expand. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
 	return b.String()
+}
+
+func isP4AssessmentTask(task Task) bool {
+	return task.Kind == "agent_fix_p4_assessment" || task.P4AssessmentBindingID != ""
 }
 
 func buildP4AssessmentPrompt(task Task) string {
