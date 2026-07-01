@@ -274,6 +274,7 @@ type larkCardActionTriggerEvent struct {
 	Context       struct {
 		OpenChatID    string `json:"open_chat_id"`
 		OpenMessageID string `json:"open_message_id"`
+		MessageID     string `json:"message_id"`
 	} `json:"context"`
 	Action struct {
 		Tag   string          `json:"tag"`
@@ -308,6 +309,8 @@ func (e larkCardActionTriggerEvent) messageID() string {
 	switch {
 	case e.Context.OpenMessageID != "":
 		return e.Context.OpenMessageID
+	case e.Context.MessageID != "":
+		return e.Context.MessageID
 	case e.OpenMessageID != "":
 		return e.OpenMessageID
 	default:

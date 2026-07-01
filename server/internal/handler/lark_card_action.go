@@ -183,7 +183,7 @@ func (h *Handler) handleLarkIssueConfirmationAction(ctx context.Context, msg lar
 		return err
 	}
 
-	h.patchLarkIssueConfirmationCard(ctx, inst, msg.CardAction, action, parentComment.Content)
+	h.patchLarkIssueConfirmationCard(ctx, inst, binding, issue, msg.CardAction, action, parentComment.Content)
 
 	resp := commentToResponse(comment, nil, nil)
 	actorID := uuidToString(binding.MulticaUserID)
@@ -209,9 +209,44 @@ func (h *Handler) handleLarkIssueConfirmationAction(ctx context.Context, msg lar
 	return nil
 }
 
-func (h *Handler) patchLarkIssueConfirmationCard(ctx context.Context, inst lark.Installation, cardAction *lark.InboundCardAction, action lark.IssueConfirmationCardAction, prompt string) {
-	if cardAction == nil || cardAction.CardMessageID == "" ||
-		h.LarkAPIClient == nil || h.LarkInstallations == nil || !h.LarkAPIClient.IsConfigured() {
+func (h *Handler) patchLarkIssueConfirmationCard(ctx context.Context, inst lark.Installation, binding lark.UserBinding, issue db.Issue, cardAction *lark.InboundCardAction, action lark.IssueConfirmationCardAction, prompt string) {
+	if h.LarkAPIClient == nil || h.LarkInstallations == nil || !h.LarkAPIClient.IsConfigured() {
+		return
+	}
+	cardMessageID := ""
+	if cardAction != nil {
+		cardMessageID = strings.TrimSpace(cardAction.CardMessageID)
+	}
+	if cardMessageID == "" {
+		card, err := lark.NewChannelStore(h.Queries).GetLarkInboxIssueCard(ctx, lark.GetInboxIssueCardParams{
+			WorkspaceID:    issue.WorkspaceID,
+			RecipientID:    binding.MulticaUserID,
+			IssueID:        issue.ID,
+			InstallationID: inst.ID,
+			ChannelUserID:  binding.ChannelUserID,
+		})
+		if err == nil {
+			cardMessageID = strings.TrimSpace(card.ChannelCardMessageID)
+			if cardMessageID != "" {
+				slog.Info("lark card action: using recorded issue card message id",
+					"workspace_id", uuidToString(issue.WorkspaceID),
+					"issue_id", uuidToString(issue.ID),
+					"installation_id", uuidToString(inst.ID))
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("lark card action: lookup issue card for patch failed",
+				"workspace_id", uuidToString(issue.WorkspaceID),
+				"issue_id", uuidToString(issue.ID),
+				"installation_id", uuidToString(inst.ID),
+				"error", err)
+		}
+	}
+	if cardMessageID == "" {
+		slog.Warn("lark card action: skip card patch because card message id is empty",
+			"workspace_id", uuidToString(issue.WorkspaceID),
+			"issue_id", uuidToString(issue.ID),
+			"installation_id", uuidToString(inst.ID),
+			"parent_comment_id", action.ParentCommentID)
 		return
 	}
 	secret, err := h.LarkInstallations.DecryptAppSecret(inst)
@@ -233,20 +268,26 @@ func (h *Handler) patchLarkIssueConfirmationCard(ctx context.Context, inst lark.
 	if err != nil {
 		slog.Warn("lark card action: render resolved card failed",
 			"installation_id", uuidToString(inst.ID),
-			"card_message_id", cardAction.CardMessageID,
+			"card_message_id", cardMessageID,
 			"error", err)
 		return
 	}
 	if err := h.LarkAPIClient.PatchInteractiveCard(ctx, lark.PatchCardParams{
 		InstallationID:    creds,
-		LarkCardMessageID: cardAction.CardMessageID,
+		LarkCardMessageID: cardMessageID,
 		CardJSON:          cardJSON,
 	}); err != nil {
 		slog.Warn("lark card action: patch resolved card failed",
 			"installation_id", uuidToString(inst.ID),
-			"card_message_id", cardAction.CardMessageID,
+			"card_message_id", cardMessageID,
 			"error", err)
+		return
 	}
+	slog.Info("lark card action: patched resolved card",
+		"workspace_id", uuidToString(issue.WorkspaceID),
+		"issue_id", uuidToString(issue.ID),
+		"installation_id", uuidToString(inst.ID),
+		"card_message_id", cardMessageID)
 }
 
 var _ lark.CardActionHandler = (*Handler)(nil)

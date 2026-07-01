@@ -150,7 +150,7 @@ func TestLarkJSONFrameDecoderIssueConfirmationCardAction(t *testing.T) {
 		},
 		"event":{
 			"operator":{"operator_id":{"open_id":"ou_requester"}},
-			"context":{"open_chat_id":"oc_dm","open_message_id":"om_issue_card_1"},
+			"context":{"open_chat_id":"oc_dm","message_id":"om_issue_card_1"},
 			"action":{"tag":"button","value":` + string(value) + `}
 		}
 	}`)
