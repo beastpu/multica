@@ -37,14 +37,15 @@ func (c emitOnceConnector) Run(ctx context.Context, inst Installation, emit Even
 }
 
 type recordingCardActionHandler struct {
-	calls int
-	msg   InboundMessage
+	calls    int
+	msg      InboundMessage
+	response DispatchResult
 }
 
-func (h *recordingCardActionHandler) HandleLarkCardAction(_ context.Context, msg InboundMessage) error {
+func (h *recordingCardActionHandler) HandleLarkCardAction(_ context.Context, msg InboundMessage) (DispatchResult, error) {
 	h.calls++
 	h.msg = msg
-	return nil
+	return h.response, nil
 }
 
 // feishuConfigJSON builds a channel_installation.config blob like migration 124

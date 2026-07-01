@@ -114,4 +114,10 @@ type DispatchResult struct {
 	IssueIdentifier string
 	// IssueTitle is the title supplied on /issue, echoed in the confirmation.
 	IssueTitle string
+	// CardActionResponseJSON is the JSON-encoded callback response returned
+	// inside the long-connection ACK for card.action.trigger. Lark expects
+	// card updates for interactive callbacks on this ACK path; ordinary
+	// message PATCH calls can return success without updating the clicked
+	// card in the user's client.
+	CardActionResponseJSON string
 }

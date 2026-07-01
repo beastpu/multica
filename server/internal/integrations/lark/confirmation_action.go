@@ -407,6 +407,30 @@ func RenderIssueConfirmationResolvedCard(content string, action IssueConfirmatio
 	return string(raw), nil
 }
 
+// RenderIssueConfirmationCardActionResponse wraps the resolved card in the
+// card.action.trigger response envelope Lark expects on the callback ACK path.
+func RenderIssueConfirmationCardActionResponse(content string, action IssueConfirmationCardAction) (string, error) {
+	cardJSON, err := RenderIssueConfirmationResolvedCard(content, action)
+	if err != nil {
+		return "", err
+	}
+	var card json.RawMessage
+	if err := json.Unmarshal([]byte(cardJSON), &card); err != nil {
+		return "", err
+	}
+	resp := map[string]any{
+		"card": map[string]any{
+			"type": "raw",
+			"data": card,
+		},
+	}
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
 func parseConfirmationCardValue(raw json.RawMessage) (confirmationCardValue, bool) {
 	if len(raw) == 0 {
 		return confirmationCardValue{}, false

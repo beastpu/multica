@@ -504,11 +504,8 @@ func TestInboxNotifierAddsIssueConfirmationActionsForAgentPrompt(t *testing.T) {
 		t.Fatalf("expected one fresh direct card for confirmation prompt, got %d", len(api.directCardsOut))
 	}
 	card := api.directCardsOut[0].CardJSON
-	if q.upsertArg.ChannelCardMessageID != "lark-direct-card-msg-id" ||
-		q.upsertArg.IssueID != issueID ||
-		q.upsertArg.RecipientID != userID ||
-		q.upsertArg.ChannelUserID != "ou_actor" {
-		t.Fatalf("confirmation card message id not recorded for fallback patch: %+v", q.upsertArg)
+	if q.upsertArg.ChannelCardMessageID != "" {
+		t.Fatalf("confirmation card should stay independent from merged issue cards, got upsert arg: %+v", q.upsertArg)
 	}
 	for _, want := range []string{
 		issueConfirmationCardActionKind,

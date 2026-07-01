@@ -48,6 +48,37 @@ func TestRenderIssueConfirmationResolvedCardCancelResult(t *testing.T) {
 	}
 }
 
+func TestRenderIssueConfirmationCardActionResponseUsesRawCard(t *testing.T) {
+	t.Parallel()
+	respJSON, err := RenderIssueConfirmationCardActionResponse("是否确认发布？", IssueConfirmationCardAction{
+		Action:  confirmationActionConfirm,
+		Message: "确认发布",
+	})
+	if err != nil {
+		t.Fatalf("render response: %v", err)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(respJSON), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v\n%s", err, respJSON)
+	}
+	card, _ := resp["card"].(map[string]any)
+	if card == nil || card["type"] != "raw" {
+		t.Fatalf("callback response must use raw card payload: %v", resp)
+	}
+	data, _ := card["data"].(map[string]any)
+	if data == nil {
+		t.Fatalf("callback response card.data missing: %v", resp)
+	}
+	if containsCardTag(data, "action") || strings.Contains(respJSON, `"tag":"button"`) {
+		t.Fatalf("callback response must replace buttons with receipt card: %s", respJSON)
+	}
+	for _, want := range []string{"是否确认发布？", "已确认", "确认发布"} {
+		if !strings.Contains(respJSON, want) {
+			t.Fatalf("callback response missing %q: %s", want, respJSON)
+		}
+	}
+}
+
 func containsCardTag(v any, tag string) bool {
 	switch x := v.(type) {
 	case map[string]any:

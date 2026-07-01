@@ -135,15 +135,13 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 	if err != nil {
 		return fmt.Errorf("render inbox card: %w", err)
 	}
-	messageID, err := n.client.SendDirectInteractiveCard(ctx, SendDirectCardParams{
+	if _, err := n.client.SendDirectInteractiveCard(ctx, SendDirectCardParams{
 		InstallationID: creds,
 		OpenID:         OpenID(row.UserBinding.ChannelUserID),
 		CardJSON:       cardJSON,
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Errorf("send inbox dm: %w", err)
 	}
-	n.recordIssueConfirmationCard(ctx, row, workspaceID, recipientID, item, messageID)
 	return nil
 }
 
@@ -442,37 +440,6 @@ func (n *InboxNotifier) inboxNotificationActions(workspaceID pgtype.UUID, row In
 		})
 	}
 	return actions
-}
-
-func (n *InboxNotifier) recordIssueConfirmationCard(ctx context.Context, row InboxNotificationBinding, workspaceID, recipientID pgtype.UUID, item inboxNotificationItem, messageID string) {
-	if strings.TrimSpace(messageID) == "" {
-		return
-	}
-	issueIDRaw := ""
-	if item.IssueID != nil {
-		issueIDRaw = strings.TrimSpace(*item.IssueID)
-	}
-	issueID, err := scanUUID(issueIDRaw)
-	if err != nil {
-		return
-	}
-	if _, _, ok := issueConfirmationCardValues(workspaceID, row, recipientID, item, time.Now()); !ok {
-		return
-	}
-	if _, err := n.queries.UpsertLarkInboxIssueCard(ctx, UpsertInboxIssueCardParams{
-		WorkspaceID:          workspaceID,
-		RecipientID:          recipientID,
-		IssueID:              issueID,
-		InstallationID:       row.Installation.ID,
-		ChannelUserID:        row.UserBinding.ChannelUserID,
-		ChannelCardMessageID: messageID,
-	}); err != nil {
-		n.log.Warn("lark inbox notifier: record confirmation card failed",
-			"workspace_id", uuidString(workspaceID),
-			"issue_id", uuidString(issueID),
-			"installation_id", uuidString(row.Installation.ID),
-			"err", err.Error())
-	}
 }
 
 func issueConfirmationCardValues(workspaceID pgtype.UUID, row InboxNotificationBinding, recipientID pgtype.UUID, item inboxNotificationItem, now time.Time) (issueConfirmationCardValue, issueConfirmationCardValue, bool) {

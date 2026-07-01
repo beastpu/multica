@@ -22,9 +22,11 @@ import (
 // existing Lark transport: Connect runs the shared WS long-conn connector for
 // this installation, translating each decoded event into a normalized
 // channel.InboundMessage and handing it to the engine's shared inbound handler
-// (the Router, injected via channel.Config.Handler); Send posts a text reply
-// through the Lark HTTP API. One instance is built per channel_installation by
-// the registered Factory; the connector is shared across instances.
+// (the Router, injected via channel.Config.Handler); card callbacks can return
+// a DispatchResult so the connector can place callback response data in the
+// long-connection ACK. Send posts a text reply through the Lark HTTP API. One
+// instance is built per channel_installation by the registered Factory; the
+// connector is shared across instances.
 //
 // The Channel holds only the credentials it needs for Connect/Send (decoded
 // from the per-installation config blob). The installation IDENTITY
@@ -43,7 +45,7 @@ type feishuChannel struct {
 var _ channel.Channel = (*feishuChannel)(nil)
 
 type CardActionHandler interface {
-	HandleLarkCardAction(ctx context.Context, msg InboundMessage) error
+	HandleLarkCardAction(ctx context.Context, msg InboundMessage) (DispatchResult, error)
 }
 
 func (c *feishuChannel) Type() channel.Type { return channel.TypeFeishu }
@@ -52,8 +54,8 @@ func (c *feishuChannel) Type() channel.Type { return channel.TypeFeishu }
 // until ctx is cancelled or the link drops — the contract engine.Supervisor
 // relies on to tie lease renewal to connection liveness. Each decoded event is
 // normalized to a channel.InboundMessage and handed to the engine handler. The
-// connector discards the (DispatchResult) return and reacts only to the error,
-// so the handler's error is what flows back.
+// connector uses DispatchResult for platform-specific ACK data and uses the
+// handler's error to decide whether to NACK/retry.
 func (c *feishuChannel) Connect(ctx context.Context) error {
 	return c.conn.Run(ctx, c.inst, func(emitCtx context.Context, lm InboundMessage) (DispatchResult, error) {
 		if lm.CardAction != nil {
@@ -63,7 +65,7 @@ func (c *feishuChannel) Connect(ctx context.Context) error {
 				}
 				return DispatchResult{}, nil
 			}
-			return DispatchResult{}, c.cardActions.HandleLarkCardAction(emitCtx, lm)
+			return c.cardActions.HandleLarkCardAction(emitCtx, lm)
 		}
 		if c.handler == nil {
 			return DispatchResult{}, errors.New("lark: inbound handler not configured")
