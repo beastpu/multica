@@ -234,6 +234,84 @@ func (s *ChannelStore) CreateLarkUserBinding(ctx context.Context, arg CreateUser
 	return userBindingFromRow(row)
 }
 
+// ---- inbox notification ----
+
+func (s *ChannelStore) ListActiveLarkUserBindingsByMember(ctx context.Context, arg ListInboxNotificationBindingsParams) ([]InboxNotificationBinding, error) {
+	rows, err := s.Queries.ListActiveChannelLarkUserBindingsByMember(ctx, db.ListActiveChannelLarkUserBindingsByMemberParams{
+		WorkspaceID:   arg.WorkspaceID,
+		MulticaUserID: arg.MulticaUserID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]InboxNotificationBinding, 0, len(rows))
+	for _, row := range rows {
+		binding, err := userBindingFromRow(row.ChannelUserBinding)
+		if err != nil {
+			return nil, err
+		}
+		inst, err := installationFromRow(row.ChannelInstallation)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, InboxNotificationBinding{
+			UserBinding:  binding,
+			Installation: inst,
+		})
+	}
+	return items, nil
+}
+
+func (s *ChannelStore) ClaimLarkInboxNotificationDelivery(ctx context.Context, arg ClaimInboxNotificationDeliveryParams) (bool, error) {
+	return s.Queries.ClaimChannelLarkInboxNotificationDelivery(ctx, db.ClaimChannelLarkInboxNotificationDeliveryParams{
+		InboxItemID:    arg.InboxItemID,
+		InstallationID: arg.InstallationID,
+		ChannelUserID:  arg.ChannelUserID,
+	})
+}
+
+func (s *ChannelStore) GetLarkInboxIssueCard(ctx context.Context, arg GetInboxIssueCardParams) (InboxIssueCard, error) {
+	row, err := s.Queries.GetChannelLarkInboxIssueCard(ctx, db.GetChannelLarkInboxIssueCardParams{
+		WorkspaceID:    arg.WorkspaceID,
+		RecipientID:    arg.RecipientID,
+		IssueID:        arg.IssueID,
+		InstallationID: arg.InstallationID,
+		ChannelUserID:  arg.ChannelUserID,
+	})
+	if err != nil {
+		return InboxIssueCard{}, err
+	}
+	return inboxIssueCardFromRow(row), nil
+}
+
+func (s *ChannelStore) UpsertLarkInboxIssueCard(ctx context.Context, arg UpsertInboxIssueCardParams) (InboxIssueCard, error) {
+	row, err := s.Queries.UpsertChannelLarkInboxIssueCard(ctx, db.UpsertChannelLarkInboxIssueCardParams{
+		WorkspaceID:          arg.WorkspaceID,
+		RecipientID:          arg.RecipientID,
+		IssueID:              arg.IssueID,
+		InstallationID:       arg.InstallationID,
+		ChannelUserID:        arg.ChannelUserID,
+		ChannelCardMessageID: arg.ChannelCardMessageID,
+	})
+	if err != nil {
+		return InboxIssueCard{}, err
+	}
+	return inboxIssueCardFromRow(row), nil
+}
+
+func (s *ChannelStore) TouchLarkInboxIssueCard(ctx context.Context, id pgtype.UUID) error {
+	return s.Queries.TouchChannelLarkInboxIssueCard(ctx, id)
+}
+
+func (s *ChannelStore) ListLarkInboxIssueCardItems(ctx context.Context, arg ListInboxIssueCardItemsParams) ([]db.InboxItem, error) {
+	return s.Queries.ListChannelLarkInboxIssueCardItems(ctx, db.ListChannelLarkInboxIssueCardItemsParams{
+		WorkspaceID: arg.WorkspaceID,
+		RecipientID: arg.RecipientID,
+		IssueID:     arg.IssueID,
+		Types:       arg.Types,
+	})
+}
+
 // ---- chat session binding ----
 
 func (s *ChannelStore) GetLarkChatSessionBinding(ctx context.Context, arg GetChatSessionBindingParams) (ChatSessionBinding, error) {

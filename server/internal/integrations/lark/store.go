@@ -70,6 +70,20 @@ type UserBinding struct {
 	BoundAt        pgtype.Timestamptz
 }
 
+// InboxNotificationBinding pairs a Feishu user binding with the active
+// installation that can send direct messages to that platform user.
+type InboxNotificationBinding struct {
+	UserBinding  UserBinding
+	Installation Installation
+}
+
+// InboxIssueCard is the channel-backed record of one mergeable inbox card that
+// has already been sent to a Feishu user.
+type InboxIssueCard struct {
+	ID                   pgtype.UUID
+	ChannelCardMessageID string
+}
+
 // ChatSessionBinding is the flat view of a channel_chat_session_binding row.
 // Every field is a flat column (config is unused for feishu today), so this is
 // a pure copy with no JSON involved.
@@ -212,6 +226,13 @@ func userBindingFromRow(row db.ChannelUserBinding) (UserBinding, error) {
 // a previously-captured union_id with this write.
 func encodeBindingConfig(b UserBinding) ([]byte, error) {
 	return json.Marshal(feishuBindingConfig{UnionID: b.UnionID.String})
+}
+
+func inboxIssueCardFromRow(row db.ChannelInboxIssueCard) InboxIssueCard {
+	return InboxIssueCard{
+		ID:                   row.ID,
+		ChannelCardMessageID: row.ChannelCardMessageID,
+	}
 }
 
 // chatSessionBindingFromRow copies a channel_chat_session_binding row into the

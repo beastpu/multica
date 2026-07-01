@@ -112,6 +112,41 @@ func (q *Queries) ClaimChannelInboundDedup(ctx context.Context, arg ClaimChannel
 	return i, err
 }
 
+const claimChannelLarkInboxNotificationDelivery = `-- name: ClaimChannelLarkInboxNotificationDelivery :one
+
+WITH ins AS (
+    INSERT INTO channel_inbox_notification_delivery (
+        inbox_item_id,
+        installation_id,
+        channel_type,
+        channel_user_id
+    ) VALUES ($1, $2, 'feishu', $3)
+    ON CONFLICT DO NOTHING
+    RETURNING true AS claimed
+)
+SELECT COALESCE((SELECT claimed FROM ins), false)::boolean AS claimed
+`
+
+type ClaimChannelLarkInboxNotificationDeliveryParams struct {
+	InboxItemID    pgtype.UUID `json:"inbox_item_id"`
+	InstallationID pgtype.UUID `json:"installation_id"`
+	ChannelUserID  string      `json:"channel_user_id"`
+}
+
+// =====================
+// channel_inbox_notification_delivery
+// =====================
+// Claims one outbound Feishu inbox notification delivery. Keyed by the durable
+// inbox_item row plus concrete channel installation and recipient open_id so
+// repeated inbox:new events, duplicate bus subscribers, or multi-replica
+// handling cannot send duplicate DMs.
+func (q *Queries) ClaimChannelLarkInboxNotificationDelivery(ctx context.Context, arg ClaimChannelLarkInboxNotificationDeliveryParams) (bool, error) {
+	row := q.db.QueryRow(ctx, claimChannelLarkInboxNotificationDelivery, arg.InboxItemID, arg.InstallationID, arg.ChannelUserID)
+	var claimed bool
+	err := row.Scan(&claimed)
+	return claimed, err
+}
+
 const consumeChannelBindingToken = `-- name: ConsumeChannelBindingToken :one
 UPDATE channel_binding_token
 SET consumed_at = now()
@@ -547,6 +582,53 @@ func (q *Queries) GetChannelInstallationInWorkspace(ctx context.Context, arg Get
 	return i, err
 }
 
+const getChannelLarkInboxIssueCard = `-- name: GetChannelLarkInboxIssueCard :one
+
+SELECT id, workspace_id, recipient_id, issue_id, installation_id, channel_type, channel_user_id, channel_card_message_id, created_at, updated_at
+FROM channel_inbox_issue_card
+WHERE workspace_id = $1
+  AND recipient_id = $2
+  AND issue_id = $3
+  AND installation_id = $4
+  AND channel_type = 'feishu'
+  AND channel_user_id = $5
+`
+
+type GetChannelLarkInboxIssueCardParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	RecipientID    pgtype.UUID `json:"recipient_id"`
+	IssueID        pgtype.UUID `json:"issue_id"`
+	InstallationID pgtype.UUID `json:"installation_id"`
+	ChannelUserID  string      `json:"channel_user_id"`
+}
+
+// =====================
+// channel_inbox_issue_card
+// =====================
+func (q *Queries) GetChannelLarkInboxIssueCard(ctx context.Context, arg GetChannelLarkInboxIssueCardParams) (ChannelInboxIssueCard, error) {
+	row := q.db.QueryRow(ctx, getChannelLarkInboxIssueCard,
+		arg.WorkspaceID,
+		arg.RecipientID,
+		arg.IssueID,
+		arg.InstallationID,
+		arg.ChannelUserID,
+	)
+	var i ChannelInboxIssueCard
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RecipientID,
+		&i.IssueID,
+		&i.InstallationID,
+		&i.ChannelType,
+		&i.ChannelUserID,
+		&i.ChannelCardMessageID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getChannelOutboundCardByTask = `-- name: GetChannelOutboundCardByTask :one
 SELECT id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at FROM channel_outbound_card_message
 WHERE task_id = $1
@@ -651,6 +733,76 @@ func (q *Queries) ListActiveChannelInstallations(ctx context.Context, channelTyp
 			&i.InstalledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActiveChannelLarkUserBindingsByMember = `-- name: ListActiveChannelLarkUserBindingsByMember :many
+SELECT cub.id, cub.workspace_id, cub.multica_user_id, cub.installation_id, cub.channel_type, cub.channel_user_id, cub.config, cub.bound_at, ci.id, ci.workspace_id, ci.agent_id, ci.channel_type, ci.config, ci.status, ci.ws_lease_token, ci.ws_lease_expires_at, ci.installer_user_id, ci.installed_at, ci.created_at, ci.updated_at
+FROM channel_user_binding cub
+JOIN channel_installation ci ON ci.id = cub.installation_id
+JOIN member m ON m.workspace_id = cub.workspace_id
+             AND m.user_id = cub.multica_user_id
+WHERE cub.workspace_id = $1
+  AND cub.multica_user_id = $2
+  AND cub.channel_type = 'feishu'
+  AND ci.channel_type = 'feishu'
+  AND ci.workspace_id = cub.workspace_id
+  AND ci.status = 'active'
+ORDER BY cub.bound_at DESC
+`
+
+type ListActiveChannelLarkUserBindingsByMemberParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	MulticaUserID pgtype.UUID `json:"multica_user_id"`
+}
+
+type ListActiveChannelLarkUserBindingsByMemberRow struct {
+	ChannelUserBinding  ChannelUserBinding  `json:"channel_user_binding"`
+	ChannelInstallation ChannelInstallation `json:"channel_installation"`
+}
+
+// Outbound inbox notifications: find the recipient's bound Feishu accounts in
+// this workspace, with the active bot installation needed for credentials.
+// The member join restores the membership proof that used to be guaranteed by
+// lark_user_binding's composite FK before channel_* removed database FKs.
+func (q *Queries) ListActiveChannelLarkUserBindingsByMember(ctx context.Context, arg ListActiveChannelLarkUserBindingsByMemberParams) ([]ListActiveChannelLarkUserBindingsByMemberRow, error) {
+	rows, err := q.db.Query(ctx, listActiveChannelLarkUserBindingsByMember, arg.WorkspaceID, arg.MulticaUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListActiveChannelLarkUserBindingsByMemberRow{}
+	for rows.Next() {
+		var i ListActiveChannelLarkUserBindingsByMemberRow
+		if err := rows.Scan(
+			&i.ChannelUserBinding.ID,
+			&i.ChannelUserBinding.WorkspaceID,
+			&i.ChannelUserBinding.MulticaUserID,
+			&i.ChannelUserBinding.InstallationID,
+			&i.ChannelUserBinding.ChannelType,
+			&i.ChannelUserBinding.ChannelUserID,
+			&i.ChannelUserBinding.Config,
+			&i.ChannelUserBinding.BoundAt,
+			&i.ChannelInstallation.ID,
+			&i.ChannelInstallation.WorkspaceID,
+			&i.ChannelInstallation.AgentID,
+			&i.ChannelInstallation.ChannelType,
+			&i.ChannelInstallation.Config,
+			&i.ChannelInstallation.Status,
+			&i.ChannelInstallation.WsLeaseToken,
+			&i.ChannelInstallation.WsLeaseExpiresAt,
+			&i.ChannelInstallation.InstallerUserID,
+			&i.ChannelInstallation.InstalledAt,
+			&i.ChannelInstallation.CreatedAt,
+			&i.ChannelInstallation.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -791,6 +943,66 @@ func (q *Queries) ListChannelInstallationsByWorkspace(ctx context.Context, arg L
 			&i.InstalledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChannelLarkInboxIssueCardItems = `-- name: ListChannelLarkInboxIssueCardItems :many
+SELECT id, workspace_id, recipient_type, recipient_id, type, severity, issue_id, title, body, read, archived, created_at, actor_type, actor_id, details
+FROM inbox_item
+WHERE workspace_id = $1
+  AND recipient_type = 'member'
+  AND recipient_id = $2
+  AND issue_id = $3
+  AND type = ANY($4::text[])
+ORDER BY created_at ASC, id ASC
+LIMIT 20
+`
+
+type ListChannelLarkInboxIssueCardItemsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RecipientID pgtype.UUID `json:"recipient_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	Types       []string    `json:"types"`
+}
+
+func (q *Queries) ListChannelLarkInboxIssueCardItems(ctx context.Context, arg ListChannelLarkInboxIssueCardItemsParams) ([]InboxItem, error) {
+	rows, err := q.db.Query(ctx, listChannelLarkInboxIssueCardItems,
+		arg.WorkspaceID,
+		arg.RecipientID,
+		arg.IssueID,
+		arg.Types,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InboxItem{}
+	for rows.Next() {
+		var i InboxItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.RecipientType,
+			&i.RecipientID,
+			&i.Type,
+			&i.Severity,
+			&i.IssueID,
+			&i.Title,
+			&i.Body,
+			&i.Read,
+			&i.Archived,
+			&i.CreatedAt,
+			&i.ActorType,
+			&i.ActorID,
+			&i.Details,
 		); err != nil {
 			return nil, err
 		}
@@ -974,6 +1186,17 @@ func (q *Queries) SetChannelInstallationStatus(ctx context.Context, arg SetChann
 	return err
 }
 
+const touchChannelLarkInboxIssueCard = `-- name: TouchChannelLarkInboxIssueCard :exec
+UPDATE channel_inbox_issue_card
+SET updated_at = now()
+WHERE id = $1
+`
+
+func (q *Queries) TouchChannelLarkInboxIssueCard(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, touchChannelLarkInboxIssueCard, id)
+	return err
+}
+
 const updateChannelChatSessionBindingReplyTarget = `-- name: UpdateChannelChatSessionBindingReplyTarget :exec
 UPDATE channel_chat_session_binding
 SET last_message_id = $2,
@@ -1080,6 +1303,64 @@ func (q *Queries) UpsertChannelInstallation(ctx context.Context, arg UpsertChann
 		&i.WsLeaseExpiresAt,
 		&i.InstallerUserID,
 		&i.InstalledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertChannelLarkInboxIssueCard = `-- name: UpsertChannelLarkInboxIssueCard :one
+INSERT INTO channel_inbox_issue_card (
+    workspace_id,
+    recipient_id,
+    issue_id,
+    installation_id,
+    channel_type,
+    channel_user_id,
+    channel_card_message_id
+) VALUES ($1, $2, $3, $4, 'feishu', $5, $6)
+ON CONFLICT (
+    workspace_id,
+    recipient_id,
+    issue_id,
+    installation_id,
+    channel_type,
+    channel_user_id
+)
+DO UPDATE SET
+    channel_card_message_id = EXCLUDED.channel_card_message_id,
+    updated_at = now()
+RETURNING id, workspace_id, recipient_id, issue_id, installation_id, channel_type, channel_user_id, channel_card_message_id, created_at, updated_at
+`
+
+type UpsertChannelLarkInboxIssueCardParams struct {
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	RecipientID          pgtype.UUID `json:"recipient_id"`
+	IssueID              pgtype.UUID `json:"issue_id"`
+	InstallationID       pgtype.UUID `json:"installation_id"`
+	ChannelUserID        string      `json:"channel_user_id"`
+	ChannelCardMessageID string      `json:"channel_card_message_id"`
+}
+
+func (q *Queries) UpsertChannelLarkInboxIssueCard(ctx context.Context, arg UpsertChannelLarkInboxIssueCardParams) (ChannelInboxIssueCard, error) {
+	row := q.db.QueryRow(ctx, upsertChannelLarkInboxIssueCard,
+		arg.WorkspaceID,
+		arg.RecipientID,
+		arg.IssueID,
+		arg.InstallationID,
+		arg.ChannelUserID,
+		arg.ChannelCardMessageID,
+	)
+	var i ChannelInboxIssueCard
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RecipientID,
+		&i.IssueID,
+		&i.InstallationID,
+		&i.ChannelType,
+		&i.ChannelUserID,
+		&i.ChannelCardMessageID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
