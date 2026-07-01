@@ -35,7 +35,17 @@ func chatReplyNeedsConfirmationAction(content string) bool {
 	}
 	return strings.Contains(trimmed, "请回复") ||
 		strings.Contains(trimmed, "回复“"+confirmationMessageConfirm+"”") ||
-		strings.Contains(trimmed, "回复\""+confirmationMessageConfirm+"\"")
+		strings.Contains(trimmed, "回复\""+confirmationMessageConfirm+"\"") ||
+		hasStandaloneConfirmationLine(trimmed)
+}
+
+func hasStandaloneConfirmationLine(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(line) == confirmationMessageConfirm {
+			return true
+		}
+	}
+	return false
 }
 
 func confirmationActionMessage(action string) (string, bool) {

@@ -336,6 +336,49 @@ func TestPatcherRoutesConfirmationPromptToActionCard(t *testing.T) {
 	}
 }
 
+func TestPatcherRoutesStandaloneConfirmationLineToActionCard(t *testing.T) {
+	p, q, api := newTestPatcher(t)
+	taskID := uuidFromString(t, "eeaaaaaa-eeaa-eeaa-eeaa-eeeeeeeeeeee")
+	requesterID := uuidFromString(t, "aaaaaaaa-9999-9999-9999-999999999999")
+	q.task = db.AgentTaskQueue{ID: taskID, InitiatorUserID: requesterID}
+	q.bindings = []InboxNotificationBinding{
+		{
+			UserBinding: UserBinding{
+				MulticaUserID:  requesterID,
+				InstallationID: q.installation.ID,
+				ChannelUserID:  "ou_requester",
+			},
+			Installation: q.installation,
+		},
+	}
+	content := "项目：`测试`\n流水线：`测试后端发布`\n\n确认执行"
+
+	p.handleEvent(events.Event{
+		Type:          protocol.EventChatDone,
+		TaskID:        uuidString(taskID),
+		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		Payload: protocol.ChatDonePayload{
+			TaskID:        uuidString(taskID),
+			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			Content:       content,
+		},
+	})
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.sent) != 1 {
+		t.Fatalf("standalone confirmation line should render one confirmation card; got %d", len(api.sent))
+	}
+	if len(api.mdCardSent) != 0 || len(api.textSent) != 0 {
+		t.Fatalf("confirmation prompt must not fall through to markdown/text; markdown=%d text=%d", len(api.mdCardSent), len(api.textSent))
+	}
+	for _, want := range []string{confirmationCardActionKind, confirmationMessageConfirm, uuidString(taskID), "ou_requester"} {
+		if !strings.Contains(api.sent[0].CardJSON, want) {
+			t.Fatalf("confirmation card missing %q: %s", want, api.sent[0].CardJSON)
+		}
+	}
+}
+
 func TestPatcherFallsBackToTextWhenConfirmationRequesterUnknown(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee999999-ee99-ee99-ee99-eeeeeeeeeeee")
