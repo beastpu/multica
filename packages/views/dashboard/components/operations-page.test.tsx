@@ -677,6 +677,40 @@ describe("OperationsPage", () => {
     expect(screen.queryByText("Login broke")).toBeNull();
   });
 
+  it("can reset the workstream filter back to all workstreams", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    await user.click(screen.getByLabelText("Workstream"));
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText("rel_1.7.3/client"),
+    );
+
+    expect(screen.getByText("Client crash")).toBeTruthy();
+    expect(screen.queryByText("Login broke")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "All workstreams" }));
+
+    expect(screen.getByText("Client crash")).toBeTruthy();
+    expect(screen.getByText("Login broke")).toBeTruthy();
+
+    await user.click(screen.getByLabelText("Workstream"));
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText("rel_1.7.3/client"),
+    );
+
+    expect(screen.getByText("Client crash")).toBeTruthy();
+    expect(screen.queryByText("Login broke")).toBeNull();
+
+    await user.click(screen.getByLabelText("Workstream"));
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText("All workstreams"),
+    );
+
+    expect(screen.getByText("Client crash")).toBeTruthy();
+    expect(screen.getByText("Login broke")).toBeTruthy();
+  });
+
   it("toggles mismatch-only off on the second click", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);

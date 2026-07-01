@@ -2010,35 +2010,50 @@ function ValueFilter({
 }) {
   const selected = options.find((option) => option.value === value);
   return (
-    <Select value={value} onValueChange={(v) => onChange(v ?? allValue)}>
-      <SelectTrigger
-        size="sm"
-        aria-label={ariaLabel}
-        className="min-w-[150px] max-w-[190px]"
-      >
-        <SelectValue>
-          {() => (
-            <span className="truncate">
-              {value === allValue ? allLabel : selected?.label ?? value}
-            </span>
-          )}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent
-        align="start"
-        alignItemWithTrigger={false}
-        className="max-h-72"
-      >
-        <SelectItem value={allValue}>
-          <span className="truncate">{allLabel}</span>
-        </SelectItem>
-        {options.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            <span className="truncate">{option.label}</span>
+    <div className="flex items-center gap-1">
+      <Select value={value} onValueChange={(v) => onChange(v ?? allValue)}>
+        <SelectTrigger
+          size="sm"
+          aria-label={ariaLabel}
+          className="min-w-[150px] max-w-[190px]"
+        >
+          <SelectValue>
+            {() => (
+              <span className="truncate">
+                {value === allValue ? allLabel : selected?.label ?? value}
+              </span>
+            )}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent
+          align="start"
+          alignItemWithTrigger={false}
+          className="max-h-72"
+        >
+          <SelectItem value={allValue}>
+            <span className="truncate">{allLabel}</span>
           </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              <span className="truncate">{option.label}</span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {value !== allValue ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={allLabel}
+          title={allLabel}
+          className="h-8 w-8 shrink-0"
+          onClick={() => onChange(allValue)}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
