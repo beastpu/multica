@@ -1981,6 +1981,7 @@ SELECT
   i.assignee_id,
   i.title AS issue_title,
   i.description AS issue_description,
+  i.metadata AS issue_metadata,
   a.runtime_id AS agent_runtime_id,
   a.archived_at AS agent_archived_at,
   fpi.status_mapping,
@@ -2014,6 +2015,7 @@ type GetP4AssessmentBindingRow struct {
 	AssigneeID          pgtype.UUID        `json:"assignee_id"`
 	IssueTitle          string             `json:"issue_title"`
 	IssueDescription    pgtype.Text        `json:"issue_description"`
+	IssueMetadata       []byte             `json:"issue_metadata"`
 	AgentRuntimeID      pgtype.UUID        `json:"agent_runtime_id"`
 	AgentArchivedAt     pgtype.Timestamptz `json:"agent_archived_at"`
 	StatusMapping       []byte             `json:"status_mapping"`
@@ -2040,6 +2042,7 @@ func (q *Queries) GetP4AssessmentBinding(ctx context.Context, arg GetP4Assessmen
 		&i.AssigneeID,
 		&i.IssueTitle,
 		&i.IssueDescription,
+		&i.IssueMetadata,
 		&i.AgentRuntimeID,
 		&i.AgentArchivedAt,
 		&i.StatusMapping,

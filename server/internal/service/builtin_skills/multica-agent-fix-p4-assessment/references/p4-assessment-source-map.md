@@ -15,8 +15,23 @@ for the behavior contracts the skill teaches.
   `issue_id`, `feishu_binding_id`, `mode: assess_only`, and `prompt_version`.
 - `P4AssessmentService.Evidence` backs
   `GET /api/operations/agent-fixes/{binding_id}/p4-evidence`. It returns
-  binding, issue, task summaries, selected comments, and linked Perforce review
-  summaries from already-ingested Multica DB data.
+  binding, issue, task summaries, selected Multica comments, optional Feishu
+  Project comments fetched through the configured integration plugin, and linked
+  Perforce review summaries.
+- The same evidence builder includes `issue.metadata` and derives
+  `cl_candidates[]` / `review_candidates[]` from structured issue metadata
+  such as `flow_cl` / `flow_review`, external fields, selected Multica
+  comments, Feishu Project comments when available, and linked Perforce review
+  rows. Candidate entries carry `source` and `field` so the agent can prioritize
+  lookup without treating hints as proof.
+- Evidence `binding.external_status_label`, `binding.mapped_status`,
+  `binding.external_fields`, and `issue.description` all come from Multica DB
+  rows produced by Feishu Project sync. `external_comments[]` is fetched at
+  assessment evidence time through `FeishuProjectClient.ListWorkItemComments`.
+  The evidence builder also uses `FeishuProjectClient.ListRelatedWorkItems` to
+  follow `_field_linked_story` to a story/requirement work item and include its
+  comments for hotfix flows. Failures are returned as
+  `external_evidence_errors[]` instead of failing the whole evidence response.
 - `p4EvidenceReviewMaps` projects linked Swarm evidence, including `changes[]`,
   `commits[]`, `swarm_branch`, `event_type`, `sent_at`, and restricted
   `raw_payload`. `changes[]` are review-attached changes, while `commits[]` /
@@ -44,6 +59,12 @@ for the behavior contracts the skill teaches.
 - `P4AssessmentService.CompleteTask` writes parsed assessment output only to
   `agent_fix_p4_assessment`. Parser failure marks the assessment failed with a
   parser warning.
+- Implementation comparison is stored inside the parsed `evidence` JSON object
+  rather than as dedicated columns. The shipped skill constrains
+  `evidence.implementation_comparison.method_equivalence` to the binary values
+  `equivalent` or `not_equivalent`; top-level `quality_prediction` and
+  `delivery_attribution_prediction` remain the persisted enum fields used by
+  Operations display and filtering.
 
 ## Human review boundary
 
@@ -63,6 +84,10 @@ for the behavior contracts the skill teaches.
   evidence. That path can also advance issue status when a committed review
   with close intent is settled, so assessment must treat it as evidence only
   and must not reuse it as its state machine.
+- Runtime-side live P4/Swarm checks are intentionally agent-owned. The Multica
+  server has no Swarm/P4 credential for assessment; the skill therefore teaches
+  read-only commands such as `p4 describe -S` and treats Swarm API
+  `Unauthorized` as `swarm_lookup_unavailable`, not as a reason to mutate state.
 - `server/pkg/db/queries/agent.sql` and generated sqlc code contain the
   assessment table queries and task-isolation filters excluding
   `agent_fix_p4_assessment` from ordinary issue task queries, latest-run views,

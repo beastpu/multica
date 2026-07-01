@@ -1078,6 +1078,7 @@ SELECT
   i.assignee_id,
   i.title AS issue_title,
   i.description AS issue_description,
+  i.metadata AS issue_metadata,
   a.runtime_id AS agent_runtime_id,
   a.archived_at AS agent_archived_at,
   fpi.status_mapping,
