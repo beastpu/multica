@@ -36,6 +36,16 @@ export function issueHasLegacyP4AssessmentSignal(issue: Issue): boolean {
   );
 }
 
+// The Operations feed (`ListWorkspaceAgentFixes`) returns one row per issue
+// an agent ran ANY fix-category task on, not just issues bound to an external
+// P4/Swarm work item. A truthy `record` alone therefore isn't evidence this
+// issue went through the P4 assessment flow — every agent-touched issue would
+// match and show these tags. `external.binding_id` is only populated when the
+// issue actually has a Feishu/Meego binding, which is the real P4 signal.
+function recordHasP4Binding(record?: AgentFixRecord): boolean {
+  return Boolean(record?.external?.binding_id);
+}
+
 export function IssueP4AssessmentTags({
   issue,
   className,
@@ -48,7 +58,7 @@ export function IssueP4AssessmentTags({
   const record = useIssueP4AssessmentRecord(issue);
   const outcome = record?.human_review?.outcome?.trim();
   const [reviewOpen, setReviewOpen] = useState(false);
-  if (!issueHasLegacyP4AssessmentSignal(issue) && !record) return null;
+  if (!issueHasLegacyP4AssessmentSignal(issue) && !recordHasP4Binding(record)) return null;
 
   return (
     <span className={cn("inline-flex min-w-0 shrink-0 items-center gap-1", className)}>
@@ -101,7 +111,7 @@ export function IssueP4AssessmentButton({
   const { t } = useT("issues");
   const p = useWorkspacePaths();
   const record = useIssueP4AssessmentRecord(issue);
-  if (!issueHasLegacyP4AssessmentSignal(issue) && !record) return null;
+  if (!issueHasLegacyP4AssessmentSignal(issue) && !recordHasP4Binding(record)) return null;
 
   return (
     <AppLink

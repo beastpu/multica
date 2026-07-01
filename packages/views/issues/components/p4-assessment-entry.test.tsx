@@ -151,4 +151,26 @@ describe("IssueP4AssessmentTags", () => {
     expect(screen.getByText("P4")).toBeTruthy();
     expect(screen.getByText("Needs changes")).toBeTruthy();
   });
+
+  it("hides assessment tags for an ordinary agent-fix record with no external P4/Swarm binding", () => {
+    const { external: _external, ...recordWithoutBinding } = defaultRecord;
+    records.splice(
+      0,
+      records.length,
+      recordWithoutBinding as unknown as typeof defaultRecord,
+    );
+
+    renderWithI18n(
+      <IssueP4AssessmentTags
+        issue={{
+          ...issue,
+          title: "今天天气怎么样",
+          metadata: {},
+        }}
+      />,
+    );
+
+    expect(screen.queryByText("P4")).toBeNull();
+    expect(screen.queryByText("Needs changes")).toBeNull();
+  });
 });
