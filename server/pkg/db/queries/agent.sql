@@ -915,6 +915,7 @@ SELECT
   i.number AS issue_number,
   i.title AS issue_title,
   i.status AS issue_status,
+  i.description AS issue_description,
   spine.started_at,
   spine.completed_at,
   spine.created_at,

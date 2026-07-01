@@ -232,7 +232,10 @@ function derivedEvidence(fix: AgentFixRecord) {
     compactList(p4?.external_committed_cls) ||
     compactList(p4?.swarm_committed_cls);
   return {
-    workstream: p4?.workstream ?? "",
+    workstream:
+      String(p4?.workstream ?? "").trim() ||
+      String(fix.external?.workstream ?? "").trim() ||
+      firstSwarmReviewField(fix, "swarm_branch"),
     swarm,
     shelve,
     swarmChanges: compactList(p4?.swarm_change_cls) || reviewChanges,

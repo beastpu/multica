@@ -3221,6 +3221,7 @@ SELECT
   i.number AS issue_number,
   i.title AS issue_title,
   i.status AS issue_status,
+  i.description AS issue_description,
   spine.started_at,
   spine.completed_at,
   spine.created_at,
@@ -3296,6 +3297,7 @@ type ListWorkspaceAgentFixesRow struct {
 	IssueNumber                     int32              `json:"issue_number"`
 	IssueTitle                      string             `json:"issue_title"`
 	IssueStatus                     string             `json:"issue_status"`
+	IssueDescription                pgtype.Text        `json:"issue_description"`
 	StartedAt                       pgtype.Timestamptz `json:"started_at"`
 	CompletedAt                     pgtype.Timestamptz `json:"completed_at"`
 	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
@@ -3370,6 +3372,7 @@ func (q *Queries) ListWorkspaceAgentFixes(ctx context.Context, arg ListWorkspace
 			&i.IssueNumber,
 			&i.IssueTitle,
 			&i.IssueStatus,
+			&i.IssueDescription,
 			&i.StartedAt,
 			&i.CompletedAt,
 			&i.CreatedAt,

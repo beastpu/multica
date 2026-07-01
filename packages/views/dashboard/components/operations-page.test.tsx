@@ -228,6 +228,7 @@ const FIXES = vi.hoisted(() => [
       mapped_status: "in_progress",
       done: false,
       project: "Warpath3",
+      workstream: "rel_1.1.0",
     },
     display_result_status: "pending",
     ai_judgement_eval: "pending",
@@ -709,6 +710,21 @@ describe("OperationsPage", () => {
 
     expect(screen.getByText("Client crash")).toBeTruthy();
     expect(screen.getByText("Login broke")).toBeTruthy();
+  });
+
+  it("uses external workstream when P4 assessment has not populated one", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    await user.click(screen.getByLabelText("Workstream"));
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText(
+        "rel_1.1.0",
+      ),
+    );
+
+    expect(screen.getByText("Shelved CL should not look final")).toBeTruthy();
+    expect(screen.queryByText("Login broke")).toBeNull();
   });
 
   it("toggles mismatch-only off on the second click", async () => {
