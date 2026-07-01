@@ -123,6 +123,71 @@ func TestLarkJSONFrameDecoderCardActionConfirm(t *testing.T) {
 	}
 }
 
+func TestLarkJSONFrameDecoderIssueConfirmationCardAction(t *testing.T) {
+	t.Parallel()
+	value, err := json.Marshal(issueConfirmationCardValue{
+		Kind:            issueConfirmationCardActionKind,
+		Action:          confirmationActionConfirm,
+		Message:         "确认发布",
+		WorkspaceID:     "11111111-1111-1111-1111-111111111111",
+		IssueID:         "22222222-2222-2222-2222-222222222222",
+		ParentCommentID: "33333333-3333-3333-3333-333333333333",
+		RecipientID:     "44444444-4444-4444-4444-444444444444",
+		AllowedOpenID:   "ou_requester",
+		IssuedAtUnix:    time.Now().Add(-time.Minute).Unix(),
+		ExpiresAtUnix:   time.Now().Add(time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	raw := []byte(`{
+		"schema":"2.0",
+		"header":{
+			"event_id":"evt-card-issue-1",
+			"event_type":"card.action.trigger",
+			"app_id":"cli_app_x",
+			"create_time":"1719999999000"
+		},
+		"event":{
+			"operator":{"operator_id":{"open_id":"ou_requester"}},
+			"context":{"open_chat_id":"oc_dm","open_message_id":"om_issue_card_1"},
+			"action":{"tag":"button","value":` + string(value) + `}
+		}
+	}`)
+
+	d := NewLarkJSONFrameDecoder()
+	msg, ok, err := d.Decode(raw, Installation{})
+	if err != nil || !ok {
+		t.Fatalf("Decode ok=%v err=%v", ok, err)
+	}
+	if msg.CardAction == nil || msg.CardAction.IssueConfirmation == nil {
+		t.Fatalf("expected issue confirmation card action, got %+v", msg.CardAction)
+	}
+	if msg.CardAction.CardMessageID != "om_issue_card_1" {
+		t.Fatalf("CardMessageID = %q", msg.CardAction.CardMessageID)
+	}
+	action := msg.CardAction.IssueConfirmation
+	if action.Action != confirmationActionConfirm || action.Message != "确认发布" {
+		t.Fatalf("unexpected action payload: %+v", action)
+	}
+	if action.ParentCommentID != "33333333-3333-3333-3333-333333333333" ||
+		action.RecipientID != "44444444-4444-4444-4444-444444444444" {
+		t.Fatalf("issue context lost: %+v", action)
+	}
+	if msg.MessageID != "card_action:multica.issue.confirmation:33333333-3333-3333-3333-333333333333:ou_requester" {
+		t.Fatalf("MessageID = %q", msg.MessageID)
+	}
+	if msg.Body != "" || msg.CommandBody != "" {
+		t.Fatalf("issue card action must not masquerade as chat text: body=%q command=%q", msg.Body, msg.CommandBody)
+	}
+	if msg.MessageType != "interactive" {
+		t.Fatalf("MessageType = %q", msg.MessageType)
+	}
+	if msg.SenderOpenID != "ou_requester" || msg.ChatID != "oc_dm" {
+		t.Fatalf("routing fields mismatch: sender=%q chat=%q", msg.SenderOpenID, msg.ChatID)
+	}
+}
+
 func TestLarkJSONFrameDecoderCardActionWrongOperatorIgnored(t *testing.T) {
 	t.Parallel()
 	value, err := json.Marshal(confirmationCardValue{

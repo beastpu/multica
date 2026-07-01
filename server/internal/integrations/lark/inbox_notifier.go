@@ -131,7 +131,7 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 	if isMergeableLarkInboxNotification(item) {
 		return n.sendOrPatchInboxIssueCard(ctx, creds, row, workspaceID, recipientID, item)
 	}
-	cardJSON, err := n.renderInboxNotificationCard(ctx, workspaceID, item)
+	cardJSON, err := n.renderInboxNotificationCard(ctx, workspaceID, row, recipientID, item)
 	if err != nil {
 		return fmt.Errorf("render inbox card: %w", err)
 	}
@@ -366,7 +366,7 @@ func (n *InboxNotifier) renderInboxIssueCard(ctx context.Context, workspaceID, r
 	return string(raw), nil
 }
 
-func (n *InboxNotifier) renderInboxNotificationCard(ctx context.Context, workspaceID pgtype.UUID, item inboxNotificationItem) (string, error) {
+func (n *InboxNotifier) renderInboxNotificationCard(ctx context.Context, workspaceID pgtype.UUID, row InboxNotificationBinding, recipientID pgtype.UUID, item inboxNotificationItem) (string, error) {
 	issue, workspace := n.inboxNotificationContext(ctx, workspaceID, item)
 	identifier := inboxIssueIdentifier(issue, workspace)
 	headerTitle := inboxNotificationHeaderTitle(identifier, item.Title)
@@ -393,19 +393,12 @@ func (n *InboxNotifier) renderInboxNotificationCard(ctx context.Context, workspa
 			},
 		},
 	}
-	if issueURL := n.issueURL(workspace, item); issueURL != "" {
+	if actions := n.inboxNotificationActions(workspaceID, row, recipientID, item, workspace); len(actions) > 0 {
 		card["elements"] = append(card["elements"].([]any),
 			map[string]any{"tag": "hr"},
 			map[string]any{
-				"tag": "action",
-				"actions": []any{
-					map[string]any{
-						"tag":  "button",
-						"text": map[string]any{"tag": "plain_text", "content": "在 Multica 中查看"},
-						"url":  issueURL,
-						"type": "primary",
-					},
-				},
+				"tag":     "action",
+				"actions": actions,
 			},
 		)
 	}
@@ -414,6 +407,98 @@ func (n *InboxNotifier) renderInboxNotificationCard(ctx context.Context, workspa
 		return "", err
 	}
 	return string(raw), nil
+}
+
+func (n *InboxNotifier) inboxNotificationActions(workspaceID pgtype.UUID, row InboxNotificationBinding, recipientID pgtype.UUID, item inboxNotificationItem, workspace *db.Workspace) []any {
+	actions := make([]any, 0, 3)
+	if confirm, cancel, ok := issueConfirmationCardValues(workspaceID, row, recipientID, item, time.Now()); ok {
+		actions = append(actions,
+			map[string]any{
+				"tag":   "button",
+				"text":  map[string]any{"tag": "plain_text", "content": confirm.Message},
+				"type":  "primary",
+				"value": confirm,
+			},
+			map[string]any{
+				"tag":   "button",
+				"text":  map[string]any{"tag": "plain_text", "content": cancel.Message},
+				"type":  "default",
+				"value": cancel,
+			},
+		)
+	}
+	if issueURL := n.issueURL(workspace, item); issueURL != "" {
+		buttonType := "primary"
+		if len(actions) > 0 {
+			buttonType = "default"
+		}
+		actions = append(actions, map[string]any{
+			"tag":  "button",
+			"text": map[string]any{"tag": "plain_text", "content": "在 Multica 中查看"},
+			"url":  issueURL,
+			"type": buttonType,
+		})
+	}
+	return actions
+}
+
+func issueConfirmationCardValues(workspaceID pgtype.UUID, row InboxNotificationBinding, recipientID pgtype.UUID, item inboxNotificationItem, now time.Time) (issueConfirmationCardValue, issueConfirmationCardValue, bool) {
+	issueID := ""
+	if item.IssueID != nil {
+		issueID = strings.TrimSpace(*item.IssueID)
+	}
+	if item.Type != "new_comment" ||
+		item.ActorType == nil || *item.ActorType != "agent" ||
+		item.Body == nil ||
+		issueID == "" {
+		return issueConfirmationCardValue{}, issueConfirmationCardValue{}, false
+	}
+	confirmMessage, ok := confirmationReplyMessage(*item.Body)
+	if !ok {
+		return issueConfirmationCardValue{}, issueConfirmationCardValue{}, false
+	}
+	parentCommentID := inboxNotificationCommentID(item.Details)
+	if parentCommentID == "" || row.UserBinding.ChannelUserID == "" {
+		return issueConfirmationCardValue{}, issueConfirmationCardValue{}, false
+	}
+	if _, err := scanUUID(issueID); err != nil {
+		return issueConfirmationCardValue{}, issueConfirmationCardValue{}, false
+	}
+	if _, err := scanUUID(parentCommentID); err != nil {
+		return issueConfirmationCardValue{}, issueConfirmationCardValue{}, false
+	}
+	issuedAt := now.Unix()
+	expiresAt := now.Add(confirmationCardTTL).Unix()
+	base := issueConfirmationCardValue{
+		Kind:            issueConfirmationCardActionKind,
+		WorkspaceID:     uuidString(workspaceID),
+		IssueID:         issueID,
+		ParentCommentID: parentCommentID,
+		RecipientID:     uuidString(recipientID),
+		AllowedOpenID:   row.UserBinding.ChannelUserID,
+		IssuedAtUnix:    issuedAt,
+		ExpiresAtUnix:   expiresAt,
+	}
+	confirm := base
+	confirm.Action = confirmationActionConfirm
+	confirm.Message = confirmMessage
+	cancel := base
+	cancel.Action = confirmationActionCancel
+	cancel.Message = confirmationCancelMessage(confirmMessage)
+	return confirm, cancel, true
+}
+
+func inboxNotificationCommentID(details json.RawMessage) string {
+	if len(details) == 0 {
+		return ""
+	}
+	var d struct {
+		CommentID string `json:"comment_id"`
+	}
+	if err := json.Unmarshal(details, &d); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(d.CommentID)
 }
 
 func mergeableLarkInboxNotificationTypes() []string {

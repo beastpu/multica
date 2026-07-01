@@ -379,6 +379,49 @@ func TestPatcherRoutesStandaloneConfirmationLineToActionCard(t *testing.T) {
 	}
 }
 
+func TestPatcherRoutesDynamicConfirmationPromptToActionCard(t *testing.T) {
+	p, q, api := newTestPatcher(t)
+	taskID := uuidFromString(t, "eebbbbbb-eebb-eebb-eebb-eeeeeeeeeeee")
+	requesterID := uuidFromString(t, "bbbbbbbb-9999-9999-9999-999999999999")
+	q.task = db.AgentTaskQueue{ID: taskID, InitiatorUserID: requesterID}
+	q.bindings = []InboxNotificationBinding{
+		{
+			UserBinding: UserBinding{
+				MulticaUserID:  requesterID,
+				InstallationID: q.installation.ID,
+				ChannelUserID:  "ou_requester",
+			},
+			Installation: q.installation,
+		},
+	}
+	content := "项目：`测试`\n流水线：`测试后端发布`\n\n请回复“确认发布”，我再触发。"
+
+	p.handleEvent(events.Event{
+		Type:          protocol.EventChatDone,
+		TaskID:        uuidString(taskID),
+		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		Payload: protocol.ChatDonePayload{
+			TaskID:        uuidString(taskID),
+			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			Content:       content,
+		},
+	})
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.sent) != 1 {
+		t.Fatalf("dynamic confirmation prompt should render one confirmation card; got %d", len(api.sent))
+	}
+	for _, want := range []string{confirmationCardActionKind, "确认发布", "取消发布", uuidString(taskID), "ou_requester"} {
+		if !strings.Contains(api.sent[0].CardJSON, want) {
+			t.Fatalf("dynamic confirmation card missing %q: %s", want, api.sent[0].CardJSON)
+		}
+	}
+	if strings.Contains(api.sent[0].CardJSON, confirmationMessageConfirm) {
+		t.Fatalf("dynamic confirmation card should not hard-code %q: %s", confirmationMessageConfirm, api.sent[0].CardJSON)
+	}
+}
+
 func TestPatcherFallsBackToTextWhenConfirmationRequesterUnknown(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee999999-ee99-ee99-ee99-eeeeeeeeeeee")

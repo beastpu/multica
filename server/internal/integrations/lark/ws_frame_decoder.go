@@ -129,16 +129,26 @@ func (d *LarkJSONFrameDecoder) decodeCardActionTrigger(env larkEventEnvelope) (I
 	if err := json.Unmarshal(env.Event, &evt); err != nil {
 		return InboundMessage{}, false, fmt.Errorf("card action event: %w", err)
 	}
-	value, ok := parseConfirmationCardValue(evt.Action.Value)
-	if !ok {
-		return InboundMessage{}, false, nil
+	if value, ok := parseConfirmationCardValue(evt.Action.Value); ok {
+		operatorOpenID := evt.operatorOpenID()
+		if operatorOpenID == "" {
+			return InboundMessage{}, false, errors.New("card.action.trigger missing operator open_id")
+		}
+		return d.decodeChatConfirmationCardAction(env, evt, value, operatorOpenID)
 	}
+	if value, ok := parseIssueConfirmationCardValue(evt.Action.Value); ok {
+		operatorOpenID := evt.operatorOpenID()
+		if operatorOpenID == "" {
+			return InboundMessage{}, false, errors.New("card.action.trigger missing operator open_id")
+		}
+		return d.decodeIssueConfirmationCardAction(env, evt, value, operatorOpenID)
+	}
+	return InboundMessage{}, false, nil
+}
+
+func (d *LarkJSONFrameDecoder) decodeChatConfirmationCardAction(env larkEventEnvelope, evt larkCardActionTriggerEvent, value confirmationCardValue, operatorOpenID string) (InboundMessage, bool, error) {
 	if value.expired(time.Now()) {
 		return InboundMessage{}, false, nil
-	}
-	operatorOpenID := evt.operatorOpenID()
-	if operatorOpenID == "" {
-		return InboundMessage{}, false, errors.New("card.action.trigger missing operator open_id")
 	}
 	if value.AllowedOpenID != operatorOpenID {
 		return InboundMessage{}, false, nil
@@ -157,7 +167,7 @@ func (d *LarkJSONFrameDecoder) decodeCardActionTrigger(env larkEventEnvelope) (I
 	body := strings.TrimSpace(value.Message)
 	if body == "" {
 		var ok bool
-		body, ok = confirmationActionMessage(value.Action)
+		body, ok = confirmationActionMessage(value.Action, "")
 		if !ok {
 			return InboundMessage{}, false, nil
 		}
@@ -176,6 +186,31 @@ func (d *LarkJSONFrameDecoder) decodeCardActionTrigger(env larkEventEnvelope) (I
 		CreateTime:     env.Header.CreateTime,
 		ThreadID:       value.ThreadID,
 		AddressedToBot: true,
+	}, true, nil
+}
+
+func (d *LarkJSONFrameDecoder) decodeIssueConfirmationCardAction(env larkEventEnvelope, evt larkCardActionTriggerEvent, value issueConfirmationCardValue, operatorOpenID string) (InboundMessage, bool, error) {
+	if value.expired(time.Now()) {
+		return InboundMessage{}, false, nil
+	}
+	if value.AllowedOpenID != operatorOpenID {
+		return InboundMessage{}, false, nil
+	}
+	action := value.toAction()
+	return InboundMessage{
+		EventType:    env.Header.EventType,
+		EventID:      env.Header.EventID,
+		AppID:        env.Header.AppID,
+		ChatID:       ChatID(evt.chatID()),
+		ChatType:     ChatTypeP2P,
+		MessageID:    value.dedupMessageID(operatorOpenID),
+		SenderOpenID: OpenID(operatorOpenID),
+		MessageType:  "interactive",
+		CreateTime:   env.Header.CreateTime,
+		CardAction: &InboundCardAction{
+			CardMessageID:     evt.messageID(),
+			IssueConfirmation: &action,
+		},
 	}, true, nil
 }
 

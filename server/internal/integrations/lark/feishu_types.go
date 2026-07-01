@@ -54,6 +54,30 @@ type InboundMessage struct {
 	// enricher prepends quoted/forwarded context). `/issue` is parsed from
 	// THIS, not the enriched Body.
 	CommandBody string
+
+	// CardAction is populated for Multica-owned interactive-card callbacks
+	// whose business semantics should not be routed as ordinary chat text.
+	CardAction *InboundCardAction
+}
+
+type InboundCardAction struct {
+	// CardMessageID is the Lark message_id of the interactive card that
+	// emitted the action callback. Handlers can patch that card after a
+	// successful action so stale buttons disappear from the chat.
+	CardMessageID     string
+	IssueConfirmation *IssueConfirmationCardAction
+}
+
+type IssueConfirmationCardAction struct {
+	Action          string
+	Message         string
+	WorkspaceID     string
+	IssueID         string
+	ParentCommentID string
+	RecipientID     string
+	AllowedOpenID   string
+	IssuedAtUnix    int64
+	ExpiresAtUnix   int64
 }
 
 // Outcome categorizes what the inbound pipeline decided. The OutcomeReplier

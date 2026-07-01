@@ -31,15 +31,20 @@ import (
 // (workspace / agent / installer) is resolved per message by the Router's
 // InstallationResolver, so it is deliberately absent here.
 type feishuChannel struct {
-	inst    Installation
-	conn    EventConnector
-	handler channel.InboundHandler
-	sender  APIClient
-	creds   CredentialsResolver
-	logger  *slog.Logger
+	inst        Installation
+	conn        EventConnector
+	handler     channel.InboundHandler
+	cardActions CardActionHandler
+	sender      APIClient
+	creds       CredentialsResolver
+	logger      *slog.Logger
 }
 
 var _ channel.Channel = (*feishuChannel)(nil)
+
+type CardActionHandler interface {
+	HandleLarkCardAction(ctx context.Context, msg InboundMessage) error
+}
 
 func (c *feishuChannel) Type() channel.Type { return channel.TypeFeishu }
 
@@ -51,6 +56,15 @@ func (c *feishuChannel) Type() channel.Type { return channel.TypeFeishu }
 // so the handler's error is what flows back.
 func (c *feishuChannel) Connect(ctx context.Context) error {
 	return c.conn.Run(ctx, c.inst, func(emitCtx context.Context, lm InboundMessage) (DispatchResult, error) {
+		if lm.CardAction != nil {
+			if c.cardActions == nil {
+				if c.logger != nil {
+					c.logger.Warn("lark: card action dropped because handler is not configured", "event_id", lm.EventID, "message_id", lm.MessageID)
+				}
+				return DispatchResult{}, nil
+			}
+			return DispatchResult{}, c.cardActions.HandleLarkCardAction(emitCtx, lm)
+		}
 		if c.handler == nil {
 			return DispatchResult{}, errors.New("lark: inbound handler not configured")
 		}
@@ -183,6 +197,7 @@ type FeishuChannelDeps struct {
 	Connector   EventConnector
 	APIClient   APIClient
 	Credentials CredentialsResolver
+	CardActions CardActionHandler
 	Logger      *slog.Logger
 }
 
@@ -214,12 +229,13 @@ func newFeishuFactory(deps FeishuChannelDeps) channel.Factory {
 			return nil, fmt.Errorf("decode feishu installation config: %w", err)
 		}
 		return &feishuChannel{
-			inst:    inst,
-			conn:    deps.Connector,
-			handler: cfg.Handler,
-			sender:  deps.APIClient,
-			creds:   deps.Credentials,
-			logger:  logger,
+			inst:        inst,
+			conn:        deps.Connector,
+			handler:     cfg.Handler,
+			cardActions: deps.CardActions,
+			sender:      deps.APIClient,
+			creds:       deps.Credentials,
+			logger:      logger,
 		}, nil
 	}
 }

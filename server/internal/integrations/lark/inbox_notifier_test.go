@@ -455,6 +455,71 @@ func TestInboxNotifierSendsNewCommentAsFreshCardEvenWhenMergedIssueCardExists(t 
 	}
 }
 
+func TestInboxNotifierAddsIssueConfirmationActionsForAgentPrompt(t *testing.T) {
+	workspaceID := mustUUID("11111111-1111-1111-1111-111111111111")
+	userID := mustUUID("22222222-2222-2222-2222-222222222222")
+	actorAgentID := mustUUID("44444444-4444-4444-4444-444444444444")
+	issueID := mustUUID("55555555-5555-5555-5555-555555555555")
+	commentID := "77777777-7777-7777-7777-777777777777"
+	q := &fakeInboxNotifierQueries{
+		rows: []InboxNotificationBinding{
+			inboxBindingRow(workspaceID, userID, actorAgentID, "cli_actor", "ou_actor"),
+		},
+		issue: db.Issue{ID: issueID, Number: 14749, Title: "p4 测试"},
+		workspace: db.Workspace{
+			ID:          workspaceID,
+			Slug:        "w3-test",
+			IssuePrefix: "WTE",
+		},
+	}
+	api := &stubAPIClientWithRecorder{configured: true}
+	notifier := NewInboxNotifier(q, stubCredentialsResolver{secret: "secret"}, api, InboxNotifierConfig{
+		PublicURL: "https://multica-test.lilithgames.com",
+	})
+
+	err := notifier.notify(context.Background(), map[string]any{
+		"item": map[string]any{
+			"id":             "88888888-8888-8888-8888-888888888888",
+			"workspace_id":   uuidString(workspaceID),
+			"recipient_type": "member",
+			"recipient_id":   uuidString(userID),
+			"type":           "new_comment",
+			"severity":       "info",
+			"issue_id":       uuidString(issueID),
+			"title":          "p4 测试",
+			"body":           "是否确认提及？",
+			"actor_type":     "agent",
+			"actor_id":       uuidString(actorAgentID),
+			"details": map[string]any{
+				"comment_id": commentID,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.directCardsOut) != 1 {
+		t.Fatalf("expected one fresh direct card for confirmation prompt, got %d", len(api.directCardsOut))
+	}
+	card := api.directCardsOut[0].CardJSON
+	for _, want := range []string{
+		issueConfirmationCardActionKind,
+		`"parent_comment_id":"` + commentID + `"`,
+		`"recipient_id":"` + uuidString(userID) + `"`,
+		`"allowed_open_id":"ou_actor"`,
+		"确认提及",
+		"取消提及",
+		"取消",
+		"在 Multica 中查看",
+	} {
+		if !strings.Contains(card, want) {
+			t.Fatalf("confirmation card missing %q: %s", want, card)
+		}
+	}
+}
+
 func TestInboxNotifierSkipsWhenNoAgentBotMatches(t *testing.T) {
 	workspaceID := mustUUID("11111111-1111-1111-1111-111111111111")
 	userID := mustUUID("22222222-2222-2222-2222-222222222222")
