@@ -68,7 +68,7 @@
       "workstream_all": "全部 workstream",
       "attribution": "AI 归因",
       "attribution_all": "全部归因",
-      "quality": "AI 质量",
+      "quality": "AI验收",
       "quality_all": "全部质量",
       "mismatch_only": "仅看偏差"
     },
@@ -113,7 +113,7 @@
       "external_status": "外部状态",
       "p4_evidence": "P4 证据",
       "ai_attribution": "AI 交付",
-      "ai_quality": "AI 质量",
+      "ai_quality": "AI验收",
       "human_review": "人工验收",
       "eval": "偏差"
     },
