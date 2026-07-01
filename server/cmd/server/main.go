@@ -359,6 +359,13 @@ func main() {
 	taskSvc := service.NewTaskService(queries, pool, hub, bus, daemonWakeup)
 	taskSvc.Analytics = analyticsClient
 	taskSvc.Metrics = businessMetrics
+	// The Feishu Project sync worker (started below) reads taskSvc.P4Assessment
+	// to backfill and trigger P4 assessments. handler.New wires its own
+	// TaskService identically; this is the parallel wiring for the worker-side
+	// instance. Without it the worker boxes a nil *P4AssessmentService into the
+	// trigger interface (a typed nil that passes != nil checks) and panics in
+	// BackfillDoneBindings on the first done binding.
+	taskSvc.P4Assessment = service.NewP4AssessmentService(queries, pool, taskSvc)
 	autopilotSvc := service.NewAutopilotService(queries, pool, bus, taskSvc)
 	registerAutopilotListeners(bus, autopilotSvc)
 
