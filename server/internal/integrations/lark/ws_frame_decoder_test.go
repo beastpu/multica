@@ -3,6 +3,7 @@ package lark
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -56,6 +57,262 @@ func TestLarkJSONFrameDecoderTextMessageInP2P(t *testing.T) {
 	}
 	if msg.AddressedToBot {
 		t.Errorf("P2P AddressedToBot should not be true")
+	}
+}
+
+func TestLarkJSONFrameDecoderCardActionConfirm(t *testing.T) {
+	t.Parallel()
+	value, err := json.Marshal(confirmationCardValue{
+		Kind:          confirmationCardActionKind,
+		Action:        confirmationActionConfirm,
+		Message:       confirmationMessageConfirm,
+		TaskID:        "task-1",
+		ChatID:        "oc_group",
+		ChatType:      "group",
+		ThreadID:      "omt_topic",
+		AllowedOpenID: "ou_requester",
+		IssuedAtUnix:  time.Now().Add(-time.Minute).Unix(),
+		ExpiresAtUnix: time.Now().Add(time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	raw := []byte(`{
+		"schema":"2.0",
+		"header":{
+			"event_id":"evt-card-1",
+			"event_type":"card.action.trigger",
+			"app_id":"cli_app_x",
+			"create_time":"1719999999000"
+		},
+		"event":{
+			"operator":{"operator_id":{"open_id":"ou_requester"}},
+			"context":{"open_chat_id":"oc_group","open_message_id":"om_card_1"},
+			"action":{"tag":"button","value":` + string(value) + `}
+		}
+	}`)
+
+	d := NewLarkJSONFrameDecoder()
+	msg, ok, err := d.Decode(raw, Installation{})
+	if err != nil || !ok {
+		t.Fatalf("Decode ok=%v err=%v", ok, err)
+	}
+	if msg.EventType != "card.action.trigger" {
+		t.Errorf("EventType = %q", msg.EventType)
+	}
+	if msg.EventID != "evt-card-1" || msg.AppID != "cli_app_x" {
+		t.Errorf("event routing mismatch: event_id=%q app_id=%q", msg.EventID, msg.AppID)
+	}
+	if msg.ChatID != "oc_group" || msg.ChatType != ChatTypeGroup {
+		t.Errorf("chat mismatch: chat_id=%q chat_type=%q", msg.ChatID, msg.ChatType)
+	}
+	if msg.MessageID != "om_card_1" {
+		t.Errorf("MessageID = %q", msg.MessageID)
+	}
+	if msg.SenderOpenID != "ou_requester" {
+		t.Errorf("SenderOpenID = %q", msg.SenderOpenID)
+	}
+	if msg.Body != confirmationMessageConfirm || msg.CommandBody != confirmationMessageConfirm {
+		t.Errorf("Body/CommandBody = %q/%q", msg.Body, msg.CommandBody)
+	}
+	if msg.ThreadID != "omt_topic" {
+		t.Errorf("ThreadID = %q", msg.ThreadID)
+	}
+	if !msg.AddressedToBot {
+		t.Error("card action must be treated as addressed to the bot")
+	}
+}
+
+func TestLarkJSONFrameDecoderCardActionWrongOperatorIgnored(t *testing.T) {
+	t.Parallel()
+	value, err := json.Marshal(confirmationCardValue{
+		Kind:          confirmationCardActionKind,
+		Action:        confirmationActionConfirm,
+		TaskID:        "task-2",
+		ChatID:        "oc_group",
+		ChatType:      "group",
+		AllowedOpenID: "ou_requester",
+		IssuedAtUnix:  time.Now().Add(-time.Minute).Unix(),
+		ExpiresAtUnix: time.Now().Add(time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	raw := []byte(`{
+		"schema":"2.0",
+		"header":{"event_id":"evt-card-2","event_type":"card.action.trigger","app_id":"cli_app_x"},
+		"event":{
+			"operator":{"operator_id":{"open_id":"ou_other"}},
+			"context":{"open_chat_id":"oc_group","open_message_id":"om_card_2"},
+			"action":{"tag":"button","value":` + string(value) + `}
+		}
+	}`)
+
+	d := NewLarkJSONFrameDecoder()
+	if _, ok, err := d.Decode(raw, Installation{}); err != nil || ok {
+		t.Fatalf("Decode ok=%v err=%v; wrong operator should be ignored", ok, err)
+	}
+}
+
+func TestLarkJSONFrameDecoderCardActionFallbackMessageIDUsesTask(t *testing.T) {
+	t.Parallel()
+	value, err := json.Marshal(confirmationCardValue{
+		Kind:          confirmationCardActionKind,
+		Action:        confirmationActionCancel,
+		Message:       confirmationMessageCancel,
+		TaskID:        "task-3",
+		ChatID:        "oc_group",
+		ChatType:      "group",
+		AllowedOpenID: "ou_requester",
+		IssuedAtUnix:  time.Now().Add(-time.Minute).Unix(),
+		ExpiresAtUnix: time.Now().Add(time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	raw := []byte(`{
+		"schema":"2.0",
+		"header":{"event_id":"evt-card-3","event_type":"card.action.trigger","app_id":"cli_app_x"},
+		"event":{
+			"operator":{"operator_id":{"open_id":"ou_requester"}},
+			"context":{"open_chat_id":"oc_group"},
+			"action":{"tag":"button","value":` + string(value) + `}
+		}
+	}`)
+
+	d := NewLarkJSONFrameDecoder()
+	msg, ok, err := d.Decode(raw, Installation{})
+	if err != nil || !ok {
+		t.Fatalf("Decode ok=%v err=%v", ok, err)
+	}
+	if msg.MessageID != "card_action:task-3:cancel" {
+		t.Errorf("MessageID = %q", msg.MessageID)
+	}
+	if msg.Body != confirmationMessageCancel {
+		t.Errorf("Body = %q", msg.Body)
+	}
+}
+
+func TestLarkJSONFrameDecoderCardActionMissingAllowedOpenIDIgnored(t *testing.T) {
+	t.Parallel()
+	value, err := json.Marshal(confirmationCardValue{
+		Kind:          confirmationCardActionKind,
+		Action:        confirmationActionConfirm,
+		TaskID:        "task-3",
+		ChatID:        "oc_group",
+		ChatType:      "group",
+		IssuedAtUnix:  time.Now().Add(-time.Minute).Unix(),
+		ExpiresAtUnix: time.Now().Add(time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	raw := []byte(`{
+		"schema":"2.0",
+		"header":{"event_id":"evt-card-3","event_type":"card.action.trigger","app_id":"cli_app_x"},
+		"event":{
+			"operator":{"operator_id":{"open_id":"ou_requester"}},
+			"context":{"open_chat_id":"oc_group","open_message_id":"om_card_3"},
+			"action":{"tag":"button","value":` + string(value) + `}
+		}
+	}`)
+
+	d := NewLarkJSONFrameDecoder()
+	if _, ok, err := d.Decode(raw, Installation{}); err != nil || ok {
+		t.Fatalf("Decode ok=%v err=%v; missing allowed_open_id should be ignored", ok, err)
+	}
+}
+
+func TestLarkJSONFrameDecoderCardActionExpiredIgnored(t *testing.T) {
+	t.Parallel()
+	value, err := json.Marshal(confirmationCardValue{
+		Kind:          confirmationCardActionKind,
+		Action:        confirmationActionConfirm,
+		TaskID:        "task-4",
+		ChatID:        "oc_group",
+		ChatType:      "group",
+		AllowedOpenID: "ou_requester",
+		IssuedAtUnix:  time.Now().Add(-2 * time.Hour).Unix(),
+		ExpiresAtUnix: time.Now().Add(-time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	raw := []byte(`{
+		"schema":"2.0",
+		"header":{"event_id":"evt-card-4","event_type":"card.action.trigger","app_id":"cli_app_x"},
+		"event":{
+			"operator":{"operator_id":{"open_id":"ou_requester"}},
+			"context":{"open_chat_id":"oc_group","open_message_id":"om_card_4"},
+			"action":{"tag":"button","value":` + string(value) + `}
+		}
+	}`)
+
+	d := NewLarkJSONFrameDecoder()
+	if _, ok, err := d.Decode(raw, Installation{}); err != nil || ok {
+		t.Fatalf("Decode ok=%v err=%v; expired confirmation card should be ignored", ok, err)
+	}
+}
+
+func TestLarkJSONFrameDecoderCardActionMissingTaskIDIgnored(t *testing.T) {
+	t.Parallel()
+	value, err := json.Marshal(confirmationCardValue{
+		Kind:          confirmationCardActionKind,
+		Action:        confirmationActionConfirm,
+		ChatID:        "oc_group",
+		ChatType:      "group",
+		AllowedOpenID: "ou_requester",
+		IssuedAtUnix:  time.Now().Add(-time.Minute).Unix(),
+		ExpiresAtUnix: time.Now().Add(time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	raw := []byte(`{
+		"schema":"2.0",
+		"header":{"event_id":"evt-card-6","event_type":"card.action.trigger","app_id":"cli_app_x"},
+		"event":{
+			"operator":{"operator_id":{"open_id":"ou_requester"}},
+			"context":{"open_chat_id":"oc_group","open_message_id":"om_card_6"},
+			"action":{"tag":"button","value":` + string(value) + `}
+		}
+	}`)
+
+	d := NewLarkJSONFrameDecoder()
+	if _, ok, err := d.Decode(raw, Installation{}); err != nil || ok {
+		t.Fatalf("Decode ok=%v err=%v; missing task_id should be ignored", ok, err)
+	}
+}
+
+func TestLarkJSONFrameDecoderCardActionUnknownActionIgnored(t *testing.T) {
+	t.Parallel()
+	value, err := json.Marshal(confirmationCardValue{
+		Kind:          confirmationCardActionKind,
+		Action:        "approve",
+		Message:       confirmationMessageConfirm,
+		TaskID:        "task-5",
+		ChatID:        "oc_group",
+		ChatType:      "group",
+		AllowedOpenID: "ou_requester",
+		IssuedAtUnix:  time.Now().Add(-time.Minute).Unix(),
+		ExpiresAtUnix: time.Now().Add(time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	raw := []byte(`{
+		"schema":"2.0",
+		"header":{"event_id":"evt-card-5","event_type":"card.action.trigger","app_id":"cli_app_x"},
+		"event":{
+			"operator":{"operator_id":{"open_id":"ou_requester"}},
+			"context":{"open_chat_id":"oc_group","open_message_id":"om_card_5"},
+			"action":{"tag":"button","value":` + string(value) + `}
+		}
+	}`)
+
+	d := NewLarkJSONFrameDecoder()
+	if _, ok, err := d.Decode(raw, Installation{}); err != nil || ok {
+		t.Fatalf("Decode ok=%v err=%v; unknown confirmation action should be ignored", ok, err)
 	}
 }
 
