@@ -1616,17 +1616,17 @@ function AssessmentTriggerButton({
 
   const status = fix.p4_assessment?.assessment_status ?? "";
   const assessmentActive = status === "pending" || status === "running";
-  const completed = status === "completed";
-  const force = completed;
+  const hasAssessment = status !== "";
+  const force = hasAssessment && !assessmentActive;
   const disabled = pending || assessmentActive;
   const label = pending
     ? t(($) => $.operations.assessment_action.starting)
     : assessmentActive
       ? t(($) => $.operations.assessment_action.in_progress)
-      : completed
+      : hasAssessment
         ? t(($) => $.operations.assessment_action.rerun)
         : t(($) => $.operations.assessment_action.run);
-  const Icon = completed ? RefreshCw : Play;
+  const Icon = hasAssessment ? RefreshCw : Play;
 
   return (
     <Button

@@ -178,6 +178,34 @@ const FIXES = vi.hoisted(() => [
     display_result_status: "needs_changes",
     ai_judgement_eval: "overestimated",
   },
+  {
+    task_id: "t-5",
+    agent_id: "a-1",
+    agent_name: "Fixer",
+    issue_id: "i-5",
+    issue_identifier: "MUL-11",
+    issue_title: "Assessment parser failed",
+    issue_status: "done",
+    last_comment: "",
+    last_comment_author_type: "",
+    started_at: null,
+    completed_at: "2026-06-05T00:00:00Z",
+    created_at: "2026-06-05T00:00:00Z",
+    external: {
+      binding_id: "binding-5",
+      work_item_id: "BUG-10001",
+      status: "Done",
+      mapped_status: "done",
+      done: true,
+      project: "Warpath3",
+    },
+    p4_assessment: {
+      assessment_status: "failed",
+      delivery_attribution_prediction: "unknown",
+      quality_prediction: "unknown",
+      warnings: ["parser_error: expected a JSON object or one fenced json block"],
+    },
+  },
 ]);
 
 const AGENTS = vi.hoisted(() => [
@@ -359,7 +387,7 @@ describe("OperationsPage", () => {
     expect(screen.queryByText("vcvaCnnGi")).toBeNull();
 
     // Agent name appears for each row.
-    expect(screen.getAllByText("Fixer").length).toBe(3);
+    expect(screen.getAllByText("Fixer").length).toBe(4);
     expect(screen.getByText("Reviewer")).toBeTruthy();
 
     // "状态" column = ISSUE workflow status (labels from the issues namespace).
@@ -535,6 +563,32 @@ describe("OperationsPage", () => {
     await waitFor(() => {
       expect(TRIGGER_ASSESSMENT).toHaveBeenCalledWith({
         binding_id: "binding-1",
+        force: true,
+      });
+    });
+  });
+
+  it("reruns a failed assessment with binding_id and force=true", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    let failedRow = screen.getByText("Assessment parser failed").parentElement;
+    while (
+      failedRow &&
+      !failedRow.getAttribute("style")?.includes("grid-template-columns")
+    ) {
+      failedRow = failedRow.parentElement;
+    }
+    expect(failedRow).not.toBeNull();
+    await user.click(
+      within(failedRow as HTMLElement).getByRole("button", {
+        name: "Rerun assessment",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(TRIGGER_ASSESSMENT).toHaveBeenCalledWith({
+        binding_id: "binding-5",
         force: true,
       });
     });
