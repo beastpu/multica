@@ -11,9 +11,9 @@ import (
 )
 
 type fakeInboxNotifierQueries struct {
-	rows         []db.ListActiveLarkUserBindingsByMemberRow
+	rows         []InboxNotificationBinding
 	err          error
-	arg          db.ListActiveLarkUserBindingsByMemberParams
+	arg          ListInboxNotificationBindingsParams
 	issue        db.Issue
 	issueErr     error
 	issueArg     pgtype.UUID
@@ -22,14 +22,14 @@ type fakeInboxNotifierQueries struct {
 	workspaceArg pgtype.UUID
 	claims       map[string]bool
 	claimCalls   int
-	claimArg     db.ClaimLarkInboxNotificationDeliveryParams
-	issueCard    db.LarkInboxIssueCard
+	claimArg     ClaimInboxNotificationDeliveryParams
+	issueCard    InboxIssueCard
 	issueCardErr error
-	issueCardArg db.GetLarkInboxIssueCardParams
+	issueCardArg GetInboxIssueCardParams
 	cardItems    []db.InboxItem
-	cardItemsArg db.ListLarkInboxIssueCardItemsParams
+	cardItemsArg ListInboxIssueCardItemsParams
 	touchCardID  pgtype.UUID
-	upsertArg    db.UpsertLarkInboxIssueCardParams
+	upsertArg    UpsertInboxIssueCardParams
 }
 
 func (f *fakeInboxNotifierQueries) GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error) {
@@ -48,7 +48,7 @@ func (f *fakeInboxNotifierQueries) GetWorkspace(ctx context.Context, id pgtype.U
 	return f.workspace, nil
 }
 
-func (f *fakeInboxNotifierQueries) ListActiveLarkUserBindingsByMember(ctx context.Context, arg db.ListActiveLarkUserBindingsByMemberParams) ([]db.ListActiveLarkUserBindingsByMemberRow, error) {
+func (f *fakeInboxNotifierQueries) ListActiveLarkUserBindingsByMember(ctx context.Context, arg ListInboxNotificationBindingsParams) ([]InboxNotificationBinding, error) {
 	f.arg = arg
 	if f.err != nil {
 		return nil, f.err
@@ -56,13 +56,13 @@ func (f *fakeInboxNotifierQueries) ListActiveLarkUserBindingsByMember(ctx contex
 	return f.rows, nil
 }
 
-func (f *fakeInboxNotifierQueries) ClaimLarkInboxNotificationDelivery(ctx context.Context, arg db.ClaimLarkInboxNotificationDeliveryParams) (bool, error) {
+func (f *fakeInboxNotifierQueries) ClaimLarkInboxNotificationDelivery(ctx context.Context, arg ClaimInboxNotificationDeliveryParams) (bool, error) {
 	f.claimCalls++
 	f.claimArg = arg
 	if f.claims == nil {
 		f.claims = map[string]bool{}
 	}
-	key := uuidString(arg.InboxItemID) + "|" + uuidString(arg.InstallationID) + "|" + arg.LarkOpenID
+	key := uuidString(arg.InboxItemID) + "|" + uuidString(arg.InstallationID) + "|" + arg.ChannelUserID
 	if f.claims[key] {
 		return false, nil
 	}
@@ -70,15 +70,15 @@ func (f *fakeInboxNotifierQueries) ClaimLarkInboxNotificationDelivery(ctx contex
 	return true, nil
 }
 
-func (f *fakeInboxNotifierQueries) GetLarkInboxIssueCard(ctx context.Context, arg db.GetLarkInboxIssueCardParams) (db.LarkInboxIssueCard, error) {
+func (f *fakeInboxNotifierQueries) GetLarkInboxIssueCard(ctx context.Context, arg GetInboxIssueCardParams) (InboxIssueCard, error) {
 	f.issueCardArg = arg
 	if f.issueCardErr != nil {
-		return db.LarkInboxIssueCard{}, f.issueCardErr
+		return InboxIssueCard{}, f.issueCardErr
 	}
 	return f.issueCard, nil
 }
 
-func (f *fakeInboxNotifierQueries) ListLarkInboxIssueCardItems(ctx context.Context, arg db.ListLarkInboxIssueCardItemsParams) ([]db.InboxItem, error) {
+func (f *fakeInboxNotifierQueries) ListLarkInboxIssueCardItems(ctx context.Context, arg ListInboxIssueCardItemsParams) ([]db.InboxItem, error) {
 	f.cardItemsArg = arg
 	return f.cardItems, nil
 }
@@ -88,16 +88,11 @@ func (f *fakeInboxNotifierQueries) TouchLarkInboxIssueCard(ctx context.Context, 
 	return nil
 }
 
-func (f *fakeInboxNotifierQueries) UpsertLarkInboxIssueCard(ctx context.Context, arg db.UpsertLarkInboxIssueCardParams) (db.LarkInboxIssueCard, error) {
+func (f *fakeInboxNotifierQueries) UpsertLarkInboxIssueCard(ctx context.Context, arg UpsertInboxIssueCardParams) (InboxIssueCard, error) {
 	f.upsertArg = arg
-	return db.LarkInboxIssueCard{
-		ID:                mustUUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
-		WorkspaceID:       arg.WorkspaceID,
-		RecipientID:       arg.RecipientID,
-		IssueID:           arg.IssueID,
-		InstallationID:    arg.InstallationID,
-		LarkOpenID:        arg.LarkOpenID,
-		LarkCardMessageID: arg.LarkCardMessageID,
+	return InboxIssueCard{
+		ID:                   mustUUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		ChannelCardMessageID: arg.ChannelCardMessageID,
 	}, nil
 }
 
@@ -107,7 +102,7 @@ func TestInboxNotifierSendsDMViaActorAgentBot(t *testing.T) {
 	otherAgentID := mustUUID("33333333-3333-3333-3333-333333333333")
 	actorAgentID := mustUUID("44444444-4444-4444-4444-444444444444")
 	q := &fakeInboxNotifierQueries{
-		rows: []db.ListActiveLarkUserBindingsByMemberRow{
+		rows: []InboxNotificationBinding{
 			inboxBindingRow(workspaceID, userID, otherAgentID, "cli_other", "ou_other"),
 			inboxBindingRow(workspaceID, userID, actorAgentID, "cli_actor", "ou_actor"),
 		},
@@ -135,7 +130,7 @@ func TestInboxNotifierSendsDMViaActorAgentBot(t *testing.T) {
 	if q.arg.WorkspaceID != workspaceID || q.arg.MulticaUserID != userID {
 		t.Fatalf("binding lookup arg = %+v", q.arg)
 	}
-	if q.claimCalls != 1 || q.claimArg.LarkOpenID != "ou_actor" {
+	if q.claimCalls != 1 || q.claimArg.ChannelUserID != "ou_actor" {
 		t.Fatalf("unexpected delivery claim calls=%d arg=%+v", q.claimCalls, q.claimArg)
 	}
 	api.mu.Lock()
@@ -164,7 +159,7 @@ func TestInboxNotifierSkipsDuplicateDeliveryClaim(t *testing.T) {
 	actorAgentID := mustUUID("44444444-4444-4444-4444-444444444444")
 	itemID := "55555555-5555-5555-5555-555555555555"
 	q := &fakeInboxNotifierQueries{
-		rows: []db.ListActiveLarkUserBindingsByMemberRow{
+		rows: []InboxNotificationBinding{
 			inboxBindingRow(workspaceID, userID, actorAgentID, "cli_actor", "ou_actor"),
 		},
 	}
@@ -208,7 +203,7 @@ func TestInboxNotifierFallsBackToAssigneeAgentBot(t *testing.T) {
 	assigneeAgentID := mustUUID("44444444-4444-4444-4444-444444444444")
 	issueID := mustUUID("55555555-5555-5555-5555-555555555555")
 	q := &fakeInboxNotifierQueries{
-		rows: []db.ListActiveLarkUserBindingsByMemberRow{
+		rows: []InboxNotificationBinding{
 			inboxBindingRow(workspaceID, userID, otherAgentID, "cli_other", "ou_other"),
 			inboxBindingRow(workspaceID, userID, assigneeAgentID, "cli_assignee", "ou_assignee"),
 		},
@@ -261,7 +256,7 @@ func TestInboxNotifierSendsMergedIssueCardForFirstLifecycleItem(t *testing.T) {
 	actorAgentID := mustUUID("44444444-4444-4444-4444-444444444444")
 	issueID := mustUUID("55555555-5555-5555-5555-555555555555")
 	q := &fakeInboxNotifierQueries{
-		rows: []db.ListActiveLarkUserBindingsByMemberRow{
+		rows: []InboxNotificationBinding{
 			inboxBindingRow(workspaceID, userID, actorAgentID, "cli_actor", "ou_actor"),
 		},
 		issue: db.Issue{ID: issueID, Number: 113, Title: "查询今天上海天气"},
@@ -300,7 +295,7 @@ func TestInboxNotifierSendsMergedIssueCardForFirstLifecycleItem(t *testing.T) {
 	if got := strings.Join(q.cardItemsArg.Types, ","); got != "quick_create_done,status_changed" {
 		t.Fatalf("card item types = %q", got)
 	}
-	if q.upsertArg.LarkCardMessageID != "lark-direct-card-msg-id" || q.upsertArg.IssueID != issueID || q.upsertArg.LarkOpenID != "ou_actor" {
+	if q.upsertArg.ChannelCardMessageID != "lark-direct-card-msg-id" || q.upsertArg.IssueID != issueID || q.upsertArg.ChannelUserID != "ou_actor" {
 		t.Fatalf("unexpected issue card upsert arg: %+v", q.upsertArg)
 	}
 	api.mu.Lock()
@@ -323,7 +318,7 @@ func TestInboxNotifierPatchesExistingMergedIssueCardForLifecycleUpdate(t *testin
 	issueID := mustUUID("55555555-5555-5555-5555-555555555555")
 	cardID := mustUUID("77777777-7777-7777-7777-777777777777")
 	q := &fakeInboxNotifierQueries{
-		rows: []db.ListActiveLarkUserBindingsByMemberRow{
+		rows: []InboxNotificationBinding{
 			inboxBindingRow(workspaceID, userID, actorAgentID, "cli_actor", "ou_actor"),
 		},
 		issue: db.Issue{ID: issueID, Number: 113},
@@ -332,14 +327,9 @@ func TestInboxNotifierPatchesExistingMergedIssueCardForLifecycleUpdate(t *testin
 			Slug:        "all",
 			IssuePrefix: "All",
 		},
-		issueCard: db.LarkInboxIssueCard{
-			ID:                cardID,
-			WorkspaceID:       workspaceID,
-			RecipientID:       userID,
-			IssueID:           issueID,
-			InstallationID:    mustUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
-			LarkOpenID:        "ou_actor",
-			LarkCardMessageID: "om_existing_card",
+		issueCard: InboxIssueCard{
+			ID:                   cardID,
+			ChannelCardMessageID: "om_existing_card",
 		},
 		cardItems: []db.InboxItem{
 			{
@@ -409,7 +399,7 @@ func TestInboxNotifierSendsNewCommentAsFreshCardEvenWhenMergedIssueCardExists(t 
 	issueID := mustUUID("55555555-5555-5555-5555-555555555555")
 	cardID := mustUUID("77777777-7777-7777-7777-777777777777")
 	q := &fakeInboxNotifierQueries{
-		rows: []db.ListActiveLarkUserBindingsByMemberRow{
+		rows: []InboxNotificationBinding{
 			inboxBindingRow(workspaceID, userID, actorAgentID, "cli_actor", "ou_actor"),
 		},
 		issue: db.Issue{ID: issueID, Number: 113},
@@ -418,14 +408,9 @@ func TestInboxNotifierSendsNewCommentAsFreshCardEvenWhenMergedIssueCardExists(t 
 			Slug:        "all",
 			IssuePrefix: "All",
 		},
-		issueCard: db.LarkInboxIssueCard{
-			ID:                cardID,
-			WorkspaceID:       workspaceID,
-			RecipientID:       userID,
-			IssueID:           issueID,
-			InstallationID:    mustUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
-			LarkOpenID:        "ou_actor",
-			LarkCardMessageID: "om_existing_card",
+		issueCard: InboxIssueCard{
+			ID:                   cardID,
+			ChannelCardMessageID: "om_existing_card",
 		},
 	}
 	api := &stubAPIClientWithRecorder{configured: true}
@@ -476,7 +461,7 @@ func TestInboxNotifierSkipsWhenNoAgentBotMatches(t *testing.T) {
 	otherAgentID := mustUUID("33333333-3333-3333-3333-333333333333")
 	actorAgentID := mustUUID("44444444-4444-4444-4444-444444444444")
 	q := &fakeInboxNotifierQueries{
-		rows: []db.ListActiveLarkUserBindingsByMemberRow{
+		rows: []InboxNotificationBinding{
 			inboxBindingRow(workspaceID, userID, otherAgentID, "cli_other", "ou_other"),
 		},
 	}
@@ -532,7 +517,7 @@ func TestInboxNotifierSendsNewCommentAsMarkdownCard(t *testing.T) {
 	userID := mustUUID("22222222-2222-2222-2222-222222222222")
 	actorAgentID := mustUUID("44444444-4444-4444-4444-444444444444")
 	q := &fakeInboxNotifierQueries{
-		rows: []db.ListActiveLarkUserBindingsByMemberRow{
+		rows: []InboxNotificationBinding{
 			inboxBindingRow(workspaceID, userID, actorAgentID, "cli_actor", "ou_actor"),
 		},
 		workspace: db.Workspace{ID: workspaceID, Slug: "tide-server", IssuePrefix: "TID"},
@@ -596,15 +581,15 @@ func TestInboxNotifierRejectsMissingInboxItemID(t *testing.T) {
 	}
 }
 
-func inboxBindingRow(workspaceID, userID, agentID pgtype.UUID, appID, openID string) db.ListActiveLarkUserBindingsByMemberRow {
-	return db.ListActiveLarkUserBindingsByMemberRow{
-		LarkUserBinding: db.LarkUserBinding{
+func inboxBindingRow(workspaceID, userID, agentID pgtype.UUID, appID, openID string) InboxNotificationBinding {
+	return InboxNotificationBinding{
+		UserBinding: UserBinding{
 			WorkspaceID:    workspaceID,
 			MulticaUserID:  userID,
 			InstallationID: mustUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-			LarkOpenID:     openID,
+			ChannelUserID:  openID,
 		},
-		LarkInstallation: db.LarkInstallation{
+		Installation: Installation{
 			ID:          mustUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
 			WorkspaceID: workspaceID,
 			AgentID:     agentID,

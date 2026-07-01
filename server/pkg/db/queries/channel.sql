@@ -192,12 +192,104 @@ RETURNING *;
 SELECT * FROM channel_user_binding
 WHERE installation_id = $1 AND channel_user_id = $2;
 
+-- name: ListActiveChannelLarkUserBindingsByMember :many
+-- Outbound inbox notifications: find the recipient's bound Feishu accounts in
+-- this workspace, with the active bot installation needed for credentials.
+-- The member join restores the membership proof that used to be guaranteed by
+-- lark_user_binding's composite FK before channel_* removed database FKs.
+SELECT sqlc.embed(cub), sqlc.embed(ci)
+FROM channel_user_binding cub
+JOIN channel_installation ci ON ci.id = cub.installation_id
+JOIN member m ON m.workspace_id = cub.workspace_id
+             AND m.user_id = cub.multica_user_id
+WHERE cub.workspace_id = $1
+  AND cub.multica_user_id = $2
+  AND cub.channel_type = 'feishu'
+  AND ci.channel_type = 'feishu'
+  AND ci.workspace_id = cub.workspace_id
+  AND ci.status = 'active'
+ORDER BY cub.bound_at DESC;
+
 -- name: DeleteChannelUserBindingsByWorkspaceMember :exec
 -- Application-layer integrity (replaces the old member-FK ON DELETE
 -- CASCADE): prune every binding for a user who has been removed from a
 -- workspace, across all installations in that workspace.
 DELETE FROM channel_user_binding
 WHERE workspace_id = $1 AND multica_user_id = $2;
+
+-- =====================
+-- channel_inbox_notification_delivery
+-- =====================
+
+-- name: ClaimChannelLarkInboxNotificationDelivery :one
+-- Claims one outbound Feishu inbox notification delivery. Keyed by the durable
+-- inbox_item row plus concrete channel installation and recipient open_id so
+-- repeated inbox:new events, duplicate bus subscribers, or multi-replica
+-- handling cannot send duplicate DMs.
+WITH ins AS (
+    INSERT INTO channel_inbox_notification_delivery (
+        inbox_item_id,
+        installation_id,
+        channel_type,
+        channel_user_id
+    ) VALUES ($1, $2, 'feishu', $3)
+    ON CONFLICT DO NOTHING
+    RETURNING true AS claimed
+)
+SELECT COALESCE((SELECT claimed FROM ins), false)::boolean AS claimed;
+
+-- =====================
+-- channel_inbox_issue_card
+-- =====================
+
+-- name: GetChannelLarkInboxIssueCard :one
+SELECT *
+FROM channel_inbox_issue_card
+WHERE workspace_id = $1
+  AND recipient_id = $2
+  AND issue_id = $3
+  AND installation_id = $4
+  AND channel_type = 'feishu'
+  AND channel_user_id = $5;
+
+-- name: UpsertChannelLarkInboxIssueCard :one
+INSERT INTO channel_inbox_issue_card (
+    workspace_id,
+    recipient_id,
+    issue_id,
+    installation_id,
+    channel_type,
+    channel_user_id,
+    channel_card_message_id
+) VALUES ($1, $2, $3, $4, 'feishu', $5, $6)
+ON CONFLICT (
+    workspace_id,
+    recipient_id,
+    issue_id,
+    installation_id,
+    channel_type,
+    channel_user_id
+)
+DO UPDATE SET
+    channel_card_message_id = EXCLUDED.channel_card_message_id,
+    updated_at = now()
+RETURNING *;
+
+-- name: TouchChannelLarkInboxIssueCard :exec
+UPDATE channel_inbox_issue_card
+SET updated_at = now()
+WHERE id = $1;
+
+-- name: ListChannelLarkInboxIssueCardItems :many
+SELECT *
+FROM inbox_item
+WHERE workspace_id = $1
+  AND recipient_type = 'member'
+  AND recipient_id = $2
+  AND issue_id = $3
+  AND type = ANY(sqlc.arg('types')::text[])
+ORDER BY created_at ASC, id ASC
+LIMIT 20;
 
 -- =====================
 -- channel_chat_session_binding
