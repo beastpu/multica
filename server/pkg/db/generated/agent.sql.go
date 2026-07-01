@@ -3185,7 +3185,14 @@ spine AS (
     latest.created_at,
     true AS has_normal_task
   FROM latest
-  WHERE COALESCE(latest.completed_at, latest.started_at, latest.created_at) > now() - make_interval(days => $3::int)
+  LEFT JOIN feishu_project_issue_binding fib
+    ON fib.issue_id = latest.issue_id
+  WHERE COALESCE(
+      fib.last_external_updated_at,
+      latest.completed_at,
+      latest.started_at,
+      latest.created_at
+    ) > now() - make_interval(days => $3::int)
 
   UNION ALL
 
@@ -3195,7 +3202,7 @@ spine AS (
     fib.issue_id,
     NULL::timestamptz AS started_at,
     NULL::timestamptz AS completed_at,
-    fib.last_synced_at AS created_at,
+    COALESCE(fib.last_external_updated_at, fib.last_synced_at) AS created_at,
     false AS has_normal_task
   FROM feishu_project_issue_binding fib
   JOIN issue i ON i.id = fib.issue_id AND i.workspace_id = fib.workspace_id
@@ -3204,7 +3211,7 @@ spine AS (
     AND i.assignee_type = 'agent'
     AND i.assignee_id IS NOT NULL
     AND latest.issue_id IS NULL
-    AND fib.last_synced_at > now() - make_interval(days => $3::int)
+    AND COALESCE(fib.last_external_updated_at, fib.last_synced_at) > now() - make_interval(days => $3::int)
 )
 SELECT
   spine.task_id,
@@ -3226,6 +3233,7 @@ SELECT
   fib.external_status_label AS external_status,
   fib.project_key AS external_project,
   fib.external_url AS external_url,
+  fib.external_fields AS external_fields,
   fpi.status_mapping AS external_status_mapping,
   fpi.work_item_types AS external_work_item_types,
   p4.assessment_status AS p4_assessment_status,
@@ -3270,7 +3278,7 @@ WHERE
   -- comment) yields NULL > 0 → excluded, which is the desired "drop unmatched".
   ($1::text IS NULL
        OR position(lower($1::text) IN lower(lc.content)) > 0)
-ORDER BY COALESCE(spine.completed_at, spine.started_at, spine.created_at) DESC
+ORDER BY COALESCE(fib.last_external_updated_at, spine.completed_at, spine.started_at, spine.created_at) DESC
 LIMIT 500
 `
 
@@ -3300,6 +3308,7 @@ type ListWorkspaceAgentFixesRow struct {
 	ExternalStatus                  pgtype.Text        `json:"external_status"`
 	ExternalProject                 pgtype.Text        `json:"external_project"`
 	ExternalUrl                     pgtype.Text        `json:"external_url"`
+	ExternalFields                  []byte             `json:"external_fields"`
 	ExternalStatusMapping           []byte             `json:"external_status_mapping"`
 	ExternalWorkItemTypes           []byte             `json:"external_work_item_types"`
 	P4AssessmentStatus              pgtype.Text        `json:"p4_assessment_status"`
@@ -3340,7 +3349,9 @@ type ListWorkspaceAgentFixesRow struct {
 // covers the whole time window, not just the most recent 500 rows. A row with
 // no matching agent comment is dropped when `search` is set.
 // JOINs agent because agent_task_queue has no workspace_id; INNER JOIN issue so
-// only issue-linked runs count. The window filters on the latest run's recency.
+// only issue-linked runs count. For Feishu/Meego-bound issues, the window
+// prefers Feishu's last_external_updated_at over Multica's last_synced_at so a
+// periodic sync does not make old business items look new.
 // Per-agent access filtering happens in the handler against accessibleAgentIDs.
 func (q *Queries) ListWorkspaceAgentFixes(ctx context.Context, arg ListWorkspaceAgentFixesParams) ([]ListWorkspaceAgentFixesRow, error) {
 	rows, err := q.db.Query(ctx, listWorkspaceAgentFixes, arg.Search, arg.WorkspaceID, arg.Days)
@@ -3371,6 +3382,7 @@ func (q *Queries) ListWorkspaceAgentFixes(ctx context.Context, arg ListWorkspace
 			&i.ExternalStatus,
 			&i.ExternalProject,
 			&i.ExternalUrl,
+			&i.ExternalFields,
 			&i.ExternalStatusMapping,
 			&i.ExternalWorkItemTypes,
 			&i.P4AssessmentStatus,

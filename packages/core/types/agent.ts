@@ -665,6 +665,7 @@ export interface AgentFixExternalRecord {
   done?: boolean;
   project?: string;
   version?: string;
+  final_cl?: string;
   url?: string;
 }
 

@@ -707,6 +707,7 @@ const AgentFixExternalRecordSchema = z.object({
   done: z.boolean().optional(),
   project: z.string().default(""),
   version: z.string().default(""),
+  final_cl: z.string().default(""),
   url: z.string().default(""),
 }).loose();
 

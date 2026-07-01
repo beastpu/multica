@@ -253,6 +253,37 @@ func TestFeishuProjectListRelatedWorkItemsFindsLinkedStory(t *testing.T) {
 	}
 }
 
+func TestFeishuProjectLatestSubmittedCLFromCommentsUsesLastSubmittedComment(t *testing.T) {
+	comments := []FeishuProjectComment{
+		{
+			Content:   "CL 287451 已 shelve，等待 review",
+			CreatedAt: time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC),
+		},
+		{
+			Content:   "ChangeList: 284805 --Submitted",
+			CreatedAt: time.Date(2026, 7, 1, 11, 0, 0, 0, time.UTC),
+		},
+		{
+			Content:   "submitted CL 284806",
+			CreatedAt: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+		},
+	}
+
+	if got := feishuProjectLatestSubmittedCLFromComments(comments); got != "284806" {
+		t.Fatalf("latest submitted CL = %q, want 284806", got)
+	}
+}
+
+func TestFeishuProjectLatestSubmittedCLFromCommentsIgnoresShelvedCL(t *testing.T) {
+	comments := []FeishuProjectComment{
+		{Content: "CL 287451 已 shelve，修复 FPS 求助分享在 IM 发送失败时仍记录 MsgID=0 的问题。"},
+	}
+
+	if got := feishuProjectLatestSubmittedCLFromComments(comments); got != "" {
+		t.Fatalf("latest submitted CL = %q, want empty", got)
+	}
+}
+
 func TestFeishuProjectIssueStatusOptionsFallsBackToFieldMetadata(t *testing.T) {
 	var sawMetadataAPI bool
 

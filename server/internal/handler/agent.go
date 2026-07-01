@@ -1606,6 +1606,7 @@ type AgentFixExternalResponse struct {
 	MappedStatus string  `json:"mapped_status,omitempty"`
 	Done         bool    `json:"done,omitempty"`
 	Project      string  `json:"project,omitempty"`
+	FinalCL      string  `json:"final_cl,omitempty"`
 	URL          *string `json:"url,omitempty"`
 }
 
@@ -1745,8 +1746,20 @@ func buildAgentFixExternal(row db.ListWorkspaceAgentFixesRow) *AgentFixExternalR
 		MappedStatus: mappedStatus,
 		Done:         mappedStatus == "done",
 		Project:      textValue(row.ExternalProject),
+		FinalCL:      agentFixExternalField(row.ExternalFields, "final_cl"),
 		URL:          textToPtr(row.ExternalUrl),
 	}
+}
+
+func agentFixExternalField(raw []byte, key string) string {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return ""
+	}
+	var fields map[string]string
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(fields[key])
 }
 
 func buildAgentFixP4(row db.ListWorkspaceAgentFixesRow) *AgentFixP4AssessmentResponse {

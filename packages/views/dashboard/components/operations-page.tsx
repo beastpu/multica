@@ -225,15 +225,12 @@ function derivedEvidence(fix: AgentFixRecord) {
     extractToken(comment, [
       /\bshelv(?:e|ed)?(?:\s+CL)?[:#\s]+(\d+)\b/i,
       /\bpending\s+P4\s+CL[:#\s]+(\d+)\b/i,
+      /\bCL[:#\s]+(\d+)\b[^\n\r]*(?:shelv(?:e|ed)|已\s*shelve|已\s*shelved)\b/i,
     ]);
   const finalCl =
+    String(fix.external?.final_cl ?? "").trim() ||
     compactList(p4?.external_committed_cls) ||
-    compactList(p4?.swarm_committed_cls) ||
-    extractToken(comment, [
-      /\bfinal\s+CL[:#\s]+(\d+)\b/i,
-      /\bsubmitted\s+as\s+CL[:#\s]+(\d+)\b/i,
-      /\bCL[:#\s]+(\d+)\b/i,
-    ]);
+    compactList(p4?.swarm_committed_cls);
   return {
     workstream: p4?.workstream ?? "",
     swarm,
@@ -679,6 +676,7 @@ export function OperationsPage() {
           />
           <Button
             type="button"
+            aria-pressed={mismatchOnly}
             variant={mismatchOnly ? "default" : "outline"}
             size="sm"
             onClick={() => setMismatchOnly((v) => !v)}

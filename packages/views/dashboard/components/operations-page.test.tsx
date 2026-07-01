@@ -83,6 +83,7 @@ const FIXES = vi.hoisted(() => [
       mapped_status: "done",
       done: true,
       project: "Warpath3",
+      final_cl: "284805",
     },
   },
   // An issue status the client doesn't know — must downgrade to the raw
@@ -205,6 +206,31 @@ const FIXES = vi.hoisted(() => [
       quality_prediction: "unknown",
       warnings: ["parser_error: expected a JSON object or one fenced json block"],
     },
+  },
+  {
+    task_id: "t-6",
+    agent_id: "a-1",
+    agent_name: "Fixer",
+    issue_id: "i-6",
+    issue_identifier: "WAR-9581",
+    issue_title: "Shelved CL should not look final",
+    issue_status: "in_progress",
+    last_comment:
+      "CL 287451 已 shelve，修复 FPS 求助分享在 IM 发送失败时仍记录 MsgID=0 的问题。",
+    last_comment_author_type: "agent",
+    started_at: null,
+    completed_at: null,
+    created_at: "2026-06-06T00:00:00Z",
+    external: {
+      binding_id: "binding-6",
+      work_item_id: "7035395614",
+      status: "IN PROGRESS",
+      mapped_status: "in_progress",
+      done: false,
+      project: "Warpath3",
+    },
+    display_result_status: "pending",
+    ai_judgement_eval: "pending",
   },
 ]);
 
@@ -387,7 +413,7 @@ describe("OperationsPage", () => {
     expect(screen.queryByText("vcvaCnnGi")).toBeNull();
 
     // Agent name appears for each row.
-    expect(screen.getAllByText("Fixer").length).toBe(4);
+    expect(screen.getAllByText("Fixer").length).toBe(5);
     expect(screen.getByText("Reviewer")).toBeTruthy();
 
     // "状态" column = ISSUE workflow status (labels from the issues namespace).
@@ -421,6 +447,9 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Swarm SW-11872")).toBeTruthy();
     expect(screen.getByText("shelve 282941")).toBeTruthy();
     expect(screen.getByText("final CL 283006")).toBeTruthy();
+    expect(screen.getByText("final CL 284805")).toBeTruthy();
+    expect(screen.getByText("shelve 287451")).toBeTruthy();
+    expect(screen.queryByText("final CL 287451")).toBeNull();
     expect(screen.queryByText("changes 282941, 282944")).toBeNull();
     expect(screen.queryByText("commits 283006")).toBeNull();
     expect(screen.queryByText("branch main")).toBeNull();
@@ -646,6 +675,28 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Client crash")).toBeTruthy();
     expect(screen.getByText("AI overestimated")).toBeTruthy();
     expect(screen.queryByText("Login broke")).toBeNull();
+  });
+
+  it("toggles mismatch-only off on the second click", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    const toggle = screen.getByRole("button", { name: "Mismatch only" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("Login broke")).toBeTruthy();
+    expect(screen.getByText("Client crash")).toBeTruthy();
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Login broke")).toBeNull();
+    expect(screen.getByText("Client crash")).toBeTruthy();
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("Login broke")).toBeTruthy();
+    expect(screen.getByText("Client crash")).toBeTruthy();
   });
 
   it("does not substitute total rows for a zero external-done summary", async () => {

@@ -646,6 +646,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	}
 	mappedPriority := mapFeishuPriority(item.Priority)
 	externalFields := feishuProjectExternalFields(item)
+	finalCLLookupComplete := s.enrichFeishuProjectFinalCL(ctx, cfg, item, externalFields)
 
 	phaseStarted := time.Now()
 	binding, bindingErr := s.Queries.GetFeishuProjectIssueBindingByExternal(ctx, db.GetFeishuProjectIssueBindingByExternalParams{
@@ -657,6 +658,9 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	var issue db.Issue
 	issueFound := false
 	if bindingErr == nil {
+		if !finalCLLookupComplete {
+			preserveFeishuProjectExternalField(binding.ExternalFields, externalFields, "final_cl")
+		}
 		phaseStarted = time.Now()
 		fetched, lookupErr := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: binding.IssueID, WorkspaceID: cfg.WorkspaceID})
 		timing.issueLookup += time.Since(phaseStarted)
@@ -766,7 +770,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 			s.reconcileSyncedIssueTasks(ctx, issue)
 			// Advance the binding watermark so the next sync's short-circuit fires.
 			phaseStarted = time.Now()
-			binding, err := s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
+			binding, err := s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParamsWithExternalFields(cfg, issue.ID, item, externalFields))
 			if err != nil {
 				return "skipped", 0, err
 			}
@@ -797,7 +801,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 			return "skipped", 0, err
 		}
 		phaseStarted = time.Now()
-		binding, bindingErr := s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
+		binding, bindingErr := s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParamsWithExternalFields(cfg, issue.ID, item, externalFields))
 		timing.bindingUpsert += time.Since(phaseStarted)
 		if bindingErr != nil {
 			return "skipped", 0, bindingErr
@@ -845,7 +849,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	if err != nil {
 		return "skipped", 0, err
 	}
-	binding, err = qtx.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
+	binding, err = qtx.UpsertFeishuProjectIssueBinding(ctx, bindingParamsWithExternalFields(cfg, issue.ID, item, externalFields))
 	if err != nil {
 		return "skipped", 0, err
 	}
@@ -1569,6 +1573,10 @@ func sameNullableUUID(a, b pgtype.UUID) bool {
 }
 
 func bindingParams(cfg db.FeishuProjectIntegration, issueID pgtype.UUID, item FeishuProjectWorkItem) db.UpsertFeishuProjectIssueBindingParams {
+	return bindingParamsWithExternalFields(cfg, issueID, item, feishuProjectExternalFields(item))
+}
+
+func bindingParamsWithExternalFields(cfg db.FeishuProjectIntegration, issueID pgtype.UUID, item FeishuProjectWorkItem, externalFields map[string]string) db.UpsertFeishuProjectIssueBindingParams {
 	return db.UpsertFeishuProjectIssueBindingParams{
 		WorkspaceID:        cfg.WorkspaceID,
 		IntegrationID:      cfg.ID,
@@ -1583,12 +1591,16 @@ func bindingParams(cfg db.FeishuProjectIntegration, issueID pgtype.UUID, item Fe
 			Valid:  item.Status != "",
 		},
 		LastExternalUpdatedAt: pgtype.Timestamptz{Time: item.UpdatedAt, Valid: !item.UpdatedAt.IsZero()},
-		ExternalFields:        feishuProjectExternalFieldsJSON(item),
+		ExternalFields:        feishuProjectExternalFieldsMapJSON(externalFields),
 	}
 }
 
 func feishuProjectExternalFieldsJSON(item FeishuProjectWorkItem) []byte {
-	b, err := json.Marshal(feishuProjectExternalFields(item))
+	return feishuProjectExternalFieldsMapJSON(feishuProjectExternalFields(item))
+}
+
+func feishuProjectExternalFieldsMapJSON(fields map[string]string) []byte {
+	b, err := json.Marshal(fields)
 	if err != nil {
 		return []byte("{}")
 	}
@@ -1631,6 +1643,114 @@ func feishuProjectExternalFields(item FeishuProjectWorkItem) map[string]string {
 		fields[displayName] = value
 	}
 	return fields
+}
+
+func (s *FeishuProjectSyncService) enrichFeishuProjectFinalCL(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, fields map[string]string) bool {
+	if fields == nil {
+		return false
+	}
+	client := s.Client
+	if client == nil {
+		client = NewFeishuProjectClient()
+	}
+	var all []FeishuProjectComment
+	complete := true
+	if comments, err := client.ListWorkItemComments(ctx, cfg, item.Type, item.ID); err == nil {
+		all = append(all, comments...)
+	} else {
+		complete = false
+		slog.Debug("Feishu Project final CL comment lookup skipped",
+			"workspace_id", UUIDString(cfg.WorkspaceID),
+			"project_key", cfg.ProjectKey,
+			"work_item_type", item.Type,
+			"work_item_id", item.ID,
+			"error", err)
+	}
+	related := item.RelatedWorkItems
+	if len(related) == 0 {
+		if items, err := client.ListRelatedWorkItems(ctx, cfg, item.Type, item.ID); err == nil {
+			related = items
+		} else {
+			complete = false
+		}
+	}
+	for _, rel := range related {
+		if strings.TrimSpace(rel.Type) == "" || strings.TrimSpace(rel.ID) == "" {
+			continue
+		}
+		comments, err := client.ListWorkItemComments(ctx, cfg, rel.Type, rel.ID)
+		if err != nil {
+			complete = false
+			slog.Debug("Feishu Project related final CL comment lookup skipped",
+				"workspace_id", UUIDString(cfg.WorkspaceID),
+				"project_key", cfg.ProjectKey,
+				"work_item_type", rel.Type,
+				"work_item_id", rel.ID,
+				"source", rel.Source,
+				"error", err)
+			continue
+		}
+		all = append(all, comments...)
+	}
+	if cl := feishuProjectLatestSubmittedCLFromComments(all); cl != "" {
+		fields["final_cl"] = cl
+	}
+	return complete
+}
+
+func preserveFeishuProjectExternalField(raw []byte, fields map[string]string, key string) {
+	if fields == nil || strings.TrimSpace(fields[key]) != "" || len(bytes.TrimSpace(raw)) == 0 {
+		return
+	}
+	var existing map[string]string
+	if err := json.Unmarshal(raw, &existing); err != nil {
+		return
+	}
+	if value := strings.TrimSpace(existing[key]); value != "" {
+		fields[key] = value
+	}
+}
+
+var feishuProjectSubmittedCLCommentREs = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(?:final\s+cl|submitted\s+cl|committed\s+cl|changelist|change\s*list)\s*[:=#-]?\s*(\d{4,})\b`),
+	regexp.MustCompile(`(?i)\bCL[:#\s]+(\d{4,})\b[^\n\r]*(?:submitted|committed|--\s*submitted|已\s*提交|已\s*submit)\b`),
+	regexp.MustCompile(`(?i)(?:提交|提交到|最终提交)[^\n\r]{0,24}\bCL[:#\s]*(\d{4,})\b`),
+}
+
+func feishuProjectLatestSubmittedCLFromComments(comments []FeishuProjectComment) string {
+	bestCL := ""
+	bestIdx := -1
+	var bestTime time.Time
+	for idx, comment := range comments {
+		cl := feishuProjectSubmittedCLFromText(comment.Content)
+		if cl == "" {
+			continue
+		}
+		if bestIdx < 0 ||
+			(!comment.CreatedAt.IsZero() && (bestTime.IsZero() || comment.CreatedAt.After(bestTime))) ||
+			(comment.CreatedAt.Equal(bestTime) && idx > bestIdx) ||
+			(comment.CreatedAt.IsZero() && bestTime.IsZero() && idx > bestIdx) {
+			bestCL = cl
+			bestIdx = idx
+			bestTime = comment.CreatedAt
+		}
+	}
+	return bestCL
+}
+
+func feishuProjectSubmittedCLFromText(text string) string {
+	for _, re := range feishuProjectSubmittedCLCommentREs {
+		matches := re.FindAllStringSubmatch(text, -1)
+		if len(matches) == 0 {
+			continue
+		}
+		for i := len(matches) - 1; i >= 0; i-- {
+			if len(matches[i]) > 1 {
+				return matches[i][1]
+			}
+		}
+	}
+	return ""
 }
 
 func feishuProjectExternalFieldDisplayName(name string) string {
