@@ -23,27 +23,16 @@ import { useT } from "../../i18n";
 
 const ISSUE_ASSESSMENT_LOOKBACK_DAYS = 90;
 
-export function issueHasLegacyP4AssessmentSignal(issue: Issue): boolean {
-  const title = issue.title.toLowerCase();
-  if (title.includes("p4 assessment") || title.includes("swarm")) return true;
-
-  const metadata = issue.metadata ?? {};
-  return (
-    metadata.demo === true ||
-    metadata.p4_assessment === true ||
-    typeof metadata.swarm_review === "string" ||
-    typeof metadata.p4_status === "string"
-  );
-}
-
-// The Operations feed (`ListWorkspaceAgentFixes`) returns one row per issue
-// an agent ran ANY fix-category task on, not just issues bound to an external
-// P4/Swarm work item. A truthy `record` alone therefore isn't evidence this
-// issue went through the P4 assessment flow — every agent-touched issue would
-// match and show these tags. `external.binding_id` is only populated when the
-// issue actually has a Feishu/Meego binding, which is the real P4 signal.
-function recordHasP4Binding(record?: AgentFixRecord): boolean {
-  return Boolean(record?.external?.binding_id);
+// Whether to show the P4/AI/human-review tags is decided ONLY by an explicit
+// flag on the issue itself — never by whether some other record (Operations
+// feed, a Feishu binding, an agent task) happens to reference this issue.
+// Cross-referencing another source made every agent-touched issue in every
+// workspace match, since the Operations feed and Feishu bindings cover far
+// more issues than the P4 assessment flow actually applies to. Default is no
+// tags: nothing in the backend sets this flag today except hand-authored demo
+// data, and that's intentional until a real, explicit tagging mechanism ships.
+export function issueHasP4AssessmentTag(issue: Issue): boolean {
+  return issue.metadata?.p4_assessment === true;
 }
 
 export function IssueP4AssessmentTags({
@@ -58,7 +47,7 @@ export function IssueP4AssessmentTags({
   const record = useIssueP4AssessmentRecord(issue);
   const outcome = record?.human_review?.outcome?.trim();
   const [reviewOpen, setReviewOpen] = useState(false);
-  if (!issueHasLegacyP4AssessmentSignal(issue) && !recordHasP4Binding(record)) return null;
+  if (!issueHasP4AssessmentTag(issue)) return null;
 
   return (
     <span className={cn("inline-flex min-w-0 shrink-0 items-center gap-1", className)}>
@@ -110,8 +99,7 @@ export function IssueP4AssessmentButton({
 }) {
   const { t } = useT("issues");
   const p = useWorkspacePaths();
-  const record = useIssueP4AssessmentRecord(issue);
-  if (!issueHasLegacyP4AssessmentSignal(issue) && !recordHasP4Binding(record)) return null;
+  if (!issueHasP4AssessmentTag(issue)) return null;
 
   return (
     <AppLink

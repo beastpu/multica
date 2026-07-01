@@ -137,29 +137,10 @@ describe("IssueP4AssessmentTags", () => {
     expect(screen.getByText("Pending")).toBeTruthy();
   });
 
-  it("shows assessment tags when only operations assessment data identifies the issue", () => {
-    renderWithI18n(
-      <IssueP4AssessmentTags
-        issue={{
-          ...issue,
-          title: "Ordinary issue title",
-          metadata: {},
-        }}
-      />,
-    );
-
-    expect(screen.getByText("P4")).toBeTruthy();
-    expect(screen.getByText("Needs changes")).toBeTruthy();
-  });
-
-  it("hides assessment tags for an ordinary agent-fix record with no external P4/Swarm binding", () => {
-    const { external: _external, ...recordWithoutBinding } = defaultRecord;
-    records.splice(
-      0,
-      records.length,
-      recordWithoutBinding as unknown as typeof defaultRecord,
-    );
-
+  it("hides assessment tags for an ordinary issue with no explicit p4_assessment metadata, even when an operations record matches it", () => {
+    // The operations record has a real external binding AND a real human
+    // review outcome — proof that a matching record alone must never be
+    // enough. Only the issue's own metadata flag may turn the tags on.
     renderWithI18n(
       <IssueP4AssessmentTags
         issue={{
