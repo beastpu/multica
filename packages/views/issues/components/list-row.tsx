@@ -20,6 +20,7 @@ import { ProgressRing } from "./progress-ring";
 import { IssueActionsContextMenu } from "../actions";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
+import { IssueP4AssessmentButton, IssueP4AssessmentTags } from "./p4-assessment-entry";
 
 export interface ChildProgress {
   done: number;
@@ -124,6 +125,7 @@ function ListRowContent({
                 )}
               </span>
             )}
+            <IssueP4AssessmentTags issue={issue} className="ml-1" />
           </span>
           {showProject && (
             <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground max-w-[140px]">
@@ -150,6 +152,7 @@ function ListRowContent({
             />
           )}
         </AppLink>
+        <IssueP4AssessmentButton issue={issue} className={isDragging ? "pointer-events-none" : ""} />
       </div>
     </IssueActionsContextMenu>
   );

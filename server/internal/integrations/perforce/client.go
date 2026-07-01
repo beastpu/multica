@@ -18,6 +18,12 @@ type Review struct {
 	Description string // carries issue identifiers, e.g. "Fixes MUL-123"
 	ShelvedCL   *int64
 	CommittedCL *int64
+	Changes     []int64
+	Commits     []int64
+	SwarmBranch string
+	EventType   string
+	SentAt      time.Time
+	RawPayload  []byte
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }

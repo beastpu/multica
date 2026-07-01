@@ -86,11 +86,12 @@ type FeishuProjectTxStarter interface {
 }
 
 type FeishuProjectSyncService struct {
-	Queries     *db.Queries
-	Tx          FeishuProjectTxStarter
-	Client      *FeishuProjectClient
-	Storage     FeishuProjectStorage
-	TaskService FeishuProjectTaskService
+	Queries      *db.Queries
+	Tx           FeishuProjectTxStarter
+	Client       *FeishuProjectClient
+	Storage      FeishuProjectStorage
+	TaskService  FeishuProjectTaskService
+	P4Assessment FeishuProjectP4AssessmentTrigger
 	// Events publishes domain events (e.g. issue:deleted from the orphan
 	// reconcile sweep) so connected clients invalidate their caches. Nil
 	// disables publishing — the DB delete still happens.
@@ -103,6 +104,11 @@ type FeishuProjectTaskService interface {
 	CancelTasksForIssue(ctx context.Context, issueID pgtype.UUID) error
 	EnqueueTaskForIssue(ctx context.Context, issue db.Issue, triggerCommentID ...pgtype.UUID) (db.AgentTaskQueue, error)
 	EnqueueTaskForSquadLeader(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, squadID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error)
+}
+
+type FeishuProjectP4AssessmentTrigger interface {
+	Trigger(ctx context.Context, workspaceID, bindingID pgtype.UUID, force bool) (P4AssessmentTriggerResult, error)
+	BackfillDoneBindings(ctx context.Context, workspaceID, integrationID pgtype.UUID, limit int32) (P4AssessmentBackfillResult, error)
 }
 
 type FeishuProjectStorage interface {
@@ -548,6 +554,12 @@ func FeishuProjectStatusMappingFor(cfg db.FeishuProjectIntegration, typ string) 
 	if entry := feishuProjectTypeConfigFor(cfg, typ); entry != nil {
 		return entry.StatusMapping
 	}
+	if len(cfg.StatusMapping) > 0 {
+		var legacy map[string]string
+		if err := json.Unmarshal(cfg.StatusMapping, &legacy); err == nil {
+			return legacy
+		}
+	}
 	return nil
 }
 
@@ -740,10 +752,12 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 			s.reconcileSyncedIssueTasks(ctx, issue)
 			// Advance the binding watermark so the next sync's short-circuit fires.
 			phaseStarted = time.Now()
-			if _, err := s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item)); err != nil {
+			binding, err := s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
+			if err != nil {
 				return "skipped", 0, err
 			}
 			timing.bindingUpsert += time.Since(phaseStarted)
+			s.triggerP4AssessmentForDoneBinding(ctx, cfg, item, binding)
 			if labelsChanged || externalFieldsChanged {
 				s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 				return "updated", 0, nil
@@ -769,13 +783,17 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 			return "skipped", 0, err
 		}
 		phaseStarted = time.Now()
-		_, _ = s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
+		binding, bindingErr := s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
 		timing.bindingUpsert += time.Since(phaseStarted)
+		if bindingErr != nil {
+			return "skipped", 0, bindingErr
+		}
 		if _, err := s.syncIssueLabels(ctx, cfg, item, issue.ID); err != nil {
 			return "skipped", 0, err
 		}
 		s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 		s.reconcileSyncedIssueTasks(ctx, updatedIssue)
+		s.triggerP4AssessmentForDoneBinding(ctx, cfg, item, binding)
 		return "updated", 0, nil
 	}
 
@@ -813,7 +831,8 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	if err != nil {
 		return "skipped", 0, err
 	}
-	if _, err := qtx.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item)); err != nil {
+	binding, err = qtx.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
+	if err != nil {
 		return "skipped", 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -851,7 +870,27 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		return "created", 0, err
 	}
 	s.reconcileSyncedIssueTasks(ctx, issue)
+	s.triggerP4AssessmentForDoneBinding(ctx, cfg, item, binding)
 	return "created", 0, nil
+}
+
+func (s *FeishuProjectSyncService) triggerP4AssessmentForDoneBinding(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, binding db.FeishuProjectIssueBinding) {
+	if s.P4Assessment == nil {
+		return
+	}
+	mappedStatus, ok := feishuProjectMappedLocalStatus(FeishuProjectStatusMappingFor(cfg, item.Type), item.Status)
+	if !ok || mappedStatus != "done" {
+		return
+	}
+	if _, err := s.P4Assessment.Trigger(ctx, cfg.WorkspaceID, binding.ID, false); err != nil {
+		slog.Warn("Feishu Project sync P4 assessment trigger failed",
+			"workspace_id", UUIDString(cfg.WorkspaceID),
+			"binding_id", UUIDString(binding.ID),
+			"work_item_type", item.Type,
+			"work_item_id", item.ID,
+			"error", err,
+		)
+	}
 }
 
 func (s *FeishuProjectSyncService) reconcileLocalStatusDrift(ctx context.Context, cfg db.FeishuProjectIntegration, syncStartedAt time.Time) (int, error) {
@@ -1583,6 +1622,8 @@ func feishuProjectExternalFields(item FeishuProjectWorkItem) map[string]string {
 func feishuProjectExternalFieldDisplayName(name string) string {
 	name = strings.TrimSpace(name)
 	switch {
+	case strings.EqualFold(name, "field_6e908d") || strings.Contains(name, "提交记录"):
+		return "提交记录"
 	case strings.Contains(name, "提交分支"):
 		return "提交分支"
 	case strings.Contains(name, "开发分支"):

@@ -58,6 +58,10 @@ import type {
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
   AgentFixRecord,
+  AgentFixHumanReview,
+  TriggerAgentFixP4AssessmentRequest,
+  TriggerAgentFixP4AssessmentResponse,
+  UpdateAgentFixReviewRequest,
   RuntimeUpdate,
   RuntimeModelListRequest,
   RuntimeLocalSkillListRequest,
@@ -165,6 +169,8 @@ import {
   DashboardRunTimeDailyListSchema,
   DashboardUsageByAgentListSchema,
   AgentFixRecordListSchema,
+  AgentFixHumanReviewSchema,
+  TriggerAgentFixP4AssessmentResponseSchema,
   DashboardUsageDailyListSchema,
   EMPTY_AGENT_TEMPLATE_DETAIL,
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
@@ -1470,6 +1476,54 @@ export class ApiClient {
       AgentFixRecordListSchema,
       [],
       { endpoint: "GET /api/operations/agent-fixes" },
+    );
+  }
+
+  async updateAgentFixReview(
+    issueId: string,
+    data: UpdateAgentFixReviewRequest,
+    bindingId?: string,
+  ): Promise<AgentFixHumanReview> {
+    const path = bindingId
+      ? `/api/operations/agent-fixes/${encodeURIComponent(bindingId)}/review`
+      : `/api/operations/agent-fixes/${encodeURIComponent(issueId)}/review`;
+    const raw = await this.fetch<unknown>(
+      path,
+      {
+        method: bindingId ? "PATCH" : "PUT",
+        body: JSON.stringify(data),
+      },
+    );
+    return parseWithFallback<AgentFixHumanReview>(
+      raw,
+      AgentFixHumanReviewSchema,
+      { outcome: "", reasons: [], note: "", reviewer_id: "", reviewed_at: null },
+      {
+        endpoint: bindingId
+          ? "PATCH /api/operations/agent-fixes/:bindingId/review"
+          : "PUT /api/operations/agent-fixes/:issueId/review",
+      },
+    );
+  }
+
+  async triggerAgentFixP4Assessment(
+    data: TriggerAgentFixP4AssessmentRequest,
+  ): Promise<TriggerAgentFixP4AssessmentResponse> {
+    const raw = await this.fetch<unknown>(
+      "/api/operations/agent-fixes/p4-assessments",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          binding_id: data.binding_id,
+          force: data.force === true,
+        }),
+      },
+    );
+    return parseWithFallback<TriggerAgentFixP4AssessmentResponse>(
+      raw,
+      TriggerAgentFixP4AssessmentResponseSchema,
+      { created: false, reason: "", assessment_status: "" },
+      { endpoint: "POST /api/operations/agent-fixes/p4-assessments" },
     );
   }
 

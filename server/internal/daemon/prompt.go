@@ -15,6 +15,9 @@ import (
 // post with `--content-file`) because the shell-layer corruption it guards
 // against is not specific to any one provider or host (MUL-2904, #4182).
 func BuildPrompt(task Task, provider string) string {
+	if task.Kind == "agent_fix_p4_assessment" {
+		return buildP4AssessmentPrompt(task)
+	}
 	if task.ChatSessionID != "" {
 		return buildChatPrompt(task)
 	}
@@ -39,6 +42,19 @@ func BuildPrompt(task Task, provider string) string {
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Start with `multica issue comment list %s --recent 10 --output json` to read the 10 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. Resolved threads come back folded — `--full` to expand. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
+	return b.String()
+}
+
+func buildP4AssessmentPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running a read-only P4/Swarm assessment for a completed external work item.\n\n")
+	fmt.Fprintf(&b, "Multica issue ID: %s\n", task.IssueID)
+	fmt.Fprintf(&b, "Feishu/Meego binding ID: %s\n\n", task.P4AssessmentBindingID)
+	b.WriteString("Use the built-in `multica-agent-fix-p4-assessment` skill for the full workflow, safety boundaries, CL role classification, and output schema.\n\n")
+	b.WriteString("First fetch task-scoped Multica evidence with:\n\n")
+	fmt.Fprintf(&b, "multica api get /api/operations/agent-fixes/%s/p4-evidence\n\n", task.P4AssessmentBindingID)
+	b.WriteString("You may inspect inner-network Swarm/P4 only with read-only commands or APIs. Do not change the issue, comments, status, Feishu/Meego, P4, Swarm, or `agent_fix_review`.\n\n")
+	b.WriteString("Your final output must satisfy the assessment parser: exactly one JSON object, or one fenced ```json block containing exactly one JSON object. Do not add natural-language text outside the JSON. Use `unknown` and warnings when evidence is missing.\n")
 	return b.String()
 }
 

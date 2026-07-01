@@ -236,6 +236,14 @@ INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, 
 VALUES ($1, $2, NULL, 'queued', $3, $4)
 RETURNING *;
 
+-- name: CreateP4AssessmentTask :one
+-- task_category='analysis' is the single place P4 assessment tasks opt out of
+-- the normal issue-fix workflow; every isolation query filters on it instead of
+-- re-checking context->>'type'.
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, task_category)
+VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, 'analysis')
+RETURNING *;
+
 -- name: LinkTaskToIssue :exec
 -- Attaches the issue a quick-create task produced back to the task row, once
 -- the agent has finished and the issue exists. Guarded by `issue_id IS NULL`
@@ -263,7 +271,7 @@ INSERT INTO agent_task_queue (
     status, priority, trigger_comment_id, trigger_summary, context,
     session_id, work_dir,
     attempt, max_attempts, parent_task_id, force_fresh_session, is_leader_task,
-    squad_id
+    squad_id, task_category
 )
 SELECT
     p.agent_id, p.runtime_id, p.issue_id, p.chat_session_id, p.autopilot_run_id,
@@ -273,7 +281,7 @@ SELECT
     p.attempt + 1, p.max_attempts, p.id,
     p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity',
     p.is_leader_task,
-    p.squad_id
+    p.squad_id, p.task_category
 FROM agent_task_queue p
 WHERE p.id = $1
 RETURNING *;
@@ -286,7 +294,9 @@ RETURNING *;
 -- status="working" with no self-correction.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+WHERE issue_id = $1
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND task_category = 'fix'
 RETURNING *;
 
 -- name: CancelAgentTasksByIssueAndAgent :many
@@ -296,7 +306,10 @@ RETURNING *;
 -- still-running @-mention agent on the same issue.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
-WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+WHERE issue_id = $1
+  AND agent_id = $2
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND task_category = 'fix'
 RETURNING *;
 
 -- name: CancelAgentTasksByAgent :many
@@ -370,7 +383,9 @@ WHERE id = (
           WHERE active.agent_id = atq.agent_id
             AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
             AND (
-              (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
+              (atq.issue_id IS NOT NULL
+                AND active.issue_id = atq.issue_id
+                AND active.task_category = atq.task_category)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
               OR (
                 atq.issue_id IS NULL
@@ -496,6 +511,7 @@ RETURNING *;
 -- never picks up a bad session even when failure_reason hasn't caught up.
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
+  AND task_category = 'fix'
   AND (
     status = 'completed'
     OR (
@@ -516,7 +532,10 @@ LIMIT 1;
 -- so this never returns the current claim's own row. MUST use started_at, never
 -- completed_at: a long run would otherwise miss comments posted while it ran.
 SELECT started_at FROM agent_task_queue
-WHERE agent_id = $1 AND issue_id = $2 AND started_at IS NOT NULL
+WHERE agent_id = $1
+  AND issue_id = $2
+  AND started_at IS NOT NULL
+  AND task_category = 'fix'
 ORDER BY started_at DESC
 LIMIT 1;
 
@@ -654,7 +673,9 @@ FOR UPDATE;
 -- Returns true if there is any queued, dispatched, waiting_local_directory,
 -- or running task for the issue.
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory');
+WHERE issue_id = $1
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND task_category = 'fix';
 
 -- name: HasPendingTaskForIssue :one
 -- Returns true if there is a queued or dispatched (but not yet running) task for the issue.
@@ -662,18 +683,25 @@ WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_l
 -- the agent picks up new comments on the next cycle) but skip if a pending
 -- task already exists (natural dedup).
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched');
+WHERE issue_id = $1
+  AND status IN ('queued', 'dispatched')
+  AND task_category = 'fix';
 
 -- name: HasPendingTaskForIssueAndAgent :one
 -- Returns true if a specific agent already has a queued or dispatched task
 -- for the given issue. Used by @mention trigger dedup.
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
-WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched');
+WHERE issue_id = $1
+  AND agent_id = $2
+  AND status IN ('queued', 'dispatched')
+  AND task_category = 'fix';
 
 -- name: HasTaskForIssueAndAgent :one
 -- Returns true if a specific agent has ever had a task for the given issue.
 SELECT count(*) > 0 AS has_task FROM agent_task_queue
-WHERE issue_id = $1 AND agent_id = $2;
+WHERE issue_id = $1
+  AND agent_id = $2
+  AND task_category = 'fix';
 
 -- name: HasPendingTaskForIssueAndAgentExcludingTriggerComment :one
 -- Same as HasPendingTaskForIssueAndAgent, but ignores tasks triggered by the
@@ -683,6 +711,7 @@ SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = @issue_id
   AND agent_id = @agent_id
   AND status IN ('queued', 'dispatched')
+  AND task_category = 'fix'
   AND trigger_comment_id IS DISTINCT FROM @exclude_trigger_comment_id::uuid;
 
 -- name: GetLatestTaskIsLeaderForIssueAndAgent :one
@@ -694,6 +723,7 @@ WHERE issue_id = @issue_id
 -- the role-blind authorID == leaderID check).
 SELECT is_leader_task FROM agent_task_queue
 WHERE issue_id = $1 AND agent_id = $2
+  AND task_category = 'fix'
 ORDER BY created_at DESC
 LIMIT 1;
 
@@ -801,10 +831,11 @@ SELECT t.* FROM (
 ) t;
 
 -- name: ListWorkspaceAgentFixes :many
--- One row per issue that an agent has worked on, carrying ONLY the latest
--- agent run for that issue, for the Usage page's Operations tab. An issue may
--- have many runs (several agents, or one agent retried) — DISTINCT ON
--- (issue_id) keeps just the newest (by completion, then created_at). Columns:
+-- One row per issue that either has a recent normal agent run or a recent
+-- Feishu/Meego binding. The binding spine lets Operations show external done
+-- work items even when no normal issue task exists. An issue may have many
+-- runs (several agents, or one agent retried) — DISTINCT ON (issue_id) keeps
+-- just the newest normal task (by completion, then created_at). Columns:
 --   - agent_name  → who ran the latest attempt (the "智能体" column)
 --   - issue_*     → the linked issue + its workflow status (the "状态" column)
 --   - last_comment→ the AGENT's most recent comment/reply on the issue, the
@@ -819,20 +850,7 @@ SELECT t.* FROM (
 -- JOINs agent because agent_task_queue has no workspace_id; INNER JOIN issue so
 -- only issue-linked runs count. The window filters on the latest run's recency.
 -- Per-agent access filtering happens in the handler against accessibleAgentIDs.
-SELECT
-  latest.task_id,
-  latest.agent_id,
-  a.name AS agent_name,
-  i.id AS issue_id,
-  i.number AS issue_number,
-  i.title AS issue_title,
-  i.status AS issue_status,
-  latest.started_at,
-  latest.completed_at,
-  latest.created_at,
-  COALESCE(lc.content, '') AS last_comment,
-  COALESCE(lc.author_type, '') AS last_comment_author_type
-FROM (
+WITH latest AS (
   SELECT DISTINCT ON (atq.issue_id)
     atq.id AS task_id, atq.agent_id, atq.issue_id,
     atq.started_at, atq.completed_at, atq.created_at
@@ -840,14 +858,87 @@ FROM (
   JOIN agent ag ON ag.id = atq.agent_id
   WHERE ag.workspace_id = sqlc.arg('workspace_id')
     AND atq.issue_id IS NOT NULL
+    AND atq.task_category = 'fix'
   -- "Latest run" = most recent activity overall: completion if finished, else
   -- start, else when it was queued. So a fresh queued/running attempt outranks
   -- an older finished one. atq.id is a final deterministic tiebreaker.
   ORDER BY atq.issue_id,
     COALESCE(atq.completed_at, atq.started_at, atq.created_at) DESC, atq.id DESC
-) latest
-JOIN agent a ON a.id = latest.agent_id
-JOIN issue i ON i.id = latest.issue_id
+),
+spine AS (
+  SELECT
+    latest.task_id,
+    latest.agent_id,
+    latest.issue_id,
+    latest.started_at,
+    latest.completed_at,
+    latest.created_at,
+    true AS has_normal_task
+  FROM latest
+  WHERE COALESCE(latest.completed_at, latest.started_at, latest.created_at) > now() - make_interval(days => sqlc.arg('days')::int)
+
+  UNION ALL
+
+  SELECT
+    NULL::uuid AS task_id,
+    i.assignee_id AS agent_id,
+    fib.issue_id,
+    NULL::timestamptz AS started_at,
+    NULL::timestamptz AS completed_at,
+    fib.last_synced_at AS created_at,
+    false AS has_normal_task
+  FROM feishu_project_issue_binding fib
+  JOIN issue i ON i.id = fib.issue_id AND i.workspace_id = fib.workspace_id
+  LEFT JOIN latest ON latest.issue_id = fib.issue_id
+  WHERE fib.workspace_id = sqlc.arg('workspace_id')
+    AND i.assignee_type = 'agent'
+    AND i.assignee_id IS NOT NULL
+    AND latest.issue_id IS NULL
+    AND fib.last_synced_at > now() - make_interval(days => sqlc.arg('days')::int)
+)
+SELECT
+  spine.task_id,
+  spine.agent_id,
+  a.name AS agent_name,
+  i.id AS issue_id,
+  i.number AS issue_number,
+  i.title AS issue_title,
+  i.status AS issue_status,
+  spine.started_at,
+  spine.completed_at,
+  spine.created_at,
+  spine.has_normal_task,
+  COALESCE(lc.content, '') AS last_comment,
+  COALESCE(lc.author_type, '') AS last_comment_author_type,
+  fib.id AS external_binding_id,
+  fib.work_item_id AS external_work_item_id,
+  fib.work_item_type AS external_work_item_type,
+  fib.external_status_label AS external_status,
+  fib.project_key AS external_project,
+  fib.external_url AS external_url,
+  fpi.status_mapping AS external_status_mapping,
+  fpi.work_item_types AS external_work_item_types,
+  p4.assessment_status AS p4_assessment_status,
+  p4.delivery_attribution_prediction AS p4_delivery_attribution_prediction,
+  p4.quality_prediction AS p4_quality_prediction,
+  p4.prediction_reasons AS p4_prediction_reasons,
+  p4.confidence AS p4_confidence,
+  p4.workstream AS p4_workstream,
+  p4.swarm_reviews AS p4_swarm_reviews,
+  p4.ai_shelved_cls AS p4_ai_shelved_cls,
+  p4.swarm_change_cls AS p4_swarm_change_cls,
+  p4.swarm_committed_cls AS p4_swarm_committed_cls,
+  p4.external_committed_cls AS p4_external_committed_cls,
+  p4.summary AS p4_summary,
+  p4.warnings AS p4_warnings,
+  afr.outcome AS review_outcome,
+  afr.reasons AS review_reasons,
+  afr.note AS review_note,
+  afr.reviewer_id AS review_reviewer_id,
+  afr.reviewed_at AS review_reviewed_at
+FROM spine
+JOIN agent a ON a.id = spine.agent_id
+JOIN issue i ON i.id = spine.issue_id
 LEFT JOIN LATERAL (
   SELECT c.content, c.author_type
   FROM comment c
@@ -855,19 +946,275 @@ LEFT JOIN LATERAL (
   ORDER BY c.created_at DESC
   LIMIT 1
 ) lc ON true
-WHERE COALESCE(latest.completed_at, latest.started_at, latest.created_at) > now() - make_interval(days => sqlc.arg('days')::int)
+LEFT JOIN feishu_project_issue_binding fib
+  ON fib.workspace_id = i.workspace_id AND fib.issue_id = i.id
+LEFT JOIN feishu_project_integration fpi
+  ON fpi.id = fib.integration_id AND fpi.workspace_id = i.workspace_id
+LEFT JOIN agent_fix_p4_assessment p4
+  ON p4.workspace_id = i.workspace_id AND p4.feishu_binding_id = fib.id
+LEFT JOIN agent_fix_review afr
+  ON afr.workspace_id = i.workspace_id AND afr.feishu_binding_id = fib.id
+WHERE
   -- Literal case-insensitive substring on the agent comment (no LIKE wildcard
   -- semantics, so a user-typed % or _ matches itself). NULL content (no agent
   -- comment) yields NULL > 0 → excluded, which is the desired "drop unmatched".
-  AND (sqlc.narg('search')::text IS NULL
+  (sqlc.narg('search')::text IS NULL
        OR position(lower(sqlc.narg('search')::text) IN lower(lc.content)) > 0)
-ORDER BY COALESCE(latest.completed_at, latest.started_at, latest.created_at) DESC
+ORDER BY COALESCE(spine.completed_at, spine.started_at, spine.created_at) DESC
 LIMIT 500;
+
+-- name: UpsertAgentFixReview :one
+WITH binding AS (
+  SELECT fib.id, fib.issue_id, fib.workspace_id
+  FROM feishu_project_issue_binding fib
+  WHERE fib.workspace_id = sqlc.arg('workspace_id')
+    AND fib.issue_id = sqlc.arg('issue_id')
+),
+assessment AS (
+  SELECT p4.id, p4.feishu_binding_id
+  FROM agent_fix_p4_assessment p4
+  JOIN binding b ON b.id = p4.feishu_binding_id
+)
+INSERT INTO agent_fix_review (
+  workspace_id,
+  issue_id,
+  feishu_binding_id,
+  p4_assessment_id,
+  outcome,
+  reasons,
+  note,
+  reviewer_id,
+  reviewed_at,
+  updated_at
+)
+SELECT
+  b.workspace_id,
+  b.issue_id,
+  b.id,
+  a.id,
+  sqlc.arg('outcome'),
+  sqlc.arg('reasons'),
+  sqlc.arg('note'),
+  sqlc.narg('reviewer_id'),
+  CASE WHEN sqlc.arg('outcome') = 'unreviewed' THEN NULL ELSE now() END,
+  now()
+FROM binding b
+LEFT JOIN assessment a ON a.feishu_binding_id = b.id
+ON CONFLICT (workspace_id, feishu_binding_id) DO UPDATE SET
+  p4_assessment_id = EXCLUDED.p4_assessment_id,
+  outcome = EXCLUDED.outcome,
+  reasons = EXCLUDED.reasons,
+  note = EXCLUDED.note,
+  reviewer_id = EXCLUDED.reviewer_id,
+  reviewed_at = EXCLUDED.reviewed_at,
+  updated_at = now()
+RETURNING id, workspace_id, issue_id, feishu_binding_id, p4_assessment_id, outcome, reasons, note, reviewer_id, reviewed_at, created_at, updated_at;
+
+-- name: UpsertAgentFixReviewByBinding :one
+WITH binding AS (
+  SELECT fib.id, fib.issue_id, fib.workspace_id
+  FROM feishu_project_issue_binding fib
+  WHERE fib.workspace_id = sqlc.arg('workspace_id')
+    AND fib.id = sqlc.arg('feishu_binding_id')
+),
+assessment AS (
+  SELECT p4.id, p4.feishu_binding_id
+  FROM agent_fix_p4_assessment p4
+  JOIN binding b ON b.id = p4.feishu_binding_id
+)
+INSERT INTO agent_fix_review (
+  workspace_id,
+  issue_id,
+  feishu_binding_id,
+  p4_assessment_id,
+  outcome,
+  reasons,
+  note,
+  reviewer_id,
+  reviewed_at,
+  updated_at
+)
+SELECT
+  b.workspace_id,
+  b.issue_id,
+  b.id,
+  a.id,
+  sqlc.arg('outcome'),
+  sqlc.arg('reasons'),
+  sqlc.arg('note'),
+  sqlc.narg('reviewer_id'),
+  CASE WHEN sqlc.arg('outcome') = 'unreviewed' THEN NULL ELSE now() END,
+  now()
+FROM binding b
+LEFT JOIN assessment a ON a.feishu_binding_id = b.id
+ON CONFLICT (workspace_id, feishu_binding_id) DO UPDATE SET
+  issue_id = EXCLUDED.issue_id,
+  p4_assessment_id = EXCLUDED.p4_assessment_id,
+  outcome = EXCLUDED.outcome,
+  reasons = EXCLUDED.reasons,
+  note = EXCLUDED.note,
+  reviewer_id = EXCLUDED.reviewer_id,
+  reviewed_at = EXCLUDED.reviewed_at,
+  updated_at = now()
+RETURNING id, workspace_id, issue_id, feishu_binding_id, p4_assessment_id, outcome, reasons, note, reviewer_id, reviewed_at, created_at, updated_at;
+
+-- name: GetP4AssessmentBinding :one
+SELECT
+  fib.id AS binding_id,
+  fib.workspace_id,
+  fib.integration_id,
+  fib.issue_id,
+  fib.project_key,
+  fib.work_item_type,
+  fib.work_item_id,
+  fib.external_identifier,
+  fib.external_url,
+  fib.external_status_label,
+  fib.external_fields,
+  i.status AS issue_status,
+  i.assignee_type,
+  i.assignee_id,
+  i.title AS issue_title,
+  i.description AS issue_description,
+  a.runtime_id AS agent_runtime_id,
+  a.archived_at AS agent_archived_at,
+  fpi.status_mapping,
+  fpi.work_item_types
+FROM feishu_project_issue_binding fib
+JOIN issue i ON i.id = fib.issue_id AND i.workspace_id = fib.workspace_id
+JOIN feishu_project_integration fpi ON fpi.id = fib.integration_id AND fpi.workspace_id = fib.workspace_id
+LEFT JOIN agent a ON a.id = i.assignee_id AND i.assignee_type = 'agent'
+WHERE fib.id = $1 AND fib.workspace_id = $2;
+
+-- name: LockP4AssessmentBinding :exec
+SELECT 1
+FROM feishu_project_issue_binding
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
+
+-- name: GetP4AssessmentByBinding :one
+SELECT * FROM agent_fix_p4_assessment
+WHERE workspace_id = $1 AND feishu_binding_id = $2;
+
+-- name: ListP4AssessmentBackfillBindings :many
+SELECT
+  fib.id AS binding_id,
+  fib.workspace_id,
+  fib.work_item_type,
+  fib.external_status_label,
+  fpi.status_mapping,
+  fpi.work_item_types,
+  p4.assessment_status
+FROM feishu_project_issue_binding fib
+JOIN feishu_project_integration fpi
+  ON fpi.id = fib.integration_id AND fpi.workspace_id = fib.workspace_id
+LEFT JOIN agent_fix_p4_assessment p4
+  ON p4.workspace_id = fib.workspace_id AND p4.feishu_binding_id = fib.id
+WHERE fib.workspace_id = $1
+  AND fib.integration_id = $2
+  AND p4.id IS NULL
+ORDER BY fib.last_synced_at DESC, fib.created_at DESC, fib.id DESC
+LIMIT $3;
+
+-- name: UpsertP4AssessmentPending :one
+INSERT INTO agent_fix_p4_assessment (
+  workspace_id,
+  issue_id,
+  feishu_binding_id,
+  assessment_status,
+  prompt_version,
+  updated_at
+)
+VALUES ($1, $2, $3, 'pending', $4, now())
+ON CONFLICT (workspace_id, feishu_binding_id) DO UPDATE SET
+  issue_id = EXCLUDED.issue_id,
+  assessment_status = 'pending',
+  assessment_task_id = NULL,
+  prompt_version = EXCLUDED.prompt_version,
+  updated_at = now()
+RETURNING *;
+
+-- name: SetP4AssessmentTask :one
+UPDATE agent_fix_p4_assessment
+SET assessment_task_id = $3,
+    assessment_status = 'pending',
+    updated_at = now()
+WHERE workspace_id = $1 AND feishu_binding_id = $2
+RETURNING *;
+
+-- name: CompleteP4AssessmentFromTask :one
+UPDATE agent_fix_p4_assessment
+SET assessment_status = 'completed',
+    delivery_attribution_prediction = $3,
+    quality_prediction = $4,
+    prediction_reasons = $5,
+    confidence = $6,
+    workstream = $7,
+    swarm_reviews = $8,
+    ai_shelved_cls = $9,
+    swarm_change_cls = $10,
+    swarm_committed_cls = $11,
+    external_committed_cls = $12,
+    evidence = $13,
+    summary = $14,
+    warnings = $15,
+    model = $16,
+    assessed_at = now(),
+    updated_at = now()
+WHERE workspace_id = $1 AND assessment_task_id = $2
+RETURNING *;
+
+-- name: FailP4AssessmentFromTask :one
+UPDATE agent_fix_p4_assessment
+SET assessment_status = 'failed',
+    warnings = $3,
+    updated_at = now()
+WHERE workspace_id = $1 AND assessment_task_id = $2
+RETURNING *;
 
 -- name: ListTasksByIssue :many
 SELECT * FROM agent_task_queue
 WHERE issue_id = $1
 ORDER BY created_at DESC;
+
+-- name: ListP4EvidenceTasksByIssue :many
+SELECT
+  atq.id,
+  atq.agent_id,
+  atq.issue_id,
+  atq.status,
+  atq.created_at,
+  atq.started_at,
+  atq.completed_at,
+  atq.failure_reason,
+  atq.error,
+  COALESCE(atq.context->>'type', '') = 'agent_fix_p4_assessment' AS is_p4_assessment
+FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+WHERE atq.issue_id = sqlc.arg('issue_id')
+  AND a.workspace_id = sqlc.arg('workspace_id')
+ORDER BY COALESCE(atq.completed_at, atq.started_at, atq.created_at) DESC, atq.id DESC
+LIMIT 20;
+
+-- name: ListP4EvidenceCommentsByIssue :many
+SELECT
+  c.id,
+  c.author_type,
+  c.author_id,
+  c.type,
+  c.content,
+  c.source_task_id,
+  c.created_at
+FROM comment c
+WHERE c.issue_id = sqlc.arg('issue_id')
+  AND c.workspace_id = sqlc.arg('workspace_id')
+  AND c.type = 'comment'
+  AND (
+    c.author_type = 'agent'
+    OR c.content ~* '(shelved[[:space:]]+cl|swarm[[:space:]]+review|review/[0-9]+|cl[[:space:]]*[:#]?[[:space:]]*[0-9]{4,})'
+  )
+ORDER BY c.created_at DESC, c.id DESC
+LIMIT 20;
 
 -- name: UpdateAgentStatus :one
 UPDATE agent SET status = $2, updated_at = now()
