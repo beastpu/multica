@@ -1225,6 +1225,7 @@ const expireStaleQueuedTasks = `-- name: ExpireStaleQueuedTasks :many
 WITH victims AS (
     SELECT id FROM agent_task_queue
     WHERE status = 'queued'
+      AND task_category = 'fix'
       AND created_at < now() - make_interval(secs => $1::double precision)
     ORDER BY created_at ASC
     LIMIT $2::int
@@ -1239,6 +1240,7 @@ SET status = 'failed',
 FROM victims v
 WHERE t.id = v.id
   AND t.status = 'queued'
+  AND t.task_category = 'fix'
   AND t.created_at < now() - make_interval(secs => $1::double precision)
 RETURNING t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.task_category
 `

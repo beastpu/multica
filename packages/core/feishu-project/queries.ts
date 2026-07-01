@@ -34,6 +34,7 @@ export const feishuProjectIssueStatusesOptions = (wsId: string, enabled = true, 
     queryKey: feishuProjectKeys.issueStatuses(wsId, workItemType),
     queryFn: () => api.getFeishuProjectIssueStatuses(wsId, workItemType),
     enabled: !!wsId && !!workItemType && enabled,
+    staleTime: Infinity,
   });
 
 // Space work-item type registry — only needed while the operator is picking the

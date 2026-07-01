@@ -967,6 +967,40 @@ func TestInjectRuntimeConfigNoSkills(t *testing.T) {
 	}
 }
 
+func TestWriteContextFilesP4AssessmentBuiltinSkill(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ctx := TaskContextForEnv{
+		IssueID: "issue-1",
+		AgentSkills: []SkillContextForEnv{
+			{
+				Name:        "multica-agent-fix-p4-assessment",
+				Description: "Use for Multica AI repair P4/Swarm assessment tasks.",
+				Content:     "Use `multica api get /api/operations/agent-fixes/<binding_id>/p4-evidence`.",
+				Files: []SkillFileContextForEnv{
+					{Path: "references/p4-assessment-source-map.md", Content: "source map"},
+				},
+			},
+		},
+	}
+	if err := writeContextFiles(dir, "claude", ctx, nil); err != nil {
+		t.Fatalf("writeContextFiles: %v", err)
+	}
+
+	skillPath := filepath.Join(dir, ".claude", "skills", "multica-agent-fix-p4-assessment", "SKILL.md")
+	content, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("read P4 assessment skill: %v", err)
+	}
+	if got := string(content); !strings.Contains(got, "name: multica-agent-fix-p4-assessment") || !strings.Contains(got, "p4-evidence") {
+		t.Fatalf("unexpected P4 assessment skill content:\n%s", got)
+	}
+	refPath := filepath.Join(dir, ".claude", "skills", "multica-agent-fix-p4-assessment", "references", "p4-assessment-source-map.md")
+	if _, err := os.Stat(refPath); err != nil {
+		t.Fatalf("supporting reference not written: %v", err)
+	}
+}
+
 func TestWriteContextFilesCopilotNativeSkills(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

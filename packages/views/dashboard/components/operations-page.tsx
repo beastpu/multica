@@ -31,6 +31,7 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { paths, useWorkspaceSlug } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
+import { feishuProjectIssueStatusesOptions } from "@multica/core/feishu-project/queries";
 import {
   operationsFixesOptions,
   useTriggerAgentFixP4Assessment,
@@ -517,6 +518,17 @@ export function OperationsPage() {
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const fixesQuery = useQuery(operationsFixesOptions(wsId, days, search));
   const fixes = fixesQuery.data ?? EMPTY;
+  const hasExternalStatuses = fixes.some((fix) => !!fix.external?.status);
+  const { data: feishuStatusData } = useQuery(
+    feishuProjectIssueStatusesOptions(wsId, hasExternalStatuses),
+  );
+  const feishuStatusNames = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const status of feishuStatusData?.statuses ?? []) {
+      if (status.key && status.name) out.set(status.key, status.name);
+    }
+    return out;
+  }, [feishuStatusData]);
   const tx = t as unknown as UsageT;
 
   // Validate the picked agent against the current workspace's list so a stale
@@ -847,7 +859,10 @@ export function OperationsPage() {
                           slug={slug}
                           issueStatusLabel={issueStatusLabel(f.issue_status)}
                         />
-                        <ExternalStatusCell fix={f} />
+                        <ExternalStatusCell
+                          fix={f}
+                          statusNames={feishuStatusNames}
+                        />
                         <div className="grid min-w-0 gap-1 overflow-hidden">
                           <div className="flex min-w-0 items-center gap-2 overflow-hidden">
                             <ActorAvatar
@@ -1441,10 +1456,21 @@ function IssueCell({
   return <div className="min-w-0 overflow-hidden">{inner}</div>;
 }
 
-function ExternalStatusCell({ fix }: { fix: AgentFixRecord }) {
+function ExternalStatusCell({
+  fix,
+  statusNames,
+}: {
+  fix: AgentFixRecord;
+  statusNames: Map<string, string>;
+}) {
   const { t } = useT("usage");
   const done = fix.external?.done;
-  const status = fix.external?.status || t(($) => $.operations.no_reason);
+  const rawStatus = fix.external?.status ?? "";
+  const status =
+    fix.external?.status_name ||
+    statusNames.get(rawStatus) ||
+    rawStatus ||
+    t(($) => $.operations.no_reason);
   return (
     <div className="grid min-w-0 gap-1">
       <ToneBadge

@@ -23,6 +23,7 @@ func TestP4AssessmentTaskIsolationSQLInvariants(t *testing.T) {
 		"HasTaskForIssueAndAgent",
 		"HasPendingTaskForIssueAndAgentExcludingTriggerComment",
 		"GetLatestTaskIsLeaderForIssueAndAgent",
+		"ExpireStaleQueuedTasks",
 		"ListWorkspaceAgentFixes",
 	} {
 		chunk := sqlSection(t, sql, section)

@@ -637,6 +637,7 @@ RETURNING *;
 WITH victims AS (
     SELECT id FROM agent_task_queue
     WHERE status = 'queued'
+      AND task_category = 'fix'
       AND created_at < now() - make_interval(secs => @ttl_secs::double precision)
     ORDER BY created_at ASC
     LIMIT @max_per_tick::int
@@ -651,6 +652,7 @@ SET status = 'failed',
 FROM victims v
 WHERE t.id = v.id
   AND t.status = 'queued'
+  AND t.task_category = 'fix'
   AND t.created_at < now() - make_interval(secs => @ttl_secs::double precision)
 RETURNING t.*;
 

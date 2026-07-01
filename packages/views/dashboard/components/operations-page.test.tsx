@@ -25,7 +25,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-1",
       work_item_id: "BUG-93218",
-      status: "Done",
+      status: "vcvaCnnGi",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -224,6 +224,18 @@ vi.mock("@tanstack/react-query", async () => {
       if (opts.queryKey.includes("agents")) {
         return { data: AGENTS, isLoading: false };
       }
+      if (opts.queryKey.includes("issue-statuses")) {
+        return {
+          data: {
+            statuses: [
+              { key: "vcvaCnnGi", name: "设计如此" },
+              { key: "Done", name: "Done" },
+              { key: "In Progress", name: "In Progress" },
+            ],
+          },
+          isLoading: false,
+        };
+      }
       return { data: undefined, isLoading: false };
     },
     useMutation: (opts: {
@@ -343,6 +355,8 @@ describe("OperationsPage", () => {
     expect(screen.getByText("MUL-7")).toBeTruthy();
     expect(screen.getByText("MUL-8")).toBeTruthy();
     expect(screen.getByText("Parser cleanup")).toBeTruthy();
+    expect(screen.getByText("设计如此")).toBeTruthy();
+    expect(screen.queryByText("vcvaCnnGi")).toBeNull();
 
     // Agent name appears for each row.
     expect(screen.getAllByText("Fixer").length).toBe(3);
