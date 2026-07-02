@@ -225,6 +225,15 @@ Use conservative predictions:
   `likely_wrong`, or `unknown`.
 - `confidence`: number from 0 to 1, or `null` when not meaningful.
 
+`quality_prediction` judges exactly one thing: the AI-side solution measured
+against the final delivery (the implementation comparison above). It is never
+a grade of a human-authored fix. When there is no verified AI output evidence
+(no AI shelve CL and no Swarm review), or the AI output evidence could not be
+accessed, output `quality_prediction: "unknown"` — do not judge the human fix
+in its place. The operations dashboard computes the AI fix rate only from
+tickets whose AI output evidence was reachable, so a wrongly-graded human fix
+corrupts the metric.
+
 Prefer `unknown` with warnings over guessing. Useful warnings include:
 
 - `missing_external_cl`
@@ -235,6 +244,20 @@ Prefer `unknown` with warnings over guessing. Useful warnings include:
 - `p4_lookup_unavailable`
 - `swarm_lookup_unavailable`
 - `insufficient_evidence`
+
+When evidence access is blocked, the warnings array MUST contain at least one
+of these canonical values so the dashboard can classify the block:
+
+- `p4_lookup_unavailable` — P4 unreachable, or a claimed shelve/CL could not
+  be verified from this runtime.
+- `swarm_lookup_unavailable` — Swarm API unreachable or unauthorized.
+- `evidence_endpoint_unavailable` — the Multica evidence endpoint itself
+  failed.
+
+You may add more specific detail warnings alongside the canonical one (e.g.
+`claimed_shelved_cl_not_found_on_reachable_p4`), but never replace it: a
+result whose only block signal is a free-form variant is counted as
+verifiable by the dashboard and skews the fix rate.
 
 ## Submit the Result
 

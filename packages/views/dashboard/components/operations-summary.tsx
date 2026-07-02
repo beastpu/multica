@@ -100,9 +100,9 @@ export function OperationsSummary({
       count: funnel.p4Covered,
     },
     {
-      key: "ai_delivered",
-      label: t(($) => $.operations.summary.stage_ai_delivered),
-      count: funnel.aiDelivered,
+      key: "verifiable",
+      label: t(($) => $.operations.summary.stage_verifiable),
+      count: funnel.verifiable,
     },
     {
       key: "judged",
@@ -119,9 +119,10 @@ export function OperationsSummary({
   const passDelta = deltaPoints(kpis.passRate, previous.passRate);
   const shareDelta = deltaPoints(kpis.deliveryShare, previous.deliveryShare);
   const noOutputDelta = deltaPoints(kpis.noOutputRate, previous.noOutputRate);
+  const unjudgedDelta = deltaPoints(kpis.unjudgedRate, previous.unjudgedRate);
   return (
     <section className="grid gap-3">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <RateCard
           label={t(($) => $.operations.summary.pass_rate)}
           hint={t(($) => $.operations.summary.pass_rate_hint, {
@@ -156,6 +157,18 @@ export function OperationsSummary({
           delta={noOutputDelta}
           deltaLabel={deltaLabel}
           deltaText={deltaText(noOutputDelta)}
+          upIsGood={false}
+        />
+        <RateCard
+          label={t(($) => $.operations.summary.unjudged_rate)}
+          hint={t(($) => $.operations.summary.unjudged_rate_hint, {
+            num: kpis.unjudgedRate.numerator,
+            den: kpis.unjudgedRate.denominator,
+          })}
+          rate={kpis.unjudgedRate}
+          delta={unjudgedDelta}
+          deltaLabel={deltaLabel}
+          deltaText={deltaText(unjudgedDelta)}
           upIsGood={false}
         />
       </div>

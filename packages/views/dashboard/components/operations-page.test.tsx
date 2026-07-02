@@ -504,29 +504,29 @@ describe("OperationsPage", () => {
     expect(screen.queryByText("Previous period fix")).toBeNull();
   });
 
-  it("renders the KPI band with the three headline rates and the funnel", () => {
+  it("renders the KPI band with the four headline rates and the funnel", () => {
     renderWithI18n(<OperationsPage />);
 
-    expect(screen.getByText("AI fix pass rate")).toBeTruthy();
+    expect(screen.getByText("AI fix rate")).toBeTruthy();
     expect(screen.getByText("AI delivery share")).toBeTruthy();
     expect(screen.getByText("AI no-output rate")).toBeTruthy();
+    expect(screen.getByText("Undetermined share")).toBeTruthy();
     expect(screen.getByText("Delivery funnel")).toBeTruthy();
     expect(screen.getByText("Last 30 days")).toBeTruthy();
-    // Funnel stages, with the AI-delivered stage nested under external done.
+    // Funnel stages, with the verifiable-output stage as the fix-rate pool.
     expect(screen.getByText("External done")).toBeTruthy();
     expect(screen.getByText("P4 covered")).toBeTruthy();
-    // Funnel stage label; the same string also appears on attribution badges.
-    expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Verifiable output")).toBeTruthy();
     expect(screen.getByText("Judged")).toBeTruthy();
-    // Pass rate: t-1 is the only judged AI-delivered row and it is
-    // likely_correct → 1/1 = 100%.
-    expect(screen.getByText("100%")).toBeTruthy();
+    // Fix rate: verifiable + judged rows are t-1 (likely_correct) and t-4
+    // (likely_wrong) → 1/2 = 50%.
+    expect(screen.getByText("50%")).toBeTruthy();
   });
 
   it("renders the weekly trend section for multi-week windows", () => {
     renderWithI18n(<OperationsPage />);
     expect(screen.getByText("Weekly trend")).toBeTruthy();
-    expect(screen.getAllByText("Pass rate").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Fix rate").length).toBeGreaterThanOrEqual(1);
   });
 
   it("derives AI no output for completed assessments without an AI shelve", () => {
@@ -706,6 +706,12 @@ describe("OperationsPage", () => {
 
     expect(screen.getByText("Delivery attribution")).toBeTruthy();
     expect(screen.getByText("AI quality distribution")).toBeTruthy();
+    // Blocked-evidence card: none of the current fixtures carry an
+    // access-blocked warning, so the empty copy shows.
+    expect(
+      screen.getByText(/Evidence access blocked \(\d+ completed\)/),
+    ).toBeTruthy();
+    expect(screen.getByText("No blocked assessments")).toBeTruthy();
     expect(screen.getByText("Workstream outcome")).toBeTruthy();
     expect(screen.getByText("Top AI reasons")).toBeTruthy();
     expect(screen.getByText("rel_1.7.3/client")).toBeTruthy();

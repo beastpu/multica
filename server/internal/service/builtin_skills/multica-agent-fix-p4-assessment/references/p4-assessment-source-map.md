@@ -130,3 +130,16 @@ for the behavior contracts the skill teaches.
 - `docs/agent-fix-p4-external-dependencies.md` records external-data limits:
   Feishu/Meego fields are already-ingested compatibility evidence, and missing
   P4/Swarm evidence should produce `unknown` plus warnings rather than guesses.
+
+## Dashboard metric contract
+
+- `packages/views/dashboard/operations-metrics.ts` computes the operations
+  dashboard KPIs from assessment rows. `isVerifiableOutput` (the AI fix-rate
+  denominator) requires a completed assessment with AI output evidence
+  (`ai_shelved_cls` or `swarm_reviews`) and no access-blocked warning;
+  `blockedWarningFamily` classifies blocks by matching
+  `unavailable|not_found|unreachable|unauthorized` and grouping into
+  swarm / p4 / evidence_endpoint families. This is why the SKILL's prediction
+  policy requires a canonical `*_unavailable` warning whenever evidence access
+  is blocked, and requires `quality_prediction: "unknown"` when no AI output
+  evidence was verified.
