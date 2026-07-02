@@ -58,7 +58,7 @@
   "operations": {
     "title": "Operations",
     "assessment_title": "AI fix assessment",
-    "subtitle": "P4/Swarm evidence, AI delivery predictions, human review, and judgement drift for issues your agents worked on.",
+    "subtitle": "P4/Swarm evidence and AI delivery predictions for issues your agents worked on.",
     "search_placeholder": "Search comments",
     "search_clear": "Clear search",
     "filter": {
@@ -69,8 +69,7 @@
       "attribution": "AI attribution",
       "attribution_all": "All attribution",
       "quality": "AI quality",
-      "quality_all": "All quality",
-      "mismatch_only": "Mismatch only"
+      "quality_all": "All quality"
     },
     "tabs": {
       "detail": "P4 details",
@@ -79,20 +78,16 @@
       "analysis_hint": "Lightweight rollups from the current filtered rows."
     },
     "summary": {
-      "hero_label": "Operations · P4 assessment",
-      "hero_hint": "Current filtered issues",
-      "external_done": "External done",
-      "external_done_hint": "Feishu/Meego done as the stats base",
-      "p4_coverage": "P4 coverage",
-      "p4_coverage_hint": "Rows with P4/Swarm evidence",
-      "ai_delivery": "AI delivered",
-      "ai_delivery_hint": "AI delivered or assisted prediction",
-      "human_reviewed": "Human reviewed",
-      "human_reviewed_hint": "Outcome confirmed by a person",
-      "accepted": "Accepted",
-      "accepted_hint": "Human review accepted",
-      "drift": "Judgement drift",
-      "drift_hint": "Mismatch or over/under-estimate"
+      "total": "Total",
+      "total_hint": "Done issues an agent worked on",
+      "has_output": "Produced output",
+      "ai_delivered": "AI delivered",
+      "ai_assisted": "AI assisted",
+      "quality_label": "AI acceptance",
+      "quality_pass": "Passed",
+      "quality_fail": "Failed",
+      "quality_needs_changes": "Needs changes",
+      "quality_unknown": "Unknown"
     },
     "analysis": {
       "attribution_title": "AI delivery attribution",
@@ -113,9 +108,7 @@
       "external_status": "External status",
       "p4_evidence": "P4 evidence",
       "ai_attribution": "AI delivery",
-      "ai_quality": "AI quality",
-      "human_review": "Human review",
-      "eval": "Eval"
+      "ai_quality": "AI quality"
     },
     "external": {
       "in_stats": "In stats",
@@ -219,11 +212,6 @@
     },
     "review_modal": {
       "title": "Human review AI fix result",
-      "empty_issue": "No issue selected",
-      "evidence_p4": "P4 evidence",
-      "evidence_attribution": "AI attribution prediction",
-      "evidence_quality": "AI quality prediction",
-      "insufficient_evidence": "Insufficient evidence",
       "outcome": "Human outcome",
       "reasons": "Reasons",
       "no_reasons": "No reason needed for this outcome.",
@@ -238,7 +226,6 @@
     "no_reason": "—",
     "export_csv": "Export CSV",
     "caption": "{{count}} records",
-    "assessment_caption": "{{p4Rows}} P4 · {{reviewed}} reviewed · {{mismatches}} drift",
     "resize_column": "Resize {{column}} column",
     "reset_columns": "Reset columns",
     "empty": {

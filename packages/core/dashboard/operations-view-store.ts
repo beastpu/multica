@@ -13,8 +13,6 @@ export type OperationsColumnKey =
   | "status"
   | "attribution"
   | "quality"
-  | "review"
-  | "eval"
   | "time";
 
 // A column can't shrink into nothing or run away and bury the others.
@@ -37,8 +35,6 @@ export const OPERATIONS_DEFAULT_WIDTHS: Record<OperationsColumnKey, number> = {
   status: 120,
   attribution: 148,
   quality: 146,
-  review: 150,
-  eval: 150,
   time: 96,
 };
 

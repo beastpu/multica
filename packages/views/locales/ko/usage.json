@@ -58,7 +58,7 @@
   "operations": {
     "title": "운영",
     "assessment_title": "AI 수정 평가",
-    "subtitle": "에이전트가 처리한 issue의 P4/Swarm 증거, AI 예측, 사람 리뷰, 판단 차이를 표시합니다.",
+    "subtitle": "에이전트가 처리한 issue의 P4/Swarm 증거와 AI 예측을 표시합니다.",
     "search_placeholder": "댓글 검색",
     "search_clear": "검색 지우기",
     "filter": {
@@ -69,8 +69,7 @@
       "attribution": "AI 귀속",
       "attribution_all": "모든 귀속",
       "quality": "AI 품질",
-      "quality_all": "모든 품질",
-      "mismatch_only": "차이만"
+      "quality_all": "모든 품질"
     },
     "tabs": {
       "detail": "P4 상세",
@@ -79,20 +78,16 @@
       "analysis_hint": "현재 필터 결과의 간단한 집계입니다."
     },
     "summary": {
-      "hero_label": "Operations · P4 평가",
-      "hero_hint": "현재 필터된 issue",
-      "external_done": "외부 완료",
-      "external_done_hint": "Feishu/Meego done을 통계 기준으로 사용",
-      "p4_coverage": "P4 커버리지",
-      "p4_coverage_hint": "P4/Swarm 증거가 있는 행",
-      "ai_delivery": "AI 전달",
-      "ai_delivery_hint": "AI 제출 또는 지원 예측",
-      "human_reviewed": "사람 리뷰 완료",
-      "human_reviewed_hint": "사람이 outcome을 확인",
-      "accepted": "통과",
-      "accepted_hint": "사람 리뷰에서 통과",
-      "drift": "판단 차이",
-      "drift_hint": "귀속 또는 품질 판단 차이"
+      "total": "합계",
+      "total_hint": "에이전트가 처리한 완료 issue",
+      "has_output": "산출물 있음",
+      "ai_delivered": "AI 제출",
+      "ai_assisted": "AI 지원",
+      "quality_label": "AI 검수",
+      "quality_pass": "통과",
+      "quality_fail": "실패",
+      "quality_needs_changes": "수정 필요",
+      "quality_unknown": "알 수 없음"
     },
     "analysis": {
       "attribution_title": "AI 전달 귀속",
@@ -113,9 +108,7 @@
       "external_status": "외부 상태",
       "p4_evidence": "P4 증거",
       "ai_attribution": "AI 전달",
-      "ai_quality": "AI 품질",
-      "human_review": "사람 리뷰",
-      "eval": "평가"
+      "ai_quality": "AI 품질"
     },
     "external": {
       "in_stats": "통계 포함",
@@ -219,11 +212,6 @@
     },
     "review_modal": {
       "title": "AI 수정 결과 사람 검토",
-      "empty_issue": "선택된 이슈 없음",
-      "evidence_p4": "P4 증거",
-      "evidence_attribution": "AI 귀속 예측",
-      "evidence_quality": "AI 품질 예측",
-      "insufficient_evidence": "증거 부족",
       "outcome": "사람 결과",
       "reasons": "이유",
       "no_reasons": "이 결과에는 이유가 필요 없습니다.",
@@ -238,7 +226,6 @@
     "no_reason": "—",
     "export_csv": "CSV 내보내기",
     "caption": "{{count}}개 기록",
-    "assessment_caption": "P4 {{p4Rows}}개 · 리뷰 {{reviewed}}개 · 차이 {{mismatches}}개",
     "resize_column": "{{column}} 열 너비 조정",
     "reset_columns": "열 너비 초기화",
     "empty": {
