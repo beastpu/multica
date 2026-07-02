@@ -825,6 +825,18 @@ type PerforceConnection struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PerforceProjectStrategy struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	SwarmUrl          string             `json:"swarm_url"`
+	Strategy          string             `json:"strategy"`
+	DefaultAssigneeID pgtype.UUID        `json:"default_assignee_id"`
+	Enabled           bool               `json:"enabled"`
+	CreatedByID       pgtype.UUID        `json:"created_by_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type PerforceReview struct {
 	ID              pgtype.UUID        `json:"id"`
 	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
@@ -845,6 +857,15 @@ type PerforceReview struct {
 	EventType       pgtype.Text        `json:"event_type"`
 	SentAt          pgtype.Timestamptz `json:"sent_at"`
 	RawPayload      []byte             `json:"raw_payload"`
+}
+
+type PerforceStrategyCreatedIssue struct {
+	ID              pgtype.UUID        `json:"id"`
+	StrategyID      pgtype.UUID        `json:"strategy_id"`
+	ReviewID        int64              `json:"review_id"`
+	ReviewUpdatedAt pgtype.Timestamptz `json:"review_updated_at"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type PersonalAccessToken struct {
