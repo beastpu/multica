@@ -677,9 +677,25 @@ const DashboardRunTimeDailySchema = z.object({
 export const DashboardRunTimeDailyListSchema = z.array(DashboardRunTimeDailySchema);
 
 const AgentFixClSchema = z.union([z.string(), z.number()]);
+// Coerce anything that isn't a clean CL array into []. Real agent output has
+// put a bare string ("unknown") where a CL array is expected; without this,
+// z.array() fails and — because the failure bubbles up through
+// AgentFixP4AssessmentSchema to AgentFixRecordListSchema — blanks the ENTIRE
+// operations table (one junk field takes down every row). Non string|number
+// elements are dropped too so a single bad entry can't fail the array.
 const AgentFixClListSchema = z.preprocess(
-  (value) => (value == null ? [] : value),
+  (value) =>
+    Array.isArray(value)
+      ? value.filter((e) => typeof e === "string" || typeof e === "number")
+      : [],
   z.array(AgentFixClSchema).default([]),
+);
+// Same defense for string arrays (prediction_reasons, warnings): a non-array
+// degrades to [] and non-string elements are dropped instead of failing.
+const AgentFixStringListSchema = z.preprocess(
+  (value) =>
+    Array.isArray(value) ? value.filter((e) => typeof e === "string") : [],
+  z.array(z.string()).default([]),
 );
 const AgentFixStringSchema = z
   .union([z.string(), z.null()])
@@ -716,22 +732,25 @@ const AgentFixP4AssessmentSchema = z.object({
   assessment_status: z.string().default(""),
   delivery_attribution_prediction: z.string().default(""),
   quality_prediction: z.string().default(""),
-  prediction_reasons: z.preprocess(
-    (value) => (value == null ? [] : value),
-    z.array(z.string()).default([]),
-  ),
+  prediction_reasons: AgentFixStringListSchema,
   confidence: z.number().nullable().optional(),
   workstream: z.string().default(""),
-  swarm_reviews: z.array(AgentFixSwarmReviewSchema).default([]),
+  // Drop non-array values and non-object elements before validating each
+  // review, so a malformed swarm_reviews entry degrades to nothing instead of
+  // failing the whole record.
+  swarm_reviews: z.preprocess(
+    (value) =>
+      Array.isArray(value)
+        ? value.filter((e) => e != null && typeof e === "object")
+        : [],
+    z.array(AgentFixSwarmReviewSchema).default([]),
+  ),
   ai_shelved_cls: AgentFixClListSchema,
   swarm_change_cls: AgentFixClListSchema,
   swarm_committed_cls: AgentFixClListSchema,
   external_committed_cls: AgentFixClListSchema,
   summary: z.string().default(""),
-  warnings: z.preprocess(
-    (value) => (value == null ? [] : value),
-    z.array(z.string()).default([]),
-  ),
+  warnings: AgentFixStringListSchema,
 }).loose();
 
 export const AgentFixHumanReviewSchema = z.object({
@@ -768,7 +787,19 @@ const AgentFixRecordSchema = z.object({
   ai_judgement_eval: z.string().default(""),
 }).loose();
 
-export const AgentFixRecordListSchema = z.array(AgentFixRecordSchema);
+// Parse each row independently and drop the ones that fail, rather than letting
+// a single malformed record fail `z.array(...)` and collapse the whole feed to
+// the empty fallback (the "暂无记录" blank-table bug). This is the list-level
+// backstop for the field-level coercions above: even a field we haven't
+// hardened yet can only ever cost its own row, never the entire table.
+export const AgentFixRecordListSchema = z
+  .array(z.unknown())
+  .transform((rows) =>
+    rows.flatMap((row) => {
+      const parsed = AgentFixRecordSchema.safeParse(row);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  );
 
 export const TriggerAgentFixP4AssessmentResponseSchema = z.object({
   created: z.boolean().default(false),
