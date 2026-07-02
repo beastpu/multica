@@ -58,7 +58,8 @@
   "operations": {
     "title": "운영",
     "assessment_title": "AI 수정 평가",
-    "subtitle": "에이전트가 처리한 issue의 P4/Swarm 증거, AI 예측, 사람 리뷰, 판단 차이를 표시합니다.",
+    "subtitle": "에이전트가 처리한 issue 의 P4/Swarm 증거, AI 예측, 사람 검수 결과를 보여줍니다.",
+    "range_label": "최근 {{days}}일",
     "search_placeholder": "댓글 검색",
     "search_clear": "검색 지우기",
     "filter": {
@@ -66,11 +67,11 @@
       "status_all": "모든 상태",
       "workstream": "Workstream",
       "workstream_all": "모든 workstream",
-      "attribution": "AI 귀속",
+      "attribution": "납품 귀속",
       "attribution_all": "모든 귀속",
-      "quality": "AI 품질",
+      "quality": "AI 품질 예측",
       "quality_all": "모든 품질",
-      "mismatch_only": "차이만"
+      "pending_only": "검수 대기만"
     },
     "tabs": {
       "detail": "P4 상세",
@@ -79,43 +80,53 @@
       "analysis_hint": "현재 필터 결과의 간단한 집계입니다."
     },
     "summary": {
-      "hero_label": "Operations · P4 평가",
-      "hero_hint": "현재 필터된 issue",
-      "external_done": "외부 완료",
-      "external_done_hint": "Feishu/Meego done을 통계 기준으로 사용",
-      "p4_coverage": "P4 커버리지",
-      "p4_coverage_hint": "P4/Swarm 증거가 있는 행",
-      "ai_delivery": "AI 전달",
-      "ai_delivery_hint": "AI 제출 또는 지원 예측",
-      "human_reviewed": "사람 리뷰 완료",
-      "human_reviewed_hint": "사람이 outcome을 확인",
-      "accepted": "통과",
-      "accepted_hint": "사람 리뷰에서 통과",
-      "drift": "판단 차이",
-      "drift_hint": "귀속 또는 품질 판단 차이"
+      "pass_rate": "AI 수정 통과율",
+      "pass_rate_hint": "통과 {{num}} / AI 납품·검수 완료 {{den}}",
+      "delivery_share": "AI 납품 비율",
+      "delivery_share_hint": "AI 납품+보조 {{num}} / 외부 완료 {{den}}",
+      "no_output_rate": "AI 무산출률",
+      "no_output_rate_hint": "산출 없음 {{num}} / AI 참여 {{den}}",
+      "delta_label": "이전 기간 대비",
+      "delta_points": "{{delta}}pt",
+      "funnel_title": "납품 퍼널",
+      "funnel_total": "총 {{count}}건",
+      "stage_external_done": "외부 완료",
+      "stage_p4_covered": "P4 커버",
+      "stage_ai_delivered": "AI 납품",
+      "stage_reviewed": "검수 완료",
+      "stage_accepted": "통과"
+    },
+    "trend": {
+      "title": "주간 추이",
+      "pass_rate": "통과율",
+      "delivery_share": "납품 비율",
+      "no_output_rate": "무산출률"
     },
     "analysis": {
-      "attribution_title": "AI 전달 귀속",
+      "attribution_title": "납품 귀속 분포",
       "review_title": "사람 리뷰 결과",
-      "eval_title": "AI 판단 평가",
       "workstream_title": "Workstream 결과",
-      "workstream_counts": "총 {{total}} · 리뷰 {{reviewed}} · 통과 {{accepted}} · 차이 {{mismatches}}",
+      "workstream_counts": "총 {{total}} · 검수 {{reviewed}} · 통과 {{accepted}}",
       "human_reason_title": "사람 이유 순위",
       "prediction_reason_title": "AI 이유 순위",
-      "no_reasons": "아직 이유 없음"
+      "no_reasons": "아직 이유 없음",
+      "drill_hint": "클릭하면 상세를 필터링합니다"
     },
     "table": {
       "issue": "Issue",
       "agent": "에이전트",
       "time": "날짜",
-      "status": "상태",
       "reason": "사유 / 설명",
       "external_status": "외부 상태",
       "p4_evidence": "P4 증거",
-      "ai_attribution": "AI 전달",
-      "ai_quality": "AI 품질",
-      "human_review": "사람 리뷰",
-      "eval": "평가"
+      "ai_attribution": "납품 귀속",
+      "ai_quality": "AI 품질 예측",
+      "human_review": "사람 리뷰"
+    },
+    "pagination": {
+      "page_of": "{{page}} / {{pages}} 페이지",
+      "prev": "이전 페이지",
+      "next": "다음 페이지"
     },
     "external": {
       "in_stats": "통계 포함",
@@ -145,7 +156,8 @@
       "in_progress": "Assessment 실행 중",
       "run_started": "Assessment를 시작했습니다",
       "rerun_started": "Assessment 재실행을 시작했습니다",
-      "failed": "Assessment 시작 실패"
+      "failed": "Assessment 시작 실패",
+      "blocked_external": "외부 작업 항목이 done 이 되면 실행할 수 있습니다"
     },
     "enums": {
       "assessment": {
@@ -161,6 +173,7 @@
         "human_delivered": "사람 제출",
         "conflict": "귀속 충돌",
         "unattributed": "귀속 불명",
+        "ai_no_output": "AI 산출 없음",
         "unknown": "증거 부족"
       },
       "quality": {
@@ -200,21 +213,6 @@
         "cancelled_requirement": "요구사항 취소",
         "no_change_needed": "변경 불필요",
         "misfire": "오작동"
-      },
-      "eval": {
-        "match": "판단 일치",
-        "accurate": "충돌 판단 정확",
-        "overestimated": "AI 과대평가",
-        "underestimated": "AI 과소평가",
-        "wrong_attribution": "귀속 오류",
-        "not_comparable": "비교 제외",
-        "out_of_scope": "범위 제외",
-        "pending": "확인 대기",
-        "needs_ai_assessment": "AI 평가 대기",
-        "ai_assessing": "AI 평가 중",
-        "ai_assessment_failed": "AI 실패",
-        "needs_review_conflict": "충돌 확인 대기",
-        "needs_human_review": "사람 리뷰 대기"
       }
     },
     "review_modal": {
@@ -230,6 +228,7 @@
       "reason_hint": "사람 결과가 최종 사실이며 AI 예측은 정확도 분석에 사용됩니다.",
       "note": "메모",
       "note_placeholder": "판단 근거를 추가하세요.",
+      "edit": "검수 편집",
       "cancel": "취소",
       "save": "저장",
       "saving": "저장 중...",
@@ -238,7 +237,6 @@
     "no_reason": "—",
     "export_csv": "CSV 내보내기",
     "caption": "{{count}}개 기록",
-    "assessment_caption": "P4 {{p4Rows}}개 · 리뷰 {{reviewed}}개 · 차이 {{mismatches}}개",
     "resize_column": "{{column}} 열 너비 조정",
     "reset_columns": "열 너비 초기화",
     "empty": {

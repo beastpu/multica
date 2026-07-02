@@ -58,7 +58,8 @@
   "operations": {
     "title": "Operations",
     "assessment_title": "AI fix assessment",
-    "subtitle": "P4/Swarm evidence, AI delivery predictions, human review, and judgement drift for issues your agents worked on.",
+    "subtitle": "P4/Swarm evidence, AI delivery predictions, and human review for issues your agents worked on.",
+    "range_label": "Last {{days}} days",
     "search_placeholder": "Search comments",
     "search_clear": "Clear search",
     "filter": {
@@ -66,11 +67,11 @@
       "status_all": "All statuses",
       "workstream": "Workstream",
       "workstream_all": "All workstreams",
-      "attribution": "AI attribution",
+      "attribution": "Delivery attribution",
       "attribution_all": "All attribution",
-      "quality": "AI quality",
+      "quality": "AI quality prediction",
       "quality_all": "All quality",
-      "mismatch_only": "Mismatch only"
+      "pending_only": "Pending review only"
     },
     "tabs": {
       "detail": "P4 details",
@@ -79,43 +80,53 @@
       "analysis_hint": "Lightweight rollups from the current filtered rows."
     },
     "summary": {
-      "hero_label": "Operations · P4 assessment",
-      "hero_hint": "Current filtered issues",
-      "external_done": "External done",
-      "external_done_hint": "Feishu/Meego done as the stats base",
-      "p4_coverage": "P4 coverage",
-      "p4_coverage_hint": "Rows with P4/Swarm evidence",
-      "ai_delivery": "AI delivered",
-      "ai_delivery_hint": "AI delivered or assisted prediction",
-      "human_reviewed": "Human reviewed",
-      "human_reviewed_hint": "Outcome confirmed by a person",
-      "accepted": "Accepted",
-      "accepted_hint": "Human review accepted",
-      "drift": "Judgement drift",
-      "drift_hint": "Mismatch or over/under-estimate"
+      "pass_rate": "AI fix pass rate",
+      "pass_rate_hint": "{{num}} accepted / {{den}} AI-delivered reviewed",
+      "delivery_share": "AI delivery share",
+      "delivery_share_hint": "{{num}} AI delivered+assisted / {{den}} external done",
+      "no_output_rate": "AI no-output rate",
+      "no_output_rate_hint": "{{num}} without output / {{den}} AI participated",
+      "delta_label": "vs previous period",
+      "delta_points": "{{delta}}pt",
+      "funnel_title": "Delivery funnel",
+      "funnel_total": "{{count}} records",
+      "stage_external_done": "External done",
+      "stage_p4_covered": "P4 covered",
+      "stage_ai_delivered": "AI delivered",
+      "stage_reviewed": "Reviewed",
+      "stage_accepted": "Accepted"
+    },
+    "trend": {
+      "title": "Weekly trend",
+      "pass_rate": "Pass rate",
+      "delivery_share": "Delivery share",
+      "no_output_rate": "No-output rate"
     },
     "analysis": {
-      "attribution_title": "AI delivery attribution",
+      "attribution_title": "Delivery attribution",
       "review_title": "Human review outcome",
-      "eval_title": "AI judgement eval",
       "workstream_title": "Workstream outcome",
-      "workstream_counts": "{{total}} total · {{reviewed}} reviewed · {{accepted}} accepted · {{mismatches}} drift",
+      "workstream_counts": "{{total}} total · {{reviewed}} reviewed · {{accepted}} accepted",
       "human_reason_title": "Top human reasons",
       "prediction_reason_title": "Top AI reasons",
-      "no_reasons": "No reasons yet"
+      "no_reasons": "No reasons yet",
+      "drill_hint": "Click to filter details"
     },
     "table": {
       "issue": "Issue",
       "agent": "Agent",
       "time": "Date",
-      "status": "Status",
       "reason": "Reason / description",
       "external_status": "External status",
       "p4_evidence": "P4 evidence",
-      "ai_attribution": "AI delivery",
-      "ai_quality": "AI quality",
-      "human_review": "Human review",
-      "eval": "Eval"
+      "ai_attribution": "Delivery attribution",
+      "ai_quality": "AI quality prediction",
+      "human_review": "Human review"
+    },
+    "pagination": {
+      "page_of": "Page {{page}} / {{pages}}",
+      "prev": "Previous page",
+      "next": "Next page"
     },
     "external": {
       "in_stats": "In stats",
@@ -145,7 +156,8 @@
       "in_progress": "Assessment running",
       "run_started": "Assessment started",
       "rerun_started": "Assessment rerun started",
-      "failed": "Failed to start assessment"
+      "failed": "Failed to start assessment",
+      "blocked_external": "Available once the external work item is done"
     },
     "enums": {
       "assessment": {
@@ -161,6 +173,7 @@
         "human_delivered": "Human delivered",
         "conflict": "Attribution conflict",
         "unattributed": "Unattributed",
+        "ai_no_output": "AI no output",
         "unknown": "Insufficient evidence"
       },
       "quality": {
@@ -200,21 +213,6 @@
         "cancelled_requirement": "Requirement cancelled",
         "no_change_needed": "No change needed",
         "misfire": "Misfire"
-      },
-      "eval": {
-        "match": "Accurate",
-        "accurate": "Conflict accurate",
-        "overestimated": "AI overestimated",
-        "underestimated": "AI underestimated",
-        "wrong_attribution": "Wrong attribution",
-        "not_comparable": "Not comparable",
-        "out_of_scope": "Out of scope",
-        "pending": "Pending review",
-        "needs_ai_assessment": "Needs AI assessment",
-        "ai_assessing": "AI assessing",
-        "ai_assessment_failed": "AI failed",
-        "needs_review_conflict": "Conflict pending",
-        "needs_human_review": "Needs human review"
       }
     },
     "review_modal": {
@@ -230,6 +228,7 @@
       "reason_hint": "Human outcome is the final fact; AI predictions remain for accuracy analysis.",
       "note": "Note",
       "note_placeholder": "Add judgement details, for example: the AI shelve was not used and the final CL was manually submitted.",
+      "edit": "Edit review",
       "cancel": "Cancel",
       "save": "Save",
       "saving": "Saving...",
@@ -238,7 +237,6 @@
     "no_reason": "—",
     "export_csv": "Export CSV",
     "caption": "{{count}} records",
-    "assessment_caption": "{{p4Rows}} P4 · {{reviewed}} reviewed · {{mismatches}} drift",
     "resize_column": "Resize {{column}} column",
     "reset_columns": "Reset columns",
     "empty": {

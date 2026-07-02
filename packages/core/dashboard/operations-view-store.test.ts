@@ -43,7 +43,6 @@ describe("useOperationsViewStore", () => {
     expect(widths.attribution).toBe(OPERATIONS_DEFAULT_WIDTHS.attribution);
     expect(widths.quality).toBe(OPERATIONS_DEFAULT_WIDTHS.quality);
     expect(widths.review).toBe(OPERATIONS_DEFAULT_WIDTHS.review);
-    expect(widths.eval).toBe(OPERATIONS_DEFAULT_WIDTHS.eval);
     expect(widths.time).toBe(OPERATIONS_DEFAULT_WIDTHS.time);
   });
 
@@ -80,7 +79,6 @@ describe("operations view store merge", () => {
     );
     expect(merged.columnWidths.quality).toBe(OPERATIONS_DEFAULT_WIDTHS.quality);
     expect(merged.columnWidths.review).toBe(OPERATIONS_DEFAULT_WIDTHS.review);
-    expect(merged.columnWidths.eval).toBe(OPERATIONS_DEFAULT_WIDTHS.eval);
     expect(merged.columnWidths.time).toBe(OPERATIONS_DEFAULT_WIDTHS.time);
   });
 

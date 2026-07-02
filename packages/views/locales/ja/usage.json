@@ -58,7 +58,8 @@
   "operations": {
     "title": "運用",
     "assessment_title": "AI 修正評価",
-    "subtitle": "エージェントが対応した issue の P4/Swarm 証跡、AI 予測、人間のレビュー、判定差分を表示します。",
+    "subtitle": "エージェントが対応した issue の P4/Swarm エビデンス、AI 予測、人によるレビュー結果を表示します。",
+    "range_label": "直近 {{days}} 日",
     "search_placeholder": "コメントを検索",
     "search_clear": "検索をクリア",
     "filter": {
@@ -66,11 +67,11 @@
       "status_all": "すべてのステータス",
       "workstream": "Workstream",
       "workstream_all": "すべての workstream",
-      "attribution": "AI 帰属",
+      "attribution": "納品帰属",
       "attribution_all": "すべての帰属",
-      "quality": "AI 品質",
+      "quality": "AI 品質予測",
       "quality_all": "すべての品質",
-      "mismatch_only": "差分のみ"
+      "pending_only": "未レビューのみ"
     },
     "tabs": {
       "detail": "P4 詳細",
@@ -79,43 +80,53 @@
       "analysis_hint": "現在の絞り込み結果からの軽量集計。"
     },
     "summary": {
-      "hero_label": "Operations · P4 評価",
-      "hero_hint": "現在の絞り込み issue",
-      "external_done": "外部完了",
-      "external_done_hint": "Feishu/Meego done を集計母数にします",
-      "p4_coverage": "P4 カバー",
-      "p4_coverage_hint": "P4/Swarm 証跡がある行",
-      "ai_delivery": "AI 交付",
-      "ai_delivery_hint": "AI 交付または支援の予測",
-      "human_reviewed": "レビュー済み",
-      "human_reviewed_hint": "人間が outcome を確認",
-      "accepted": "承認",
-      "accepted_hint": "人間レビューで承認",
-      "drift": "判定差分",
-      "drift_hint": "帰属または品質判断の差分"
+      "pass_rate": "AI 修正合格率",
+      "pass_rate_hint": "合格 {{num}} / AI 納品かつレビュー済み {{den}}",
+      "delivery_share": "AI 納品比率",
+      "delivery_share_hint": "AI 納品+支援 {{num}} / 外部完了 {{den}}",
+      "no_output_rate": "AI 未産出率",
+      "no_output_rate_hint": "産出なし {{num}} / AI 参加 {{den}}",
+      "delta_label": "前期間比",
+      "delta_points": "{{delta}}pt",
+      "funnel_title": "納品ファネル",
+      "funnel_total": "{{count}} 件",
+      "stage_external_done": "外部完了",
+      "stage_p4_covered": "P4 カバー",
+      "stage_ai_delivered": "AI 納品",
+      "stage_reviewed": "レビュー済み",
+      "stage_accepted": "合格"
+    },
+    "trend": {
+      "title": "週次トレンド",
+      "pass_rate": "合格率",
+      "delivery_share": "納品比率",
+      "no_output_rate": "未産出率"
     },
     "analysis": {
-      "attribution_title": "AI 交付帰属",
+      "attribution_title": "納品帰属の分布",
       "review_title": "人間レビュー結果",
-      "eval_title": "AI 判定評価",
       "workstream_title": "Workstream 結果",
-      "workstream_counts": "合計 {{total}} · レビュー済み {{reviewed}} · 承認 {{accepted}} · 差分 {{mismatches}}",
+      "workstream_counts": "計 {{total}} · レビュー済み {{reviewed}} · 合格 {{accepted}}",
       "human_reason_title": "人手理由ランキング",
       "prediction_reason_title": "AI 理由ランキング",
-      "no_reasons": "理由はまだありません"
+      "no_reasons": "理由はまだありません",
+      "drill_hint": "クリックで明細を絞り込み"
     },
     "table": {
       "issue": "Issue",
       "agent": "エージェント",
       "time": "日付",
-      "status": "ステータス",
       "reason": "理由 / 説明",
       "external_status": "外部ステータス",
       "p4_evidence": "P4 証跡",
-      "ai_attribution": "AI 交付",
-      "ai_quality": "AI 品質",
-      "human_review": "人間レビュー",
-      "eval": "評価"
+      "ai_attribution": "納品帰属",
+      "ai_quality": "AI 品質予測",
+      "human_review": "人間レビュー"
+    },
+    "pagination": {
+      "page_of": "{{page}} / {{pages}} ページ",
+      "prev": "前のページ",
+      "next": "次のページ"
     },
     "external": {
       "in_stats": "集計対象",
@@ -145,7 +156,8 @@
       "in_progress": "Assessment 実行中",
       "run_started": "Assessment を開始しました",
       "rerun_started": "Assessment の再実行を開始しました",
-      "failed": "Assessment を開始できませんでした"
+      "failed": "Assessment を開始できませんでした",
+      "blocked_external": "外部の作業項目が done になると実行できます"
     },
     "enums": {
       "assessment": {
@@ -161,6 +173,7 @@
         "human_delivered": "人間が交付",
         "conflict": "帰属の衝突",
         "unattributed": "帰属不明",
+        "ai_no_output": "AI 産出なし",
         "unknown": "証跡不足"
       },
       "quality": {
@@ -200,21 +213,6 @@
         "cancelled_requirement": "要件キャンセル",
         "no_change_needed": "変更不要",
         "misfire": "誤作動"
-      },
-      "eval": {
-        "match": "判定一致",
-        "accurate": "衝突判定一致",
-        "overestimated": "AI が過大評価",
-        "underestimated": "AI が過小評価",
-        "wrong_attribution": "帰属誤り",
-        "not_comparable": "比較対象外",
-        "out_of_scope": "範囲外",
-        "pending": "確認待ち",
-        "needs_ai_assessment": "AI 評価待ち",
-        "ai_assessing": "AI 評価中",
-        "ai_assessment_failed": "AI 失敗",
-        "needs_review_conflict": "衝突確認待ち",
-        "needs_human_review": "人間レビュー待ち"
       }
     },
     "review_modal": {
@@ -230,6 +228,7 @@
       "reason_hint": "人手結果を最終事実とし、AI 予測は精度分析に残します。",
       "note": "メモ",
       "note_placeholder": "判断根拠を追加します。",
+      "edit": "レビューを編集",
       "cancel": "キャンセル",
       "save": "保存",
       "saving": "保存中...",
@@ -238,7 +237,6 @@
     "no_reason": "—",
     "export_csv": "CSV をエクスポート",
     "caption": "{{count}} 件",
-    "assessment_caption": "P4 {{p4Rows}} 件 · レビュー済み {{reviewed}} 件 · 差分 {{mismatches}} 件",
     "resize_column": "{{column}}列の幅を調整",
     "reset_columns": "列幅をリセット",
     "empty": {

@@ -1,0 +1,220 @@
+import type { AgentFixRecord } from "@multica/core/types";
+import { addDaysIso, todayIso, weekStartIso } from "../runtimes/utils";
+import { buildWeekShells, type WeekShell } from "./utils";
+
+// ---------------------------------------------------------------------------
+// Operations page metrics
+//
+// Pure derivations over the agent-fixes feed. Everything here is computed
+// client-side from GET /api/operations/agent-fixes rows: the page fetches a
+// 2× window (`days * 2`) so the trailing `days` window and the window before
+// it can be compared without a second endpoint.
+// ---------------------------------------------------------------------------
+
+// Derived delivery attribution. Extends the AI prediction with one value the
+// backend doesn't emit: `ai_no_output` — the agent ran but the completed P4
+// assessment found no AI shelve at all (e.g. the agent hit an auth failure
+// before it could submit). Rows without a completed assessment keep the raw
+// prediction (or "unknown") — absence of evidence is not evidence of absence.
+export const AI_NO_OUTPUT = "ai_no_output";
+
+export function deriveAttribution(fix: AgentFixRecord): string {
+  const p4 = fix.p4_assessment;
+  const prediction = p4?.delivery_attribution_prediction?.trim() || "unknown";
+  if (p4?.assessment_status !== "completed") return prediction;
+  if (prediction === "ai_delivered" || prediction === "ai_assisted") {
+    return prediction;
+  }
+  const shelved = (p4.ai_shelved_cls ?? []).filter(
+    (cl) => String(cl).trim() !== "",
+  );
+  if (shelved.length === 0) return AI_NO_OUTPUT;
+  return prediction;
+}
+
+export function isAiDelivered(fix: AgentFixRecord): boolean {
+  const attribution = deriveAttribution(fix);
+  return attribution === "ai_delivered" || attribution === "ai_assisted";
+}
+
+// Human review outcomes that count as "已验收" (a human made a call). Both
+// `not_applicable` and `unreviewed` stay out: the former removes the row from
+// the quality denominator, the latter is the pending queue.
+const REVIEWED_OUTCOMES = new Set(["accepted", "needs_changes", "rejected"]);
+
+export function isReviewed(fix: AgentFixRecord): boolean {
+  return REVIEWED_OUTCOMES.has(fix.human_review?.outcome ?? "");
+}
+
+export function isPendingReview(fix: AgentFixRecord): boolean {
+  const outcome = fix.human_review?.outcome ?? "";
+  return outcome === "" || outcome === "unreviewed";
+}
+
+// The record's day axis in the viewer's timezone — the latest run's completion
+// day, falling back to start/created for running or queued rows. en-CA gives a
+// locale-neutral YYYY-MM-DD; a bad tz falls back to the raw ISO day.
+export function fixDayIso(fix: AgentFixRecord, tz: string): string {
+  const iso = fix.completed_at ?? fix.started_at ?? fix.created_at;
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
+  } catch {
+    return iso.slice(0, 10);
+  }
+}
+
+// Split a 2×-window fetch into the user-selected trailing window and the
+// equal-length window before it (for the KPI period-over-period delta).
+export function splitOperationsWindow(
+  fixes: AgentFixRecord[],
+  days: number,
+  tz: string,
+): { current: AgentFixRecord[]; previous: AgentFixRecord[] } {
+  const today = todayIso(tz);
+  const currentCutoff = addDaysIso(today, -(days - 1));
+  const previousCutoff = addDaysIso(today, -(days * 2 - 1));
+  const current: AgentFixRecord[] = [];
+  const previous: AgentFixRecord[] = [];
+  for (const fix of fixes) {
+    const day = fixDayIso(fix, tz);
+    if (!day) continue;
+    if (day >= currentCutoff) current.push(fix);
+    else if (day >= previousCutoff) previous.push(fix);
+  }
+  return { current, previous };
+}
+
+// One ratio KPI: `value` is null when the denominator is 0 (render "—", never
+// a fake 0% or 100%).
+export interface OperationsRate {
+  value: number | null;
+  numerator: number;
+  denominator: number;
+}
+
+function rate(numerator: number, denominator: number): OperationsRate {
+  return {
+    value: denominator > 0 ? numerator / denominator : null,
+    numerator,
+    denominator,
+  };
+}
+
+// Delivery funnel counts. Stages are nested: accepted ⊆ reviewed ⊆
+// aiDelivered; externalDone / p4Covered are the two upstream gates.
+export interface OperationsFunnel {
+  total: number;
+  externalDone: number;
+  p4Covered: number;
+  aiDelivered: number;
+  reviewed: number;
+  accepted: number;
+}
+
+export interface OperationsKpis {
+  funnel: OperationsFunnel;
+  // 通过 / AI 交付且已验收
+  passRate: OperationsRate;
+  // AI 交付（提交+辅助）/ 外部完成
+  deliveryShare: OperationsRate;
+  // AI 无产出 / 全部参与记录
+  noOutputRate: OperationsRate;
+}
+
+export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
+  let externalDone = 0;
+  let p4Covered = 0;
+  let aiDelivered = 0;
+  let reviewed = 0;
+  let accepted = 0;
+  let noOutput = 0;
+  for (const fix of rows) {
+    if (fix.external?.done === true) externalDone += 1;
+    if (fix.p4_assessment) p4Covered += 1;
+    const attribution = deriveAttribution(fix);
+    if (attribution === AI_NO_OUTPUT) noOutput += 1;
+    const delivered =
+      attribution === "ai_delivered" || attribution === "ai_assisted";
+    if (!delivered) continue;
+    aiDelivered += 1;
+    if (isReviewed(fix)) {
+      reviewed += 1;
+      if (fix.human_review?.outcome === "accepted") accepted += 1;
+    }
+  }
+  return {
+    funnel: {
+      total: rows.length,
+      externalDone,
+      p4Covered,
+      aiDelivered,
+      reviewed,
+      accepted,
+    },
+    passRate: rate(accepted, reviewed),
+    deliveryShare: rate(aiDelivered, externalDone),
+    noOutputRate: rate(noOutput, rows.length),
+  };
+}
+
+// Weekly trend point: the three headline rates folded per trailing calendar
+// week (Mon–Sun, viewer tz). Rates are 0–100 percentages for the chart axis;
+// null when that week's denominator is 0 so recharts leaves a gap instead of
+// painting a fake zero.
+export interface OperationsTrendPoint extends WeekShell {
+  passRate: number | null;
+  deliveryShare: number | null;
+  noOutputRate: number | null;
+}
+
+function pct(r: OperationsRate): number | null {
+  return r.value == null ? null : Math.round(r.value * 1000) / 10;
+}
+
+export function computeOperationsTrend(
+  rows: AgentFixRecord[],
+  tz: string,
+  weekCount: number,
+): OperationsTrendPoint[] {
+  const shells = buildWeekShells(tz, weekCount);
+  const buckets = new Map<string, AgentFixRecord[]>();
+  for (const shell of shells) buckets.set(shell.weekStart, []);
+  for (const fix of rows) {
+    const day = fixDayIso(fix, tz);
+    if (!day) continue;
+    const bucket = buckets.get(weekStartIso(day));
+    if (bucket) bucket.push(fix);
+  }
+  return shells.map((shell) => {
+    const kpis = computeOperationsKpis(buckets.get(shell.weekStart) ?? []);
+    return {
+      ...shell,
+      passRate: pct(kpis.passRate),
+      deliveryShare: pct(kpis.deliveryShare),
+      noOutputRate: pct(kpis.noOutputRate),
+    };
+  });
+}
+
+// Builds the Swarm links for evidence chips. `base` is the workspace's Helix
+// Swarm URL (perforce connection); empty base → no link, the chip renders as
+// plain text.
+export function swarmReviewUrl(base: string, reviewId: string): string {
+  const trimmed = base.trim().replace(/\/+$/, "");
+  if (!trimmed || !reviewId) return "";
+  return `${trimmed}/reviews/${encodeURIComponent(reviewId)}`;
+}
+
+export function swarmChangeUrl(base: string, cl: string): string {
+  const trimmed = base.trim().replace(/\/+$/, "");
+  if (!trimmed || !cl) return "";
+  return `${trimmed}/changes/${encodeURIComponent(cl)}`;
+}
