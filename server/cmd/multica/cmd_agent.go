@@ -311,16 +311,21 @@ func hasDaemonTaskContextMarker() bool {
 	}
 	for {
 		markerPath := filepath.Join(dir, execenv.TaskContextMarkerRelPath)
-		data, err := os.ReadFile(markerPath)
-		if err == nil {
+		// Only a marker we can read AND whose managed_by matches counts as a
+		// daemon-task signal. Any other outcome — missing file, unreadable
+		// path, or a foreign file at this name — is treated as "no signal
+		// here", so we keep walking up. We must not fail closed on an
+		// unrelated read error (e.g. an unsearchable ancestor directory on a
+		// normal user's machine), which would refuse their PAT for no reason;
+		// the daemon writes this marker world-readable in the agent's own
+		// workdir, so a legitimate agent can always read it.
+		if data, err := os.ReadFile(markerPath); err == nil {
 			var marker struct {
 				ManagedBy string `json:"managed_by"`
 			}
 			if json.Unmarshal(data, &marker) == nil && marker.ManagedBy == execenv.TaskContextMarkerManagedBy {
 				return true
 			}
-		} else if !os.IsNotExist(err) {
-			return true
 		}
 
 		parent := filepath.Dir(dir)

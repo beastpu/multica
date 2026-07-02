@@ -234,6 +234,44 @@ func TestResolveToken_AgentContextSkipsConfig(t *testing.T) {
 		}
 	})
 
+	// A non-regular file at the marker path (here a directory) makes
+	// os.ReadFile fail with a non-IsNotExist error. That must NOT be read as a
+	// daemon-task signal: a normal user whose ancestor tree happens to contain
+	// such a path (or any unreadable one) must still reach their config token,
+	// rather than be locked out by a fail-closed guard on an unrelated error.
+	t.Run("unreadable marker path does not fail closed", func(t *testing.T) {
+		workDir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(workDir, execenv.TaskContextMarkerRelPath), 0o755); err != nil {
+			t.Fatalf("create marker-as-dir: %v", err)
+		}
+		nested := filepath.Join(workDir, "repo")
+		if err := os.MkdirAll(nested, 0o755); err != nil {
+			t.Fatalf("create nested cwd: %v", err)
+		}
+		prev, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("get cwd: %v", err)
+		}
+		if err := os.Chdir(nested); err != nil {
+			t.Fatalf("chdir nested: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := os.Chdir(prev); err != nil {
+				t.Fatalf("restore cwd: %v", err)
+			}
+		})
+
+		t.Setenv("MULTICA_AGENT_ID", "")
+		t.Setenv("MULTICA_TASK_ID", "")
+		t.Setenv("MULTICA_DAEMON_PORT", "")
+		t.Setenv("MULTICA_SERVER_URL", "")
+		t.Setenv("MULTICA_TOKEN", "")
+
+		if got := resolveToken(testCmd()); got != "mul_profile_token" {
+			t.Fatalf("resolveToken() = %q, want profile token (unreadable marker path must not fail closed)", got)
+		}
+	})
+
 	t.Run("agent context uses explicit task token env", func(t *testing.T) {
 		t.Setenv("MULTICA_AGENT_ID", "agent-123")
 		t.Setenv("MULTICA_TASK_ID", "task-456")
