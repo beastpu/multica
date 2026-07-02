@@ -286,3 +286,61 @@ func mustTestUUID(t *testing.T, s string) pgtype.UUID {
 	}
 	return id
 }
+
+func TestValidateP4AssessmentPayload(t *testing.T) {
+	valid := `{
+		"delivery_attribution_prediction":"human_delivered",
+		"quality_prediction":"likely_wrong",
+		"prediction_reasons":["r1"],
+		"confidence":0.8,
+		"workstream":"rel_1.1.0",
+		"swarm_reviews":[],
+		"ai_shelved_cls":[280120],
+		"swarm_change_cls":[],
+		"swarm_committed_cls":[],
+		"external_committed_cls":[278969],
+		"evidence":{},
+		"summary":"ok",
+		"warnings":["w1"],
+		"model":"gpt-5-codex"
+	}`
+	out, err := validateP4AssessmentPayload([]byte(valid))
+	if err != nil {
+		t.Fatalf("valid payload rejected: %v", err)
+	}
+	if out.DeliveryAttributionPrediction != "human_delivered" || out.QualityPrediction != "likely_wrong" {
+		t.Fatalf("predictions = %q/%q", out.DeliveryAttributionPrediction, out.QualityPrediction)
+	}
+	if len(out.ExternalCommittedCLs) != 1 || out.ExternalCommittedCLs[0] != 278969 {
+		t.Fatalf("external_committed_cls = %#v", out.ExternalCommittedCLs)
+	}
+
+	// Empty predictions default to unknown (agent may omit them on no evidence).
+	minimal, err := validateP4AssessmentPayload([]byte(`{"summary":"none"}`))
+	if err != nil {
+		t.Fatalf("minimal payload rejected: %v", err)
+	}
+	if minimal.DeliveryAttributionPrediction != "unknown" || minimal.QualityPrediction != "unknown" {
+		t.Fatalf("minimal defaults = %q/%q", minimal.DeliveryAttributionPrediction, minimal.QualityPrediction)
+	}
+
+	bad := []struct {
+		name    string
+		payload string
+	}{
+		{"invalid delivery enum", `{"delivery_attribution_prediction":"teleported"}`},
+		{"invalid quality enum", `{"quality_prediction":"perfect"}`},
+		{"confidence out of range", `{"confidence":1.5}`},
+		{"unknown field", `{"nope":1}`},
+		{"swarm_reviews not array", `{"swarm_reviews":"unknown"}`},
+		{"warnings not array", `{"warnings":{}}`},
+		{"evidence not object", `{"evidence":[]}`},
+		{"trailing json", `{}{}`},
+		{"not an object", `[]`},
+	}
+	for _, tc := range bad {
+		if _, err := validateP4AssessmentPayload([]byte(tc.payload)); err == nil {
+			t.Errorf("%s: expected rejection, got none", tc.name)
+		}
+	}
+}

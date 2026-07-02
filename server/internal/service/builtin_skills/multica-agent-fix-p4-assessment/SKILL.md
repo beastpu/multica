@@ -236,12 +236,20 @@ Prefer `unknown` with warnings over guessing. Useful warnings include:
 - `swarm_lookup_unavailable`
 - `insufficient_evidence`
 
-## Final Output
+## Submit the Result
 
-Return only a strict JSON object, or one fenced `json` block containing exactly
-one JSON object. Do not write prose before or after it.
+Submit your result by POSTing the JSON to the assessment result endpoint —
+this is how the assessment reaches the operations dashboard. Do NOT rely on
+printing the JSON as your final message; the endpoint is the authoritative
+path. Write the JSON to a file and post it with `--content-file` so shell
+quoting can't corrupt it:
 
-Use this shape:
+```bash
+multica api post /api/operations/agent-fixes/<binding_id>/p4-assessment/result --content-file result.json
+```
+
+Use the binding id from the task prompt. The request body is exactly one JSON
+object with this shape (no surrounding prose, no envelope):
 
 ```json
 {
@@ -263,7 +271,14 @@ Use this shape:
 ```
 
 CL arrays must contain integers only. `swarm_reviews` must be an array,
-`evidence` must be an object, and `warnings` must be an array. Do not include fields outside this schema.
+`evidence` must be an object, and `warnings` must be an array.
+Do not include fields outside this schema.
+
+On success the endpoint returns `{"status":"completed"}`. On a `400` it returns
+the exact validation problem (e.g. `invalid quality_prediction`,
+`confidence out of range`, an unknown field name) — read it, fix that field,
+and POST again. Keep correcting and resubmitting until you get a success; a run
+that ends without a successful submit leaves the assessment unrecorded.
 
 ## References
 

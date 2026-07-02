@@ -43,22 +43,35 @@ for the behavior contracts the skill teaches.
 ## HTTP routes and auth boundary
 
 - `server/cmd/server/router.go` registers operations routes, including
-  assessment trigger, evidence read, and human review routes.
+  assessment trigger, evidence read, the result submit route, and human review
+  routes.
 - `server/internal/handler/agent.go` handles Operations agent-fix APIs and
   evidence access. Agent access is task-scoped: an agent token can read
   only evidence for the same workspace and Feishu binding recorded in the
-  assessment task context.
+  assessment task context. `SubmitAgentFixP4Assessment` gates the result
+  submit endpoint with the same `requestTaskCanReadP4Evidence` scope, so only
+  the binding's own assessment task may write its result.
 
-## Parser and output contract
+## Result submit and output contract
 
-- `server/internal/service/agent_fix_assessment.go` implements
-  `parseP4AssessmentTaskOutput`. It reads only `agent_task_queue.result.output`,
-  accepts a raw JSON object or exactly one fenced `json` block, rejects wrapper
-  prose/multiple blocks and unknown fields, validates confidence range, and
-  defaults missing prediction fields to `unknown`.
-- `P4AssessmentService.CompleteTask` writes parsed assessment output only to
-  `agent_fix_p4_assessment`. Parser failure marks the assessment failed with a
-  parser warning.
+- The authoritative ingestion path is the submit endpoint
+  `POST /api/operations/agent-fixes/{binding_id}/p4-assessment/result`: the
+  agent POSTs the bare result JSON (via `multica api post --content-file`), the
+  server validates it, and a 400 returns the exact validation problem so the
+  agent can self-correct and resubmit. This avoids parsing a free-text agent
+  message.
+- `server/internal/service/agent_fix_assessment.go` shares one validator,
+  `validateP4AssessmentPayload`: it accepts one JSON object, rejects unknown
+  fields, validates the prediction enums and confidence range, requires
+  `swarm_reviews`/`warnings` to be arrays and `evidence` an object, and defaults
+  missing predictions to `unknown`. The endpoint (`SubmitResult`) and the
+  task-output fallback (`parseP4AssessmentTaskOutput` → `CompleteTask`) both run
+  it, so the contract is identical either way.
+- `P4AssessmentService.SubmitResult`/`writeCompletedAssessment` write the
+  validated result to `agent_fix_p4_assessment`. Once a row is `completed`, the
+  guarded `FailP4AssessmentFromTask` (`WHERE assessment_status <> 'completed'`)
+  will not knock a submitted result back to `failed` when the task later ends
+  and the output-parse fallback finds nothing to parse.
 - Implementation comparison is stored inside the parsed `evidence` JSON object
   rather than as dedicated columns. The shipped skill constrains
   `evidence.implementation_comparison.method_equivalence` to the binary values
@@ -92,6 +105,18 @@ for the behavior contracts the skill teaches.
   assessment table queries and task-isolation filters excluding
   `agent_fix_p4_assessment` from ordinary issue task queries, latest-run views,
   session resume, cancellation, and dedup paths.
+- Read-only enforcement is server-side, not advisory. `CreateP4AssessmentTask`
+  in `agent.sql` stamps `handoff_note` with the read-only assessment
+  instructions (built by `p4AssessmentHandoffNote` in
+  `agent_fix_assessment.go`); a stale daemon that predates the dedicated
+  assessment prompt still renders `handoff_note` on the normal assignment path,
+  which is how the server steers it into JSON output without a client update.
+  Independently, `Handler.isAnalysisTaskActor` /
+  `Handler.rejectAnalysisTaskWrite` (`internal/handler/issue.go`) reject every
+  issue mutation from an analysis-category task in `UpdateIssue`,
+  `BatchUpdateIssues`, and comment creation (`internal/handler/comment.go`), so
+  even a stale daemon running the task as a normal fix cannot change status,
+  edit fields, or post comments.
 
 ## Product design baseline
 

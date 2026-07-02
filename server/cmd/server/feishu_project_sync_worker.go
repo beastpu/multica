@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,18 +15,51 @@ import (
 
 const feishuProjectSyncInterval = 5 * time.Minute
 
+// p4AssessmentWorkspaceAllowlistEnv names the env var holding a comma-separated
+// list of workspace UUIDs permitted to auto-trigger P4 assessment on Feishu
+// sync. Unset or blank ⇒ the auto-assessment path is off everywhere
+// (fail-closed), so a workspace must be opted in explicitly.
+const p4AssessmentWorkspaceAllowlistEnv = "P4_ASSESSMENT_WORKSPACE_ALLOWLIST"
+
+// p4AssessmentAllowlistFromEnv parses the workspace allowlist. Entries are
+// trimmed and lowercased to match the canonical UUID form the sync path
+// carries; blank entries are dropped. Returns nil when unset/blank so the
+// downstream Allows() stays fail-closed.
+func p4AssessmentAllowlistFromEnv() service.P4AssessmentAllowlist {
+	raw := strings.TrimSpace(os.Getenv(p4AssessmentWorkspaceAllowlistEnv))
+	if raw == "" {
+		return nil
+	}
+	out := service.P4AssessmentAllowlist{}
+	for _, part := range strings.Split(raw, ",") {
+		if id := strings.ToLower(strings.TrimSpace(part)); id != "" {
+			out[id] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func runFeishuProjectSyncWorker(ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, taskSvc *service.TaskService, bus *events.Bus) {
 	store := newStorageFromEnv()
+	allowlist := p4AssessmentAllowlistFromEnv()
+	if len(allowlist) > 0 {
+		slog.Info("P4 assessment auto-trigger allowlist loaded", "workspace_count", len(allowlist))
+	} else {
+		slog.Info("P4 assessment auto-trigger disabled (empty workspace allowlist)")
+	}
 	ticker := time.NewTicker(feishuProjectSyncInterval)
 	defer ticker.Stop()
 
-	runFeishuProjectSyncOnce(ctx, queries, pool, store, taskSvc, bus)
+	runFeishuProjectSyncOnce(ctx, queries, pool, store, taskSvc, bus, allowlist)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runFeishuProjectSyncOnce(ctx, queries, pool, store, taskSvc, bus)
+			runFeishuProjectSyncOnce(ctx, queries, pool, store, taskSvc, bus, allowlist)
 		}
 	}
 }
@@ -43,14 +78,14 @@ func feishuP4AssessmentTrigger(taskSvc *service.TaskService) service.FeishuProje
 	return taskSvc.P4Assessment
 }
 
-func runFeishuProjectSyncOnce(ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, store service.FeishuProjectStorage, taskSvc *service.TaskService, bus *events.Bus) {
+func runFeishuProjectSyncOnce(ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, store service.FeishuProjectStorage, taskSvc *service.TaskService, bus *events.Bus, allowlist service.P4AssessmentAllowlist) {
 	configs, err := queries.ListEnabledFeishuProjectIntegrations(ctx)
 	if err != nil {
 		slog.Warn("Feishu Project sync scan failed", "error", err)
 		return
 	}
 	p4Assessment := feishuP4AssessmentTrigger(taskSvc)
-	svc := &service.FeishuProjectSyncService{Queries: queries, Tx: pool, Client: service.NewFeishuProjectClient(), Storage: store, TaskService: taskSvc, P4Assessment: p4Assessment, Events: bus}
+	svc := &service.FeishuProjectSyncService{Queries: queries, Tx: pool, Client: service.NewFeishuProjectClient(), Storage: store, TaskService: taskSvc, P4Assessment: p4Assessment, P4AssessmentAllowlist: allowlist, Events: bus}
 	now := time.Now()
 	for _, cfg := range configs {
 		locked, unlock, err := service.TryAcquireFeishuProjectSyncLock(ctx, pool, cfg.ID)
@@ -74,7 +109,7 @@ func runFeishuProjectSyncOnce(ctx context.Context, queries *db.Queries, pool *pg
 				slog.Warn("Feishu Project mark orphan-reconciled failed", "integration_id", service.UUIDString(cfg.ID), "error", err)
 			}
 		}
-		if p4Assessment != nil {
+		if p4Assessment != nil && allowlist.Allows(cfg.WorkspaceID) {
 			result, err := p4Assessment.BackfillDoneBindings(ctx, cfg.WorkspaceID, cfg.ID, service.P4AssessmentBackfillLimit)
 			if err != nil {
 				slog.Warn("P4 assessment historical binding backfill failed", "integration_id", service.UUIDString(cfg.ID), "project_key", cfg.ProjectKey, "error", err)

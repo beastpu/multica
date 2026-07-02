@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +77,43 @@ func IsP4AssessmentTask(task db.AgentTaskQueue) bool {
 	return len(task.Context) > 0 &&
 		json.Unmarshal(task.Context, &ctx) == nil &&
 		ctx.Type == P4AssessmentTaskType
+}
+
+// p4AssessmentHandoffNote is the read-only assessment instruction the server
+// stores on the task's handoff_note. A NEW daemon builds a dedicated assessment
+// prompt from the task kind and ignores this; an OLD daemon (pre-isolation)
+// treats the task as a normal assignment and renders handoff_note into the
+// opening prompt — so this is the only server-side lever that steers a stale
+// daemon into read-only JSON output without a client update.
+//
+// It is intentionally self-contained: an old runtime may not have synced the
+// `multica-agent-fix-p4-assessment` skill, so the output contract (allowed
+// enum values, exact key set, JSON-only) is inlined rather than deferred to the
+// skill. The parser rejects unknown JSON keys, so the note lists the exact keys
+// and forbids extras. Write-side pollution is separately blocked server-side
+// (analysis tasks cannot mutate issues or post comments), so a stale daemon
+// that ignores these instructions still cannot damage the issue.
+func p4AssessmentHandoffNote(bindingID pgtype.UUID) string {
+	binding := util.UUIDToString(bindingID)
+	var b strings.Builder
+	b.WriteString("THIS RUN IS A READ-ONLY P4/SWARM ASSESSMENT, NOT A FIX. ")
+	b.WriteString("Do NOT modify code, and do NOT change the issue, comments, status, Feishu/Meego, P4, or Swarm. ")
+	b.WriteString("Do not run any repair or feature-fix mission. The server rejects every write from this task, so any edit/comment/status attempt only wastes the run.\n\n")
+	b.WriteString("Goal: judge the delivery attribution and quality of the completed external work item, then emit a single assessment JSON.\n\n")
+	b.WriteString("Step 1 — read the task-scoped evidence (this is the only required Multica call):\n")
+	fmt.Fprintf(&b, "  multica api get /api/operations/agent-fixes/%s/p4-evidence\n\n", binding)
+	b.WriteString("Step 2 — you MAY inspect inner-network Swarm/P4 with read-only commands (e.g. `p4 describe -s`) when it helps classify CLs. Never mutate anything.\n")
+	b.WriteString("If the `multica-agent-fix-p4-assessment` skill is available, follow it for CL role classification and the full schema.\n\n")
+	b.WriteString("Step 3 — FINAL OUTPUT: print exactly one JSON object (or one fenced ```json block containing exactly one JSON object) and NOTHING else — no prose before or after. Unknown keys are rejected, so use only these keys:\n")
+	b.WriteString("  delivery_attribution_prediction: one of \"ai_delivered\" | \"ai_assisted\" | \"human_delivered\" | \"conflict\" | \"unattributed\" | \"unknown\"\n")
+	b.WriteString("  quality_prediction: one of \"likely_correct\" | \"likely_needs_changes\" | \"likely_wrong\" | \"unknown\"\n")
+	b.WriteString("  prediction_reasons: array of short strings\n")
+	b.WriteString("  confidence: number in [0,1] or null\n")
+	b.WriteString("  workstream: string\n")
+	b.WriteString("  swarm_reviews: array   ai_shelved_cls / swarm_change_cls / swarm_committed_cls / external_committed_cls: arrays of integers\n")
+	b.WriteString("  evidence: object   summary: string   warnings: array of strings   model: string\n\n")
+	b.WriteString("When evidence is missing or ambiguous, use \"unknown\" for the predictions and record why in warnings — never guess.\n")
+	return b.String()
 }
 
 func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingID pgtype.UUID, force bool) (P4AssessmentTriggerResult, error) {
@@ -153,11 +191,12 @@ func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingI
 			return err
 		}
 		task, err := q.CreateP4AssessmentTask(ctx, db.CreateP4AssessmentTaskParams{
-			AgentID:   row.AssigneeID,
-			RuntimeID: row.AgentRuntimeID,
-			IssueID:   row.IssueID,
-			Priority:  int32(1),
-			Context:   taskContext,
+			AgentID:     row.AssigneeID,
+			RuntimeID:   row.AgentRuntimeID,
+			IssueID:     row.IssueID,
+			Priority:    int32(1),
+			Context:     taskContext,
+			HandoffNote: pgtype.Text{String: p4AssessmentHandoffNote(bindingID), Valid: true},
 		})
 		if err != nil {
 			return err
@@ -583,20 +622,53 @@ func (s *P4AssessmentService) CompleteTask(ctx context.Context, task db.AgentTas
 			AssessmentTaskID: task.ID,
 			Warnings:         warnings,
 		})
-		if failErr != nil {
+		// pgx.ErrNoRows means the row was already 'completed' — the agent
+		// submitted the result through the /p4-assessment/result endpoint, so
+		// the guarded FailP4AssessmentFromTask matched nothing. That is the
+		// happy path now, not a failure: the parse fallback simply had nothing
+		// to do.
+		if failErr != nil && !errors.Is(failErr, pgx.ErrNoRows) {
 			return failErr
 		}
+		if failErr == nil {
+			return err
+		}
+		return nil
+	}
+	return s.writeCompletedAssessment(ctx, s.taskWorkspaceID(task), task.ID, parsed)
+}
+
+// SubmitResult stores an assessment result the agent POSTed to the
+// /p4-assessment/result endpoint. The payload is the bare result JSON (no
+// {"output": ...} envelope). Validation errors are returned verbatim so the
+// handler can surface them as a 400 the agent can self-correct against;
+// assessmentTaskID is the agent's own task (already authorized by the handler),
+// which is the row's assessment_task_id.
+func (s *P4AssessmentService) SubmitResult(ctx context.Context, workspaceID, assessmentTaskID pgtype.UUID, payload []byte) error {
+	parsed, err := validateP4AssessmentPayload(payload)
+	if err != nil {
 		return err
 	}
+	return s.writeCompletedAssessment(ctx, workspaceID, assessmentTaskID, parsed)
+}
+
+// writeCompletedAssessment maps a validated result onto the completed row,
+// keyed on (workspace, assessment_task_id). Shared by the task-output fallback
+// and the submit endpoint so both write identical columns.
+func (s *P4AssessmentService) writeCompletedAssessment(ctx context.Context, workspaceID, assessmentTaskID pgtype.UUID, parsed p4AssessmentOutput) error {
 	confidence := pgtype.Numeric{}
 	if parsed.Confidence != nil {
-		if err := confidence.Scan(*parsed.Confidence); err != nil {
+		// pgtype.Numeric.Scan does not accept a float64 (it panics/errors with
+		// "cannot scan float64"); feed it the decimal string form instead. This
+		// path was never exercised before the submit endpoint because every
+		// prior completion failed the output parse.
+		if err := confidence.Scan(strconv.FormatFloat(*parsed.Confidence, 'f', -1, 64)); err != nil {
 			return err
 		}
 	}
-	_, err = s.Queries.CompleteP4AssessmentFromTask(ctx, db.CompleteP4AssessmentFromTaskParams{
-		WorkspaceID:                   s.taskWorkspaceID(task),
-		AssessmentTaskID:              task.ID,
+	_, err := s.Queries.CompleteP4AssessmentFromTask(ctx, db.CompleteP4AssessmentFromTaskParams{
+		WorkspaceID:                   workspaceID,
+		AssessmentTaskID:              assessmentTaskID,
 		DeliveryAttributionPrediction: parsed.DeliveryAttributionPrediction,
 		QualityPrediction:             parsed.QualityPrediction,
 		PredictionReasons:             parsed.PredictionReasons,
@@ -666,6 +738,16 @@ func parseP4AssessmentTaskOutput(result []byte) (p4AssessmentOutput, error) {
 		}
 		payload = []byte(matches[0][1])
 	}
+	return validateP4AssessmentPayload(payload)
+}
+
+// validateP4AssessmentPayload validates a bare assessment-result JSON object
+// (exactly the schema the skill documents) and fills the same defaults the
+// task-output parser applies. It is shared by the task-completion fallback
+// path and the /p4-assessment/result submit endpoint, so the agent gets the
+// identical contract whether it returns the JSON or POSTs it. Errors are
+// phrased for the agent to self-correct on a 400.
+func validateP4AssessmentPayload(payload []byte) (p4AssessmentOutput, error) {
 	var out p4AssessmentOutput
 	dec := json.NewDecoder(bytes.NewReader(payload))
 	dec.DisallowUnknownFields()
@@ -705,6 +787,24 @@ func parseP4AssessmentTaskOutput(result []byte) (p4AssessmentOutput, error) {
 		out.Warnings = []byte("[]")
 	} else if !jsonRawHasShape(out.Warnings, []byte("[")) {
 		return p4AssessmentOutput{}, fmt.Errorf("warnings must be an array")
+	}
+	// The array columns are NOT NULL DEFAULT '{}'; an omitted field decodes to a
+	// nil slice, which would write SQL NULL and violate the constraint. Normalize
+	// to empty slices so a sparse (evidence-poor) result still stores cleanly.
+	if out.PredictionReasons == nil {
+		out.PredictionReasons = []string{}
+	}
+	if out.AIShelvedCLs == nil {
+		out.AIShelvedCLs = []int32{}
+	}
+	if out.SwarmChangeCLs == nil {
+		out.SwarmChangeCLs = []int32{}
+	}
+	if out.SwarmCommittedCLs == nil {
+		out.SwarmCommittedCLs = []int32{}
+	}
+	if out.ExternalCommittedCLs == nil {
+		out.ExternalCommittedCLs = []int32{}
 	}
 	return out, nil
 }

@@ -1125,6 +1125,14 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Analysis tasks (P4 assessment) are read-only side channels — block them
+	// from posting comments so a stale daemon that runs one as a normal fix
+	// cannot pollute the issue thread. The assessment result is captured from
+	// the task output, never from a comment.
+	if h.rejectAnalysisTaskWrite(w, r, userID, uuidToString(issue.WorkspaceID), "post comments") {
+		return
+	}
+
 	var req CreateCommentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")

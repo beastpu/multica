@@ -584,6 +584,59 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
     expect(parsed).toEqual([]);
   });
 
+  it("coerces a non-array CL field (agent emitted a bare string) to [] instead of blanking the row", () => {
+    // Regression: an assessment where swarm_reviews[].commits arrived as the
+    // string "unknown" failed z.array() and collapsed the ENTIRE feed to the
+    // empty fallback ("暂无记录"). The field must degrade to [], row intact.
+    const parsed = AgentFixRecordListSchema.parse([
+      {
+        task_id: "t1",
+        issue_status: "done",
+        p4_assessment: {
+          assessment_status: "completed",
+          delivery_attribution_prediction: "human_delivered",
+          quality_prediction: "likely_wrong",
+          ai_shelved_cls: "unknown",
+          swarm_reviews: [
+            { review: 259294, status: "pending", commits: "unknown", changes: "n/a" },
+          ],
+        },
+      },
+    ]);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.p4_assessment?.ai_shelved_cls).toEqual([]);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.commits).toEqual([]);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.changes).toEqual([]);
+  });
+
+  it("drops only the malformed row, keeping valid rows (one bad record never blanks the table)", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      { task_id: "good-1", issue_status: "done" },
+      "garbage-not-an-object",
+      { task_id: "bad", issue_status: 123 }, // number where string required
+      { task_id: "good-2", issue_status: "in_review" },
+    ]);
+    expect(parsed.map((r) => r.task_id)).toEqual(["good-1", "good-2"]);
+  });
+
+  it("drops non-string prediction_reasons/warnings entries and non-object swarm reviews", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      {
+        task_id: "t1",
+        p4_assessment: {
+          prediction_reasons: ["ok", 42, null, "fine"],
+          warnings: "not-an-array",
+          swarm_reviews: ["junk", { review_id: "SW-1" }, 7],
+        },
+      },
+    ]);
+    const p4 = parsed[0]?.p4_assessment;
+    expect(p4?.prediction_reasons).toEqual(["ok", "fine"]);
+    expect(p4?.warnings).toEqual([]);
+    expect(p4?.swarm_reviews).toHaveLength(1);
+    expect(p4?.swarm_reviews?.[0]?.review_id).toBe("SW-1");
+  });
+
   it("parses the P4 assessment trigger response with drift-tolerant defaults", () => {
     const parsed = TriggerAgentFixP4AssessmentResponseSchema.parse({
       created: true,

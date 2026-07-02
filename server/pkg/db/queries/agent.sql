@@ -240,8 +240,13 @@ RETURNING *;
 -- task_category='analysis' is the single place P4 assessment tasks opt out of
 -- the normal issue-fix workflow; every isolation query filters on it instead of
 -- re-checking context->>'type'.
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, task_category)
-VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, 'analysis')
+-- handoff_note carries the read-only assessment instructions the daemon renders
+-- into the opening prompt. New daemons build a dedicated assessment prompt from
+-- the task kind and ignore it; OLD daemons (pre-isolation) fall into the normal
+-- assignment path and DO render handoff_note, which is how the server steers a
+-- stale daemon into read-only JSON output without a client update.
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, task_category, handoff_note)
+VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, 'analysis', $6)
 RETURNING *;
 
 -- name: LinkTaskToIssue :exec
@@ -1179,11 +1184,16 @@ WHERE workspace_id = $1 AND assessment_task_id = $2
 RETURNING *;
 
 -- name: FailP4AssessmentFromTask :one
+-- Never clobber a result the agent already submitted through the
+-- /p4-assessment/result endpoint: once the row is 'completed', a later
+-- task-end parse failure must not knock it back to 'failed'. The endpoint is
+-- the authoritative path; task-output parsing is only a fallback.
 UPDATE agent_fix_p4_assessment
 SET assessment_status = 'failed',
     warnings = $3,
     updated_at = now()
 WHERE workspace_id = $1 AND assessment_task_id = $2
+  AND assessment_status <> 'completed'
 RETURNING *;
 
 -- name: ListTasksByIssue :many
