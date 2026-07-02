@@ -179,6 +179,29 @@ Useful feature categories for recent Multica notes:
    - Local GitLab commits can add internal integrations, fixes, or not-yet-public work.
    - If a feature appears local-only or unmerged, call that out to the user before publishing it.
 
+## Test Environment Update Scope
+
+When the user asks to update the test environment as part of the release-note
+workflow, first classify the change surface from the Git range before proposing
+what to update.
+
+- Backend-only: changed files are limited to backend/runtime/deploy surfaces such
+  as `server/`, backend SQL/migrations, backend-only scripts, or backend image
+  configuration. In this case, update only the test backend service/image; do
+  not rebuild or redeploy the web/frontend test service just to publish the
+  release note.
+- Frontend-involved: changed files include `apps/web/`, `apps/desktop/`,
+  `packages/core/`, `packages/ui/`, `packages/views/`, frontend package/config
+  files, or other UI/client assets. In this case, include the relevant frontend
+  test update in the plan.
+- Mixed or uncertain: if the range includes both backend and frontend surfaces,
+  or the impact is unclear from file paths, state the uncertainty and use the
+  broader test update path unless the user confirms a narrower scope.
+
+Report the inferred test update scope alongside the change range. If the scope
+is backend-only, explicitly say that the test environment only needs the backend
+updated.
+
 ## Feishu Document Workflow
 
 Use `lark-doc`, `lark-wiki`, and `lark-drive` skills/CLI as needed.
