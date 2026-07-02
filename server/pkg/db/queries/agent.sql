@@ -240,8 +240,13 @@ RETURNING *;
 -- task_category='analysis' is the single place P4 assessment tasks opt out of
 -- the normal issue-fix workflow; every isolation query filters on it instead of
 -- re-checking context->>'type'.
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, task_category)
-VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, 'analysis')
+-- handoff_note carries the read-only assessment instructions the daemon renders
+-- into the opening prompt. New daemons build a dedicated assessment prompt from
+-- the task kind and ignore it; OLD daemons (pre-isolation) fall into the normal
+-- assignment path and DO render handoff_note, which is how the server steers a
+-- stale daemon into read-only JSON output without a client update.
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, task_category, handoff_note)
+VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, 'analysis', $6)
 RETURNING *;
 
 -- name: LinkTaskToIssue :exec

@@ -1028,22 +1028,28 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 }
 
 const createP4AssessmentTask = `-- name: CreateP4AssessmentTask :one
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, task_category)
-VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, 'analysis')
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, task_category, handoff_note)
+VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, 'analysis', $6)
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
 `
 
 type CreateP4AssessmentTaskParams struct {
-	AgentID   pgtype.UUID `json:"agent_id"`
-	RuntimeID pgtype.UUID `json:"runtime_id"`
-	IssueID   pgtype.UUID `json:"issue_id"`
-	Priority  int32       `json:"priority"`
-	Context   []byte      `json:"context"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	Priority    int32       `json:"priority"`
+	Context     []byte      `json:"context"`
+	HandoffNote pgtype.Text `json:"handoff_note"`
 }
 
 // task_category='analysis' is the single place P4 assessment tasks opt out of
 // the normal issue-fix workflow; every isolation query filters on it instead of
 // re-checking context->>'type'.
+// handoff_note carries the read-only assessment instructions the daemon renders
+// into the opening prompt. New daemons build a dedicated assessment prompt from
+// the task kind and ignore it; OLD daemons (pre-isolation) fall into the normal
+// assignment path and DO render handoff_note, which is how the server steers a
+// stale daemon into read-only JSON output without a client update.
 func (q *Queries) CreateP4AssessmentTask(ctx context.Context, arg CreateP4AssessmentTaskParams) (AgentTaskQueue, error) {
 	row := q.db.QueryRow(ctx, createP4AssessmentTask,
 		arg.AgentID,
@@ -1051,6 +1057,7 @@ func (q *Queries) CreateP4AssessmentTask(ctx context.Context, arg CreateP4Assess
 		arg.IssueID,
 		arg.Priority,
 		arg.Context,
+		arg.HandoffNote,
 	)
 	var i AgentTaskQueue
 	err := row.Scan(

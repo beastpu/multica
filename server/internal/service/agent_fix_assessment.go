@@ -78,6 +78,43 @@ func IsP4AssessmentTask(task db.AgentTaskQueue) bool {
 		ctx.Type == P4AssessmentTaskType
 }
 
+// p4AssessmentHandoffNote is the read-only assessment instruction the server
+// stores on the task's handoff_note. A NEW daemon builds a dedicated assessment
+// prompt from the task kind and ignores this; an OLD daemon (pre-isolation)
+// treats the task as a normal assignment and renders handoff_note into the
+// opening prompt — so this is the only server-side lever that steers a stale
+// daemon into read-only JSON output without a client update.
+//
+// It is intentionally self-contained: an old runtime may not have synced the
+// `multica-agent-fix-p4-assessment` skill, so the output contract (allowed
+// enum values, exact key set, JSON-only) is inlined rather than deferred to the
+// skill. The parser rejects unknown JSON keys, so the note lists the exact keys
+// and forbids extras. Write-side pollution is separately blocked server-side
+// (analysis tasks cannot mutate issues or post comments), so a stale daemon
+// that ignores these instructions still cannot damage the issue.
+func p4AssessmentHandoffNote(bindingID pgtype.UUID) string {
+	binding := util.UUIDToString(bindingID)
+	var b strings.Builder
+	b.WriteString("THIS RUN IS A READ-ONLY P4/SWARM ASSESSMENT, NOT A FIX. ")
+	b.WriteString("Do NOT modify code, and do NOT change the issue, comments, status, Feishu/Meego, P4, or Swarm. ")
+	b.WriteString("Do not run any repair or feature-fix mission. The server rejects every write from this task, so any edit/comment/status attempt only wastes the run.\n\n")
+	b.WriteString("Goal: judge the delivery attribution and quality of the completed external work item, then emit a single assessment JSON.\n\n")
+	b.WriteString("Step 1 — read the task-scoped evidence (this is the only required Multica call):\n")
+	fmt.Fprintf(&b, "  multica api get /api/operations/agent-fixes/%s/p4-evidence\n\n", binding)
+	b.WriteString("Step 2 — you MAY inspect inner-network Swarm/P4 with read-only commands (e.g. `p4 describe -s`) when it helps classify CLs. Never mutate anything.\n")
+	b.WriteString("If the `multica-agent-fix-p4-assessment` skill is available, follow it for CL role classification and the full schema.\n\n")
+	b.WriteString("Step 3 — FINAL OUTPUT: print exactly one JSON object (or one fenced ```json block containing exactly one JSON object) and NOTHING else — no prose before or after. Unknown keys are rejected, so use only these keys:\n")
+	b.WriteString("  delivery_attribution_prediction: one of \"ai_delivered\" | \"ai_assisted\" | \"human_delivered\" | \"conflict\" | \"unattributed\" | \"unknown\"\n")
+	b.WriteString("  quality_prediction: one of \"likely_correct\" | \"likely_needs_changes\" | \"likely_wrong\" | \"unknown\"\n")
+	b.WriteString("  prediction_reasons: array of short strings\n")
+	b.WriteString("  confidence: number in [0,1] or null\n")
+	b.WriteString("  workstream: string\n")
+	b.WriteString("  swarm_reviews: array   ai_shelved_cls / swarm_change_cls / swarm_committed_cls / external_committed_cls: arrays of integers\n")
+	b.WriteString("  evidence: object   summary: string   warnings: array of strings   model: string\n\n")
+	b.WriteString("When evidence is missing or ambiguous, use \"unknown\" for the predictions and record why in warnings — never guess.\n")
+	return b.String()
+}
+
 func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingID pgtype.UUID, force bool) (P4AssessmentTriggerResult, error) {
 	var result P4AssessmentTriggerResult
 	err := s.runInTx(ctx, func(q *db.Queries) error {
@@ -153,11 +190,12 @@ func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingI
 			return err
 		}
 		task, err := q.CreateP4AssessmentTask(ctx, db.CreateP4AssessmentTaskParams{
-			AgentID:   row.AssigneeID,
-			RuntimeID: row.AgentRuntimeID,
-			IssueID:   row.IssueID,
-			Priority:  int32(1),
-			Context:   taskContext,
+			AgentID:     row.AssigneeID,
+			RuntimeID:   row.AgentRuntimeID,
+			IssueID:     row.IssueID,
+			Priority:    int32(1),
+			Context:     taskContext,
+			HandoffNote: pgtype.Text{String: p4AssessmentHandoffNote(bindingID), Valid: true},
 		})
 		if err != nil {
 			return err

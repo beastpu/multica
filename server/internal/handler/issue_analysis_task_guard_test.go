@@ -72,3 +72,41 @@ func TestAnalysisTaskCannotBatchUpdateIssueStatus(t *testing.T) {
 	}
 	assertIssueStatus(t, issueID, "done")
 }
+
+func TestAnalysisTaskCannotComment(t *testing.T) {
+	issueID := createTestIssue(t, "analysis comment guard", "done", "low")
+	t.Cleanup(func() { deleteTestIssue(t, issueID) })
+	agentID := createHandlerTestAgent(t, "Analysis Comment Guard Agent", nil)
+	taskID := createAnalysisTaskForIssue(t, agentID, issueID)
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/issues/"+issueID+"/comments", map[string]any{
+		"content": "assessment result: likely_correct",
+	})
+	req = withURLParam(req, "id", issueID)
+	req.Header.Set("X-Agent-ID", agentID)
+	req.Header.Set("X-Task-ID", taskID)
+
+	testHandler.CreateComment(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for analysis task comment, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAnalysisTaskCannotUpdateNonStatusField(t *testing.T) {
+	issueID := createTestIssue(t, "analysis title guard", "done", "low")
+	t.Cleanup(func() { deleteTestIssue(t, issueID) })
+	agentID := createHandlerTestAgent(t, "Analysis Title Guard Agent", nil)
+	taskID := createAnalysisTaskForIssue(t, agentID, issueID)
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPut, "/api/issues/"+issueID, map[string]any{"title": "rewritten by analysis"})
+	req = withURLParam(req, "id", issueID)
+	req.Header.Set("X-Agent-ID", agentID)
+	req.Header.Set("X-Task-ID", taskID)
+
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for analysis task non-status update, got %d: %s", w.Code, w.Body.String())
+	}
+}
