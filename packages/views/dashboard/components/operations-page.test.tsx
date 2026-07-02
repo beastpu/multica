@@ -454,7 +454,7 @@ describe("OperationsPage", () => {
     await user.keyboard("{Escape}");
 
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Likely correct")).toBeTruthy();
+    expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("confidence 86%")).toBeTruthy();
   });
 
@@ -580,7 +580,7 @@ describe("OperationsPage", () => {
 
     await user.click(screen.getByLabelText("AI quality"));
     await user.click(
-      within(await screen.findByRole("listbox")).getByText("Likely wrong"),
+      within(await screen.findByRole("listbox")).getByText("Fail"),
     );
 
     expect(screen.getByText("Client crash")).toBeTruthy();
@@ -654,10 +654,10 @@ describe("OperationsPage", () => {
     // Quality (acceptance) breakdown labels render, scoped to the summary strip.
     expect(screen.getByText("AI acceptance")).toBeTruthy();
     const acceptanceRow = screen.getByText("AI acceptance").parentElement;
-    expect(within(acceptanceRow as HTMLElement).getByText("Passed")).toBeTruthy();
-    expect(within(acceptanceRow as HTMLElement).getByText("Failed")).toBeTruthy();
+    expect(within(acceptanceRow as HTMLElement).getByText("Pass")).toBeTruthy();
+    expect(within(acceptanceRow as HTMLElement).getByText("Fail")).toBeTruthy();
     expect(
-      within(acceptanceRow as HTMLElement).getByText("Needs changes"),
+      within(acceptanceRow as HTMLElement).getByText("Needs work"),
     ).toBeTruthy();
   });
 

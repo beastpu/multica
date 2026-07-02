@@ -85,9 +85,9 @@
       "ai_assisted": "AI 辅助",
       "quality_label": "AI 验收",
       "quality_pass": "通过",
-      "quality_fail": "失败",
-      "quality_needs_changes": "需改动",
-      "quality_unknown": "未知"
+      "quality_fail": "不通过",
+      "quality_needs_changes": "待完善",
+      "quality_unknown": "无法判断"
     },
     "analysis": {
       "attribution_title": "AI 交付归因",
@@ -157,10 +157,10 @@
         "unknown": "证据不足"
       },
       "quality": {
-        "likely_correct": "大概率正确",
-        "likely_needs_changes": "可能返工",
-        "likely_wrong": "可能错误",
-        "unknown": "不判断"
+        "likely_correct": "通过",
+        "likely_needs_changes": "待完善",
+        "likely_wrong": "不通过",
+        "unknown": "无法判断"
       },
       "review": {
         "unreviewed": "待验收",
