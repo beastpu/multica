@@ -62,6 +62,7 @@ func TestTaskKindHasIssueContext(t *testing.T) {
 		kind taskKind
 		want bool
 	}{
+		{kindP4Assessment, false},
 		{kindCommentTriggered, true},
 		{kindAssignmentTriggered, true},
 		{kindAutopilotRunOnly, false},
@@ -125,6 +126,48 @@ func TestSlimFlagOnUsesSlim(t *testing.T) {
 	}
 }
 
+func TestLegacyP4AssessmentBriefOmitsOrdinaryIssueWorkflow(t *testing.T) {
+	// Not parallel: pins the production-default legacy path.
+	saved := runtimeFlags.Load()
+	t.Cleanup(func() { runtimeFlags.Store(saved) })
+	runtimeFlags.Store(nil)
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{
+		IssueID:               "issue-1",
+		P4AssessmentBindingID: "binding-1",
+		AgentName:             "Eve",
+		AgentID:               "eve-1",
+		AgentSkills: []SkillContextForEnv{{
+			Name:        "multica-agent-fix-p4-assessment",
+			Description: "Use for P4 assessment.",
+		}},
+		Repos: []RepoContextForEnv{{URL: "https://example.com/repo.git"}},
+	})
+
+	for _, want := range []string{
+		"/api/operations/agent-fixes/binding-1/p4-evidence",
+		"read-only P4/Swarm assessment",
+		"multica-agent-fix-p4-assessment",
+		"exactly one strict JSON object",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("legacy P4 assessment brief missing %q\n---\n%s", want, out)
+		}
+	}
+	for _, forbidden := range []string{
+		"multica issue status",
+		"multica issue comment add",
+		"Run `multica issue get",
+		"## Repositories",
+		"## Issue Metadata",
+		"## Mentions",
+	} {
+		if strings.Contains(out, forbidden) {
+			t.Fatalf("legacy P4 assessment brief contains ordinary issue workflow %q\n---\n%s", forbidden, out)
+		}
+	}
+}
+
 // TestBuildMetaSkillContentSlimKindMatrix locks in which sections the
 // slim brief emits per task kind, machine-checking the matrix documented
 // on `buildMetaSkillContentSlim`. Heading is matched as a discrete line
@@ -141,6 +184,7 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 		mustHave map[taskKind]bool
 	}
 	allKinds := map[taskKind]bool{
+		kindP4Assessment:     true,
 		kindCommentTriggered: true, kindAssignmentTriggered: true,
 		kindAutopilotRunOnly: true, kindQuickCreate: true, kindChat: true,
 	}
@@ -164,6 +208,7 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 		{"## Instruction Precedence", map[taskKind]bool{kindAssignmentTriggered: true}},
 		{"## Sub-issue Creation", issueKinds},
 		{"## Skills", map[taskKind]bool{
+			kindP4Assessment:     true,
 			kindCommentTriggered: true, kindAssignmentTriggered: true,
 			kindAutopilotRunOnly: true, kindChat: true,
 		}},
@@ -172,6 +217,8 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 	}
 
 	fixtures := map[taskKind]TaskContextForEnv{
+		kindP4Assessment: {IssueID: "i-1", P4AssessmentBindingID: "b-1",
+			AgentName: "Eve", AgentID: "eve-1", Repos: baseRepo, AgentSkills: baseSkill},
 		kindChat: {ChatSessionID: "c-1", AgentName: "Eve", AgentID: "eve-1",
 			Repos: baseRepo, AgentSkills: baseSkill},
 		kindQuickCreate: {QuickCreatePrompt: "p", AgentName: "Eve", AgentID: "eve-1",

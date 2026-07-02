@@ -23,6 +23,7 @@ func TestP4AssessmentTaskIsolationSQLInvariants(t *testing.T) {
 		"HasTaskForIssueAndAgent",
 		"HasPendingTaskForIssueAndAgentExcludingTriggerComment",
 		"GetLatestTaskIsLeaderForIssueAndAgent",
+		"ExpireStaleQueuedTasks",
 		"ListWorkspaceAgentFixes",
 	} {
 		chunk := sqlSection(t, sql, section)
@@ -91,7 +92,8 @@ func TestOperationsFeedUsesBindingSpineWithoutAssessmentTaskPollution(t *testing
 		"WITH latest AS",
 		"spine AS",
 		"FROM feishu_project_issue_binding fib",
-		"fib.last_synced_at",
+		"fib.last_external_updated_at",
+		"COALESCE(fib.last_external_updated_at, fib.last_synced_at)",
 		"false AS has_normal_task",
 		"atq.task_category = 'fix'",
 	} {

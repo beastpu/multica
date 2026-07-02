@@ -702,10 +702,13 @@ const AgentFixExternalRecordSchema = z.object({
   binding_id: z.string().default(""),
   work_item_id: z.string().default(""),
   status: z.string().default(""),
+  status_name: z.string().default(""),
   mapped_status: z.string().default(""),
   done: z.boolean().optional(),
   project: z.string().default(""),
   version: z.string().default(""),
+  workstream: z.string().default(""),
+  final_cl: z.string().default(""),
   url: z.string().default(""),
 }).loose();
 

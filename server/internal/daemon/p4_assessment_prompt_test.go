@@ -36,3 +36,17 @@ func TestBuildP4AssessmentPrompt(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildP4AssessmentPromptFromBindingFallback(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID:               "issue-1",
+		P4AssessmentBindingID: "binding-1",
+	}, "codex")
+
+	if !strings.Contains(out, "/api/operations/agent-fixes/binding-1/p4-evidence") {
+		t.Fatalf("prompt did not use P4 assessment fallback:\n%s", out)
+	}
+	if strings.Contains(out, "multica issue get") {
+		t.Fatalf("P4 assessment fallback should not use ordinary issue prompt:\n%s", out)
+	}
+}

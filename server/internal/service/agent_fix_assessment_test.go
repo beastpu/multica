@@ -220,6 +220,64 @@ func TestP4EvidenceReviewProjectionKeepsSwarmAndCLFields(t *testing.T) {
 	}
 }
 
+func TestP4EvidenceCandidatesPreferStructuredFlowMetadata(t *testing.T) {
+	metadata := map[string]any{
+		"flow_cl":     float64(283198),
+		"flow_review": float64(283199),
+		"flow_locked": true,
+	}
+	fields := map[string]any{
+		"提交记录": "CL 283198",
+	}
+	comments := []map[string]any{{
+		"id":      "comment-1",
+		"content": "Shelved CL: 283198\nSwarm Review: http://w3-swarm.lilithgame.com/reviews/283199",
+	}}
+	externalComments := []map[string]any{{
+		"id":      "external-comment-1",
+		"content": "ChangeList: 283198 --Submitted\nSwarm Review: [#283199](http://w3-swarm.lilithgame.com/reviews/283199)",
+	}}
+	reviews := []map[string]any{{
+		"id":         "review-row-1",
+		"review_id":  int64(283199),
+		"shelved_cl": int32(283198),
+		"changes":    []int32{283198},
+		"commits":    []int32{},
+	}}
+
+	cls := p4EvidenceCLCandidates(metadata, fields, comments, externalComments, reviews)
+	if len(cls) != 1 {
+		t.Fatalf("cl candidates = %#v", cls)
+	}
+	if cls[0]["value"] != int64(283198) || cls[0]["source"] != "issue_metadata" || cls[0]["field"] != "flow_cl" {
+		t.Fatalf("cl candidate = %#v", cls[0])
+	}
+
+	swarmReviews := p4EvidenceReviewCandidates(metadata, fields, comments, externalComments, reviews)
+	if len(swarmReviews) != 1 {
+		t.Fatalf("review candidates = %#v", swarmReviews)
+	}
+	if swarmReviews[0]["value"] != int64(283199) || swarmReviews[0]["source"] != "issue_metadata" || swarmReviews[0]["field"] != "flow_review" {
+		t.Fatalf("review candidate = %#v", swarmReviews[0])
+	}
+}
+
+func TestP4EvidenceCandidatesIncludeFeishuProjectComments(t *testing.T) {
+	externalComments := []map[string]any{{
+		"id":      "external-comment-1",
+		"content": "ChangeList: 283198 --Submitted\nSwarm Review: [#283199](http://w3-swarm.lilithgame.com/reviews/283199)",
+	}}
+
+	cls := p4EvidenceCLCandidates(map[string]any{}, map[string]any{}, nil, externalComments, nil)
+	if len(cls) != 1 || cls[0]["value"] != int64(283198) || cls[0]["source"] != "feishu_project_comment" {
+		t.Fatalf("cl candidates = %#v", cls)
+	}
+	reviews := p4EvidenceReviewCandidates(map[string]any{}, map[string]any{}, nil, externalComments, nil)
+	if len(reviews) != 1 || reviews[0]["value"] != int64(283199) || reviews[0]["source"] != "feishu_project_comment" {
+		t.Fatalf("review candidates = %#v", reviews)
+	}
+}
+
 func mustTestUUID(t *testing.T, s string) pgtype.UUID {
 	t.Helper()
 	id, err := util.ParseUUID(s)

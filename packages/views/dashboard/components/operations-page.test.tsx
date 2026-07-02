@@ -25,7 +25,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-1",
       work_item_id: "BUG-93218",
-      status: "Done",
+      status: "vcvaCnnGi",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -83,6 +83,7 @@ const FIXES = vi.hoisted(() => [
       mapped_status: "done",
       done: true,
       project: "Warpath3",
+      final_cl: "284805",
     },
   },
   // An issue status the client doesn't know — must downgrade to the raw
@@ -178,6 +179,60 @@ const FIXES = vi.hoisted(() => [
     display_result_status: "needs_changes",
     ai_judgement_eval: "overestimated",
   },
+  {
+    task_id: "t-5",
+    agent_id: "a-1",
+    agent_name: "Fixer",
+    issue_id: "i-5",
+    issue_identifier: "MUL-11",
+    issue_title: "Assessment parser failed",
+    issue_status: "done",
+    last_comment: "",
+    last_comment_author_type: "",
+    started_at: null,
+    completed_at: "2026-06-05T00:00:00Z",
+    created_at: "2026-06-05T00:00:00Z",
+    external: {
+      binding_id: "binding-5",
+      work_item_id: "BUG-10001",
+      status: "Done",
+      mapped_status: "done",
+      done: true,
+      project: "Warpath3",
+    },
+    p4_assessment: {
+      assessment_status: "failed",
+      delivery_attribution_prediction: "unknown",
+      quality_prediction: "unknown",
+      warnings: ["parser_error: expected a JSON object or one fenced json block"],
+    },
+  },
+  {
+    task_id: "t-6",
+    agent_id: "a-1",
+    agent_name: "Fixer",
+    issue_id: "i-6",
+    issue_identifier: "WAR-9581",
+    issue_title: "Shelved CL should not look final",
+    issue_status: "in_progress",
+    last_comment:
+      "CL 287451 已 shelve，修复 FPS 求助分享在 IM 发送失败时仍记录 MsgID=0 的问题。",
+    last_comment_author_type: "agent",
+    started_at: null,
+    completed_at: null,
+    created_at: "2026-06-06T00:00:00Z",
+    external: {
+      binding_id: "binding-6",
+      work_item_id: "7035395614",
+      status: "IN PROGRESS",
+      mapped_status: "in_progress",
+      done: false,
+      project: "Warpath3",
+      workstream: "rel_1.1.0",
+    },
+    display_result_status: "pending",
+    ai_judgement_eval: "pending",
+  },
 ]);
 
 const AGENTS = vi.hoisted(() => [
@@ -223,6 +278,18 @@ vi.mock("@tanstack/react-query", async () => {
       }
       if (opts.queryKey.includes("agents")) {
         return { data: AGENTS, isLoading: false };
+      }
+      if (opts.queryKey.includes("issue-statuses")) {
+        return {
+          data: {
+            statuses: [
+              { key: "vcvaCnnGi", name: "设计如此" },
+              { key: "Done", name: "Done" },
+              { key: "In Progress", name: "In Progress" },
+            ],
+          },
+          isLoading: false,
+        };
       }
       return { data: undefined, isLoading: false };
     },
@@ -343,9 +410,11 @@ describe("OperationsPage", () => {
     expect(screen.getByText("MUL-7")).toBeTruthy();
     expect(screen.getByText("MUL-8")).toBeTruthy();
     expect(screen.getByText("Parser cleanup")).toBeTruthy();
+    expect(screen.getByText("设计如此")).toBeTruthy();
+    expect(screen.queryByText("vcvaCnnGi")).toBeNull();
 
     // Agent name appears for each row.
-    expect(screen.getAllByText("Fixer").length).toBe(3);
+    expect(screen.getAllByText("Fixer").length).toBe(5);
     expect(screen.getByText("Reviewer")).toBeTruthy();
 
     // "状态" column = ISSUE workflow status (labels from the issues namespace).
@@ -379,6 +448,9 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Swarm SW-11872")).toBeTruthy();
     expect(screen.getByText("shelve 282941")).toBeTruthy();
     expect(screen.getByText("final CL 283006")).toBeTruthy();
+    expect(screen.getByText("final CL 284805")).toBeTruthy();
+    expect(screen.getByText("shelve 287451")).toBeTruthy();
+    expect(screen.queryByText("final CL 287451")).toBeNull();
     expect(screen.queryByText("changes 282941, 282944")).toBeNull();
     expect(screen.queryByText("commits 283006")).toBeNull();
     expect(screen.queryByText("branch main")).toBeNull();
@@ -526,6 +598,32 @@ describe("OperationsPage", () => {
     });
   });
 
+  it("reruns a failed assessment with binding_id and force=true", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    let failedRow = screen.getByText("Assessment parser failed").parentElement;
+    while (
+      failedRow &&
+      !failedRow.getAttribute("style")?.includes("grid-template-columns")
+    ) {
+      failedRow = failedRow.parentElement;
+    }
+    expect(failedRow).not.toBeNull();
+    await user.click(
+      within(failedRow as HTMLElement).getByRole("button", {
+        name: "Rerun assessment",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(TRIGGER_ASSESSMENT).toHaveBeenCalledWith({
+        binding_id: "binding-5",
+        force: true,
+      });
+    });
+  });
+
   it("switches to the lightweight analysis report tab", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
@@ -578,6 +676,77 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Client crash")).toBeTruthy();
     expect(screen.getByText("AI overestimated")).toBeTruthy();
     expect(screen.queryByText("Login broke")).toBeNull();
+  });
+
+  it("can reset the workstream filter back to all workstreams", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    await user.click(screen.getByLabelText("Workstream"));
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText("rel_1.7.3/client"),
+    );
+
+    expect(screen.getByText("Client crash")).toBeTruthy();
+    expect(screen.queryByText("Login broke")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "All workstreams" }));
+
+    expect(screen.getByText("Client crash")).toBeTruthy();
+    expect(screen.getByText("Login broke")).toBeTruthy();
+
+    await user.click(screen.getByLabelText("Workstream"));
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText("rel_1.7.3/client"),
+    );
+
+    expect(screen.getByText("Client crash")).toBeTruthy();
+    expect(screen.queryByText("Login broke")).toBeNull();
+
+    await user.click(screen.getByLabelText("Workstream"));
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText("All workstreams"),
+    );
+
+    expect(screen.getByText("Client crash")).toBeTruthy();
+    expect(screen.getByText("Login broke")).toBeTruthy();
+  });
+
+  it("uses external workstream when P4 assessment has not populated one", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    await user.click(screen.getByLabelText("Workstream"));
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText(
+        "rel_1.1.0",
+      ),
+    );
+
+    expect(screen.getByText("Shelved CL should not look final")).toBeTruthy();
+    expect(screen.queryByText("Login broke")).toBeNull();
+  });
+
+  it("toggles mismatch-only off on the second click", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    const toggle = screen.getByRole("button", { name: "Mismatch only" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("Login broke")).toBeTruthy();
+    expect(screen.getByText("Client crash")).toBeTruthy();
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Login broke")).toBeNull();
+    expect(screen.getByText("Client crash")).toBeTruthy();
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("Login broke")).toBeTruthy();
+    expect(screen.getByText("Client crash")).toBeTruthy();
   });
 
   it("does not substitute total rows for a zero external-done summary", async () => {

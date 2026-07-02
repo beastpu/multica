@@ -133,6 +133,157 @@ func TestFeishuProjectPluginTokenCachesAndRefreshes(t *testing.T) {
 	}
 }
 
+func TestFeishuProjectListWorkItemCommentsUsesIntegrationAuthAndAPIName(t *testing.T) {
+	var sawComments bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/issue/7030670417/comments":
+			sawComments = true
+			if r.Method != http.MethodGet {
+				t.Fatalf("method = %s, want GET", r.Method)
+			}
+			if got := r.Header.Get("X-PLUGIN-TOKEN"); got != "plugin-token" {
+				t.Fatalf("X-PLUGIN-TOKEN = %q", got)
+			}
+			if got := r.Header.Get("X-USER-KEY"); got != "actor-user" {
+				t.Fatalf("X-USER-KEY = %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": [{
+					"id": "comment-1",
+					"operator": "actor-user",
+					"created_at": 1778933232000,
+					"content": "ChangeList: 283198 --Submitted\nSwarm Review: [#283199](http://w3-swarm.lilithgame.com/reviews/283199)"
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	comments, err := client.ListWorkItemComments(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+		ActorUserKey: pgtype.Text{String: "actor-user", Valid: true},
+		WorkItemTypes: feishuTestIssueTypes(`{
+			"vcvaCnnGi": "done"
+		}`),
+	}, "issue", "7030670417")
+	if err != nil {
+		t.Fatalf("ListWorkItemComments: %v", err)
+	}
+	if !sawComments {
+		t.Fatal("comments endpoint was not called")
+	}
+	if len(comments) != 1 {
+		t.Fatalf("len(comments) = %d", len(comments))
+	}
+	if comments[0].ID != "comment-1" || comments[0].Operator != "actor-user" || !strings.Contains(comments[0].Content, "ChangeList: 283198") {
+		t.Fatalf("comment = %#v", comments[0])
+	}
+	if comments[0].CreatedAt.Format(time.RFC3339) != "2026-05-16T12:07:12Z" {
+		t.Fatalf("created_at = %s", comments[0].CreatedAt.Format(time.RFC3339))
+	}
+}
+
+func TestFeishuProjectListRelatedWorkItemsFindsLinkedStory(t *testing.T) {
+	var sawFilter bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/filter":
+			sawFilter = true
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode filter request: %v", err)
+			}
+			if got := req["work_item_ids"]; !jsonEqual(got, []any{"7030670417"}) {
+				t.Fatalf("work_item_ids = %#v", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": [{
+					"id": 7030670417,
+					"name": "bug",
+					"work_item_status": {"state_key": "OPEN", "name": "新建"},
+					"fields": [
+						{"field_key":"resolve_version","field_type_key":"work_item_related_multi_select","field_value":[6692313662]},
+						{"field_key":"_field_linked_story","field_type_key":"work_item_related_select","field_value":7031382520}
+					]
+				}],
+				"pagination": {"page_num": 1, "page_size": 100, "total": 1}
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	related, err := client.ListRelatedWorkItems(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+		WorkItemTypes: feishuTestIssueTypes(`{
+			"OPEN": "todo"
+		}`),
+	}, "issue", "7030670417")
+	if err != nil {
+		t.Fatalf("ListRelatedWorkItems: %v", err)
+	}
+	if !sawFilter {
+		t.Fatal("filter endpoint was not called")
+	}
+	if len(related) != 1 {
+		t.Fatalf("related = %#v", related)
+	}
+	if related[0].Type != "story" || related[0].ID != "7031382520" || related[0].Source != "_field_linked_story" {
+		t.Fatalf("related[0] = %#v", related[0])
+	}
+}
+
+func TestFeishuProjectLatestSubmittedCLFromCommentsUsesLastSubmittedComment(t *testing.T) {
+	comments := []FeishuProjectComment{
+		{
+			Content:   "CL 287451 已 shelve，等待 review",
+			CreatedAt: time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC),
+		},
+		{
+			Content:   "ChangeList: 284805 --Submitted",
+			CreatedAt: time.Date(2026, 7, 1, 11, 0, 0, 0, time.UTC),
+		},
+		{
+			Content:   "submitted CL 284806",
+			CreatedAt: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+		},
+	}
+
+	if got := feishuProjectLatestSubmittedCLFromComments(comments); got != "284806" {
+		t.Fatalf("latest submitted CL = %q, want 284806", got)
+	}
+}
+
+func TestFeishuProjectLatestSubmittedCLFromCommentsIgnoresShelvedCL(t *testing.T) {
+	comments := []FeishuProjectComment{
+		{Content: "CL 287451 已 shelve，修复 FPS 求助分享在 IM 发送失败时仍记录 MsgID=0 的问题。"},
+	}
+
+	if got := feishuProjectLatestSubmittedCLFromComments(comments); got != "" {
+		t.Fatalf("latest submitted CL = %q, want empty", got)
+	}
+}
+
 func TestFeishuProjectIssueStatusOptionsFallsBackToFieldMetadata(t *testing.T) {
 	var sawMetadataAPI bool
 

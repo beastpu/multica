@@ -3433,6 +3433,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// via `multica repo checkout <url>`.
 	taskCtx := execenv.TaskContextForEnv{
 		IssueID:                          task.IssueID,
+		P4AssessmentBindingID:            task.P4AssessmentBindingID,
 		TriggerCommentID:                 task.TriggerCommentID,
 		TriggerThreadID:                  task.TriggerThreadID,
 		NewCommentCount:                  task.NewCommentCount,

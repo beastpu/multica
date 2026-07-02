@@ -31,6 +31,7 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { paths, useWorkspaceSlug } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
+import { feishuProjectIssueStatusesOptions } from "@multica/core/feishu-project/queries";
 import {
   operationsFixesOptions,
   useTriggerAgentFixP4Assessment,
@@ -224,17 +225,17 @@ function derivedEvidence(fix: AgentFixRecord) {
     extractToken(comment, [
       /\bshelv(?:e|ed)?(?:\s+CL)?[:#\s]+(\d+)\b/i,
       /\bpending\s+P4\s+CL[:#\s]+(\d+)\b/i,
+      /\bCL[:#\s]+(\d+)\b[^\n\r]*(?:shelv(?:e|ed)|已\s*shelve|已\s*shelved)\b/i,
     ]);
   const finalCl =
+    String(fix.external?.final_cl ?? "").trim() ||
     compactList(p4?.external_committed_cls) ||
-    compactList(p4?.swarm_committed_cls) ||
-    extractToken(comment, [
-      /\bfinal\s+CL[:#\s]+(\d+)\b/i,
-      /\bsubmitted\s+as\s+CL[:#\s]+(\d+)\b/i,
-      /\bCL[:#\s]+(\d+)\b/i,
-    ]);
+    compactList(p4?.swarm_committed_cls);
   return {
-    workstream: p4?.workstream ?? "",
+    workstream:
+      String(p4?.workstream ?? "").trim() ||
+      String(fix.external?.workstream ?? "").trim() ||
+      firstSwarmReviewField(fix, "swarm_branch"),
     swarm,
     shelve,
     swarmChanges: compactList(p4?.swarm_change_cls) || reviewChanges,
@@ -517,6 +518,17 @@ export function OperationsPage() {
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const fixesQuery = useQuery(operationsFixesOptions(wsId, days, search));
   const fixes = fixesQuery.data ?? EMPTY;
+  const hasExternalStatuses = fixes.some((fix) => !!fix.external?.status);
+  const { data: feishuStatusData } = useQuery(
+    feishuProjectIssueStatusesOptions(wsId, hasExternalStatuses),
+  );
+  const feishuStatusNames = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const status of feishuStatusData?.statuses ?? []) {
+      if (status.key && status.name) out.set(status.key, status.name);
+    }
+    return out;
+  }, [feishuStatusData]);
   const tx = t as unknown as UsageT;
 
   // Validate the picked agent against the current workspace's list so a stale
@@ -667,6 +679,7 @@ export function OperationsPage() {
           />
           <Button
             type="button"
+            aria-pressed={mismatchOnly}
             variant={mismatchOnly ? "default" : "outline"}
             size="sm"
             onClick={() => setMismatchOnly((v) => !v)}
@@ -847,7 +860,10 @@ export function OperationsPage() {
                           slug={slug}
                           issueStatusLabel={issueStatusLabel(f.issue_status)}
                         />
-                        <ExternalStatusCell fix={f} />
+                        <ExternalStatusCell
+                          fix={f}
+                          statusNames={feishuStatusNames}
+                        />
                         <div className="grid min-w-0 gap-1 overflow-hidden">
                           <div className="flex min-w-0 items-center gap-2 overflow-hidden">
                             <ActorAvatar
@@ -1441,10 +1457,21 @@ function IssueCell({
   return <div className="min-w-0 overflow-hidden">{inner}</div>;
 }
 
-function ExternalStatusCell({ fix }: { fix: AgentFixRecord }) {
+function ExternalStatusCell({
+  fix,
+  statusNames,
+}: {
+  fix: AgentFixRecord;
+  statusNames: Map<string, string>;
+}) {
   const { t } = useT("usage");
   const done = fix.external?.done;
-  const status = fix.external?.status || t(($) => $.operations.no_reason);
+  const rawStatus = fix.external?.status ?? "";
+  const status =
+    fix.external?.status_name ||
+    statusNames.get(rawStatus) ||
+    rawStatus ||
+    t(($) => $.operations.no_reason);
   return (
     <div className="grid min-w-0 gap-1">
       <ToneBadge
@@ -1590,17 +1617,17 @@ function AssessmentTriggerButton({
 
   const status = fix.p4_assessment?.assessment_status ?? "";
   const assessmentActive = status === "pending" || status === "running";
-  const completed = status === "completed";
-  const force = completed;
+  const hasAssessment = status !== "";
+  const force = hasAssessment && !assessmentActive;
   const disabled = pending || assessmentActive;
   const label = pending
     ? t(($) => $.operations.assessment_action.starting)
     : assessmentActive
       ? t(($) => $.operations.assessment_action.in_progress)
-      : completed
+      : hasAssessment
         ? t(($) => $.operations.assessment_action.rerun)
         : t(($) => $.operations.assessment_action.run);
-  const Icon = completed ? RefreshCw : Play;
+  const Icon = hasAssessment ? RefreshCw : Play;
 
   return (
     <Button
@@ -1986,35 +2013,50 @@ function ValueFilter({
 }) {
   const selected = options.find((option) => option.value === value);
   return (
-    <Select value={value} onValueChange={(v) => onChange(v ?? allValue)}>
-      <SelectTrigger
-        size="sm"
-        aria-label={ariaLabel}
-        className="min-w-[150px] max-w-[190px]"
-      >
-        <SelectValue>
-          {() => (
-            <span className="truncate">
-              {value === allValue ? allLabel : selected?.label ?? value}
-            </span>
-          )}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent
-        align="start"
-        alignItemWithTrigger={false}
-        className="max-h-72"
-      >
-        <SelectItem value={allValue}>
-          <span className="truncate">{allLabel}</span>
-        </SelectItem>
-        {options.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            <span className="truncate">{option.label}</span>
+    <div className="flex items-center gap-1">
+      <Select value={value} onValueChange={(v) => onChange(v ?? allValue)}>
+        <SelectTrigger
+          size="sm"
+          aria-label={ariaLabel}
+          className="min-w-[150px] max-w-[190px]"
+        >
+          <SelectValue>
+            {() => (
+              <span className="truncate">
+                {value === allValue ? allLabel : selected?.label ?? value}
+              </span>
+            )}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent
+          align="start"
+          alignItemWithTrigger={false}
+          className="max-h-72"
+        >
+          <SelectItem value={allValue}>
+            <span className="truncate">{allLabel}</span>
           </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              <span className="truncate">{option.label}</span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {value !== allValue ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={allLabel}
+          title={allLabel}
+          className="h-8 w-8 shrink-0"
+          onClick={() => onChange(allValue)}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

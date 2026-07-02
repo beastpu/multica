@@ -24,9 +24,10 @@ const (
 )
 
 type P4AssessmentService struct {
-	Queries   *db.Queries
-	TxStarter TxStarter
-	Task      *TaskService
+	Queries       *db.Queries
+	TxStarter     TxStarter
+	Task          *TaskService
+	FeishuProject *FeishuProjectClient
 }
 
 type P4AssessmentTriggerResult struct {
@@ -46,11 +47,15 @@ type P4AssessmentBackfillResult struct {
 }
 
 type P4AssessmentEvidence struct {
-	Binding         map[string]any   `json:"binding"`
-	Issue           map[string]any   `json:"issue"`
-	Tasks           []map[string]any `json:"tasks"`
-	Comments        []map[string]any `json:"comments"`
-	PerforceReviews []map[string]any `json:"perforce_reviews"`
+	Binding                map[string]any   `json:"binding"`
+	Issue                  map[string]any   `json:"issue"`
+	Tasks                  []map[string]any `json:"tasks"`
+	Comments               []map[string]any `json:"comments"`
+	ExternalComments       []map[string]any `json:"external_comments"`
+	ExternalEvidenceErrors []string         `json:"external_evidence_errors,omitempty"`
+	PerforceReviews        []map[string]any `json:"perforce_reviews"`
+	CLCandidates           []map[string]any `json:"cl_candidates"`
+	ReviewCandidates       []map[string]any `json:"review_candidates"`
 }
 
 type p4AssessmentContext struct {
@@ -242,6 +247,8 @@ func (s *P4AssessmentService) Evidence(ctx context.Context, workspaceID, binding
 	}
 	fields := map[string]any{}
 	_ = json.Unmarshal(row.ExternalFields, &fields)
+	metadata := map[string]any{}
+	_ = json.Unmarshal(row.IssueMetadata, &metadata)
 	tasks, err := s.Queries.ListP4EvidenceTasksByIssue(ctx, db.ListP4EvidenceTasksByIssueParams{
 		IssueID:     row.IssueID,
 		WorkspaceID: workspaceID,
@@ -260,6 +267,9 @@ func (s *P4AssessmentService) Evidence(ctx context.Context, workspaceID, binding
 	if err != nil {
 		return P4AssessmentEvidence{}, err
 	}
+	commentMaps := p4EvidenceCommentMaps(comments)
+	reviewMaps := p4EvidenceReviewMaps(reviews)
+	externalComments, externalErrors := s.p4EvidenceExternalComments(ctx, row)
 	return P4AssessmentEvidence{
 		Binding: map[string]any{
 			"id":                    util.UUIDToString(row.BindingID),
@@ -276,11 +286,49 @@ func (s *P4AssessmentService) Evidence(ctx context.Context, workspaceID, binding
 			"title":       row.IssueTitle,
 			"status":      row.IssueStatus,
 			"description": textString(row.IssueDescription),
+			"metadata":    metadata,
 		},
-		Tasks:           p4EvidenceTaskMaps(tasks),
-		Comments:        p4EvidenceCommentMaps(comments),
-		PerforceReviews: p4EvidenceReviewMaps(reviews),
+		Tasks:                  p4EvidenceTaskMaps(tasks),
+		Comments:               commentMaps,
+		ExternalComments:       externalComments,
+		ExternalEvidenceErrors: externalErrors,
+		PerforceReviews:        reviewMaps,
+		CLCandidates:           p4EvidenceCLCandidates(metadata, fields, commentMaps, externalComments, reviewMaps),
+		ReviewCandidates:       p4EvidenceReviewCandidates(metadata, fields, commentMaps, externalComments, reviewMaps),
 	}, nil
+}
+
+func (s *P4AssessmentService) p4EvidenceExternalComments(ctx context.Context, row db.GetP4AssessmentBindingRow) ([]map[string]any, []string) {
+	if s == nil || s.Queries == nil {
+		return nil, nil
+	}
+	cfg, err := s.Queries.GetFeishuProjectIntegrationByID(ctx, row.IntegrationID)
+	if err != nil {
+		return nil, []string{"feishu_project_integration_unavailable: " + err.Error()}
+	}
+	client := s.FeishuProject
+	if client == nil {
+		client = NewFeishuProjectClient()
+	}
+	comments, err := client.ListWorkItemComments(ctx, cfg, row.WorkItemType, row.WorkItemID)
+	if err != nil {
+		return nil, []string{"feishu_project_comments_unavailable: " + err.Error()}
+	}
+	out := p4EvidenceExternalCommentMaps(comments, row.WorkItemType, row.WorkItemID, "binding")
+	related, err := client.ListRelatedWorkItems(ctx, cfg, row.WorkItemType, row.WorkItemID)
+	if err != nil {
+		return out, []string{"feishu_project_related_work_items_unavailable: " + err.Error()}
+	}
+	var errs []string
+	for _, item := range related {
+		linkedComments, err := client.ListWorkItemComments(ctx, cfg, item.Type, item.ID)
+		if err != nil {
+			errs = append(errs, "feishu_project_linked_comments_unavailable: "+item.Type+"/"+item.ID+": "+err.Error())
+			continue
+		}
+		out = append(out, p4EvidenceExternalCommentMaps(linkedComments, item.Type, item.ID, item.Source)...)
+	}
+	return out, errs
 }
 
 func p4EvidenceTaskMaps(tasks []db.ListP4EvidenceTasksByIssueRow) []map[string]any {
@@ -315,6 +363,190 @@ func p4EvidenceCommentMaps(comments []db.ListP4EvidenceCommentsByIssueRow) []map
 		})
 	}
 	return out
+}
+
+func p4EvidenceExternalCommentMaps(comments []FeishuProjectComment, workItemType, workItemID, source string) []map[string]any {
+	out := make([]map[string]any, 0, len(comments))
+	for _, comment := range comments {
+		out = append(out, map[string]any{
+			"id":             comment.ID,
+			"work_item_type": workItemType,
+			"work_item_id":   workItemID,
+			"source":         source,
+			"operator":       comment.Operator,
+			"content":        comment.Content,
+			"created_at":     timeString(pgtype.Timestamptz{Time: comment.CreatedAt, Valid: !comment.CreatedAt.IsZero()}),
+		})
+	}
+	return out
+}
+
+func p4EvidenceCLCandidates(metadata map[string]any, fields map[string]any, comments []map[string]any, externalComments []map[string]any, reviews []map[string]any) []map[string]any {
+	seen := map[int64]bool{}
+	var out []map[string]any
+	add := func(value int64, source, field string) {
+		if value <= 0 || seen[value] {
+			return
+		}
+		seen[value] = true
+		out = append(out, map[string]any{
+			"value":  value,
+			"source": source,
+			"field":  field,
+		})
+	}
+	add(anyInt64(metadata["flow_cl"]), "issue_metadata", "flow_cl")
+	add(anyInt64(metadata["p4_cl"]), "issue_metadata", "p4_cl")
+	add(anyInt64(metadata["shelved_cl"]), "issue_metadata", "shelved_cl")
+	for field, value := range fields {
+		for _, cl := range extractP4CLs(fmt.Sprint(value)) {
+			add(cl, "external_fields", field)
+		}
+	}
+	for _, comment := range comments {
+		for _, cl := range extractP4CLs(fmt.Sprint(comment["content"])) {
+			add(cl, "multica_comment", fmt.Sprint(comment["id"]))
+		}
+	}
+	for _, comment := range externalComments {
+		for _, cl := range extractP4CLs(fmt.Sprint(comment["content"])) {
+			add(cl, "feishu_project_comment", fmt.Sprint(comment["id"]))
+		}
+	}
+	for _, review := range reviews {
+		add(anyInt64(review["shelved_cl"]), "perforce_review", fmt.Sprint(review["review_id"]))
+		add(anyInt64(review["committed_cl"]), "perforce_review", fmt.Sprint(review["review_id"]))
+		for _, cl := range anyInt64Slice(review["changes"]) {
+			add(cl, "perforce_review_changes", fmt.Sprint(review["review_id"]))
+		}
+		for _, cl := range anyInt64Slice(review["commits"]) {
+			add(cl, "perforce_review_commits", fmt.Sprint(review["review_id"]))
+		}
+	}
+	return out
+}
+
+func p4EvidenceReviewCandidates(metadata map[string]any, fields map[string]any, comments []map[string]any, externalComments []map[string]any, reviews []map[string]any) []map[string]any {
+	seen := map[int64]bool{}
+	var out []map[string]any
+	add := func(value int64, source, field string) {
+		if value <= 0 || seen[value] {
+			return
+		}
+		seen[value] = true
+		out = append(out, map[string]any{
+			"value":  value,
+			"source": source,
+			"field":  field,
+		})
+	}
+	add(anyInt64(metadata["flow_review"]), "issue_metadata", "flow_review")
+	add(anyInt64(metadata["swarm_review"]), "issue_metadata", "swarm_review")
+	for field, value := range fields {
+		for _, review := range extractSwarmReviews(fmt.Sprint(value)) {
+			add(review, "external_fields", field)
+		}
+	}
+	for _, comment := range comments {
+		for _, review := range extractSwarmReviews(fmt.Sprint(comment["content"])) {
+			add(review, "multica_comment", fmt.Sprint(comment["id"]))
+		}
+	}
+	for _, comment := range externalComments {
+		for _, review := range extractSwarmReviews(fmt.Sprint(comment["content"])) {
+			add(review, "feishu_project_comment", fmt.Sprint(comment["id"]))
+		}
+	}
+	for _, review := range reviews {
+		add(anyInt64(review["review_id"]), "perforce_review", fmt.Sprint(review["id"]))
+	}
+	return out
+}
+
+var (
+	p4CLCandidateRe        = regexp.MustCompile(`(?i)\b(?:shelved\s+cl|submitted\s+cl|committed\s+cl|final\s+cl|changelist|cl)\s*[:=#-]?\s*(\d{4,})\b`)
+	swarmReviewCandidateRe = regexp.MustCompile(`(?i)\b(?:swarm\s+review|review)\s*[:=#/-]?\s*(\d{4,})\b|/reviews?/(\d{4,})\b`)
+)
+
+func extractP4CLs(text string) []int64 {
+	return extractCandidateInts(p4CLCandidateRe, text)
+}
+
+func extractSwarmReviews(text string) []int64 {
+	return extractCandidateInts(swarmReviewCandidateRe, text)
+}
+
+func extractCandidateInts(re *regexp.Regexp, text string) []int64 {
+	matches := re.FindAllStringSubmatch(text, -1)
+	out := make([]int64, 0, len(matches))
+	for _, match := range matches {
+		for _, group := range match[1:] {
+			if v := parsePositiveInt64(group); v > 0 {
+				out = append(out, v)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func parsePositiveInt64(raw string) int64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	var out int64
+	for _, r := range raw {
+		if r < '0' || r > '9' {
+			return 0
+		}
+		out = out*10 + int64(r-'0')
+	}
+	return out
+}
+
+func anyInt64(value any) int64 {
+	switch v := value.(type) {
+	case int:
+		return int64(v)
+	case int32:
+		return int64(v)
+	case int64:
+		return v
+	case float64:
+		if v == float64(int64(v)) {
+			return int64(v)
+		}
+	case json.Number:
+		n, _ := v.Int64()
+		return n
+	case string:
+		return parsePositiveInt64(v)
+	}
+	return 0
+}
+
+func anyInt64Slice(value any) []int64 {
+	switch v := value.(type) {
+	case []int32:
+		out := make([]int64, 0, len(v))
+		for _, item := range v {
+			out = append(out, int64(item))
+		}
+		return out
+	case []int64:
+		return v
+	case []any:
+		out := make([]int64, 0, len(v))
+		for _, item := range v {
+			if n := anyInt64(item); n > 0 {
+				out = append(out, n)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func p4EvidenceReviewMaps(reviews []db.PerforceReview) []map[string]any {

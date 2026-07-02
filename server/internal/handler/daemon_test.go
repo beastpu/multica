@@ -574,6 +574,93 @@ func TestClaimTaskByRuntime_SkillBundleRefsAndResolve(t *testing.T) {
 	}
 }
 
+func TestClaimTaskByRuntime_P4AssessmentIncludesBindingAndBuiltinSkillRef(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "P4 assessment claim runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "P4 assessment claim agent")
+	bindingID := uuid.NewString()
+	taskContext, err := json.Marshal(map[string]string{
+		"type":              service.P4AssessmentTaskType,
+		"workspace_id":      testWorkspaceID,
+		"issue_id":          issueID,
+		"feishu_binding_id": bindingID,
+		"mode":              "assess_only",
+		"prompt_version":    service.P4AssessmentPromptVersion,
+	})
+	if err != nil {
+		t.Fatalf("marshal task context: %v", err)
+	}
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, task_category)
+		VALUES ($1, $2, $3, 'queued', 1, $4, 'analysis')
+		RETURNING id
+	`, agentID, runtimeID, issueID, taskContext).Scan(&taskID); err != nil {
+		t.Fatalf("setup: create P4 assessment task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, "p4-assessment-claim-daemon")
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilitySkillBundlesV1)
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var claimResp struct {
+		Task *AgentTaskResponse `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &claimResp); err != nil {
+		t.Fatalf("decode claim: %v", err)
+	}
+	if claimResp.Task == nil || claimResp.Task.Agent == nil {
+		t.Fatalf("missing task agent in response: %s", w.Body.String())
+	}
+	if claimResp.Task.Kind != service.P4AssessmentTaskType {
+		t.Fatalf("kind = %q, want %q", claimResp.Task.Kind, service.P4AssessmentTaskType)
+	}
+	if claimResp.Task.P4AssessmentBindingID != bindingID {
+		t.Fatalf("p4_assessment_binding_id = %q, want %q", claimResp.Task.P4AssessmentBindingID, bindingID)
+	}
+	var p4Ref service.AgentSkillRefData
+	for _, ref := range claimResp.Task.Agent.SkillRefs {
+		if ref.ID == "builtin:multica-agent-fix-p4-assessment" && ref.Hash != "" {
+			p4Ref = ref
+			break
+		}
+	}
+	if p4Ref.ID == "" {
+		t.Fatalf("claim response missing builtin P4 assessment skill ref: %+v", claimResp.Task.Agent.SkillRefs)
+	}
+
+	resolveBody := resolveSkillBundlesRequest{Skills: []resolveSkillBundleRef{{ID: p4Ref.ID, Source: p4Ref.Source, Hash: p4Ref.Hash}}}
+	w = httptest.NewRecorder()
+	req = newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/"+taskID+"/skill-bundles/resolve", resolveBody, testWorkspaceID, "p4-assessment-claim-daemon")
+	req = withURLParams(req, "runtimeId", runtimeID, "taskId", taskID)
+	testHandler.ResolveTaskSkillBundles(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ResolveTaskSkillBundles: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resolveResp struct {
+		Bundles []service.AgentSkillData `json:"bundles"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resolveResp); err != nil {
+		t.Fatalf("decode resolve: %v", err)
+	}
+	if len(resolveResp.Bundles) != 1 ||
+		resolveResp.Bundles[0].Name != "multica-agent-fix-p4-assessment" ||
+		!strings.Contains(resolveResp.Bundles[0].Content, "p4-evidence") {
+		t.Fatalf("unexpected resolved P4 assessment bundle: %+v", resolveResp.Bundles)
+	}
+}
+
 // TestClaimTaskByRuntime_PopulatesWorkspaceContext verifies the claim
 // response carries workspace.context so the daemon can inject the
 // workspace-level system prompt into every agent brief. Regression coverage

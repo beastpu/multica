@@ -660,10 +660,13 @@ export interface AgentFixExternalRecord {
   binding_id?: string;
   work_item_id?: string;
   status?: string;
+  status_name?: string;
   mapped_status?: string;
   done?: boolean;
   project?: string;
   version?: string;
+  workstream?: string;
+  final_cl?: string;
   url?: string;
 }
 
