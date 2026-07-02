@@ -1184,11 +1184,16 @@ WHERE workspace_id = $1 AND assessment_task_id = $2
 RETURNING *;
 
 -- name: FailP4AssessmentFromTask :one
+-- Never clobber a result the agent already submitted through the
+-- /p4-assessment/result endpoint: once the row is 'completed', a later
+-- task-end parse failure must not knock it back to 'failed'. The endpoint is
+-- the authoritative path; task-output parsing is only a fallback.
 UPDATE agent_fix_p4_assessment
 SET assessment_status = 'failed',
     warnings = $3,
     updated_at = now()
 WHERE workspace_id = $1 AND assessment_task_id = $2
+  AND assessment_status <> 'completed'
 RETURNING *;
 
 -- name: ListTasksByIssue :many

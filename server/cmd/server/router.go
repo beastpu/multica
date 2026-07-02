@@ -1126,6 +1126,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/operations/agent-fixes", h.ListWorkspaceAgentFixes)
 			r.Post("/api/operations/agent-fixes/p4-assessments", h.TriggerAgentFixP4Assessment)
 			r.Get("/api/operations/agent-fixes/{bindingId}/p4-evidence", h.GetAgentFixP4Evidence)
+			r.Post("/api/operations/agent-fixes/{bindingId}/p4-assessment/result", h.SubmitAgentFixP4Assessment)
 			r.Patch("/api/operations/agent-fixes/{bindingId}/review", h.PatchAgentFixReviewByBinding)
 			r.Put("/api/operations/agent-fixes/{issueId}/review", h.UpdateAgentFixReview)
 

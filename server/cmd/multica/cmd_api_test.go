@@ -73,3 +73,60 @@ func TestRunAPIGetRejectsNonAPIPath(t *testing.T) {
 		t.Fatalf("error = %q", err)
 	}
 }
+
+func TestRunAPIPostSendsJSONBodyAndTaskContext(t *testing.T) {
+	t.Setenv("MULTICA_TOKEN", "mat_task_token")
+	t.Setenv("MULTICA_AGENT_ID", "agent-1")
+	t.Setenv("MULTICA_TASK_ID", "task-1")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/operations/agent-fixes/binding-1/p4-assessment/result" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if got := r.Header.Get("X-Task-ID"); got != "task-1" {
+			t.Fatalf("X-Task-ID = %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body["quality_prediction"] != "likely_wrong" {
+			t.Fatalf("body = %#v", body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "completed"})
+	}))
+	defer srv.Close()
+
+	apiPostContentFile = "" // read from the provided reader (stdin stand-in)
+	in := strings.NewReader(`{"quality_prediction":"likely_wrong"}`)
+	var out bytes.Buffer
+	cmd := newAPITestCmd(srv.URL)
+	err := runAPIPostWithWriter(cmd, []string{"/api/operations/agent-fixes/binding-1/p4-assessment/result"}, in, &out)
+	if err != nil {
+		t.Fatalf("runAPIPost: %v", err)
+	}
+	if !strings.Contains(out.String(), `"status": "completed"`) {
+		t.Fatalf("output = %s", out.String())
+	}
+}
+
+func TestRunAPIPostRejectsInvalidJSONBody(t *testing.T) {
+	apiPostContentFile = ""
+	cmd := newAPITestCmd("http://127.0.0.1:0")
+	err := runAPIPostWithWriter(cmd, []string{"/api/x"}, strings.NewReader("not json"), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "valid JSON") {
+		t.Fatalf("expected invalid-JSON error, got %v", err)
+	}
+}
+
+func TestRunAPIPostRejectsNonAPIPath(t *testing.T) {
+	apiPostContentFile = ""
+	cmd := newAPITestCmd("http://127.0.0.1:0")
+	err := runAPIPostWithWriter(cmd, []string{"https://example.com/api/test"}, strings.NewReader("{}"), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "/api/") {
+		t.Fatalf("expected path error, got %v", err)
+	}
+}
