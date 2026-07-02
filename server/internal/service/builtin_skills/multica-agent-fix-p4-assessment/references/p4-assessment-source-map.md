@@ -92,6 +92,18 @@ for the behavior contracts the skill teaches.
   assessment table queries and task-isolation filters excluding
   `agent_fix_p4_assessment` from ordinary issue task queries, latest-run views,
   session resume, cancellation, and dedup paths.
+- Read-only enforcement is server-side, not advisory. `CreateP4AssessmentTask`
+  in `agent.sql` stamps `handoff_note` with the read-only assessment
+  instructions (built by `p4AssessmentHandoffNote` in
+  `agent_fix_assessment.go`); a stale daemon that predates the dedicated
+  assessment prompt still renders `handoff_note` on the normal assignment path,
+  which is how the server steers it into JSON output without a client update.
+  Independently, `Handler.isAnalysisTaskActor` /
+  `Handler.rejectAnalysisTaskWrite` (`internal/handler/issue.go`) reject every
+  issue mutation from an analysis-category task in `UpdateIssue`,
+  `BatchUpdateIssues`, and comment creation (`internal/handler/comment.go`), so
+  even a stale daemon running the task as a normal fix cannot change status,
+  edit fields, or post comments.
 
 ## Product design baseline
 

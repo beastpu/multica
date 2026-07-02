@@ -2508,7 +2508,14 @@ type UpdateIssueRequest struct {
 	HandoffNote string `json:"handoff_note,omitempty"`
 }
 
-func (h *Handler) rejectAnalysisTaskStatusUpdate(w http.ResponseWriter, r *http.Request, userID, workspaceID string) bool {
+// isAnalysisTaskActor reports whether the request is an agent acting under an
+// analysis-category task (currently P4 assessment). Analysis tasks are
+// read-only side channels: the server rejects every issue write and comment
+// they attempt, so a stale daemon that runs one as a normal fix still cannot
+// mutate the issue or post to it. The check is gated on X-Task-ID (stamped by
+// the mat_ token middleware for agent runs), so a member request is never
+// affected.
+func (h *Handler) isAnalysisTaskActor(r *http.Request, userID, workspaceID string) bool {
 	actorType, _ := h.resolveActor(r, userID, workspaceID)
 	if actorType != "agent" {
 		return false
@@ -2525,10 +2532,17 @@ func (h *Handler) rejectAnalysisTaskStatusUpdate(w http.ResponseWriter, r *http.
 	if err != nil {
 		return false
 	}
-	if task.TaskCategory != "analysis" {
+	return task.TaskCategory == "analysis"
+}
+
+// rejectAnalysisTaskWrite writes a 403 and returns true when the request is an
+// analysis task attempting a write. `action` completes the sentence "analysis
+// tasks are read-only and cannot <action>".
+func (h *Handler) rejectAnalysisTaskWrite(w http.ResponseWriter, r *http.Request, userID, workspaceID, action string) bool {
+	if !h.isAnalysisTaskActor(r, userID, workspaceID) {
 		return false
 	}
-	writeError(w, http.StatusForbidden, "analysis tasks cannot change issue status")
+	writeError(w, http.StatusForbidden, "analysis tasks are read-only and cannot "+action)
 	return true
 }
 
@@ -2540,6 +2554,13 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := requestUserID(r)
 	workspaceID := uuidToString(prevIssue.WorkspaceID)
+
+	// Analysis tasks (P4 assessment) are read-only: block every issue mutation,
+	// not just status, so a stale daemon running one as a normal fix cannot
+	// touch the issue.
+	if h.rejectAnalysisTaskWrite(w, r, userID, workspaceID, "modify issues") {
+		return
+	}
 
 	// Read body as raw bytes so we can detect which fields were explicitly sent.
 	bodyBytes, err := io.ReadAll(r.Body)
@@ -2578,9 +2599,6 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		params.Description = pgtype.Text{String: *req.Description, Valid: true}
 	}
 	if req.Status != nil {
-		if h.rejectAnalysisTaskStatusUpdate(w, r, userID, workspaceID) {
-			return
-		}
 		if !validateIssueEnum(w, "status", *req.Status, validIssueStatuses) {
 			return
 		}
@@ -3085,10 +3103,11 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Analysis tasks (P4 assessment) are read-only: block the whole batch write.
+	if h.rejectAnalysisTaskWrite(w, r, userID, workspaceID, "modify issues") {
+		return
+	}
 	if req.Updates.Status != nil {
-		if h.rejectAnalysisTaskStatusUpdate(w, r, userID, workspaceID) {
-			return
-		}
 		if !validateIssueEnum(w, "status", *req.Updates.Status, validIssueStatuses) {
 			return
 		}
