@@ -14,17 +14,25 @@ import { buildWeekShells, type WeekShell } from "./utils";
 // Derived delivery attribution. Extends the AI prediction with one value the
 // backend doesn't emit: `ai_no_output` — the agent ran but the completed P4
 // assessment found no AI shelve at all (e.g. the agent hit an auth failure
-// before it could submit). Rows without a completed assessment keep the raw
-// prediction (or "unknown") — absence of evidence is not evidence of absence.
+// before it could submit). Two guards keep this honest:
+// - Rows without a completed assessment keep the raw prediction; absence of
+//   evidence is not evidence of absence.
+// - An `unknown` prediction stays `unknown`: the assessment skill outputs
+//   unknown + empty CL arrays when P4/Swarm lookup was unavailable, and
+//   "couldn't find evidence" must not be counted as "produced nothing".
 export const AI_NO_OUTPUT = "ai_no_output";
+
+const PROVEN_NON_AI_ATTRIBUTIONS = new Set([
+  "human_delivered",
+  "unattributed",
+  "conflict",
+]);
 
 export function deriveAttribution(fix: AgentFixRecord): string {
   const p4 = fix.p4_assessment;
   const prediction = p4?.delivery_attribution_prediction?.trim() || "unknown";
   if (p4?.assessment_status !== "completed") return prediction;
-  if (prediction === "ai_delivered" || prediction === "ai_assisted") {
-    return prediction;
-  }
+  if (!PROVEN_NON_AI_ATTRIBUTIONS.has(prediction)) return prediction;
   const shelved = (p4.ai_shelved_cls ?? []).filter(
     (cl) => String(cl).trim() !== "",
   );

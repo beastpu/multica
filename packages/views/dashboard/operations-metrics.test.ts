@@ -69,6 +69,22 @@ describe("deriveAttribution", () => {
     ).toBe(AI_NO_OUTPUT);
   });
 
+  it("keeps unknown as unknown — insufficient evidence is not no-output", () => {
+    // The assessment skill emits unknown + empty CL arrays when P4/Swarm
+    // lookup was unavailable; that must not inflate the no-output rate.
+    expect(
+      deriveAttribution(
+        fix({
+          p4_assessment: {
+            assessment_status: "completed",
+            delivery_attribution_prediction: "unknown",
+            ai_shelved_cls: [],
+          },
+        }),
+      ),
+    ).toBe("unknown");
+  });
+
   it("keeps the prediction when the AI shelved something", () => {
     expect(
       deriveAttribution(
