@@ -58,7 +58,7 @@
   "operations": {
     "title": "運用",
     "assessment_title": "AI 修正評価",
-    "subtitle": "エージェントが対応した issue の P4/Swarm 証跡、AI 予測、人間のレビュー、判定差分を表示します。",
+    "subtitle": "エージェントが対応した issue の P4/Swarm 証跡と AI 予測を表示します。",
     "search_placeholder": "コメントを検索",
     "search_clear": "検索をクリア",
     "filter": {
@@ -69,8 +69,7 @@
       "attribution": "AI 帰属",
       "attribution_all": "すべての帰属",
       "quality": "AI 品質",
-      "quality_all": "すべての品質",
-      "mismatch_only": "差分のみ"
+      "quality_all": "すべての品質"
     },
     "tabs": {
       "detail": "P4 詳細",
@@ -79,20 +78,16 @@
       "analysis_hint": "現在の絞り込み結果からの軽量集計。"
     },
     "summary": {
-      "hero_label": "Operations · P4 評価",
-      "hero_hint": "現在の絞り込み issue",
-      "external_done": "外部完了",
-      "external_done_hint": "Feishu/Meego done を集計母数にします",
-      "p4_coverage": "P4 カバー",
-      "p4_coverage_hint": "P4/Swarm 証跡がある行",
-      "ai_delivery": "AI 交付",
-      "ai_delivery_hint": "AI 交付または支援の予測",
-      "human_reviewed": "レビュー済み",
-      "human_reviewed_hint": "人間が outcome を確認",
-      "accepted": "承認",
-      "accepted_hint": "人間レビューで承認",
-      "drift": "判定差分",
-      "drift_hint": "帰属または品質判断の差分"
+      "total": "合計",
+      "total_hint": "エージェントが対応した完了 issue",
+      "has_output": "産出あり",
+      "ai_delivered": "AI 交付",
+      "ai_assisted": "AI 支援",
+      "quality_label": "AI 検収",
+      "quality_pass": "合格",
+      "quality_fail": "不合格",
+      "quality_needs_changes": "要修正",
+      "quality_unknown": "不明"
     },
     "analysis": {
       "attribution_title": "AI 交付帰属",
@@ -113,9 +108,7 @@
       "external_status": "外部ステータス",
       "p4_evidence": "P4 証跡",
       "ai_attribution": "AI 交付",
-      "ai_quality": "AI 品質",
-      "human_review": "人間レビュー",
-      "eval": "評価"
+      "ai_quality": "AI 品質"
     },
     "external": {
       "in_stats": "集計対象",
@@ -219,11 +212,6 @@
     },
     "review_modal": {
       "title": "AI 修正結果の人手レビュー",
-      "empty_issue": "Issue が選択されていません",
-      "evidence_p4": "P4 証跡",
-      "evidence_attribution": "AI 帰属予測",
-      "evidence_quality": "AI 品質予測",
-      "insufficient_evidence": "証跡不足",
       "outcome": "人手結果",
       "reasons": "理由",
       "no_reasons": "この結果では理由は不要です。",
@@ -238,7 +226,6 @@
     "no_reason": "—",
     "export_csv": "CSV をエクスポート",
     "caption": "{{count}} 件",
-    "assessment_caption": "P4 {{p4Rows}} 件 · レビュー済み {{reviewed}} 件 · 差分 {{mismatches}} 件",
     "resize_column": "{{column}}列の幅を調整",
     "reset_columns": "列幅をリセット",
     "empty": {

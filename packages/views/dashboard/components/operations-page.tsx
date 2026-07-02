@@ -35,7 +35,6 @@ import { feishuProjectIssueStatusesOptions } from "@multica/core/feishu-project/
 import {
   operationsFixesOptions,
   useTriggerAgentFixP4Assessment,
-  useUpdateAgentFixReview,
   useOperationsViewStore,
   clampOperationsColumnWidth,
   OPERATIONS_DEFAULT_WIDTHS,
@@ -53,10 +52,8 @@ import { AppLink } from "../../navigation";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { useT } from "../../i18n";
 import {
-  AgentFixReviewDialog,
   ToneBadge,
   agentFixEnumLabel,
-  agentFixReviewReasonLabels,
   agentFixEnumTone,
   type Tone,
   type UsageT,
@@ -107,12 +104,13 @@ const EMPTY: AgentFixRecord[] = [];
 
 // --- Resizable-column layout -------------------------------------------------
 // Column order: Issue, external state, agent, P4 evidence, AI attribution,
-// AI quality, human review, eval, date. The external status column stays fixed;
-// the rest are user-resizable. The legacy `status` width slot backs the P4
-// evidence column so stored preferences remain scoped to this page.
+// AI quality, date. The external status column stays fixed; the rest are
+// user-resizable. The legacy `status` width slot backs the P4 evidence column
+// so stored preferences remain scoped to this page.
 const EXTERNAL_PX = 138;
 const COLUMN_GAP_PX = 12; // matches gap-3
 const CARD_PADDING_X_PX = 32; // px-4 on the header + each row (16 × 2)
+const RESIZABLE_COLUMN_COUNT = 6; // issue, agent, status, attribution, quality, time
 
 const COLUMN_VAR: Record<OperationsColumnKey, string> = {
   agent: "--ops-col-agent",
@@ -120,12 +118,10 @@ const COLUMN_VAR: Record<OperationsColumnKey, string> = {
   status: "--ops-col-status",
   attribution: "--ops-col-attribution",
   quality: "--ops-col-quality",
-  review: "--ops-col-review",
-  eval: "--ops-col-eval",
   time: "--ops-col-time",
 };
 
-const GRID_TEMPLATE = `var(${COLUMN_VAR.issue}) ${EXTERNAL_PX}px var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.status}) var(${COLUMN_VAR.attribution}) var(${COLUMN_VAR.quality}) var(${COLUMN_VAR.review}) var(${COLUMN_VAR.eval}) var(${COLUMN_VAR.time})`;
+const GRID_TEMPLATE = `var(${COLUMN_VAR.issue}) ${EXTERNAL_PX}px var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.status}) var(${COLUMN_VAR.attribution}) var(${COLUMN_VAR.quality}) var(${COLUMN_VAR.time})`;
 
 const GRID_STYLE: CSSProperties = { gridTemplateColumns: GRID_TEMPLATE };
 
@@ -141,11 +137,9 @@ function operationsMinWidth(w: Record<OperationsColumnKey, number>): number {
     w.status +
     w.attribution +
     w.quality +
-    w.review +
-    w.eval +
     w.time +
     EXTERNAL_PX +
-    COLUMN_GAP_PX * 8 +
+    COLUMN_GAP_PX * RESIZABLE_COLUMN_COUNT +
     CARD_PADDING_X_PX
   );
 }
@@ -159,8 +153,6 @@ function cardStyle(w: Record<OperationsColumnKey, number>): CSSProperties {
     [COLUMN_VAR.status]: `${w.status}px`,
     [COLUMN_VAR.attribution]: `${w.attribution}px`,
     [COLUMN_VAR.quality]: `${w.quality}px`,
-    [COLUMN_VAR.review]: `${w.review}px`,
-    [COLUMN_VAR.eval]: `${w.eval}px`,
     [COLUMN_VAR.time]: `${w.time}px`,
     minWidth: `${operationsMinWidth(w)}px`,
   } as CSSProperties;
@@ -282,6 +274,26 @@ function hasP4Signal(fix: AgentFixRecord): boolean {
   if (hasP4Assessment(fix)) return true;
   const evidence = derivedEvidence(fix);
   return Boolean(evidence.swarm || evidence.shelve || evidence.finalCl);
+}
+
+// The summary denominator: an issue an agent finished. "Done" means the issue
+// reached a done workflow state, or the external work item is marked done. An
+// unknown external `done` (undefined) falls back to the issue status alone.
+function isDoneFix(fix: AgentFixRecord): boolean {
+  return fix.external?.done === true || fix.issue_status === "done";
+}
+
+// Whether the AI actually produced something in P4 — a swarm review, a shelved
+// CL, or swarm change/commit CLs. This is the "有产出" numerator.
+function hasAiOutput(fix: AgentFixRecord): boolean {
+  const p4 = fix.p4_assessment;
+  if (!p4) return false;
+  return Boolean(
+    (p4.ai_shelved_cls?.length ?? 0) > 0 ||
+      (p4.swarm_reviews?.length ?? 0) > 0 ||
+      (p4.swarm_change_cls?.length ?? 0) > 0 ||
+      (p4.swarm_committed_cls?.length ?? 0) > 0,
+  );
 }
 
 function confidenceLabel(confidence: number | null | undefined): string {
@@ -494,17 +506,14 @@ export function OperationsPage() {
   const [attributionFilter, setAttributionFilter] =
     useState<string>(ALL_ATTRIBUTIONS);
   const [qualityFilter, setQualityFilter] = useState<string>(ALL_QUALITIES);
-  const [mismatchOnly, setMismatchOnly] = useState(false);
   const [activeTab, setActiveTab] = useState<OperationsTab>(DETAIL_TAB);
   // `searchInput` is what the user types; `search` is the debounced term that
   // actually keys the query (so we don't refetch on every keystroke).
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [reviewFix, setReviewFix] = useState<AgentFixRecord | null>(null);
   const [triggeringBindingId, setTriggeringBindingId] = useState<string | null>(
     null,
   );
-  const updateReview = useUpdateAgentFixReview();
   const triggerAssessment = useTriggerAgentFixP4Assessment();
 
   useEffect(() => {
@@ -593,9 +602,6 @@ export function OperationsPage() {
       ) {
         return false;
       }
-      if (mismatchOnly && !isMismatchEval(f)) {
-        return false;
-      }
       return true;
     });
   }, [
@@ -605,31 +611,28 @@ export function OperationsPage() {
     workstreamFilter,
     attributionFilter,
     qualityFilter,
-    mismatchOnly,
   ]);
 
+  // Summary stats are computed over "done" issues an agent worked on — the
+  // denominator (total). Every numerator is counted within that same set so
+  // the percentages read against a single, consistent base.
   const assessmentSummary = useMemo(() => {
-    const p4Rows = rows.filter(hasP4Signal);
-    const reviewed = rows.filter((f) => {
-      const outcome = f.human_review?.outcome ?? "";
-      return outcome !== "" && outcome !== "unreviewed";
-    });
-    const mismatches = rows.filter((f) => {
-      return isMismatchEval(f);
-    });
+    const done = rows.filter(isDoneFix);
+    const attribution = (f: AgentFixRecord) =>
+      f.p4_assessment?.delivery_attribution_prediction ?? "";
+    const quality = (f: AgentFixRecord) =>
+      compactKey(f.p4_assessment?.quality_prediction, "unknown");
     return {
-      total: rows.length,
-      p4Rows: p4Rows.length,
-      reviewed: reviewed.length,
-      mismatches: mismatches.length,
-      externalDone: rows.filter((f) => f.external?.done === true).length,
-      aiDelivered: rows.filter(
-        (f) =>
-          f.p4_assessment?.delivery_attribution_prediction === "ai_delivered" ||
-          f.p4_assessment?.delivery_attribution_prediction === "ai_assisted",
+      total: done.length,
+      hasOutput: done.filter(hasAiOutput).length,
+      aiDelivered: done.filter((f) => attribution(f) === "ai_delivered").length,
+      aiAssisted: done.filter((f) => attribution(f) === "ai_assisted").length,
+      qualityCorrect: done.filter((f) => quality(f) === "likely_correct").length,
+      qualityWrong: done.filter((f) => quality(f) === "likely_wrong").length,
+      qualityNeedsChanges: done.filter(
+        (f) => quality(f) === "likely_needs_changes",
       ).length,
-      accepted: rows.filter((f) => f.human_review?.outcome === "accepted")
-        .length,
+      qualityUnknown: done.filter((f) => quality(f) === "unknown").length,
     };
   }, [rows]);
 
@@ -677,16 +680,6 @@ export function OperationsPage() {
             options={qualityOptions}
             onChange={setQualityFilter}
           />
-          <Button
-            type="button"
-            aria-pressed={mismatchOnly}
-            variant={mismatchOnly ? "default" : "outline"}
-            size="sm"
-            onClick={() => setMismatchOnly((v) => !v)}
-            className="h-8"
-          >
-            {t(($) => $.operations.filter.mismatch_only)}
-          </Button>
           <Segmented
             value={days}
             onChange={setDays}
@@ -734,15 +727,9 @@ export function OperationsPage() {
                 </button>
               ) : null}
               {!fixesQuery.isLoading && rows.length > 0 ? (
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <span>
-                    {t(($) => $.operations.caption, { count: rows.length })}
-                  </span>
-                  <span className="text-border">/</span>
-                  <span>
-                    {t(($) => $.operations.assessment_caption, assessmentSummary)}
-                  </span>
-                </div>
+                <span className="text-xs text-muted-foreground">
+                  {t(($) => $.operations.caption, { count: rows.length })}
+                </span>
               ) : null}
             </div>
           </div>
@@ -790,7 +777,7 @@ export function OperationsPage() {
                 className="rounded-lg border bg-card"
                 style={cardStyle(columnWidths)}
               >
-                {/* Header: issue, external status, agent, evidence, predictions, review, eval, date. */}
+                {/* Header: issue, external status, agent, evidence, predictions, date. */}
                 <div
                   className="grid items-center gap-3 border-b px-4 py-2 text-xs font-medium text-muted-foreground"
                   style={GRID_STYLE}
@@ -822,16 +809,6 @@ export function OperationsPage() {
                     columnKey="quality"
                     cardRef={cardRef}
                     label={t(($) => $.operations.table.ai_quality)}
-                  />
-                  <HeaderCell
-                    columnKey="review"
-                    cardRef={cardRef}
-                    label={t(($) => $.operations.table.human_review)}
-                  />
-                  <HeaderCell
-                    columnKey="eval"
-                    cardRef={cardRef}
-                    label={t(($) => $.operations.table.eval)}
                   />
                   <HeaderCell
                     columnKey="time"
@@ -936,13 +913,11 @@ export function OperationsPage() {
                           kind="quality"
                           detail={confidenceLabel(f.p4_assessment?.confidence)}
                         />
-                        <HumanReviewCell fix={f} onEdit={() => setReviewFix(f)} />
-                        <EvalCell fix={f} />
                         <span className="min-w-0 overflow-hidden truncate whitespace-nowrap text-xs text-muted-foreground tabular-nums">
                           {day}
                         </span>
                         {comment ? (
-                          <div className="col-span-9 -mt-1 truncate text-xs text-muted-foreground">
+                          <div className="col-span-7 -mt-1 truncate text-xs text-muted-foreground">
                             <span className="mr-1 font-medium text-foreground/80">
                               {t(($) => $.operations.table.reason)}:
                             </span>
@@ -958,45 +933,6 @@ export function OperationsPage() {
           )}
         </div>
       </div>
-      <AgentFixReviewDialog
-        open={!!reviewFix}
-        description={
-          reviewFix
-            ? `${reviewFix.issue_identifier} · ${reviewFix.issue_title}`
-            : t(($) => $.operations.review_modal.empty_issue)
-        }
-        initialReview={reviewFix?.human_review}
-        saving={updateReview.isPending}
-        canSave={!!reviewFix}
-        evidenceSlot={
-          reviewFix ? <AgentFixReviewEvidence fix={reviewFix} /> : null
-        }
-        onOpenChange={(open) => {
-          if (!open && !updateReview.isPending) setReviewFix(null);
-        }}
-        onSave={(data) => {
-          if (!reviewFix) return;
-          updateReview.mutate(
-            {
-              issueId: reviewFix.issue_id,
-              bindingId: reviewFix.external?.binding_id,
-              data,
-            },
-            {
-              onSuccess: () => {
-                setReviewFix(null);
-              },
-              onError: (err) => {
-                toast.error(
-                  err instanceof Error && err.message
-                    ? err.message
-                    : t(($) => $.operations.review_modal.save_failed),
-                );
-              },
-            },
-          );
-        }}
-      />
     </div>
   );
 }
@@ -1026,79 +962,129 @@ function HeaderCell({
   );
 }
 
-function OperationsSummary({
-  summary,
-}: {
-  summary: {
-    total: number;
-    externalDone: number;
-    p4Rows: number;
-    aiDelivered: number;
-    reviewed: number;
-    accepted: number;
-    mismatches: number;
-  };
-}) {
+interface OperationsSummaryData {
+  total: number;
+  hasOutput: number;
+  aiDelivered: number;
+  aiAssisted: number;
+  qualityCorrect: number;
+  qualityWrong: number;
+  qualityNeedsChanges: number;
+  qualityUnknown: number;
+}
+
+// A compact percentage of `total`, "—" when there's nothing to divide by so a
+// zero denominator never renders NaN%.
+function pct(value: number, total: number): string {
+  if (total <= 0) return "—";
+  return `${Math.round((value / total) * 100)}%`;
+}
+
+// Top-of-page stat strip. One hero number (总计 = done issues an agent worked
+// on) plus scannable pills for output, AI delivery/assist, and the quality
+// (验收) breakdown — each with its share of the total.
+function OperationsSummary({ summary }: { summary: OperationsSummaryData }) {
   const { t } = useT("usage");
-  const stats = [
+  const { total } = summary;
+  const pills: { label: string; value: number; tone?: Tone }[] = [
     {
-      label: t(($) => $.operations.summary.external_done),
-      value: summary.externalDone,
-      hint: t(($) => $.operations.summary.external_done_hint),
+      label: t(($) => $.operations.summary.has_output),
+      value: summary.hasOutput,
     },
     {
-      label: t(($) => $.operations.summary.p4_coverage),
-      value: `${summary.p4Rows}/${summary.total}`,
-      hint: t(($) => $.operations.summary.p4_coverage_hint),
-    },
-    {
-      label: t(($) => $.operations.summary.ai_delivery),
+      label: t(($) => $.operations.summary.ai_delivered),
       value: summary.aiDelivered,
-      hint: t(($) => $.operations.summary.ai_delivery_hint),
     },
     {
-      label: t(($) => $.operations.summary.human_reviewed),
-      value: `${summary.reviewed}/${summary.total}`,
-      hint: t(($) => $.operations.summary.human_reviewed_hint),
+      label: t(($) => $.operations.summary.ai_assisted),
+      value: summary.aiAssisted,
+    },
+  ];
+  const quality: { label: string; value: number; tone: Tone }[] = [
+    {
+      label: t(($) => $.operations.summary.quality_pass),
+      value: summary.qualityCorrect,
+      tone: "success",
     },
     {
-      label: t(($) => $.operations.summary.accepted),
-      value: summary.accepted,
-      hint: t(($) => $.operations.summary.accepted_hint),
+      label: t(($) => $.operations.summary.quality_fail),
+      value: summary.qualityWrong,
+      tone: "danger",
     },
     {
-      label: t(($) => $.operations.summary.drift),
-      value: summary.mismatches,
-      hint: t(($) => $.operations.summary.drift_hint),
+      label: t(($) => $.operations.summary.quality_needs_changes),
+      value: summary.qualityNeedsChanges,
+      tone: "warning",
+    },
+    {
+      label: t(($) => $.operations.summary.quality_unknown),
+      value: summary.qualityUnknown,
+      tone: "muted",
     },
   ];
   return (
-    <section className="grid overflow-hidden rounded-lg border bg-card sm:grid-cols-[minmax(180px,1fr)_minmax(0,4fr)]">
-      <div className="border-b bg-muted/30 p-4 sm:border-b-0 sm:border-r">
-        <p className="text-xs font-medium text-muted-foreground">
-          {t(($) => $.operations.summary.hero_label)}
-        </p>
-        <p className="mt-2 text-3xl font-semibold tabular-nums">
-          {summary.total}
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {t(($) => $.operations.summary.hero_hint)}
-        </p>
+    <section className="grid gap-3 rounded-lg border bg-card p-4 lg:grid-cols-[auto_1fr]">
+      <div className="flex items-center gap-4 border-b pb-3 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-6">
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">
+            {t(($) => $.operations.summary.total)}
+          </p>
+          <p className="mt-1 text-3xl font-semibold tabular-nums">{total}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t(($) => $.operations.summary.total_hint)}
+          </p>
+        </div>
       </div>
-      <div className="grid sm:grid-cols-3 xl:grid-cols-6">
-        {stats.map((s) => (
-          <div key={s.label} className="border-b p-4 last:border-b-0 sm:border-r sm:last:border-r-0 xl:border-b-0">
-            <p className="truncate text-xs font-medium text-muted-foreground">
-              {s.label}
-            </p>
-            <p className="mt-2 text-xl font-semibold tabular-nums">{s.value}</p>
-            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-              {s.hint}
-            </p>
-          </div>
-        ))}
+      <div className="grid gap-3">
+        <div className="flex flex-wrap gap-2">
+          {pills.map((p) => (
+            <StatPill
+              key={p.label}
+              label={p.label}
+              value={p.value}
+              share={pct(p.value, total)}
+            />
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">
+            {t(($) => $.operations.summary.quality_label)}
+          </span>
+          {quality.map((q) => (
+            <StatPill
+              key={q.label}
+              label={q.label}
+              value={q.value}
+              share={pct(q.value, total)}
+              tone={q.tone}
+            />
+          ))}
+        </div>
       </div>
     </section>
+  );
+}
+
+// One stat pill: a tone dot, a label, its count, and its share of the total.
+function StatPill({
+  label,
+  value,
+  share,
+  tone,
+}: {
+  label: string;
+  value: number;
+  share: string;
+  tone?: Tone;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 rounded-md border bg-muted/40 px-2.5 py-1">
+      {tone ? <ToneBadge tone={tone}>{label}</ToneBadge> : (
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      )}
+      <span className="text-sm font-semibold tabular-nums">{value}</span>
+      <span className="text-xs text-muted-foreground tabular-nums">{share}</span>
+    </div>
   );
 }
 
@@ -1675,181 +1661,6 @@ function PredictionCell({
           {t(($) => $.operations.p4.confidence, { value: detail })}
         </span>
       ) : null}
-    </div>
-  );
-}
-
-function HumanReviewCell({
-  fix,
-  onEdit,
-}: {
-  fix: AgentFixRecord;
-  onEdit: () => void;
-}) {
-  const { t } = useT("usage");
-  const tx = t as unknown as UsageT;
-  const outcome = fix.human_review?.outcome;
-  const reasonText = agentFixReviewReasonLabels(
-    tx,
-    fix.human_review?.reasons,
-  ).join(", ");
-  const note = fix.human_review?.note ?? "";
-  const reviewedAt = fix.human_review?.reviewed_at ?? "";
-  const detailRows = [
-    reasonText ? [t(($) => $.operations.review_modal.reasons), reasonText] : null,
-    note ? [t(($) => $.operations.review_modal.note), note] : null,
-    reviewedAt ? [t(($) => $.operations.table.time), reviewedAt] : null,
-  ].filter(Boolean) as Array<[string, string]>;
-  return (
-    <div className="grid min-w-0 gap-1 justify-items-start overflow-hidden">
-      <button
-        type="button"
-        onClick={onEdit}
-        className="inline-flex min-w-0 max-w-full rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <ToneBadge tone={agentFixEnumTone("review", outcome)}>
-          {agentFixEnumLabel(tx, "review", outcome)}
-        </ToneBadge>
-      </button>
-      {detailRows.length > 0 ? (
-        <Popover>
-          <PopoverTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 min-w-0 max-w-full gap-1 px-2 text-xs"
-              >
-                <List className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">
-                  {t(($) => $.operations.p4.details)}
-                </span>
-              </Button>
-            }
-          />
-          <PopoverContent align="end" className="w-80 gap-2">
-            <div className="text-xs font-medium">
-              {t(($) => $.operations.review_modal.title)}
-            </div>
-            <div className="grid gap-2">
-              {detailRows.map(([label, value]) => (
-                <div key={label} className="grid gap-0.5">
-                  <div className="text-[11px] uppercase text-muted-foreground">
-                    {label}
-                  </div>
-                  <div className="break-words text-xs">{value}</div>
-                </div>
-              ))}
-            </div>
-          </PopoverContent>
-        </Popover>
-      ) : null}
-    </div>
-  );
-}
-
-function AgentFixReviewEvidence({ fix }: { fix: AgentFixRecord }) {
-  const { t } = useT("usage");
-  const tx = t as unknown as UsageT;
-  const evidence = derivedEvidence(fix);
-
-  return (
-    <div className="grid gap-3 md:grid-cols-3">
-      <EvidencePanel
-        label={t(($) => $.operations.review_modal.evidence_p4)}
-        value={[
-          fix.p4_assessment?.workstream || t(($) => $.operations.no_reason),
-          evidence.swarm
-            ? t(($) => $.operations.p4.swarm_value, { value: evidence.swarm })
-            : t(($) => $.operations.p4.no_swarm),
-          evidence.swarmChanges
-            ? `${t(($) => $.operations.p4.changes)} ${evidence.swarmChanges}`
-            : "",
-          evidence.swarmCommits
-            ? `${t(($) => $.operations.p4.commits)} ${evidence.swarmCommits}`
-            : "",
-          evidence.swarmBranch
-            ? `${t(($) => $.operations.p4.branch)} ${evidence.swarmBranch}`
-            : "",
-          evidence.eventType
-            ? `${t(($) => $.operations.p4.event)} ${evidence.eventType}`
-            : "",
-          evidence.sentAt
-            ? `${t(($) => $.operations.p4.sent_at)} ${evidence.sentAt}`
-            : "",
-          `${t(($) => $.operations.p4.shelve)} ${
-            evidence.shelve || t(($) => $.operations.no_reason)
-          } / ${t(($) => $.operations.p4.final_cl)} ${
-            evidence.finalCl || t(($) => $.operations.no_reason)
-          }`,
-        ]}
-      />
-      <EvidencePanel
-        label={t(($) => $.operations.review_modal.evidence_attribution)}
-        value={[
-          agentFixEnumLabel(
-            tx,
-            "attribution",
-            fix.p4_assessment?.delivery_attribution_prediction,
-          ),
-        ]}
-        badgeTone={agentFixEnumTone(
-          "attribution",
-          fix.p4_assessment?.delivery_attribution_prediction,
-        )}
-      />
-      <EvidencePanel
-        label={t(($) => $.operations.review_modal.evidence_quality)}
-        value={[
-          agentFixEnumLabel(tx, "quality", fix.p4_assessment?.quality_prediction),
-          fix.p4_assessment?.confidence != null
-            ? t(($) => $.operations.p4.confidence, {
-                value: confidenceLabel(fix.p4_assessment.confidence),
-              })
-            : t(($) => $.operations.review_modal.insufficient_evidence),
-        ]}
-        badgeTone={agentFixEnumTone("quality", fix.p4_assessment?.quality_prediction)}
-      />
-    </div>
-  );
-}
-
-function EvidencePanel({
-  label,
-  value,
-  badgeTone,
-}: {
-  label: string;
-  value: string[];
-  badgeTone?: Tone;
-}) {
-  const first = value[0] || "—";
-  const rest = value.slice(1).filter(Boolean);
-  return (
-    <div className="rounded-lg border bg-muted/20 p-3">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="mt-2 grid gap-1 text-sm">
-        {badgeTone ? <ToneBadge tone={badgeTone}>{first}</ToneBadge> : <span>{first}</span>}
-        {rest.map((line) => (
-          <span key={line} className="text-xs text-muted-foreground">
-            {line}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function EvalCell({ fix }: { fix: AgentFixRecord }) {
-  const { t } = useT("usage");
-  const tx = t as unknown as UsageT;
-  const value = fix.ai_judgement_eval || fix.display_result_status;
-  return (
-    <div className="min-w-0 overflow-hidden">
-      <ToneBadge tone={agentFixEnumTone("eval", value)}>
-        {agentFixEnumLabel(tx, "eval", value)}
-      </ToneBadge>
     </div>
   );
 }
