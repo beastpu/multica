@@ -111,6 +111,19 @@ func (h *Handler) HandleP4SwarmWebhook(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:   time.Unix(p.Review.Updated, 0).UTC(),
 	}
 
+	// Per-project strategy dispatch. A project (identified by its Swarm URL)
+	// may be configured in perforce_project_strategy to run a bespoke
+	// capability (e.g. create-per-event) instead of the default
+	// link-to-existing-issue flow below. Checked first so that path stays fully
+	// independent of perforce_connection — a strategy row is its own opt-in.
+	if handled, status, err := h.dispatchPerforceStrategy(ctx, swarmURL, review); err != nil {
+		writeError(w, http.StatusInternalServerError, "process strategy failed")
+		return
+	} else if handled {
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": status})
+		return
+	}
+
 	candidates, err := h.Queries.ListPerforceConnectionsBySwarmURL(ctx, swarmURL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "lookup connections failed")

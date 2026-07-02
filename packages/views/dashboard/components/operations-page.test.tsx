@@ -570,9 +570,9 @@ describe("OperationsPage", () => {
     await user.keyboard("{Escape}");
 
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Likely correct")).toBeTruthy();
+    expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("confidence 86%")).toBeTruthy();
-    expect(screen.getByText("Likely wrong")).toBeTruthy();
+    expect(screen.getAllByText("Fail").length).toBeGreaterThanOrEqual(1);
   });
 
   it("links external work items, swarm reviews, and CLs", () => {
@@ -600,7 +600,7 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />, { locale: "zh-Hans" });
 
     // Quality prediction badges + funnel stage labels.
-    expect(screen.getByText("\u5927\u6982\u7387\u6b63\u786e")).toBeTruthy();
+    expect(screen.getByText("\u4e0d\u901a\u8fc7")).toBeTruthy();
     expect(screen.getByText("\u5df2\u5224\u5b9a")).toBeTruthy();
     expect(screen.getAllByText("\u901a\u8fc7").length).toBeGreaterThanOrEqual(1);
 
@@ -711,7 +711,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText("rel_1.7.3/client")).toBeTruthy();
     expect(screen.getByText("Wrong direction")).toBeTruthy();
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Likely correct").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(1);
   });
 
   it("drills down from an analysis distribution into the filtered detail table", async () => {
@@ -750,7 +750,7 @@ describe("OperationsPage", () => {
 
     await user.click(screen.getByLabelText("AI quality prediction"));
     await user.click(
-      within(await screen.findByRole("listbox")).getByText("Likely wrong"),
+      within(await screen.findByRole("listbox")).getByText("Fail"),
     );
 
     expect(screen.getByText("Client crash")).toBeTruthy();

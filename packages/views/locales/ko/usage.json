@@ -81,7 +81,7 @@
     },
     "summary": {
       "pass_rate": "AI 수정 통과율",
-      "pass_rate_hint": "정상 가능성 높음 {{num}} / 판정 완료 {{den}}",
+      "pass_rate_hint": "통과 {{num}} / 판정 완료 {{den}}",
       "delivery_share": "AI 납품 비율",
       "delivery_share_hint": "AI 납품+보조 {{num}} / 외부 완료 {{den}}",
       "no_output_rate": "AI 무산출률",
@@ -175,10 +175,10 @@
         "unknown": "증거 부족"
       },
       "quality": {
-        "likely_correct": "대체로 정확",
-        "likely_needs_changes": "수정 필요 가능",
-        "likely_wrong": "오류 가능",
-        "unknown": "판단 없음"
+        "likely_correct": "통과",
+        "likely_needs_changes": "보완 필요",
+        "likely_wrong": "불통과",
+        "unknown": "판단 불가"
       },
       "review": {
         "unreviewed": "리뷰 대기",

@@ -81,7 +81,7 @@
     },
     "summary": {
       "pass_rate": "AI fix pass rate",
-      "pass_rate_hint": "{{num}} likely correct / {{den}} judged",
+      "pass_rate_hint": "{{num}} passed / {{den}} judged",
       "delivery_share": "AI delivery share",
       "delivery_share_hint": "{{num}} AI delivered+assisted / {{den}} external done",
       "no_output_rate": "AI no-output rate",
@@ -175,10 +175,10 @@
         "unknown": "Insufficient evidence"
       },
       "quality": {
-        "likely_correct": "Likely correct",
-        "likely_needs_changes": "May need changes",
-        "likely_wrong": "Likely wrong",
-        "unknown": "No judgement"
+        "likely_correct": "Pass",
+        "likely_needs_changes": "Needs work",
+        "likely_wrong": "Fail",
+        "unknown": "Undetermined"
       },
       "review": {
         "unreviewed": "Pending",
