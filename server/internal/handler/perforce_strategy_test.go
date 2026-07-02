@@ -148,3 +148,48 @@ func TestP4SwarmWebhook_CreatePerEvent_NewEventCreatesAnother(t *testing.T) {
 		t.Errorf("created issues = %d, want 2 (each distinct event creates an issue)", got)
 	}
 }
+
+// TestP4SwarmWebhook_CreatePerEvent_IgnoresOtherEventTypes verifies the
+// capability only reacts to review.created / review.updated: any other Swarm
+// event_type is acknowledged (202) but creates no issue.
+func TestP4SwarmWebhook_CreatePerEvent_IgnoresOtherEventTypes(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+	t.Setenv("MULTICA_P4_SWARM_WEBHOOK_TOKEN", p4WebhookTestToken)
+	agentID := createHandlerTestAgent(t, "P4 Strategy Agent Evt", []byte("[]"))
+	stratID := seedP4Strategy(ctx, t, "http://swarm.strat.evt", agentID)
+
+	for _, evt := range []string{"review.commented", "review.archived", "review.tested", ""} {
+		payload := p4WebhookPayload("http://swarm.strat.evt", "x", 1700000500, nil)
+		payload["event_type"] = evt
+		if w := postP4Webhook(t, p4WebhookTestToken, payload); w.Code != http.StatusAccepted {
+			t.Fatalf("event_type=%q code = %d, want 202; body=%s", evt, w.Code, w.Body.String())
+		}
+	}
+	if got := countStrategyIssues(ctx, t, stratID); got != 0 {
+		t.Errorf("created issues = %d, want 0 (non created/updated events must not create)", got)
+	}
+}
+
+// TestP4SwarmWebhook_CreatePerEvent_CreatedEventCreatesIssue verifies
+// review.created is an accepted event type (companion to review.updated).
+func TestP4SwarmWebhook_CreatePerEvent_CreatedEventCreatesIssue(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+	t.Setenv("MULTICA_P4_SWARM_WEBHOOK_TOKEN", p4WebhookTestToken)
+	agentID := createHandlerTestAgent(t, "P4 Strategy Agent Created", []byte("[]"))
+	stratID := seedP4Strategy(ctx, t, "http://swarm.strat.created", agentID)
+
+	payload := p4WebhookPayload("http://swarm.strat.created", "x", 1700000500, nil)
+	payload["event_type"] = "review.created"
+	if w := postP4Webhook(t, p4WebhookTestToken, payload); w.Code != http.StatusAccepted {
+		t.Fatalf("code = %d, want 202; body=%s", w.Code, w.Body.String())
+	}
+	if got := countStrategyIssues(ctx, t, stratID); got != 1 {
+		t.Errorf("created issues = %d, want 1 (review.created must create)", got)
+	}
+}

@@ -23,6 +23,15 @@ import (
 // review descriptions — every event spawns a fresh issue.
 const perforceStrategyCreatePerEvent = "create_per_event"
 
+// createPerEventAllowedEventTypes gates the create_per_event capability to the
+// Swarm event types that represent a review being opened or changed. Any other
+// event_type (e.g. review.commented, review.archived, review.tested) is
+// acknowledged and ignored — we only spawn issues for created/updated reviews.
+var createPerEventAllowedEventTypes = map[string]bool{
+	"review.created": true,
+	"review.updated": true,
+}
+
 // perforceReviewStrategyFunc is one registered capability. The registry below
 // is the ONLY place a strategy name maps to behaviour — the code provides
 // capabilities, and the perforce_project_strategy row (data) picks which one a
@@ -69,6 +78,12 @@ func (h *Handler) dispatchPerforceStrategy(ctx context.Context, swarmURL string,
 // review_updated_at): a webhook retry carries an identical review_updated_at and
 // is a no-op; a genuinely newer event has a fresh key and creates another issue.
 func (h *Handler) createIssuePerEvent(ctx context.Context, strat db.PerforceProjectStrategy, review perforce.Review) (string, error) {
+	// Only react to a review being created or updated; other Swarm event types
+	// (commented, archived, tested, ...) are acknowledged and ignored.
+	if !createPerEventAllowedEventTypes[strings.TrimSpace(review.EventType)] {
+		return "ignored", nil
+	}
+
 	// Fast-path the common retry before opening a transaction.
 	_, err := h.Queries.GetPerforceStrategyCreatedIssue(ctx, db.GetPerforceStrategyCreatedIssueParams{
 		StrategyID:      strat.ID,

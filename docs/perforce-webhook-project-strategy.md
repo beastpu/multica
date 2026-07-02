@@ -67,14 +67,16 @@ var perforceReviewStrategies = map[string]perforceReviewStrategyFunc{
 
 ## `create_per_event` 行为
 
-1. **每个不同事件建一个 issue**：以 `review.updated` 区分事件；台账唯一键保证
+1. **只在 `review.created` / `review.updated` 两种事件生效**：其它 `event_type`
+   （如 `review.commented`、`review.archived`）一律 ack + `ignored`，不建 issue。
+2. **每个不同事件建一个 issue**：以 `review.updated` 区分事件；台账唯一键保证
    **网络重试（updated 相同）不重复建**，而 Swarm 真正 bump `updated` 的新事件会再建一个。
-2. **建 issue**：`status=todo`、`assignee=default_assignee_id`（agent）、creator=同一 agent；
+3. **建 issue**：`status=todo`、`assignee=default_assignee_id`（agent）、creator=同一 agent；
    title 用 `review.title`（空则 `CL <cl> by <author>`）。
-3. **CL# / author 进描述**（约定的零精度落点）：描述里渲染 changelist
+4. **CL# / author 进描述**（约定的零精度落点）：描述里渲染 changelist
    （committed 优先，否则 shelved）、author、state、review#，以及原始 review 描述。
-4. 建完 publish `issue:created` 并 `EnqueueTaskForIssue` —— agent 立即开工。
-5. **不跑 auto-advance/close**：每个事件是独立 issue，只建不推进。
+5. 建完 publish `issue:created` 并 `EnqueueTaskForIssue` —— agent 立即开工。
+6. **不跑 auto-advance/close**：每个事件是独立 issue，只建不推进。
 
 ## 配置示例（策略数据 = 直接写表）
 
