@@ -2508,6 +2508,30 @@ type UpdateIssueRequest struct {
 	HandoffNote string `json:"handoff_note,omitempty"`
 }
 
+func (h *Handler) rejectAnalysisTaskStatusUpdate(w http.ResponseWriter, r *http.Request, userID, workspaceID string) bool {
+	actorType, _ := h.resolveActor(r, userID, workspaceID)
+	if actorType != "agent" {
+		return false
+	}
+	taskID := r.Header.Get("X-Task-ID")
+	if taskID == "" {
+		return false
+	}
+	taskUUID, err := util.ParseUUID(taskID)
+	if err != nil {
+		return false
+	}
+	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
+	if err != nil {
+		return false
+	}
+	if task.TaskCategory != "analysis" {
+		return false
+	}
+	writeError(w, http.StatusForbidden, "analysis tasks cannot change issue status")
+	return true
+}
+
 func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	prevIssue, ok := h.loadIssueForUser(w, r, id)
@@ -2554,6 +2578,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		params.Description = pgtype.Text{String: *req.Description, Valid: true}
 	}
 	if req.Status != nil {
+		if h.rejectAnalysisTaskStatusUpdate(w, r, userID, workspaceID) {
+			return
+		}
 		if !validateIssueEnum(w, "status", *req.Status, validIssueStatuses) {
 			return
 		}
@@ -3053,7 +3080,15 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"updated": 0})
 		return
 	}
+	workspaceID := h.resolveWorkspaceID(r)
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
 	if req.Updates.Status != nil {
+		if h.rejectAnalysisTaskStatusUpdate(w, r, userID, workspaceID) {
+			return
+		}
 		if !validateIssueEnum(w, "status", *req.Updates.Status, validIssueStatuses) {
 			return
 		}
@@ -3062,12 +3097,6 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if !validateIssueEnum(w, "priority", *req.Updates.Priority, validIssuePriorities) {
 			return
 		}
-	}
-
-	workspaceID := h.resolveWorkspaceID(r)
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
 	}
 	updated := 0
 	for _, issueID := range req.IssueIDs {
