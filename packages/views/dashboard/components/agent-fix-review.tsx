@@ -74,8 +74,7 @@ export function agentFixEnumLabel(
     | "attribution"
     | "quality"
     | "review"
-    | "review_reason"
-    | "eval",
+    | "review_reason",
   value?: string,
 ): string {
   const key = value?.trim();
@@ -98,6 +97,7 @@ export function agentFixEnumLabel(
             ),
             conflict: t(($) => $.operations.enums.attribution.conflict),
             unattributed: t(($) => $.operations.enums.attribution.unattributed),
+            ai_no_output: t(($) => $.operations.enums.attribution.ai_no_output),
             unknown: t(($) => $.operations.enums.attribution.unknown),
           }
         : group === "quality"
@@ -117,8 +117,7 @@ export function agentFixEnumLabel(
                 rejected: t(($) => $.operations.enums.review.rejected),
                 not_applicable: t(($) => $.operations.enums.review.not_applicable),
               }
-            : group === "review_reason"
-              ? {
+            : {
                   complete_usable: t(
                     ($) => $.operations.enums.review_reason.complete_usable,
                   ),
@@ -178,37 +177,12 @@ export function agentFixEnumLabel(
                     ($) => $.operations.enums.review_reason.no_change_needed,
                   ),
                   misfire: t(($) => $.operations.enums.review_reason.misfire),
-                }
-              : {
-                  match: t(($) => $.operations.enums.eval.match),
-                  accurate: t(($) => $.operations.enums.eval.accurate),
-                  overestimated: t(($) => $.operations.enums.eval.overestimated),
-                  underestimated: t(($) => $.operations.enums.eval.underestimated),
-                  wrong_attribution: t(
-                    ($) => $.operations.enums.eval.wrong_attribution,
-                  ),
-                  not_comparable: t(($) => $.operations.enums.eval.not_comparable),
-                  out_of_scope: t(($) => $.operations.enums.eval.out_of_scope),
-                  pending: t(($) => $.operations.enums.eval.pending),
-                  needs_ai_assessment: t(
-                    ($) => $.operations.enums.eval.needs_ai_assessment,
-                  ),
-                  ai_assessing: t(($) => $.operations.enums.eval.ai_assessing),
-                  ai_assessment_failed: t(
-                    ($) => $.operations.enums.eval.ai_assessment_failed,
-                  ),
-                  needs_review_conflict: t(
-                    ($) => $.operations.enums.eval.needs_review_conflict,
-                  ),
-                  needs_human_review: t(
-                    ($) => $.operations.enums.eval.needs_human_review,
-                  ),
                 };
   return labels[key] ?? key;
 }
 
 export function agentFixEnumTone(
-  group: "attribution" | "quality" | "review" | "eval",
+  group: "attribution" | "quality" | "review",
   value?: string,
 ): Tone {
   const key = value?.trim();
@@ -217,26 +191,17 @@ export function agentFixEnumTone(
     key === "accepted" ||
     key === "ai_delivered" ||
     key === "ai_assisted" ||
-    key === "likely_correct" ||
-    key === "match" ||
-    key === "accurate"
+    key === "likely_correct"
   ) {
     return "success";
   }
-  if (
-    key === "conflict" ||
-    key === "likely_wrong" ||
-    key === "rejected" ||
-    key === "overestimated" ||
-    key === "wrong_attribution" ||
-    key === "mismatch"
-  ) {
+  if (key === "conflict" || key === "likely_wrong" || key === "rejected") {
     return "danger";
   }
   if (
     key === "likely_needs_changes" ||
     key === "needs_changes" ||
-    key === "underestimated" ||
+    key === "ai_no_output" ||
     key === "pending"
   ) {
     return "warning";

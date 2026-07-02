@@ -58,7 +58,8 @@
   "operations": {
     "title": "运营",
     "assessment_title": "AI 修单评估",
-    "subtitle": "展示智能体处理过的 issue 的 P4/Swarm 证据与 AI 交付预判。",
+    "subtitle": "展示智能体处理过的 issue 的 P4/Swarm 证据、交付归因与 AI 质量分析。",
+    "range_label": "最近 {{days}} 天",
     "search_placeholder": "搜索评论内容",
     "search_clear": "清除搜索",
     "filter": {
@@ -66,10 +67,11 @@
       "status_all": "全部状态",
       "workstream": "Workstream",
       "workstream_all": "全部 workstream",
-      "attribution": "AI 归因",
+      "attribution": "交付归因",
       "attribution_all": "全部归因",
-      "quality": "AI验收",
-      "quality_all": "全部质量"
+      "quality": "AI 质量预判",
+      "quality_all": "全部质量",
+      "pending_only": "仅看待判定"
     },
     "tabs": {
       "detail": "P4 明细",
@@ -78,37 +80,51 @@
       "analysis_hint": "基于当前筛选结果的轻量统计。"
     },
     "summary": {
-      "total": "总计",
-      "total_hint": "有智能体参与且已完成的 issue",
-      "has_output": "有产出",
-      "ai_delivered": "AI 提交",
-      "ai_assisted": "AI 辅助",
-      "quality_label": "AI 验收",
-      "quality_pass": "通过",
-      "quality_fail": "不通过",
-      "quality_needs_changes": "待完善",
-      "quality_unknown": "无法判断"
+      "pass_rate": "AI 修单通过率",
+      "pass_rate_hint": "通过 {{num}} / 已判定 {{den}}",
+      "delivery_share": "AI 交付占比",
+      "delivery_share_hint": "AI 提交+辅助 {{num}} / 外部完成 {{den}}",
+      "no_output_rate": "AI 无产出率",
+      "no_output_rate_hint": "无提交产出 {{num}} / AI 参与 {{den}}",
+      "delta_label": "较上一周期",
+      "delta_points": "{{delta}}pt",
+      "funnel_title": "交付漏斗",
+      "funnel_total": "共 {{count}} 条记录",
+      "stage_external_done": "外部完成",
+      "stage_p4_covered": "P4 覆盖",
+      "stage_ai_delivered": "AI 交付",
+      "stage_judged": "已判定",
+      "stage_passed": "通过"
+    },
+    "trend": {
+      "title": "周趋势",
+      "pass_rate": "通过率",
+      "delivery_share": "交付占比",
+      "no_output_rate": "无产出率"
     },
     "analysis": {
-      "attribution_title": "AI 交付归因",
-      "review_title": "人工验收结果",
-      "eval_title": "AI 判断偏差",
+      "attribution_title": "交付归因分布",
+      "quality_title": "AI 质量判定分布",
       "workstream_title": "Workstream 结果",
-      "workstream_counts": "共 {{total}} · 已验收 {{reviewed}} · 通过 {{accepted}} · 偏差 {{mismatches}}",
-      "human_reason_title": "人工原因排行",
+      "workstream_counts": "共 {{total}} · 已判定 {{judged}} · 通过 {{passed}}",
       "prediction_reason_title": "AI 原因排行",
-      "no_reasons": "暂无原因"
+      "no_reasons": "暂无原因",
+      "drill_hint": "点击可筛选明细"
     },
     "table": {
       "issue": "关联 issue",
       "agent": "智能体",
       "time": "时间",
-      "status": "状态",
       "reason": "原因 / 描述",
       "external_status": "外部状态",
       "p4_evidence": "P4 证据",
-      "ai_attribution": "AI 交付",
-      "ai_quality": "AI验收"
+      "ai_attribution": "交付归因",
+      "ai_quality": "AI 质量预判"
+    },
+    "pagination": {
+      "page_of": "第 {{page}} / {{pages}} 页",
+      "prev": "上一页",
+      "next": "下一页"
     },
     "external": {
       "in_stats": "进入统计",
@@ -138,7 +154,8 @@
       "in_progress": "Assessment 运行中",
       "run_started": "Assessment 已启动",
       "rerun_started": "Assessment 重跑已启动",
-      "failed": "启动 assessment 失败"
+      "failed": "启动 assessment 失败",
+      "blocked_external": "外部工单完成（done）后才能运行 AI 预判"
     },
     "enums": {
       "assessment": {
@@ -154,6 +171,7 @@
         "human_delivered": "人工提交",
         "conflict": "归因冲突",
         "unattributed": "无法归因",
+        "ai_no_output": "AI 无产出",
         "unknown": "证据不足"
       },
       "quality": {
@@ -193,25 +211,15 @@
         "cancelled_requirement": "需求取消",
         "no_change_needed": "无需修改",
         "misfire": "误触发"
-      },
-      "eval": {
-        "match": "判断准确",
-        "accurate": "冲突识别准确",
-        "overestimated": "AI 高估",
-        "underestimated": "AI 低估",
-        "wrong_attribution": "归因错误",
-        "not_comparable": "不计准确率",
-        "out_of_scope": "未进统计",
-        "pending": "待人工确认",
-        "needs_ai_assessment": "待 AI 预判",
-        "ai_assessing": "AI 预判中",
-        "ai_assessment_failed": "AI 失败",
-        "needs_review_conflict": "冲突待确认",
-        "needs_human_review": "待人工验收"
       }
     },
     "review_modal": {
       "title": "人工验收 AI 修单结果",
+      "empty_issue": "未选择 issue",
+      "evidence_p4": "P4 证据",
+      "evidence_attribution": "AI 归因预判",
+      "evidence_quality": "AI 质量预判",
+      "insufficient_evidence": "证据不足",
       "outcome": "人工结果",
       "reasons": "原因",
       "no_reasons": "当前结果无需选择原因。",

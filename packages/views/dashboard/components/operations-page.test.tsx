@@ -4,10 +4,23 @@ import userEvent from "@testing-library/user-event";
 import { useOperationsViewStore } from "@multica/core/dashboard";
 import { renderWithI18n } from "../../test/i18n";
 
+// Fixture timestamps are relative to "now" so the page's trailing-window split
+// (selected window vs the previous equal-length window) stays deterministic no
+// matter when the tests run. All primary rows sit inside the default 30d
+// window; PREVIOUS_FIX sits in the window before it.
+const dayIso = vi.hoisted(() => {
+  return (daysAgo: number) =>
+    new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+});
+const dayLabel = vi.hoisted(() => {
+  return (daysAgo: number) =>
+    new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+});
+
 // One row per issue (the backend already collapses to the latest run). Each
-// carries the issue's workflow status (the "状态" column) and its most recent
-// comment (the "原因/描述" column). The table must surface the agent, the
-// issue identifier/title, the localized issue-status badge, and the comment.
+// carries the issue's workflow status and its most recent comment. The table
+// must surface the agent, the issue identifier/title, the localized
+// issue-status badge, and the comment.
 const FIXES = vi.hoisted(() => [
   {
     task_id: "t-1",
@@ -20,8 +33,8 @@ const FIXES = vi.hoisted(() => [
     last_comment: "looks good, ready for review",
     last_comment_author_type: "agent",
     started_at: null,
-    completed_at: "2026-06-01T00:00:00Z",
-    created_at: "2026-06-01T00:00:00Z",
+    completed_at: dayIso(6),
+    created_at: dayIso(6),
     external: {
       binding_id: "binding-1",
       work_item_id: "BUG-93218",
@@ -30,6 +43,7 @@ const FIXES = vi.hoisted(() => [
       done: true,
       project: "Warpath3",
       version: "1.7.2",
+      url: "https://meego.example.com/items/BUG-93218",
     },
     p4_assessment: {
       assessment_status: "completed",
@@ -60,8 +74,6 @@ const FIXES = vi.hoisted(() => [
       note: "",
       reviewed_at: "2026-06-01T01:00:00Z",
     },
-    display_result_status: "accepted",
-    ai_judgement_eval: "match",
   },
   {
     task_id: "t-2",
@@ -74,8 +86,8 @@ const FIXES = vi.hoisted(() => [
     last_comment: "",
     last_comment_author_type: "",
     started_at: null,
-    completed_at: "2026-06-02T00:00:00Z",
-    created_at: "2026-06-02T00:00:00Z",
+    completed_at: dayIso(5),
+    created_at: dayIso(5),
     external: {
       binding_id: "binding-2",
       work_item_id: "BUG-93219",
@@ -100,7 +112,7 @@ const FIXES = vi.hoisted(() => [
     last_comment_author_type: "",
     started_at: null,
     completed_at: null,
-    created_at: "2026-06-03T00:00:00Z",
+    created_at: dayIso(4),
     external: {
       binding_id: "binding-3",
       work_item_id: "BUG-99999",
@@ -123,8 +135,6 @@ const FIXES = vi.hoisted(() => [
       outcome: "mystery_outcome",
       reasons: ["new_reason"],
     },
-    display_result_status: "brand_new_display_state",
-    ai_judgement_eval: "brand_new_eval",
   },
   {
     task_id: "t-4",
@@ -137,8 +147,8 @@ const FIXES = vi.hoisted(() => [
     last_comment: "needs follow-up validation",
     last_comment_author_type: "agent",
     started_at: null,
-    completed_at: "2026-06-04T00:00:00Z",
-    created_at: "2026-06-04T00:00:00Z",
+    completed_at: dayIso(3),
+    created_at: dayIso(3),
     external: {
       binding_id: "binding-4",
       work_item_id: "BUG-10000",
@@ -176,8 +186,6 @@ const FIXES = vi.hoisted(() => [
       note: "Needs more validation.",
       reviewed_at: "2026-06-04T01:00:00Z",
     },
-    display_result_status: "needs_changes",
-    ai_judgement_eval: "overestimated",
   },
   {
     task_id: "t-5",
@@ -190,8 +198,8 @@ const FIXES = vi.hoisted(() => [
     last_comment: "",
     last_comment_author_type: "",
     started_at: null,
-    completed_at: "2026-06-05T00:00:00Z",
-    created_at: "2026-06-05T00:00:00Z",
+    completed_at: dayIso(2),
+    created_at: dayIso(2),
     external: {
       binding_id: "binding-5",
       work_item_id: "BUG-10001",
@@ -220,7 +228,7 @@ const FIXES = vi.hoisted(() => [
     last_comment_author_type: "agent",
     started_at: null,
     completed_at: null,
-    created_at: "2026-06-06T00:00:00Z",
+    created_at: dayIso(1),
     external: {
       binding_id: "binding-6",
       work_item_id: "7035395614",
@@ -230,8 +238,66 @@ const FIXES = vi.hoisted(() => [
       project: "Warpath3",
       workstream: "rel_1.1.0",
     },
-    display_result_status: "pending",
-    ai_judgement_eval: "pending",
+  },
+  // A completed assessment with NO AI shelve — derives to "AI no output".
+  {
+    task_id: "t-7",
+    agent_id: "a-1",
+    agent_name: "Fixer",
+    issue_id: "i-7",
+    issue_identifier: "MUL-12",
+    issue_title: "Auth blocked the agent",
+    issue_status: "done",
+    last_comment: "",
+    last_comment_author_type: "",
+    started_at: null,
+    completed_at: dayIso(2),
+    created_at: dayIso(2),
+    external: {
+      binding_id: "binding-7",
+      work_item_id: "BUG-10002",
+      status: "Done",
+      mapped_status: "done",
+      done: true,
+      project: "Warpath3",
+    },
+    p4_assessment: {
+      assessment_status: "completed",
+      delivery_attribution_prediction: "unattributed",
+      quality_prediction: "unknown",
+      ai_shelved_cls: [],
+    },
+  },
+  // Older than the selected 30d window (previous period) — feeds the KPI
+  // delta but must never appear in the table.
+  {
+    task_id: "t-8",
+    agent_id: "a-1",
+    agent_name: "Fixer",
+    issue_id: "i-8",
+    issue_identifier: "MUL-99",
+    issue_title: "Previous period fix",
+    issue_status: "done",
+    last_comment: "",
+    last_comment_author_type: "",
+    started_at: null,
+    completed_at: dayIso(40),
+    created_at: dayIso(40),
+    external: {
+      binding_id: "binding-8",
+      work_item_id: "BUG-777",
+      status: "Done",
+      mapped_status: "done",
+      done: true,
+      project: "Warpath3",
+    },
+    p4_assessment: {
+      assessment_status: "completed",
+      delivery_attribution_prediction: "ai_delivered",
+      quality_prediction: "likely_correct",
+      ai_shelved_cls: [270001],
+    },
+    human_review: { outcome: "rejected", reasons: ["wrong_direction"] },
   },
 ]);
 
@@ -278,6 +344,21 @@ vi.mock("@tanstack/react-query", async () => {
               { key: "Done", name: "Done" },
               { key: "In Progress", name: "In Progress" },
             ],
+          },
+          isLoading: false,
+        };
+      }
+      if (
+        opts.queryKey.includes("perforce") &&
+        opts.queryKey.includes("connection")
+      ) {
+        return {
+          data: {
+            connection: {
+              workspace_id: "ws-1",
+              swarm_url: "https://swarm.example.com",
+            },
+            configured: true,
           },
           isLoading: false,
         };
@@ -402,52 +483,87 @@ describe("OperationsPage", () => {
     expect(screen.getByText("设计如此")).toBeTruthy();
     expect(screen.queryByText("vcvaCnnGi")).toBeNull();
 
-    // Agent name appears for each row.
-    expect(screen.getAllByText("Fixer").length).toBe(5);
+    // Agent name appears for each row (six a-1 rows in the current window).
+    expect(screen.getAllByText("Fixer").length).toBe(6);
     expect(screen.getByText("Reviewer")).toBeTruthy();
 
     // "状态" column = ISSUE workflow status (labels from the issues namespace).
     expect(screen.getAllByText("In Review").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
 
-    // "原因/描述" column = the issue's most recent comment; the dash when none.
+    // "原因/描述" column = the issue's most recent comment.
     expect(screen.getByText("looks good, ready for review")).toBeTruthy();
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(1);
 
     // By-day time column (UTC) renders the latest-run day per row.
-    expect(screen.getByText("2026-06-01")).toBeTruthy();
-    expect(screen.getByText("2026-06-02")).toBeTruthy();
+    expect(screen.getAllByText(dayLabel(6)).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(dayLabel(5)).length).toBeGreaterThanOrEqual(1);
   });
 
-  it("renders demo-like P4 assessment evidence and review outcomes", async () => {
+  it("excludes previous-period rows from the table", () => {
+    renderWithI18n(<OperationsPage />);
+    expect(screen.queryByText("Previous period fix")).toBeNull();
+  });
+
+  it("renders the KPI band with the three headline rates and the funnel", () => {
+    renderWithI18n(<OperationsPage />);
+
+    expect(screen.getByText("AI fix pass rate")).toBeTruthy();
+    expect(screen.getByText("AI delivery share")).toBeTruthy();
+    expect(screen.getByText("AI no-output rate")).toBeTruthy();
+    expect(screen.getByText("Delivery funnel")).toBeTruthy();
+    expect(screen.getByText("Last 30 days")).toBeTruthy();
+    // Funnel stages, with the AI-delivered stage nested under external done.
+    expect(screen.getByText("External done")).toBeTruthy();
+    expect(screen.getByText("P4 covered")).toBeTruthy();
+    // Funnel stage label; the same string also appears on attribution badges.
+    expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Judged")).toBeTruthy();
+    // Pass rate: t-1 is the only judged AI-delivered row and it is
+    // likely_correct → 1/1 = 100%.
+    expect(screen.getByText("100%")).toBeTruthy();
+  });
+
+  it("renders the weekly trend section for multi-week windows", () => {
+    renderWithI18n(<OperationsPage />);
+    expect(screen.getByText("Weekly trend")).toBeTruthy();
+    expect(screen.getAllByText("Pass rate").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("derives AI no output for completed assessments without an AI shelve", () => {
+    renderWithI18n(<OperationsPage />);
+    // t-7: unattributed prediction + empty ai_shelved_cls → derived label.
+    expect(screen.getAllByText("AI no output").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders demo-like P4 assessment evidence and quality analysis", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
     expect(screen.getByText("AI fix assessment")).toBeTruthy();
     expect(screen.getByText("P4 details")).toBeTruthy();
     expect(screen.getByText("Analysis report")).toBeTruthy();
-    expect(screen.getByText("Total")).toBeTruthy();
-    expect(screen.getByText("AI acceptance")).toBeTruthy();
     expect(screen.getByText("BUG-93218")).toBeTruthy();
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("In stats").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("AI assessed").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("stream rel_1.7.2/server")).toBeTruthy();
     expect(screen.getByText("Swarm SW-11872")).toBeTruthy();
-    expect(screen.getByText("shelve 282941")).toBeTruthy();
-    expect(screen.getByText("final CL 283006")).toBeTruthy();
-    expect(screen.getByText("final CL 284805")).toBeTruthy();
-    expect(screen.getByText("shelve 287451")).toBeTruthy();
-    expect(screen.queryByText("final CL 287451")).toBeNull();
+    // CL badges split label and per-CL links into separate nodes — match on
+    // the badge's normalized textContent.
+    const badgeTexts = Array.from(document.querySelectorAll("span")).map((s) =>
+      (s.textContent ?? "").replace(/\s+/g, " ").trim(),
+    );
+    expect(badgeTexts).toContain("shelve 282941");
+    expect(badgeTexts).toContain("final CL 283006");
+    expect(badgeTexts).toContain("final CL 284805");
+    expect(badgeTexts).toContain("shelve 287451");
+    expect(badgeTexts).not.toContain("final CL 287451");
     expect(screen.queryByText("changes 282941, 282944")).toBeNull();
-    expect(screen.queryByText("commits 283006")).toBeNull();
-    expect(screen.queryByText("branch main")).toBeNull();
-    expect(screen.queryByText("event review.committed")).toBeNull();
-    expect(screen.queryByText("sent 2026-06-01T00:30:00Z")).toBeNull();
 
     await user.click(screen.getAllByRole("button", { name: "Details" })[0]!);
     expect(screen.getByText("282941, 282944")).toBeTruthy();
-    expect(screen.getByText("283006")).toBeTruthy();
+    // "283006" also renders as the linked final-CL badge text in the row.
+    expect(screen.getAllByText("283006").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("main")).toBeTruthy();
     expect(screen.getByText("review.committed")).toBeTruthy();
     expect(screen.getByText("2026-06-01T00:30:00Z")).toBeTruthy();
@@ -456,40 +572,80 @@ describe("OperationsPage", () => {
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("confidence 86%")).toBeTruthy();
+    expect(screen.getAllByText("Fail").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("no longer renders the human review or eval columns", () => {
-    const { container } = renderWithI18n(<OperationsPage />);
-
-    // Removed table columns: no human-review outcome or eval badges in the grid.
-    expect(screen.queryByText("Human review")).toBeNull();
-    expect(screen.queryByText("Eval")).toBeNull();
-    // "Accepted" was the human-review outcome badge — gone from the detail table.
-    // (It still appears under the Analysis report tab, not tested here.)
-    expect(screen.queryByRole("button", { name: "Accepted" })).toBeNull();
-    expect(
-      container.querySelector('[style*="grid-template-columns"]'),
-    ).not.toBeNull();
-  });
-
-  it("shows assessment trigger actions only for external done bindings", () => {
+  it("links external work items, swarm reviews, and CLs", () => {
     renderWithI18n(<OperationsPage />);
 
-    expect(screen.getByText("Run assessment")).toBeTruthy();
-    expect(screen.getAllByText("Rerun assessment").length).toBeGreaterThanOrEqual(1);
-    expect(screen.queryByText("Assessment running")).toBeNull();
+    // Feishu/Meego work item → external.url.
+    const workItem = screen.getByText("BUG-93218").closest("a");
+    expect(workItem?.getAttribute("href")).toBe(
+      "https://meego.example.com/items/BUG-93218",
+    );
+    // Swarm review badge → {base}/reviews/{id}.
+    const swarm = screen.getByText("Swarm SW-11872").closest("a");
+    expect(swarm?.getAttribute("href")).toBe(
+      "https://swarm.example.com/reviews/SW-11872",
+    );
+    // Shelve CL → {base}/changes/{cl}.
+    const cl = screen.getByText("282941").closest("a");
+    expect(cl?.getAttribute("href")).toBe(
+      "https://swarm.example.com/changes/282941",
+    );
+  });
 
-    const futureRow = screen.getByText("Future work").closest(".grid");
+  it("renders quality analysis copy in Chinese locale", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />, { locale: "zh-Hans" });
+
+    // Quality prediction badges + funnel stage labels.
+    expect(screen.getByText("\u4e0d\u901a\u8fc7")).toBeTruthy();
+    expect(screen.getByText("\u5df2\u5224\u5b9a")).toBeTruthy();
+    expect(screen.getAllByText("\u901a\u8fc7").length).toBeGreaterThanOrEqual(1);
+
+    // The P4 evidence popover still opens with the localized trigger.
+    await user.click(screen.getAllByRole("button", { name: "\u8be6\u60c5" })[0]!);
+    expect(screen.getByText("282941, 282944")).toBeTruthy();
+  });
+
+  it("disables the assessment trigger until the external item is done", () => {
+    renderWithI18n(<OperationsPage />);
+
+    // t-2 (done, no assessment yet) → enabled Run assessment.
+    const runButtons = screen.getAllByRole("button", {
+      name: "Run assessment",
+    });
+    expect(runButtons.some((b) => !(b as HTMLButtonElement).disabled)).toBe(
+      true,
+    );
+
+    // t-3 (external in_progress) → visible but disabled, with the reason.
+    let futureRow = screen.getByText("Future work").parentElement;
+    while (
+      futureRow &&
+      !futureRow.getAttribute("style")?.includes("grid-template-columns")
+    ) {
+      futureRow = futureRow.parentElement;
+    }
     expect(futureRow).not.toBeNull();
-    expect(within(futureRow as HTMLElement).queryByText("Run assessment")).toBeNull();
-    expect(within(futureRow as HTMLElement).queryByText("Rerun assessment")).toBeNull();
+    const futureButton = within(futureRow as HTMLElement).getByRole("button", {
+      name: "Rerun assessment",
+    }) as HTMLButtonElement;
+    expect(futureButton.disabled).toBe(true);
+    expect(futureButton.getAttribute("title")).toBe(
+      "Available once the external work item is done",
+    );
   });
 
   it("triggers a new assessment with binding_id and force=false", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    await user.click(screen.getByText("Run assessment"));
+    const enabled = screen
+      .getAllByRole("button", { name: "Run assessment" })
+      .find((b) => !(b as HTMLButtonElement).disabled)!;
+    await user.click(enabled);
 
     await waitFor(() => {
       expect(TRIGGER_ASSESSMENT).toHaveBeenCalledWith({
@@ -503,7 +659,10 @@ describe("OperationsPage", () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    await user.click(screen.getAllByText("Rerun assessment")[0]!);
+    const enabled = screen
+      .getAllByRole("button", { name: "Rerun assessment" })
+      .find((b) => !(b as HTMLButtonElement).disabled)!;
+    await user.click(enabled);
 
     await waitFor(() => {
       expect(TRIGGER_ASSESSMENT).toHaveBeenCalledWith({
@@ -545,20 +704,31 @@ describe("OperationsPage", () => {
 
     await user.click(screen.getByText("Analysis report"));
 
-    expect(screen.getByText("AI delivery attribution")).toBeTruthy();
-    expect(screen.getByText("Human review outcome")).toBeTruthy();
-    expect(screen.getByText("AI judgement eval")).toBeTruthy();
+    expect(screen.getByText("Delivery attribution")).toBeTruthy();
+    expect(screen.getByText("AI quality distribution")).toBeTruthy();
     expect(screen.getByText("Workstream outcome")).toBeTruthy();
-    expect(screen.getByText("Top human reasons")).toBeTruthy();
     expect(screen.getByText("Top AI reasons")).toBeTruthy();
     expect(screen.getByText("rel_1.7.3/client")).toBeTruthy();
-    expect(screen.getByText("Incomplete coverage")).toBeTruthy();
     expect(screen.getByText("Wrong direction")).toBeTruthy();
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Accepted").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("filters assessment rows by workstream and predictions", async () => {
+  it("drills down from an analysis distribution into the filtered detail table", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    await user.click(screen.getByText("Analysis report"));
+    // Clicking a distribution row applies the filter and jumps back to detail.
+    await user.click(screen.getAllByText("Human delivered")[0]!);
+
+    await waitFor(() => {
+      expect(screen.getByText("Client crash")).toBeTruthy();
+      expect(screen.queryByText("Login broke")).toBeNull();
+    });
+  });
+
+  it("filters assessment rows by workstream, predictions, and pending-only", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
@@ -570,7 +740,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Client crash")).toBeTruthy();
     expect(screen.queryByText("Login broke")).toBeNull();
 
-    await user.click(screen.getByLabelText("AI attribution"));
+    await user.click(screen.getByLabelText("Delivery attribution"));
     await user.click(
       within(await screen.findByRole("listbox")).getByText("Human delivered"),
     );
@@ -578,13 +748,39 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Client crash")).toBeTruthy();
     expect(screen.queryByText("Login broke")).toBeNull();
 
-    await user.click(screen.getByLabelText("AI quality"));
+    await user.click(screen.getByLabelText("AI quality prediction"));
     await user.click(
       within(await screen.findByRole("listbox")).getByText("Fail"),
     );
 
     expect(screen.getByText("Client crash")).toBeTruthy();
     expect(screen.queryByText("Login broke")).toBeNull();
+  });
+
+  it("toggles pending-judgement-only on and off", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    const toggle = screen.getByRole("button", {
+      name: "Pending judgement only",
+    });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("Login broke")).toBeTruthy();
+    expect(screen.getByText("Parser cleanup")).toBeTruthy();
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    // Rows with an AI quality verdict (likely_correct / likely_wrong) drop
+    // out; rows without a judgement stay.
+    expect(screen.queryByText("Login broke")).toBeNull();
+    expect(screen.queryByText("Client crash")).toBeNull();
+    expect(screen.getByText("Parser cleanup")).toBeTruthy();
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("Login broke")).toBeTruthy();
   });
 
   it("can reset the workstream filter back to all workstreams", async () => {
@@ -603,22 +799,6 @@ describe("OperationsPage", () => {
 
     expect(screen.getByText("Client crash")).toBeTruthy();
     expect(screen.getByText("Login broke")).toBeTruthy();
-
-    await user.click(screen.getByLabelText("Workstream"));
-    await user.click(
-      within(await screen.findByRole("listbox")).getByText("rel_1.7.3/client"),
-    );
-
-    expect(screen.getByText("Client crash")).toBeTruthy();
-    expect(screen.queryByText("Login broke")).toBeNull();
-
-    await user.click(screen.getByLabelText("Workstream"));
-    await user.click(
-      within(await screen.findByRole("listbox")).getByText("All workstreams"),
-    );
-
-    expect(screen.getByText("Client crash")).toBeTruthy();
-    expect(screen.getByText("Login broke")).toBeTruthy();
   });
 
   it("uses external workstream when P4 assessment has not populated one", async () => {
@@ -627,38 +807,26 @@ describe("OperationsPage", () => {
 
     await user.click(screen.getByLabelText("Workstream"));
     await user.click(
-      within(await screen.findByRole("listbox")).getByText(
-        "rel_1.1.0",
-      ),
+      within(await screen.findByRole("listbox")).getByText("rel_1.1.0"),
     );
 
     expect(screen.getByText("Shelved CL should not look final")).toBeTruthy();
     expect(screen.queryByText("Login broke")).toBeNull();
   });
 
-  it("summarizes done issues with output, delivery, and quality breakdown", () => {
+  it("does not substitute total rows for a zero external-done funnel stage", async () => {
+    const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    // Done denominator: MUL-7, MUL-8, MUL-11 (issue_status done) + MUL-10
-    // (external.done) = 4. MUL-9 (external.done false, status triaged) and
-    // WAR-9581 (not done) are excluded.
-    const totalCard = screen.getByText("Total").parentElement;
-    expect(totalCard?.textContent).toContain("4");
-    expect(screen.getByText("Done issues an agent worked on")).toBeTruthy();
+    await user.click(screen.getByLabelText("Workstream"));
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText("rel_future/server"),
+    );
 
-    // Produced output: rows with swarm/shelve evidence among the done set —
-    // MUL-7 and MUL-10 both have swarm_reviews/ai_shelved_cls = 2.
-    const output = screen.getByText("Produced output").parentElement;
-    expect(output?.textContent).toContain("2");
-
-    // Quality (acceptance) breakdown labels render, scoped to the summary strip.
-    expect(screen.getByText("AI acceptance")).toBeTruthy();
-    const acceptanceRow = screen.getByText("AI acceptance").parentElement;
-    expect(within(acceptanceRow as HTMLElement).getByText("Pass")).toBeTruthy();
-    expect(within(acceptanceRow as HTMLElement).getByText("Fail")).toBeTruthy();
-    expect(
-      within(acceptanceRow as HTMLElement).getByText("Needs work"),
-    ).toBeTruthy();
+    expect(screen.getByText("Future work")).toBeTruthy();
+    expect(screen.queryByText("Login broke")).toBeNull();
+    const stage = screen.getByText("External done").parentElement;
+    expect(stage?.textContent).toContain("0");
   });
 
   it("exports the current filtered P4 assessment rows as CSV", async () => {
@@ -686,9 +854,7 @@ describe("OperationsPage", () => {
     expect(csv).toContain("2026-06-04T00:30:00Z");
     expect(csv).toContain("283111");
     expect(csv).toContain("283222");
-    expect(csv).toContain("needs_changes");
-    expect(csv).toContain("coverage_incomplete");
-    expect(csv).toContain("overestimated");
+    expect(csv).toContain("likely_wrong");
     expect(csv).not.toContain("Login broke");
   });
 
@@ -702,8 +868,8 @@ describe("OperationsPage", () => {
       "Resize Issue column",
       "Resize Agent column",
       "Resize P4 evidence column",
-      "Resize AI delivery column",
-      "Resize AI quality column",
+      "Resize Delivery attribution column",
+      "Resize AI quality prediction column",
       "Resize Date column",
     ]);
     expect(
@@ -744,7 +910,7 @@ describe("OperationsPage", () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    // All three issues present before searching.
+    // All issues present before searching.
     expect(screen.getByText("Login broke")).toBeTruthy();
     expect(screen.getByText("Parser cleanup")).toBeTruthy();
 
@@ -834,9 +1000,9 @@ describe("buildOperationsP4AssessmentCsv", () => {
       {
         ...(FIXES[0] as any),
         issue_title: 'Login, "broke"',
-        human_review: {
-          ...((FIXES[0] as any).human_review ?? {}),
-          note: "first line\nsecond line",
+        p4_assessment: {
+          ...((FIXES[0] as any).p4_assessment ?? {}),
+          summary: "first line\nsecond line",
         },
       },
       { ...(FIXES[1] as any), external: undefined },
@@ -844,6 +1010,7 @@ describe("buildOperationsP4AssessmentCsv", () => {
 
     expect(csv.startsWith("\uFEFF")).toBe(true);
     expect(csv).toContain("Issue,Issue Title,External Work Item ID");
+    expect(csv).toContain("Derived Attribution");
     expect(csv).toContain('MUL-7,"Login, ""broke""",BUG-93218');
     expect(csv).toContain('"first line\nsecond line"');
     expect(csv).toContain("SW-11872");

@@ -58,7 +58,8 @@
   "operations": {
     "title": "Operations",
     "assessment_title": "AI fix assessment",
-    "subtitle": "P4/Swarm evidence and AI delivery predictions for issues your agents worked on.",
+    "subtitle": "P4/Swarm evidence, delivery attribution, and AI quality analysis for issues your agents worked on.",
+    "range_label": "Last {{days}} days",
     "search_placeholder": "Search comments",
     "search_clear": "Clear search",
     "filter": {
@@ -66,10 +67,11 @@
       "status_all": "All statuses",
       "workstream": "Workstream",
       "workstream_all": "All workstreams",
-      "attribution": "AI attribution",
+      "attribution": "Delivery attribution",
       "attribution_all": "All attribution",
-      "quality": "AI quality",
-      "quality_all": "All quality"
+      "quality": "AI quality prediction",
+      "quality_all": "All quality",
+      "pending_only": "Pending judgement only"
     },
     "tabs": {
       "detail": "P4 details",
@@ -78,37 +80,51 @@
       "analysis_hint": "Lightweight rollups from the current filtered rows."
     },
     "summary": {
-      "total": "Total",
-      "total_hint": "Done issues an agent worked on",
-      "has_output": "Produced output",
-      "ai_delivered": "AI delivered",
-      "ai_assisted": "AI assisted",
-      "quality_label": "AI acceptance",
-      "quality_pass": "Pass",
-      "quality_fail": "Fail",
-      "quality_needs_changes": "Needs work",
-      "quality_unknown": "Undetermined"
+      "pass_rate": "AI fix pass rate",
+      "pass_rate_hint": "{{num}} passed / {{den}} judged",
+      "delivery_share": "AI delivery share",
+      "delivery_share_hint": "{{num}} AI delivered+assisted / {{den}} external done",
+      "no_output_rate": "AI no-output rate",
+      "no_output_rate_hint": "{{num}} without output / {{den}} AI participated",
+      "delta_label": "vs previous period",
+      "delta_points": "{{delta}}pt",
+      "funnel_title": "Delivery funnel",
+      "funnel_total": "{{count}} records",
+      "stage_external_done": "External done",
+      "stage_p4_covered": "P4 covered",
+      "stage_ai_delivered": "AI delivered",
+      "stage_judged": "Judged",
+      "stage_passed": "Passed"
+    },
+    "trend": {
+      "title": "Weekly trend",
+      "pass_rate": "Pass rate",
+      "delivery_share": "Delivery share",
+      "no_output_rate": "No-output rate"
     },
     "analysis": {
-      "attribution_title": "AI delivery attribution",
-      "review_title": "Human review outcome",
-      "eval_title": "AI judgement eval",
+      "attribution_title": "Delivery attribution",
+      "quality_title": "AI quality distribution",
       "workstream_title": "Workstream outcome",
-      "workstream_counts": "{{total}} total · {{reviewed}} reviewed · {{accepted}} accepted · {{mismatches}} drift",
-      "human_reason_title": "Top human reasons",
+      "workstream_counts": "{{total}} total · {{judged}} judged · {{passed}} passed",
       "prediction_reason_title": "Top AI reasons",
-      "no_reasons": "No reasons yet"
+      "no_reasons": "No reasons yet",
+      "drill_hint": "Click to filter details"
     },
     "table": {
       "issue": "Issue",
       "agent": "Agent",
       "time": "Date",
-      "status": "Status",
       "reason": "Reason / description",
       "external_status": "External status",
       "p4_evidence": "P4 evidence",
-      "ai_attribution": "AI delivery",
-      "ai_quality": "AI quality"
+      "ai_attribution": "Delivery attribution",
+      "ai_quality": "AI quality prediction"
+    },
+    "pagination": {
+      "page_of": "Page {{page}} / {{pages}}",
+      "prev": "Previous page",
+      "next": "Next page"
     },
     "external": {
       "in_stats": "In stats",
@@ -138,7 +154,8 @@
       "in_progress": "Assessment running",
       "run_started": "Assessment started",
       "rerun_started": "Assessment rerun started",
-      "failed": "Failed to start assessment"
+      "failed": "Failed to start assessment",
+      "blocked_external": "Available once the external work item is done"
     },
     "enums": {
       "assessment": {
@@ -154,6 +171,7 @@
         "human_delivered": "Human delivered",
         "conflict": "Attribution conflict",
         "unattributed": "Unattributed",
+        "ai_no_output": "AI no output",
         "unknown": "Insufficient evidence"
       },
       "quality": {
@@ -193,25 +211,15 @@
         "cancelled_requirement": "Requirement cancelled",
         "no_change_needed": "No change needed",
         "misfire": "Misfire"
-      },
-      "eval": {
-        "match": "Accurate",
-        "accurate": "Conflict accurate",
-        "overestimated": "AI overestimated",
-        "underestimated": "AI underestimated",
-        "wrong_attribution": "Wrong attribution",
-        "not_comparable": "Not comparable",
-        "out_of_scope": "Out of scope",
-        "pending": "Pending review",
-        "needs_ai_assessment": "Needs AI assessment",
-        "ai_assessing": "AI assessing",
-        "ai_assessment_failed": "AI failed",
-        "needs_review_conflict": "Conflict pending",
-        "needs_human_review": "Needs human review"
       }
     },
     "review_modal": {
       "title": "Human review AI fix result",
+      "empty_issue": "No issue selected",
+      "evidence_p4": "P4 evidence",
+      "evidence_attribution": "AI attribution prediction",
+      "evidence_quality": "AI quality prediction",
+      "insufficient_evidence": "Insufficient evidence",
       "outcome": "Human outcome",
       "reasons": "Reasons",
       "no_reasons": "No reason needed for this outcome.",
