@@ -84,10 +84,10 @@
       "ai_delivered": "AI delivered",
       "ai_assisted": "AI assisted",
       "quality_label": "AI acceptance",
-      "quality_pass": "Passed",
-      "quality_fail": "Failed",
-      "quality_needs_changes": "Needs changes",
-      "quality_unknown": "Unknown"
+      "quality_pass": "Pass",
+      "quality_fail": "Fail",
+      "quality_needs_changes": "Needs work",
+      "quality_unknown": "Undetermined"
     },
     "analysis": {
       "attribution_title": "AI delivery attribution",
@@ -157,10 +157,10 @@
         "unknown": "Insufficient evidence"
       },
       "quality": {
-        "likely_correct": "Likely correct",
-        "likely_needs_changes": "May need changes",
-        "likely_wrong": "Likely wrong",
-        "unknown": "No judgement"
+        "likely_correct": "Pass",
+        "likely_needs_changes": "Needs work",
+        "likely_wrong": "Fail",
+        "unknown": "Undetermined"
       },
       "review": {
         "unreviewed": "Pending",

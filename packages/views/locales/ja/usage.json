@@ -86,8 +86,8 @@
       "quality_label": "AI 検収",
       "quality_pass": "合格",
       "quality_fail": "不合格",
-      "quality_needs_changes": "要修正",
-      "quality_unknown": "不明"
+      "quality_needs_changes": "要改善",
+      "quality_unknown": "判定不可"
     },
     "analysis": {
       "attribution_title": "AI 交付帰属",
@@ -157,10 +157,10 @@
         "unknown": "証跡不足"
       },
       "quality": {
-        "likely_correct": "おそらく正しい",
-        "likely_needs_changes": "修正が必要かも",
-        "likely_wrong": "おそらく誤り",
-        "unknown": "判定なし"
+        "likely_correct": "合格",
+        "likely_needs_changes": "要改善",
+        "likely_wrong": "不合格",
+        "unknown": "判定不可"
       },
       "review": {
         "unreviewed": "レビュー待ち",
