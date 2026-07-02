@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -1847,7 +1848,10 @@ func TestTriggerP4AssessmentForDoneBindingOnlyMappedDone(t *testing.T) {
 	binding := db.FeishuProjectIssueBinding{ID: issueWithID(11)}
 
 	trigger := &fakeP4AssessmentTrigger{}
-	svc := &FeishuProjectSyncService{P4Assessment: trigger}
+	svc := &FeishuProjectSyncService{
+		P4Assessment:          trigger,
+		P4AssessmentAllowlist: P4AssessmentAllowlist{UUIDString(cfg.WorkspaceID): true},
+	}
 	svc.triggerP4AssessmentForDoneBinding(context.Background(), cfg, FeishuProjectWorkItem{Type: "issue", ID: "BUG-1", Status: "OPEN_KEY"}, binding)
 	if len(trigger.calls) != 0 {
 		t.Fatalf("non-done status triggered assessment %d times", len(trigger.calls))
@@ -1856,6 +1860,15 @@ func TestTriggerP4AssessmentForDoneBindingOnlyMappedDone(t *testing.T) {
 	svc.triggerP4AssessmentForDoneBinding(context.Background(), cfg, FeishuProjectWorkItem{Type: "issue", ID: "BUG-1", Status: "DONE_KEY"}, binding)
 	if len(trigger.calls) != 1 || trigger.calls[0] != binding.ID {
 		t.Fatalf("done status trigger calls = %#v, want binding %s", trigger.calls, UUIDString(binding.ID))
+	}
+
+	// A workspace outside the allowlist must not trigger even on a done status —
+	// this locks the fail-closed opt-in gate.
+	gated := &fakeP4AssessmentTrigger{}
+	gatedSvc := &FeishuProjectSyncService{P4Assessment: gated}
+	gatedSvc.triggerP4AssessmentForDoneBinding(context.Background(), cfg, FeishuProjectWorkItem{Type: "issue", ID: "BUG-1", Status: "DONE_KEY"}, binding)
+	if len(gated.calls) != 0 {
+		t.Fatalf("non-allowlisted workspace triggered assessment %d times", len(gated.calls))
 	}
 }
 
@@ -1867,7 +1880,10 @@ func TestTriggerP4AssessmentForDoneBindingBestEffort(t *testing.T) {
 		]`),
 	}
 	trigger := &fakeP4AssessmentTrigger{err: errors.New("temporary trigger failure")}
-	svc := &FeishuProjectSyncService{P4Assessment: trigger}
+	svc := &FeishuProjectSyncService{
+		P4Assessment:          trigger,
+		P4AssessmentAllowlist: P4AssessmentAllowlist{UUIDString(cfg.WorkspaceID): true},
+	}
 
 	svc.triggerP4AssessmentForDoneBinding(context.Background(), cfg, FeishuProjectWorkItem{Type: "issue", ID: "BUG-2", Status: "DONE_KEY"}, db.FeishuProjectIssueBinding{ID: issueWithID(13)})
 
@@ -2015,4 +2031,29 @@ func TestFeishuProjectInlineImageUsesURLTokenAsExternalID(t *testing.T) {
 // issue type with the given status mapping — the query tests' minimal config.
 func feishuTestIssueTypes(statusMappingJSON string) []byte {
 	return []byte(`[{"type_key":"issue","api_name":"issue","name":"缺陷","status_mapping":` + statusMappingJSON + `,"reverse_status_mapping":{}}]`)
+}
+
+func TestP4AssessmentAllowlistAllows(t *testing.T) {
+	t.Parallel()
+	const idA = "fefe70d0-844d-4f4a-85c8-f995666daf1f"
+	const idB = "015959f4-69b9-4f21-85b0-ff8188d22c78"
+	wsA := util.MustParseUUID(idA)
+	wsB := util.MustParseUUID(idB)
+
+	// Fail-closed: nil and empty allowlists permit no workspace, so a missing
+	// or blank config never mass-triggers assessment.
+	if (P4AssessmentAllowlist(nil)).Allows(wsA) {
+		t.Fatal("nil allowlist must permit no workspace")
+	}
+	if (P4AssessmentAllowlist{}).Allows(wsA) {
+		t.Fatal("empty allowlist must permit no workspace")
+	}
+
+	list := P4AssessmentAllowlist{idA: true}
+	if !list.Allows(wsA) {
+		t.Fatal("allowlisted workspace must be permitted")
+	}
+	if list.Allows(wsB) {
+		t.Fatal("non-allowlisted workspace must be denied")
+	}
 }
