@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { AgentFixRecord } from "@multica/core/types";
 import {
   AI_NO_OUTPUT,
+  blockedWarningFamily,
+  computeBlockedStats,
   computeOperationsKpis,
   computeOperationsTrend,
   deriveAttribution,
   fixDayIso,
+  isVerifiableOutput,
   splitOperationsWindow,
   swarmChangeUrl,
   swarmReviewUrl,
@@ -67,6 +70,22 @@ describe("deriveAttribution", () => {
         }),
       ),
     ).toBe(AI_NO_OUTPUT);
+  });
+
+  it("keeps unknown as unknown — insufficient evidence is not no-output", () => {
+    // The assessment skill emits unknown + empty CL arrays when P4/Swarm
+    // lookup was unavailable; that must not inflate the no-output rate.
+    expect(
+      deriveAttribution(
+        fix({
+          p4_assessment: {
+            assessment_status: "completed",
+            delivery_attribution_prediction: "unknown",
+            ai_shelved_cls: [],
+          },
+        }),
+      ),
+    ).toBe("unknown");
   });
 
   it("keeps the prediction when the AI shelved something", () => {
@@ -136,7 +155,7 @@ describe("computeOperationsKpis", () => {
   });
   const notDone = fix({ external: { done: false } });
 
-  it("computes the nested funnel and the three headline rates", () => {
+  it("computes the nested funnel and the headline rates", () => {
     const kpis = computeOperationsKpis([
       aiPassed,
       aiFailed,
@@ -148,7 +167,7 @@ describe("computeOperationsKpis", () => {
       total: 5,
       externalDone: 4,
       p4Covered: 4,
-      aiDelivered: 3,
+      verifiable: 3,
       judged: 2,
       passed: 1,
     });
@@ -163,6 +182,29 @@ describe("computeOperationsKpis", () => {
       numerator: 1,
       denominator: 5,
     });
+    // Completed but verdict-less: aiUnjudged (unknown quality) and noOutput
+    // (no quality at all).
+    expect(kpis.unjudgedRate).toEqual({
+      value: 0.4,
+      numerator: 2,
+      denominator: 5,
+    });
+  });
+
+  it("keeps access-blocked rows out of the fix-rate denominator", () => {
+    const blocked = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "unknown",
+        quality_prediction: "likely_correct",
+        ai_shelved_cls: [9],
+        warnings: ["claimed_shelved_cl_not_found_on_reachable_p4"],
+      },
+    });
+    const kpis = computeOperationsKpis([aiPassed, blocked]);
+    expect(kpis.funnel.verifiable).toBe(1);
+    expect(kpis.passRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
   });
 
   it("returns null rates on empty input instead of fake zeros", () => {
@@ -170,6 +212,7 @@ describe("computeOperationsKpis", () => {
     expect(kpis.passRate.value).toBeNull();
     expect(kpis.deliveryShare.value).toBeNull();
     expect(kpis.noOutputRate.value).toBeNull();
+    expect(kpis.unjudgedRate.value).toBeNull();
   });
 
   it("does not count an unknown or drifting quality value as judged", () => {
@@ -252,6 +295,118 @@ describe("fixDayIso", () => {
 
   it("survives a bad timezone", () => {
     expect(fixDayIso(fix(), "Not/AZone")).toBe("2026-07-01");
+  });
+});
+
+describe("blockedWarningFamily / isVerifiableOutput", () => {
+  it("family-matches drifting warning variants, not just canonical values", () => {
+    expect(blockedWarningFamily("p4_lookup_unavailable")).toBe("p4");
+    expect(blockedWarningFamily("p4_lookup_unavailable_for_candidate_cls")).toBe(
+      "p4",
+    );
+    expect(
+      blockedWarningFamily("claimed_shelved_cl_not_found_on_reachable_p4"),
+    ).toBe("p4");
+    expect(blockedWarningFamily("swarm_lookup_unavailable")).toBe("swarm");
+    expect(
+      blockedWarningFamily(
+        "multica_p4_evidence_endpoint_unavailable_cli_missing_api_command",
+      ),
+    ).toBe("evidence_endpoint");
+    // Non-blocking warnings are not access blocks.
+    expect(blockedWarningFamily("missing_external_cl")).toBeNull();
+    expect(blockedWarningFamily("swarm_review_not_committed")).toBeNull();
+    expect(blockedWarningFamily("final CL differs from AI shelve")).toBeNull();
+  });
+
+  it("requires completed status, AI evidence, and unblocked access", () => {
+    const base = {
+      assessment_status: "completed",
+      delivery_attribution_prediction: "ai_delivered",
+      quality_prediction: "likely_correct",
+    };
+    expect(
+      isVerifiableOutput(
+        fix({ p4_assessment: { ...base, ai_shelved_cls: [1] } }),
+      ),
+    ).toBe(true);
+    // Swarm review evidence counts even without a shelve CL.
+    expect(
+      isVerifiableOutput(
+        fix({
+          p4_assessment: {
+            ...base,
+            ai_shelved_cls: [],
+            swarm_reviews: [{ review_id: 1 }],
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isVerifiableOutput(
+        fix({ p4_assessment: { ...base, ai_shelved_cls: [] } }),
+      ),
+    ).toBe(false);
+    expect(
+      isVerifiableOutput(
+        fix({
+          p4_assessment: {
+            ...base,
+            ai_shelved_cls: [1],
+            warnings: ["swarm_lookup_unavailable"],
+          },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isVerifiableOutput(
+        fix({
+          p4_assessment: { ...base, assessment_status: "running", ai_shelved_cls: [1] },
+        }),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("computeBlockedStats", () => {
+  it("counts blocked completed assessments per family with dedup per row", () => {
+    const stats = computeBlockedStats([
+      fix({
+        p4_assessment: {
+          assessment_status: "completed",
+          warnings: [
+            "swarm_lookup_unavailable",
+            "p4_lookup_unavailable",
+            "p4_cl_not_found",
+          ],
+        },
+      }),
+      fix({
+        p4_assessment: {
+          assessment_status: "completed",
+          warnings: ["evidence_endpoint_unavailable"],
+        },
+      }),
+      fix({
+        p4_assessment: {
+          assessment_status: "completed",
+          warnings: ["missing_external_cl"],
+        },
+      }),
+      // Not completed — excluded entirely.
+      fix({
+        p4_assessment: {
+          assessment_status: "failed",
+          warnings: ["swarm_lookup_unavailable"],
+        },
+      }),
+    ]);
+    expect(stats.completed).toBe(3);
+    expect(stats.families).toEqual([
+      { family: "swarm", count: 1 },
+      { family: "p4", count: 1 },
+      { family: "evidence_endpoint", count: 1 },
+    ]);
   });
 });
 

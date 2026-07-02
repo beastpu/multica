@@ -74,6 +74,7 @@ import { OperationsSummary } from "./operations-summary";
 import { OperationsTrend } from "./operations-trend";
 import { Segmented } from "./segmented";
 import {
+  computeBlockedStats,
   computeOperationsKpis,
   computeOperationsTrend,
   deriveAttribution,
@@ -83,6 +84,7 @@ import {
   splitOperationsWindow,
   swarmChangeUrl,
   swarmReviewUrl,
+  type BlockedFamily,
 } from "../operations-metrics";
 
 const ALL_AGENTS = "__all__";
@@ -1054,6 +1056,19 @@ function OperationsAnalysis({
     compactKey(f.p4_assessment?.quality_prediction, "unknown"),
   );
   const workstreams = groupWorkstreams(rows);
+  const blocked = computeBlockedStats(rows);
+  const blockedFamilyLabel = (family: BlockedFamily): string =>
+    family === "swarm"
+      ? t(($) => $.operations.analysis.blocked_swarm)
+      : family === "p4"
+        ? t(($) => $.operations.analysis.blocked_p4)
+        : family === "evidence_endpoint"
+          ? t(($) => $.operations.analysis.blocked_evidence)
+          : t(($) => $.operations.analysis.blocked_misc);
+  const blockedShare = (count: number): string =>
+    blocked.completed > 0
+      ? ` · ${Math.round((count / blocked.completed) * 1000) / 10}%`
+      : "";
   const predictionReasons = topReasons(
     rows,
     (f) => f.p4_assessment?.prediction_reasons,
@@ -1081,6 +1096,20 @@ function OperationsAnalysis({
         }))}
         onSelect={onDrillQuality}
       />
+      {/* Access-blocked share among completed assessments: which system
+          (Swarm auth / P4 / evidence endpoint) kept evidence unreachable. */}
+      <AnalysisCard
+        title={t(($) => $.operations.analysis.blocked_title, {
+          completed: blocked.completed,
+        })}
+        rows={blocked.families.map(({ family, count }) => ({
+          label: blockedFamilyLabel(family),
+          count,
+          countLabel: `${count}${blockedShare(count)}`,
+          tone: "warning" as Tone,
+        }))}
+        emptyLabel={t(($) => $.operations.analysis.blocked_none)}
+      />
       <AnalysisCard
         title={t(($) => $.operations.analysis.prediction_reason_title)}
         rows={predictionReasons}
@@ -1102,7 +1131,14 @@ function AnalysisCard({
   onSelect,
 }: {
   title: string;
-  rows: { key?: string; label: string; count: number; tone: Tone }[];
+  rows: {
+    key?: string;
+    label: string;
+    count: number;
+    // Optional display override for the right-hand number (e.g. "12 · 26%").
+    countLabel?: string;
+    tone: Tone;
+  }[];
   emptyLabel?: string;
   // When set, each row is clickable and drills down to the detail table with
   // the matching filter applied.
@@ -1129,7 +1165,7 @@ function AnalysisCard({
               <div className="flex items-center justify-between gap-3">
                 <ToneBadge tone={r.tone}>{r.label}</ToneBadge>
                 <span className="text-xs text-muted-foreground tabular-nums">
-                  {r.count}
+                  {r.countLabel ?? r.count}
                 </span>
               </div>
               <div className="h-1.5 overflow-hidden rounded-full bg-muted">
