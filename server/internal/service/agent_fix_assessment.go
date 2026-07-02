@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -621,20 +622,53 @@ func (s *P4AssessmentService) CompleteTask(ctx context.Context, task db.AgentTas
 			AssessmentTaskID: task.ID,
 			Warnings:         warnings,
 		})
-		if failErr != nil {
+		// pgx.ErrNoRows means the row was already 'completed' — the agent
+		// submitted the result through the /p4-assessment/result endpoint, so
+		// the guarded FailP4AssessmentFromTask matched nothing. That is the
+		// happy path now, not a failure: the parse fallback simply had nothing
+		// to do.
+		if failErr != nil && !errors.Is(failErr, pgx.ErrNoRows) {
 			return failErr
 		}
+		if failErr == nil {
+			return err
+		}
+		return nil
+	}
+	return s.writeCompletedAssessment(ctx, s.taskWorkspaceID(task), task.ID, parsed)
+}
+
+// SubmitResult stores an assessment result the agent POSTed to the
+// /p4-assessment/result endpoint. The payload is the bare result JSON (no
+// {"output": ...} envelope). Validation errors are returned verbatim so the
+// handler can surface them as a 400 the agent can self-correct against;
+// assessmentTaskID is the agent's own task (already authorized by the handler),
+// which is the row's assessment_task_id.
+func (s *P4AssessmentService) SubmitResult(ctx context.Context, workspaceID, assessmentTaskID pgtype.UUID, payload []byte) error {
+	parsed, err := validateP4AssessmentPayload(payload)
+	if err != nil {
 		return err
 	}
+	return s.writeCompletedAssessment(ctx, workspaceID, assessmentTaskID, parsed)
+}
+
+// writeCompletedAssessment maps a validated result onto the completed row,
+// keyed on (workspace, assessment_task_id). Shared by the task-output fallback
+// and the submit endpoint so both write identical columns.
+func (s *P4AssessmentService) writeCompletedAssessment(ctx context.Context, workspaceID, assessmentTaskID pgtype.UUID, parsed p4AssessmentOutput) error {
 	confidence := pgtype.Numeric{}
 	if parsed.Confidence != nil {
-		if err := confidence.Scan(*parsed.Confidence); err != nil {
+		// pgtype.Numeric.Scan does not accept a float64 (it panics/errors with
+		// "cannot scan float64"); feed it the decimal string form instead. This
+		// path was never exercised before the submit endpoint because every
+		// prior completion failed the output parse.
+		if err := confidence.Scan(strconv.FormatFloat(*parsed.Confidence, 'f', -1, 64)); err != nil {
 			return err
 		}
 	}
-	_, err = s.Queries.CompleteP4AssessmentFromTask(ctx, db.CompleteP4AssessmentFromTaskParams{
-		WorkspaceID:                   s.taskWorkspaceID(task),
-		AssessmentTaskID:              task.ID,
+	_, err := s.Queries.CompleteP4AssessmentFromTask(ctx, db.CompleteP4AssessmentFromTaskParams{
+		WorkspaceID:                   workspaceID,
+		AssessmentTaskID:              assessmentTaskID,
 		DeliveryAttributionPrediction: parsed.DeliveryAttributionPrediction,
 		QualityPrediction:             parsed.QualityPrediction,
 		PredictionReasons:             parsed.PredictionReasons,
@@ -704,6 +738,16 @@ func parseP4AssessmentTaskOutput(result []byte) (p4AssessmentOutput, error) {
 		}
 		payload = []byte(matches[0][1])
 	}
+	return validateP4AssessmentPayload(payload)
+}
+
+// validateP4AssessmentPayload validates a bare assessment-result JSON object
+// (exactly the schema the skill documents) and fills the same defaults the
+// task-output parser applies. It is shared by the task-completion fallback
+// path and the /p4-assessment/result submit endpoint, so the agent gets the
+// identical contract whether it returns the JSON or POSTs it. Errors are
+// phrased for the agent to self-correct on a 400.
+func validateP4AssessmentPayload(payload []byte) (p4AssessmentOutput, error) {
 	var out p4AssessmentOutput
 	dec := json.NewDecoder(bytes.NewReader(payload))
 	dec.DisallowUnknownFields()
@@ -743,6 +787,24 @@ func parseP4AssessmentTaskOutput(result []byte) (p4AssessmentOutput, error) {
 		out.Warnings = []byte("[]")
 	} else if !jsonRawHasShape(out.Warnings, []byte("[")) {
 		return p4AssessmentOutput{}, fmt.Errorf("warnings must be an array")
+	}
+	// The array columns are NOT NULL DEFAULT '{}'; an omitted field decodes to a
+	// nil slice, which would write SQL NULL and violate the constraint. Normalize
+	// to empty slices so a sparse (evidence-poor) result still stores cleanly.
+	if out.PredictionReasons == nil {
+		out.PredictionReasons = []string{}
+	}
+	if out.AIShelvedCLs == nil {
+		out.AIShelvedCLs = []int32{}
+	}
+	if out.SwarmChangeCLs == nil {
+		out.SwarmChangeCLs = []int32{}
+	}
+	if out.SwarmCommittedCLs == nil {
+		out.SwarmCommittedCLs = []int32{}
+	}
+	if out.ExternalCommittedCLs == nil {
+		out.ExternalCommittedCLs = []int32{}
 	}
 	return out, nil
 }

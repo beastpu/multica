@@ -1472,6 +1472,7 @@ SET assessment_status = 'failed',
     warnings = $3,
     updated_at = now()
 WHERE workspace_id = $1 AND assessment_task_id = $2
+  AND assessment_status <> 'completed'
 RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at
 `
 
@@ -1481,6 +1482,10 @@ type FailP4AssessmentFromTaskParams struct {
 	Warnings         []byte      `json:"warnings"`
 }
 
+// Never clobber a result the agent already submitted through the
+// /p4-assessment/result endpoint: once the row is 'completed', a later
+// task-end parse failure must not knock it back to 'failed'. The endpoint is
+// the authoritative path; task-output parsing is only a fallback.
 func (q *Queries) FailP4AssessmentFromTask(ctx context.Context, arg FailP4AssessmentFromTaskParams) (AgentFixP4Assessment, error) {
 	row := q.db.QueryRow(ctx, failP4AssessmentFromTask, arg.WorkspaceID, arg.AssessmentTaskID, arg.Warnings)
 	var i AgentFixP4Assessment

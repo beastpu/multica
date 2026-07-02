@@ -2184,3 +2184,56 @@ func (h *Handler) requestTaskCanReadP4Evidence(r *http.Request, workspaceID, act
 	}
 	return ctx.WorkspaceID == workspaceID && ctx.FeishuBindingID == uuidToString(bindingID)
 }
+
+// SubmitAgentFixP4Assessment ingests a structured assessment result the agent
+// POSTs directly (POST /api/operations/agent-fixes/{bindingId}/p4-assessment/result).
+// This is the authoritative ingestion path: the agent constructs the result
+// JSON and submits it as a deliberate API call, so nothing has to parse a
+// free-text task message. Malformed payloads are rejected with a 400 the agent
+// can self-correct against, and server-side validation keeps junk out of the
+// operations feed at the boundary.
+//
+// Only the binding's own assessment task (owned by the calling agent) may
+// submit — same scope as the evidence endpoint. The request body is the bare
+// result JSON, not wrapped in the task-output {"output": ...} envelope.
+func (h *Handler) SubmitAgentFixP4Assessment(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	bindingID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "bindingId"), "binding_id")
+	if !ok {
+		return
+	}
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	if actorType != "agent" {
+		writeError(w, http.StatusForbidden, "only an assessment agent task may submit results")
+		return
+	}
+	if !h.requestTaskCanReadP4Evidence(r, workspaceID, actorID, bindingID) {
+		writeError(w, http.StatusForbidden, "P4 assessment submit denied")
+		return
+	}
+	if h.P4AssessmentService == nil {
+		writeError(w, http.StatusServiceUnavailable, "P4 assessment service unavailable")
+		return
+	}
+	// requestTaskCanReadP4Evidence already validated X-Task-ID belongs to this
+	// agent's assessment task for this binding, so re-parsing it is safe.
+	taskUUID, err := util.ParseUUID(r.Header.Get("X-Task-ID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid task id")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 512*1024))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+	if err := h.P4AssessmentService.SubmitResult(r.Context(), parseUUID(workspaceID), taskUUID, body); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "P4 assessment target not found")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "invalid assessment result: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "completed"})
+}
