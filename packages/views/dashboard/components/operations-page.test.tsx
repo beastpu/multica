@@ -307,15 +307,6 @@ const AGENTS = vi.hoisted(() => [
 ]);
 
 const TRIGGER_ASSESSMENT = vi.hoisted(() => vi.fn());
-const UPDATE_REVIEW = vi.hoisted(() =>
-  vi.fn().mockResolvedValue({
-    outcome: "accepted",
-    reasons: [],
-    note: "",
-    reviewer_id: "u-1",
-    reviewed_at: "2026-06-01T01:00:00Z",
-  }),
-);
 
 // useQuery is keyed: the operations-fixes options carry "operations-fixes" in
 // their key, with the debounced search term as the last key segment; the agent
@@ -398,7 +389,6 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("@multica/core/api", () => ({
   api: {
-    updateAgentFixReview: UPDATE_REVIEW,
     triggerAgentFixP4Assessment: vi.fn().mockResolvedValue({
       created: true,
       reason: "created",
@@ -455,27 +445,12 @@ import {
 
 let exportedBlob: Blob | null = null;
 
-// Opens a row's quick-review select (aria-label "Human review") and picks an
-// outcome from the listbox.
-async function pickQuickOutcome(
-  user: ReturnType<typeof userEvent.setup>,
-  rowIndex: number,
-  outcomeLabel: string,
-) {
-  const selects = screen.getAllByLabelText("Human review");
-  await user.click(selects[rowIndex]!);
-  await user.click(
-    within(await screen.findByRole("listbox")).getByText(outcomeLabel),
-  );
-}
-
 describe("OperationsPage", () => {
   beforeEach(() => {
     cleanup();
     // Each test starts from the default column layout, regardless of prior runs.
     useOperationsViewStore.getState().resetColumnWidths();
     TRIGGER_ASSESSMENT.mockClear();
-    UPDATE_REVIEW.mockClear();
     exportedBlob = null;
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
@@ -542,7 +517,9 @@ describe("OperationsPage", () => {
     expect(screen.getByText("P4 covered")).toBeTruthy();
     // Funnel stage label; the same string also appears on attribution badges.
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
-    // Pass rate: 1 accepted / 1 reviewed AI-delivered row (t-1) = 100%.
+    expect(screen.getByText("Judged")).toBeTruthy();
+    // Pass rate: t-1 is the only judged AI-delivered row and it is
+    // likely_correct → 1/1 = 100%.
     expect(screen.getByText("100%")).toBeTruthy();
   });
 
@@ -558,7 +535,7 @@ describe("OperationsPage", () => {
     expect(screen.getAllByText("AI no output").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("renders demo-like P4 assessment evidence and review outcomes", async () => {
+  it("renders demo-like P4 assessment evidence and quality analysis", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
@@ -595,10 +572,7 @@ describe("OperationsPage", () => {
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Likely correct")).toBeTruthy();
     expect(screen.getByText("confidence 86%")).toBeTruthy();
-    expect(screen.getAllByText("Accepted").length).toBeGreaterThanOrEqual(1);
-    expect(screen.queryByText("Complete")).toBeNull();
-    await user.click(screen.getAllByRole("button", { name: "Details" })[1]!);
-    expect(screen.getByText("Complete")).toBeTruthy();
+    expect(screen.getByText("Likely wrong")).toBeTruthy();
   });
 
   it("links external work items, swarm reviews, and CLs", () => {
@@ -621,108 +595,18 @@ describe("OperationsPage", () => {
     );
   });
 
-  it("quick-saves an accepted outcome from the row select", async () => {
-    const user = userEvent.setup();
-    renderWithI18n(<OperationsPage />);
-
-    // Row order is the fixture order: t-4 (Client crash) is the 4th row.
-    await pickQuickOutcome(user, 3, "Accepted");
-
-    await waitFor(() => {
-      expect(UPDATE_REVIEW).toHaveBeenCalledWith(
-        "i-4",
-        {
-          outcome: "accepted",
-          reasons: [],
-          note: "Needs more validation.",
-        },
-        "binding-4",
-      );
-    });
-    // No dialog for the direct-save path.
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
-  it("routes needs_changes through the dialog with the outcome preloaded", async () => {
-    const user = userEvent.setup();
-    renderWithI18n(<OperationsPage />);
-
-    await pickQuickOutcome(user, 0, "Needs changes");
-
-    // Dialog opens preloaded on needs_changes with its reason set, reasons
-    // reset (the previous outcome's reasons don't carry over).
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Incomplete coverage")).toBeTruthy();
-    expect(UPDATE_REVIEW).not.toHaveBeenCalled();
-
-    await user.click(
-      within(dialog).getByRole("button", { name: "Incomplete coverage" }),
-    );
-    await user.click(within(dialog).getByText("Save"));
-
-    await waitFor(() => {
-      expect(UPDATE_REVIEW).toHaveBeenCalledWith(
-        "i-1",
-        {
-          outcome: "needs_changes",
-          reasons: ["coverage_incomplete"],
-          note: "",
-        },
-        "binding-1",
-      );
-    });
-  });
-
-  it("edits a review through the full dialog and saves via binding_id", async () => {
-    const user = userEvent.setup();
-    renderWithI18n(<OperationsPage />);
-
-    await user.click(screen.getAllByRole("button", { name: "Edit review" })[0]!);
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Human review AI fix result")).toBeTruthy();
-
-    const note = within(dialog).getByPlaceholderText(/Add judgement details/i);
-    await user.clear(note);
-    await user.type(note, "Accepted after manual smoke test.");
-    await user.click(within(dialog).getByText("Save"));
-
-    await waitFor(() => {
-      expect(UPDATE_REVIEW).toHaveBeenCalledWith(
-        "i-1",
-        {
-          outcome: "accepted",
-          reasons: ["complete_usable"],
-          note: "Accepted after manual smoke test.",
-        },
-        "binding-1",
-      );
-    });
-  });
-
-  it("renders human review outcome and reason copy in Chinese locale", async () => {
+  it("renders quality analysis copy in Chinese locale", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />, { locale: "zh-Hans" });
 
-    expect(screen.getAllByText("通过").length).toBeGreaterThanOrEqual(1);
-    expect(screen.queryByText("完整可用")).toBeNull();
+    // Quality prediction badges + funnel stage labels.
+    expect(screen.getByText("\u5927\u6982\u7387\u6b63\u786e")).toBeTruthy();
+    expect(screen.getByText("\u5df2\u5224\u5b9a")).toBeTruthy();
+    expect(screen.getAllByText("\u901a\u8fc7").length).toBeGreaterThanOrEqual(1);
 
-    await user.click(screen.getAllByRole("button", { name: "详情" })[1]!);
-    expect(screen.getByText("完整可用")).toBeTruthy();
-    await user.keyboard("{Escape}");
-
-    await user.click(screen.getAllByRole("button", { name: "编辑验收" })[0]!);
-    expect(screen.getByText("人工验收 AI 修单结果")).toBeTruthy();
-    expect(screen.getByPlaceholderText(/补充判断依据/)).toBeTruthy();
-  });
-
-  it("keeps human review reasons out of the compact main table", () => {
-    const { container } = renderWithI18n(<OperationsPage />);
-
-    expect(screen.getAllByText("Accepted").length).toBeGreaterThanOrEqual(1);
-    expect(screen.queryByText("Complete")).toBeNull();
-    expect(
-      container.querySelector('[style*="grid-template-columns"]'),
-    ).not.toBeNull();
+    // The P4 evidence popover still opens with the localized trigger.
+    await user.click(screen.getAllByRole("button", { name: "\u8be6\u60c5" })[0]!);
+    expect(screen.getByText("282941, 282944")).toBeTruthy();
   });
 
   it("disables the assessment trigger until the external item is done", () => {
@@ -821,15 +705,13 @@ describe("OperationsPage", () => {
     await user.click(screen.getByText("Analysis report"));
 
     expect(screen.getByText("Delivery attribution")).toBeTruthy();
-    expect(screen.getByText("Human review outcome")).toBeTruthy();
+    expect(screen.getByText("AI quality distribution")).toBeTruthy();
     expect(screen.getByText("Workstream outcome")).toBeTruthy();
-    expect(screen.getByText("Top human reasons")).toBeTruthy();
     expect(screen.getByText("Top AI reasons")).toBeTruthy();
     expect(screen.getByText("rel_1.7.3/client")).toBeTruthy();
-    expect(screen.getByText("Incomplete coverage")).toBeTruthy();
     expect(screen.getByText("Wrong direction")).toBeTruthy();
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Accepted").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Likely correct").length).toBeGreaterThanOrEqual(1);
   });
 
   it("drills down from an analysis distribution into the filtered detail table", async () => {
@@ -875,11 +757,13 @@ describe("OperationsPage", () => {
     expect(screen.queryByText("Login broke")).toBeNull();
   });
 
-  it("toggles pending-review-only on and off", async () => {
+  it("toggles pending-judgement-only on and off", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    const toggle = screen.getByRole("button", { name: "Pending review only" });
+    const toggle = screen.getByRole("button", {
+      name: "Pending judgement only",
+    });
     expect(toggle).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText("Login broke")).toBeTruthy();
     expect(screen.getByText("Parser cleanup")).toBeTruthy();
@@ -887,8 +771,8 @@ describe("OperationsPage", () => {
     await user.click(toggle);
 
     expect(toggle).toHaveAttribute("aria-pressed", "true");
-    // Reviewed rows (accepted / needs_changes / unknown outcome) drop out;
-    // unreviewed rows stay.
+    // Rows with an AI quality verdict (likely_correct / likely_wrong) drop
+    // out; rows without a judgement stay.
     expect(screen.queryByText("Login broke")).toBeNull();
     expect(screen.queryByText("Client crash")).toBeNull();
     expect(screen.getByText("Parser cleanup")).toBeTruthy();
@@ -970,15 +854,14 @@ describe("OperationsPage", () => {
     expect(csv).toContain("2026-06-04T00:30:00Z");
     expect(csv).toContain("283111");
     expect(csv).toContain("283222");
-    expect(csv).toContain("needs_changes");
-    expect(csv).toContain("coverage_incomplete");
+    expect(csv).toContain("likely_wrong");
     expect(csv).not.toContain("Login broke");
   });
 
   it("renders a resize handle for each sizable column", () => {
     renderWithI18n(<OperationsPage />);
     const handles = screen.getAllByRole("separator");
-    expect(handles.length).toBe(7);
+    expect(handles.length).toBe(6);
     expect(
       handles.map((h) => h.getAttribute("aria-label")),
     ).toEqual([
@@ -987,7 +870,6 @@ describe("OperationsPage", () => {
       "Resize P4 evidence column",
       "Resize Delivery attribution column",
       "Resize AI quality prediction column",
-      "Resize Human review column",
       "Resize Date column",
     ]);
     expect(
@@ -1022,7 +904,6 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Future work")).toBeTruthy();
     expect(screen.getByText("robot_wrote_it")).toBeTruthy();
     expect(screen.getByText("surprisingly_fine")).toBeTruthy();
-    expect(screen.getAllByText("mystery_outcome").length).toBeGreaterThanOrEqual(1);
   });
 
   it("filters rows by the comment search term and highlights the match", async () => {
@@ -1119,9 +1000,9 @@ describe("buildOperationsP4AssessmentCsv", () => {
       {
         ...(FIXES[0] as any),
         issue_title: 'Login, "broke"',
-        human_review: {
-          ...((FIXES[0] as any).human_review ?? {}),
-          note: "first line\nsecond line",
+        p4_assessment: {
+          ...((FIXES[0] as any).p4_assessment ?? {}),
+          summary: "first line\nsecond line",
         },
       },
       { ...(FIXES[1] as any), external: undefined },

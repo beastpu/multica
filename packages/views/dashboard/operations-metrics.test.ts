@@ -99,29 +99,30 @@ describe("deriveAttribution", () => {
 });
 
 describe("computeOperationsKpis", () => {
-  const aiAccepted = fix({
+  const aiPassed = fix({
     external: { done: true },
     p4_assessment: {
       assessment_status: "completed",
       delivery_attribution_prediction: "ai_delivered",
+      quality_prediction: "likely_correct",
       ai_shelved_cls: [1],
     },
-    human_review: { outcome: "accepted" },
   });
-  const aiRejected = fix({
+  const aiFailed = fix({
     external: { done: true },
     p4_assessment: {
       assessment_status: "completed",
       delivery_attribution_prediction: "ai_assisted",
+      quality_prediction: "likely_wrong",
       ai_shelved_cls: [2],
     },
-    human_review: { outcome: "rejected" },
   });
-  const aiUnreviewed = fix({
+  const aiUnjudged = fix({
     external: { done: true },
     p4_assessment: {
       assessment_status: "completed",
       delivery_attribution_prediction: "ai_delivered",
+      quality_prediction: "unknown",
       ai_shelved_cls: [3],
     },
   });
@@ -137,9 +138,9 @@ describe("computeOperationsKpis", () => {
 
   it("computes the nested funnel and the three headline rates", () => {
     const kpis = computeOperationsKpis([
-      aiAccepted,
-      aiRejected,
-      aiUnreviewed,
+      aiPassed,
+      aiFailed,
+      aiUnjudged,
       noOutput,
       notDone,
     ]);
@@ -148,8 +149,8 @@ describe("computeOperationsKpis", () => {
       externalDone: 4,
       p4Covered: 4,
       aiDelivered: 3,
-      reviewed: 2,
-      accepted: 1,
+      judged: 2,
+      passed: 1,
     });
     expect(kpis.passRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
     expect(kpis.deliveryShare).toEqual({
@@ -171,18 +172,19 @@ describe("computeOperationsKpis", () => {
     expect(kpis.noOutputRate.value).toBeNull();
   });
 
-  it("does not count not_applicable as reviewed", () => {
+  it("does not count an unknown or drifting quality value as judged", () => {
     const kpis = computeOperationsKpis([
+      aiUnjudged,
       fix({
         p4_assessment: {
           assessment_status: "completed",
           delivery_attribution_prediction: "ai_delivered",
+          quality_prediction: "surprisingly_fine",
           ai_shelved_cls: [1],
         },
-        human_review: { outcome: "not_applicable" },
       }),
     ]);
-    expect(kpis.funnel.reviewed).toBe(0);
+    expect(kpis.funnel.judged).toBe(0);
   });
 });
 
@@ -216,9 +218,9 @@ describe("computeOperationsTrend", () => {
         p4_assessment: {
           assessment_status: "completed",
           delivery_attribution_prediction: "ai_delivered",
+          quality_prediction: "likely_correct",
           ai_shelved_cls: [1],
         },
-        human_review: { outcome: "accepted" },
       }),
     ];
     const trend = computeOperationsTrend(rows, "UTC", 4);

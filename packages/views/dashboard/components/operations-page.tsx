@@ -19,7 +19,6 @@ import {
   Radar,
   RefreshCw,
   Search,
-  SquarePen,
   X,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -48,7 +47,6 @@ import { feishuProjectIssueStatusesOptions } from "@multica/core/feishu-project/
 import {
   operationsFixesOptions,
   useTriggerAgentFixP4Assessment,
-  useUpdateAgentFixReview,
   useOperationsViewStore,
   clampOperationsColumnWidth,
   OPERATIONS_DEFAULT_WIDTHS,
@@ -66,11 +64,8 @@ import { AppLink } from "../../navigation";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { useT } from "../../i18n";
 import {
-  AGENT_FIX_REVIEW_OUTCOMES,
-  AgentFixReviewDialog,
   ToneBadge,
   agentFixEnumLabel,
-  agentFixReviewReasonLabels,
   agentFixEnumTone,
   type Tone,
   type UsageT,
@@ -83,7 +78,8 @@ import {
   computeOperationsTrend,
   deriveAttribution,
   fixDayIso,
-  isPendingReview,
+  isPendingJudgement,
+  qualityJudgement,
   splitOperationsWindow,
   swarmChangeUrl,
   swarmReviewUrl,
@@ -139,10 +135,9 @@ const EMPTY: AgentFixRecord[] = [];
 
 // --- Resizable-column layout -------------------------------------------------
 // Column order: Issue, external state, agent, P4 evidence, delivery
-// attribution, AI quality prediction, human review, date. The external status
-// column stays fixed; the rest are user-resizable. The legacy `status` width
-// slot backs the P4 evidence column so stored preferences remain scoped to
-// this page.
+// attribution, AI quality analysis, date. The external status column stays
+// fixed; the rest are user-resizable. The legacy `status` width slot backs the
+// P4 evidence column so stored preferences remain scoped to this page.
 const EXTERNAL_PX = 138;
 const COLUMN_GAP_PX = 12; // matches gap-3
 const CARD_PADDING_X_PX = 32; // px-4 on the header + each row (16 × 2)
@@ -153,11 +148,10 @@ const COLUMN_VAR: Record<OperationsColumnKey, string> = {
   status: "--ops-col-status",
   attribution: "--ops-col-attribution",
   quality: "--ops-col-quality",
-  review: "--ops-col-review",
   time: "--ops-col-time",
 };
 
-const GRID_TEMPLATE = `var(${COLUMN_VAR.issue}) ${EXTERNAL_PX}px var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.status}) var(${COLUMN_VAR.attribution}) var(${COLUMN_VAR.quality}) var(${COLUMN_VAR.review}) var(${COLUMN_VAR.time})`;
+const GRID_TEMPLATE = `var(${COLUMN_VAR.issue}) ${EXTERNAL_PX}px var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.status}) var(${COLUMN_VAR.attribution}) var(${COLUMN_VAR.quality}) var(${COLUMN_VAR.time})`;
 
 const GRID_STYLE: CSSProperties = { gridTemplateColumns: GRID_TEMPLATE };
 
@@ -173,10 +167,9 @@ function operationsMinWidth(w: Record<OperationsColumnKey, number>): number {
     w.status +
     w.attribution +
     w.quality +
-    w.review +
     w.time +
     EXTERNAL_PX +
-    COLUMN_GAP_PX * 7 +
+    COLUMN_GAP_PX * 6 +
     CARD_PADDING_X_PX
   );
 }
@@ -190,7 +183,6 @@ function cardStyle(w: Record<OperationsColumnKey, number>): CSSProperties {
     [COLUMN_VAR.status]: `${w.status}px`,
     [COLUMN_VAR.attribution]: `${w.attribution}px`,
     [COLUMN_VAR.quality]: `${w.quality}px`,
-    [COLUMN_VAR.review]: `${w.review}px`,
     [COLUMN_VAR.time]: `${w.time}px`,
     minWidth: `${operationsMinWidth(w)}px`,
   } as CSSProperties;
@@ -347,9 +339,6 @@ export const OPERATIONS_P4_CSV_HEADERS = [
   "AI Shelve CL",
   "Swarm Change CL",
   "Final CL",
-  "Human Outcome",
-  "Reasons",
-  "Note",
   "Summary",
   "Warnings",
 ] as const;
@@ -407,9 +396,6 @@ export function buildOperationsP4AssessmentCsv(rows: AgentFixRecord[]): string {
         csvList(p4?.ai_shelved_cls) || evidence.shelve,
         csvList(p4?.swarm_change_cls),
         evidence.finalCl,
-        fix.human_review?.outcome,
-        csvList(fix.human_review?.reasons),
-        fix.human_review?.note,
         p4?.summary,
         csvList(p4?.warnings),
       ];
@@ -469,21 +455,14 @@ export function splitHighlight(text: string, keyword: string): HighlightPart[] {
   return parts;
 }
 
-// Pending target for the review dialog: the row plus an optional outcome the
-// quick-select preloaded (needs_changes / rejected require reasons, so they
-// route through the dialog instead of saving directly).
-interface ReviewTarget {
-  fix: AgentFixRecord;
-  presetOutcome?: string;
-}
-
 /**
  * Operations page — AI fix assessment. One row per issue an agent has worked
  * on (the latest run only), joining the external work item state, P4/Swarm
- * evidence, the AI's delivery/quality predictions, and the human review
- * verdict. A KPI band (pass rate / delivery share / no-output rate + delivery
- * funnel) and a weekly trend chart sit above the detail table. Lives at
- * `/{slug}/operations`; backed by GET /api/operations/agent-fixes.
+ * evidence, and the AI's delivery/quality analysis. Quality is AI-judged —
+ * there is no human review step. A KPI band (pass rate / delivery share /
+ * no-output rate + delivery funnel) and a weekly trend chart sit above the
+ * detail table. Lives at `/{slug}/operations`; backed by
+ * GET /api/operations/agent-fixes.
  */
 export function OperationsPage() {
   const { t } = useT("usage");
@@ -517,14 +496,9 @@ export function OperationsPage() {
   // actually keys the query (so we don't refetch on every keystroke).
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
-  const [quickSavingIssueId, setQuickSavingIssueId] = useState<string | null>(
-    null,
-  );
   const [triggeringBindingId, setTriggeringBindingId] = useState<string | null>(
     null,
   );
-  const updateReview = useUpdateAgentFixReview();
   const triggerAssessment = useTriggerAgentFixP4Assessment();
 
   useEffect(() => {
@@ -622,7 +596,7 @@ export function OperationsPage() {
       ) {
         return false;
       }
-      if (pendingOnly && !isPendingReview(f)) {
+      if (pendingOnly && !isPendingJudgement(f)) {
         return false;
       }
       return true;
@@ -672,44 +646,10 @@ export function OperationsPage() {
     [rows, safePage],
   );
 
-  // Quick review from the row's outcome select. Outcomes that don't need
-  // reasons (accepted / not_applicable / back-to-unreviewed) save directly;
-  // needs_changes / rejected open the dialog with the outcome preloaded so the
-  // reviewer picks the reasons that make the verdict auditable.
-  const quickReview = (fix: AgentFixRecord, outcome: string) => {
-    if ((fix.human_review?.outcome ?? "unreviewed") === outcome) return;
-    if (outcome === "needs_changes" || outcome === "rejected") {
-      setReviewTarget({ fix, presetOutcome: outcome });
-      return;
-    }
-    setQuickSavingIssueId(fix.issue_id);
-    updateReview.mutate(
-      {
-        issueId: fix.issue_id,
-        bindingId: fix.external?.binding_id,
-        data: { outcome, reasons: [], note: fix.human_review?.note ?? "" },
-      },
-      {
-        onError: (err) => {
-          toast.error(
-            err instanceof Error && err.message
-              ? err.message
-              : t(($) => $.operations.review_modal.save_failed),
-          );
-        },
-        onSettled: () => {
-          setQuickSavingIssueId(null);
-        },
-      },
-    );
-  };
-
   // "状态" column = issue workflow status (reused from the issues namespace);
   // unknown server values render raw so enum drift downgrades, not crashes.
   const issueStatusLabel = (s: string) =>
     isKnownIssueStatus(s) ? tIssues(($) => $.status[s]) : s;
-
-  const reviewFix = reviewTarget?.fix ?? null;
 
   return (
     <div className="flex h-full flex-col">
@@ -862,6 +802,10 @@ export function OperationsPage() {
                 setAttributionFilter(key);
                 setActiveTab(DETAIL_TAB);
               }}
+              onDrillQuality={(key) => {
+                setQualityFilter(key);
+                setActiveTab(DETAIL_TAB);
+              }}
               onDrillWorkstream={(key) => {
                 setWorkstreamFilter(key);
                 setActiveTab(DETAIL_TAB);
@@ -909,11 +853,6 @@ export function OperationsPage() {
                       columnKey="quality"
                       cardRef={cardRef}
                       label={t(($) => $.operations.table.ai_quality)}
-                    />
-                    <HeaderCell
-                      columnKey="review"
-                      cardRef={cardRef}
-                      label={t(($) => $.operations.table.human_review)}
                     />
                     <HeaderCell
                       columnKey="time"
@@ -1015,17 +954,11 @@ export function OperationsPage() {
                             value={f.p4_assessment?.quality_prediction}
                             kind="quality"
                           />
-                          <HumanReviewCell
-                            fix={f}
-                            saving={quickSavingIssueId === f.issue_id}
-                            onQuickReview={(outcome) => quickReview(f, outcome)}
-                            onEdit={() => setReviewTarget({ fix: f })}
-                          />
                           <span className="min-w-0 overflow-hidden truncate whitespace-nowrap text-xs text-muted-foreground tabular-nums">
                             {day}
                           </span>
                           {comment ? (
-                            <div className="col-span-8 -mt-1 truncate text-xs text-muted-foreground">
+                            <div className="col-span-7 -mt-1 truncate text-xs text-muted-foreground">
                               <span className="mr-1 font-medium text-foreground/80">
                                 {t(($) => $.operations.table.reason)}:
                               </span>
@@ -1074,58 +1007,6 @@ export function OperationsPage() {
           )}
         </div>
       </div>
-      <AgentFixReviewDialog
-        open={!!reviewFix}
-        description={
-          reviewFix
-            ? `${reviewFix.issue_identifier} · ${reviewFix.issue_title}`
-            : t(($) => $.operations.review_modal.empty_issue)
-        }
-        initialReview={
-          reviewFix
-            ? {
-                ...reviewFix.human_review,
-                outcome:
-                  reviewTarget?.presetOutcome ??
-                  reviewFix.human_review?.outcome,
-                // A preset outcome invalidates the previous outcome's reasons.
-                reasons: reviewTarget?.presetOutcome
-                  ? []
-                  : reviewFix.human_review?.reasons,
-              }
-            : undefined
-        }
-        saving={updateReview.isPending}
-        canSave={!!reviewFix}
-        evidenceSlot={
-          reviewFix ? <AgentFixReviewEvidence fix={reviewFix} /> : null
-        }
-        onOpenChange={(open) => {
-          if (!open && !updateReview.isPending) setReviewTarget(null);
-        }}
-        onSave={(data) => {
-          if (!reviewFix) return;
-          updateReview.mutate(
-            {
-              issueId: reviewFix.issue_id,
-              bindingId: reviewFix.external?.binding_id,
-              data,
-            },
-            {
-              onSuccess: () => {
-                setReviewTarget(null);
-              },
-              onError: (err) => {
-                toast.error(
-                  err instanceof Error && err.message
-                    ? err.message
-                    : t(($) => $.operations.review_modal.save_failed),
-                );
-              },
-            },
-          );
-        }}
-      />
     </div>
   );
 }
@@ -1158,24 +1039,21 @@ function HeaderCell({
 function OperationsAnalysis({
   rows,
   onDrillAttribution,
+  onDrillQuality,
   onDrillWorkstream,
 }: {
   rows: AgentFixRecord[];
   onDrillAttribution: (key: string) => void;
+  onDrillQuality: (key: string) => void;
   onDrillWorkstream: (key: string) => void;
 }) {
   const { t } = useT("usage");
   const tx = t as unknown as UsageT;
   const attribution = countBy(rows, deriveAttribution);
-  const review = countBy(rows, (f) =>
-    f.human_review?.outcome?.trim() || "unreviewed",
+  const quality = countBy(rows, (f) =>
+    compactKey(f.p4_assessment?.quality_prediction, "unknown"),
   );
   const workstreams = groupWorkstreams(rows);
-  const humanReasons = topReasons(
-    rows,
-    (f) => f.human_review?.reasons,
-    (key) => agentFixEnumLabel(tx, "review_reason", key),
-  );
   const predictionReasons = topReasons(
     rows,
     (f) => f.p4_assessment?.prediction_reasons,
@@ -1194,28 +1072,24 @@ function OperationsAnalysis({
         onSelect={onDrillAttribution}
       />
       <AnalysisCard
-        title={t(($) => $.operations.analysis.review_title)}
-        rows={Array.from(review.entries()).map(([key, count]) => ({
+        title={t(($) => $.operations.analysis.quality_title)}
+        rows={Array.from(quality.entries()).map(([key, count]) => ({
           key,
-          label: agentFixEnumLabel(tx, "review", key),
+          label: agentFixEnumLabel(tx, "quality", key),
           count,
-          tone: agentFixEnumTone("review", key),
+          tone: agentFixEnumTone("quality", key),
         }))}
+        onSelect={onDrillQuality}
       />
       <AnalysisCard
-        title={t(($) => $.operations.analysis.human_reason_title)}
-        rows={humanReasons}
+        title={t(($) => $.operations.analysis.prediction_reason_title)}
+        rows={predictionReasons}
         emptyLabel={t(($) => $.operations.analysis.no_reasons)}
       />
       <WorkstreamAnalysisCard
         title={t(($) => $.operations.analysis.workstream_title)}
         rows={workstreams}
         onSelect={onDrillWorkstream}
-      />
-      <AnalysisCard
-        title={t(($) => $.operations.analysis.prediction_reason_title)}
-        rows={predictionReasons}
-        emptyLabel={t(($) => $.operations.analysis.no_reasons)}
       />
     </div>
   );
@@ -1298,8 +1172,8 @@ function WorkstreamAnalysisCard({
   rows: {
     workstream: string;
     total: number;
-    reviewed: number;
-    accepted: number;
+    judged: number;
+    passed: number;
   }[];
   onSelect: (key: string) => void;
 }) {
@@ -1357,19 +1231,19 @@ function groupWorkstreams(rows: AgentFixRecord[]) {
     {
       workstream: string;
       total: number;
-      reviewed: number;
-      accepted: number;
+      judged: number;
+      passed: number;
     }
   >();
   for (const row of rows) {
     const workstream = derivedEvidence(row).workstream || "unknown";
     const group =
       groups.get(workstream) ??
-      { workstream, total: 0, reviewed: 0, accepted: 0 };
+      { workstream, total: 0, judged: 0, passed: 0 };
     group.total += 1;
-    const outcome = row.human_review?.outcome ?? "";
-    if (outcome && outcome !== "unreviewed") group.reviewed += 1;
-    if (outcome === "accepted") group.accepted += 1;
+    const quality = qualityJudgement(row);
+    if (quality !== "") group.judged += 1;
+    if (quality === "likely_correct") group.passed += 1;
     groups.set(workstream, group);
   }
   return Array.from(groups.values()).sort((a, b) => b.total - a.total);
@@ -1859,200 +1733,6 @@ function PredictionCell({
           {t(($) => $.operations.p4.confidence, { value: detail })}
         </span>
       ) : null}
-    </div>
-  );
-}
-
-function HumanReviewCell({
-  fix,
-  saving,
-  onQuickReview,
-  onEdit,
-}: {
-  fix: AgentFixRecord;
-  saving: boolean;
-  onQuickReview: (outcome: string) => void;
-  onEdit: () => void;
-}) {
-  const { t } = useT("usage");
-  const tx = t as unknown as UsageT;
-  const outcome = fix.human_review?.outcome || "unreviewed";
-  const reasonText = agentFixReviewReasonLabels(
-    tx,
-    fix.human_review?.reasons,
-  ).join(", ");
-  const note = fix.human_review?.note ?? "";
-  const reviewedAt = fix.human_review?.reviewed_at ?? "";
-  const detailRows = [
-    reasonText ? [t(($) => $.operations.review_modal.reasons), reasonText] : null,
-    note ? [t(($) => $.operations.review_modal.note), note] : null,
-    reviewedAt ? [t(($) => $.operations.table.time), reviewedAt] : null,
-  ].filter(Boolean) as Array<[string, string]>;
-  return (
-    <div className="grid min-w-0 gap-1 justify-items-start overflow-hidden">
-      {/* Quick outcome select: accepted / N/A / unreviewed save in place;
-          needs_changes / rejected open the dialog for reasons. */}
-      <Select
-        value={outcome}
-        onValueChange={(v) => {
-          if (v) onQuickReview(v);
-        }}
-      >
-        <SelectTrigger
-          size="sm"
-          disabled={saving}
-          aria-label={t(($) => $.operations.table.human_review)}
-          className="h-7 min-w-0 max-w-full gap-1 px-2 text-xs"
-        >
-          <SelectValue>
-            {() => (
-              <ToneBadge tone={agentFixEnumTone("review", outcome)}>
-                {saving
-                  ? t(($) => $.operations.review_modal.saving)
-                  : agentFixEnumLabel(tx, "review", outcome)}
-              </ToneBadge>
-            )}
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent align="start" alignItemWithTrigger={false}>
-          {AGENT_FIX_REVIEW_OUTCOMES.map((value) => (
-            <SelectItem key={value} value={value}>
-              {agentFixEnumLabel(tx, "review", value)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <div className="flex min-w-0 max-w-full items-center gap-1">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onEdit}
-          className="h-6 min-w-0 gap-1 px-2 text-xs"
-        >
-          <SquarePen className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">
-            {t(($) => $.operations.review_modal.edit)}
-          </span>
-        </Button>
-        {detailRows.length > 0 ? (
-          <Popover>
-            <PopoverTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 min-w-0 max-w-full gap-1 px-2 text-xs"
-                >
-                  <List className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">
-                    {t(($) => $.operations.p4.details)}
-                  </span>
-                </Button>
-              }
-            />
-            <PopoverContent align="end" className="w-80 gap-2">
-              <div className="text-xs font-medium">
-                {t(($) => $.operations.review_modal.title)}
-              </div>
-              <div className="grid gap-2">
-                {detailRows.map(([label, value]) => (
-                  <div key={label} className="grid gap-0.5">
-                    <div className="text-[11px] uppercase text-muted-foreground">
-                      {label}
-                    </div>
-                    <div className="break-words text-xs">{value}</div>
-                  </div>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function AgentFixReviewEvidence({ fix }: { fix: AgentFixRecord }) {
-  const { t } = useT("usage");
-  const tx = t as unknown as UsageT;
-  const evidence = derivedEvidence(fix);
-
-  return (
-    <div className="grid gap-3 md:grid-cols-3">
-      <EvidencePanel
-        label={t(($) => $.operations.review_modal.evidence_p4)}
-        value={[
-          fix.p4_assessment?.workstream || t(($) => $.operations.no_reason),
-          evidence.swarm
-            ? t(($) => $.operations.p4.swarm_value, { value: evidence.swarm })
-            : t(($) => $.operations.p4.no_swarm),
-          evidence.swarmChanges
-            ? `${t(($) => $.operations.p4.changes)} ${evidence.swarmChanges}`
-            : "",
-          evidence.swarmCommits
-            ? `${t(($) => $.operations.p4.commits)} ${evidence.swarmCommits}`
-            : "",
-          evidence.swarmBranch
-            ? `${t(($) => $.operations.p4.branch)} ${evidence.swarmBranch}`
-            : "",
-          evidence.eventType
-            ? `${t(($) => $.operations.p4.event)} ${evidence.eventType}`
-            : "",
-          evidence.sentAt
-            ? `${t(($) => $.operations.p4.sent_at)} ${evidence.sentAt}`
-            : "",
-          `${t(($) => $.operations.p4.shelve)} ${
-            evidence.shelve || t(($) => $.operations.no_reason)
-          } / ${t(($) => $.operations.p4.final_cl)} ${
-            evidence.finalCl || t(($) => $.operations.no_reason)
-          }`,
-        ]}
-      />
-      <EvidencePanel
-        label={t(($) => $.operations.review_modal.evidence_attribution)}
-        value={[agentFixEnumLabel(tx, "attribution", deriveAttribution(fix))]}
-        badgeTone={agentFixEnumTone("attribution", deriveAttribution(fix))}
-      />
-      <EvidencePanel
-        label={t(($) => $.operations.review_modal.evidence_quality)}
-        value={[
-          agentFixEnumLabel(tx, "quality", fix.p4_assessment?.quality_prediction),
-          fix.p4_assessment?.confidence != null
-            ? t(($) => $.operations.p4.confidence, {
-                value: confidenceLabel(fix.p4_assessment.confidence),
-              })
-            : t(($) => $.operations.review_modal.insufficient_evidence),
-        ]}
-        badgeTone={agentFixEnumTone("quality", fix.p4_assessment?.quality_prediction)}
-      />
-    </div>
-  );
-}
-
-function EvidencePanel({
-  label,
-  value,
-  badgeTone,
-}: {
-  label: string;
-  value: string[];
-  badgeTone?: Tone;
-}) {
-  const first = value[0] || "—";
-  const rest = value.slice(1).filter(Boolean);
-  return (
-    <div className="rounded-lg border bg-muted/20 p-3">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="mt-2 grid gap-1 text-sm">
-        {badgeTone ? <ToneBadge tone={badgeTone}>{first}</ToneBadge> : <span>{first}</span>}
-        {rest.map((line) => (
-          <span key={line} className="text-xs text-muted-foreground">
-            {line}
-          </span>
-        ))}
-      </div>
     </div>
   );
 }

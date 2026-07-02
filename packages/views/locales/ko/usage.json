@@ -58,7 +58,7 @@
   "operations": {
     "title": "운영",
     "assessment_title": "AI 수정 평가",
-    "subtitle": "에이전트가 처리한 issue 의 P4/Swarm 증거, AI 예측, 사람 검수 결과를 보여줍니다.",
+    "subtitle": "에이전트가 처리한 issue 의 P4/Swarm 증거, 납품 귀속, AI 품질 분석을 보여줍니다.",
     "range_label": "최근 {{days}}일",
     "search_placeholder": "댓글 검색",
     "search_clear": "검색 지우기",
@@ -71,7 +71,7 @@
       "attribution_all": "모든 귀속",
       "quality": "AI 품질 예측",
       "quality_all": "모든 품질",
-      "pending_only": "검수 대기만"
+      "pending_only": "판정 대기만"
     },
     "tabs": {
       "detail": "P4 상세",
@@ -81,7 +81,7 @@
     },
     "summary": {
       "pass_rate": "AI 수정 통과율",
-      "pass_rate_hint": "통과 {{num}} / AI 납품·검수 완료 {{den}}",
+      "pass_rate_hint": "정상 가능성 높음 {{num}} / 판정 완료 {{den}}",
       "delivery_share": "AI 납품 비율",
       "delivery_share_hint": "AI 납품+보조 {{num}} / 외부 완료 {{den}}",
       "no_output_rate": "AI 무산출률",
@@ -93,8 +93,8 @@
       "stage_external_done": "외부 완료",
       "stage_p4_covered": "P4 커버",
       "stage_ai_delivered": "AI 납품",
-      "stage_reviewed": "검수 완료",
-      "stage_accepted": "통과"
+      "stage_judged": "판정 완료",
+      "stage_passed": "통과"
     },
     "trend": {
       "title": "주간 추이",
@@ -104,10 +104,9 @@
     },
     "analysis": {
       "attribution_title": "납품 귀속 분포",
-      "review_title": "사람 리뷰 결과",
+      "quality_title": "AI 품질 판정 분포",
       "workstream_title": "Workstream 결과",
-      "workstream_counts": "총 {{total}} · 검수 {{reviewed}} · 통과 {{accepted}}",
-      "human_reason_title": "사람 이유 순위",
+      "workstream_counts": "총 {{total}} · 판정 {{judged}} · 통과 {{passed}}",
       "prediction_reason_title": "AI 이유 순위",
       "no_reasons": "아직 이유 없음",
       "drill_hint": "클릭하면 상세를 필터링합니다"
@@ -120,8 +119,7 @@
       "external_status": "외부 상태",
       "p4_evidence": "P4 증거",
       "ai_attribution": "납품 귀속",
-      "ai_quality": "AI 품질 예측",
-      "human_review": "사람 리뷰"
+      "ai_quality": "AI 품질 예측"
     },
     "pagination": {
       "page_of": "{{page}} / {{pages}} 페이지",
@@ -228,7 +226,6 @@
       "reason_hint": "사람 결과가 최종 사실이며 AI 예측은 정확도 분석에 사용됩니다.",
       "note": "메모",
       "note_placeholder": "판단 근거를 추가하세요.",
-      "edit": "검수 편집",
       "cancel": "취소",
       "save": "저장",
       "saving": "저장 중...",

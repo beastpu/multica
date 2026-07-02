@@ -37,18 +37,22 @@ export function isAiDelivered(fix: AgentFixRecord): boolean {
   return attribution === "ai_delivered" || attribution === "ai_assisted";
 }
 
-// Human review outcomes that count as "已验收" (a human made a call). Both
-// `not_applicable` and `unreviewed` stay out: the former removes the row from
-// the quality denominator, the latter is the pending queue.
-const REVIEWED_OUTCOMES = new Set(["accepted", "needs_changes", "rejected"]);
+// AI quality predictions that count as "已判定" (the assessment reached a
+// verdict). "unknown" / missing / drifting enum values stay out — they are the
+// pending-judgement queue, not a quality datapoint.
+const JUDGED_QUALITIES = new Set([
+  "likely_correct",
+  "likely_needs_changes",
+  "likely_wrong",
+]);
 
-export function isReviewed(fix: AgentFixRecord): boolean {
-  return REVIEWED_OUTCOMES.has(fix.human_review?.outcome ?? "");
+export function qualityJudgement(fix: AgentFixRecord): string {
+  const quality = fix.p4_assessment?.quality_prediction?.trim() ?? "";
+  return JUDGED_QUALITIES.has(quality) ? quality : "";
 }
 
-export function isPendingReview(fix: AgentFixRecord): boolean {
-  const outcome = fix.human_review?.outcome ?? "";
-  return outcome === "" || outcome === "unreviewed";
+export function isPendingJudgement(fix: AgentFixRecord): boolean {
+  return qualityJudgement(fix) === "";
 }
 
 // The record's day axis in the viewer's timezone — the latest run's completion
@@ -108,20 +112,21 @@ function rate(numerator: number, denominator: number): OperationsRate {
   };
 }
 
-// Delivery funnel counts. Stages are nested: accepted ⊆ reviewed ⊆
-// aiDelivered; externalDone / p4Covered are the two upstream gates.
+// Delivery funnel counts. Stages are nested: passed ⊆ judged ⊆ aiDelivered;
+// externalDone / p4Covered are the two upstream gates. Judgement is the AI
+// quality analysis — there is no human review in this flow.
 export interface OperationsFunnel {
   total: number;
   externalDone: number;
   p4Covered: number;
   aiDelivered: number;
-  reviewed: number;
-  accepted: number;
+  judged: number;
+  passed: number;
 }
 
 export interface OperationsKpis {
   funnel: OperationsFunnel;
-  // 通过 / AI 交付且已验收
+  // 大概率正确 / AI 交付且已判定
   passRate: OperationsRate;
   // AI 交付（提交+辅助）/ 外部完成
   deliveryShare: OperationsRate;
@@ -133,8 +138,8 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   let externalDone = 0;
   let p4Covered = 0;
   let aiDelivered = 0;
-  let reviewed = 0;
-  let accepted = 0;
+  let judged = 0;
+  let passed = 0;
   let noOutput = 0;
   for (const fix of rows) {
     if (fix.external?.done === true) externalDone += 1;
@@ -145,9 +150,10 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
       attribution === "ai_delivered" || attribution === "ai_assisted";
     if (!delivered) continue;
     aiDelivered += 1;
-    if (isReviewed(fix)) {
-      reviewed += 1;
-      if (fix.human_review?.outcome === "accepted") accepted += 1;
+    const quality = qualityJudgement(fix);
+    if (quality !== "") {
+      judged += 1;
+      if (quality === "likely_correct") passed += 1;
     }
   }
   return {
@@ -156,10 +162,10 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
       externalDone,
       p4Covered,
       aiDelivered,
-      reviewed,
-      accepted,
+      judged,
+      passed,
     },
-    passRate: rate(accepted, reviewed),
+    passRate: rate(passed, judged),
     deliveryShare: rate(aiDelivered, externalDone),
     noOutputRate: rate(noOutput, rows.length),
   };

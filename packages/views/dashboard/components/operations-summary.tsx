@@ -105,14 +105,14 @@ export function OperationsSummary({
       count: funnel.aiDelivered,
     },
     {
-      key: "reviewed",
-      label: t(($) => $.operations.summary.stage_reviewed),
-      count: funnel.reviewed,
+      key: "judged",
+      label: t(($) => $.operations.summary.stage_judged),
+      count: funnel.judged,
     },
     {
-      key: "accepted",
-      label: t(($) => $.operations.summary.stage_accepted),
-      count: funnel.accepted,
+      key: "passed",
+      label: t(($) => $.operations.summary.stage_passed),
+      count: funnel.passed,
     },
   ];
   const max = Math.max(1, ...stages.map((s) => s.count));

@@ -58,7 +58,7 @@
   "operations": {
     "title": "运营",
     "assessment_title": "AI 修单评估",
-    "subtitle": "展示智能体处理过的 issue 的 P4/Swarm 证据、AI 交付预判与人工验收结果。",
+    "subtitle": "展示智能体处理过的 issue 的 P4/Swarm 证据、交付归因与 AI 质量分析。",
     "range_label": "最近 {{days}} 天",
     "search_placeholder": "搜索评论内容",
     "search_clear": "清除搜索",
@@ -71,7 +71,7 @@
       "attribution_all": "全部归因",
       "quality": "AI 质量预判",
       "quality_all": "全部质量",
-      "pending_only": "仅看待验收"
+      "pending_only": "仅看待判定"
     },
     "tabs": {
       "detail": "P4 明细",
@@ -81,7 +81,7 @@
     },
     "summary": {
       "pass_rate": "AI 修单通过率",
-      "pass_rate_hint": "通过 {{num}} / AI 交付且已验收 {{den}}",
+      "pass_rate_hint": "大概率正确 {{num}} / 已判定 {{den}}",
       "delivery_share": "AI 交付占比",
       "delivery_share_hint": "AI 提交+辅助 {{num}} / 外部完成 {{den}}",
       "no_output_rate": "AI 无产出率",
@@ -93,8 +93,8 @@
       "stage_external_done": "外部完成",
       "stage_p4_covered": "P4 覆盖",
       "stage_ai_delivered": "AI 交付",
-      "stage_reviewed": "已验收",
-      "stage_accepted": "通过"
+      "stage_judged": "已判定",
+      "stage_passed": "通过"
     },
     "trend": {
       "title": "周趋势",
@@ -104,10 +104,9 @@
     },
     "analysis": {
       "attribution_title": "交付归因分布",
-      "review_title": "人工验收结果",
+      "quality_title": "AI 质量判定分布",
       "workstream_title": "Workstream 结果",
-      "workstream_counts": "共 {{total}} · 已验收 {{reviewed}} · 通过 {{accepted}}",
-      "human_reason_title": "人工原因排行",
+      "workstream_counts": "共 {{total}} · 已判定 {{judged}} · 通过 {{passed}}",
       "prediction_reason_title": "AI 原因排行",
       "no_reasons": "暂无原因",
       "drill_hint": "点击可筛选明细"
@@ -120,8 +119,7 @@
       "external_status": "外部状态",
       "p4_evidence": "P4 证据",
       "ai_attribution": "交付归因",
-      "ai_quality": "AI 质量预判",
-      "human_review": "人工验收"
+      "ai_quality": "AI 质量预判"
     },
     "pagination": {
       "page_of": "第 {{page}} / {{pages}} 页",
@@ -228,7 +226,6 @@
       "reason_hint": "人工结果是最终事实；AI 判断保留为前置预测，用来分析 AI 判断是否准确。",
       "note": "备注",
       "note_placeholder": "补充判断依据，例如：AI shelve 未被采用，最终 CL 是开发同学手动提交。",
-      "edit": "编辑验收",
       "cancel": "取消",
       "save": "保存",
       "saving": "保存中...",

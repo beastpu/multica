@@ -58,7 +58,7 @@
   "operations": {
     "title": "Operations",
     "assessment_title": "AI fix assessment",
-    "subtitle": "P4/Swarm evidence, AI delivery predictions, and human review for issues your agents worked on.",
+    "subtitle": "P4/Swarm evidence, delivery attribution, and AI quality analysis for issues your agents worked on.",
     "range_label": "Last {{days}} days",
     "search_placeholder": "Search comments",
     "search_clear": "Clear search",
@@ -71,7 +71,7 @@
       "attribution_all": "All attribution",
       "quality": "AI quality prediction",
       "quality_all": "All quality",
-      "pending_only": "Pending review only"
+      "pending_only": "Pending judgement only"
     },
     "tabs": {
       "detail": "P4 details",
@@ -81,7 +81,7 @@
     },
     "summary": {
       "pass_rate": "AI fix pass rate",
-      "pass_rate_hint": "{{num}} accepted / {{den}} AI-delivered reviewed",
+      "pass_rate_hint": "{{num}} likely correct / {{den}} judged",
       "delivery_share": "AI delivery share",
       "delivery_share_hint": "{{num}} AI delivered+assisted / {{den}} external done",
       "no_output_rate": "AI no-output rate",
@@ -93,8 +93,8 @@
       "stage_external_done": "External done",
       "stage_p4_covered": "P4 covered",
       "stage_ai_delivered": "AI delivered",
-      "stage_reviewed": "Reviewed",
-      "stage_accepted": "Accepted"
+      "stage_judged": "Judged",
+      "stage_passed": "Passed"
     },
     "trend": {
       "title": "Weekly trend",
@@ -104,10 +104,9 @@
     },
     "analysis": {
       "attribution_title": "Delivery attribution",
-      "review_title": "Human review outcome",
+      "quality_title": "AI quality distribution",
       "workstream_title": "Workstream outcome",
-      "workstream_counts": "{{total}} total · {{reviewed}} reviewed · {{accepted}} accepted",
-      "human_reason_title": "Top human reasons",
+      "workstream_counts": "{{total}} total · {{judged}} judged · {{passed}} passed",
       "prediction_reason_title": "Top AI reasons",
       "no_reasons": "No reasons yet",
       "drill_hint": "Click to filter details"
@@ -120,8 +119,7 @@
       "external_status": "External status",
       "p4_evidence": "P4 evidence",
       "ai_attribution": "Delivery attribution",
-      "ai_quality": "AI quality prediction",
-      "human_review": "Human review"
+      "ai_quality": "AI quality prediction"
     },
     "pagination": {
       "page_of": "Page {{page}} / {{pages}}",
@@ -228,7 +226,6 @@
       "reason_hint": "Human outcome is the final fact; AI predictions remain for accuracy analysis.",
       "note": "Note",
       "note_placeholder": "Add judgement details, for example: the AI shelve was not used and the final CL was manually submitted.",
-      "edit": "Edit review",
       "cancel": "Cancel",
       "save": "Save",
       "saving": "Saving...",

@@ -58,7 +58,7 @@
   "operations": {
     "title": "運用",
     "assessment_title": "AI 修正評価",
-    "subtitle": "エージェントが対応した issue の P4/Swarm エビデンス、AI 予測、人によるレビュー結果を表示します。",
+    "subtitle": "エージェントが対応した issue の P4/Swarm エビデンス、納品帰属、AI 品質分析を表示します。",
     "range_label": "直近 {{days}} 日",
     "search_placeholder": "コメントを検索",
     "search_clear": "検索をクリア",
@@ -71,7 +71,7 @@
       "attribution_all": "すべての帰属",
       "quality": "AI 品質予測",
       "quality_all": "すべての品質",
-      "pending_only": "未レビューのみ"
+      "pending_only": "未判定のみ"
     },
     "tabs": {
       "detail": "P4 詳細",
@@ -81,7 +81,7 @@
     },
     "summary": {
       "pass_rate": "AI 修正合格率",
-      "pass_rate_hint": "合格 {{num}} / AI 納品かつレビュー済み {{den}}",
+      "pass_rate_hint": "正しい可能性が高い {{num}} / 判定済み {{den}}",
       "delivery_share": "AI 納品比率",
       "delivery_share_hint": "AI 納品+支援 {{num}} / 外部完了 {{den}}",
       "no_output_rate": "AI 未産出率",
@@ -93,8 +93,8 @@
       "stage_external_done": "外部完了",
       "stage_p4_covered": "P4 カバー",
       "stage_ai_delivered": "AI 納品",
-      "stage_reviewed": "レビュー済み",
-      "stage_accepted": "合格"
+      "stage_judged": "判定済み",
+      "stage_passed": "合格"
     },
     "trend": {
       "title": "週次トレンド",
@@ -104,10 +104,9 @@
     },
     "analysis": {
       "attribution_title": "納品帰属の分布",
-      "review_title": "人間レビュー結果",
+      "quality_title": "AI 品質判定の分布",
       "workstream_title": "Workstream 結果",
-      "workstream_counts": "計 {{total}} · レビュー済み {{reviewed}} · 合格 {{accepted}}",
-      "human_reason_title": "人手理由ランキング",
+      "workstream_counts": "計 {{total}} · 判定済み {{judged}} · 合格 {{passed}}",
       "prediction_reason_title": "AI 理由ランキング",
       "no_reasons": "理由はまだありません",
       "drill_hint": "クリックで明細を絞り込み"
@@ -120,8 +119,7 @@
       "external_status": "外部ステータス",
       "p4_evidence": "P4 証跡",
       "ai_attribution": "納品帰属",
-      "ai_quality": "AI 品質予測",
-      "human_review": "人間レビュー"
+      "ai_quality": "AI 品質予測"
     },
     "pagination": {
       "page_of": "{{page}} / {{pages}} ページ",
@@ -228,7 +226,6 @@
       "reason_hint": "人手結果を最終事実とし、AI 予測は精度分析に残します。",
       "note": "メモ",
       "note_placeholder": "判断根拠を追加します。",
-      "edit": "レビューを編集",
       "cancel": "キャンセル",
       "save": "保存",
       "saving": "保存中...",
