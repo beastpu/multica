@@ -79,6 +79,12 @@ data:
   ALLOWED_EMAIL_DOMAINS: ""
   ALLOWED_EMAILS: ""
 
+  # --- P4 assessment (comma-separated workspace UUIDs) ---
+  # Fail-closed gate shared by the Feishu-sync auto-trigger and the batch
+  # assessment worker endpoints. Empty = no workspace may run P4 assessment.
+  # Overlays override this per environment.
+  P4_ASSESSMENT_WORKSPACE_ALLOWLIST: ""
+
   # --- Logging / analytics ---
   POSTHOG_HOST: "https://us.i.posthog.com"
   ANALYTICS_DISABLED: "true"
