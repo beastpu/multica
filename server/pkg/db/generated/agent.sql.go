@@ -3407,7 +3407,7 @@ WHERE
   ($1::text IS NULL
        OR position(lower($1::text) IN lower(lc.content)) > 0)
 ORDER BY COALESCE(fib.last_external_updated_at, spine.completed_at, spine.started_at, spine.created_at) DESC
-LIMIT 500
+LIMIT 2000
 `
 
 type ListWorkspaceAgentFixesParams struct {
@@ -3474,14 +3474,19 @@ type ListWorkspaceAgentFixesRow struct {
 //     which a later "收到" from a human would otherwise mask.
 //
 // The optional `search` arg filters to issues whose agent comment contains the
-// term (case-insensitive substring). It runs BEFORE the 500-row cap, so search
-// covers the whole time window, not just the most recent 500 rows. A row with
+// term (case-insensitive substring). It runs BEFORE the 2000-row cap, so search
+// covers the whole time window, not just the most recent 2000 rows. A row with
 // no matching agent comment is dropped when `search` is set.
 // JOINs agent because agent_task_queue has no workspace_id; INNER JOIN issue so
 // only issue-linked runs count. For Feishu/Meego-bound issues, the window
 // prefers Feishu's last_external_updated_at over Multica's last_synced_at so a
 // periodic sync does not make old business items look new.
 // Per-agent access filtering happens in the handler against accessibleAgentIDs.
+// Row cap: the dashboard fetches a 2x window (period-over-period deltas)
+// and computes KPIs client-side, so this must comfortably exceed the busiest
+// workspace's 2x-window row count (W3: ~1.3k over 60 days) or the funnel and
+// rates silently undercount. Raise again or move to a server-side stats
+// endpoint if volume approaches this.
 func (q *Queries) ListWorkspaceAgentFixes(ctx context.Context, arg ListWorkspaceAgentFixesParams) ([]ListWorkspaceAgentFixesRow, error) {
 	rows, err := q.db.Query(ctx, listWorkspaceAgentFixes, arg.Search, arg.WorkspaceID, arg.Days)
 	if err != nil {
