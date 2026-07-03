@@ -76,7 +76,7 @@
     "tabs": {
       "detail": "Assessments",
       "analysis": "Insights",
-      "detail_hint": "External completion, P4 evidence, AI predictions, and human review.",
+      "detail_hint": "External completion, submitted CL records, AI predictions, and human review.",
       "analysis_hint": "Lightweight rollups from the current filtered rows."
     },
     "summary": {
@@ -93,7 +93,7 @@
       "funnel_title": "Delivery funnel",
       "funnel_total": "{{count}} records",
       "stage_external_done": "External done",
-      "stage_p4_covered": "P4 covered",
+      "stage_p4_covered": "Submitted CL record",
       "stage_verifiable": "Verifiable output",
       "stage_judged": "Judged",
       "stage_passed": "Passed"
@@ -125,9 +125,9 @@
       "time": "Date",
       "reason": "Reason / description",
       "external_status": "External status",
-      "p4_evidence": "P4 evidence",
+      "p4_evidence": "Submitted CL record",
       "ai_attribution": "Delivery attribution",
-      "ai_quality": "AI quality prediction"
+      "ai_quality": "AI assessment"
     },
     "pagination": {
       "page_of": "Page {{page}} / {{pages}}",
@@ -140,6 +140,7 @@
     },
     "p4": {
       "workstream": "stream",
+      "swarm": "Swarm",
       "swarm_value": "Swarm {{value}}",
       "no_swarm": "No Swarm",
       "changes": "changes",
@@ -153,7 +154,7 @@
       "warnings": "warnings",
       "warning_count": "{{count}} warning",
       "confidence": "confidence {{value}}",
-      "no_evidence": "No P4 evidence"
+      "no_evidence": "No submitted CL record"
     },
     "assessment_action": {
       "run": "Queue assessment",
@@ -224,7 +225,7 @@
     "review_modal": {
       "title": "Human review AI fix result",
       "empty_issue": "No issue selected",
-      "evidence_p4": "P4 evidence",
+      "evidence_p4": "Submitted CL record",
       "evidence_attribution": "AI attribution prediction",
       "evidence_quality": "AI quality prediction",
       "insufficient_evidence": "Insufficient evidence",

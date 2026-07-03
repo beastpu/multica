@@ -76,7 +76,7 @@
     "tabs": {
       "detail": "평가 상세",
       "analysis": "성과 분석",
-      "detail_hint": "외부 완료, P4 증거, AI 예측, 사람 리뷰.",
+      "detail_hint": "외부 완료, CL 제출 기록, AI 예측, 사람 리뷰.",
       "analysis_hint": "현재 필터 결과의 간단한 집계입니다."
     },
     "summary": {
@@ -93,7 +93,7 @@
       "funnel_title": "납품 퍼널",
       "funnel_total": "총 {{count}}건",
       "stage_external_done": "외부 완료",
-      "stage_p4_covered": "P4 커버",
+      "stage_p4_covered": "CL 제출 기록",
       "stage_verifiable": "산출 검증 가능",
       "stage_judged": "판정 완료",
       "stage_passed": "통과"
@@ -125,9 +125,9 @@
       "time": "날짜",
       "reason": "사유 / 설명",
       "external_status": "외부 상태",
-      "p4_evidence": "P4 증거",
+      "p4_evidence": "CL 제출 기록",
       "ai_attribution": "납품 귀속",
-      "ai_quality": "AI 품질 예측"
+      "ai_quality": "AI 평가"
     },
     "pagination": {
       "page_of": "{{page}} / {{pages}} 페이지",
@@ -140,6 +140,7 @@
     },
     "p4": {
       "workstream": "stream",
+      "swarm": "Swarm",
       "swarm_value": "Swarm {{value}}",
       "no_swarm": "Swarm 없음",
       "changes": "changes",
@@ -153,7 +154,7 @@
       "warnings": "warnings",
       "warning_count": "{{count}}개 warning",
       "confidence": "신뢰도 {{value}}",
-      "no_evidence": "P4 증거 없음"
+      "no_evidence": "CL 제출 기록 없음"
     },
     "assessment_action": {
       "run": "평가 대기열에 추가",
@@ -224,7 +225,7 @@
     "review_modal": {
       "title": "AI 수정 결과 사람 검토",
       "empty_issue": "선택된 이슈 없음",
-      "evidence_p4": "P4 증거",
+      "evidence_p4": "CL 제출 기록",
       "evidence_attribution": "AI 귀속 예측",
       "evidence_quality": "AI 품질 예측",
       "insufficient_evidence": "증거 부족",

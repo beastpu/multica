@@ -76,7 +76,7 @@
     "tabs": {
       "detail": "评估明细",
       "analysis": "效果分析",
-      "detail_hint": "外部完成态、P4 证据、AI 预判和人工验收。",
+      "detail_hint": "外部完成态、提交 CL 记录、AI 预判和人工验收。",
       "analysis_hint": "基于当前筛选结果的轻量统计。"
     },
     "summary": {
@@ -93,7 +93,7 @@
       "funnel_title": "交付漏斗",
       "funnel_total": "共 {{count}} 条记录",
       "stage_external_done": "外部完成",
-      "stage_p4_covered": "P4 覆盖",
+      "stage_p4_covered": "提交 CL 记录",
       "stage_verifiable": "产出可验证",
       "stage_judged": "已判定",
       "stage_passed": "通过"
@@ -125,9 +125,9 @@
       "time": "时间",
       "reason": "原因 / 描述",
       "external_status": "外部状态",
-      "p4_evidence": "P4 证据",
+      "p4_evidence": "提交 CL 记录",
       "ai_attribution": "交付归因",
-      "ai_quality": "AI 质量预判"
+      "ai_quality": "AI 预判"
     },
     "pagination": {
       "page_of": "第 {{page}} / {{pages}} 页",
@@ -140,6 +140,7 @@
     },
     "p4": {
       "workstream": "stream",
+      "swarm": "Swarm",
       "swarm_value": "Swarm {{value}}",
       "no_swarm": "无 Swarm",
       "changes": "changes",
@@ -153,7 +154,7 @@
       "warnings": "warnings",
       "warning_count": "{{count}} 条 warning",
       "confidence": "置信度 {{value}}",
-      "no_evidence": "暂无 P4 证据"
+      "no_evidence": "暂无提交 CL 记录"
     },
     "assessment_action": {
       "run": "加入评估队列",
@@ -224,7 +225,7 @@
     "review_modal": {
       "title": "人工验收 AI 修单结果",
       "empty_issue": "未选择 issue",
-      "evidence_p4": "P4 证据",
+      "evidence_p4": "提交 CL 记录",
       "evidence_attribution": "AI 归因预判",
       "evidence_quality": "AI 质量预判",
       "insufficient_evidence": "证据不足",
