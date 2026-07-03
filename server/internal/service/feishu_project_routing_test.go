@@ -276,6 +276,50 @@ func TestFeishuProjectExternalFieldsKeepsUserFacingBranchNames(t *testing.T) {
 	}
 }
 
+func TestParseFeishuProjectSearchIndexesWorkItemFieldsDisplayNames(t *testing.T) {
+	payload := map[string]any{
+		"data": []any{
+			map[string]any{
+				"id":   7031318584,
+				"name": "branch-item",
+				"work_item_fields": []any{
+					map[string]any{
+						"key":   "field_467c5f",
+						"name":  "提交分支",
+						"value": []any{map[string]any{"label": "1.7.1(dev or rel)", "value": "wbia77tj9"}},
+					},
+					map[string]any{
+						"key":  "field_d7788a",
+						"name": "开发分支（QA不用手动改，这个字段QA不用维护）",
+						"value": []any{
+							map[string]any{"label": "main", "value": "qy_f3vu4a"},
+							map[string]any{"label": "rel_1.1.0", "value": "71jgpjjcp"},
+						},
+					},
+					map[string]any{
+						"key":   "field_priority",
+						"name":  "优先级",
+						"value": []any{map[string]any{"label": "P1", "value": "priority_1"}},
+					},
+				},
+			},
+		},
+	}
+
+	items := parseFeishuProjectSearch(payload, "issue", "issue", "igame", "")
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	got := feishuProjectExternalFields(items[0])
+	want := map[string]string{
+		"提交分支": "1.7.1(dev or rel)",
+		"开发分支": "main, rel_1.1.0",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("external fields = %#v, want %#v; values=%#v", got, want, items[0].FieldValues)
+	}
+}
+
 func TestParseFeishuProjectSearchExtractsPriority(t *testing.T) {
 	payload := map[string]any{
 		"data": []any{
