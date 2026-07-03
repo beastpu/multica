@@ -514,10 +514,12 @@ describe("OperationsPage", () => {
   it("renders the KPI band with the headline rates and the funnel", () => {
     renderWithI18n(<OperationsPage />);
 
-    // Composition bar over 外部完成, then the three ratio cards.
+    // Composition bar over 外部完成, then the two ratio cards. Direct
+    // deliveries (always-100% by construction) are a footer count on the
+    // assisted card, not a card: t-1 is the only judged direct row.
     expect(screen.getByText("Delivery composition")).toBeTruthy();
-    expect(screen.getByText("Direct-delivery pass rate")).toBeTruthy();
     expect(screen.getByText("Assisted pass rate")).toBeTruthy();
+    expect(screen.getByText("AI submitted 1 directly")).toBeTruthy();
     expect(screen.getByText("Assessment coverage")).toBeTruthy();
     expect(screen.getByText("Delivery funnel")).toBeTruthy();
     expect(screen.getByText("Last 30 days")).toBeTruthy();
@@ -533,9 +535,8 @@ describe("OperationsPage", () => {
     // raw "Done" status and t-1 resolves vcvaCnnGi → 设计如此 via the status
     // name map.
     expect(screen.getByText("Done 5 · 设计如此 1")).toBeTruthy();
-    // Delivered pass rate: t-1 is the only judged ai_delivered verifiable row
-    // (likely_correct) → 1/1 = 100%. t-4 is human-delivered and stays out.
-    // (100% can also appear on other same-base cards, hence getAllByText.)
+    // Coverage: both AI plans (t-1, t-4) reached a verdict → 2/2 = 100%.
+    // (100% can also appear in the composition read-off, hence getAllByText.)
     expect(screen.getAllByText("100%").length).toBeGreaterThanOrEqual(1);
     // Data-health footnote replaces the old no-output/undetermined cards.
     expect(screen.getByText(/no output · \d+ undetermined/)).toBeTruthy();

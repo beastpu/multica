@@ -362,9 +362,19 @@ export interface OperationsKpis {
   // AI 贡献率：AI 的方案进入了最终交付(ai_delivered + ai_assisted) / 外部完成。
   // 与参与率同底,差 = 出方案未转化。= 构成的前两段。
   contributionRate: OperationsRate;
-  // 直接交付通过率：判对 / 已判定，限 AI 直接交付（ai_delivered）。
+  // Pass rates over the judged-with-committed-CL pool (an AI plan exists AND
+  // the ticket demonstrably shipped, so the plan was judged against a real
+  // delivery), partitioned by channel:
+  // - aiDeliveredPassRate: AI submitted the final CL itself (ai_delivered).
+  //   ~100% by construction (a plan compared to its own shipped CL), so the
+  //   summary renders its denominator as the independent-submission count on
+  //   the assisted card instead of a card of its own.
+  // - aiAssistedPassRate: everything else — the plan went through a human.
+  //   Scoping by CHANNEL, not by the ai_assisted attribution, is what keeps
+  //   this honest: attribution and quality share one source (method
+  //   equivalence), so an attribution-scoped denominator would exclude every
+  //   failed plan (they land in human_delivered) and read 100% forever.
   aiDeliveredPassRate: OperationsRate;
-  // 辅助通过率：判对 / 已判定，限 AI 方案人工提交（ai_assisted）。
   aiAssistedPassRate: OperationsRate;
   // 评估覆盖率：已判定 / AI 参与。上面几个数有多可信——覆盖率低说明大量 AI
   // 产出没能被验证(证据受阻),通过率只建立在少数可见样本上。
@@ -429,12 +439,16 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
       judged += 1;
       const pass = quality === "likely_correct";
       if (pass) passed += 1;
-      if (attribution === "ai_delivered") {
-        judgedDelivered += 1;
-        if (pass) passedDelivered += 1;
-      } else if (attribution === "ai_assisted") {
-        judgedAssisted += 1;
-        if (pass) passedAssisted += 1;
+      // Split pass rates require a committed CL: without one the plan was
+      // judged in isolation and no delivery channel exists to attribute.
+      if (hasCommittedCl(fix)) {
+        if (attribution === "ai_delivered") {
+          judgedDelivered += 1;
+          if (pass) passedDelivered += 1;
+        } else {
+          judgedAssisted += 1;
+          if (pass) passedAssisted += 1;
+        }
       }
     }
   }
