@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -1638,6 +1639,178 @@ func TestFeishuProjectQueryWorkItemsTargetedIDSkipsStatusMappingGuard(t *testing
 	}
 	if hits != 1 {
 		t.Fatalf("expected /work_item/filter to be called once, got %d", hits)
+	}
+}
+
+func TestFeishuProjectListExternalFieldKeysUsesDisplayNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/field/all":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": {"fields": [
+					{"field_key":"field_467c5f","field_name":"提交分支","field_type_key":"multi-select","work_item_scopes":["issue"]},
+					{"field_key":"field_d7788a","field_name":"开发分支（QA不用手动改，这个字段QA不用维护）","field_type_key":"multi-select","work_item_scopes":["issue"]},
+					{"field_key":"field_priority","field_name":"优先级","field_type_key":"select","work_item_scopes":["issue"]},
+					{"field_key":"field_story_branch","field_name":"提交分支","field_type_key":"multi-select","work_item_scopes":["story"]}
+				]}
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	keys, err := client.ListExternalFieldKeys(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+	}, "issue")
+	if err != nil {
+		t.Fatalf("ListExternalFieldKeys: %v", err)
+	}
+	want := []string{"field_467c5f", "field_d7788a"}
+	if !jsonEqual(keys, want) {
+		t.Fatalf("keys = %#v, want %#v", keys, want)
+	}
+}
+
+func TestFeishuProjectQueryWorkItemFieldValuesParsesDetailFields(t *testing.T) {
+	var request map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/issue/query":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode query request: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": [{
+					"work_item_attribute": {
+						"work_item_id": "7037722588",
+						"work_item_name": "branch-item",
+						"work_item_status": {"key": "OPEN", "name": "未开始"},
+						"update_time": "2026-07-03T20:20:59+08:00"
+					},
+					"work_item_fields": [{
+						"key": "field_467c5f",
+						"name": "提交分支",
+						"value": [{"label": "1.7.2(dev or rel)", "value": "f_8ckn0o_"}]
+					}]
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	items, err := client.QueryWorkItemFieldValues(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+	}, "issue", []string{"7037722588"}, []string{"field_467c5f"})
+	if err != nil {
+		t.Fatalf("QueryWorkItemFieldValues: %v", err)
+	}
+	if !jsonEqual(request["work_item_ids"], []any{"7037722588"}) {
+		t.Fatalf("work_item_ids = %#v", request["work_item_ids"])
+	}
+	if !jsonEqual(request["fields"], []any{"field_467c5f"}) {
+		t.Fatalf("fields = %#v", request["fields"])
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	got := feishuProjectExternalFields(items[0])
+	want := map[string]string{"提交分支": "1.7.2(dev or rel)"}
+	if !jsonEqual(got, want) {
+		t.Fatalf("external fields = %#v, want %#v; values=%#v", got, want, items[0].FieldValues)
+	}
+}
+
+// The detail query endpoint rejects more than 50 work_item_ids per request, so
+// a page-sized (100) batch must be split into ≤50-id chunks and the results
+// merged back together.
+func TestFeishuProjectQueryWorkItemFieldValuesChunksBatches(t *testing.T) {
+	var batchSizes []int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/issue/query":
+			var req struct {
+				WorkItemIDs []string `json:"work_item_ids"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode query request: %v", err)
+			}
+			batchSizes = append(batchSizes, len(req.WorkItemIDs))
+			rows := make([]string, 0, len(req.WorkItemIDs))
+			for _, id := range req.WorkItemIDs {
+				rows = append(rows, fmt.Sprintf(`{"work_item_attribute":{"work_item_id":"%s"}}`, id))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"err_code":0,"data":[%s]}`, strings.Join(rows, ","))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	ids := make([]string, 0, 120)
+	for i := range 120 {
+		ids = append(ids, fmt.Sprintf("70377%05d", i))
+	}
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	items, err := client.QueryWorkItemFieldValues(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+	}, "issue", ids, []string{"field_467c5f"})
+	if err != nil {
+		t.Fatalf("QueryWorkItemFieldValues: %v", err)
+	}
+	if !jsonEqual(batchSizes, []int{50, 50, 20}) {
+		t.Fatalf("batch sizes = %v, want [50 50 20]", batchSizes)
+	}
+	if len(items) != 120 {
+		t.Fatalf("len(items) = %d, want 120", len(items))
+	}
+	if items[0].ID != ids[0] || items[119].ID != ids[119] {
+		t.Fatalf("merged items lost order: first=%s last=%s", items[0].ID, items[119].ID)
+	}
+}
+
+// When the detail-field lookup fails, the sync must not clear branch fields
+// that a previous successful sync stored on the binding.
+func TestFeishuProjectPreserveExternalBranchFieldsOnIncompleteLookup(t *testing.T) {
+	raw := []byte(`{"提交分支":"1.7.2(dev or rel)","开发分支":"feature/foo","final_cl":"12345"}`)
+	fields := map[string]string{"开发分支": "feature/bar"}
+	preserveFeishuProjectExternalBranchFields(raw, fields)
+	want := map[string]string{
+		"提交分支": "1.7.2(dev or rel)", // restored from binding
+		"开发分支": "feature/bar",       // fresh value wins over stored one
+	}
+	if !jsonEqual(fields, want) {
+		t.Fatalf("fields = %#v, want %#v", fields, want)
+	}
+	if _, ok := fields["final_cl"]; ok {
+		t.Fatalf("final_cl must stay owned by the final-CL preservation path, got %q", fields["final_cl"])
 	}
 }
 
