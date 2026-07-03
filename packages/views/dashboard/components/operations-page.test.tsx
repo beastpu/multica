@@ -520,6 +520,10 @@ describe("OperationsPage", () => {
     ).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Verifiable output")).toBeTruthy();
     expect(screen.getByText("Judged")).toBeTruthy();
+        // External-done splits by resolved status label: five fixtures carry the
+    // raw "Done" status and t-1 resolves vcvaCnnGi → 设计如此 via the status
+    // name map.
+    expect(screen.getByText("Done 5 · 设计如此 1")).toBeTruthy();
     // Fix rate: verifiable + judged rows are t-1 (likely_correct) and t-4
     // (likely_wrong) → 1/2 = 50%.
     expect(screen.getByText("50%")).toBeTruthy();
