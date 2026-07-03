@@ -175,7 +175,6 @@ describe("deriveAttribution", () => {
 });
 
 describe("computeOperationsKpis", () => {
-  // Verifiable rows: AI produced a plan (shelve) AND a committed CL shipped.
   const aiPassed = fix({
     external: { done: true },
     p4_assessment: {
@@ -233,8 +232,28 @@ describe("computeOperationsKpis", () => {
       judged: 2,
       passed: 1,
     });
-    // Pass rates split by attribution: aiPassed is the only judged
-    // ai_delivered row; aiFailed the only judged ai_assisted row.
+    // MECE composition sums to externalDone (4): two ai_delivered, one
+    // ai_assisted, and noOutput has no AI involvement.
+    expect(kpis.composition).toEqual({
+      directDelivered: 2,
+      assisted: 1,
+      unconverted: 0,
+      notParticipated: 1,
+    });
+    // Scale (same 外部完成 base): 3 of 4 done tickets have an AI plan and all 3
+    // are AI-contributed.
+    expect(kpis.participationRate).toEqual({
+      value: 0.75,
+      numerator: 3,
+      denominator: 4,
+    });
+    expect(kpis.contributionRate).toEqual({
+      value: 0.75,
+      numerator: 3,
+      denominator: 4,
+    });
+    // Quality, split by attribution: aiPassed is the only judged ai_delivered
+    // row; aiFailed the only judged ai_assisted row.
     expect(kpis.aiDeliveredPassRate).toEqual({
       value: 1,
       numerator: 1,
@@ -245,28 +264,22 @@ describe("computeOperationsKpis", () => {
       numerator: 0,
       denominator: 1,
     });
-    expect(kpis.deliveryShare).toEqual({
-      value: 0.75,
-      numerator: 3,
-      denominator: 4,
-    });
-    expect(kpis.noOutputRate).toEqual({
-      value: 0.2,
-      numerator: 1,
-      denominator: 5,
-    });
-    // Completed but verdict-less: aiUnjudged (unknown quality) and noOutput
-    // (no quality at all).
-    expect(kpis.unjudgedRate).toEqual({
-      value: 0.4,
+    // Coverage: 2 of the 3 AI plans reached a verdict (aiUnjudged did not).
+    expect(kpis.coverageRate).toEqual({
+      value: 2 / 3,
       numerator: 2,
-      denominator: 5,
+      denominator: 3,
     });
+    // Demoted health counts. noOutput = the unattributed-with-no-shelve row.
+    // unjudged = every completed assessment without a verdict: aiUnjudged
+    // (unknown quality) AND noOutput (no quality at all).
+    expect(kpis.noOutput).toBe(1);
+    expect(kpis.unjudged).toBe(2);
   });
 
   it("counts a verifiable row regardless of noisy warnings", () => {
-    // AI shelve + committed CL: the denominator is built from artifacts, so a
-    // stray "*_unavailable" warning does not drop it.
+    // AI shelve + committed CL: the gate is built from artifacts, so a stray
+    // "*_unavailable" warning does not drop it.
     const warned = fix({
       external: { done: true },
       p4_assessment: {
@@ -289,49 +302,35 @@ describe("computeOperationsKpis", () => {
     });
   });
 
-  it("counts a comment-only plan as engaged but not planned", () => {
-    // Scenario ②: the agent commented a plan but never produced a shelve or
-    // Swarm review — visible as the aiEngaged→aiPlanned funnel drop and the
-    // plan-no-record share of the no-output rate.
-    const planNoRecord = fix({
-      external: { done: true },
-      last_comment: "proposed a fix plan in the ticket",
-      last_comment_author_type: "agent",
-      p4_assessment: {
-        assessment_status: "completed",
-        delivery_attribution_prediction: "unattributed",
-        ai_shelved_cls: [],
-      },
-    });
-    const kpis = computeOperationsKpis([planNoRecord]);
-    expect(kpis.funnel.aiEngaged).toBe(1);
-    expect(kpis.funnel.aiPlanned).toBe(0);
-    expect(kpis.noOutputRate).toEqual({
-      value: 1,
-      numerator: 1,
-      denominator: 1,
-    });
-  });
-
-  it("excludes an AI plan that never shipped a committed CL", () => {
-    // AI shelved a fix and judged it likely_correct, but no committed CL exists
-    // — the fix didn't land, so it can't count toward the fix rate.
+  it("judges an AI plan even without a committed CL (assessment ≠ delivery)", () => {
+    // AI shelved a fix and the assessment judged the plan likely_correct. Even
+    // though nothing shipped (no committed CL), the quality verdict is valid —
+    // quality is about the plan, not delivery. Whether it shipped is
+    // contribution's job, not the quality pipeline's.
     const shelvedButUnshipped = fix({
       external: { done: true },
       p4_assessment: {
         assessment_status: "completed",
-        delivery_attribution_prediction: "ai_delivered",
+        delivery_attribution_prediction: "unknown",
         quality_prediction: "likely_correct",
         ai_shelved_cls: [9],
       },
     });
     const kpis = computeOperationsKpis([aiPassed, shelvedButUnshipped]);
-    expect(kpis.funnel.verifiable).toBe(1);
+    expect(kpis.funnel.verifiable).toBe(2);
+    expect(kpis.funnel.judged).toBe(2);
+    expect(kpis.funnel.passed).toBe(2);
+    // The unknown-attribution plan is judged but belongs to neither split
+    // pass rate — those stay scoped to proven AI deliveries.
     expect(kpis.aiDeliveredPassRate).toEqual({
       value: 1,
       numerator: 1,
       denominator: 1,
     });
+    // Coverage counts it (assessed 2 of 2 participated); contribution does not
+    // (it never reached delivery — attribution stayed unknown).
+    expect(kpis.coverageRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
+    expect(kpis.contributionRate.numerator).toBe(1);
   });
 
   it("excludes a committed CL with no AI plan (human-delivered)", () => {
@@ -356,13 +355,70 @@ describe("computeOperationsKpis", () => {
     });
   });
 
+  it("counts an unused AI plan as participation but not contribution", () => {
+    // AI shelved a fix (participation) but a human shipped a different CL, so
+    // the attribution is human_delivered — it did not reach delivery, so it is
+    // NOT a contribution. The gap between the two rates is exactly this case.
+    const planNotUsed = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+        quality_prediction: "likely_wrong",
+        ai_shelved_cls: [283979],
+        external_committed_cls: [285179],
+      },
+    });
+    const kpis = computeOperationsKpis([planNotUsed]);
+    expect(kpis.composition).toEqual({
+      directDelivered: 0,
+      assisted: 0,
+      unconverted: 1,
+      notParticipated: 0,
+    });
+    expect(kpis.participationRate).toEqual({
+      value: 1,
+      numerator: 1,
+      denominator: 1,
+    });
+    expect(kpis.contributionRate).toEqual({
+      value: 0,
+      numerator: 0,
+      denominator: 1,
+    });
+  });
+
+  it("counts a comment-only plan as engaged but not planned or participated", () => {
+    // The agent commented a plan but never produced a shelve or Swarm review —
+    // visible as the aiEngaged→aiPlanned funnel drop and the plan-no-record
+    // share of the no-output footnote. Participation stays artifact-driven, so
+    // the composition bar keeps this row in not-participated.
+    const planNoRecord = fix({
+      external: { done: true },
+      last_comment: "proposed a fix plan in the ticket",
+      last_comment_author_type: "agent",
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "unattributed",
+        ai_shelved_cls: [],
+      },
+    });
+    const kpis = computeOperationsKpis([planNoRecord]);
+    expect(kpis.funnel.aiEngaged).toBe(1);
+    expect(kpis.funnel.aiPlanned).toBe(0);
+    expect(kpis.composition.notParticipated).toBe(1);
+    expect(kpis.noOutput).toBe(1);
+  });
+
   it("returns null rates on empty input instead of fake zeros", () => {
     const kpis = computeOperationsKpis([]);
+    expect(kpis.participationRate.value).toBeNull();
+    expect(kpis.contributionRate.value).toBeNull();
     expect(kpis.aiDeliveredPassRate.value).toBeNull();
     expect(kpis.aiAssistedPassRate.value).toBeNull();
-    expect(kpis.deliveryShare.value).toBeNull();
-    expect(kpis.noOutputRate.value).toBeNull();
-    expect(kpis.unjudgedRate.value).toBeNull();
+    expect(kpis.coverageRate.value).toBeNull();
+    expect(kpis.noOutput).toBe(0);
+    expect(kpis.unjudged).toBe(0);
   });
 
   it("does not count an unknown or drifting quality value as judged", () => {
@@ -417,14 +473,14 @@ describe("distribution buckets reconcile with the KPI numerators", () => {
     expect(attributionBucket(passed)).toBe("ai_delivered");
   });
 
-  it("quality-card unknown equals the undetermined-share numerator", () => {
+  it("quality-card unknown equals the undetermined footnote count", () => {
     const rows = [completedUnknown, running, failed, neverAssessed, passed];
     const kpis = computeOperationsKpis(rows);
     const unknownInCard = rows.filter((r) => qualityBucket(r) === "unknown").length;
     // The reported mismatch (208 vs 157) came from counting unfinished
     // assessments as "unknown" in the card; with the bucket split both
     // surfaces count exactly the completed-without-verdict rows.
-    expect(unknownInCard).toBe(kpis.unjudgedRate.numerator);
+    expect(unknownInCard).toBe(kpis.unjudged);
     expect(
       rows.filter((r) => qualityBucket(r) === UNASSESSED).length,
     ).toBe(3);
@@ -508,25 +564,19 @@ describe("blockedWarningFamily / isVerifiableOutput", () => {
     expect(blockedWarningFamily("final CL differs from AI shelve")).toBeNull();
   });
 
-  it("requires completed status, an AI plan, and a committed CL", () => {
+  it("requires completed status and an AI plan; a committed CL is not required", () => {
     const base = {
       assessment_status: "completed",
       delivery_attribution_prediction: "ai_delivered",
       quality_prediction: "likely_correct",
     };
-    // AI shelve + committed CL → counts.
+    // AI shelve alone → counts: the plan is assessable before it ships.
     expect(
       isVerifiableOutput(
-        fix({
-          p4_assessment: {
-            ...base,
-            ai_shelved_cls: [1],
-            swarm_committed_cls: [10],
-          },
-        }),
+        fix({ p4_assessment: { ...base, ai_shelved_cls: [1] } }),
       ),
     ).toBe(true);
-    // Swarm review (fix proposal) + committed CL → counts even without a shelve.
+    // Swarm review (fix proposal) → counts even without a shelve.
     expect(
       isVerifiableOutput(
         fix({
@@ -534,30 +584,22 @@ describe("blockedWarningFamily / isVerifiableOutput", () => {
             ...base,
             ai_shelved_cls: [],
             swarm_reviews: [{ review_id: 1 }],
-            external_committed_cls: [11],
           },
         }),
       ),
     ).toBe(true);
-    // Noisy warnings do not gate the denominator — artifacts do.
+    // Noisy warnings do not gate the pipeline — artifacts do.
     expect(
       isVerifiableOutput(
         fix({
           p4_assessment: {
             ...base,
             ai_shelved_cls: [1],
-            swarm_committed_cls: [10],
             warnings: ["swarm_lookup_unavailable", "evidence_endpoint_unavailable"],
           },
         }),
       ),
     ).toBe(true);
-    // AI plan but no committed CL → excluded (the fix never shipped).
-    expect(
-      isVerifiableOutput(
-        fix({ p4_assessment: { ...base, ai_shelved_cls: [1] } }),
-      ),
-    ).toBe(false);
     // Committed CL but no AI plan → excluded (human-delivered, WAR-6085 shape).
     expect(
       isVerifiableOutput(
@@ -579,7 +621,6 @@ describe("blockedWarningFamily / isVerifiableOutput", () => {
             ...base,
             assessment_status: "running",
             ai_shelved_cls: [1],
-            swarm_committed_cls: [10],
           },
         }),
       ),

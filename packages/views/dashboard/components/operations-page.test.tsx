@@ -514,14 +514,14 @@ describe("OperationsPage", () => {
   it("renders the KPI band with the headline rates and the funnel", () => {
     renderWithI18n(<OperationsPage />);
 
-    expect(screen.getByText("AI delivered pass rate")).toBeTruthy();
-    expect(screen.getByText("AI assisted pass rate")).toBeTruthy();
-    expect(screen.getByText("AI delivery share")).toBeTruthy();
-    expect(screen.getByText("AI no-output rate")).toBeTruthy();
-    expect(screen.getByText("Undetermined share")).toBeTruthy();
+    // Composition bar over 外部完成, then the three ratio cards.
+    expect(screen.getByText("Delivery composition")).toBeTruthy();
+    expect(screen.getByText("Direct-delivery pass rate")).toBeTruthy();
+    expect(screen.getByText("Assisted pass rate")).toBeTruthy();
+    expect(screen.getByText("Assessment coverage")).toBeTruthy();
     expect(screen.getByText("Delivery funnel")).toBeTruthy();
     expect(screen.getByText("Last 30 days")).toBeTruthy();
-    // Funnel stages, with the verifiable-output stage as the fix-rate pool.
+    // Funnel stages, with the verifiable-output stage as the quality pool.
     expect(screen.getByText("External done")).toBeTruthy();
     expect(screen.getByText("AI engaged")).toBeTruthy();
     expect(
@@ -535,7 +535,10 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Done 5 · 设计如此 1")).toBeTruthy();
     // Delivered pass rate: t-1 is the only judged ai_delivered verifiable row
     // (likely_correct) → 1/1 = 100%. t-4 is human-delivered and stays out.
-    expect(screen.getByText("100%")).toBeTruthy();
+    // (100% can also appear on other same-base cards, hence getAllByText.)
+    expect(screen.getAllByText("100%").length).toBeGreaterThanOrEqual(1);
+    // Data-health footnote replaces the old no-output/undetermined cards.
+    expect(screen.getByText(/no output · \d+ undetermined/)).toBeTruthy();
   });
 
   it("derives AI no output for completed assessments without an AI shelve", () => {

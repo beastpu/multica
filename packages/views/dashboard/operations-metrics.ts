@@ -37,7 +37,7 @@ const PROVEN_NON_AI_ATTRIBUTIONS = new Set([
 // agent_comment_count (every agent comment on the issue) — authoritative.
 // Older servers omit it; fall back to the last_comment snippet, which is the
 // agent's latest comment (the SQL filters author_type='agent').
-export function hasAgentPlanComment(fix: AgentFixRecord): boolean {
+function hasAgentPlanComment(fix: AgentFixRecord): boolean {
   if (typeof fix.agent_comment_count === "number") {
     return fix.agent_comment_count > 0;
   }
@@ -122,7 +122,7 @@ export function attributionBucket(fix: AgentFixRecord): string {
 // Access-blocked warning classification.
 //
 // Used only by the blocked-analysis card (computeBlockedStats) — NOT by the
-// fix-rate denominator. Production agents emit drifting variants
+// quality-pipeline gate. Production agents emit drifting variants
 // ("p4_lookup_unavailable_for_candidate_cls", ...), so classify by FAMILY.
 // ---------------------------------------------------------------------------
 
@@ -156,15 +156,16 @@ export function blockedWarningFamily(warning: string): BlockedFamily | null {
 }
 
 // ---------------------------------------------------------------------------
-// Verifiable AI output — the fix-rate denominator.
+// Assessable AI output — the quality-pipeline gate (verifiable → judged →
+// passed, and the coverage numerator).
 //
-// The fix rate answers "when AI attempted a fix that actually shipped, how
-// often was it right?". A ticket enters the denominator only when BOTH hold:
-//   1. AI produced a fix plan — a shelve CL or a Swarm review.
-//   2. A committed CL exists — the ticket was actually delivered (by anyone;
-//      human or AI submission both count, the point is it shipped).
-// This is built from concrete result artifacts, not warning strings: the
-// assessment warnings are noisy/drifting and must not gate the denominator.
+// Quality is about the PLAN: the assessment judges whether the AI's shelved
+// fix / proposal is correct by reading the code — it does not need the fix to
+// have shipped. So the gate is just "completed assessment with an AI plan"; a
+// committed CL is NOT required. Delivery (did the plan actually ship?) is a
+// separate axis, measured by contribution + the delivery-composition bar.
+// Requiring a committed CL here used to drop ~30% of already-judged plans
+// (their commit evidence was unreachable), understating coverage badly.
 // ---------------------------------------------------------------------------
 
 function hasNonEmptyCl(cls: Array<string | number> | undefined): boolean {
@@ -175,15 +176,15 @@ function hasNonEmptyCl(cls: Array<string | number> | undefined): boolean {
 // quality_prediction judges whether the *fix* is correct, not whether AI
 // produced it — so without this gate a human-delivered "likely_correct" would
 // count as an AI win.
-export function aiProducedPlan(fix: AgentFixRecord): boolean {
+function aiProducedPlan(fix: AgentFixRecord): boolean {
   const p4 = fix.p4_assessment;
   if (!p4) return false;
   return hasNonEmptyCl(p4.ai_shelved_cls) || (p4.swarm_reviews ?? []).length > 0;
 }
 
 // The ticket actually shipped: a committed/submitted CL exists. Who submitted
-// it (human continuation or AI/Swarm) doesn't matter — only that the fix landed
-// so its correctness can be judged. Shelve CLs are NOT committed CLs.
+// it doesn't matter. Shelve CLs are NOT committed CLs. Not part of the quality
+// gate — used by the missing-human-CL process-gap check below.
 function hasCommittedCl(fix: AgentFixRecord): boolean {
   const p4 = fix.p4_assessment;
   if (!p4) return false;
@@ -206,14 +207,13 @@ export function hasMissingExternalClWarning(fix: AgentFixRecord): boolean {
   );
 }
 
-// A ticket enters the fix-rate denominator when the assessment completed, AI
-// produced a fix plan, and a committed CL exists. Warnings do not gate this —
-// the denominator is defined by concrete result artifacts.
+// A ticket enters the quality pipeline when the assessment completed and AI
+// produced a plan to judge. Whether that plan shipped (committed CL) is a
+// delivery question, not an assessability one — it lives in contribution.
 export function isVerifiableOutput(fix: AgentFixRecord): boolean {
   return (
     fix.p4_assessment?.assessment_status === "completed" &&
-    aiProducedPlan(fix) &&
-    hasCommittedCl(fix)
+    aiProducedPlan(fix)
   );
 }
 
@@ -323,10 +323,10 @@ function rate(numerator: number, denominator: number): OperationsRate {
 // Delivery funnel counts. Stages are nested: passed ⊆ judged ⊆ verifiable ⊆
 // aiPlanned ⊆ aiEngaged; externalDone is the upstream gate. Each drop is one
 // process problem: engaged→planned = the agent proposed but never landed a
-// shelve/Swarm record; planned→verifiable = no committed CL exists (often a
-// human CL missing from the external ticket). `verifiable` is the fix-rate
-// denominator pool. Judgement is the AI quality analysis — there is no human
-// review in this flow.
+// shelve/Swarm record; planned→verifiable = the assessment hasn't completed.
+// `verifiable` is the quality-pipeline pool (completed assessment with an AI
+// plan). Judgement is the AI quality analysis — there is no human review in
+// this flow.
 export interface OperationsFunnel {
   total: number;
   externalDone: number;
@@ -340,25 +340,51 @@ export interface OperationsFunnel {
   passed: number;
 }
 
+// A MECE partition of 外部完成 (every shipped ticket lands in exactly one
+// bucket) by AI's role, for the delivery-composition stacked bar:
+//   directDelivered + assisted + unconverted + notParticipated === externalDone
+// participation = directDelivered + assisted + unconverted (AI was involved);
+// contribution  = directDelivered + assisted (AI's work reached delivery).
+export interface DeliveryComposition {
+  directDelivered: number; // AI's CL is the final CL (ai_delivered)
+  assisted: number; // human shipped an AI-equivalent CL (ai_assisted)
+  unconverted: number; // AI produced a plan but it did not reach delivery
+  notParticipated: number; // shipped with no AI involvement at all
+}
+
 export interface OperationsKpis {
   funnel: OperationsFunnel;
-  // AI 贡献通过率：通过 / 已判定，限 AI 直接提交（ai_delivered）
+  // MECE breakdown of 外部完成 by AI role — backs the composition bar.
+  composition: DeliveryComposition;
+  // AI 参与率：AI 参与了(出方案或被归因交付) / 外部完成。产出物驱动,不被
+  // unknown 压成地板。= 构成的前三段。
+  participationRate: OperationsRate;
+  // AI 贡献率：AI 的方案进入了最终交付(ai_delivered + ai_assisted) / 外部完成。
+  // 与参与率同底,差 = 出方案未转化。= 构成的前两段。
+  contributionRate: OperationsRate;
+  // 直接交付通过率：判对 / 已判定，限 AI 直接交付（ai_delivered）。
   aiDeliveredPassRate: OperationsRate;
-  // AI 辅助通过率：通过 / 已判定，限 AI 方案人工提交（ai_assisted）
+  // 辅助通过率：判对 / 已判定，限 AI 方案人工提交（ai_assisted）。
   aiAssistedPassRate: OperationsRate;
-  // AI 交付占比：AI 提交+辅助 / 外部完成
-  deliveryShare: OperationsRate;
-  // AI 无产出率：无产出 + 有方案未落记录 / 全部参与记录
-  noOutputRate: OperationsRate;
-  // 无法判断占比：评估完成但没有质量结论 / 全部参与记录
-  unjudgedRate: OperationsRate;
+  // 评估覆盖率：已判定 / AI 参与。上面几个数有多可信——覆盖率低说明大量 AI
+  // 产出没能被验证(证据受阻),通过率只建立在少数可见样本上。
+  coverageRate: OperationsRate;
+  // Demoted data-health counts (rendered as a muted footnote, not a headline
+  // card): AI produced no record (no-output + plan-no-record) / assessment
+  // completed without a verdict.
+  noOutput: number;
+  unjudged: number;
 }
 
 export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   let externalDone = 0;
   let aiEngaged = 0;
   let aiPlanned = 0;
-  let aiDelivered = 0;
+  let participatedAll = 0;
+  let directDelivered = 0;
+  let assisted = 0;
+  let unconverted = 0;
+  let notParticipated = 0;
   let verifiable = 0;
   let judged = 0;
   let passed = 0;
@@ -369,16 +395,30 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   let noOutput = 0;
   let unjudged = 0;
   for (const fix of rows) {
-    if (fix.external?.done === true) externalDone += 1;
-    const planned = aiProducedPlan(fix);
-    if (planned) aiPlanned += 1;
-    if (planned || hasAgentPlanComment(fix)) aiEngaged += 1;
+    const done = fix.external?.done === true;
+    if (done) externalDone += 1;
     const attribution = deriveAttribution(fix);
     if (attribution === AI_NO_OUTPUT || attribution === AI_PLAN_NO_RECORD) {
       noOutput += 1;
     }
-    if (attribution === "ai_delivered" || attribution === "ai_assisted") {
-      aiDelivered += 1;
+    const contributed =
+      attribution === "ai_delivered" || attribution === "ai_assisted";
+    const planned = aiProducedPlan(fix);
+    if (planned) aiPlanned += 1;
+    // Engagement is looser than participation: a comment-only plan counts as
+    // the agent showing up (the funnel's engaged→planned drop), but not as
+    // artifact-driven participation.
+    if (planned || hasAgentPlanComment(fix)) aiEngaged += 1;
+    // Participation counts contribution too: an ai_delivered row whose shelve
+    // wasn't captured in ai_shelved_cls must still count as involvement, so
+    // contribution ⊆ participation always holds.
+    const participated = planned || contributed;
+    if (participated) participatedAll += 1;
+    if (done) {
+      if (attribution === "ai_delivered") directDelivered += 1;
+      else if (attribution === "ai_assisted") assisted += 1;
+      else if (participated) unconverted += 1;
+      else notParticipated += 1;
     }
     const completed = fix.p4_assessment?.assessment_status === "completed";
     const quality = qualityJudgement(fix);
@@ -408,11 +448,17 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
       judged,
       passed,
     },
+    composition: { directDelivered, assisted, unconverted, notParticipated },
+    participationRate: rate(
+      directDelivered + assisted + unconverted,
+      externalDone,
+    ),
+    contributionRate: rate(directDelivered + assisted, externalDone),
     aiDeliveredPassRate: rate(passedDelivered, judgedDelivered),
     aiAssistedPassRate: rate(passedAssisted, judgedAssisted),
-    deliveryShare: rate(aiDelivered, externalDone),
-    noOutputRate: rate(noOutput, rows.length),
-    unjudgedRate: rate(unjudged, rows.length),
+    coverageRate: rate(judged, participatedAll),
+    noOutput,
+    unjudged,
   };
 }
 

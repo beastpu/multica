@@ -90,11 +90,21 @@ func TestP4SwarmWebhook_CreatePerEvent_CreatesIssue(t *testing.T) {
 	if creatorType != "agent" {
 		t.Errorf("creator_type = %q, want agent", creatorType)
 	}
-	if !strings.Contains(description, "500120") {
-		t.Errorf("description missing changelist 500120: %q", description)
-	}
-	if !strings.Contains(description, "alice") {
-		t.Errorf("description missing author alice: %q", description)
+	// The description faithfully displays the webhook fields so the agent has
+	// the full review context: changelist, author, state, branch, Swarm URL,
+	// review id, plus the original review description.
+	for _, want := range []string{
+		"500120",                  // shelved CL (from review.changes)
+		"alice",                   // author
+		"approved",                // state
+		"main",                    // swarm branch
+		"http://swarm.strat.test", // swarm url
+		"500123",                  // review id
+		"no issue reference here", // original review description
+	} {
+		if !strings.Contains(description, want) {
+			t.Errorf("description missing %q: %q", want, description)
+		}
 	}
 }
 
@@ -191,5 +201,71 @@ func TestP4SwarmWebhook_CreatePerEvent_CreatedEventCreatesIssue(t *testing.T) {
 	}
 	if got := countStrategyIssues(ctx, t, stratID); got != 1 {
 		t.Errorf("created issues = %d, want 1 (review.created must create)", got)
+	}
+}
+
+// TestP4SwarmWebhook_CreatePerEvent_RealPartopiaPayload locks the exact issue a
+// real production Swarm payload (the partopia project) produces, so any future
+// change to the field rendering is caught. The body below is the verbatim
+// webhook payload: the submitter is sent as a structured review.author field,
+// and there is no review.title — so the title falls back to "CL <cl> by
+// <author>". If the payload later grows a title field, that is a different
+// payload and belongs in its own test.
+func TestP4SwarmWebhook_CreatePerEvent_RealPartopiaPayload(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+	t.Setenv("MULTICA_P4_SWARM_WEBHOOK_TOKEN", p4WebhookTestToken)
+	agentID := createHandlerTestAgent(t, "Partopia Agent", []byte("[]"))
+	stratID := seedP4Strategy(ctx, t, "http://partopia-swarm.lilithgame.com", agentID)
+
+	body := []byte(`{
+  "event_type": "review.updated",
+  "swarm": {
+    "url": "http://partopia-swarm.lilithgame.com",
+    "branch": "main"
+  },
+  "review": {
+    "id": 141630,
+    "state": "needsReview",
+    "description": "AI-REVIEW test description",
+    "author": "wangjiajie",
+    "changes": [141629],
+    "commits": [],
+    "created": 1,
+    "updated": 1
+  }
+}`)
+	if w := postP4Webhook(t, p4WebhookTestToken, body); w.Code != http.StatusAccepted {
+		t.Fatalf("code = %d, want 202; body=%s", w.Code, w.Body.String())
+	}
+
+	var title, description string
+	if err := testPool.QueryRow(ctx, `
+		SELECT i.title, i.description
+		FROM perforce_strategy_created_issue ci
+		JOIN issue i ON i.id = ci.issue_id
+		WHERE ci.strategy_id = $1
+	`, stratID).Scan(&title, &description); err != nil {
+		t.Fatalf("load created issue: %v", err)
+	}
+
+	if want := "CL 141629 by wangjiajie"; title != want {
+		t.Errorf("title = %q, want %q", title, want)
+	}
+	wantDesc := `Created from a Perforce / Helix Swarm review event.
+
+- Review: #141630
+- State: needsReview
+- Author: wangjiajie
+- Shelved CL: 141629
+- Branch: main
+- Swarm: http://partopia-swarm.lilithgame.com
+
+---
+AI-REVIEW test description`
+	if description != wantDesc {
+		t.Errorf("description mismatch:\n got: %q\nwant: %q", description, wantDesc)
 	}
 }

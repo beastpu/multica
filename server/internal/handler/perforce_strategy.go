@@ -114,7 +114,7 @@ func (h *Handler) createIssuePerEvent(ctx context.Context, strat db.PerforceProj
 	issue, err := qtx.CreateIssue(ctx, db.CreateIssueParams{
 		WorkspaceID:  strat.WorkspaceID,
 		Title:        perforceStrategyIssueTitle(review),
-		Description:  pgtype.Text{String: perforceStrategyIssueDescription(review), Valid: true},
+		Description:  pgtype.Text{String: perforceStrategyIssueDescription(strat.SwarmUrl, review), Valid: true},
 		Status:       "todo",
 		Priority:     "none",
 		AssigneeType: pgtype.Text{String: "agent", Valid: true},
@@ -193,28 +193,33 @@ func perforceStrategyIssueTitle(review perforce.Review) string {
 	}
 }
 
-// perforceStrategyIssueDescription carries the changelist and author into the
-// issue body (the agreed zero-fidelity requirement), plus review state and the
-// original review description for context.
-func perforceStrategyIssueDescription(review perforce.Review) string {
+// perforceStrategyIssueDescription faithfully renders the webhook's review
+// fields into the issue body so the assigned agent has the full context it needs
+// to review the change: review id, state, author, the shelved and committed
+// changelists (kept distinct — shelved needs `p4 describe -S`, committed does
+// not), the Swarm branch and project URL, plus the original review description.
+func perforceStrategyIssueDescription(swarmURL string, review perforce.Review) string {
 	var b strings.Builder
 	b.WriteString("Created from a Perforce / Helix Swarm review event.\n\n")
-	if cl := perforceReviewChangelist(review); cl != "" {
-		b.WriteString("- Changelist: ")
-		b.WriteString(cl)
-		b.WriteString("\n")
+	fmt.Fprintf(&b, "- Review: #%d\n", review.ID)
+	if review.State != "" {
+		fmt.Fprintf(&b, "- State: %s\n", review.State)
 	}
 	if review.Author != "" {
-		b.WriteString("- Author: ")
-		b.WriteString(review.Author)
-		b.WriteString("\n")
+		fmt.Fprintf(&b, "- Author: %s\n", review.Author)
 	}
-	if review.State != "" {
-		b.WriteString("- State: ")
-		b.WriteString(review.State)
-		b.WriteString("\n")
+	if review.ShelvedCL != nil {
+		fmt.Fprintf(&b, "- Shelved CL: %d\n", *review.ShelvedCL)
 	}
-	fmt.Fprintf(&b, "- Review: #%d\n", review.ID)
+	if review.CommittedCL != nil {
+		fmt.Fprintf(&b, "- Committed CL: %d\n", *review.CommittedCL)
+	}
+	if review.SwarmBranch != "" {
+		fmt.Fprintf(&b, "- Branch: %s\n", review.SwarmBranch)
+	}
+	if s := strings.TrimSpace(swarmURL); s != "" {
+		fmt.Fprintf(&b, "- Swarm: %s\n", s)
+	}
 	if d := strings.TrimSpace(review.Description); d != "" {
 		b.WriteString("\n---\n")
 		b.WriteString(d)
