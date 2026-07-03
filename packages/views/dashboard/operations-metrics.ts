@@ -63,14 +63,11 @@ export function isPendingJudgement(fix: AgentFixRecord): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Verifiable AI output — the fix-rate denominator.
+// Access-blocked warning classification.
 //
-// The fix rate only counts tickets where the AI produced something AND the
-// assessment could actually reach that evidence. Access problems are detected
-// from the assessment warnings by FAMILY matching, not exact enum values:
-// production agents emit drifting variants ("p4_lookup_unavailable_for_
-// candidate_cls", "claimed_shelved_cl_not_found_on_reachable_p4", ...), so an
-// exact match would silently let blocked rows into the denominator.
+// Used only by the blocked-analysis card (computeBlockedStats) — NOT by the
+// fix-rate denominator. Production agents emit drifting variants
+// ("p4_lookup_unavailable_for_candidate_cls", ...), so classify by FAMILY.
 // ---------------------------------------------------------------------------
 
 const BLOCKED_WARNING_RE = /(unavailable|not_found|unreachable|unauthorized)/i;
@@ -89,29 +86,52 @@ export function blockedWarningFamily(warning: string): BlockedFamily | null {
   return "other";
 }
 
-export function isAccessBlocked(fix: AgentFixRecord): boolean {
-  return (fix.p4_assessment?.warnings ?? []).some(
-    (w) => blockedWarningFamily(String(w)) !== null,
-  );
+// ---------------------------------------------------------------------------
+// Verifiable AI output — the fix-rate denominator.
+//
+// The fix rate answers "when AI attempted a fix that actually shipped, how
+// often was it right?". A ticket enters the denominator only when BOTH hold:
+//   1. AI produced a fix plan — a shelve CL or a Swarm review.
+//   2. A committed CL exists — the ticket was actually delivered (by anyone;
+//      human or AI submission both count, the point is it shipped).
+// This is built from concrete result artifacts, not warning strings: the
+// assessment warnings are noisy/drifting and must not gate the denominator.
+// ---------------------------------------------------------------------------
+
+function hasNonEmptyCl(cls: Array<string | number> | undefined): boolean {
+  return (cls ?? []).some((cl) => String(cl).trim() !== "");
 }
 
-function hasAiOutputEvidence(fix: AgentFixRecord): boolean {
+// AI produced a fix plan: a shelve CL, or a Swarm review (the proposed fix).
+// quality_prediction judges whether the *fix* is correct, not whether AI
+// produced it — so without this gate a human-delivered "likely_correct" would
+// count as an AI win.
+function aiProducedPlan(fix: AgentFixRecord): boolean {
   const p4 = fix.p4_assessment;
   if (!p4) return false;
-  const shelved = (p4.ai_shelved_cls ?? []).filter(
-    (cl) => String(cl).trim() !== "",
-  );
-  return shelved.length > 0 || (p4.swarm_reviews ?? []).length > 0;
+  return hasNonEmptyCl(p4.ai_shelved_cls) || (p4.swarm_reviews ?? []).length > 0;
 }
 
-// A ticket enters the fix-rate denominator only when the assessment completed,
-// the AI produced evidence (shelve CL or swarm review), and nothing blocked
-// access to that evidence.
+// The ticket actually shipped: a committed/submitted CL exists. Who submitted
+// it (human continuation or AI/Swarm) doesn't matter — only that the fix landed
+// so its correctness can be judged. Shelve CLs are NOT committed CLs.
+function hasCommittedCl(fix: AgentFixRecord): boolean {
+  const p4 = fix.p4_assessment;
+  if (!p4) return false;
+  return (
+    hasNonEmptyCl(p4.swarm_committed_cls) ||
+    hasNonEmptyCl(p4.external_committed_cls)
+  );
+}
+
+// A ticket enters the fix-rate denominator when the assessment completed, AI
+// produced a fix plan, and a committed CL exists. Warnings do not gate this —
+// the denominator is defined by concrete result artifacts.
 export function isVerifiableOutput(fix: AgentFixRecord): boolean {
   return (
     fix.p4_assessment?.assessment_status === "completed" &&
-    hasAiOutputEvidence(fix) &&
-    !isAccessBlocked(fix)
+    aiProducedPlan(fix) &&
+    hasCommittedCl(fix)
   );
 }
 

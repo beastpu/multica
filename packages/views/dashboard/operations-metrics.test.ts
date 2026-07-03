@@ -117,6 +117,7 @@ describe("deriveAttribution", () => {
 });
 
 describe("computeOperationsKpis", () => {
+  // Verifiable rows: AI produced a plan (shelve) AND a committed CL shipped.
   const aiPassed = fix({
     external: { done: true },
     p4_assessment: {
@@ -124,6 +125,7 @@ describe("computeOperationsKpis", () => {
       delivery_attribution_prediction: "ai_delivered",
       quality_prediction: "likely_correct",
       ai_shelved_cls: [1],
+      swarm_committed_cls: [101],
     },
   });
   const aiFailed = fix({
@@ -133,6 +135,7 @@ describe("computeOperationsKpis", () => {
       delivery_attribution_prediction: "ai_assisted",
       quality_prediction: "likely_wrong",
       ai_shelved_cls: [2],
+      external_committed_cls: [102],
     },
   });
   const aiUnjudged = fix({
@@ -142,6 +145,7 @@ describe("computeOperationsKpis", () => {
       delivery_attribution_prediction: "ai_delivered",
       quality_prediction: "unknown",
       ai_shelved_cls: [3],
+      swarm_committed_cls: [103],
     },
   });
   const noOutput = fix({
@@ -190,18 +194,58 @@ describe("computeOperationsKpis", () => {
     });
   });
 
-  it("keeps access-blocked rows out of the fix-rate denominator", () => {
-    const blocked = fix({
+  it("counts a verifiable row regardless of noisy warnings", () => {
+    // AI shelve + committed CL: the denominator is built from artifacts, so a
+    // stray "*_unavailable" warning does not drop it.
+    const warned = fix({
       external: { done: true },
       p4_assessment: {
         assessment_status: "completed",
-        delivery_attribution_prediction: "unknown",
+        delivery_attribution_prediction: "ai_delivered",
         quality_prediction: "likely_correct",
         ai_shelved_cls: [9],
-        warnings: ["claimed_shelved_cl_not_found_on_reachable_p4"],
+        external_committed_cls: [909],
+        warnings: ["evidence_endpoint_unavailable", "swarm_lookup_unavailable"],
       },
     });
-    const kpis = computeOperationsKpis([aiPassed, blocked]);
+    const kpis = computeOperationsKpis([aiPassed, warned]);
+    expect(kpis.funnel.verifiable).toBe(2);
+    expect(kpis.funnel.judged).toBe(2);
+    expect(kpis.funnel.passed).toBe(2);
+    expect(kpis.passRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
+  });
+
+  it("excludes an AI plan that never shipped a committed CL", () => {
+    // AI shelved a fix and judged it likely_correct, but no committed CL exists
+    // — the fix didn't land, so it can't count toward the fix rate.
+    const shelvedButUnshipped = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "ai_delivered",
+        quality_prediction: "likely_correct",
+        ai_shelved_cls: [9],
+      },
+    });
+    const kpis = computeOperationsKpis([aiPassed, shelvedButUnshipped]);
+    expect(kpis.funnel.verifiable).toBe(1);
+    expect(kpis.passRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
+  });
+
+  it("excludes a committed CL with no AI plan (human-delivered)", () => {
+    // WAR-6085 shape: a committed CL shipped and the fix is judged correct, but
+    // AI produced nothing — the human's fix must not count as an AI win.
+    const humanDelivered = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+        quality_prediction: "likely_correct",
+        ai_shelved_cls: [],
+        external_committed_cls: [261939],
+      },
+    });
+    const kpis = computeOperationsKpis([aiPassed, humanDelivered]);
     expect(kpis.funnel.verifiable).toBe(1);
     expect(kpis.passRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
   });
@@ -301,18 +345,25 @@ describe("blockedWarningFamily / isVerifiableOutput", () => {
     expect(blockedWarningFamily("final CL differs from AI shelve")).toBeNull();
   });
 
-  it("requires completed status, AI evidence, and unblocked access", () => {
+  it("requires completed status, an AI plan, and a committed CL", () => {
     const base = {
       assessment_status: "completed",
       delivery_attribution_prediction: "ai_delivered",
       quality_prediction: "likely_correct",
     };
+    // AI shelve + committed CL → counts.
     expect(
       isVerifiableOutput(
-        fix({ p4_assessment: { ...base, ai_shelved_cls: [1] } }),
+        fix({
+          p4_assessment: {
+            ...base,
+            ai_shelved_cls: [1],
+            swarm_committed_cls: [10],
+          },
+        }),
       ),
     ).toBe(true);
-    // Swarm review evidence counts even without a shelve CL.
+    // Swarm review (fix proposal) + committed CL → counts even without a shelve.
     expect(
       isVerifiableOutput(
         fix({
@@ -320,30 +371,53 @@ describe("blockedWarningFamily / isVerifiableOutput", () => {
             ...base,
             ai_shelved_cls: [],
             swarm_reviews: [{ review_id: 1 }],
+            external_committed_cls: [11],
           },
         }),
       ),
     ).toBe(true);
-    expect(
-      isVerifiableOutput(
-        fix({ p4_assessment: { ...base, ai_shelved_cls: [] } }),
-      ),
-    ).toBe(false);
+    // Noisy warnings do not gate the denominator — artifacts do.
     expect(
       isVerifiableOutput(
         fix({
           p4_assessment: {
             ...base,
             ai_shelved_cls: [1],
-            warnings: ["swarm_lookup_unavailable"],
+            swarm_committed_cls: [10],
+            warnings: ["swarm_lookup_unavailable", "evidence_endpoint_unavailable"],
+          },
+        }),
+      ),
+    ).toBe(true);
+    // AI plan but no committed CL → excluded (the fix never shipped).
+    expect(
+      isVerifiableOutput(
+        fix({ p4_assessment: { ...base, ai_shelved_cls: [1] } }),
+      ),
+    ).toBe(false);
+    // Committed CL but no AI plan → excluded (human-delivered, WAR-6085 shape).
+    expect(
+      isVerifiableOutput(
+        fix({
+          p4_assessment: {
+            ...base,
+            delivery_attribution_prediction: "human_delivered",
+            ai_shelved_cls: [],
+            external_committed_cls: [261939],
           },
         }),
       ),
     ).toBe(false);
+    // Not completed → excluded.
     expect(
       isVerifiableOutput(
         fix({
-          p4_assessment: { ...base, assessment_status: "running", ai_shelved_cls: [1] },
+          p4_assessment: {
+            ...base,
+            assessment_status: "running",
+            ai_shelved_cls: [1],
+            swarm_committed_cls: [10],
+          },
         }),
       ),
     ).toBe(false);
