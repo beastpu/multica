@@ -1589,6 +1589,16 @@ type AgentFixResponse struct {
 	// no comment.
 	LastComment           string                        `json:"last_comment,omitempty"`
 	LastCommentAuthorType string                        `json:"last_comment_author_type,omitempty"` // always "agent" (or "" when none)
+	// AgentCommentCount is how many comments the agent has left on the issue
+	// in total — the dashboard's "the agent commented a plan" signal.
+	// LastComment above carries only the newest one.
+	AgentCommentCount int64 `json:"agent_comment_count,omitempty"`
+	// TaskStatus / TaskFailureReason describe the latest run itself
+	// (queued/running/completed/failed/timeout + the taskfailure taxonomy
+	// code), so the dashboard can explain a no-output ticket by its structured
+	// failure instead of guessing. Empty for binding-only rows.
+	TaskStatus        string `json:"task_status,omitempty"`
+	TaskFailureReason string `json:"task_failure_reason,omitempty"`
 	StartedAt             *string                       `json:"started_at"`
 	CompletedAt           *string                       `json:"completed_at"`
 	CreatedAt             string                        `json:"created_at"`
@@ -1954,6 +1964,9 @@ func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request
 			IssueStatus:           row.IssueStatus,
 			LastComment:           commentSnippetAround(row.LastComment, search),
 			LastCommentAuthorType: row.LastCommentAuthorType,
+			AgentCommentCount:     row.AgentCommentCount,
+			TaskStatus:            row.TaskStatus,
+			TaskFailureReason:     row.TaskFailureReason,
 			StartedAt:             timestampToPtr(row.StartedAt),
 			CompletedAt:           timestampToPtr(row.CompletedAt),
 			CreatedAt:             timestampToString(row.CreatedAt),

@@ -3290,7 +3290,8 @@ const listWorkspaceAgentFixes = `-- name: ListWorkspaceAgentFixes :many
 WITH latest AS (
   SELECT DISTINCT ON (atq.issue_id)
     atq.id AS task_id, atq.agent_id, atq.issue_id,
-    atq.started_at, atq.completed_at, atq.created_at
+    atq.started_at, atq.completed_at, atq.created_at,
+    atq.status AS task_status, atq.failure_reason
   FROM agent_task_queue atq
   JOIN agent ag ON ag.id = atq.agent_id
   WHERE ag.workspace_id = $2
@@ -3310,6 +3311,8 @@ spine AS (
     latest.started_at,
     latest.completed_at,
     latest.created_at,
+    latest.task_status,
+    latest.failure_reason,
     true AS has_normal_task
   FROM latest
   LEFT JOIN feishu_project_issue_binding fib
@@ -3330,6 +3333,8 @@ spine AS (
     NULL::timestamptz AS started_at,
     NULL::timestamptz AS completed_at,
     COALESCE(fib.last_external_updated_at, fib.last_synced_at) AS created_at,
+    NULL::text AS task_status,
+    NULL::text AS failure_reason,
     false AS has_normal_task
   FROM feishu_project_issue_binding fib
   JOIN issue i ON i.id = fib.issue_id AND i.workspace_id = fib.workspace_id
@@ -3352,6 +3357,11 @@ SELECT
   spine.started_at,
   spine.completed_at,
   spine.created_at,
+  -- The latest run's own state: lets the dashboard explain a no-output row by
+  -- its structured failure_reason (taskfailure taxonomy) instead of guessing.
+  -- Empty for binding-only rows (no normal task).
+  COALESCE(spine.task_status, '') AS task_status,
+  COALESCE(spine.failure_reason, '') AS task_failure_reason,
   spine.has_normal_task,
   -- The same instant the window predicate above filters on. The dashboard
   -- splits its current/previous periods and buckets its weekly trend on this,
@@ -3366,6 +3376,14 @@ SELECT
   ) AS activity_at,
   COALESCE(lc.content, '') AS last_comment,
   COALESCE(lc.author_type, '') AS last_comment_author_type,
+  -- Every agent comment on the issue (member replies excluded), so the
+  -- dashboard's "the agent commented a plan" signal survives a member reply
+  -- and doesn't hinge on the single last_comment row above.
+  (
+    SELECT count(*)
+    FROM comment c
+    WHERE c.issue_id = i.id AND c.type = 'comment' AND c.author_type = 'agent'
+  ) AS agent_comment_count,
   fib.id AS external_binding_id,
   fib.work_item_id AS external_work_item_id,
   fib.work_item_type AS external_work_item_type,
@@ -3439,10 +3457,13 @@ type ListWorkspaceAgentFixesRow struct {
 	StartedAt                       pgtype.Timestamptz `json:"started_at"`
 	CompletedAt                     pgtype.Timestamptz `json:"completed_at"`
 	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
+	TaskStatus                      string             `json:"task_status"`
+	TaskFailureReason               string             `json:"task_failure_reason"`
 	HasNormalTask                   bool               `json:"has_normal_task"`
 	ActivityAt                      pgtype.Timestamptz `json:"activity_at"`
 	LastComment                     string             `json:"last_comment"`
 	LastCommentAuthorType           string             `json:"last_comment_author_type"`
+	AgentCommentCount               int64              `json:"agent_comment_count"`
 	ExternalBindingID               pgtype.UUID        `json:"external_binding_id"`
 	ExternalWorkItemID              pgtype.Text        `json:"external_work_item_id"`
 	ExternalWorkItemType            pgtype.Text        `json:"external_work_item_type"`
@@ -3520,10 +3541,13 @@ func (q *Queries) ListWorkspaceAgentFixes(ctx context.Context, arg ListWorkspace
 			&i.StartedAt,
 			&i.CompletedAt,
 			&i.CreatedAt,
+			&i.TaskStatus,
+			&i.TaskFailureReason,
 			&i.HasNormalTask,
 			&i.ActivityAt,
 			&i.LastComment,
 			&i.LastCommentAuthorType,
+			&i.AgentCommentCount,
 			&i.ExternalBindingID,
 			&i.ExternalWorkItemID,
 			&i.ExternalWorkItemType,

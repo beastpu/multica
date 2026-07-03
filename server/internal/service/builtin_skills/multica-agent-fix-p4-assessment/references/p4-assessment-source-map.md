@@ -161,11 +161,20 @@ for the behavior contracts the skill teaches.
 
 - `packages/views/dashboard/operations-metrics.ts` computes the operations
   dashboard KPIs from assessment rows. `isVerifiableOutput` (the AI fix-rate
-  denominator) requires a completed assessment with AI output evidence
-  (`ai_shelved_cls` or `swarm_reviews`) and no access-blocked warning;
-  `blockedWarningFamily` classifies blocks by matching
+  denominator) requires a completed assessment, AI output evidence
+  (`ai_shelved_cls` or `swarm_reviews`), and a committed CL
+  (`swarm_committed_cls` or `external_committed_cls`) — warnings do not gate
+  the denominator. The pass rate is split by
+  `delivery_attribution_prediction`: `ai_delivered` and `ai_assisted` rows
+  feed separate KPIs, which is why attribution must not be guessed.
+- `blockedWarningFamily` classifies access-blocked warnings by matching
   `unavailable|not_found|unreachable|unauthorized` and grouping into
-  swarm / p4 / evidence_endpoint families. This is why the SKILL's prediction
-  policy requires a canonical `*_unavailable` warning whenever evidence access
-  is blocked, and requires `quality_prediction: "unknown"` when no AI output
-  evidence was verified.
+  auth (any `unauthorized`), identification (`not_found` + cl/shelve/branch),
+  swarm, p4, and evidence_endpoint families. This is why the SKILL's
+  prediction policy requires a canonical `*_unavailable` warning whenever
+  evidence access is blocked, and requires `quality_prediction: "unknown"`
+  when no AI output evidence was verified.
+- `hasMissingExternalClWarning` counts the "missing human CL" process gap:
+  completed assessments carrying `missing_external_cl` with no committed CL
+  evidence. This is why the SKILL requires `missing_external_cl` whenever the
+  external item is done but no submitted CL was found in any evidence source.
