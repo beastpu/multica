@@ -197,11 +197,23 @@ Build evidence arrays conservatively:
   and Swarm review descriptions that point back to the agent's shelve.
 - `swarm_change_cls`: CLs attached to a Swarm review's `changes[]`. This may
   include both the AI shelve and generated Swarm companion CLs.
-- `swarm_committed_cls`: submitted CLs from Swarm `commits[]` or stored committed
-  CL evidence.
+- `swarm_committed_cls`: submitted CLs verified as delivered — from Swarm
+  `commits[]`, stored committed-CL evidence, OR a submitted CL you confirmed
+  through read-only P4 inspection (`p4 describe -s <cl>` / `p4 filelog`) when no
+  structured source carried it. If your P4 lookup finds the submitted CL that
+  delivered the work (e.g. a shelve later submitted as an identical-diff CL),
+  record that CL number here.
 - `external_committed_cls`: submitted CLs found in already-ingested external
   compatibility evidence, such as `提交记录`, when the CL actually appears to
   belong to this binding.
+
+Always write a verified submitted CL into one of these structured
+`*_committed_cls` arrays — never leave it only in `summary` /
+`prediction_reasons`. Delivery attribution and the operations delivery metrics
+read the structured arrays, not the prose; a submitted CL you found in P4 but
+narrated only in text is invisible to them and undercounts delivery (the
+`structured_evidence_endpoint_unavailable` fallback path is exactly when this
+happens).
 - `swarm_reviews`: review ids and compact facts used for the judgement.
 - `workstream`: infer from binding fields, branch/workstream fields, review
   branch, or depot paths. Leave empty when unclear.
