@@ -88,7 +88,6 @@ import {
 } from "../operations-metrics";
 
 const ALL_AGENTS = "__all__";
-const ALL_STATUSES = "__all__";
 const ALL_WORKSTREAMS = "__all__";
 const ALL_ATTRIBUTIONS = "__all__";
 const ALL_QUALITIES = "__all__";
@@ -96,6 +95,13 @@ const DETAIL_TAB = "detail";
 const ANALYSIS_TAB = "analysis";
 type OperationsTab = typeof DETAIL_TAB | typeof ANALYSIS_TAB;
 type SelectOption = { value: string; label: string };
+
+const FILTER_SELECT_TRIGGER_CLASS =
+  "h-8 rounded-md border-0 bg-transparent px-2.5 text-xs text-muted-foreground shadow-none hover:bg-background/70 hover:text-foreground focus-visible:ring-2";
+const SEARCH_INPUT_CLASS =
+  "h-8 w-full rounded-lg border-border/70 bg-muted/25 pl-8 pr-7 text-base shadow-none transition-colors hover:bg-muted/35 focus-visible:border-ring focus-visible:bg-background sm:w-[260px] md:text-sm [&::-webkit-search-cancel-button]:appearance-none";
+const SEARCH_CLEAR_CLASS =
+  "absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
 
 // Detail-table page size. The full window is fetched once (a few thousand rows
 // at most) and paged purely in the UI so the client-side filters keep covering
@@ -297,6 +303,20 @@ function hasP4Signal(fix: AgentFixRecord): boolean {
   return Boolean(evidence.swarm || evidence.shelve || evidence.finalCl);
 }
 
+function isOperationsVisibleIssue(fix: AgentFixRecord): boolean {
+  const external = fix.external;
+  const hasAgentRun = fix.task_id.trim().length > 0;
+  const hasExternalBinding = (external?.binding_id ?? "").trim().length > 0;
+  const externalDone =
+    external?.done === true || external?.mapped_status === "done";
+  return (
+    hasAgentRun &&
+    fix.issue_status === "done" &&
+    hasExternalBinding &&
+    externalDone
+  );
+}
+
 function confidenceLabel(confidence: number | null | undefined): string {
   if (typeof confidence !== "number" || Number.isNaN(confidence)) return "";
   return `${Math.round(confidence * 100)}%`;
@@ -486,7 +506,6 @@ export function OperationsPage() {
   );
   const [days, setDays] = useState<OpsRange>(30);
   const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS);
-  const [statusFilter, setStatusFilter] = useState<string>(ALL_STATUSES);
   const [workstreamFilter, setWorkstreamFilter] = useState<string>(ALL_WORKSTREAMS);
   const [attributionFilter, setAttributionFilter] =
     useState<string>(ALL_ATTRIBUTIONS);
@@ -517,15 +536,19 @@ export function OperationsPage() {
   const fetchDays = Math.min(365, days * 2);
   const fixesQuery = useQuery(operationsFixesOptions(wsId, fetchDays, search));
   const allFixes = fixesQuery.data ?? EMPTY;
+  const visibleFixes = useMemo(
+    () => allFixes.filter(isOperationsVisibleIssue),
+    [allFixes],
+  );
   const { current: fixes, previous: previousFixes } = useMemo(
-    () => splitOperationsWindow(allFixes, days, viewTZ),
-    [allFixes, days, viewTZ],
+    () => splitOperationsWindow(visibleFixes, days, viewTZ),
+    [visibleFixes, days, viewTZ],
   );
   // The workspace's Helix Swarm URL — one connection per workspace — turns
   // review IDs and CL numbers into links. Absent connection → plain text.
   const { data: perforceData } = useQuery(perforceConnectionOptions(wsId));
   const swarmBase = perforceData?.connection?.swarm_url ?? "";
-  const hasExternalStatuses = fixes.some((fix) => !!fix.external?.status);
+  const hasExternalStatuses = visibleFixes.some((fix) => !!fix.external?.status);
   const { data: feishuStatusData } = useQuery(
     feishuProjectIssueStatusesOptions(wsId, hasExternalStatuses),
   );
@@ -576,9 +599,6 @@ export function OperationsPage() {
       if (effectiveAgent !== ALL_AGENTS && f.agent_id !== effectiveAgent) {
         return false;
       }
-      if (statusFilter !== ALL_STATUSES && f.issue_status !== statusFilter) {
-        return false;
-      }
       if (
         workstreamFilter !== ALL_WORKSTREAMS &&
         derivedEvidence(f).workstream !== workstreamFilter
@@ -605,7 +625,6 @@ export function OperationsPage() {
     };
   }, [
     effectiveAgent,
-    statusFilter,
     workstreamFilter,
     attributionFilter,
     qualityFilter,
@@ -631,16 +650,28 @@ export function OperationsPage() {
   const trend = useMemo(
     () =>
       showTrend
-        ? computeOperationsTrend(allFixes.filter(matchesFilters), viewTZ, weekCount)
+        ? computeOperationsTrend(
+            visibleFixes.filter(matchesFilters),
+            viewTZ,
+            weekCount,
+          )
         : [],
-    [showTrend, allFixes, matchesFilters, viewTZ, weekCount],
+    [showTrend, visibleFixes, matchesFilters, viewTZ, weekCount],
   );
 
   // UI pagination over the filtered rows. Any filter / window / search change
   // snaps back to the first page.
   useEffect(() => {
     setPage(0);
-  }, [days, effectiveAgent, statusFilter, workstreamFilter, attributionFilter, qualityFilter, pendingOnly, search]);
+  }, [
+    days,
+    effectiveAgent,
+    workstreamFilter,
+    attributionFilter,
+    qualityFilter,
+    pendingOnly,
+    search,
+  ]);
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pagedRows = useMemo(
@@ -655,50 +686,59 @@ export function OperationsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader className="h-auto min-h-12 flex-wrap justify-between gap-y-1.5 px-5 py-1.5 sm:py-0">
+      <PageHeader className="h-auto min-h-14 flex-col items-stretch gap-2 px-5 py-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 items-center gap-2">
           <Radar className="h-4 w-4 shrink-0 text-muted-foreground" />
           <h1 className="truncate text-sm font-medium">{t(($) => $.operations.title)}</h1>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <nav
+          role="toolbar"
+          aria-label={t(($) => $.operations.title)}
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-2 lg:justify-end"
+        >
           <SearchBox value={searchInput} onChange={setSearchInput} />
-          <AgentFilter
-            agents={agents}
-            value={agentFilter}
-            onChange={setAgentFilter}
-          />
-          <StatusFilter value={statusFilter} onChange={setStatusFilter} />
-          <ValueFilter
-            ariaLabel={t(($) => $.operations.filter.workstream)}
-            value={workstreamFilter}
-            allValue={ALL_WORKSTREAMS}
-            allLabel={t(($) => $.operations.filter.workstream_all)}
-            options={workstreamOptions}
-            onChange={setWorkstreamFilter}
-          />
-          <ValueFilter
-            ariaLabel={t(($) => $.operations.filter.attribution)}
-            value={attributionFilter}
-            allValue={ALL_ATTRIBUTIONS}
-            allLabel={t(($) => $.operations.filter.attribution_all)}
-            options={attributionOptions}
-            onChange={setAttributionFilter}
-          />
-          <ValueFilter
-            ariaLabel={t(($) => $.operations.filter.quality)}
-            value={qualityFilter}
-            allValue={ALL_QUALITIES}
-            allLabel={t(($) => $.operations.filter.quality_all)}
-            options={qualityOptions}
-            onChange={setQualityFilter}
-          />
+          <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-lg border border-border/70 bg-muted/25 p-1">
+            <AgentFilter
+              agents={agents}
+              value={agentFilter}
+              onChange={setAgentFilter}
+            />
+            <ValueFilter
+              ariaLabel={t(($) => $.operations.filter.workstream)}
+              value={workstreamFilter}
+              allValue={ALL_WORKSTREAMS}
+              allLabel={t(($) => $.operations.filter.workstream_all)}
+              options={workstreamOptions}
+              onChange={setWorkstreamFilter}
+            />
+            <ValueFilter
+              ariaLabel={t(($) => $.operations.filter.attribution)}
+              value={attributionFilter}
+              allValue={ALL_ATTRIBUTIONS}
+              allLabel={t(($) => $.operations.filter.attribution_all)}
+              options={attributionOptions}
+              onChange={setAttributionFilter}
+            />
+            <ValueFilter
+              ariaLabel={t(($) => $.operations.filter.quality)}
+              value={qualityFilter}
+              allValue={ALL_QUALITIES}
+              allLabel={t(($) => $.operations.filter.quality_all)}
+              options={qualityOptions}
+              onChange={setQualityFilter}
+            />
+          </div>
           <Button
             type="button"
             aria-pressed={pendingOnly}
-            variant={pendingOnly ? "default" : "outline"}
+            variant="outline"
             size="sm"
             onClick={() => setPendingOnly((v) => !v)}
-            className="h-8"
+            className={`h-8 rounded-lg px-3 text-xs shadow-none transition-colors ${
+              pendingOnly
+                ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+                : "border-border/70 bg-muted/25 text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+            }`}
           >
             {t(($) => $.operations.filter.pending_only)}
           </Button>
@@ -707,7 +747,7 @@ export function OperationsPage() {
             onChange={setDays}
             options={RANGES.map((r) => ({ label: r.label, value: r.days }))}
           />
-        </div>
+        </nav>
       </PageHeader>
 
       <div className="flex-1 overflow-y-auto">
@@ -1817,7 +1857,7 @@ function SearchBox({
 }) {
   const { t } = useT("usage");
   return (
-    <div className="relative">
+    <div className="relative min-w-[220px] flex-1 sm:flex-none">
       <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
       <Input
         type="search"
@@ -1825,14 +1865,14 @@ function SearchBox({
         onChange={(e) => onChange(e.target.value)}
         placeholder={t(($) => $.operations.search_placeholder)}
         aria-label={t(($) => $.operations.search_placeholder)}
-        className="h-8 w-[200px] pl-8 pr-7 text-sm [&::-webkit-search-cancel-button]:appearance-none"
+        className={SEARCH_INPUT_CLASS}
       />
       {value ? (
         <button
           type="button"
           onClick={() => onChange("")}
           aria-label={t(($) => $.operations.search_clear)}
-          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
+          className={SEARCH_CLEAR_CLASS}
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -1852,10 +1892,15 @@ function AgentFilter({
 }) {
   const { t } = useT("usage");
   const allLabel = t(($) => $.operations.filter.all_agents);
+  const ariaLabel = t(($) => $.operations.table.agent);
   const selected = agents.find((a) => a.id === value);
   return (
     <Select value={value} onValueChange={(v) => onChange(v ?? ALL_AGENTS)}>
-      <SelectTrigger size="sm" className="min-w-[160px]">
+      <SelectTrigger
+        size="sm"
+        aria-label={ariaLabel}
+        className={`${FILTER_SELECT_TRIGGER_CLASS} min-w-[150px] max-w-[190px]`}
+      >
         <SelectValue>
           {() => (
             <span className="truncate">
@@ -1871,43 +1916,6 @@ function AgentFilter({
         {agents.map((a) => (
           <SelectItem key={a.id} value={a.id}>
             <span className="truncate">{a.name}</span>
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
-// Filters rows by the ISSUE workflow status (the "状态" column). Labels reuse
-// the issues namespace so they match the rest of the product.
-function StatusFilter({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const { t } = useT("usage");
-  const { t: tIssues } = useT("issues");
-  const allLabel = t(($) => $.operations.filter.status_all);
-  const label = (s: string) =>
-    isKnownIssueStatus(s) ? tIssues(($) => $.status[s]) : s;
-  return (
-    <Select value={value} onValueChange={(v) => onChange(v ?? ALL_STATUSES)}>
-      <SelectTrigger size="sm" className="min-w-[130px]">
-        <SelectValue>
-          {() => (
-            <span className="truncate">
-              {value === ALL_STATUSES ? allLabel : label(value)}
-            </span>
-          )}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent align="start" alignItemWithTrigger={false}>
-        <SelectItem value={ALL_STATUSES}>{allLabel}</SelectItem>
-        {ISSUE_STATUSES.map((s) => (
-          <SelectItem key={s} value={s}>
-            {label(s)}
           </SelectItem>
         ))}
       </SelectContent>
@@ -1932,12 +1940,12 @@ function ValueFilter({
 }) {
   const selected = options.find((option) => option.value === value);
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-0.5">
       <Select value={value} onValueChange={(v) => onChange(v ?? allValue)}>
         <SelectTrigger
           size="sm"
           aria-label={ariaLabel}
-          className="min-w-[150px] max-w-[190px]"
+          className={`${FILTER_SELECT_TRIGGER_CLASS} min-w-[138px] max-w-[180px]`}
         >
           <SelectValue>
             {() => (
@@ -1969,10 +1977,10 @@ function ValueFilter({
           size="icon"
           aria-label={allLabel}
           title={allLabel}
-          className="h-8 w-8 shrink-0"
+          className="h-7 w-7 shrink-0 rounded-md text-muted-foreground hover:bg-background/70 hover:text-foreground"
           onClick={() => onChange(allValue)}
         >
-          <X className="h-4 w-4" />
+          <X className="h-3.5 w-3.5" />
         </Button>
       ) : null}
     </div>
