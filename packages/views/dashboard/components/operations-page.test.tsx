@@ -614,7 +614,7 @@ describe("OperationsPage", () => {
 
     // t-2 (done, no assessment yet) → enabled Run assessment.
     const runButtons = screen.getAllByRole("button", {
-      name: "Run assessment",
+      name: "Queue assessment",
     });
     expect(runButtons.some((b) => !(b as HTMLButtonElement).disabled)).toBe(
       true,
@@ -630,7 +630,7 @@ describe("OperationsPage", () => {
     }
     expect(futureRow).not.toBeNull();
     const futureButton = within(futureRow as HTMLElement).getByRole("button", {
-      name: "Rerun assessment",
+      name: "Requeue assessment",
     }) as HTMLButtonElement;
     expect(futureButton.disabled).toBe(true);
     expect(futureButton.getAttribute("title")).toBe(
@@ -643,7 +643,7 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
 
     const enabled = screen
-      .getAllByRole("button", { name: "Run assessment" })
+      .getAllByRole("button", { name: "Queue assessment" })
       .find((b) => !(b as HTMLButtonElement).disabled)!;
     await user.click(enabled);
 
@@ -660,7 +660,7 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
 
     const enabled = screen
-      .getAllByRole("button", { name: "Rerun assessment" })
+      .getAllByRole("button", { name: "Requeue assessment" })
       .find((b) => !(b as HTMLButtonElement).disabled)!;
     await user.click(enabled);
 
@@ -686,7 +686,7 @@ describe("OperationsPage", () => {
     expect(failedRow).not.toBeNull();
     await user.click(
       within(failedRow as HTMLElement).getByRole("button", {
-        name: "Rerun assessment",
+        name: "Requeue assessment",
       }),
     );
 

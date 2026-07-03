@@ -156,13 +156,13 @@
       "no_evidence": "P4 証跡なし"
     },
     "assessment_action": {
-      "run": "Run assessment",
-      "rerun": "Rerun assessment",
-      "starting": "開始中...",
-      "in_progress": "Assessment 実行中",
-      "run_started": "Assessment を開始しました",
-      "rerun_started": "Assessment の再実行を開始しました",
-      "failed": "Assessment を開始できませんでした",
+      "run": "評価キューに追加",
+      "rerun": "評価を再キュー",
+      "starting": "キュー追加中...",
+      "in_progress": "評価進行中",
+      "run_started": "評価キューに追加しました",
+      "rerun_started": "再キューしました",
+      "failed": "キュー追加に失敗しました",
       "blocked_external": "外部の作業項目が done になると実行できます"
     },
     "enums": {
