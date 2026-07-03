@@ -540,8 +540,8 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(screen.getByText("AI fix assessment")).toBeTruthy();
-    expect(screen.getByText("P4 details")).toBeTruthy();
-    expect(screen.getByText("Analysis report")).toBeTruthy();
+    expect(screen.getByText("Assessments")).toBeTruthy();
+    expect(screen.getByText("Insights")).toBeTruthy();
     expect(screen.getByText("BUG-93218")).toBeTruthy();
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("In stats").length).toBeGreaterThanOrEqual(1);
@@ -691,7 +691,7 @@ describe("OperationsPage", () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    await user.click(screen.getByText("Analysis report"));
+    await user.click(screen.getByText("Insights"));
 
     expect(screen.getByText("Delivery attribution")).toBeTruthy();
     expect(screen.getByText("AI quality distribution")).toBeTruthy();
@@ -713,7 +713,7 @@ describe("OperationsPage", () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    await user.click(screen.getByText("Analysis report"));
+    await user.click(screen.getByText("Insights"));
     // Clicking a distribution row applies the filter and jumps back to detail.
     await user.click(screen.getAllByText("Human delivered")[0]!);
 
