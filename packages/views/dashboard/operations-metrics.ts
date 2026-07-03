@@ -362,20 +362,14 @@ export interface OperationsKpis {
   // AI 贡献率：AI 的方案进入了最终交付(ai_delivered + ai_assisted) / 外部完成。
   // 与参与率同底,差 = 出方案未转化。= 构成的前两段。
   contributionRate: OperationsRate;
-  // Pass rates over the judged-with-committed-CL pool (an AI plan exists AND
-  // the ticket demonstrably shipped, so the plan was judged against a real
-  // delivery), partitioned by channel:
-  // - aiDeliveredPassRate: AI submitted the final CL itself (ai_delivered).
-  //   ~100% by construction (a plan compared to its own shipped CL), so the
-  //   summary renders its denominator as the independent-submission count on
-  //   the assisted card instead of a card of its own.
-  // - aiAssistedPassRate: everything else — the plan went through a human.
-  //   Scoping by CHANNEL, not by the ai_assisted attribution, is what keeps
-  //   this honest: attribution and quality share one source (method
-  //   equivalence), so an attribution-scoped denominator would exclude every
-  //   failed plan (they land in human_delivered) and read 100% forever.
-  aiDeliveredPassRate: OperationsRate;
-  aiAssistedPassRate: OperationsRate;
+  // AI 方案通过率：通过(likely_correct) / 已判定。One plan-quality rate over the
+  // full judged pool — it does NOT require a committed CL. Committed-CL evidence
+  // is unreliable (agents verify delivery via read-only P4 describe but write
+  // the CL into prose, not the structured field), so gating pass on it dropped
+  // real passes; and delivery already lives in contribution / the composition
+  // bar. Keeping ONE rate (not a channel split) also sidesteps the "attribution
+  // and quality share a source → split denominator reads 100% forever" trap.
+  passRate: OperationsRate;
   // 评估覆盖率：已判定 / AI 参与。上面几个数有多可信——覆盖率低说明大量 AI
   // 产出没能被验证(证据受阻),通过率只建立在少数可见样本上。
   coverageRate: OperationsRate;
@@ -398,10 +392,6 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   let verifiable = 0;
   let judged = 0;
   let passed = 0;
-  let judgedDelivered = 0;
-  let passedDelivered = 0;
-  let judgedAssisted = 0;
-  let passedAssisted = 0;
   let noOutput = 0;
   let unjudged = 0;
   for (const fix of rows) {
@@ -437,19 +427,7 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     verifiable += 1;
     if (quality !== "") {
       judged += 1;
-      const pass = quality === "likely_correct";
-      if (pass) passed += 1;
-      // Split pass rates require a committed CL: without one the plan was
-      // judged in isolation and no delivery channel exists to attribute.
-      if (hasCommittedCl(fix)) {
-        if (attribution === "ai_delivered") {
-          judgedDelivered += 1;
-          if (pass) passedDelivered += 1;
-        } else {
-          judgedAssisted += 1;
-          if (pass) passedAssisted += 1;
-        }
-      }
+      if (quality === "likely_correct") passed += 1;
     }
   }
   return {
@@ -468,8 +446,7 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
       externalDone,
     ),
     contributionRate: rate(directDelivered + assisted, externalDone),
-    aiDeliveredPassRate: rate(passedDelivered, judgedDelivered),
-    aiAssistedPassRate: rate(passedAssisted, judgedAssisted),
+    passRate: rate(passed, judged),
     coverageRate: rate(judged, participatedAll),
     noOutput,
     unjudged,

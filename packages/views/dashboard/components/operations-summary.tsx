@@ -147,10 +147,7 @@ export function OperationsSummary({
   const SMALL_SAMPLE = 30;
   const stableDelta = (cur: OperationsRate, prev: OperationsRate) =>
     cur.denominator < SMALL_SAMPLE ? null : deltaPoints(cur, prev);
-  const assistedDelta = stableDelta(
-    kpis.aiAssistedPassRate,
-    previous.aiAssistedPassRate,
-  );
+  const passDelta = stableDelta(kpis.passRate, previous.passRate);
   const coverageDelta = stableDelta(kpis.coverageRate, previous.coverageRate);
   // MECE composition of 外部完成 by AI role — one segment per ticket. Colour
   // reads hottest→coldest by AI involvement (direct > assisted > unconverted >
@@ -221,22 +218,16 @@ export function OperationsSummary({
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <RateCard
-          label={t(($) => $.operations.summary.assisted_pass_rate)}
-          hint={t(($) => $.operations.summary.assisted_pass_rate_hint, {
-            num: kpis.aiAssistedPassRate.numerator,
-            den: kpis.aiAssistedPassRate.denominator,
+          label={t(($) => $.operations.summary.pass_rate)}
+          hint={t(($) => $.operations.summary.pass_rate_hint, {
+            num: kpis.passRate.numerator,
+            den: kpis.passRate.denominator,
           })}
-          rate={kpis.aiAssistedPassRate}
-          delta={assistedDelta}
+          rate={kpis.passRate}
+          delta={passDelta}
           deltaLabel={deltaLabel}
-          deltaText={deltaText(assistedDelta)}
+          deltaText={deltaText(passDelta)}
           upIsGood
-          // Direct deliveries (AI submitted the final CL itself) pass by
-          // construction — a plan compared to its own shipped CL — so they get
-          // a count here instead of a whole always-100% card.
-          footer={t(($) => $.operations.summary.independent_submissions, {
-            count: kpis.aiDeliveredPassRate.denominator,
-          })}
         />
         <RateCard
           label={t(($) => $.operations.summary.coverage_rate)}

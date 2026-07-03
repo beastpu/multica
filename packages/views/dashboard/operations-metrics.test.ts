@@ -252,18 +252,8 @@ describe("computeOperationsKpis", () => {
       numerator: 3,
       denominator: 4,
     });
-    // Quality, split by attribution: aiPassed is the only judged ai_delivered
-    // row; aiFailed the only judged ai_assisted row.
-    expect(kpis.aiDeliveredPassRate).toEqual({
-      value: 1,
-      numerator: 1,
-      denominator: 1,
-    });
-    expect(kpis.aiAssistedPassRate).toEqual({
-      value: 0,
-      numerator: 0,
-      denominator: 1,
-    });
+    // Quality (plan-quality, one rate): 1 of 2 judged is likely_correct.
+    expect(kpis.passRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
     // Coverage: 2 of the 3 AI plans reached a verdict (aiUnjudged did not).
     expect(kpis.coverageRate).toEqual({
       value: 2 / 3,
@@ -295,11 +285,7 @@ describe("computeOperationsKpis", () => {
     expect(kpis.funnel.verifiable).toBe(2);
     expect(kpis.funnel.judged).toBe(2);
     expect(kpis.funnel.passed).toBe(2);
-    expect(kpis.aiDeliveredPassRate).toEqual({
-      value: 1,
-      numerator: 2,
-      denominator: 2,
-    });
+    expect(kpis.passRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
   });
 
   it("judges an AI plan even without a committed CL (assessment ≠ delivery)", () => {
@@ -320,18 +306,9 @@ describe("computeOperationsKpis", () => {
     expect(kpis.funnel.verifiable).toBe(2);
     expect(kpis.funnel.judged).toBe(2);
     expect(kpis.funnel.passed).toBe(2);
-    // The unshipped plan is judged but enters neither split pass rate: with no
-    // committed CL there is no delivery channel to attribute it to.
-    expect(kpis.aiDeliveredPassRate).toEqual({
-      value: 1,
-      numerator: 1,
-      denominator: 1,
-    });
-    expect(kpis.aiAssistedPassRate).toEqual({
-      value: null,
-      numerator: 0,
-      denominator: 0,
-    });
+    // The unshipped plan is judged and passed — pass rate does not require a
+    // committed CL.
+    expect(kpis.passRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
     // Coverage counts it (assessed 2 of 2 participated); contribution does not
     // (it never reached delivery — attribution stayed unknown).
     expect(kpis.coverageRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
@@ -353,11 +330,7 @@ describe("computeOperationsKpis", () => {
     });
     const kpis = computeOperationsKpis([aiPassed, humanDelivered]);
     expect(kpis.funnel.verifiable).toBe(1);
-    expect(kpis.aiDeliveredPassRate).toEqual({
-      value: 1,
-      numerator: 1,
-      denominator: 1,
-    });
+    expect(kpis.passRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
   });
 
   it("counts an unused AI plan as participation but not contribution", () => {
@@ -391,15 +364,8 @@ describe("computeOperationsKpis", () => {
       numerator: 0,
       denominator: 1,
     });
-    // The failed plan stays in the assisted-pass-rate denominator: it had a
-    // plan AND a committed CL to be judged against. This is what keeps the
-    // assisted rate honest — attribution-scoped denominators would push every
-    // failed plan into human_delivered and read 100% forever.
-    expect(kpis.aiAssistedPassRate).toEqual({
-      value: 0,
-      numerator: 0,
-      denominator: 1,
-    });
+    // The failed plan is judged (it reached a verdict) but not passed.
+    expect(kpis.passRate).toEqual({ value: 0, numerator: 0, denominator: 1 });
   });
 
   it("counts a comment-only plan as engaged but not planned or participated", () => {
@@ -428,8 +394,7 @@ describe("computeOperationsKpis", () => {
     const kpis = computeOperationsKpis([]);
     expect(kpis.participationRate.value).toBeNull();
     expect(kpis.contributionRate.value).toBeNull();
-    expect(kpis.aiDeliveredPassRate.value).toBeNull();
-    expect(kpis.aiAssistedPassRate.value).toBeNull();
+    expect(kpis.passRate.value).toBeNull();
     expect(kpis.coverageRate.value).toBeNull();
     expect(kpis.noOutput).toBe(0);
     expect(kpis.unjudged).toBe(0);
