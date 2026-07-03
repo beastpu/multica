@@ -73,8 +73,9 @@ var perforceReviewStrategies = map[string]perforceReviewStrategyFunc{
    **网络重试（updated 相同）不重复建**，而 Swarm 真正 bump `updated` 的新事件会再建一个。
 3. **建 issue**：`status=todo`、`assignee=default_assignee_id`（agent）、creator=同一 agent；
    title 用 `review.title`（空则 `CL <cl> by <author>`）。
-4. **CL# / author 进描述**（约定的零精度落点）：描述里渲染 changelist
-   （committed 优先，否则 shelved）、author、state、review#，以及原始 review 描述。
+4. **如实展示 webhook 字段**：描述里渲染 review#、state、author、shelved CL、
+   committed CL、branch、swarm URL 及原始 review 描述，agent 因此拿到完整
+   review 上下文（含拉 diff 所需的 CL 号）。
 5. 建完 publish `issue:created` 并 `EnqueueTaskForIssue` —— agent 立即开工。
 6. **不跑 auto-advance/close**：每个事件是独立 issue，只建不推进。
 
@@ -126,10 +127,12 @@ Description 内容：
 ```text
 Created from a Perforce / Helix Swarm review event.
 
-- Changelist: 500120
-- Author: alice
-- State: needsReview
 - Review: #500123
+- State: needsReview
+- Author: alice
+- Shelved CL: 500120
+- Branch: main
+- Swarm: https://swarm.example.com/game-client
 ```
 
 响应 `202 {"status":"processed"}`。相同 `updated` 重投 → `202 {"status":"duplicate"}`，不重复建。
