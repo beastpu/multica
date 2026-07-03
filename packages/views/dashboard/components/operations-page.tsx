@@ -641,6 +641,24 @@ export function OperationsPage() {
     () => computeOperationsKpis(previousRows),
     [previousRows],
   );
+  // Which external statuses make up the external-done stage: several raw
+  // statuses can map to done (e.g. 测试通过 + 已关闭), and ops wants to see
+  // the split, not just the sum. Labels resolve the same way the external
+  // status column does.
+  const externalDoneBreakdown = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const f of rows) {
+      if (f.external?.done !== true) continue;
+      const raw = f.external?.status ?? "";
+      const label =
+        f.external?.status_name || feishuStatusNames.get(raw) || raw;
+      if (!label) continue;
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [rows, feishuStatusNames]);
 
   // Weekly trend over the whole fetch (both windows) so the leftmost calendar
   // week isn't truncated when today isn't a Sunday. Hidden for 1d/7d — a
@@ -802,7 +820,11 @@ export function OperationsPage() {
           </div>
 
           {!fixesQuery.isLoading && rows.length > 0 ? (
-            <OperationsSummary kpis={kpis} previous={previousKpis} />
+            <OperationsSummary
+              kpis={kpis}
+              previous={previousKpis}
+              externalDoneBreakdown={externalDoneBreakdown}
+            />
           ) : null}
 
           {!fixesQuery.isLoading && rows.length > 0 && showTrend ? (

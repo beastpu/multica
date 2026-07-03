@@ -75,9 +75,13 @@ function RateCard({
 export function OperationsSummary({
   kpis,
   previous,
+  externalDoneBreakdown = [],
 }: {
   kpis: OperationsKpis;
   previous: OperationsKpis;
+  // Which external statuses make up the external-done stage (multiple raw
+  // statuses can map to done), largest first, e.g. 测试通过 291 · 已关闭 36.
+  externalDoneBreakdown?: Array<{ label: string; count: number }>;
 }) {
   const { t } = useT("usage");
   const deltaLabel = t(($) => $.operations.summary.delta_label);
@@ -185,24 +189,34 @@ export function OperationsSummary({
         </div>
         <div className="mt-3 grid gap-2">
           {stages.map((stage) => (
-            <div
-              key={stage.key}
-              className="grid grid-cols-[88px_minmax(0,1fr)_48px] items-center gap-3"
-            >
-              <span className="truncate text-xs text-muted-foreground">
-                {stage.label}
-              </span>
-              <div className="h-2 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary"
-                  style={{
-                    width: `${Math.max(stage.count > 0 ? 4 : 0, (stage.count / max) * 100)}%`,
-                  }}
-                />
+            <div key={stage.key} className="grid gap-1">
+              <div className="grid grid-cols-[88px_minmax(0,1fr)_48px] items-center gap-3">
+                <span className="truncate text-xs text-muted-foreground">
+                  {stage.label}
+                </span>
+                <div className="h-2 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-primary"
+                    style={{
+                      width: `${Math.max(stage.count > 0 ? 4 : 0, (stage.count / max) * 100)}%`,
+                    }}
+                  />
+                </div>
+                <span className="text-right text-xs font-medium tabular-nums">
+                  {stage.count}
+                </span>
               </div>
-              <span className="text-right text-xs font-medium tabular-nums">
-                {stage.count}
-              </span>
+              {stage.key === "external_done" &&
+              externalDoneBreakdown.length > 0 ? (
+                <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
+                  <span aria-hidden="true" />
+                  <span className="truncate text-xs text-muted-foreground tabular-nums">
+                    {externalDoneBreakdown
+                      .map((entry) => `${entry.label} ${entry.count}`)
+                      .join(" · ")}
+                  </span>
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
