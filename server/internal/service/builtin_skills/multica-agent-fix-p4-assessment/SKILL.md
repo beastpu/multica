@@ -1,32 +1,71 @@
 ---
 name: multica-agent-fix-p4-assessment
-description: "Use for Multica AI repair P4/Swarm assessment tasks. Teaches the read-only evidence workflow, inner-network P4/Swarm inspection boundaries, CL role classification, conservative unknown handling, and strict JSON output schema for agent_fix_p4_assessment."
+description: "Use for Multica AI repair P4/Swarm assessment work — the batch worker loop (pull pending assessments, judge each, submit by ref) and legacy per-binding agent_fix_p4_assessment tasks. Teaches the read-only evidence workflow, inner-network P4/Swarm inspection boundaries, CL role classification, conservative unknown handling, and the strict JSON result schema."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(p4 *), Bash(curl *)
 ---
 
 # P4/Swarm Assessment
 
-Use this skill only for tasks whose context is `agent_fix_p4_assessment`.
-This is assessment-only work: produce an AI judgement for
-`agent_fix_p4_assessment`; do not repair code or update external systems.
+Use this skill when the task asks you to run P4/Swarm assessment — either a
+batch worker run ("process the pending assessment queue") or a legacy task
+whose context is `agent_fix_p4_assessment`. This is assessment-only work:
+produce AI judgements; do not repair code or update external systems.
 
 Every contract below is traced to source in
 `references/p4-assessment-source-map.md`.
 
-## Start Here
+## Start Here — the batch loop
 
-First read the task-scoped Multica evidence:
+Pull a batch of pending assessments:
 
 ```bash
-multica api get /api/operations/agent-fixes/<binding_id>/p4-evidence
+multica api get "/api/operations/assessments/pending?limit=5"
 ```
 
-Use the binding id from the task prompt. The evidence endpoint is the only
-Multica API required for assessment input. It returns already-ingested binding,
-issue, task-summary, Multica comment, selected Feishu Project comment, and
-Perforce/Swarm evidence. It deliberately omits task result/context/session/workdir
-and credentials.
+The response is `{"items": [...]}` where each item is:
+
+```json
+{ "ref": "<opaque>", "issue": {"title": "..."}, "lease_expires_at": "...", "evidence": {...} }
+```
+
+- `ref` is an OPAQUE handle. Echo it back on submit exactly as given — never
+  construct, guess, or transform a ref, and never treat it as a binding id.
+- `evidence` is inlined per item — no follow-up evidence call is needed.
+- Each item is leased to your task until `lease_expires_at` (~30 minutes).
+  Submit before then or the item silently returns to the pending pool.
+- An empty `items` array means the queue is drained: report how many you
+  assessed and stop.
+- A `403` means this workspace is not allowlisted for P4 assessment — stop and
+  report; do not retry.
+
+For each item: classify the evidence (sections below), then submit:
+
+```bash
+multica api post /api/operations/assessments/result --content-file result.json
+```
+
+where `result.json` is the result schema (see "Submit the Result") plus the
+`"ref"` field carried over from the item. On a `400`, fix exactly the field
+the error names and resubmit. On a `409` your lease was reclaimed — drop that
+item and continue; it will come back in a later pull. Loop pull → assess →
+submit until a pull returns no items.
+
+### Legacy per-binding tasks
+
+A task whose context carries a `feishu_binding_id` predates the batch loop.
+For those, read evidence with
+`multica api get /api/operations/agent-fixes/<binding_id>/p4-evidence` and
+submit to
+`multica api post /api/operations/agent-fixes/<binding_id>/p4-assessment/result`
+with the same result schema (no `ref` field). Everything else in this skill
+applies unchanged.
+
+## Reading the evidence
+
+The evidence object contains already-ingested binding, issue, task-summary,
+Multica comment, selected Feishu Project comment, and Perforce/Swarm evidence.
+It deliberately omits task result/context/session/workdir and credentials.
 
 Start from the structured candidates when present:
 
@@ -261,21 +300,22 @@ verifiable by the dashboard and skews the fix rate.
 
 ## Submit the Result
 
-Submit your result by POSTing the JSON to the assessment result endpoint —
-this is how the assessment reaches the operations dashboard. Do NOT rely on
-printing the JSON as your final message; the endpoint is the authoritative
-path. Write the JSON to a file and post it with `--content-file` so shell
-quoting can't corrupt it:
+Submit each result by POSTing JSON to the batch result endpoint — this is how
+the assessment reaches the operations dashboard. Do NOT rely on printing the
+JSON as your final message; the endpoint is the authoritative path. Write the
+JSON to a file and post it with `--content-file` so shell quoting can't
+corrupt it:
 
 ```bash
-multica api post /api/operations/agent-fixes/<binding_id>/p4-assessment/result --content-file result.json
+multica api post /api/operations/assessments/result --content-file result.json
 ```
 
-Use the binding id from the task prompt. The request body is exactly one JSON
-object with this shape (no surrounding prose, no envelope):
+The request body is exactly one JSON object with this shape (no surrounding
+prose, no envelope):
 
 ```json
 {
+  "ref": "<echoed from the pending item>",
   "delivery_attribution_prediction": "unknown",
   "quality_prediction": "unknown",
   "prediction_reasons": [],
@@ -295,13 +335,16 @@ object with this shape (no surrounding prose, no envelope):
 
 CL arrays must contain integers only. `swarm_reviews` must be an array,
 `evidence` must be an object, and `warnings` must be an array.
-Do not include fields outside this schema.
+Do not include fields outside this schema. (Legacy per-binding tasks POST the
+same body WITHOUT `ref` to
+`/api/operations/agent-fixes/<binding_id>/p4-assessment/result`.)
 
 On success the endpoint returns `{"status":"completed"}`. On a `400` it returns
 the exact validation problem (e.g. `invalid quality_prediction`,
 `confidence out of range`, an unknown field name) — read it, fix that field,
-and POST again. Keep correcting and resubmitting until you get a success; a run
-that ends without a successful submit leaves the assessment unrecorded.
+and POST again until it succeeds. On a `409` the lease was reclaimed by
+another worker — drop the item and move on; a result that never submits
+successfully leaves the assessment unrecorded.
 
 ## References
 

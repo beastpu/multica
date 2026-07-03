@@ -52,14 +52,39 @@ for the behavior contracts the skill teaches.
   submit endpoint with the same `requestTaskCanReadP4Evidence` scope, so only
   the binding's own assessment task may write its result.
 
+## Batch worker contract (pull / submit-by-ref)
+
+- `GET /api/operations/assessments/pending?limit=N`
+  (`Handler.ListPendingP4Assessments` → `P4AssessmentService.LeasePending`)
+  atomically leases up to N claimable rows (`pending`/`failed`/`stale`, or
+  `running` with an expired lease) to the caller's task via
+  `LeaseP4AssessmentsPending` (SKIP LOCKED), and returns each with an opaque
+  `ref` (internally the binding UUID), the issue summary, `lease_expires_at`
+  (`P4AssessmentLeaseDuration`, 30 minutes), and inlined evidence from
+  `P4AssessmentService.Evidence`. Rows whose evidence fails to build are
+  released back to the pool (`ReleaseP4AssessmentLease`).
+- `POST /api/operations/assessments/result`
+  (`Handler.SubmitP4AssessmentResultByRef` →
+  `P4AssessmentService.SubmitBatchResult`) strips `ref`, runs the same
+  `validateP4AssessmentPayload`, and completes the row keyed on
+  (workspace, binding, leasing task) via `CompleteP4AssessmentFromBinding`.
+  A reclaimed/unknown ref returns `ErrP4AssessmentRefNotLeased` → HTTP 409.
+- Both endpoints require an agent actor whose `X-Task-ID` task belongs to it
+  and to the workspace (`requestBatchAssessmentTask`), and are fail-closed on
+  the same `P4AssessmentAllowlist` (`P4_ASSESSMENT_WORKSPACE_ALLOWLIST`) that
+  gates auto-trigger.
+- `P4AssessmentService.Trigger` no longer spawns per-binding agent tasks: it
+  upserts the row to `pending` and the batch worker consumes the pool, so
+  assessment work does not fan out into `agent_task_queue`.
+
 ## Result submit and output contract
 
-- The authoritative ingestion path is the submit endpoint
-  `POST /api/operations/agent-fixes/{binding_id}/p4-assessment/result`: the
-  agent POSTs the bare result JSON (via `multica api post --content-file`), the
-  server validates it, and a 400 returns the exact validation problem so the
-  agent can self-correct and resubmit. This avoids parsing a free-text agent
-  message.
+- The batch path above is the primary ingestion route. The legacy per-binding
+  endpoint `POST /api/operations/agent-fixes/{binding_id}/p4-assessment/result`
+  remains for in-flight per-binding tasks: the agent POSTs the bare result
+  JSON (via `multica api post --content-file`), the server validates it, and a
+  400 returns the exact validation problem so the agent can self-correct and
+  resubmit. This avoids parsing a free-text agent message.
 - `server/internal/service/agent_fix_assessment.go` shares one validator,
   `validateP4AssessmentPayload`: it accepts one JSON object, rejects unknown
   fields, validates the prediction enums and confidence range, requires

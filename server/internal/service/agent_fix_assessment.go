@@ -22,6 +22,13 @@ const (
 	P4AssessmentTaskType      = "agent_fix_p4_assessment"
 	P4AssessmentPromptVersion = "p4-assessment-v1"
 	P4AssessmentBackfillLimit = 50
+
+	// Batch-worker lease: a pulled row must be submitted within this window or
+	// it returns to the pending pool for the next pull.
+	P4AssessmentLeaseDuration = 30 * time.Minute
+	// Evidence is inlined per item, so batches stay small.
+	P4AssessmentBatchDefaultLimit = 5
+	P4AssessmentBatchMaxLimit     = 10
 )
 
 type P4AssessmentService struct {
@@ -29,6 +36,9 @@ type P4AssessmentService struct {
 	TxStarter     TxStarter
 	Task          *TaskService
 	FeishuProject *FeishuProjectClient
+	// Allowlist gates the batch assessment endpoints the same way it gates the
+	// sync auto-trigger: fail-closed, only explicitly opted-in workspaces.
+	Allowlist P4AssessmentAllowlist
 }
 
 type P4AssessmentTriggerResult struct {
@@ -79,43 +89,12 @@ func IsP4AssessmentTask(task db.AgentTaskQueue) bool {
 		ctx.Type == P4AssessmentTaskType
 }
 
-// p4AssessmentHandoffNote is the read-only assessment instruction the server
-// stores on the task's handoff_note. A NEW daemon builds a dedicated assessment
-// prompt from the task kind and ignores this; an OLD daemon (pre-isolation)
-// treats the task as a normal assignment and renders handoff_note into the
-// opening prompt — so this is the only server-side lever that steers a stale
-// daemon into read-only JSON output without a client update.
-//
-// It is intentionally self-contained: an old runtime may not have synced the
-// `multica-agent-fix-p4-assessment` skill, so the output contract (allowed
-// enum values, exact key set, JSON-only) is inlined rather than deferred to the
-// skill. The parser rejects unknown JSON keys, so the note lists the exact keys
-// and forbids extras. Write-side pollution is separately blocked server-side
-// (analysis tasks cannot mutate issues or post comments), so a stale daemon
-// that ignores these instructions still cannot damage the issue.
-func p4AssessmentHandoffNote(bindingID pgtype.UUID) string {
-	binding := util.UUIDToString(bindingID)
-	var b strings.Builder
-	b.WriteString("THIS RUN IS A READ-ONLY P4/SWARM ASSESSMENT, NOT A FIX. ")
-	b.WriteString("Do NOT modify code, and do NOT change the issue, comments, status, Feishu/Meego, P4, or Swarm. ")
-	b.WriteString("Do not run any repair or feature-fix mission. The server rejects every write from this task, so any edit/comment/status attempt only wastes the run.\n\n")
-	b.WriteString("Goal: judge the delivery attribution and quality of the completed external work item, then emit a single assessment JSON.\n\n")
-	b.WriteString("Step 1 — read the task-scoped evidence (this is the only required Multica call):\n")
-	fmt.Fprintf(&b, "  multica api get /api/operations/agent-fixes/%s/p4-evidence\n\n", binding)
-	b.WriteString("Step 2 — you MAY inspect inner-network Swarm/P4 with read-only commands (e.g. `p4 describe -s`) when it helps classify CLs. Never mutate anything.\n")
-	b.WriteString("If the `multica-agent-fix-p4-assessment` skill is available, follow it for CL role classification and the full schema.\n\n")
-	b.WriteString("Step 3 — FINAL OUTPUT: print exactly one JSON object (or one fenced ```json block containing exactly one JSON object) and NOTHING else — no prose before or after. Unknown keys are rejected, so use only these keys:\n")
-	b.WriteString("  delivery_attribution_prediction: one of \"ai_delivered\" | \"ai_assisted\" | \"human_delivered\" | \"conflict\" | \"unattributed\" | \"unknown\"\n")
-	b.WriteString("  quality_prediction: one of \"likely_correct\" | \"likely_needs_changes\" | \"likely_wrong\" | \"unknown\"\n")
-	b.WriteString("  prediction_reasons: array of short strings\n")
-	b.WriteString("  confidence: number in [0,1] or null\n")
-	b.WriteString("  workstream: string\n")
-	b.WriteString("  swarm_reviews: array   ai_shelved_cls / swarm_change_cls / swarm_committed_cls / external_committed_cls: arrays of integers\n")
-	b.WriteString("  evidence: object   summary: string   warnings: array of strings   model: string\n\n")
-	b.WriteString("When evidence is missing or ambiguous, use \"unknown\" for the predictions and record why in warnings — never guess.\n")
-	return b.String()
-}
-
+// Trigger enqueues a binding for assessment by upserting its row to 'pending'.
+// It does NOT spawn an agent task: the pending pool is consumed by a batch
+// assessment worker through LeasePending / SubmitBatchResult, so per-binding
+// task fan-out (which used to pile hundreds of queued tasks onto one runtime)
+// no longer exists. Legacy per-binding tasks already in flight still complete
+// through CompleteTask / SubmitResult.
 func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingID pgtype.UUID, force bool) (P4AssessmentTriggerResult, error) {
 	var result P4AssessmentTriggerResult
 	err := s.runInTx(ctx, func(q *db.Queries) error {
@@ -134,18 +113,6 @@ func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingI
 		}
 		if mapped := P4AssessmentMappedStatus(row.WorkItemType, row.ExternalStatusLabel.String, row.StatusMapping, row.WorkItemTypes); mapped != "done" {
 			result = P4AssessmentTriggerResult{Reason: "external_status_not_done"}
-			return nil
-		}
-		if !row.AssigneeType.Valid || row.AssigneeType.String != "agent" || !row.AssigneeID.Valid {
-			result = P4AssessmentTriggerResult{Reason: "issue_has_no_agent_assignee"}
-			return nil
-		}
-		if !row.AgentRuntimeID.Valid {
-			result = P4AssessmentTriggerResult{Reason: "agent_has_no_runtime"}
-			return nil
-		}
-		if row.AgentArchivedAt.Valid {
-			result = P4AssessmentTriggerResult{Reason: "agent_archived"}
 			return nil
 		}
 
@@ -178,47 +145,129 @@ func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingI
 		if err != nil {
 			return err
 		}
-
-		taskContext, err := json.Marshal(p4AssessmentContext{
-			Type:            P4AssessmentTaskType,
-			WorkspaceID:     util.UUIDToString(workspaceID),
-			IssueID:         util.UUIDToString(row.IssueID),
-			FeishuBindingID: util.UUIDToString(bindingID),
-			Mode:            "assess_only",
-			PromptVersion:   P4AssessmentPromptVersion,
-		})
-		if err != nil {
-			return err
-		}
-		task, err := q.CreateP4AssessmentTask(ctx, db.CreateP4AssessmentTaskParams{
-			AgentID:     row.AssigneeID,
-			RuntimeID:   row.AgentRuntimeID,
-			IssueID:     row.IssueID,
-			Priority:    int32(1),
-			Context:     taskContext,
-			HandoffNote: pgtype.Text{String: p4AssessmentHandoffNote(bindingID), Valid: true},
-		})
-		if err != nil {
-			return err
-		}
-		assessment, err = q.SetP4AssessmentTask(ctx, db.SetP4AssessmentTaskParams{
-			WorkspaceID:      workspaceID,
-			FeishuBindingID:  bindingID,
-			AssessmentTaskID: task.ID,
-		})
-		if err != nil {
-			return err
-		}
-		result = P4AssessmentTriggerResult{Assessment: assessment, Task: &task, Created: true}
+		result = P4AssessmentTriggerResult{Assessment: assessment, Created: true}
 		return nil
 	})
 	if err != nil {
 		return P4AssessmentTriggerResult{}, err
 	}
-	if result.Task != nil && s.Task != nil {
-		s.Task.NotifyTaskEnqueued(ctx, *result.Task)
-	}
 	return result, nil
+}
+
+// P4AssessmentPendingItem is one entry of the batch-worker pull. `Ref` is an
+// opaque handle the agent must echo back on submit — internally the binding
+// UUID, but the agent never needs to know or construct that. Evidence is
+// inlined so the worker needs no follow-up call per item.
+type P4AssessmentPendingItem struct {
+	Ref            string               `json:"ref"`
+	Issue          map[string]any       `json:"issue"`
+	LeaseExpiresAt string               `json:"lease_expires_at"`
+	Evidence       P4AssessmentEvidence `json:"evidence"`
+}
+
+// LeasePending claims up to `limit` assessable rows for the worker task and
+// returns them with inlined evidence. Rows whose evidence fails to build are
+// released back to the pending pool instead of being returned half-empty.
+func (s *P4AssessmentService) LeasePending(ctx context.Context, workspaceID, taskID pgtype.UUID, limit int32) ([]P4AssessmentPendingItem, error) {
+	if limit <= 0 {
+		limit = P4AssessmentBatchDefaultLimit
+	}
+	if limit > P4AssessmentBatchMaxLimit {
+		limit = P4AssessmentBatchMaxLimit
+	}
+	leaseUntil := time.Now().Add(P4AssessmentLeaseDuration)
+	rows, err := s.Queries.LeaseP4AssessmentsPending(ctx, db.LeaseP4AssessmentsPendingParams{
+		WorkspaceID:      workspaceID,
+		AssessmentTaskID: taskID,
+		LeasedUntil:      pgtype.Timestamptz{Time: leaseUntil, Valid: true},
+		Limit:            limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]P4AssessmentPendingItem, 0, len(rows))
+	for _, row := range rows {
+		evidence, evidenceErr := s.Evidence(ctx, workspaceID, row.FeishuBindingID)
+		if evidenceErr != nil {
+			_ = s.Queries.ReleaseP4AssessmentLease(ctx, db.ReleaseP4AssessmentLeaseParams{
+				WorkspaceID:      workspaceID,
+				FeishuBindingID:  row.FeishuBindingID,
+				AssessmentTaskID: taskID,
+			})
+			continue
+		}
+		items = append(items, P4AssessmentPendingItem{
+			Ref:            util.UUIDToString(row.FeishuBindingID),
+			Issue:          evidence.Issue,
+			LeaseExpiresAt: leaseUntil.UTC().Format(time.RFC3339),
+			Evidence:       evidence,
+		})
+	}
+	return items, nil
+}
+
+// ErrP4AssessmentRefNotLeased distinguishes "this ref is not leased by your
+// task" (lease expired and reclaimed, or a made-up ref) from validation
+// failures — the handler maps it to a 409 the worker can react to by
+// re-pulling.
+var ErrP4AssessmentRefNotLeased = errors.New("ref not leased by this task")
+
+// SubmitBatchResult stores an assessment result the batch worker POSTed with
+// an opaque `ref` (as returned by LeasePending). Everything except `ref` is
+// exactly the single-result schema, validated by the same code path.
+func (s *P4AssessmentService) SubmitBatchResult(ctx context.Context, workspaceID, taskID pgtype.UUID, payload []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return err
+	}
+	refRaw, ok := fields["ref"]
+	if !ok {
+		return fmt.Errorf("missing ref")
+	}
+	var ref string
+	if err := json.Unmarshal(refRaw, &ref); err != nil {
+		return fmt.Errorf("ref must be a string")
+	}
+	bindingID, err := util.ParseUUID(strings.TrimSpace(ref))
+	if err != nil {
+		return fmt.Errorf("invalid ref")
+	}
+	delete(fields, "ref")
+	rest, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	parsed, err := validateP4AssessmentPayload(rest)
+	if err != nil {
+		return err
+	}
+	confidence, err := p4AssessmentConfidenceNumeric(parsed.Confidence)
+	if err != nil {
+		return err
+	}
+	_, err = s.Queries.CompleteP4AssessmentFromBinding(ctx, db.CompleteP4AssessmentFromBindingParams{
+		WorkspaceID:                   workspaceID,
+		FeishuBindingID:               bindingID,
+		AssessmentTaskID:              taskID,
+		DeliveryAttributionPrediction: parsed.DeliveryAttributionPrediction,
+		QualityPrediction:             parsed.QualityPrediction,
+		PredictionReasons:             parsed.PredictionReasons,
+		Confidence:                    confidence,
+		Workstream:                    parsed.Workstream,
+		SwarmReviews:                  parsed.SwarmReviews,
+		AiShelvedCls:                  parsed.AIShelvedCLs,
+		SwarmChangeCls:                parsed.SwarmChangeCLs,
+		SwarmCommittedCls:             parsed.SwarmCommittedCLs,
+		ExternalCommittedCls:          parsed.ExternalCommittedCLs,
+		Evidence:                      parsed.Evidence,
+		Summary:                       parsed.Summary,
+		Warnings:                      parsed.Warnings,
+		Model:                         pgtype.Text{String: parsed.Model, Valid: parsed.Model != ""},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrP4AssessmentRefNotLeased
+	}
+	return err
 }
 
 func (s *P4AssessmentService) BackfillDoneBindings(ctx context.Context, workspaceID, integrationID pgtype.UUID, limit int32) (P4AssessmentBackfillResult, error) {
@@ -655,18 +704,27 @@ func (s *P4AssessmentService) SubmitResult(ctx context.Context, workspaceID, ass
 // writeCompletedAssessment maps a validated result onto the completed row,
 // keyed on (workspace, assessment_task_id). Shared by the task-output fallback
 // and the submit endpoint so both write identical columns.
-func (s *P4AssessmentService) writeCompletedAssessment(ctx context.Context, workspaceID, assessmentTaskID pgtype.UUID, parsed p4AssessmentOutput) error {
-	confidence := pgtype.Numeric{}
-	if parsed.Confidence != nil {
-		// pgtype.Numeric.Scan does not accept a float64 (it panics/errors with
-		// "cannot scan float64"); feed it the decimal string form instead. This
-		// path was never exercised before the submit endpoint because every
-		// prior completion failed the output parse.
-		if err := confidence.Scan(strconv.FormatFloat(*parsed.Confidence, 'f', -1, 64)); err != nil {
-			return err
-		}
+// p4AssessmentConfidenceNumeric converts the optional confidence into a
+// pgtype.Numeric. pgtype.Numeric.Scan does not accept a float64 (it
+// panics/errors with "cannot scan float64"); feed it the decimal string form
+// instead.
+func p4AssessmentConfidenceNumeric(confidence *float64) (pgtype.Numeric, error) {
+	out := pgtype.Numeric{}
+	if confidence == nil {
+		return out, nil
 	}
-	_, err := s.Queries.CompleteP4AssessmentFromTask(ctx, db.CompleteP4AssessmentFromTaskParams{
+	if err := out.Scan(strconv.FormatFloat(*confidence, 'f', -1, 64)); err != nil {
+		return pgtype.Numeric{}, err
+	}
+	return out, nil
+}
+
+func (s *P4AssessmentService) writeCompletedAssessment(ctx context.Context, workspaceID, assessmentTaskID pgtype.UUID, parsed p4AssessmentOutput) error {
+	confidence, err := p4AssessmentConfidenceNumeric(parsed.Confidence)
+	if err != nil {
+		return err
+	}
+	_, err = s.Queries.CompleteP4AssessmentFromTask(ctx, db.CompleteP4AssessmentFromTaskParams{
 		WorkspaceID:                   workspaceID,
 		AssessmentTaskID:              assessmentTaskID,
 		DeliveryAttributionPrediction: parsed.DeliveryAttributionPrediction,

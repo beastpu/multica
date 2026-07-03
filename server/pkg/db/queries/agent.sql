@@ -236,19 +236,6 @@ INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, 
 VALUES ($1, $2, NULL, 'queued', $3, $4)
 RETURNING *;
 
--- name: CreateP4AssessmentTask :one
--- task_category='analysis' is the single place P4 assessment tasks opt out of
--- the normal issue-fix workflow; every isolation query filters on it instead of
--- re-checking context->>'type'.
--- handoff_note carries the read-only assessment instructions the daemon renders
--- into the opening prompt. New daemons build a dedicated assessment prompt from
--- the task kind and ignore it; OLD daemons (pre-isolation) fall into the normal
--- assignment path and DO render handoff_note, which is how the server steers a
--- stale daemon into read-only JSON output without a client update.
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, task_category, handoff_note)
-VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, 'analysis', $6)
-RETURNING *;
-
 -- name: LinkTaskToIssue :exec
 -- Attaches the issue a quick-create task produced back to the task row, once
 -- the agent has finished and the issue exists. Guarded by `issue_id IS NULL`
@@ -1153,14 +1140,6 @@ ON CONFLICT (workspace_id, feishu_binding_id) DO UPDATE SET
   updated_at = now()
 RETURNING *;
 
--- name: SetP4AssessmentTask :one
-UPDATE agent_fix_p4_assessment
-SET assessment_task_id = $3,
-    assessment_status = 'pending',
-    updated_at = now()
-WHERE workspace_id = $1 AND feishu_binding_id = $2
-RETURNING *;
-
 -- name: CompleteP4AssessmentFromTask :one
 UPDATE agent_fix_p4_assessment
 SET assessment_status = 'completed',
@@ -1181,6 +1160,68 @@ SET assessment_status = 'completed',
     assessed_at = now(),
     updated_at = now()
 WHERE workspace_id = $1 AND assessment_task_id = $2
+RETURNING *;
+
+-- name: LeaseP4AssessmentsPending :many
+-- Batch-worker pull: atomically claim up to sqlc.arg(lease_limit) assessable
+-- rows for the caller task. Claimable = pending/failed/stale, or running with
+-- an expired lease (a worker that died mid-batch). SKIP LOCKED keeps
+-- concurrent workers from double-claiming. Oldest-first so the backlog drains
+-- fairly.
+UPDATE agent_fix_p4_assessment a
+SET assessment_status = 'running',
+    assessment_task_id = $2,
+    leased_until = $3,
+    updated_at = now()
+WHERE a.id IN (
+  SELECT p.id FROM agent_fix_p4_assessment p
+  WHERE p.workspace_id = $1
+    AND (
+      p.assessment_status IN ('pending', 'failed', 'stale')
+      OR (p.assessment_status = 'running' AND p.leased_until IS NOT NULL AND p.leased_until < now())
+    )
+  ORDER BY p.updated_at ASC
+  LIMIT $4
+  FOR UPDATE SKIP LOCKED
+)
+RETURNING a.*;
+
+-- name: ReleaseP4AssessmentLease :exec
+-- Return a leased row to the pending pool (e.g. its evidence failed to
+-- build), guarded by the owning task so a stale worker can't release someone
+-- else's claim.
+UPDATE agent_fix_p4_assessment
+SET assessment_status = 'pending',
+    assessment_task_id = NULL,
+    leased_until = NULL,
+    updated_at = now()
+WHERE workspace_id = $1 AND feishu_binding_id = $2 AND assessment_task_id = $3
+  AND assessment_status = 'running';
+
+-- name: CompleteP4AssessmentFromBinding :one
+-- Batch-worker submit: keyed on the binding ref (one worker task leases many
+-- bindings, so assessment_task_id alone is not unique per row here). The task
+-- guard rejects a worker whose lease was reclaimed by another task.
+UPDATE agent_fix_p4_assessment
+SET assessment_status = 'completed',
+    delivery_attribution_prediction = $4,
+    quality_prediction = $5,
+    prediction_reasons = $6,
+    confidence = $7,
+    workstream = $8,
+    swarm_reviews = $9,
+    ai_shelved_cls = $10,
+    swarm_change_cls = $11,
+    swarm_committed_cls = $12,
+    external_committed_cls = $13,
+    evidence = $14,
+    summary = $15,
+    warnings = $16,
+    model = $17,
+    leased_until = NULL,
+    assessed_at = now(),
+    updated_at = now()
+WHERE workspace_id = $1 AND feishu_binding_id = $2 AND assessment_task_id = $3
 RETURNING *;
 
 -- name: FailP4AssessmentFromTask :one
