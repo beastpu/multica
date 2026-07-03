@@ -34,10 +34,13 @@ const (
 	feishuProjectBaseURL = "https://project.feishu.cn"
 	feishuProjectMCPURL  = "https://project.feishu.cn/mcp_server/v1"
 
-	feishuProjectSyncPageSize      = 100
-	feishuProjectInitialLookback   = 24 * time.Hour
-	feishuProjectManualLookback    = 30 * 24 * time.Hour
-	feishuProjectIncrementalReplay = 10 * time.Minute
+	feishuProjectSyncPageSize = 100
+	// The work_item/{type}/query detail endpoint rejects requests with more
+	// than 50 work_item_ids, so page-sized batches must be chunked down.
+	feishuProjectDetailQueryBatchSize = 50
+	feishuProjectInitialLookback      = 24 * time.Hour
+	feishuProjectManualLookback       = 30 * 24 * time.Hour
+	feishuProjectIncrementalReplay    = 10 * time.Minute
 	// feishuProjectDefaultManualLookbackDays / feishuProjectMaxManualLookbackDays
 	// bound a user-selected manual-sync window. Feishu Project enforces a
 	// monthly open-platform quota, so an unbounded lookback could exhaust it;
@@ -211,6 +214,11 @@ type FeishuProjectWorkItem struct {
 	BusinessLineTokens []FeishuBusinessLineToken
 	FieldValues        map[string][]string
 	RelatedWorkItems   []FeishuProjectRelatedWorkItem
+	// ExternalFieldsIncomplete marks items whose detail-field lookup failed,
+	// so FieldValues may be missing external sync fields that Meego actually
+	// has. The binding update then preserves previously synced values instead
+	// of clearing them.
+	ExternalFieldsIncomplete bool
 }
 
 type FeishuProjectLabelSyncRule struct {
@@ -385,9 +393,12 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 						"page_num", page.PageNum,
 						"error", err,
 					)
+					markFeishuProjectExternalFieldsIncomplete(page.Items)
 				} else {
 					mergeFeishuProjectWorkItemFieldValues(page.Items, enriched)
 				}
+			} else if externalFieldKeysErr != nil {
+				markFeishuProjectExternalFieldsIncomplete(page.Items)
 			}
 			workerCount := feishuProjectSyncWorkers
 			if len(page.Items) < workerCount {
@@ -711,6 +722,9 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	if bindingErr == nil {
 		if !finalCLLookupComplete {
 			preserveFeishuProjectExternalField(binding.ExternalFields, externalFields, "final_cl")
+		}
+		if item.ExternalFieldsIncomplete {
+			preserveFeishuProjectExternalBranchFields(binding.ExternalFields, externalFields)
 		}
 		phaseStarted = time.Now()
 		fetched, lookupErr := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: binding.IssueID, WorkspaceID: cfg.WorkspaceID})
@@ -1807,6 +1821,17 @@ func feishuProjectSubmittedCLFromText(text string) string {
 	return ""
 }
 
+// Canonical display names produced by feishuProjectExternalFieldDisplayName.
+// Kept in sync with its switch arms so the incomplete-lookup preservation
+// path covers every external field the sync can produce.
+var feishuProjectExternalFieldDisplayNames = []string{"提交记录", "提交分支", "开发分支"}
+
+func preserveFeishuProjectExternalBranchFields(raw []byte, fields map[string]string) {
+	for _, key := range feishuProjectExternalFieldDisplayNames {
+		preserveFeishuProjectExternalField(raw, fields, key)
+	}
+}
+
 func feishuProjectExternalFieldDisplayName(name string) string {
 	name = strings.TrimSpace(name)
 	switch {
@@ -2573,24 +2598,32 @@ func (c *FeishuProjectClient) QueryWorkItemFieldValues(ctx context.Context, cfg 
 	if len(workItemIDs) == 0 || len(fieldKeys) == 0 {
 		return nil, nil
 	}
-	req := map[string]any{
-		"work_item_ids": workItemIDs,
-		"fields":        fieldKeys,
-		"expand": map[string]any{
-			"need_multi_text":        true,
-			"need_user_detail":       true,
-			"relation_fields_detail": true,
-		},
-	}
-	payload, err := c.openAPI(ctx, cfg, http.MethodPost, fmt.Sprintf("/open_api/%s/work_item/%s/query", cfg.ProjectKey, workItemType), req)
-	if err != nil {
-		return nil, err
-	}
 	urlType := workItemType
 	if typeEntry := feishuProjectTypeConfigFor(cfg, workItemType); typeEntry != nil && strings.TrimSpace(typeEntry.APIName) != "" {
 		urlType = strings.TrimSpace(typeEntry.APIName)
 	}
-	return parseFeishuProjectSearch(payload, workItemType, urlType, cfg.ProjectKey, strings.TrimSpace(cfg.BusinessLineFieldKey)), nil
+	var out []FeishuProjectWorkItem
+	for start := 0; start < len(workItemIDs); start += feishuProjectDetailQueryBatchSize {
+		end := start + feishuProjectDetailQueryBatchSize
+		if end > len(workItemIDs) {
+			end = len(workItemIDs)
+		}
+		req := map[string]any{
+			"work_item_ids": workItemIDs[start:end],
+			"fields":        fieldKeys,
+			"expand": map[string]any{
+				"need_multi_text":        true,
+				"need_user_detail":       true,
+				"relation_fields_detail": true,
+			},
+		}
+		payload, err := c.openAPI(ctx, cfg, http.MethodPost, fmt.Sprintf("/open_api/%s/work_item/%s/query", cfg.ProjectKey, workItemType), req)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, parseFeishuProjectSearch(payload, workItemType, urlType, cfg.ProjectKey, strings.TrimSpace(cfg.BusinessLineFieldKey))...)
+	}
+	return out, nil
 }
 
 func feishuProjectWorkItemStatusFilter(statuses []string) []map[string]any {
@@ -3796,6 +3829,12 @@ func feishuProjectWorkItemIDs(items []FeishuProjectWorkItem) []string {
 		ids = append(ids, item.ID)
 	}
 	return dedupeTrimmedStrings(ids)
+}
+
+func markFeishuProjectExternalFieldsIncomplete(items []FeishuProjectWorkItem) {
+	for i := range items {
+		items[i].ExternalFieldsIncomplete = true
+	}
 }
 
 func mergeFeishuProjectWorkItemFieldValues(items []FeishuProjectWorkItem, enriched []FeishuProjectWorkItem) {
