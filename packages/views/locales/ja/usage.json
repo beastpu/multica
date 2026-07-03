@@ -86,7 +86,7 @@
       "comp_unconverted": "案が未反映",
       "comp_not_participated": "AI 不関与",
       "comp_rates": "参加率 {{participation}} · 貢献率 {{contribution}}",
-      "pass_rate": "AI 修復合格率",
+      "pass_rate": "AI 提案合格率",
       "pass_rate_hint": "合格 {{num}} / 判定済み {{den}}",
       "coverage_rate": "評価カバレッジ",
       "coverage_rate_hint": "判定済み {{num}} / AI 産出 {{den}}",

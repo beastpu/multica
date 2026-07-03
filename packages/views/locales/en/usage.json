@@ -86,7 +86,7 @@
       "comp_unconverted": "Plan unused",
       "comp_not_participated": "No AI",
       "comp_rates": "Participation {{participation}} · Contribution {{contribution}}",
-      "pass_rate": "AI fix pass rate",
+      "pass_rate": "AI plan pass rate",
       "pass_rate_hint": "{{num}} correct / {{den}} assessed",
       "coverage_rate": "Assessment coverage",
       "coverage_rate_hint": "{{num}} assessed / {{den}} AI produced",
