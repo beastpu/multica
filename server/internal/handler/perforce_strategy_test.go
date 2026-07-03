@@ -90,11 +90,21 @@ func TestP4SwarmWebhook_CreatePerEvent_CreatesIssue(t *testing.T) {
 	if creatorType != "agent" {
 		t.Errorf("creator_type = %q, want agent", creatorType)
 	}
-	if !strings.Contains(description, "500120") {
-		t.Errorf("description missing changelist 500120: %q", description)
-	}
-	if !strings.Contains(description, "alice") {
-		t.Errorf("description missing author alice: %q", description)
+	// The description faithfully displays the webhook fields so the agent has
+	// the full review context: changelist, author, state, branch, Swarm URL,
+	// review id, plus the original review description.
+	for _, want := range []string{
+		"500120",                  // shelved CL (from review.changes)
+		"alice",                   // author
+		"approved",                // state
+		"main",                    // swarm branch
+		"http://swarm.strat.test", // swarm url
+		"500123",                  // review id
+		"no issue reference here", // original review description
+	} {
+		if !strings.Contains(description, want) {
+			t.Errorf("description missing %q: %q", want, description)
+		}
 	}
 }
 
