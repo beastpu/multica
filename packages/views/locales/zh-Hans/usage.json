@@ -89,7 +89,7 @@
       "delivered_pass_rate": "直接交付通过率",
       "assisted_pass_rate": "辅助通过率",
       "delivered_pass_rate_hint": "判对 {{num}} / 已评估 {{den}} · 直接交付",
-      "assisted_pass_rate_hint": "判对 {{num}} / 已评估 {{den}} · 辅助",
+      "assisted_pass_rate_hint": "判对 {{num}} / 出方案且有人提交 CL {{den}}",
       "coverage_rate": "评估覆盖率",
       "coverage_rate_hint": "已评估 {{num}} / AI 产出 {{den}}",
       "health_footnote": "无产出 {{noOutput}} · 无法判断 {{unjudged}}",

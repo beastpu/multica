@@ -320,12 +320,17 @@ describe("computeOperationsKpis", () => {
     expect(kpis.funnel.verifiable).toBe(2);
     expect(kpis.funnel.judged).toBe(2);
     expect(kpis.funnel.passed).toBe(2);
-    // The unknown-attribution plan is judged but belongs to neither split
-    // pass rate — those stay scoped to proven AI deliveries.
+    // The unshipped plan is judged but enters neither split pass rate: with no
+    // committed CL there is no delivery channel to attribute it to.
     expect(kpis.aiDeliveredPassRate).toEqual({
       value: 1,
       numerator: 1,
       denominator: 1,
+    });
+    expect(kpis.aiAssistedPassRate).toEqual({
+      value: null,
+      numerator: 0,
+      denominator: 0,
     });
     // Coverage counts it (assessed 2 of 2 participated); contribution does not
     // (it never reached delivery — attribution stayed unknown).
@@ -382,6 +387,15 @@ describe("computeOperationsKpis", () => {
       denominator: 1,
     });
     expect(kpis.contributionRate).toEqual({
+      value: 0,
+      numerator: 0,
+      denominator: 1,
+    });
+    // The failed plan stays in the assisted-pass-rate denominator: it had a
+    // plan AND a committed CL to be judged against. This is what keeps the
+    // assisted rate honest — attribution-scoped denominators would push every
+    // failed plan into human_delivered and read 100% forever.
+    expect(kpis.aiAssistedPassRate).toEqual({
       value: 0,
       numerator: 0,
       denominator: 1,

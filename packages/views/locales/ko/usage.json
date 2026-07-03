@@ -89,7 +89,7 @@
       "delivered_pass_rate": "직접 납품 통과율",
       "assisted_pass_rate": "지원 통과율",
       "delivered_pass_rate_hint": "판정 통과 {{num}} / 평가 완료 {{den}} · 직접 납품",
-      "assisted_pass_rate_hint": "판정 통과 {{num}} / 평가 완료 {{den}} · 지원",
+      "assisted_pass_rate_hint": "판정 통과 {{num}} / 계획+커밋 CL 있음 {{den}}",
       "coverage_rate": "평가 커버리지",
       "coverage_rate_hint": "평가 완료 {{num}} / AI 산출 {{den}}",
       "health_footnote": "산출 없음 {{noOutput}} · 판단 불가 {{unjudged}}",
