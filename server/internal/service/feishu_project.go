@@ -356,11 +356,39 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 	var maxObservedUpdatedAtMs atomic.Int64
 	totalCount := 0
 	for _, typ := range enabledFeishuProjectTypes(cfg) {
+		externalFieldKeys, externalFieldKeysErr := s.Client.ListExternalFieldKeys(ctx, cfg, typ)
+		if externalFieldKeysErr != nil {
+			slog.Warn("Feishu Project external field metadata lookup failed",
+				"integration_id", UUIDString(cfg.ID),
+				"workspace_id", UUIDString(cfg.WorkspaceID),
+				"project_key", cfg.ProjectKey,
+				"work_item_type", typ,
+				"error", externalFieldKeysErr,
+			)
+		}
 		err := s.Client.QueryWorkItemPagesWithOptions(ctx, cfg, typ, fullSync, opts, func(page FeishuProjectWorkItemPage) error {
 			if page.Total > totalCount {
 				totalCount = page.Total
 			}
 			s.updateRunProgress(ctx, run.ID, summary, totalCount, page.PageNum, typ)
+			if len(externalFieldKeys) > 0 && len(page.Items) > 0 {
+				enriched, err := s.Client.QueryWorkItemFieldValues(ctx, cfg, typ, feishuProjectWorkItemIDs(page.Items), externalFieldKeys)
+				if err != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					slog.Warn("Feishu Project external field value lookup failed",
+						"integration_id", UUIDString(cfg.ID),
+						"workspace_id", UUIDString(cfg.WorkspaceID),
+						"project_key", cfg.ProjectKey,
+						"work_item_type", typ,
+						"page_num", page.PageNum,
+						"error", err,
+					)
+				} else {
+					mergeFeishuProjectWorkItemFieldValues(page.Items, enriched)
+				}
+			}
 			workerCount := feishuProjectSyncWorkers
 			if len(page.Items) < workerCount {
 				workerCount = len(page.Items)
@@ -2539,6 +2567,32 @@ func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context,
 	return fmt.Errorf("Feishu Project sync stopped after %d pages; narrow the sync scope", feishuProjectSyncMaxPages)
 }
 
+func (c *FeishuProjectClient) QueryWorkItemFieldValues(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType string, workItemIDs, fieldKeys []string) ([]FeishuProjectWorkItem, error) {
+	workItemIDs = dedupeTrimmedStrings(workItemIDs)
+	fieldKeys = dedupeTrimmedStrings(fieldKeys)
+	if len(workItemIDs) == 0 || len(fieldKeys) == 0 {
+		return nil, nil
+	}
+	req := map[string]any{
+		"work_item_ids": workItemIDs,
+		"fields":        fieldKeys,
+		"expand": map[string]any{
+			"need_multi_text":        true,
+			"need_user_detail":       true,
+			"relation_fields_detail": true,
+		},
+	}
+	payload, err := c.openAPI(ctx, cfg, http.MethodPost, fmt.Sprintf("/open_api/%s/work_item/%s/query", cfg.ProjectKey, workItemType), req)
+	if err != nil {
+		return nil, err
+	}
+	urlType := workItemType
+	if typeEntry := feishuProjectTypeConfigFor(cfg, workItemType); typeEntry != nil && strings.TrimSpace(typeEntry.APIName) != "" {
+		urlType = strings.TrimSpace(typeEntry.APIName)
+	}
+	return parseFeishuProjectSearch(payload, workItemType, urlType, cfg.ProjectKey, strings.TrimSpace(cfg.BusinessLineFieldKey)), nil
+}
+
 func feishuProjectWorkItemStatusFilter(statuses []string) []map[string]any {
 	out := make([]map[string]any, 0, len(statuses))
 	for _, status := range statuses {
@@ -2701,6 +2755,14 @@ func (c *FeishuProjectClient) ListWorkItemFields(ctx context.Context, cfg db.Fei
 		return nil, err
 	}
 	return parseFeishuProjectFieldMetas(payload, workItemType), nil
+}
+
+func (c *FeishuProjectClient) ListExternalFieldKeys(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType string) ([]string, error) {
+	fields, err := c.ListWorkItemFields(ctx, cfg, workItemType)
+	if err != nil {
+		return nil, err
+	}
+	return feishuProjectExternalFieldKeys(fields), nil
 }
 
 // ListFieldOptions returns the option tree of a specific work-item field. Used by
@@ -3626,20 +3688,25 @@ func parseFeishuProjectSearch(payload map[string]any, typ, urlType, projectKey, 
 	rows, _ := payload["data"].([]any)
 	for _, rowAny := range rows {
 		row, _ := rowAny.(map[string]any)
-		id := firstNonEmpty(feishuProjectIDString(row["id"]), feishuProjectIDString(row["work_item_id"]))
+		attr, _ := row["work_item_attribute"].(map[string]any)
+		id := firstNonEmpty(
+			feishuProjectIDString(row["id"]),
+			feishuProjectIDString(row["work_item_id"]),
+			feishuProjectIDString(attr["work_item_id"]),
+		)
 		if id == "" {
 			continue
 		}
 		record := map[string]string{
-			"name":               fmt.Sprint(row["name"]),
+			"name":               firstNonEmpty(fmt.Sprint(row["name"]), fmt.Sprint(row["work_item_name"]), fmt.Sprint(attr["work_item_name"])),
 			"priority":           fmt.Sprint(row["priority"]),
 			"work_item_priority": fmt.Sprint(row["work_item_priority"]),
 			"sub_stage":          fmt.Sprint(row["sub_stage"]),
 			"current_status":     fmt.Sprint(row["current_status"]),
-			"work_item_status":   feishuProjectStatusValue(row["work_item_status"]),
+			"work_item_status":   firstNonEmpty(feishuProjectStatusValue(row["work_item_status"]), feishuProjectStatusValue(attr["work_item_status"])),
 			"current_status_key": feishuProjectStatusValue(row["current_status_key"]),
 		}
-		if ts := feishuProjectTime(row["updated_at"]); !ts.IsZero() {
+		if ts := firstNonZeroTime(feishuProjectTime(row["updated_at"]), feishuProjectTime(attr["update_time"])); !ts.IsZero() {
 			record["updated_at"] = ts.Format(time.RFC3339Nano)
 		}
 		userEmails := feishuProjectUserEmails(row)
@@ -3719,6 +3786,50 @@ func addFeishuProjectFieldValues(out map[string][]string, key, displayName strin
 			}
 			out[k] = append(out[k], v)
 			seenVals[v] = true
+		}
+	}
+}
+
+func feishuProjectWorkItemIDs(items []FeishuProjectWorkItem) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return dedupeTrimmedStrings(ids)
+}
+
+func mergeFeishuProjectWorkItemFieldValues(items []FeishuProjectWorkItem, enriched []FeishuProjectWorkItem) {
+	byID := make(map[string]FeishuProjectWorkItem, len(enriched))
+	for _, item := range enriched {
+		if id := strings.TrimSpace(item.ID); id != "" {
+			byID[id] = item
+		}
+	}
+	for i := range items {
+		extra, ok := byID[strings.TrimSpace(items[i].ID)]
+		if !ok || len(extra.FieldValues) == 0 {
+			continue
+		}
+		if items[i].FieldValues == nil {
+			items[i].FieldValues = map[string][]string{}
+		}
+		for key, values := range extra.FieldValues {
+			key = strings.TrimSpace(key)
+			if key == "" || key == "<nil>" {
+				continue
+			}
+			seen := map[string]bool{}
+			for _, existing := range items[i].FieldValues[key] {
+				seen[existing] = true
+			}
+			for _, value := range values {
+				value = strings.TrimSpace(value)
+				if value == "" || value == "<nil>" || seen[value] {
+					continue
+				}
+				items[i].FieldValues[key] = append(items[i].FieldValues[key], value)
+				seen[value] = true
+			}
 		}
 	}
 }
@@ -4091,13 +4202,13 @@ func feishuProjectOpenAPIOwnerFieldValue(value any) string {
 	return strings.Join(values, ", ")
 }
 
-// parseFeishuProjectFieldMetas walks the /field/all response (payload["data"] is a flat
-// list) and returns (field_key, field_name, field_type) triples, deduped by key. If
+// parseFeishuProjectFieldMetas walks the /field/all response and returns
+// (field_key, field_name, field_type) triples, deduped by key. If
 // workItemType is non-empty, entries are kept only when their work_item_scopes list
 // contains it — /field/all is project-wide and includes fields scoped to other types
 // (e.g. story-only fields) that the caller doesn't want in this dropdown.
 func parseFeishuProjectFieldMetas(payload map[string]any, workItemType string) []FeishuProjectFieldMeta {
-	data, _ := payload["data"].([]any)
+	data := feishuProjectFieldMetaRows(payload)
 	seen := map[string]bool{}
 	out := make([]FeishuProjectFieldMeta, 0, len(data))
 	want := strings.TrimSpace(workItemType)
@@ -4121,6 +4232,37 @@ func parseFeishuProjectFieldMetas(payload map[string]any, workItemType string) [
 		seen[key] = true
 	}
 	return out
+}
+
+func feishuProjectFieldMetaRows(payload map[string]any) []any {
+	if data, ok := payload["data"].([]any); ok {
+		return data
+	}
+	dataMap, _ := payload["data"].(map[string]any)
+	for _, key := range []string{"fields", "field_list", "list", "items"} {
+		if rows, ok := dataMap[key].([]any); ok {
+			return rows
+		}
+	}
+	return nil
+}
+
+func feishuProjectExternalFieldKeys(fields []FeishuProjectFieldMeta) []string {
+	seen := map[string]bool{}
+	keys := make([]string, 0, len(fields))
+	for _, field := range fields {
+		key := strings.TrimSpace(field.Key)
+		if key == "" || key == "<nil>" || seen[key] {
+			continue
+		}
+		if feishuProjectExternalFieldDisplayName(field.Name) == "" &&
+			feishuProjectExternalFieldDisplayName(key) == "" {
+			continue
+		}
+		keys = append(keys, key)
+		seen[key] = true
+	}
+	return keys
 }
 
 func feishuProjectFieldScopeMatches(scopesAny any, workItemType string) bool {
@@ -4989,6 +5131,29 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func dedupeTrimmedStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || value == "<nil>" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func firstNonZeroTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Time{}
 }
 
 var feishuProjectEmailRe = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)

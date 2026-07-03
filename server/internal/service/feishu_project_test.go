@@ -1641,6 +1641,106 @@ func TestFeishuProjectQueryWorkItemsTargetedIDSkipsStatusMappingGuard(t *testing
 	}
 }
 
+func TestFeishuProjectListExternalFieldKeysUsesDisplayNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/field/all":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": {"fields": [
+					{"field_key":"field_467c5f","field_name":"提交分支","field_type_key":"multi-select","work_item_scopes":["issue"]},
+					{"field_key":"field_d7788a","field_name":"开发分支（QA不用手动改，这个字段QA不用维护）","field_type_key":"multi-select","work_item_scopes":["issue"]},
+					{"field_key":"field_priority","field_name":"优先级","field_type_key":"select","work_item_scopes":["issue"]},
+					{"field_key":"field_story_branch","field_name":"提交分支","field_type_key":"multi-select","work_item_scopes":["story"]}
+				]}
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	keys, err := client.ListExternalFieldKeys(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+	}, "issue")
+	if err != nil {
+		t.Fatalf("ListExternalFieldKeys: %v", err)
+	}
+	want := []string{"field_467c5f", "field_d7788a"}
+	if !jsonEqual(keys, want) {
+		t.Fatalf("keys = %#v, want %#v", keys, want)
+	}
+}
+
+func TestFeishuProjectQueryWorkItemFieldValuesParsesDetailFields(t *testing.T) {
+	var request map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/issue/query":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode query request: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": [{
+					"work_item_attribute": {
+						"work_item_id": "7037722588",
+						"work_item_name": "branch-item",
+						"work_item_status": {"key": "OPEN", "name": "未开始"},
+						"update_time": "2026-07-03T20:20:59+08:00"
+					},
+					"work_item_fields": [{
+						"key": "field_467c5f",
+						"name": "提交分支",
+						"value": [{"label": "1.7.2(dev or rel)", "value": "f_8ckn0o_"}]
+					}]
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	items, err := client.QueryWorkItemFieldValues(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+	}, "issue", []string{"7037722588"}, []string{"field_467c5f"})
+	if err != nil {
+		t.Fatalf("QueryWorkItemFieldValues: %v", err)
+	}
+	if !jsonEqual(request["work_item_ids"], []any{"7037722588"}) {
+		t.Fatalf("work_item_ids = %#v", request["work_item_ids"])
+	}
+	if !jsonEqual(request["fields"], []any{"field_467c5f"}) {
+		t.Fatalf("fields = %#v", request["fields"])
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	got := feishuProjectExternalFields(items[0])
+	want := map[string]string{"提交分支": "1.7.2(dev or rel)"}
+	if !jsonEqual(got, want) {
+		t.Fatalf("external fields = %#v, want %#v; values=%#v", got, want, items[0].FieldValues)
+	}
+}
+
 // Regression: a custom plugin/radio field like "BUG提单助手" (field_c1f194) is
 // silently dropped from /work_item/{type}/meta but appears in /field/all with its
 // inline options (是/否). Before the fix, the missing-from-/meta path fell through
