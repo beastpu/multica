@@ -142,10 +142,10 @@ function isKnownIssueStatus(s: string): s is IssueStatus {
 const EMPTY: AgentFixRecord[] = [];
 
 // --- Resizable-column layout -------------------------------------------------
-// Column order: Issue, external state, agent, P4 evidence, delivery
+// Column order: Issue, external state, agent, submitted CL record, delivery
 // attribution, AI quality analysis, date. The external status column stays
 // fixed; the rest are user-resizable. The legacy `status` width slot backs the
-// P4 evidence column so stored preferences remain scoped to this page.
+// submitted-CL column so stored preferences remain scoped to this page.
 const EXTERNAL_PX = 138;
 const COLUMN_GAP_PX = 12; // matches gap-3
 const CARD_PADDING_X_PX = 32; // px-4 on the header + each row (16 × 2)
@@ -912,79 +912,30 @@ export function OperationsPage() {
                       return (
                         <div
                           key={f.issue_id || f.task_id}
-                          className="grid items-center gap-3 px-4 py-3"
+                          className="grid items-start gap-3 px-4 py-3"
                           style={GRID_STYLE}
                         >
                           <IssueCell
                             fix={f}
                             slug={slug}
                             issueStatusLabel={issueStatusLabel(f.issue_status)}
+                            comment={comment}
+                            search={search}
                           />
                           <ExternalStatusCell
                             fix={f}
                             statusNames={feishuStatusNames}
                           />
-                          <div className="grid min-w-0 gap-1 overflow-hidden">
-                            <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-                              <ActorAvatar
-                                actorType="agent"
-                                actorId={f.agent_id}
-                                size={22}
-                                enableHoverCard
-                              />
-                              <span className="min-w-0 truncate text-sm">
-                                {agent?.name ?? f.agent_name}
-                              </span>
-                            </div>
-                            <div className="flex min-w-0 flex-wrap items-center gap-1.5 overflow-hidden">
-                              <AssessmentStatusBadge
-                                value={f.p4_assessment?.assessment_status}
-                              />
-                              <AssessmentTriggerButton
-                                fix={f}
-                                pending={
-                                  triggerAssessment.isPending &&
-                                  triggeringBindingId === f.external?.binding_id
-                                }
-                                onTrigger={(bindingId, force) => {
-                                  setTriggeringBindingId(bindingId);
-                                  triggerAssessment.mutate(
-                                    { binding_id: bindingId, force },
-                                    {
-                                      onSuccess: () => {
-                                        toast.success(
-                                          force
-                                            ? t(
-                                                ($) =>
-                                                  $.operations.assessment_action
-                                                    .rerun_started,
-                                              )
-                                            : t(
-                                                ($) =>
-                                                  $.operations.assessment_action
-                                                    .run_started,
-                                              ),
-                                        );
-                                      },
-                                      onError: (err) => {
-                                        toast.error(
-                                          err instanceof Error && err.message
-                                            ? err.message
-                                            : t(
-                                                ($) =>
-                                                  $.operations.assessment_action
-                                                    .failed,
-                                              ),
-                                        );
-                                      },
-                                      onSettled: () => {
-                                        setTriggeringBindingId(null);
-                                      },
-                                    },
-                                  );
-                                }}
-                              />
-                            </div>
+                          <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                            <ActorAvatar
+                              actorType="agent"
+                              actorId={f.agent_id}
+                              size={22}
+                              enableHoverCard
+                            />
+                            <span className="min-w-0 truncate text-sm">
+                              {agent?.name ?? f.agent_name}
+                            </span>
                           </div>
                           <P4EvidenceCell fix={f} swarmBase={swarmBase} />
                           <PredictionCell
@@ -992,21 +943,53 @@ export function OperationsPage() {
                             kind="attribution"
                             detail={confidenceLabel(f.p4_assessment?.confidence)}
                           />
-                          <PredictionCell
-                            value={f.p4_assessment?.quality_prediction}
-                            kind="quality"
+                          <AssessmentQualityCell
+                            fix={f}
+                            pending={
+                              triggerAssessment.isPending &&
+                              triggeringBindingId === f.external?.binding_id
+                            }
+                            onTrigger={(bindingId, force) => {
+                              setTriggeringBindingId(bindingId);
+                              triggerAssessment.mutate(
+                                { binding_id: bindingId, force },
+                                {
+                                  onSuccess: () => {
+                                    toast.success(
+                                      force
+                                        ? t(
+                                            ($) =>
+                                              $.operations.assessment_action
+                                                .rerun_started,
+                                          )
+                                        : t(
+                                            ($) =>
+                                              $.operations.assessment_action
+                                                .run_started,
+                                          ),
+                                    );
+                                  },
+                                  onError: (err) => {
+                                    toast.error(
+                                      err instanceof Error && err.message
+                                        ? err.message
+                                        : t(
+                                            ($) =>
+                                              $.operations.assessment_action
+                                                .failed,
+                                          ),
+                                    );
+                                  },
+                                  onSettled: () => {
+                                    setTriggeringBindingId(null);
+                                  },
+                                },
+                              );
+                            }}
                           />
                           <span className="min-w-0 overflow-hidden truncate whitespace-nowrap text-xs text-muted-foreground tabular-nums">
                             {day}
                           </span>
-                          {comment ? (
-                            <div className="col-span-7 -mt-1 truncate text-xs text-muted-foreground">
-                              <span className="mr-1 font-medium text-foreground/80">
-                                {t(($) => $.operations.table.reason)}:
-                              </span>
-                              <ReasonText text={comment} keyword={search} />
-                            </div>
-                          ) : null}
                         </div>
                       );
                     })}
@@ -1115,51 +1098,56 @@ function OperationsAnalysis({
     (key) => agentFixEnumLabel(tx, "review_reason", key),
   );
   return (
-    <div className="grid gap-4 xl:grid-cols-3">
-      <AnalysisCard
-        title={t(($) => $.operations.analysis.attribution_title)}
-        rows={Array.from(attribution.entries()).map(([key, count]) => ({
-          key,
-          label: agentFixEnumLabel(tx, "attribution", key),
-          count,
-          tone: agentFixEnumTone("attribution", key),
-        }))}
-        onSelect={onDrillAttribution}
-      />
-      <AnalysisCard
-        title={t(($) => $.operations.analysis.quality_title)}
-        rows={Array.from(quality.entries()).map(([key, count]) => ({
-          key,
-          label: agentFixEnumLabel(tx, "quality", key),
-          count,
-          tone: agentFixEnumTone("quality", key),
-        }))}
-        onSelect={onDrillQuality}
-      />
-      {/* Access-blocked share among completed assessments: which system
-          (Swarm auth / P4 / evidence endpoint) kept evidence unreachable. */}
-      <AnalysisCard
-        title={t(($) => $.operations.analysis.blocked_title, {
-          completed: blocked.completed,
-        })}
-        rows={blocked.families.map(({ family, count }) => ({
-          label: blockedFamilyLabel(family),
-          count,
-          countLabel: `${count}${blockedShare(count)}`,
-          tone: "warning" as Tone,
-        }))}
-        emptyLabel={t(($) => $.operations.analysis.blocked_none)}
-      />
-      <AnalysisCard
-        title={t(($) => $.operations.analysis.prediction_reason_title)}
-        rows={predictionReasons}
-        emptyLabel={t(($) => $.operations.analysis.no_reasons)}
-      />
-      <WorkstreamAnalysisCard
-        title={t(($) => $.operations.analysis.workstream_title)}
-        rows={workstreams}
-        onSelect={onDrillWorkstream}
-      />
+    <div className="grid min-w-0 gap-4">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-3">
+        <AnalysisCard
+          title={t(($) => $.operations.analysis.attribution_title)}
+          rows={Array.from(attribution.entries()).map(([key, count]) => ({
+            key,
+            label: agentFixEnumLabel(tx, "attribution", key),
+            count,
+            tone: agentFixEnumTone("attribution", key),
+          }))}
+          onSelect={onDrillAttribution}
+        />
+        <AnalysisCard
+          title={t(($) => $.operations.analysis.quality_title)}
+          rows={Array.from(quality.entries()).map(([key, count]) => ({
+            key,
+            label: agentFixEnumLabel(tx, "quality", key),
+            count,
+            tone: agentFixEnumTone("quality", key),
+          }))}
+          onSelect={onDrillQuality}
+        />
+        {/* Access-blocked share among completed assessments: which system
+            (Swarm auth / P4 / evidence endpoint) kept evidence unreachable. */}
+        <AnalysisCard
+          title={t(($) => $.operations.analysis.blocked_title, {
+            completed: blocked.completed,
+          })}
+          rows={blocked.families.map(({ family, count }) => ({
+            label: blockedFamilyLabel(family),
+            count,
+            countLabel: `${count}${blockedShare(count)}`,
+            tone: "warning" as Tone,
+          }))}
+          emptyLabel={t(($) => $.operations.analysis.blocked_none)}
+        />
+      </div>
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+        <AnalysisCard
+          title={t(($) => $.operations.analysis.prediction_reason_title)}
+          rows={predictionReasons}
+          emptyLabel={t(($) => $.operations.analysis.no_reasons)}
+          labelMode="text"
+        />
+        <WorkstreamAnalysisCard
+          title={t(($) => $.operations.analysis.workstream_title)}
+          rows={workstreams}
+          onSelect={onDrillWorkstream}
+        />
+      </div>
     </div>
   );
 }
@@ -1169,6 +1157,7 @@ function AnalysisCard({
   rows,
   emptyLabel,
   onSelect,
+  labelMode = "badge",
 }: {
   title: string;
   rows: {
@@ -1183,32 +1172,44 @@ function AnalysisCard({
   // When set, each row is clickable and drills down to the detail table with
   // the matching filter applied.
   onSelect?: (key: string) => void;
+  labelMode?: "badge" | "text";
 }) {
   const { t } = useT("usage");
   const max = Math.max(1, ...rows.map((r) => r.count));
   return (
-    <section className="rounded-lg border bg-card">
-      <div className="flex items-baseline justify-between gap-3 border-b px-4 py-3">
-        <h2 className="text-sm font-medium">{title}</h2>
+    <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
+      <div className="flex min-w-0 items-baseline justify-between gap-3 border-b px-4 py-3">
+        <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
         {onSelect ? (
-          <span className="text-xs text-muted-foreground">
+          <span className="shrink-0 text-xs text-muted-foreground">
             {t(($) => $.operations.analysis.drill_hint)}
           </span>
         ) : null}
       </div>
-      <div className="grid gap-3 p-4">
+      <div className="grid min-w-0 gap-3 p-4">
         {rows.length === 0 ? (
           <div className="text-sm text-muted-foreground">{emptyLabel ?? "—"}</div>
         ) : rows.map((r) => {
           const inner = (
             <>
-              <div className="flex items-center justify-between gap-3">
-                <ToneBadge tone={r.tone}>{r.label}</ToneBadge>
-                <span className="text-xs text-muted-foreground tabular-nums">
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                {labelMode === "text" ? (
+                  <span
+                    className="min-w-0 truncate text-sm text-foreground"
+                    title={r.label}
+                  >
+                    {r.label}
+                  </span>
+                ) : (
+                  <ToneBadge tone={r.tone} className="min-w-0">
+                    {r.label}
+                  </ToneBadge>
+                )}
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                   {r.countLabel ?? r.count}
                 </span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div className="h-1.5 min-w-0 overflow-hidden rounded-full bg-muted">
                 <div
                   className="h-full rounded-full bg-primary"
                   style={{ width: `${Math.max(8, (r.count / max) * 100)}%` }}
@@ -1222,14 +1223,15 @@ function AnalysisCard({
                 key={r.label}
                 type="button"
                 onClick={() => onSelect(r.key!)}
-                className="grid gap-1.5 rounded-md text-left transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                title={r.label}
+                className="grid min-w-0 gap-1.5 rounded-md text-left transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {inner}
               </button>
             );
           }
           return (
-            <div key={r.label} className="grid gap-1.5">
+            <div key={r.label} title={r.label} className="grid min-w-0 gap-1.5">
               {inner}
             </div>
           );
@@ -1256,30 +1258,31 @@ function WorkstreamAnalysisCard({
   const { t } = useT("usage");
   const max = Math.max(1, ...rows.map((r) => r.total));
   return (
-    <section className="rounded-lg border bg-card xl:col-span-2">
-      <div className="flex items-baseline justify-between gap-3 border-b px-4 py-3">
-        <h2 className="text-sm font-medium">{title}</h2>
-        <span className="text-xs text-muted-foreground">
+    <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
+      <div className="flex min-w-0 items-baseline justify-between gap-3 border-b px-4 py-3">
+        <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
+        <span className="shrink-0 text-xs text-muted-foreground">
           {t(($) => $.operations.analysis.drill_hint)}
         </span>
       </div>
-      <div className="grid gap-3 p-4">
+      <div className="grid max-h-[420px] min-w-0 gap-3 overflow-y-auto p-4 pr-3">
         {rows.map((r) => (
           <button
             key={r.workstream}
             type="button"
             onClick={() => onSelect(r.workstream)}
-            className="grid gap-1.5 rounded-md text-left transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            title={r.workstream}
+            className="grid min-w-0 gap-1.5 rounded-md text-left transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <div className="flex min-w-0 items-center justify-between gap-3">
-              <span className="truncate font-mono text-xs text-foreground">
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+              <span className="min-w-0 truncate font-mono text-xs text-foreground">
                 {r.workstream}
               </span>
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              <span className="shrink-0 text-right text-xs text-muted-foreground tabular-nums">
                 {t(($) => $.operations.analysis.workstream_counts, r)}
               </span>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className="h-1.5 min-w-0 overflow-hidden rounded-full bg-muted">
               <div
                 className="h-full rounded-full bg-primary"
                 style={{ width: `${Math.max(8, (r.total / max) * 100)}%` }}
@@ -1429,10 +1432,14 @@ function IssueCell({
   fix,
   slug,
   issueStatusLabel,
+  comment,
+  search,
 }: {
   fix: AgentFixRecord;
   slug: string | null;
   issueStatusLabel: string;
+  comment: string;
+  search: string;
 }) {
   const inner = (
     <div className="grid min-w-0 gap-1 overflow-hidden">
@@ -1440,7 +1447,7 @@ function IssueCell({
         <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
           {fix.issue_identifier || "—"}
         </span>
-        <span className="truncate text-sm font-medium">
+        <span className="truncate text-sm font-medium group-hover:underline">
           {fix.issue_title || "—"}
         </span>
       </div>
@@ -1468,6 +1475,14 @@ function IssueCell({
           </>
         ) : null}
       </div>
+      {comment ? (
+        <p
+          className="truncate text-xs text-muted-foreground"
+          title={comment}
+        >
+          <ReasonText text={comment} keyword={search} />
+        </p>
+      ) : null}
     </div>
   );
   // Link to the issue when we know the workspace slug; fall back to plain text
@@ -1476,7 +1491,7 @@ function IssueCell({
     return (
       <AppLink
         href={paths.workspace(slug).issueDetail(fix.issue_identifier)}
-        className="block min-w-0 overflow-hidden hover:underline"
+        className="group block min-w-0 overflow-hidden"
       >
         {inner}
       </AppLink>
@@ -1549,26 +1564,60 @@ function P4EvidenceCell({
   const evidence = derivedEvidence(fix);
   const swarmUrl =
     firstSwarmReviewUrl(fix) || swarmReviewUrl(swarmBase, evidence.swarm);
+  const primaryCl = evidence.finalCl
+    ? { label: t(($) => $.operations.p4.final_cl), value: evidence.finalCl }
+    : evidence.shelve
+      ? { label: t(($) => $.operations.p4.shelve), value: evidence.shelve }
+      : null;
   const detailRows = [
+    evidence.swarm
+      ? {
+          label: t(($) => $.operations.p4.swarm),
+          value: evidence.swarm,
+          href: swarmUrl,
+        }
+      : null,
     evidence.swarmChanges
-      ? [t(($) => $.operations.p4.changes), evidence.swarmChanges]
+      ? {
+          label: t(($) => $.operations.p4.changes),
+          value: evidence.swarmChanges,
+        }
       : null,
     evidence.swarmCommits
-      ? [t(($) => $.operations.p4.commits), evidence.swarmCommits]
+      ? {
+          label: t(($) => $.operations.p4.commits),
+          value: evidence.swarmCommits,
+        }
       : null,
     evidence.swarmBranch
-      ? [t(($) => $.operations.p4.branch), evidence.swarmBranch]
+      ? {
+          label: t(($) => $.operations.p4.branch),
+          value: evidence.swarmBranch,
+        }
       : null,
     evidence.eventType
-      ? [t(($) => $.operations.p4.event), evidence.eventType]
+      ? { label: t(($) => $.operations.p4.event), value: evidence.eventType }
       : null,
     evidence.sentAt
-      ? [t(($) => $.operations.p4.sent_at), evidence.sentAt]
+      ? { label: t(($) => $.operations.p4.sent_at), value: evidence.sentAt }
       : null,
     p4?.warnings?.length
-      ? [t(($) => $.operations.p4.warnings), p4.warnings.join(", ")]
+      ? {
+          label: t(($) => $.operations.p4.warnings),
+          value: p4.warnings.join(", "),
+        }
       : null,
-  ].filter(Boolean) as Array<[string, string]>;
+  ].filter(Boolean) as Array<{ label: string; value: string; href?: string }>;
+  const meta = [
+    evidence.workstream
+      ? `${t(($) => $.operations.p4.workstream)} ${evidence.workstream}`
+      : "",
+    p4?.warnings?.length
+      ? t(($) => $.operations.p4.warning_count, {
+          count: p4.warnings.length,
+        })
+      : "",
+  ].filter(Boolean);
   if (!hasP4Signal(fix)) {
     return (
       <span className="text-xs text-muted-foreground">
@@ -1577,73 +1626,78 @@ function P4EvidenceCell({
     );
   }
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1.5 overflow-hidden">
-      <div className="flex min-w-0 flex-wrap gap-1.5 overflow-hidden">
-        {evidence.workstream ? (
-          <EvidenceBadge>
-            {t(($) => $.operations.p4.workstream)} {evidence.workstream}
-          </EvidenceBadge>
-        ) : null}
-        {evidence.swarm ? (
+    <div className="grid min-w-0 gap-1.5 justify-items-start overflow-hidden">
+      <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-hidden">
+        {primaryCl ? (
+          <ClListBadge
+            label={primaryCl.label}
+            cls={primaryCl.value}
+            swarmBase={swarmBase}
+          />
+        ) : evidence.swarm ? (
           <EvidenceBadge href={swarmUrl}>
             {t(($) => $.operations.p4.swarm_value, { value: evidence.swarm })}
           </EvidenceBadge>
         ) : null}
-        {evidence.shelve ? (
-          <ClListBadge
-            label={t(($) => $.operations.p4.shelve)}
-            cls={evidence.shelve}
-            swarmBase={swarmBase}
-          />
-        ) : null}
-        {evidence.finalCl ? (
-          <ClListBadge
-            label={t(($) => $.operations.p4.final_cl)}
-            cls={evidence.finalCl}
-            swarmBase={swarmBase}
-          />
-        ) : null}
-        {p4?.warnings?.length ? (
-          <ToneBadge tone="warning">
-            {t(($) => $.operations.p4.warning_count, {
-              count: p4.warnings.length,
-            })}
-          </ToneBadge>
+        {detailRows.length > 0 ? (
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 min-w-0 max-w-full gap-1 px-1.5 text-xs text-muted-foreground"
+                >
+                  <List className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {t(($) => $.operations.p4.details)}
+                  </span>
+                </Button>
+              }
+            />
+            <PopoverContent align="end" className="w-80 gap-2">
+              <div className="text-xs font-medium">
+                {t(($) => $.operations.p4.details)}
+              </div>
+              <div className="grid gap-2">
+                {detailRows.map(({ label, value, href }) => (
+                  <div key={label} className="grid gap-0.5">
+                    <div className="text-[11px] uppercase text-muted-foreground">
+                      {label}
+                    </div>
+                    {href ? (
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex min-w-0 items-center gap-1 break-words text-xs hover:underline"
+                      >
+                        <span className="min-w-0 break-all">{value}</span>
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                      </a>
+                    ) : (
+                      <div className="break-words text-xs">{value}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
         ) : null}
       </div>
-      {detailRows.length > 0 ? (
-        <Popover>
-          <PopoverTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 min-w-0 max-w-full gap-1 px-2 text-xs"
-              >
-                <List className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">
-                  {t(($) => $.operations.p4.details)}
-                </span>
-              </Button>
-            }
-          />
-          <PopoverContent align="end" className="w-80 gap-2">
-            <div className="text-xs font-medium">
-              {t(($) => $.operations.p4.details)}
-            </div>
-            <div className="grid gap-2">
-              {detailRows.map(([label, value]) => (
-                <div key={label} className="grid gap-0.5">
-                  <div className="text-[11px] uppercase text-muted-foreground">
-                    {label}
-                  </div>
-                  <div className="break-words text-xs">{value}</div>
-                </div>
-              ))}
-            </div>
-          </PopoverContent>
-        </Popover>
+      {meta.length > 0 ? (
+        <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-hidden text-xs text-muted-foreground">
+          {meta.map((item, index) => (
+            <span
+              key={item}
+              className={index === 0 ? "min-w-0 truncate" : "shrink-0"}
+            >
+              {index > 0 ? "· " : ""}
+              {item}
+            </span>
+          ))}
+        </div>
       ) : null}
     </div>
   );
@@ -1656,6 +1710,33 @@ function AssessmentStatusBadge({ value }: { value?: string }) {
     <ToneBadge tone={assessmentTone(value)}>
       {agentFixEnumLabel(tx, "assessment", value || "missing")}
     </ToneBadge>
+  );
+}
+
+function AssessmentQualityCell({
+  fix,
+  pending,
+  onTrigger,
+}: {
+  fix: AgentFixRecord;
+  pending: boolean;
+  onTrigger: (bindingId: string, force: boolean) => void;
+}) {
+  return (
+    <div className="grid min-w-0 gap-1.5 justify-items-start overflow-hidden">
+      <PredictionCell
+        value={fix.p4_assessment?.quality_prediction}
+        kind="quality"
+      />
+      <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 overflow-hidden">
+        <AssessmentStatusBadge value={fix.p4_assessment?.assessment_status} />
+        <AssessmentTriggerButton
+          fix={fix}
+          pending={pending}
+          onTrigger={onTrigger}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -1691,6 +1772,7 @@ function AssessmentTriggerButton({
         ? t(($) => $.operations.assessment_action.rerun)
         : t(($) => $.operations.assessment_action.run);
   const Icon = hasAssessment ? RefreshCw : Play;
+  const compact = hasAssessment;
 
   return (
     <Button
@@ -1701,13 +1783,23 @@ function AssessmentTriggerButton({
       title={
         !externalDone
           ? t(($) => $.operations.assessment_action.blocked_external)
-          : undefined
+          : compact
+            ? label
+            : undefined
       }
       onClick={() => onTrigger(bindingId, force)}
-      className="h-7 min-w-0 max-w-full px-2 text-xs"
+      className={
+        compact
+          ? "h-7 w-7 shrink-0 px-0 text-xs"
+          : "h-7 min-w-0 max-w-full px-2 text-xs"
+      }
     >
       <Icon className="h-3.5 w-3.5 shrink-0" />
-      <span className="min-w-0 max-w-28 truncate">{label}</span>
+      {compact ? (
+        <span className="sr-only">{label}</span>
+      ) : (
+        <span className="min-w-0 max-w-28 truncate">{label}</span>
+      )}
     </Button>
   );
 }

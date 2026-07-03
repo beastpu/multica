@@ -76,7 +76,7 @@
     "tabs": {
       "detail": "評価詳細",
       "analysis": "成果分析",
-      "detail_hint": "外部完了、P4 証跡、AI 予測、人間レビュー。",
+      "detail_hint": "外部完了、CL 提出記録、AI 予測、人間レビュー。",
       "analysis_hint": "現在の絞り込み結果からの軽量集計。"
     },
     "summary": {
@@ -93,7 +93,7 @@
       "funnel_title": "納品ファネル",
       "funnel_total": "{{count}} 件",
       "stage_external_done": "外部完了",
-      "stage_p4_covered": "P4 カバー",
+      "stage_p4_covered": "CL 提出記録",
       "stage_verifiable": "産出検証可能",
       "stage_judged": "判定済み",
       "stage_passed": "合格"
@@ -125,9 +125,9 @@
       "time": "日付",
       "reason": "理由 / 説明",
       "external_status": "外部ステータス",
-      "p4_evidence": "P4 証跡",
+      "p4_evidence": "CL 提出記録",
       "ai_attribution": "納品帰属",
-      "ai_quality": "AI 品質予測"
+      "ai_quality": "AI 評価"
     },
     "pagination": {
       "page_of": "{{page}} / {{pages}} ページ",
@@ -140,6 +140,7 @@
     },
     "p4": {
       "workstream": "stream",
+      "swarm": "Swarm",
       "swarm_value": "Swarm {{value}}",
       "no_swarm": "Swarm なし",
       "changes": "changes",
@@ -153,7 +154,7 @@
       "warnings": "warnings",
       "warning_count": "{{count}} 件の warning",
       "confidence": "信頼度 {{value}}",
-      "no_evidence": "P4 証跡なし"
+      "no_evidence": "CL 提出記録なし"
     },
     "assessment_action": {
       "run": "評価キューに追加",
@@ -224,7 +225,7 @@
     "review_modal": {
       "title": "AI 修正結果の人手レビュー",
       "empty_issue": "Issue が選択されていません",
-      "evidence_p4": "P4 証跡",
+      "evidence_p4": "CL 提出記録",
       "evidence_attribution": "AI 帰属予測",
       "evidence_quality": "AI 品質予測",
       "insufficient_evidence": "証跡不足",

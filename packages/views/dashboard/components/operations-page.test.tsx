@@ -491,7 +491,7 @@ describe("OperationsPage", () => {
     // "状态" column = ISSUE workflow status (labels from the issues namespace).
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
 
-    // "原因/描述" column = the issue's most recent comment.
+    // Issue cell includes a compact preview of the most recent comment.
     expect(screen.getByText("looks good, ready for review")).toBeTruthy();
 
     // By-day time column (UTC) renders the latest-run day per row.
@@ -515,7 +515,9 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Last 30 days")).toBeTruthy();
     // Funnel stages, with the verifiable-output stage as the fix-rate pool.
     expect(screen.getByText("External done")).toBeTruthy();
-    expect(screen.getByText("P4 covered")).toBeTruthy();
+    expect(
+      screen.getAllByText("Submitted CL record").length,
+    ).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Verifiable output")).toBeTruthy();
     expect(screen.getByText("Judged")).toBeTruthy();
     // Fix rate: verifiable + judged rows are t-1 (likely_correct) and t-4
@@ -547,20 +549,21 @@ describe("OperationsPage", () => {
     expect(screen.getAllByText("In stats").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("AI assessed").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("stream rel_1.7.2/server")).toBeTruthy();
-    expect(screen.getByText("Swarm SW-11872")).toBeTruthy();
-    // CL badges split label and per-CL links into separate nodes — match on
-    // the badge's normalized textContent.
+    expect(screen.queryByText("Swarm SW-11872")).toBeNull();
+    // The detail table shows the submitted CL first; shelved CLs stay hidden
+    // when a final committed CL exists.
     const badgeTexts = Array.from(document.querySelectorAll("span")).map((s) =>
       (s.textContent ?? "").replace(/\s+/g, " ").trim(),
     );
-    expect(badgeTexts).toContain("shelve 282941");
     expect(badgeTexts).toContain("final CL 283006");
     expect(badgeTexts).toContain("final CL 284805");
     expect(badgeTexts).toContain("shelve 287451");
+    expect(badgeTexts).not.toContain("shelve 282941");
     expect(badgeTexts).not.toContain("final CL 287451");
     expect(screen.queryByText("changes 282941, 282944")).toBeNull();
 
     await user.click(screen.getAllByRole("button", { name: "Details" })[0]!);
+    expect(screen.getByText("SW-11872")).toBeTruthy();
     expect(screen.getByText("282941, 282944")).toBeTruthy();
     // "283006" also renders as the linked final-CL badge text in the row.
     expect(screen.getAllByText("283006").length).toBeGreaterThanOrEqual(1);
@@ -575,7 +578,8 @@ describe("OperationsPage", () => {
     expect(screen.getAllByText("Fail").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("links external work items, swarm reviews, and CLs", () => {
+  it("links external work items, swarm reviews, and CLs", async () => {
+    const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
     // Feishu/Meego work item → external.url.
@@ -583,15 +587,18 @@ describe("OperationsPage", () => {
     expect(workItem?.getAttribute("href")).toBe(
       "https://meego.example.com/items/BUG-93218",
     );
-    // Swarm review badge → {base}/reviews/{id}.
-    const swarm = screen.getByText("Swarm SW-11872").closest("a");
+    // Swarm review lives in the submitted-CL details popover.
+    await user.click(screen.getAllByRole("button", { name: "Details" })[0]!);
+    const swarm = screen.getByText("SW-11872").closest("a");
     expect(swarm?.getAttribute("href")).toBe(
       "https://swarm.example.com/reviews/SW-11872",
     );
-    // Shelve CL → {base}/changes/{cl}.
-    const cl = screen.getByText("282941").closest("a");
+    await user.keyboard("{Escape}");
+
+    // Final CL → {base}/changes/{cl}.
+    const cl = screen.getByText("283006").closest("a");
     expect(cl?.getAttribute("href")).toBe(
-      "https://swarm.example.com/changes/282941",
+      "https://swarm.example.com/changes/283006",
     );
   });
 
@@ -604,7 +611,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText("\u5df2\u5224\u5b9a")).toBeTruthy();
     expect(screen.getAllByText("\u901a\u8fc7").length).toBeGreaterThanOrEqual(1);
 
-    // The P4 evidence popover still opens with the localized trigger.
+    // The submitted-CL record popover still opens with the localized trigger.
     await user.click(screen.getAllByRole("button", { name: "\u8be6\u60c5" })[0]!);
     expect(screen.getByText("282941, 282944")).toBeTruthy();
   });
@@ -857,9 +864,9 @@ describe("OperationsPage", () => {
     ).toEqual([
       "Resize Issue column",
       "Resize Agent column",
-      "Resize P4 evidence column",
+      "Resize Submitted CL record column",
       "Resize Delivery attribution column",
-      "Resize AI quality prediction column",
+      "Resize AI assessment column",
       "Resize Date column",
     ]);
     expect(
