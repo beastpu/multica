@@ -405,6 +405,15 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	}
 	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_fix_review WHERE feishu_binding_id = $1`, bindingID) })
 
+	// A hard-failed latest run: the feed must carry the run's status and the
+	// structured failure_reason so the dashboard can explain no-output rows.
+	blockedIssue := mkIssue("Blocked by provider auth", "in_progress")
+	mkTask(`
+		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, priority, completed_at, failure_reason)
+		VALUES ($1, $2, $3, 'failed', 0, now() - interval '5 minutes', 'agent_error.provider_auth_or_access')
+		RETURNING id
+	`, agentID, blockedIssue, testRuntimeID)
+
 	// No issue_id — must be excluded by the INNER JOIN on issue.
 	issuelessTaskID := mkTask(`
 		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, completed_at)
@@ -471,6 +480,30 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	}
 	if review.LastCommentAuthorType != "agent" {
 		t.Errorf("review.LastCommentAuthorType = %q, want agent", review.LastCommentAuthorType)
+	}
+	// Every agent comment on the issue counts (member replies don't), so the
+	// dashboard can tell "commented a plan" from "did nothing" without relying
+	// on the single last_comment snippet.
+	if review.AgentCommentCount != 1 {
+		t.Errorf("review.AgentCommentCount = %d, want 1", review.AgentCommentCount)
+	}
+	if done.AgentCommentCount != 0 {
+		t.Errorf("done.AgentCommentCount = %d, want 0", done.AgentCommentCount)
+	}
+	// The latest run's status and structured failure reason ride along so the
+	// dashboard can explain a no-output ticket (e.g. provider auth failure).
+	if done.TaskStatus != "completed" {
+		t.Errorf("done.TaskStatus = %q, want completed", done.TaskStatus)
+	}
+	blocked, ok := byIssue[blockedIssue]
+	if !ok {
+		t.Fatalf("blockedIssue fix not returned")
+	}
+	if blocked.TaskStatus != "failed" {
+		t.Errorf("blocked.TaskStatus = %q, want failed", blocked.TaskStatus)
+	}
+	if blocked.TaskFailureReason != "agent_error.provider_auth_or_access" {
+		t.Errorf("blocked.TaskFailureReason = %q, want agent_error.provider_auth_or_access", blocked.TaskFailureReason)
 	}
 	if review.External == nil {
 		t.Fatalf("review.External = nil, want Feishu binding data")

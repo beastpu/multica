@@ -320,6 +320,14 @@ You may add more specific detail warnings alongside the canonical one (e.g.
 result whose only block signal is a free-form variant is counted as
 verifiable by the dashboard and skews the fix rate.
 
+One data-gap warning is equally contractual: when the external work item is
+done but no submitted CL was found in ANY evidence source (external work-item
+comments / 提交记录, Swarm `commits[]`, stored committed-CL evidence), the
+warnings array MUST include `missing_external_cl`. The dashboard counts it as
+the "missing human CL" process gap — the signal that the human who delivered
+never recorded their final CL on the work item. Without the canonical value
+that ticket is indistinguishable from an assessment that simply didn't look.
+
 ## Submit the Result
 
 Submit each result by POSTing JSON to the batch result endpoint — this is how

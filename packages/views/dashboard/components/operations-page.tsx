@@ -73,11 +73,17 @@ import {
 import { OperationsSummary } from "./operations-summary";
 import { Segmented } from "./segmented";
 import {
+  AI_PLAN_NO_RECORD,
+  UNASSESSED,
+  attributionBucket,
   computeBlockedStats,
   computeOperationsKpis,
   deriveAttribution,
   fixDayIso,
+  hasMissingExternalClWarning,
   isPendingJudgement,
+  isVerifiableOutput,
+  qualityBucket,
   qualityJudgement,
   splitOperationsWindow,
   swarmChangeUrl,
@@ -479,9 +485,9 @@ export function splitHighlight(text: string, keyword: string): HighlightPart[] {
  * Operations page — AI fix assessment. One row per issue an agent has worked
  * on (the latest run only), joining the external work item state, P4/Swarm
  * evidence, and the AI's delivery/quality analysis. Quality is AI-judged —
- * there is no human review step. A KPI band (pass rate / delivery share /
- * no-output rate + delivery funnel) sits above the
- * detail table. Lives at `/{slug}/operations`; backed by
+ * there is no human review step. A KPI band (pass rate split by AI-delivered
+ * vs AI-assisted / delivery share / no-output rate + delivery funnel) sits
+ * above the detail table. Lives at `/{slug}/operations`; backed by
  * GET /api/operations/agent-fixes.
  */
 export function OperationsPage() {
@@ -574,7 +580,7 @@ export function OperationsPage() {
   }, [fixes]);
 
   const attributionOptions = useMemo<SelectOption[]>(() => {
-    return sortedUniqueOptions(fixes, deriveAttribution).map((value) => ({
+    return sortedUniqueOptions(fixes, attributionBucket).map((value) => ({
       value,
       label: agentFixEnumLabel(tx, "attribution", value),
     }));
@@ -582,7 +588,7 @@ export function OperationsPage() {
 
   const qualityOptions = useMemo<SelectOption[]>(() => {
     return sortedUniqueOptions(fixes, (f) =>
-      compactKey(f.p4_assessment?.quality_prediction, "unknown"),
+      qualityBucket(f),
     ).map((value) => ({
       value,
       label: agentFixEnumLabel(tx, "quality", value),
@@ -605,14 +611,13 @@ export function OperationsPage() {
       }
       if (
         attributionFilter !== ALL_ATTRIBUTIONS &&
-        deriveAttribution(f) !== attributionFilter
+        attributionBucket(f) !== attributionFilter
       ) {
         return false;
       }
       if (
         qualityFilter !== ALL_QUALITIES &&
-        compactKey(f.p4_assessment?.quality_prediction, "unknown") !==
-          qualityFilter
+        qualityBucket(f) !== qualityFilter
       ) {
         return false;
       }
@@ -648,9 +653,10 @@ export function OperationsPage() {
     for (const f of rows) {
       if (f.external?.done !== true) continue;
       const raw = f.external?.status ?? "";
+      // Empty labels still count (bucketed as "—") so the breakdown always
+      // sums to the external-done stage count.
       const label =
-        f.external?.status_name || feishuStatusNames.get(raw) || raw;
-      if (!label) continue;
+        f.external?.status_name || feishuStatusNames.get(raw) || raw || "—";
       counts.set(label, (counts.get(label) ?? 0) + 1);
     }
     return Array.from(counts.entries())
@@ -1073,20 +1079,25 @@ function OperationsAnalysis({
 }) {
   const { t } = useT("usage");
   const tx = t as unknown as UsageT;
-  const attribution = countBy(rows, deriveAttribution);
-  const quality = countBy(rows, (f) =>
-    compactKey(f.p4_assessment?.quality_prediction, "unknown"),
-  );
+  // Bucketed the same way the filters and KPI numerators are, so each
+  // distribution slice reconciles exactly (e.g. 无法判断 = the undetermined
+  // KPI numerator; 未评估 = rows without a completed assessment).
+  const attribution = countBy(rows, attributionBucket);
+  const quality = countBy(rows, qualityBucket);
   const workstreams = groupWorkstreams(rows);
   const blocked = computeBlockedStats(rows);
   const blockedFamilyLabel = (family: BlockedFamily): string =>
-    family === "swarm"
-      ? t(($) => $.operations.analysis.blocked_swarm)
-      : family === "p4"
-        ? t(($) => $.operations.analysis.blocked_p4)
-        : family === "evidence_endpoint"
-          ? t(($) => $.operations.analysis.blocked_evidence)
-          : t(($) => $.operations.analysis.blocked_misc);
+    family === "auth"
+      ? t(($) => $.operations.analysis.blocked_auth)
+      : family === "identification"
+        ? t(($) => $.operations.analysis.blocked_identification)
+        : family === "swarm"
+          ? t(($) => $.operations.analysis.blocked_swarm)
+          : family === "p4"
+            ? t(($) => $.operations.analysis.blocked_p4)
+            : family === "evidence_endpoint"
+              ? t(($) => $.operations.analysis.blocked_evidence)
+              : t(($) => $.operations.analysis.blocked_misc);
   const blockedShare = (count: number): string =>
     blocked.completed > 0
       ? ` · ${Math.round((count / blocked.completed) * 1000) / 10}%`
@@ -1096,9 +1107,42 @@ function OperationsAnalysis({
     (f) => f.p4_assessment?.prediction_reasons,
     (key) => agentFixEnumLabel(tx, "review_reason", key),
   );
+  // Structured failure codes (taskfailure taxonomy) of the latest fix runs —
+  // raw codes on purpose: they're operator-facing identifiers, and the set
+  // grows server-side without a frontend release. Scope note: the page only
+  // shows externally-done tickets, so this explains why a *delivered* ticket
+  // ended with no AI output, not the live blocked queue.
+  const fixFailures = topReasons(
+    rows,
+    (f) => (f.task_failure_reason ? [f.task_failure_reason] : undefined),
+    (key) => key,
+  );
+  // Process gaps — each row is one fixable workflow problem, not an AI defect:
+  // a plan that never landed a shelve, a delivered ticket whose human CL was
+  // never recorded, and the unassessed backlog. Zero counts stay visible (zero
+  // is the healthy state worth confirming).
+  const gaps = [
+    {
+      key: AI_PLAN_NO_RECORD,
+      label: agentFixEnumLabel(tx, "attribution", AI_PLAN_NO_RECORD),
+      count: attribution.get(AI_PLAN_NO_RECORD) ?? 0,
+      tone: "warning" as Tone,
+    },
+    {
+      label: t(($) => $.operations.analysis.gaps_missing_cl),
+      count: rows.filter(hasMissingExternalClWarning).length,
+      tone: "warning" as Tone,
+    },
+    {
+      key: UNASSESSED,
+      label: agentFixEnumLabel(tx, "attribution", UNASSESSED),
+      count: attribution.get(UNASSESSED) ?? 0,
+      tone: "muted" as Tone,
+    },
+  ];
   return (
     <div className="grid min-w-0 gap-4">
-      <div className="grid min-w-0 gap-4 xl:grid-cols-3">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-2 2xl:grid-cols-4">
         <AnalysisCard
           title={t(($) => $.operations.analysis.attribution_title)}
           rows={Array.from(attribution.entries()).map(([key, count]) => ({
@@ -1133,12 +1177,23 @@ function OperationsAnalysis({
           }))}
           emptyLabel={t(($) => $.operations.analysis.blocked_none)}
         />
+        <AnalysisCard
+          title={t(($) => $.operations.analysis.gaps_title)}
+          rows={gaps}
+          onSelect={onDrillAttribution}
+        />
       </div>
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,0.75fr)_minmax(0,0.75fr)_minmax(0,1.1fr)]">
         <AnalysisCard
           title={t(($) => $.operations.analysis.prediction_reason_title)}
           rows={predictionReasons}
           emptyLabel={t(($) => $.operations.analysis.no_reasons)}
+          labelMode="text"
+        />
+        <AnalysisCard
+          title={t(($) => $.operations.analysis.failures_title)}
+          rows={fixFailures}
+          emptyLabel={t(($) => $.operations.analysis.failures_none)}
           labelMode="text"
         />
         <WorkstreamAnalysisCard
@@ -1319,9 +1374,13 @@ function groupWorkstreams(rows: AgentFixRecord[]) {
       groups.get(workstream) ??
       { workstream, total: 0, judged: 0, passed: 0 };
     group.total += 1;
-    const quality = qualityJudgement(row);
-    if (quality !== "") group.judged += 1;
-    if (quality === "likely_correct") group.passed += 1;
+    // Same scope as the funnel's 已判定/通过 (fix-rate pool), so the
+    // per-workstream numbers sum to the funnel stages.
+    if (isVerifiableOutput(row)) {
+      const quality = qualityJudgement(row);
+      if (quality !== "") group.judged += 1;
+      if (quality === "likely_correct") group.passed += 1;
+    }
     groups.set(workstream, group);
   }
   return Array.from(groups.values()).sort((a, b) => b.total - a.total);

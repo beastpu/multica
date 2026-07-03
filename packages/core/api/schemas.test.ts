@@ -466,6 +466,21 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
     expect(parsed[0]?.last_comment_author_type).toBe("agent");
   });
 
+  it("keeps agent_comment_count absent when missing or malformed", () => {
+    // Old servers omit the field; the dashboard falls back to last_comment.
+    // The distinction "absent" vs 0 must survive parsing, and a drifted type
+    // degrades to absent instead of dropping the row.
+    const parsed = AgentFixRecordListSchema.parse([
+      { task_id: "t1" },
+      { task_id: "t2", agent_comment_count: 3 },
+      { task_id: "t3", agent_comment_count: "many" },
+    ]);
+    expect(parsed).toHaveLength(3);
+    expect(parsed[0]?.agent_comment_count).toBeUndefined();
+    expect(parsed[1]?.agent_comment_count).toBe(3);
+    expect(parsed[2]?.agent_comment_count).toBeUndefined();
+  });
+
   it("keeps optional P4 assessment fields while tolerating unknown enum strings", () => {
     const parsed = AgentFixRecordListSchema.parse([
       {

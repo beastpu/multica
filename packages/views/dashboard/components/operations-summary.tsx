@@ -8,8 +8,9 @@ import type { OperationsKpis, OperationsRate } from "../operations-metrics";
 // bases don't masquerade as comparable cards:
 //   - a delivery-composition bar over 外部完成 (MECE by AI role) whose read-off
 //     is participation + contribution (same base, nested);
-//   - two small ratio cards on different bases — pass rate (over 已判定) and
-//     assessment coverage (over AI participation);
+//   - three small ratio cards — pass rate over 已判定 split by attribution
+//     (direct-delivered vs assisted), and assessment coverage (over AI
+//     participation);
 //   - a muted data-health footnote, then the nested delivery funnel.
 // `previous` carries the KPIs of the equal-length window before the selected
 // one; deltas are null (render nothing) when a window's denominator is 0 or the
@@ -105,9 +106,14 @@ export function OperationsSummary({
       count: funnel.externalDone,
     },
     {
-      key: "p4_covered",
-      label: t(($) => $.operations.summary.stage_p4_covered),
-      count: funnel.p4Covered,
+      key: "ai_engaged",
+      label: t(($) => $.operations.summary.stage_ai_engaged),
+      count: funnel.aiEngaged,
+    },
+    {
+      key: "ai_planned",
+      label: t(($) => $.operations.summary.stage_ai_planned),
+      count: funnel.aiPlanned,
     },
     {
       key: "verifiable",
@@ -132,7 +138,14 @@ export function OperationsSummary({
   const SMALL_SAMPLE = 30;
   const stableDelta = (cur: OperationsRate, prev: OperationsRate) =>
     cur.denominator < SMALL_SAMPLE ? null : deltaPoints(cur, prev);
-  const passDelta = stableDelta(kpis.passRate, previous.passRate);
+  const deliveredDelta = stableDelta(
+    kpis.aiDeliveredPassRate,
+    previous.aiDeliveredPassRate,
+  );
+  const assistedDelta = stableDelta(
+    kpis.aiAssistedPassRate,
+    previous.aiAssistedPassRate,
+  );
   const coverageDelta = stableDelta(kpis.coverageRate, previous.coverageRate);
   // MECE composition of 外部完成 by AI role — one segment per ticket. Colour
   // reads hottest→coldest by AI involvement (direct > assisted > unconverted >
@@ -201,17 +214,29 @@ export function OperationsSummary({
           ))}
         </div>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-3">
         <RateCard
-          label={t(($) => $.operations.summary.pass_rate)}
-          hint={t(($) => $.operations.summary.pass_rate_hint, {
-            num: kpis.passRate.numerator,
-            den: kpis.passRate.denominator,
+          label={t(($) => $.operations.summary.delivered_pass_rate)}
+          hint={t(($) => $.operations.summary.delivered_pass_rate_hint, {
+            num: kpis.aiDeliveredPassRate.numerator,
+            den: kpis.aiDeliveredPassRate.denominator,
           })}
-          rate={kpis.passRate}
-          delta={passDelta}
+          rate={kpis.aiDeliveredPassRate}
+          delta={deliveredDelta}
           deltaLabel={deltaLabel}
-          deltaText={deltaText(passDelta)}
+          deltaText={deltaText(deliveredDelta)}
+          upIsGood
+        />
+        <RateCard
+          label={t(($) => $.operations.summary.assisted_pass_rate)}
+          hint={t(($) => $.operations.summary.assisted_pass_rate_hint, {
+            num: kpis.aiAssistedPassRate.numerator,
+            den: kpis.aiAssistedPassRate.denominator,
+          })}
+          rate={kpis.aiAssistedPassRate}
+          delta={assistedDelta}
+          deltaLabel={deltaLabel}
+          deltaText={deltaText(assistedDelta)}
           upIsGood
         />
         <RateCard
