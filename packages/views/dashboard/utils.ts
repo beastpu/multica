@@ -253,7 +253,7 @@ export function filterKnownAgentRows(
 // identical apart from where the tz comes from.
 // ---------------------------------------------------------------------------
 
-export interface WeekShell {
+interface WeekShell {
   weekStart: string;
   weekEnd: string;
   label: string;
@@ -266,7 +266,7 @@ export interface WeekShell {
 // carries the labels and partial-week metadata the chart components consume;
 // downstream aggregators fold their own per-week values onto the matching
 // shell.
-export function buildWeekShells(tz: string, weekCount: number): WeekShell[] {
+function buildWeekShells(tz: string, weekCount: number): WeekShell[] {
   const count = Math.max(1, Math.floor(weekCount));
   const today = todayIso(tz);
   const currentWeekStart = weekStartIso(today);

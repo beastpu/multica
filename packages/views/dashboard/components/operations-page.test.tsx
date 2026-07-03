@@ -529,12 +529,6 @@ describe("OperationsPage", () => {
     expect(screen.getByText("50%")).toBeTruthy();
   });
 
-  it("renders the weekly trend section for multi-week windows", () => {
-    renderWithI18n(<OperationsPage />);
-    expect(screen.getByText("Weekly trend")).toBeTruthy();
-    expect(screen.getAllByText("Fix rate").length).toBeGreaterThanOrEqual(1);
-  });
-
   it("derives AI no output for completed assessments without an AI shelve", () => {
     renderWithI18n(<OperationsPage />);
     // t-7: unattributed prediction + empty ai_shelved_cls → derived label.

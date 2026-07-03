@@ -98,12 +98,6 @@
       "stage_judged": "判定済み",
       "stage_passed": "合格"
     },
-    "trend": {
-      "title": "週次トレンド",
-      "pass_rate": "修復率",
-      "delivery_share": "納品比率",
-      "no_output_rate": "未産出率"
-    },
     "analysis": {
       "attribution_title": "納品帰属の分布",
       "quality_title": "AI 品質判定の分布",

@@ -98,12 +98,6 @@
       "stage_judged": "판정 완료",
       "stage_passed": "통과"
     },
-    "trend": {
-      "title": "주간 추이",
-      "pass_rate": "수정률",
-      "delivery_share": "납품 비율",
-      "no_output_rate": "무산출률"
-    },
     "analysis": {
       "attribution_title": "납품 귀속 분포",
       "quality_title": "AI 품질 판정 분포",

@@ -71,12 +71,10 @@ import {
   type UsageT,
 } from "./agent-fix-review";
 import { OperationsSummary } from "./operations-summary";
-import { OperationsTrend } from "./operations-trend";
 import { Segmented } from "./segmented";
 import {
   computeBlockedStats,
   computeOperationsKpis,
-  computeOperationsTrend,
   deriveAttribution,
   fixDayIso,
   isPendingJudgement,
@@ -482,7 +480,7 @@ export function splitHighlight(text: string, keyword: string): HighlightPart[] {
  * on (the latest run only), joining the external work item state, P4/Swarm
  * evidence, and the AI's delivery/quality analysis. Quality is AI-judged —
  * there is no human review step. A KPI band (pass rate / delivery share /
- * no-output rate + delivery funnel) and a weekly trend chart sit above the
+ * no-output rate + delivery funnel) sits above the
  * detail table. Lives at `/{slug}/operations`; backed by
  * GET /api/operations/agent-fixes.
  */
@@ -660,23 +658,6 @@ export function OperationsPage() {
       .sort((a, b) => b.count - a.count);
   }, [rows, feishuStatusNames]);
 
-  // Weekly trend over the whole fetch (both windows) so the leftmost calendar
-  // week isn't truncated when today isn't a Sunday. Hidden for 1d/7d — a
-  // single-bucket line has nothing to say.
-  const weekCount = Math.max(1, Math.ceil(days / 7));
-  const showTrend = weekCount >= 2;
-  const trend = useMemo(
-    () =>
-      showTrend
-        ? computeOperationsTrend(
-            visibleFixes.filter(matchesFilters),
-            viewTZ,
-            weekCount,
-          )
-        : [],
-    [showTrend, visibleFixes, matchesFilters, viewTZ, weekCount],
-  );
-
   // UI pagination over the filtered rows. Any filter / window / search change
   // snaps back to the first page.
   useEffect(() => {
@@ -825,10 +806,6 @@ export function OperationsPage() {
               previous={previousKpis}
               externalDoneBreakdown={externalDoneBreakdown}
             />
-          ) : null}
-
-          {!fixesQuery.isLoading && rows.length > 0 && showTrend ? (
-            <OperationsTrend data={trend} />
           ) : null}
 
           {!fixesQuery.isLoading && rows.length > 0 ? (

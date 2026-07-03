@@ -98,12 +98,6 @@
       "stage_judged": "已判定",
       "stage_passed": "通过"
     },
-    "trend": {
-      "title": "周趋势",
-      "pass_rate": "修复率",
-      "delivery_share": "交付占比",
-      "no_output_rate": "无产出率"
-    },
     "analysis": {
       "attribution_title": "交付归因分布",
       "quality_title": "AI 质量判定分布",

@@ -98,12 +98,6 @@
       "stage_judged": "Judged",
       "stage_passed": "Passed"
     },
-    "trend": {
-      "title": "Weekly trend",
-      "pass_rate": "Fix rate",
-      "delivery_share": "Delivery share",
-      "no_output_rate": "No-output rate"
-    },
     "analysis": {
       "attribution_title": "Delivery attribution",
       "quality_title": "AI quality distribution",
