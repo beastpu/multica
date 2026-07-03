@@ -80,8 +80,10 @@
       "analysis_hint": "現在の絞り込み結果からの軽量集計。"
     },
     "summary": {
-      "pass_rate": "AI 修復率",
-      "pass_rate_hint": "合格 {{num}} / 検証可能かつ判定済み {{den}}",
+      "delivered_pass_rate": "AI 交付合格率",
+      "assisted_pass_rate": "AI 支援合格率",
+      "delivered_pass_rate_hint": "合格 {{num}} / AI 交付の判定済み {{den}}",
+      "assisted_pass_rate_hint": "合格 {{num}} / AI 支援の判定済み {{den}}",
       "delivery_share": "AI 納品比率",
       "delivery_share_hint": "AI 納品+支援 {{num}} / 外部完了 {{den}}",
       "no_output_rate": "AI 未産出率",
@@ -93,7 +95,8 @@
       "funnel_title": "納品ファネル",
       "funnel_total": "{{count}} 件",
       "stage_external_done": "外部完了",
-      "stage_p4_covered": "CL 提出記録",
+      "stage_ai_engaged": "AI 関与",
+      "stage_ai_planned": "shelve/Swarm 記録",
       "stage_verifiable": "産出検証可能",
       "stage_judged": "判定済み",
       "stage_passed": "合格"
@@ -102,11 +105,17 @@
       "attribution_title": "納品帰属の分布",
       "quality_title": "AI 品質判定の分布",
       "blocked_title": "評価ブロック分布（完了 {{completed}}）",
+      "blocked_auth": "認証失敗",
+      "blocked_identification": "ブランチ / CL 特定失敗",
       "blocked_swarm": "Swarm アクセス不可",
       "blocked_p4": "P4 / shelve アクセス不可",
       "blocked_evidence": "エビデンス API 不可",
       "blocked_misc": "その他",
       "blocked_none": "ブロックなし",
+      "gaps_title": "プロセスギャップ",
+      "gaps_missing_cl": "作業項目に人間の CL 未記録",
+      "failures_title": "修復タスクの失敗理由",
+      "failures_none": "失敗記録なし",
       "workstream_title": "Workstream 結果",
       "workstream_counts": "計 {{total}} · 判定済み {{judged}} · 合格 {{passed}}",
       "prediction_reason_title": "AI 理由ランキング",
@@ -176,6 +185,7 @@
         "conflict": "帰属の衝突",
         "unattributed": "帰属不明",
         "ai_no_output": "AI 産出なし",
+        "ai_plan_no_record": "計画あり記録なし",
         "unknown": "証跡不足"
       },
       "quality": {

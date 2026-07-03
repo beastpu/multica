@@ -80,8 +80,10 @@
       "analysis_hint": "현재 필터 결과의 간단한 집계입니다."
     },
     "summary": {
-      "pass_rate": "AI 수정률",
-      "pass_rate_hint": "통과 {{num}} / 검증 가능·판정 완료 {{den}}",
+      "delivered_pass_rate": "AI 제출 통과율",
+      "assisted_pass_rate": "AI 지원 통과율",
+      "delivered_pass_rate_hint": "통과 {{num}} / AI 제출 판정 완료 {{den}}",
+      "assisted_pass_rate_hint": "통과 {{num}} / AI 지원 판정 완료 {{den}}",
       "delivery_share": "AI 납품 비율",
       "delivery_share_hint": "AI 납품+보조 {{num}} / 외부 완료 {{den}}",
       "no_output_rate": "AI 무산출률",
@@ -93,7 +95,8 @@
       "funnel_title": "납품 퍼널",
       "funnel_total": "총 {{count}}건",
       "stage_external_done": "외부 완료",
-      "stage_p4_covered": "CL 제출 기록",
+      "stage_ai_engaged": "AI 참여",
+      "stage_ai_planned": "shelve/Swarm 기록",
       "stage_verifiable": "산출 검증 가능",
       "stage_judged": "판정 완료",
       "stage_passed": "통과"
@@ -102,11 +105,17 @@
       "attribution_title": "납품 귀속 분포",
       "quality_title": "AI 품질 판정 분포",
       "blocked_title": "평가 차단 분포 (완료 {{completed}})",
+      "blocked_auth": "인증 실패",
+      "blocked_identification": "브랜치 / CL 식별 실패",
       "blocked_swarm": "Swarm 접근 불가",
       "blocked_p4": "P4 / shelve 접근 불가",
       "blocked_evidence": "증거 API 불가",
       "blocked_misc": "기타",
       "blocked_none": "차단 없음",
+      "gaps_title": "프로세스 갭",
+      "gaps_missing_cl": "작업 항목에 사람 CL 미기록",
+      "failures_title": "수정 실행 실패 원인",
+      "failures_none": "실패 기록 없음",
       "workstream_title": "Workstream 결과",
       "workstream_counts": "총 {{total}} · 판정 {{judged}} · 통과 {{passed}}",
       "prediction_reason_title": "AI 이유 순위",
@@ -176,6 +185,7 @@
         "conflict": "귀속 충돌",
         "unattributed": "귀속 불명",
         "ai_no_output": "AI 산출 없음",
+        "ai_plan_no_record": "계획만, 기록 없음",
         "unknown": "증거 부족"
       },
       "quality": {

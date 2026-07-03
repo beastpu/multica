@@ -777,6 +777,12 @@ const AgentFixRecordSchema = z.object({
   issue_status: z.string().default(""),
   last_comment: z.string().default(""),
   last_comment_author_type: z.string().default(""),
+  // Absent (old server / zero + omitempty) must stay absent — the dashboard
+  // falls back to last_comment then. A drifted type degrades to absent
+  // instead of dropping the row.
+  agent_comment_count: z.number().optional().catch(undefined),
+  task_status: z.string().default(""),
+  task_failure_reason: z.string().default(""),
   started_at: z.string().nullable().default(null),
   completed_at: z.string().nullable().default(null),
   created_at: z.string().default(""),

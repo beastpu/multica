@@ -80,8 +80,10 @@
       "analysis_hint": "Lightweight rollups from the current filtered rows."
     },
     "summary": {
-      "pass_rate": "AI fix rate",
-      "pass_rate_hint": "{{num}} passed / {{den}} verifiable judged",
+      "delivered_pass_rate": "AI delivered pass rate",
+      "assisted_pass_rate": "AI assisted pass rate",
+      "delivered_pass_rate_hint": "{{num}} passed / {{den}} judged AI-delivered",
+      "assisted_pass_rate_hint": "{{num}} passed / {{den}} judged AI-assisted",
       "delivery_share": "AI delivery share",
       "delivery_share_hint": "{{num}} AI delivered+assisted / {{den}} external done",
       "no_output_rate": "AI no-output rate",
@@ -93,7 +95,8 @@
       "funnel_title": "Delivery funnel",
       "funnel_total": "{{count}} records",
       "stage_external_done": "External done",
-      "stage_p4_covered": "Submitted CL record",
+      "stage_ai_engaged": "AI engaged",
+      "stage_ai_planned": "Shelve/Swarm record",
       "stage_verifiable": "Verifiable output",
       "stage_judged": "Judged",
       "stage_passed": "Passed"
@@ -102,11 +105,17 @@
       "attribution_title": "Delivery attribution",
       "quality_title": "AI quality distribution",
       "blocked_title": "Evidence access blocked ({{completed}} completed)",
+      "blocked_auth": "Auth failed",
+      "blocked_identification": "Branch / CL not identified",
       "blocked_swarm": "Swarm unreachable",
       "blocked_p4": "P4 / shelve unreachable",
       "blocked_evidence": "Evidence API unavailable",
       "blocked_misc": "Other",
       "blocked_none": "No blocked assessments",
+      "gaps_title": "Process gaps",
+      "gaps_missing_cl": "Missing human CL on work item",
+      "failures_title": "Fix-run failures",
+      "failures_none": "No failed runs",
       "workstream_title": "Workstream outcome",
       "workstream_counts": "{{total}} total · {{judged}} judged · {{passed}} passed",
       "prediction_reason_title": "Top AI reasons",
@@ -176,6 +185,7 @@
         "conflict": "Attribution conflict",
         "unattributed": "Unattributed",
         "ai_no_output": "AI no output",
+        "ai_plan_no_record": "Plan, no record",
         "unknown": "Insufficient evidence"
       },
       "quality": {

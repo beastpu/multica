@@ -99,6 +99,9 @@ export function agentFixEnumLabel(
             conflict: t(($) => $.operations.enums.attribution.conflict),
             unattributed: t(($) => $.operations.enums.attribution.unattributed),
             ai_no_output: t(($) => $.operations.enums.attribution.ai_no_output),
+            ai_plan_no_record: t(
+              ($) => $.operations.enums.attribution.ai_plan_no_record,
+            ),
             unknown: t(($) => $.operations.enums.attribution.unknown),
           }
         : group === "quality"
@@ -206,6 +209,7 @@ export function agentFixEnumTone(
     key === "likely_needs_changes" ||
     key === "needs_changes" ||
     key === "ai_no_output" ||
+    key === "ai_plan_no_record" ||
     key === "pending"
   ) {
     return "warning";

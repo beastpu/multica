@@ -10,22 +10,42 @@ import { addDaysIso, todayIso } from "../runtimes/utils";
 // it can be compared without a second endpoint.
 // ---------------------------------------------------------------------------
 
-// Derived delivery attribution. Extends the AI prediction with one value the
-// backend doesn't emit: `ai_no_output` — the agent ran but the completed P4
-// assessment found no AI shelve at all (e.g. the agent hit an auth failure
-// before it could submit). Two guards keep this honest:
+// Derived delivery attribution. Extends the AI prediction with two values the
+// backend doesn't emit, for completed assessments where the prediction is
+// non-AI and no AI shelve exists:
+// - `ai_plan_no_record` — the agent left an issue comment (it completed a
+//   comment task, i.e. proposed a plan) but never landed a shelve/Swarm
+//   record. A process gap: the plan existed, the P4 artifact didn't.
+// - `ai_no_output` — no comment either; the agent produced nothing visible
+//   (e.g. it hit an auth failure before it could do anything).
+// Two guards keep this honest:
 // - Rows without a completed assessment keep the raw prediction; absence of
 //   evidence is not evidence of absence.
 // - An `unknown` prediction stays `unknown`: the assessment skill outputs
 //   unknown + empty CL arrays when P4/Swarm lookup was unavailable, and
 //   "couldn't find evidence" must not be counted as "produced nothing".
 export const AI_NO_OUTPUT = "ai_no_output";
+export const AI_PLAN_NO_RECORD = "ai_plan_no_record";
 
 const PROVEN_NON_AI_ATTRIBUTIONS = new Set([
   "human_delivered",
   "unattributed",
   "conflict",
 ]);
+
+// The agent commented a plan on the issue. Newer servers send
+// agent_comment_count (every agent comment on the issue) — authoritative.
+// Older servers omit it; fall back to the last_comment snippet, which is the
+// agent's latest comment (the SQL filters author_type='agent').
+export function hasAgentPlanComment(fix: AgentFixRecord): boolean {
+  if (typeof fix.agent_comment_count === "number") {
+    return fix.agent_comment_count > 0;
+  }
+  return (
+    fix.last_comment_author_type === "agent" &&
+    (fix.last_comment ?? "").trim() !== ""
+  );
+}
 
 export function deriveAttribution(fix: AgentFixRecord): string {
   const p4 = fix.p4_assessment;
@@ -35,7 +55,9 @@ export function deriveAttribution(fix: AgentFixRecord): string {
   const shelved = (p4.ai_shelved_cls ?? []).filter(
     (cl) => String(cl).trim() !== "",
   );
-  if (shelved.length === 0) return AI_NO_OUTPUT;
+  if (shelved.length === 0) {
+    return hasAgentPlanComment(fix) ? AI_PLAN_NO_RECORD : AI_NO_OUTPUT;
+  }
   return prediction;
 }
 
@@ -106,15 +128,28 @@ export function attributionBucket(fix: AgentFixRecord): string {
 
 const BLOCKED_WARNING_RE = /(unavailable|not_found|unreachable|unauthorized)/i;
 
-export type BlockedFamily = "evidence_endpoint" | "swarm" | "p4" | "other";
+export type BlockedFamily =
+  | "auth"
+  | "identification"
+  | "evidence_endpoint"
+  | "swarm"
+  | "p4"
+  | "other";
 
 // Classifies one warning string: null when it is not an access-blocked
-// warning; otherwise which system the block belongs to. Order matters — the
-// multica evidence endpoint markers often also contain "p4".
+// warning; otherwise the actionable cause. Cause families (auth,
+// identification) come before system families so a "swarm_api_unauthorized"
+// reads as an auth problem, not a Swarm outage — the fix (grant credentials
+// vs. check the service) is what ops routes on. Order matters — the multica
+// evidence endpoint markers often also contain "p4".
 export function blockedWarningFamily(warning: string): BlockedFamily | null {
   const w = warning.trim().toLowerCase();
   if (!w || !BLOCKED_WARNING_RE.test(w)) return null;
   if (w.includes("evidence_endpoint")) return "evidence_endpoint";
+  if (w.includes("unauthorized")) return "auth";
+  if (w.includes("not_found") && /(cl|shelve|branch)/.test(w)) {
+    return "identification";
+  }
   if (w.includes("swarm")) return "swarm";
   if (w.includes("p4") || w.includes("shelve") || w.includes("cl")) return "p4";
   return "other";
@@ -140,7 +175,7 @@ function hasNonEmptyCl(cls: Array<string | number> | undefined): boolean {
 // quality_prediction judges whether the *fix* is correct, not whether AI
 // produced it — so without this gate a human-delivered "likely_correct" would
 // count as an AI win.
-function aiProducedPlan(fix: AgentFixRecord): boolean {
+export function aiProducedPlan(fix: AgentFixRecord): boolean {
   const p4 = fix.p4_assessment;
   if (!p4) return false;
   return hasNonEmptyCl(p4.ai_shelved_cls) || (p4.swarm_reviews ?? []).length > 0;
@@ -155,6 +190,19 @@ function hasCommittedCl(fix: AgentFixRecord): boolean {
   return (
     hasNonEmptyCl(p4.swarm_committed_cls) ||
     hasNonEmptyCl(p4.external_committed_cls)
+  );
+}
+
+// The "missing human CL" process gap: the assessment completed, found no
+// committed CL anywhere, and flagged the canonical `missing_external_cl`
+// warning (the SKILL requires it whenever the external item is done but no
+// submitted CL exists in any evidence source). Ops fixes this with work-item
+// hygiene — humans recording their final CL — not with agent changes.
+export function hasMissingExternalClWarning(fix: AgentFixRecord): boolean {
+  if (fix.p4_assessment?.assessment_status !== "completed") return false;
+  if (hasCommittedCl(fix)) return false;
+  return (fix.p4_assessment?.warnings ?? []).some(
+    (w) => String(w).trim().toLowerCase() === "missing_external_cl",
   );
 }
 
@@ -192,7 +240,14 @@ export function computeBlockedStats(rows: AgentFixRecord[]): BlockedStats {
       counts.set(family, (counts.get(family) ?? 0) + 1);
     }
   }
-  const order: BlockedFamily[] = ["swarm", "p4", "evidence_endpoint", "other"];
+  const order: BlockedFamily[] = [
+    "auth",
+    "identification",
+    "swarm",
+    "p4",
+    "evidence_endpoint",
+    "other",
+  ];
   return {
     completed,
     families: order
@@ -266,13 +321,20 @@ function rate(numerator: number, denominator: number): OperationsRate {
 }
 
 // Delivery funnel counts. Stages are nested: passed ⊆ judged ⊆ verifiable ⊆
-// p4Covered; externalDone is the upstream gate. `verifiable` is the fix-rate
-// denominator pool — completed assessments with reachable AI output evidence.
-// Judgement is the AI quality analysis — there is no human review in this flow.
+// aiPlanned ⊆ aiEngaged; externalDone is the upstream gate. Each drop is one
+// process problem: engaged→planned = the agent proposed but never landed a
+// shelve/Swarm record; planned→verifiable = no committed CL exists (often a
+// human CL missing from the external ticket). `verifiable` is the fix-rate
+// denominator pool. Judgement is the AI quality analysis — there is no human
+// review in this flow.
 export interface OperationsFunnel {
   total: number;
   externalDone: number;
-  p4Covered: number;
+  // The agent did something visible: commented a plan or produced P4/Swarm
+  // evidence.
+  aiEngaged: number;
+  // A shelve CL or Swarm review exists — the plan became a P4 artifact.
+  aiPlanned: number;
   verifiable: number;
   judged: number;
   passed: number;
@@ -280,11 +342,13 @@ export interface OperationsFunnel {
 
 export interface OperationsKpis {
   funnel: OperationsFunnel;
-  // AI 修复率：通过 / 可验证产出且已判定
-  passRate: OperationsRate;
+  // AI 贡献通过率：通过 / 已判定，限 AI 直接提交（ai_delivered）
+  aiDeliveredPassRate: OperationsRate;
+  // AI 辅助通过率：通过 / 已判定，限 AI 方案人工提交（ai_assisted）
+  aiAssistedPassRate: OperationsRate;
   // AI 交付占比：AI 提交+辅助 / 外部完成
   deliveryShare: OperationsRate;
-  // AI 无产出率：已证实无产出 / 全部参与记录
+  // AI 无产出率：无产出 + 有方案未落记录 / 全部参与记录
   noOutputRate: OperationsRate;
   // 无法判断占比：评估完成但没有质量结论 / 全部参与记录
   unjudgedRate: OperationsRate;
@@ -292,18 +356,27 @@ export interface OperationsKpis {
 
 export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   let externalDone = 0;
-  let p4Covered = 0;
+  let aiEngaged = 0;
+  let aiPlanned = 0;
   let aiDelivered = 0;
   let verifiable = 0;
   let judged = 0;
   let passed = 0;
+  let judgedDelivered = 0;
+  let passedDelivered = 0;
+  let judgedAssisted = 0;
+  let passedAssisted = 0;
   let noOutput = 0;
   let unjudged = 0;
   for (const fix of rows) {
     if (fix.external?.done === true) externalDone += 1;
-    if (fix.p4_assessment) p4Covered += 1;
+    const planned = aiProducedPlan(fix);
+    if (planned) aiPlanned += 1;
+    if (planned || hasAgentPlanComment(fix)) aiEngaged += 1;
     const attribution = deriveAttribution(fix);
-    if (attribution === AI_NO_OUTPUT) noOutput += 1;
+    if (attribution === AI_NO_OUTPUT || attribution === AI_PLAN_NO_RECORD) {
+      noOutput += 1;
+    }
     if (attribution === "ai_delivered" || attribution === "ai_assisted") {
       aiDelivered += 1;
     }
@@ -314,19 +387,29 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     verifiable += 1;
     if (quality !== "") {
       judged += 1;
-      if (quality === "likely_correct") passed += 1;
+      const pass = quality === "likely_correct";
+      if (pass) passed += 1;
+      if (attribution === "ai_delivered") {
+        judgedDelivered += 1;
+        if (pass) passedDelivered += 1;
+      } else if (attribution === "ai_assisted") {
+        judgedAssisted += 1;
+        if (pass) passedAssisted += 1;
+      }
     }
   }
   return {
     funnel: {
       total: rows.length,
       externalDone,
-      p4Covered,
+      aiEngaged,
+      aiPlanned,
       verifiable,
       judged,
       passed,
     },
-    passRate: rate(passed, judged),
+    aiDeliveredPassRate: rate(passedDelivered, judgedDelivered),
+    aiAssistedPassRate: rate(passedAssisted, judgedAssisted),
     deliveryShare: rate(aiDelivered, externalDone),
     noOutputRate: rate(noOutput, rows.length),
     unjudgedRate: rate(unjudged, rows.length),

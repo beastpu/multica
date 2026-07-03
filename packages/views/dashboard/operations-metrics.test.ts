@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentFixRecord } from "@multica/core/types";
 import {
   AI_NO_OUTPUT,
+  AI_PLAN_NO_RECORD,
   attributionBucket,
   qualityBucket,
   UNASSESSED,
@@ -10,6 +11,7 @@ import {
   computeOperationsKpis,
   deriveAttribution,
   fixDayIso,
+  hasMissingExternalClWarning,
   isVerifiableOutput,
   splitOperationsWindow,
   swarmChangeUrl,
@@ -71,6 +73,59 @@ describe("deriveAttribution", () => {
           },
         }),
       ),
+    ).toBe(AI_NO_OUTPUT);
+  });
+
+  it("splits no-output into plan-no-record when the agent left a comment", () => {
+    // The agent completed a comment task (the feed's last_comment is the
+    // latest agent comment) but no shelve landed — a process gap, not a
+    // no-show. Distinguishing the two drives different fixes.
+    expect(
+      deriveAttribution(
+        fix({
+          last_comment: "proposed a fix plan in the ticket",
+          last_comment_author_type: "agent",
+          p4_assessment: {
+            assessment_status: "completed",
+            delivery_attribution_prediction: "unattributed",
+            ai_shelved_cls: [],
+          },
+        }),
+      ),
+    ).toBe(AI_PLAN_NO_RECORD);
+    // A whitespace-only comment is not a plan.
+    expect(
+      deriveAttribution(
+        fix({
+          last_comment: "  ",
+          last_comment_author_type: "agent",
+          p4_assessment: {
+            assessment_status: "completed",
+            delivery_attribution_prediction: "unattributed",
+            ai_shelved_cls: [],
+          },
+        }),
+      ),
+    ).toBe(AI_NO_OUTPUT);
+  });
+
+  it("prefers the server's agent_comment_count over the last-comment fallback", () => {
+    // A member reply pushes the agent comment out of last_comment on old
+    // servers; the count survives it. A server that sends the count wins.
+    const base = {
+      p4_assessment: {
+        assessment_status: "completed" as const,
+        delivery_attribution_prediction: "unattributed",
+        ai_shelved_cls: [],
+      },
+    };
+    expect(
+      deriveAttribution(
+        fix({ ...base, agent_comment_count: 2, last_comment: "" }),
+      ),
+    ).toBe(AI_PLAN_NO_RECORD);
+    expect(
+      deriveAttribution(fix({ ...base, agent_comment_count: 0 })),
     ).toBe(AI_NO_OUTPUT);
   });
 
@@ -172,12 +227,24 @@ describe("computeOperationsKpis", () => {
     expect(kpis.funnel).toEqual({
       total: 5,
       externalDone: 4,
-      p4Covered: 4,
+      aiEngaged: 3,
+      aiPlanned: 3,
       verifiable: 3,
       judged: 2,
       passed: 1,
     });
-    expect(kpis.passRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
+    // Pass rates split by attribution: aiPassed is the only judged
+    // ai_delivered row; aiFailed the only judged ai_assisted row.
+    expect(kpis.aiDeliveredPassRate).toEqual({
+      value: 1,
+      numerator: 1,
+      denominator: 1,
+    });
+    expect(kpis.aiAssistedPassRate).toEqual({
+      value: 0,
+      numerator: 0,
+      denominator: 1,
+    });
     expect(kpis.deliveryShare).toEqual({
       value: 0.75,
       numerator: 3,
@@ -215,7 +282,35 @@ describe("computeOperationsKpis", () => {
     expect(kpis.funnel.verifiable).toBe(2);
     expect(kpis.funnel.judged).toBe(2);
     expect(kpis.funnel.passed).toBe(2);
-    expect(kpis.passRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
+    expect(kpis.aiDeliveredPassRate).toEqual({
+      value: 1,
+      numerator: 2,
+      denominator: 2,
+    });
+  });
+
+  it("counts a comment-only plan as engaged but not planned", () => {
+    // Scenario ②: the agent commented a plan but never produced a shelve or
+    // Swarm review — visible as the aiEngaged→aiPlanned funnel drop and the
+    // plan-no-record share of the no-output rate.
+    const planNoRecord = fix({
+      external: { done: true },
+      last_comment: "proposed a fix plan in the ticket",
+      last_comment_author_type: "agent",
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "unattributed",
+        ai_shelved_cls: [],
+      },
+    });
+    const kpis = computeOperationsKpis([planNoRecord]);
+    expect(kpis.funnel.aiEngaged).toBe(1);
+    expect(kpis.funnel.aiPlanned).toBe(0);
+    expect(kpis.noOutputRate).toEqual({
+      value: 1,
+      numerator: 1,
+      denominator: 1,
+    });
   });
 
   it("excludes an AI plan that never shipped a committed CL", () => {
@@ -232,7 +327,11 @@ describe("computeOperationsKpis", () => {
     });
     const kpis = computeOperationsKpis([aiPassed, shelvedButUnshipped]);
     expect(kpis.funnel.verifiable).toBe(1);
-    expect(kpis.passRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
+    expect(kpis.aiDeliveredPassRate).toEqual({
+      value: 1,
+      numerator: 1,
+      denominator: 1,
+    });
   });
 
   it("excludes a committed CL with no AI plan (human-delivered)", () => {
@@ -250,12 +349,17 @@ describe("computeOperationsKpis", () => {
     });
     const kpis = computeOperationsKpis([aiPassed, humanDelivered]);
     expect(kpis.funnel.verifiable).toBe(1);
-    expect(kpis.passRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
+    expect(kpis.aiDeliveredPassRate).toEqual({
+      value: 1,
+      numerator: 1,
+      denominator: 1,
+    });
   });
 
   it("returns null rates on empty input instead of fake zeros", () => {
     const kpis = computeOperationsKpis([]);
-    expect(kpis.passRate.value).toBeNull();
+    expect(kpis.aiDeliveredPassRate.value).toBeNull();
+    expect(kpis.aiAssistedPassRate.value).toBeNull();
     expect(kpis.deliveryShare.value).toBeNull();
     expect(kpis.noOutputRate.value).toBeNull();
     expect(kpis.unjudgedRate.value).toBeNull();
@@ -383,15 +487,21 @@ describe("blockedWarningFamily / isVerifiableOutput", () => {
     expect(blockedWarningFamily("p4_lookup_unavailable_for_candidate_cls")).toBe(
       "p4",
     );
-    expect(
-      blockedWarningFamily("claimed_shelved_cl_not_found_on_reachable_p4"),
-    ).toBe("p4");
     expect(blockedWarningFamily("swarm_lookup_unavailable")).toBe("swarm");
     expect(
       blockedWarningFamily(
         "multica_p4_evidence_endpoint_unavailable_cli_missing_api_command",
       ),
     ).toBe("evidence_endpoint");
+    // Auth failures classify by cause (鉴权), not by which system raised them.
+    expect(blockedWarningFamily("perforce_unauthorized")).toBe("auth");
+    expect(blockedWarningFamily("swarm_api_unauthorized")).toBe("auth");
+    // A CL/shelve/branch the agent claimed but nobody can find is an
+    // identification failure, not an unreachable system.
+    expect(
+      blockedWarningFamily("claimed_shelved_cl_not_found_on_reachable_p4"),
+    ).toBe("identification");
+    expect(blockedWarningFamily("bug_branch_not_found")).toBe("identification");
     // Non-blocking warnings are not access blocks.
     expect(blockedWarningFamily("missing_external_cl")).toBeNull();
     expect(blockedWarningFamily("swarm_review_not_committed")).toBeNull();
@@ -477,6 +587,49 @@ describe("blockedWarningFamily / isVerifiableOutput", () => {
   });
 });
 
+describe("hasMissingExternalClWarning", () => {
+  it("flags a completed assessment with the canonical warning and no committed CL", () => {
+    expect(
+      hasMissingExternalClWarning(
+        fix({
+          p4_assessment: {
+            assessment_status: "completed",
+            warnings: ["missing_external_cl"],
+          },
+        }),
+      ),
+    ).toBe(true);
+    // A committed CL means the gap is closed even if the warning is stale.
+    expect(
+      hasMissingExternalClWarning(
+        fix({
+          p4_assessment: {
+            assessment_status: "completed",
+            warnings: ["missing_external_cl"],
+            swarm_committed_cls: [101],
+          },
+        }),
+      ),
+    ).toBe(false);
+    // Unfinished assessments are a queue state, not a data gap.
+    expect(
+      hasMissingExternalClWarning(
+        fix({
+          p4_assessment: {
+            assessment_status: "running",
+            warnings: ["missing_external_cl"],
+          },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasMissingExternalClWarning(
+        fix({ p4_assessment: { assessment_status: "completed" } }),
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("computeBlockedStats", () => {
   it("counts blocked completed assessments per family with dedup per row", () => {
     const stats = computeBlockedStats([
@@ -487,6 +640,7 @@ describe("computeBlockedStats", () => {
             "swarm_lookup_unavailable",
             "p4_lookup_unavailable",
             "p4_cl_not_found",
+            "perforce_unauthorized",
           ],
         },
       }),
@@ -511,7 +665,11 @@ describe("computeBlockedStats", () => {
       }),
     ]);
     expect(stats.completed).toBe(3);
+    // The first row hits four families at once (one warning each): auth,
+    // identification (p4_cl_not_found), swarm, and p4 — each counted once.
     expect(stats.families).toEqual([
+      { family: "auth", count: 1 },
+      { family: "identification", count: 1 },
       { family: "swarm", count: 1 },
       { family: "p4", count: 1 },
       { family: "evidence_endpoint", count: 1 },

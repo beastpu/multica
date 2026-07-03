@@ -646,6 +646,14 @@ export interface AgentFixRecord {
   // Most recent agent comment on the issue (truncated). Empty/absent when none.
   last_comment?: string;
   last_comment_author_type?: string; // "agent" or ""
+  // Total agent comments on the issue. Absent on older servers (fall back to
+  // last_comment) and when zero (omitempty).
+  agent_comment_count?: number;
+  // The latest run's own state: queued/running/completed/failed/timeout plus
+  // the structured taskfailure code (e.g. "agent_error.provider_auth_or_access")
+  // when it failed. Absent on older servers and binding-only rows.
+  task_status?: string;
+  task_failure_reason?: string;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;

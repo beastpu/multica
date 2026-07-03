@@ -4,10 +4,11 @@ import { MoveDownRight, MoveUpRight } from "lucide-react";
 import { useT } from "../../i18n";
 import type { OperationsKpis, OperationsRate } from "../operations-metrics";
 
-// Headline KPI band for the operations page: the three north-star rates with a
-// period-over-period delta, plus the nested delivery funnel. `previous` carries
-// the KPIs of the equal-length window before the selected one; null deltas
-// (either window's denominator is 0) render nothing instead of a fake 0pt.
+// Headline KPI band for the operations page: the north-star rates (pass rate
+// split by AI-delivered vs AI-assisted) with a period-over-period delta, plus
+// the nested delivery funnel. `previous` carries the KPIs of the equal-length
+// window before the selected one; null deltas (either window's denominator is
+// 0) render nothing instead of a fake 0pt.
 
 function formatPercent(rate: OperationsRate): string {
   if (rate.value == null) return "—";
@@ -99,9 +100,14 @@ export function OperationsSummary({
       count: funnel.externalDone,
     },
     {
-      key: "p4_covered",
-      label: t(($) => $.operations.summary.stage_p4_covered),
-      count: funnel.p4Covered,
+      key: "ai_engaged",
+      label: t(($) => $.operations.summary.stage_ai_engaged),
+      count: funnel.aiEngaged,
+    },
+    {
+      key: "ai_planned",
+      label: t(($) => $.operations.summary.stage_ai_planned),
+      count: funnel.aiPlanned,
     },
     {
       key: "verifiable",
@@ -120,23 +126,42 @@ export function OperationsSummary({
     },
   ];
   const max = Math.max(1, ...stages.map((s) => s.count));
-  const passDelta = deltaPoints(kpis.passRate, previous.passRate);
+  const deliveredDelta = deltaPoints(
+    kpis.aiDeliveredPassRate,
+    previous.aiDeliveredPassRate,
+  );
+  const assistedDelta = deltaPoints(
+    kpis.aiAssistedPassRate,
+    previous.aiAssistedPassRate,
+  );
   const shareDelta = deltaPoints(kpis.deliveryShare, previous.deliveryShare);
   const noOutputDelta = deltaPoints(kpis.noOutputRate, previous.noOutputRate);
   const unjudgedDelta = deltaPoints(kpis.unjudgedRate, previous.unjudgedRate);
   return (
     <section className="grid gap-3">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <RateCard
-          label={t(($) => $.operations.summary.pass_rate)}
-          hint={t(($) => $.operations.summary.pass_rate_hint, {
-            num: kpis.passRate.numerator,
-            den: kpis.passRate.denominator,
+          label={t(($) => $.operations.summary.delivered_pass_rate)}
+          hint={t(($) => $.operations.summary.delivered_pass_rate_hint, {
+            num: kpis.aiDeliveredPassRate.numerator,
+            den: kpis.aiDeliveredPassRate.denominator,
           })}
-          rate={kpis.passRate}
-          delta={passDelta}
+          rate={kpis.aiDeliveredPassRate}
+          delta={deliveredDelta}
           deltaLabel={deltaLabel}
-          deltaText={deltaText(passDelta)}
+          deltaText={deltaText(deliveredDelta)}
+          upIsGood
+        />
+        <RateCard
+          label={t(($) => $.operations.summary.assisted_pass_rate)}
+          hint={t(($) => $.operations.summary.assisted_pass_rate_hint, {
+            num: kpis.aiAssistedPassRate.numerator,
+            den: kpis.aiAssistedPassRate.denominator,
+          })}
+          rate={kpis.aiAssistedPassRate}
+          delta={assistedDelta}
+          deltaLabel={deltaLabel}
+          deltaText={deltaText(assistedDelta)}
           upIsGood
         />
         <RateCard

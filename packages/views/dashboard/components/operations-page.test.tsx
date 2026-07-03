@@ -250,6 +250,10 @@ const FIXES = vi.hoisted(() => [
     issue_status: "done",
     last_comment: "",
     last_comment_author_type: "",
+    // The latest run hard-failed with a structured taskfailure code — the
+    // analysis tab's fix-run failures card surfaces the raw code.
+    task_status: "failed",
+    task_failure_reason: "agent_error.provider_auth_or_access",
     started_at: null,
     completed_at: dayIso(2),
     created_at: dayIso(2),
@@ -266,6 +270,9 @@ const FIXES = vi.hoisted(() => [
       delivery_attribution_prediction: "unattributed",
       quality_prediction: "unknown",
       ai_shelved_cls: [],
+      // Canonical data-gap warning (not an access block): the external item
+      // is done but no submitted CL exists in any evidence source.
+      warnings: ["missing_external_cl"],
     },
   },
   // Older than the selected 30d window (previous period) — feeds the KPI
@@ -504,10 +511,11 @@ describe("OperationsPage", () => {
     expect(screen.queryByText("Previous period fix")).toBeNull();
   });
 
-  it("renders the KPI band with the four headline rates and the funnel", () => {
+  it("renders the KPI band with the headline rates and the funnel", () => {
     renderWithI18n(<OperationsPage />);
 
-    expect(screen.getByText("AI fix rate")).toBeTruthy();
+    expect(screen.getByText("AI delivered pass rate")).toBeTruthy();
+    expect(screen.getByText("AI assisted pass rate")).toBeTruthy();
     expect(screen.getByText("AI delivery share")).toBeTruthy();
     expect(screen.getByText("AI no-output rate")).toBeTruthy();
     expect(screen.getByText("Undetermined share")).toBeTruthy();
@@ -515,8 +523,9 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Last 30 days")).toBeTruthy();
     // Funnel stages, with the verifiable-output stage as the fix-rate pool.
     expect(screen.getByText("External done")).toBeTruthy();
+    expect(screen.getByText("AI engaged")).toBeTruthy();
     expect(
-      screen.getAllByText("Submitted CL record").length,
+      screen.getAllByText("Shelve/Swarm record").length,
     ).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Verifiable output")).toBeTruthy();
     expect(screen.getByText("Judged")).toBeTruthy();
@@ -524,9 +533,9 @@ describe("OperationsPage", () => {
     // raw "Done" status and t-1 resolves vcvaCnnGi → 设计如此 via the status
     // name map.
     expect(screen.getByText("Done 5 · 设计如此 1")).toBeTruthy();
-    // Fix rate: verifiable + judged rows are t-1 (likely_correct) and t-4
-    // (likely_wrong) → 1/2 = 50%.
-    expect(screen.getByText("50%")).toBeTruthy();
+    // Delivered pass rate: t-1 is the only judged ai_delivered verifiable row
+    // (likely_correct) → 1/1 = 100%. t-4 is human-delivered and stays out.
+    expect(screen.getByText("100%")).toBeTruthy();
   });
 
   it("derives AI no output for completed assessments without an AI shelve", () => {
@@ -706,6 +715,18 @@ describe("OperationsPage", () => {
       screen.getByText(/Evidence access blocked \(\d+ completed\)/),
     ).toBeTruthy();
     expect(screen.getByText("No blocked assessments")).toBeTruthy();
+    // Process-gaps card: t-7 carries missing_external_cl with no committed CL
+    // (its warning is a data gap, not an access block — the blocked card above
+    // must stay empty). Zero-count rows stay visible.
+    expect(screen.getByText("Process gaps")).toBeTruthy();
+    expect(screen.getByText("Missing human CL on work item")).toBeTruthy();
+    expect(screen.getAllByText("Plan, no record").length).toBeGreaterThanOrEqual(1);
+    // Fix-run failures card: t-7's latest run failed with a structured
+    // taskfailure code, shown raw.
+    expect(screen.getByText("Fix-run failures")).toBeTruthy();
+    expect(
+      screen.getByText("agent_error.provider_auth_or_access"),
+    ).toBeTruthy();
     expect(screen.getByText("Workstream outcome")).toBeTruthy();
     expect(screen.getByText("Top AI reasons")).toBeTruthy();
     expect(screen.getByText("rel_1.7.3/client")).toBeTruthy();
