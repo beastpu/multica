@@ -80,12 +80,10 @@
       "analysis_hint": "基于当前筛选结果的轻量统计。"
     },
     "summary": {
-      "composition_title": "交付构成",
-      "comp_direct": "直接交付",
-      "comp_assisted": "辅助",
-      "comp_unconverted": "出方案未转化",
-      "comp_not_participated": "未参与",
-      "comp_rates": "参与率 {{participation}} · 贡献率 {{contribution}}",
+      "participation_rate": "AI 参与率",
+      "participation_rate_hint": "出方案 {{num}} / 外部完成 {{den}}",
+      "contribution_rate": "AI 贡献率",
+      "contribution_rate_hint": "确认进入交付 {{num}} / 外部完成 {{den}}",
       "pass_rate": "AI 方案通过率",
       "pass_rate_hint": "判对 {{num}} / 已评估 {{den}}",
       "coverage_rate": "评估覆盖率",

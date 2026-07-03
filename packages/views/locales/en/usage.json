@@ -80,12 +80,10 @@
       "analysis_hint": "Lightweight rollups from the current filtered rows."
     },
     "summary": {
-      "composition_title": "Delivery composition",
-      "comp_direct": "Direct",
-      "comp_assisted": "Assisted",
-      "comp_unconverted": "Plan unused",
-      "comp_not_participated": "No AI",
-      "comp_rates": "Participation {{participation}} · Contribution {{contribution}}",
+      "participation_rate": "AI participation rate",
+      "participation_rate_hint": "{{num}} produced a plan / {{den}} external done",
+      "contribution_rate": "AI contribution rate",
+      "contribution_rate_hint": "{{num}} confirmed delivered / {{den}} external done",
       "pass_rate": "AI plan pass rate",
       "pass_rate_hint": "{{num}} correct / {{den}} assessed",
       "coverage_rate": "Assessment coverage",
