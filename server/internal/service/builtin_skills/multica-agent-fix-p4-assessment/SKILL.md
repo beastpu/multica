@@ -17,10 +17,23 @@ Every contract below is traced to source in
 
 ## Start Here — the batch loop
 
+All server calls are plain HTTP with `curl` — do NOT depend on any `multica`
+CLI subcommand (installed CLI versions vary and may lack newer commands). The
+daemon already injects everything you need into the task environment:
+`MULTICA_SERVER_URL`, `MULTICA_TOKEN` (task-scoped `mat_` token),
+`MULTICA_WORKSPACE_ID`, `MULTICA_AGENT_ID`, `MULTICA_TASK_ID`. Never print
+`MULTICA_TOKEN`.
+
 Pull a batch of pending assessments:
 
 ```bash
-multica api get "/api/operations/assessments/pending?limit=5"
+status=$(curl -sS -o /tmp/pending.json -w "%{http_code}" \
+  "${MULTICA_SERVER_URL%/}/api/operations/assessments/pending?limit=5" \
+  -H "Authorization: Bearer $MULTICA_TOKEN" \
+  -H "X-Workspace-ID: $MULTICA_WORKSPACE_ID" \
+  -H "X-Agent-ID: $MULTICA_AGENT_ID" \
+  -H "X-Task-ID: $MULTICA_TASK_ID")
+echo "$status"; cat /tmp/pending.json
 ```
 
 The response is `{"items": [...]}` where each item is:
@@ -39,10 +52,19 @@ The response is `{"items": [...]}` where each item is:
 - A `403` means this workspace is not allowlisted for P4 assessment — stop and
   report; do not retry.
 
-For each item: classify the evidence (sections below), then submit:
+For each item: classify the evidence (sections below), write the result JSON
+to a file, then submit:
 
 ```bash
-multica api post /api/operations/assessments/result --content-file result.json
+status=$(curl -sS -o /tmp/submit.json -w "%{http_code}" -X POST \
+  "${MULTICA_SERVER_URL%/}/api/operations/assessments/result" \
+  -H "Authorization: Bearer $MULTICA_TOKEN" \
+  -H "X-Workspace-ID: $MULTICA_WORKSPACE_ID" \
+  -H "X-Agent-ID: $MULTICA_AGENT_ID" \
+  -H "X-Task-ID: $MULTICA_TASK_ID" \
+  -H "Content-Type: application/json" \
+  --data-binary @result.json)
+echo "$status"; cat /tmp/submit.json
 ```
 
 where `result.json` is the result schema (see "Submit the Result") plus the
@@ -54,10 +76,10 @@ submit until a pull returns no items.
 ### Legacy per-binding tasks
 
 A task whose context carries a `feishu_binding_id` predates the batch loop.
-For those, read evidence with
-`multica api get /api/operations/agent-fixes/<binding_id>/p4-evidence` and
-submit to
-`multica api post /api/operations/agent-fixes/<binding_id>/p4-assessment/result`
+For those, read evidence with the same headers from
+`GET ${MULTICA_SERVER_URL%/}/api/operations/agent-fixes/<binding_id>/p4-evidence`
+and submit to
+`POST ${MULTICA_SERVER_URL%/}/api/operations/agent-fixes/<binding_id>/p4-assessment/result`
 with the same result schema (no `ref` field). Everything else in this skill
 applies unchanged.
 
@@ -303,12 +325,8 @@ verifiable by the dashboard and skews the fix rate.
 Submit each result by POSTing JSON to the batch result endpoint — this is how
 the assessment reaches the operations dashboard. Do NOT rely on printing the
 JSON as your final message; the endpoint is the authoritative path. Write the
-JSON to a file and post it with `--content-file` so shell quoting can't
-corrupt it:
-
-```bash
-multica api post /api/operations/assessments/result --content-file result.json
-```
+JSON to a file and post it with the `curl --data-binary @result.json` command
+from "Start Here" so shell quoting can't corrupt it.
 
 The request body is exactly one JSON object with this shape (no surrounding
 prose, no envelope):

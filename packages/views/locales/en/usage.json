@@ -156,13 +156,13 @@
       "no_evidence": "No P4 evidence"
     },
     "assessment_action": {
-      "run": "Run assessment",
-      "rerun": "Rerun assessment",
-      "starting": "Starting...",
-      "in_progress": "Assessment running",
-      "run_started": "Assessment started",
-      "rerun_started": "Assessment rerun started",
-      "failed": "Failed to start assessment",
+      "run": "Queue assessment",
+      "rerun": "Requeue assessment",
+      "starting": "Queueing...",
+      "in_progress": "Assessment in progress",
+      "run_started": "Queued for assessment",
+      "rerun_started": "Requeued for assessment",
+      "failed": "Failed to queue assessment",
       "blocked_external": "Available once the external work item is done"
     },
     "enums": {

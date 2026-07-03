@@ -532,7 +532,14 @@ func TestAgentFixP4AssessmentSkillCoversReadOnlyAssessmentContract(t *testing.T)
 	}
 
 	mustContain := []string{
-		"multica api get /api/operations/agent-fixes/<binding_id>/p4-evidence",
+		// Batch worker contract: plain curl over the task-env HTTP surface —
+		// no dependency on any installed multica CLI subcommand.
+		"/api/operations/assessments/pending",
+		"/api/operations/assessments/result",
+		"MULTICA_TOKEN",
+		"X-Task-ID: $MULTICA_TASK_ID",
+		"do NOT depend on any `multica`",
+		"/api/operations/agent-fixes/<binding_id>/p4-evidence",
 		"Read-only inner-network lookup",
 		"Do not write Multica issue comments",
 		"Do not change issue status",

@@ -82,7 +82,8 @@ for the behavior contracts the skill teaches.
 - The batch path above is the primary ingestion route. The legacy per-binding
   endpoint `POST /api/operations/agent-fixes/{binding_id}/p4-assessment/result`
   remains for in-flight per-binding tasks: the agent POSTs the bare result
-  JSON (via `multica api post --content-file`), the server validates it, and a
+  JSON (via `curl --data-binary @result.json` with the task-env headers — the
+  skill is CLI-version independent by design), the server validates it, and a
   400 returns the exact validation problem so the agent can self-correct and
   resubmit. This avoids parsing a free-text agent message.
 - `server/internal/service/agent_fix_assessment.go` shares one validator,

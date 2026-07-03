@@ -156,13 +156,13 @@
       "no_evidence": "暂无 P4 证据"
     },
     "assessment_action": {
-      "run": "Run assessment",
-      "rerun": "Rerun assessment",
-      "starting": "启动中...",
-      "in_progress": "Assessment 运行中",
-      "run_started": "Assessment 已启动",
-      "rerun_started": "Assessment 重跑已启动",
-      "failed": "启动 assessment 失败",
+      "run": "加入评估队列",
+      "rerun": "重新排队评估",
+      "starting": "排队中...",
+      "in_progress": "评估进行中",
+      "run_started": "已加入评估队列",
+      "rerun_started": "已重新排队",
+      "failed": "加入评估队列失败",
       "blocked_external": "外部工单完成（done）后才能运行 AI 预判"
     },
     "enums": {

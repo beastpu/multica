@@ -156,13 +156,13 @@
       "no_evidence": "P4 증거 없음"
     },
     "assessment_action": {
-      "run": "Run assessment",
-      "rerun": "Rerun assessment",
-      "starting": "시작 중...",
-      "in_progress": "Assessment 실행 중",
-      "run_started": "Assessment를 시작했습니다",
-      "rerun_started": "Assessment 재실행을 시작했습니다",
-      "failed": "Assessment 시작 실패",
+      "run": "평가 대기열에 추가",
+      "rerun": "평가 재대기",
+      "starting": "대기열 추가 중...",
+      "in_progress": "평가 진행 중",
+      "run_started": "평가 대기열에 추가됨",
+      "rerun_started": "재대기 완료",
+      "failed": "대기열 추가 실패",
       "blocked_external": "외부 작업 항목이 done 이 되면 실행할 수 있습니다"
     },
     "enums": {
