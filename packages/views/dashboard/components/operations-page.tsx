@@ -73,11 +73,14 @@ import {
 import { OperationsSummary } from "./operations-summary";
 import { Segmented } from "./segmented";
 import {
+  attributionBucket,
   computeBlockedStats,
   computeOperationsKpis,
   deriveAttribution,
   fixDayIso,
   isPendingJudgement,
+  isVerifiableOutput,
+  qualityBucket,
   qualityJudgement,
   splitOperationsWindow,
   swarmChangeUrl,
@@ -574,7 +577,7 @@ export function OperationsPage() {
   }, [fixes]);
 
   const attributionOptions = useMemo<SelectOption[]>(() => {
-    return sortedUniqueOptions(fixes, deriveAttribution).map((value) => ({
+    return sortedUniqueOptions(fixes, attributionBucket).map((value) => ({
       value,
       label: agentFixEnumLabel(tx, "attribution", value),
     }));
@@ -582,7 +585,7 @@ export function OperationsPage() {
 
   const qualityOptions = useMemo<SelectOption[]>(() => {
     return sortedUniqueOptions(fixes, (f) =>
-      compactKey(f.p4_assessment?.quality_prediction, "unknown"),
+      qualityBucket(f),
     ).map((value) => ({
       value,
       label: agentFixEnumLabel(tx, "quality", value),
@@ -605,14 +608,13 @@ export function OperationsPage() {
       }
       if (
         attributionFilter !== ALL_ATTRIBUTIONS &&
-        deriveAttribution(f) !== attributionFilter
+        attributionBucket(f) !== attributionFilter
       ) {
         return false;
       }
       if (
         qualityFilter !== ALL_QUALITIES &&
-        compactKey(f.p4_assessment?.quality_prediction, "unknown") !==
-          qualityFilter
+        qualityBucket(f) !== qualityFilter
       ) {
         return false;
       }
@@ -648,9 +650,10 @@ export function OperationsPage() {
     for (const f of rows) {
       if (f.external?.done !== true) continue;
       const raw = f.external?.status ?? "";
+      // Empty labels still count (bucketed as "—") so the breakdown always
+      // sums to the external-done stage count.
       const label =
-        f.external?.status_name || feishuStatusNames.get(raw) || raw;
-      if (!label) continue;
+        f.external?.status_name || feishuStatusNames.get(raw) || raw || "—";
       counts.set(label, (counts.get(label) ?? 0) + 1);
     }
     return Array.from(counts.entries())
@@ -1073,10 +1076,11 @@ function OperationsAnalysis({
 }) {
   const { t } = useT("usage");
   const tx = t as unknown as UsageT;
-  const attribution = countBy(rows, deriveAttribution);
-  const quality = countBy(rows, (f) =>
-    compactKey(f.p4_assessment?.quality_prediction, "unknown"),
-  );
+  // Bucketed the same way the filters and KPI numerators are, so each
+  // distribution slice reconciles exactly (e.g. 无法判断 = the undetermined
+  // KPI numerator; 未评估 = rows without a completed assessment).
+  const attribution = countBy(rows, attributionBucket);
+  const quality = countBy(rows, qualityBucket);
   const workstreams = groupWorkstreams(rows);
   const blocked = computeBlockedStats(rows);
   const blockedFamilyLabel = (family: BlockedFamily): string =>
@@ -1319,9 +1323,13 @@ function groupWorkstreams(rows: AgentFixRecord[]) {
       groups.get(workstream) ??
       { workstream, total: 0, judged: 0, passed: 0 };
     group.total += 1;
-    const quality = qualityJudgement(row);
-    if (quality !== "") group.judged += 1;
-    if (quality === "likely_correct") group.passed += 1;
+    // Same scope as the funnel's 已判定/通过 (fix-rate pool), so the
+    // per-workstream numbers sum to the funnel stages.
+    if (isVerifiableOutput(row)) {
+      const quality = qualityJudgement(row);
+      if (quality !== "") group.judged += 1;
+      if (quality === "likely_correct") group.passed += 1;
+    }
     groups.set(workstream, group);
   }
   return Array.from(groups.values()).sort((a, b) => b.total - a.total);

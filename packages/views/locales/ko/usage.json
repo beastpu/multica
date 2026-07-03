@@ -169,6 +169,7 @@
         "stale": "만료"
       },
       "attribution": {
+        "unassessed": "미평가",
         "ai_delivered": "AI 제출",
         "ai_assisted": "AI 지원",
         "human_delivered": "사람 제출",
@@ -178,6 +179,7 @@
         "unknown": "증거 부족"
       },
       "quality": {
+        "unassessed": "미평가",
         "likely_correct": "통과",
         "likely_needs_changes": "보완 필요",
         "likely_wrong": "불통과",

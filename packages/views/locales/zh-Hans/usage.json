@@ -169,6 +169,7 @@
         "stale": "已过期"
       },
       "attribution": {
+        "unassessed": "未评估",
         "ai_delivered": "AI 提交",
         "ai_assisted": "AI 辅助",
         "human_delivered": "人工提交",
@@ -178,6 +179,7 @@
         "unknown": "证据不足"
       },
       "quality": {
+        "unassessed": "未评估",
         "likely_correct": "通过",
         "likely_needs_changes": "待完善",
         "likely_wrong": "不通过",

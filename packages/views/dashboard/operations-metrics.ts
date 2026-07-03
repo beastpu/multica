@@ -63,6 +63,40 @@ export function isPendingJudgement(fix: AgentFixRecord): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Distribution buckets — the reconciliation layer.
+//
+// The analysis distributions, the detail filters, and the drill-downs must
+// all agree with the KPI numerators, so they share these bucket functions.
+// Rows without a COMPLETED assessment go into a dedicated "unassessed" bucket
+// instead of polluting "unknown"/"证据不足": an unfinished assessment is a
+// queue state, not a verdict. With that split, the quality card's "无法判断"
+// count is exactly the undetermined-share KPI numerator.
+// ---------------------------------------------------------------------------
+
+export const UNASSESSED = "unassessed";
+
+function isAssessmentCompleted(fix: AgentFixRecord): boolean {
+  return fix.p4_assessment?.assessment_status === "completed";
+}
+
+// Quality distribution/filter bucket: unassessed | likely_correct |
+// likely_needs_changes | likely_wrong | unknown (completed, no verdict) |
+// <drifting raw value>.
+export function qualityBucket(fix: AgentFixRecord): string {
+  if (!isAssessmentCompleted(fix)) return UNASSESSED;
+  const quality = fix.p4_assessment?.quality_prediction?.trim() ?? "";
+  return quality === "" ? "unknown" : quality;
+}
+
+// Attribution distribution/filter bucket: unassessed for unfinished rows,
+// else the derived attribution (which already only classifies completed
+// assessments — see deriveAttribution).
+export function attributionBucket(fix: AgentFixRecord): string {
+  if (!isAssessmentCompleted(fix)) return UNASSESSED;
+  return deriveAttribution(fix);
+}
+
+// ---------------------------------------------------------------------------
 // Access-blocked warning classification.
 //
 // Used only by the blocked-analysis card (computeBlockedStats) — NOT by the

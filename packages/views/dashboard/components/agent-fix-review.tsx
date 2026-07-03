@@ -90,6 +90,7 @@ export function agentFixEnumLabel(
         }
       : group === "attribution"
         ? {
+            unassessed: t(($) => $.operations.enums.attribution.unassessed),
             ai_delivered: t(($) => $.operations.enums.attribution.ai_delivered),
             ai_assisted: t(($) => $.operations.enums.attribution.ai_assisted),
             human_delivered: t(
@@ -102,6 +103,7 @@ export function agentFixEnumLabel(
           }
         : group === "quality"
           ? {
+              unassessed: t(($) => $.operations.enums.quality.unassessed),
               likely_correct: t(($) => $.operations.enums.quality.likely_correct),
               likely_needs_changes: t(
                 ($) => $.operations.enums.quality.likely_needs_changes,
@@ -186,7 +188,9 @@ export function agentFixEnumTone(
   value?: string,
 ): Tone {
   const key = value?.trim();
-  if (!key || key === "unknown" || key === "unreviewed") return "muted";
+  if (!key || key === "unknown" || key === "unreviewed" || key === "unassessed") {
+    return "muted";
+  }
   if (
     key === "accepted" ||
     key === "ai_delivered" ||

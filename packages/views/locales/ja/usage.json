@@ -169,6 +169,7 @@
         "stale": "期限切れ"
       },
       "attribution": {
+        "unassessed": "未評価",
         "ai_delivered": "AI が交付",
         "ai_assisted": "AI が支援",
         "human_delivered": "人間が交付",
@@ -178,6 +179,7 @@
         "unknown": "証跡不足"
       },
       "quality": {
+        "unassessed": "未評価",
         "likely_correct": "合格",
         "likely_needs_changes": "要改善",
         "likely_wrong": "不合格",

@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { AgentFixRecord } from "@multica/core/types";
 import {
   AI_NO_OUTPUT,
+  attributionBucket,
+  qualityBucket,
+  UNASSESSED,
   blockedWarningFamily,
   computeBlockedStats,
   computeOperationsKpis,
@@ -271,6 +274,56 @@ describe("computeOperationsKpis", () => {
       }),
     ]);
     expect(kpis.funnel.judged).toBe(0);
+  });
+});
+
+describe("distribution buckets reconcile with the KPI numerators", () => {
+  const completedUnknown = fix({
+    p4_assessment: {
+      assessment_status: "completed",
+      delivery_attribution_prediction: "unknown",
+      quality_prediction: "unknown",
+    },
+  });
+  const running = fix({
+    p4_assessment: { assessment_status: "running" },
+  });
+  const failed = fix({
+    p4_assessment: { assessment_status: "failed", quality_prediction: "unknown" },
+  });
+  const neverAssessed = fix();
+  const passed = fix({
+    p4_assessment: {
+      assessment_status: "completed",
+      delivery_attribution_prediction: "ai_delivered",
+      quality_prediction: "likely_correct",
+      ai_shelved_cls: [1],
+      swarm_committed_cls: [2],
+    },
+  });
+
+  it("splits unfinished assessments into the unassessed bucket", () => {
+    expect(qualityBucket(running)).toBe(UNASSESSED);
+    expect(qualityBucket(failed)).toBe(UNASSESSED);
+    expect(qualityBucket(neverAssessed)).toBe(UNASSESSED);
+    expect(qualityBucket(completedUnknown)).toBe("unknown");
+    expect(qualityBucket(passed)).toBe("likely_correct");
+    expect(attributionBucket(running)).toBe(UNASSESSED);
+    expect(attributionBucket(completedUnknown)).toBe("unknown");
+    expect(attributionBucket(passed)).toBe("ai_delivered");
+  });
+
+  it("quality-card unknown equals the undetermined-share numerator", () => {
+    const rows = [completedUnknown, running, failed, neverAssessed, passed];
+    const kpis = computeOperationsKpis(rows);
+    const unknownInCard = rows.filter((r) => qualityBucket(r) === "unknown").length;
+    // The reported mismatch (208 vs 157) came from counting unfinished
+    // assessments as "unknown" in the card; with the bucket split both
+    // surfaces count exactly the completed-without-verdict rows.
+    expect(unknownInCard).toBe(kpis.unjudgedRate.numerator);
+    expect(
+      rows.filter((r) => qualityBucket(r) === UNASSESSED).length,
+    ).toBe(3);
   });
 });
 

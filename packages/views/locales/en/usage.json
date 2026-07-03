@@ -169,6 +169,7 @@
         "stale": "Stale"
       },
       "attribution": {
+        "unassessed": "Not assessed",
         "ai_delivered": "AI delivered",
         "ai_assisted": "AI assisted",
         "human_delivered": "Human delivered",
@@ -178,6 +179,7 @@
         "unknown": "Insufficient evidence"
       },
       "quality": {
+        "unassessed": "Not assessed",
         "likely_correct": "Pass",
         "likely_needs_changes": "Needs work",
         "likely_wrong": "Fail",
