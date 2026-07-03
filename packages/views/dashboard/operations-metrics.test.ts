@@ -5,7 +5,6 @@ import {
   blockedWarningFamily,
   computeBlockedStats,
   computeOperationsKpis,
-  computeOperationsTrend,
   deriveAttribution,
   fixDayIso,
   isVerifiableOutput,
@@ -248,32 +247,6 @@ describe("splitOperationsWindow", () => {
     );
     expect(current).toEqual([recent]);
     expect(previous).toEqual([older]);
-  });
-});
-
-describe("computeOperationsTrend", () => {
-  it("folds rows into trailing calendar weeks with null gaps", () => {
-    const now = new Date().toISOString();
-    const rows = [
-      fix({
-        completed_at: now,
-        external: { done: true },
-        p4_assessment: {
-          assessment_status: "completed",
-          delivery_attribution_prediction: "ai_delivered",
-          quality_prediction: "likely_correct",
-          ai_shelved_cls: [1],
-        },
-      }),
-    ];
-    const trend = computeOperationsTrend(rows, "UTC", 4);
-    expect(trend).toHaveLength(4);
-    const last = trend[trend.length - 1]!;
-    expect(last.passRate).toBe(100);
-    expect(last.deliveryShare).toBe(100);
-    expect(last.noOutputRate).toBe(0);
-    // Empty weeks render as gaps, not zeros.
-    expect(trend[0]!.passRate).toBeNull();
   });
 });
 

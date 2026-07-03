@@ -1,6 +1,5 @@
 import type { AgentFixRecord } from "@multica/core/types";
-import { addDaysIso, todayIso, weekStartIso } from "../runtimes/utils";
-import { buildWeekShells, type WeekShell } from "./utils";
+import { addDaysIso, todayIso } from "../runtimes/utils";
 
 // ---------------------------------------------------------------------------
 // Operations page metrics
@@ -278,45 +277,6 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     noOutputRate: rate(noOutput, rows.length),
     unjudgedRate: rate(unjudged, rows.length),
   };
-}
-
-// Weekly trend point: the three headline rates folded per trailing calendar
-// week (Mon–Sun, viewer tz). Rates are 0–100 percentages for the chart axis;
-// null when that week's denominator is 0 so recharts leaves a gap instead of
-// painting a fake zero.
-export interface OperationsTrendPoint extends WeekShell {
-  passRate: number | null;
-  deliveryShare: number | null;
-  noOutputRate: number | null;
-}
-
-function pct(r: OperationsRate): number | null {
-  return r.value == null ? null : Math.round(r.value * 1000) / 10;
-}
-
-export function computeOperationsTrend(
-  rows: AgentFixRecord[],
-  tz: string,
-  weekCount: number,
-): OperationsTrendPoint[] {
-  const shells = buildWeekShells(tz, weekCount);
-  const buckets = new Map<string, AgentFixRecord[]>();
-  for (const shell of shells) buckets.set(shell.weekStart, []);
-  for (const fix of rows) {
-    const day = fixDayIso(fix, tz);
-    if (!day) continue;
-    const bucket = buckets.get(weekStartIso(day));
-    if (bucket) bucket.push(fix);
-  }
-  return shells.map((shell) => {
-    const kpis = computeOperationsKpis(buckets.get(shell.weekStart) ?? []);
-    return {
-      ...shell,
-      passRate: pct(kpis.passRate),
-      deliveryShare: pct(kpis.deliveryShare),
-      noOutputRate: pct(kpis.noOutputRate),
-    };
-  });
 }
 
 // Builds the Swarm links for evidence chips. `base` is the workspace's Helix
