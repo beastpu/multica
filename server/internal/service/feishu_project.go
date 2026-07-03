@@ -3646,59 +3646,35 @@ func parseFeishuProjectSearch(payload map[string]any, typ, urlType, projectKey, 
 		fieldValues := map[string][]string{}
 		var businessLineTokens []FeishuBusinessLineToken
 		var relatedWorkItems []FeishuProjectRelatedWorkItem
-		fields, _ := row["fields"].([]any)
 		var attachments []FeishuProjectAttachment
 		// Index each field by both its field_key and its Chinese display name. Two spaces
 		// can give the same logical field different names (经办人 vs 处理人 vs 负责人)
-		// — sometimes even custom field_keys like `field_xxx` — so downstream lookups
+		// - sometimes even custom field_keys like `field_xxx` - so downstream lookups
 		// (notably owner-email extraction) need to try by display name too.
-		for _, fieldAny := range fields {
-			field, _ := fieldAny.(map[string]any)
-			key := firstNonEmpty(fmt.Sprint(field["field_key"]), fmt.Sprint(field["field_alias"]))
-			if key == "" {
+		for _, field := range feishuProjectAllFieldMaps(row) {
+			key := feishuProjectFieldKey(field)
+			displayName := feishuFieldDisplayName(field)
+			if key == "" && displayName == "" {
 				continue
 			}
+			payload := feishuProjectFieldValuePayload(field)
 			attachments = append(attachments, feishuProjectOpenAPIFieldAttachments(field)...)
 			value := feishuProjectOpenAPIFieldValue(field)
-			displayName := feishuFieldDisplayName(field)
 			if feishuProjectIsOwnerField(key, displayName) {
-				value = firstNonEmpty(feishuProjectOpenAPIOwnerFieldValue(field["field_value"]), value)
+				value = firstNonEmpty(feishuProjectOpenAPIOwnerFieldValue(payload), value)
 			}
 			if value != "" {
-				record[key] = value
+				if key != "" {
+					record[key] = value
+				}
 				if displayName != "" {
 					record[displayName] = value
 				}
 			}
 			relatedWorkItems = append(relatedWorkItems, feishuProjectRelatedWorkItemsFromField(key, displayName, field)...)
-			addFeishuProjectFieldValues(fieldValues, key, displayName, feishuProjectOpenAPIFieldValues(field["field_value"]))
-			if businessLineFieldKey != "" && key == businessLineFieldKey {
-				businessLineTokens = extractBusinessLineTokens(field["field_value"])
-			}
-		}
-		multiTexts, _ := row["multi_texts"].([]any)
-		for _, fieldAny := range multiTexts {
-			field, _ := fieldAny.(map[string]any)
-			key := fmt.Sprint(field["field_key"])
-			if key == "" {
-				continue
-			}
-			attachments = append(attachments, feishuProjectOpenAPIFieldAttachments(field)...)
-			value := feishuProjectOpenAPIFieldValue(field)
-			displayName := feishuFieldDisplayName(field)
-			if feishuProjectIsOwnerField(key, displayName) {
-				value = firstNonEmpty(feishuProjectOpenAPIOwnerFieldValue(field["field_value"]), value)
-			}
-			if value != "" {
-				record[key] = value
-				if displayName != "" {
-					record[displayName] = value
-				}
-			}
-			relatedWorkItems = append(relatedWorkItems, feishuProjectRelatedWorkItemsFromField(key, displayName, field)...)
-			addFeishuProjectFieldValues(fieldValues, key, displayName, feishuProjectOpenAPIFieldValues(field["field_value"]))
+			addFeishuProjectFieldValues(fieldValues, key, displayName, feishuProjectOpenAPIFieldValues(payload))
 			if businessLineFieldKey != "" && len(businessLineTokens) == 0 && key == businessLineFieldKey {
-				businessLineTokens = extractBusinessLineTokens(field["field_value"])
+				businessLineTokens = extractBusinessLineTokens(payload)
 			}
 		}
 		description, descriptionAttachments := normalizeFeishuProjectDescription(record["description"])
@@ -3793,12 +3769,12 @@ func feishuProjectOperatorRoleEmail(row map[string]any, userEmails map[string]st
 		}
 	}
 	for _, field := range feishuProjectAllFieldMaps(row) {
-		key := firstNonEmpty(fmt.Sprint(field["field_key"]), fmt.Sprint(field["field_alias"]))
+		key := feishuProjectFieldKey(field)
 		fieldType := strings.TrimSpace(fmt.Sprint(field["field_type_key"]))
 		if key != "role_owners" && fieldType != "role_owners" {
 			continue
 		}
-		if email := feishuProjectRoleOwnersFieldEmail(field["field_value"], userEmails); email != "" {
+		if email := feishuProjectRoleOwnersFieldEmail(feishuProjectFieldValuePayload(field), userEmails); email != "" {
 			return email
 		}
 	}
@@ -3817,6 +3793,21 @@ func feishuProjectAllFieldMaps(row map[string]any) []map[string]any {
 		}
 	}
 	return out
+}
+
+func feishuProjectFieldKey(field map[string]any) string {
+	return firstNonEmpty(
+		fmt.Sprint(field["field_key"]),
+		fmt.Sprint(field["field_alias"]),
+		fmt.Sprint(field["key"]),
+	)
+}
+
+func feishuProjectFieldValuePayload(field map[string]any) any {
+	if value, ok := field["field_value"]; ok && value != nil {
+		return value
+	}
+	return field["value"]
 }
 
 func feishuProjectIsOperatorRole(role map[string]any) bool {
@@ -4451,7 +4442,7 @@ func feishuProjectRelatedWorkItemsFromField(key, displayName string, field map[s
 	if !feishuProjectLinkedStoryField(key, displayName) {
 		return nil
 	}
-	values := feishuProjectOpenAPIFieldValues(field["field_value"])
+	values := feishuProjectOpenAPIFieldValues(feishuProjectFieldValuePayload(field))
 	out := make([]FeishuProjectRelatedWorkItem, 0, len(values))
 	for _, value := range values {
 		id := strings.TrimSpace(value)
@@ -4506,7 +4497,7 @@ func dedupeFeishuProjectRelatedWorkItems(items []FeishuProjectRelatedWorkItem) [
 }
 
 func feishuProjectOpenAPIFieldValue(field map[string]any) string {
-	value := field["field_value"]
+	value := feishuProjectFieldValuePayload(field)
 	switch v := value.(type) {
 	case nil:
 		return ""
@@ -4568,7 +4559,8 @@ func feishuProjectMQLAttachments(row map[string]any) []FeishuProjectAttachment {
 
 func feishuProjectOpenAPIFieldAttachments(field map[string]any) []FeishuProjectAttachment {
 	var out []FeishuProjectAttachment
-	out = append(out, feishuProjectRichTextAttachments(field["field_value"])...)
+	value := feishuProjectFieldValuePayload(field)
+	out = append(out, feishuProjectRichTextAttachments(value)...)
 	var walk func(any)
 	walk = func(v any) {
 		switch x := v.(type) {
@@ -4585,7 +4577,7 @@ func feishuProjectOpenAPIFieldAttachments(field map[string]any) []FeishuProjectA
 			}
 		}
 	}
-	walk(field["field_value"])
+	walk(value)
 	return dedupeFeishuProjectAttachments(out)
 }
 
