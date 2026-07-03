@@ -364,8 +364,11 @@ export interface OperationsKpis {
   contributionRate: OperationsRate;
   // Pass rates over the judged-with-committed-CL pool (an AI plan exists AND
   // the ticket demonstrably shipped, so the plan was judged against a real
-  // delivery). The two cards partition that pool by channel:
+  // delivery), partitioned by channel:
   // - aiDeliveredPassRate: AI submitted the final CL itself (ai_delivered).
+  //   ~100% by construction (a plan compared to its own shipped CL), so the
+  //   summary renders its denominator as the independent-submission count on
+  //   the assisted card instead of a card of its own.
   // - aiAssistedPassRate: everything else — the plan went through a human.
   //   Scoping by CHANNEL, not by the ai_assisted attribution, is what keeps
   //   this honest: attribution and quality share one source (method

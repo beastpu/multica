@@ -8,9 +8,9 @@ import type { OperationsKpis, OperationsRate } from "../operations-metrics";
 // bases don't masquerade as comparable cards:
 //   - a delivery-composition bar over 外部完成 (MECE by AI role) whose read-off
 //     is participation + contribution (same base, nested);
-//   - three small ratio cards — pass rate over 已判定 split by attribution
-//     (direct-delivered vs assisted), and assessment coverage (over AI
-//     participation);
+//   - two small ratio cards — the assisted pass rate (judged plans with a
+//     committed CL, human-shipped; the always-100% direct-delivery count is a
+//     footer datum on it) and assessment coverage (over AI participation);
 //   - a muted data-health footnote, then the nested delivery funnel.
 // `previous` carries the KPIs of the equal-length window before the selected
 // one; deltas are null (render nothing) when a window's denominator is 0 or the
@@ -40,6 +40,9 @@ function RateCard({
   deltaText,
   // Whether an increase is good news (pass rate ↑ good) or bad (no-output ↑ bad).
   upIsGood,
+  // Optional extra datum under the hint (e.g. the independent-submission
+  // count on the assisted card).
+  footer,
 }: {
   label: string;
   hint: string;
@@ -48,6 +51,7 @@ function RateCard({
   deltaLabel: string;
   deltaText: string;
   upIsGood: boolean;
+  footer?: string;
 }) {
   const showDelta = delta != null && delta !== 0;
   const good = delta != null && (delta > 0 ? upIsGood : !upIsGood);
@@ -75,6 +79,11 @@ function RateCard({
         ) : null}
       </div>
       <div className="text-xs text-muted-foreground">{hint}</div>
+      {footer ? (
+        <div className="border-t pt-2 text-xs text-muted-foreground">
+          {footer}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -138,10 +147,6 @@ export function OperationsSummary({
   const SMALL_SAMPLE = 30;
   const stableDelta = (cur: OperationsRate, prev: OperationsRate) =>
     cur.denominator < SMALL_SAMPLE ? null : deltaPoints(cur, prev);
-  const deliveredDelta = stableDelta(
-    kpis.aiDeliveredPassRate,
-    previous.aiDeliveredPassRate,
-  );
   const assistedDelta = stableDelta(
     kpis.aiAssistedPassRate,
     previous.aiAssistedPassRate,
@@ -214,19 +219,7 @@ export function OperationsSummary({
           ))}
         </div>
       </div>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <RateCard
-          label={t(($) => $.operations.summary.delivered_pass_rate)}
-          hint={t(($) => $.operations.summary.delivered_pass_rate_hint, {
-            num: kpis.aiDeliveredPassRate.numerator,
-            den: kpis.aiDeliveredPassRate.denominator,
-          })}
-          rate={kpis.aiDeliveredPassRate}
-          delta={deliveredDelta}
-          deltaLabel={deltaLabel}
-          deltaText={deltaText(deliveredDelta)}
-          upIsGood
-        />
+      <div className="grid gap-3 sm:grid-cols-2">
         <RateCard
           label={t(($) => $.operations.summary.assisted_pass_rate)}
           hint={t(($) => $.operations.summary.assisted_pass_rate_hint, {
@@ -238,6 +231,12 @@ export function OperationsSummary({
           deltaLabel={deltaLabel}
           deltaText={deltaText(assistedDelta)}
           upIsGood
+          // Direct deliveries (AI submitted the final CL itself) pass by
+          // construction — a plan compared to its own shipped CL — so they get
+          // a count here instead of a whole always-100% card.
+          footer={t(($) => $.operations.summary.independent_submissions, {
+            count: kpis.aiDeliveredPassRate.denominator,
+          })}
         />
         <RateCard
           label={t(($) => $.operations.summary.coverage_rate)}
