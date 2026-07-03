@@ -87,15 +87,16 @@ export function blockedWarningFamily(warning: string): BlockedFamily | null {
 }
 
 // ---------------------------------------------------------------------------
-// Verifiable AI output — the fix-rate denominator.
+// Assessable AI output — the quality-pipeline gate (verifiable → judged →
+// passed, and the coverage numerator).
 //
-// The fix rate answers "when AI attempted a fix that actually shipped, how
-// often was it right?". A ticket enters the denominator only when BOTH hold:
-//   1. AI produced a fix plan — a shelve CL or a Swarm review.
-//   2. A committed CL exists — the ticket was actually delivered (by anyone;
-//      human or AI submission both count, the point is it shipped).
-// This is built from concrete result artifacts, not warning strings: the
-// assessment warnings are noisy/drifting and must not gate the denominator.
+// Quality is about the PLAN: the assessment judges whether the AI's shelved
+// fix / proposal is correct by reading the code — it does not need the fix to
+// have shipped. So the gate is just "completed assessment with an AI plan"; a
+// committed CL is NOT required. Delivery (did the plan actually ship?) is a
+// separate axis, measured by contribution + the delivery-composition bar.
+// Requiring a committed CL here used to drop ~30% of already-judged plans
+// (their commit evidence was unreachable), understating coverage badly.
 // ---------------------------------------------------------------------------
 
 function hasNonEmptyCl(cls: Array<string | number> | undefined): boolean {
@@ -112,26 +113,13 @@ function aiProducedPlan(fix: AgentFixRecord): boolean {
   return hasNonEmptyCl(p4.ai_shelved_cls) || (p4.swarm_reviews ?? []).length > 0;
 }
 
-// The ticket actually shipped: a committed/submitted CL exists. Who submitted
-// it (human continuation or AI/Swarm) doesn't matter — only that the fix landed
-// so its correctness can be judged. Shelve CLs are NOT committed CLs.
-function hasCommittedCl(fix: AgentFixRecord): boolean {
-  const p4 = fix.p4_assessment;
-  if (!p4) return false;
-  return (
-    hasNonEmptyCl(p4.swarm_committed_cls) ||
-    hasNonEmptyCl(p4.external_committed_cls)
-  );
-}
-
-// A ticket enters the fix-rate denominator when the assessment completed, AI
-// produced a fix plan, and a committed CL exists. Warnings do not gate this —
-// the denominator is defined by concrete result artifacts.
+// A ticket enters the quality pipeline when the assessment completed and AI
+// produced a plan to judge. Whether that plan shipped (committed CL) is a
+// delivery question, not an assessability one — it lives in contribution.
 export function isVerifiableOutput(fix: AgentFixRecord): boolean {
   return (
     fix.p4_assessment?.assessment_status === "completed" &&
-    aiProducedPlan(fix) &&
-    hasCommittedCl(fix)
+    aiProducedPlan(fix)
   );
 }
 

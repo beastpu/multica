@@ -86,7 +86,7 @@
       "comp_unconverted": "出方案未转化",
       "comp_not_participated": "未参与",
       "comp_rates": "参与率 {{participation}} · 贡献率 {{contribution}}",
-      "pass_rate": "AI 修复通过率",
+      "pass_rate": "AI 方案通过率",
       "pass_rate_hint": "判对 {{num}} / 已评估 {{den}}",
       "coverage_rate": "评估覆盖率",
       "coverage_rate_hint": "已评估 {{num}} / AI 产出 {{den}}",

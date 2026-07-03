@@ -86,7 +86,7 @@
       "comp_unconverted": "방안 미반영",
       "comp_not_participated": "AI 미참여",
       "comp_rates": "참여율 {{participation}} · 기여율 {{contribution}}",
-      "pass_rate": "AI 수정 통과율",
+      "pass_rate": "AI 방안 통과율",
       "pass_rate_hint": "정답 {{num}} / 평가 완료 {{den}}",
       "coverage_rate": "평가 커버리지",
       "coverage_rate_hint": "평가 완료 {{num}} / AI 산출 {{den}}",
