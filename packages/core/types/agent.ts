@@ -649,6 +649,10 @@ export interface AgentFixRecord {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  // The instant the feed's trailing window filtered on (external item's last
+  // update when bound, else latest run activity). KPI/trend windowing splits
+  // on this; absent on older servers, in which case run timestamps are used.
+  activity_at?: string;
   external?: AgentFixExternalRecord;
   p4_assessment?: AgentFixP4Assessment;
   human_review?: AgentFixHumanReview;

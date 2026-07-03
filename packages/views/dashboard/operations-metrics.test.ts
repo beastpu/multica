@@ -278,6 +278,15 @@ describe("computeOperationsTrend", () => {
 });
 
 describe("fixDayIso", () => {
+  it("prefers the server's window instant (activity_at) over run timestamps", () => {
+    expect(
+      fixDayIso(
+        fix({ activity_at: "2026-06-15T08:00:00Z" } as any),
+        "UTC",
+      ),
+    ).toBe("2026-06-15");
+  });
+
   it("prefers completed_at and falls back through started/created", () => {
     expect(
       fixDayIso(

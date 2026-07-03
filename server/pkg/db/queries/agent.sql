@@ -912,6 +912,17 @@ SELECT
   spine.completed_at,
   spine.created_at,
   spine.has_normal_task,
+  -- The same instant the window predicate above filters on. The dashboard
+  -- splits its current/previous periods and buckets its weekly trend on this,
+  -- so client-side windowing agrees with the SQL window (a ticket whose AI
+  -- task ran long ago but whose external item closed this week counts as
+  -- this week's activity).
+  COALESCE(
+    fib.last_external_updated_at,
+    spine.completed_at,
+    spine.started_at,
+    spine.created_at
+  ) AS activity_at,
   COALESCE(lc.content, '') AS last_comment,
   COALESCE(lc.author_type, '') AS last_comment_author_type,
   fib.id AS external_binding_id,

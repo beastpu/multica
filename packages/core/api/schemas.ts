@@ -780,6 +780,7 @@ const AgentFixRecordSchema = z.object({
   started_at: z.string().nullable().default(null),
   completed_at: z.string().nullable().default(null),
   created_at: z.string().default(""),
+  activity_at: z.string().default(""),
   external: AgentFixExternalRecordSchema.optional(),
   p4_assessment: AgentFixP4AssessmentSchema.optional(),
   human_review: AgentFixHumanReviewSchema.optional(),
