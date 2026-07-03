@@ -148,11 +148,18 @@ export function computeBlockedStats(rows: AgentFixRecord[]): BlockedStats {
   };
 }
 
-// The record's day axis in the viewer's timezone — the latest run's completion
-// day, falling back to start/created for running or queued rows. en-CA gives a
-// locale-neutral YYYY-MM-DD; a bad tz falls back to the raw ISO day.
+// The record's day axis in the viewer's timezone. Prefers the server's
+// activity_at — the same instant the feed's SQL window filters on (external
+// item's last update when bound), so client-side period splitting agrees with
+// the SQL window; older servers omit it and the run timestamps take over.
+// en-CA gives a locale-neutral YYYY-MM-DD; a bad tz falls back to the raw ISO
+// day.
 export function fixDayIso(fix: AgentFixRecord, tz: string): string {
-  const iso = fix.completed_at ?? fix.started_at ?? fix.created_at;
+  const iso =
+    (fix.activity_at?.trim() ? fix.activity_at : null) ??
+    fix.completed_at ??
+    fix.started_at ??
+    fix.created_at;
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10);

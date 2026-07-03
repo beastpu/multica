@@ -1592,7 +1592,12 @@ type AgentFixResponse struct {
 	StartedAt             *string                       `json:"started_at"`
 	CompletedAt           *string                       `json:"completed_at"`
 	CreatedAt             string                        `json:"created_at"`
-	External              *AgentFixExternalResponse     `json:"external,omitempty"`
+	// ActivityAt is the instant the feed's trailing window filtered on: the
+	// external item's last update when bound, else the latest run activity.
+	// The dashboard splits its current/previous periods and buckets the
+	// weekly trend on this so client-side windowing matches the SQL window.
+	ActivityAt string                        `json:"activity_at,omitempty"`
+	External   *AgentFixExternalResponse     `json:"external,omitempty"`
 	P4Assessment          *AgentFixP4AssessmentResponse `json:"p4_assessment,omitempty"`
 	HumanReview           *AgentFixHumanReviewResponse  `json:"human_review,omitempty"`
 	DisplayResultStatus   string                        `json:"display_result_status,omitempty"`
@@ -1952,6 +1957,7 @@ func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request
 			StartedAt:             timestampToPtr(row.StartedAt),
 			CompletedAt:           timestampToPtr(row.CompletedAt),
 			CreatedAt:             timestampToString(row.CreatedAt),
+			ActivityAt:            timestampToString(row.ActivityAt),
 		}
 		fix.External = external
 		fix.P4Assessment = buildAgentFixP4(row)
