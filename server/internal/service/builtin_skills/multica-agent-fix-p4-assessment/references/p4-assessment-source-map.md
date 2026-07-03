@@ -164,10 +164,12 @@ for the behavior contracts the skill teaches.
   gate: judged / pass rate / coverage) requires a completed assessment and AI
   output evidence (`ai_shelved_cls` or `swarm_reviews`) — a committed CL is NOT
   required, because quality judges the plan's code, not whether it shipped. The
-  pass rate is a single plan-quality rate (`likely_correct` / judged). Delivery
-  is a separate axis: `contributionRate` and the delivery-composition bar are
-  driven by `delivery_attribution_prediction` (`ai_delivered` / `ai_assisted`),
-  which is why attribution must not be guessed.
+  headline is a strict nesting chain — contribution (AI produced a plan /
+  外部完成) → coverage (judged / produced) → pass rate (`likely_correct` /
+  judged). Delivery attribution (`ai_delivered` / `ai_assisted` from
+  `delivery_attribution_prediction`) drives the analysis tab's attribution
+  distribution and the composition partition, which is why attribution must not
+  be guessed.
 - Delivery-side metrics and the missing-CL process gap read the structured
   `*_committed_cls` arrays, not `summary` / `prediction_reasons`. This is why
   the SKILL requires a verified submitted CL — including one confirmed only via

@@ -80,10 +80,8 @@
       "analysis_hint": "現在の絞り込み結果からの軽量集計。"
     },
     "summary": {
-      "participation_rate": "AI 参加率",
-      "participation_rate_hint": "案を産出 {{num}} / 外部完了 {{den}}",
       "contribution_rate": "AI 貢献率",
-      "contribution_rate_hint": "納品確認 {{num}} / 外部完了 {{den}}",
+      "contribution_rate_hint": "案を産出 {{num}} / 外部完了 {{den}}",
       "pass_rate": "AI 提案合格率",
       "pass_rate_hint": "合格 {{num}} / 判定済み {{den}}",
       "coverage_rate": "評価カバレッジ",

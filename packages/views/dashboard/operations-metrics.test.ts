@@ -240,26 +240,23 @@ describe("computeOperationsKpis", () => {
       unconverted: 0,
       notParticipated: 1,
     });
-    // Scale (same 外部完成 base): 3 of 4 done tickets have an AI plan and all 3
-    // are AI-contributed.
-    expect(kpis.participationRate).toEqual({
-      value: 0.75,
-      numerator: 3,
-      denominator: 4,
-    });
+    // Contribution: 3 of 4 done tickets have an AI plan. Its numerator is the
+    // SAME count as coverage's denominator — the headline nesting chain.
     expect(kpis.contributionRate).toEqual({
       value: 0.75,
       numerator: 3,
       denominator: 4,
     });
-    // Quality (plan-quality, one rate): 1 of 2 judged is likely_correct.
-    expect(kpis.passRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
     // Coverage: 2 of the 3 AI plans reached a verdict (aiUnjudged did not).
     expect(kpis.coverageRate).toEqual({
       value: 2 / 3,
       numerator: 2,
       denominator: 3,
     });
+    expect(kpis.coverageRate.denominator).toBe(kpis.contributionRate.numerator);
+    // Quality (plan-quality, one rate): 1 of 2 judged is likely_correct.
+    expect(kpis.passRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
+    expect(kpis.passRate.denominator).toBe(kpis.coverageRate.numerator);
     // Demoted health counts. noOutput = the unattributed-with-no-shelve row.
     // unjudged = every completed assessment without a verdict: aiUnjudged
     // (unknown quality) AND noOutput (no quality at all).
@@ -309,10 +306,10 @@ describe("computeOperationsKpis", () => {
     // The unshipped plan is judged and passed — pass rate does not require a
     // committed CL.
     expect(kpis.passRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
-    // Coverage counts it (assessed 2 of 2 participated); contribution does not
-    // (it never reached delivery — attribution stayed unknown).
+    // Both plans count as contribution (artifact-driven) and both were
+    // assessed, so coverage is 2/2 — delivery attribution plays no role here.
+    expect(kpis.contributionRate.numerator).toBe(2);
     expect(kpis.coverageRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
-    expect(kpis.contributionRate.numerator).toBe(1);
   });
 
   it("excludes a committed CL with no AI plan (human-delivered)", () => {
@@ -333,10 +330,8 @@ describe("computeOperationsKpis", () => {
     expect(kpis.passRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
   });
 
-  it("counts an unused AI plan as participation but not contribution", () => {
-    // AI shelved a fix (participation) but a human shipped a different CL, so
-    // the attribution is human_delivered — it did not reach delivery, so it is
-    // NOT a contribution. The gap between the two rates is exactly this case.
+  it("counts an unused AI plan as contribution (artifact-driven)", () => {
+    // AI shelved a fix but a human shipped a different CL (human_delivered).
     const planNotUsed = fix({
       external: { done: true },
       p4_assessment: {
@@ -354,14 +349,12 @@ describe("computeOperationsKpis", () => {
       unconverted: 1,
       notParticipated: 0,
     });
-    expect(kpis.participationRate).toEqual({
+    // Contribution is artifact-driven: the plan exists, so it counts even
+    // though a human shipped a different CL. Where it landed (unconverted)
+    // stays visible in the composition partition and the analysis tab.
+    expect(kpis.contributionRate).toEqual({
       value: 1,
       numerator: 1,
-      denominator: 1,
-    });
-    expect(kpis.contributionRate).toEqual({
-      value: 0,
-      numerator: 0,
       denominator: 1,
     });
     // The failed plan is judged (it reached a verdict) but not passed.
@@ -392,7 +385,6 @@ describe("computeOperationsKpis", () => {
 
   it("returns null rates on empty input instead of fake zeros", () => {
     const kpis = computeOperationsKpis([]);
-    expect(kpis.participationRate.value).toBeNull();
     expect(kpis.contributionRate.value).toBeNull();
     expect(kpis.passRate.value).toBeNull();
     expect(kpis.coverageRate.value).toBeNull();

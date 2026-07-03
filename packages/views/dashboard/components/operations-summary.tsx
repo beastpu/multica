@@ -4,17 +4,14 @@ import { MoveDownRight, MoveUpRight } from "lucide-react";
 import { useT } from "../../i18n";
 import type { OperationsKpis, OperationsRate } from "../operations-metrics";
 
-// Headline KPI band for the operations page: four cards that read left to
-// right as one causal chain — scale (participation) → conversion
-// (contribution) → quality (plan pass rate) → confidence (assessment
-// coverage). The first two share the 外部完成 base and nest (contribution ⊆
-// participation, their gap = plans that never converted); the last two sit on
-// their own bases, spelled out in each card's hint. Contribution is a floor
-// value — it needs attribution, which evidence blocks suppress — so it must be
-// read against coverage: low coverage means the real contribution is higher.
-// The per-role breakdown (direct/assisted/unconverted) lives in the analysis
-// tab's attribution distribution, not here; the funnel below carries absolute
-// counts and stage drop-offs.
+// Headline KPI band for the operations page: three cards forming one strict
+// nesting chain — contribution (AI produced a plan / 外部完成) → coverage
+// (judged / AI produced) → pass rate (correct / judged). Each card's
+// denominator IS the previous card's numerator, so the numerators read as a
+// single shrinking pipeline (e.g. 149 → 80 → 50) and can never appear to
+// contradict each other across cards. Delivery attribution (direct/assisted)
+// lives in the analysis tab's attribution distribution; the funnel below
+// carries absolute counts and stage drop-offs.
 // `previous` carries the KPIs of the equal-length window before the selected
 // one; deltas are null (render nothing) when a window's denominator is 0 or the
 // sample is too small to be anything but noise.
@@ -150,31 +147,15 @@ export function OperationsSummary({
   const SMALL_SAMPLE = 30;
   const stableDelta = (cur: OperationsRate, prev: OperationsRate) =>
     cur.denominator < SMALL_SAMPLE ? null : deltaPoints(cur, prev);
-  const participationDelta = stableDelta(
-    kpis.participationRate,
-    previous.participationRate,
-  );
   const contributionDelta = stableDelta(
     kpis.contributionRate,
     previous.contributionRate,
   );
-  const passDelta = stableDelta(kpis.passRate, previous.passRate);
   const coverageDelta = stableDelta(kpis.coverageRate, previous.coverageRate);
+  const passDelta = stableDelta(kpis.passRate, previous.passRate);
   return (
     <section className="grid gap-3">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <RateCard
-          label={t(($) => $.operations.summary.participation_rate)}
-          hint={t(($) => $.operations.summary.participation_rate_hint, {
-            num: kpis.participationRate.numerator,
-            den: kpis.participationRate.denominator,
-          })}
-          rate={kpis.participationRate}
-          delta={participationDelta}
-          deltaLabel={deltaLabel}
-          deltaText={deltaText(participationDelta)}
-          upIsGood
-        />
+      <div className="grid gap-3 sm:grid-cols-3">
         <RateCard
           label={t(($) => $.operations.summary.contribution_rate)}
           hint={t(($) => $.operations.summary.contribution_rate_hint, {
@@ -188,18 +169,6 @@ export function OperationsSummary({
           upIsGood
         />
         <RateCard
-          label={t(($) => $.operations.summary.pass_rate)}
-          hint={t(($) => $.operations.summary.pass_rate_hint, {
-            num: kpis.passRate.numerator,
-            den: kpis.passRate.denominator,
-          })}
-          rate={kpis.passRate}
-          delta={passDelta}
-          deltaLabel={deltaLabel}
-          deltaText={deltaText(passDelta)}
-          upIsGood
-        />
-        <RateCard
           label={t(($) => $.operations.summary.coverage_rate)}
           hint={t(($) => $.operations.summary.coverage_rate_hint, {
             num: kpis.coverageRate.numerator,
@@ -209,6 +178,18 @@ export function OperationsSummary({
           delta={coverageDelta}
           deltaLabel={deltaLabel}
           deltaText={deltaText(coverageDelta)}
+          upIsGood
+        />
+        <RateCard
+          label={t(($) => $.operations.summary.pass_rate)}
+          hint={t(($) => $.operations.summary.pass_rate_hint, {
+            num: kpis.passRate.numerator,
+            den: kpis.passRate.denominator,
+          })}
+          rate={kpis.passRate}
+          delta={passDelta}
+          deltaLabel={deltaLabel}
+          deltaText={deltaText(passDelta)}
           upIsGood
         />
       </div>

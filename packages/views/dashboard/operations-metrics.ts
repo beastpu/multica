@@ -356,11 +356,12 @@ export interface OperationsKpis {
   funnel: OperationsFunnel;
   // MECE breakdown of 外部完成 by AI role — backs the composition bar.
   composition: DeliveryComposition;
-  // AI 参与率：AI 参与了(出方案或被归因交付) / 外部完成。产出物驱动,不被
-  // unknown 压成地板。= 构成的前三段。
-  participationRate: OperationsRate;
-  // AI 贡献率：AI 的方案进入了最终交付(ai_delivered + ai_assisted) / 外部完成。
-  // 与参与率同底,差 = 出方案未转化。= 构成的前两段。
+  // AI 贡献率：AI 产出了方案(shelve/Swarm review,或被归因交付) / 外部完成。
+  // Artifact-driven, so evidence blocks can't suppress it. Its numerator is the
+  // SAME count as coverageRate's denominator, making the three headline cards a
+  // strict nesting chain: produced ⊇ judged ⊇ passed — each card's denominator
+  // is the previous card's numerator, so their numerators can never appear to
+  // contradict each other across cards.
   contributionRate: OperationsRate;
   // AI 方案通过率：通过(likely_correct) / 已判定。One plan-quality rate over the
   // full judged pool — it does NOT require a committed CL. Committed-CL evidence
@@ -441,11 +442,10 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
       passed,
     },
     composition: { directDelivered, assisted, unconverted, notParticipated },
-    participationRate: rate(
-      directDelivered + assisted + unconverted,
-      externalDone,
-    ),
-    contributionRate: rate(directDelivered + assisted, externalDone),
+    // participatedAll is deliberately the numerator here AND coverageRate's
+    // denominator — the nesting chain (produced ⊇ judged ⊇ passed) depends on
+    // these two cards sharing one count.
+    contributionRate: rate(participatedAll, externalDone),
     passRate: rate(passed, judged),
     coverageRate: rate(judged, participatedAll),
     noOutput,
