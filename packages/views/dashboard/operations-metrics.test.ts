@@ -174,24 +174,39 @@ describe("computeOperationsKpis", () => {
       judged: 2,
       passed: 1,
     });
-    expect(kpis.passRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
-    expect(kpis.deliveryShare).toEqual({
+    // MECE composition sums to externalDone (4): two ai_delivered, one
+    // ai_assisted, and noOutput has no AI involvement.
+    expect(kpis.composition).toEqual({
+      directDelivered: 2,
+      assisted: 1,
+      unconverted: 0,
+      notParticipated: 1,
+    });
+    // Scale (same 外部完成 base): 3 of 4 done tickets have an AI plan and all 3
+    // are AI-contributed.
+    expect(kpis.participationRate).toEqual({
       value: 0.75,
       numerator: 3,
       denominator: 4,
     });
-    expect(kpis.noOutputRate).toEqual({
-      value: 0.2,
-      numerator: 1,
-      denominator: 5,
+    expect(kpis.contributionRate).toEqual({
+      value: 0.75,
+      numerator: 3,
+      denominator: 4,
     });
-    // Completed but verdict-less: aiUnjudged (unknown quality) and noOutput
-    // (no quality at all).
-    expect(kpis.unjudgedRate).toEqual({
-      value: 0.4,
+    // Quality: 1 of 2 judged is likely_correct.
+    expect(kpis.passRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
+    // Coverage: 2 of the 3 AI plans reached a verdict (aiUnjudged did not).
+    expect(kpis.coverageRate).toEqual({
+      value: 2 / 3,
       numerator: 2,
-      denominator: 5,
+      denominator: 3,
     });
+    // Demoted health counts. noOutput = the unattributed-with-no-shelve row.
+    // unjudged = every completed assessment without a verdict: aiUnjudged
+    // (unknown quality) AND noOutput (no quality at all).
+    expect(kpis.noOutput).toBe(1);
+    expect(kpis.unjudged).toBe(2);
   });
 
   it("counts a verifiable row regardless of noisy warnings", () => {
@@ -250,12 +265,47 @@ describe("computeOperationsKpis", () => {
     expect(kpis.passRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
   });
 
+  it("counts an unused AI plan as participation but not contribution", () => {
+    // AI shelved a fix (participation) but a human shipped a different CL, so
+    // the attribution is human_delivered — it did not reach delivery, so it is
+    // NOT a contribution. The gap between the two rates is exactly this case.
+    const planNotUsed = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+        quality_prediction: "likely_wrong",
+        ai_shelved_cls: [283979],
+        external_committed_cls: [285179],
+      },
+    });
+    const kpis = computeOperationsKpis([planNotUsed]);
+    expect(kpis.composition).toEqual({
+      directDelivered: 0,
+      assisted: 0,
+      unconverted: 1,
+      notParticipated: 0,
+    });
+    expect(kpis.participationRate).toEqual({
+      value: 1,
+      numerator: 1,
+      denominator: 1,
+    });
+    expect(kpis.contributionRate).toEqual({
+      value: 0,
+      numerator: 0,
+      denominator: 1,
+    });
+  });
+
   it("returns null rates on empty input instead of fake zeros", () => {
     const kpis = computeOperationsKpis([]);
+    expect(kpis.participationRate.value).toBeNull();
+    expect(kpis.contributionRate.value).toBeNull();
     expect(kpis.passRate.value).toBeNull();
-    expect(kpis.deliveryShare.value).toBeNull();
-    expect(kpis.noOutputRate.value).toBeNull();
-    expect(kpis.unjudgedRate.value).toBeNull();
+    expect(kpis.coverageRate.value).toBeNull();
+    expect(kpis.noOutput).toBe(0);
+    expect(kpis.unjudged).toBe(0);
   });
 
   it("does not count an unknown or drifting quality value as judged", () => {
