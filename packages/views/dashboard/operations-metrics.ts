@@ -244,34 +244,70 @@ export interface OperationsFunnel {
   passed: number;
 }
 
+// A MECE partition of 外部完成 (every shipped ticket lands in exactly one
+// bucket) by AI's role, for the delivery-composition stacked bar:
+//   directDelivered + assisted + unconverted + notParticipated === externalDone
+// participation = directDelivered + assisted + unconverted (AI was involved);
+// contribution  = directDelivered + assisted (AI's work reached delivery).
+export interface DeliveryComposition {
+  directDelivered: number; // AI's CL is the final CL (ai_delivered)
+  assisted: number; // human shipped an AI-equivalent CL (ai_assisted)
+  unconverted: number; // AI produced a plan but it did not reach delivery
+  notParticipated: number; // shipped with no AI involvement at all
+}
+
 export interface OperationsKpis {
   funnel: OperationsFunnel;
-  // AI 修复率：通过 / 可验证产出且已判定
+  // MECE breakdown of 外部完成 by AI role — backs the composition bar.
+  composition: DeliveryComposition;
+  // AI 参与率：AI 参与了(出方案或被归因交付) / 外部完成。产出物驱动,不被
+  // unknown 压成地板。= 构成的前三段。
+  participationRate: OperationsRate;
+  // AI 贡献率：AI 的方案进入了最终交付(ai_delivered + ai_assisted) / 外部完成。
+  // 与参与率同底,差 = 出方案未转化。= 构成的前两段。
+  contributionRate: OperationsRate;
+  // AI 修复通过率：通过 / 已判定。条件质量指标——只在能评估到结论的样本内。
   passRate: OperationsRate;
-  // AI 交付占比：AI 提交+辅助 / 外部完成
-  deliveryShare: OperationsRate;
-  // AI 无产出率：已证实无产出 / 全部参与记录
-  noOutputRate: OperationsRate;
-  // 无法判断占比：评估完成但没有质量结论 / 全部参与记录
-  unjudgedRate: OperationsRate;
+  // 评估覆盖率：已判定 / AI 参与。上面几个数有多可信——覆盖率低说明大量 AI
+  // 产出没能被验证(证据受阻),passRate 只建立在少数可见样本上。
+  coverageRate: OperationsRate;
+  // Demoted data-health counts (rendered as a muted footnote, not a headline
+  // card): AI ran but produced nothing / assessment completed without a verdict.
+  noOutput: number;
+  unjudged: number;
 }
 
 export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   let externalDone = 0;
   let p4Covered = 0;
-  let aiDelivered = 0;
+  let participatedAll = 0;
+  let directDelivered = 0;
+  let assisted = 0;
+  let unconverted = 0;
+  let notParticipated = 0;
   let verifiable = 0;
   let judged = 0;
   let passed = 0;
   let noOutput = 0;
   let unjudged = 0;
   for (const fix of rows) {
-    if (fix.external?.done === true) externalDone += 1;
+    const done = fix.external?.done === true;
+    if (done) externalDone += 1;
     if (fix.p4_assessment) p4Covered += 1;
     const attribution = deriveAttribution(fix);
     if (attribution === AI_NO_OUTPUT) noOutput += 1;
-    if (attribution === "ai_delivered" || attribution === "ai_assisted") {
-      aiDelivered += 1;
+    const contributed =
+      attribution === "ai_delivered" || attribution === "ai_assisted";
+    // Participation counts contribution too: an ai_delivered row whose shelve
+    // wasn't captured in ai_shelved_cls must still count as involvement, so
+    // contribution ⊆ participation always holds.
+    const participated = aiProducedPlan(fix) || contributed;
+    if (participated) participatedAll += 1;
+    if (done) {
+      if (attribution === "ai_delivered") directDelivered += 1;
+      else if (attribution === "ai_assisted") assisted += 1;
+      else if (participated) unconverted += 1;
+      else notParticipated += 1;
     }
     const completed = fix.p4_assessment?.assessment_status === "completed";
     const quality = qualityJudgement(fix);
@@ -292,10 +328,16 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
       judged,
       passed,
     },
+    composition: { directDelivered, assisted, unconverted, notParticipated },
+    participationRate: rate(
+      directDelivered + assisted + unconverted,
+      externalDone,
+    ),
+    contributionRate: rate(directDelivered + assisted, externalDone),
     passRate: rate(passed, judged),
-    deliveryShare: rate(aiDelivered, externalDone),
-    noOutputRate: rate(noOutput, rows.length),
-    unjudgedRate: rate(unjudged, rows.length),
+    coverageRate: rate(judged, participatedAll),
+    noOutput,
+    unjudged,
   };
 }
 
