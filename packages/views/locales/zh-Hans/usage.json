@@ -74,8 +74,8 @@
       "pending_only": "仅看待判定"
     },
     "tabs": {
-      "detail": "P4 明细",
-      "analysis": "分析报告",
+      "detail": "评估明细",
+      "analysis": "效果分析",
       "detail_hint": "外部完成态、P4 证据、AI 预判和人工验收。",
       "analysis_hint": "基于当前筛选结果的轻量统计。"
     },

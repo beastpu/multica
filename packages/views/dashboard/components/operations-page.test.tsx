@@ -143,7 +143,7 @@ const FIXES = vi.hoisted(() => [
     issue_id: "i-4",
     issue_identifier: "MUL-10",
     issue_title: "Client crash",
-    issue_status: "in_review",
+    issue_status: "done",
     last_comment: "needs follow-up validation",
     last_comment_author_type: "agent",
     started_at: null,
@@ -222,7 +222,7 @@ const FIXES = vi.hoisted(() => [
     issue_id: "i-6",
     issue_identifier: "WAR-9581",
     issue_title: "Shelved CL should not look final",
-    issue_status: "in_progress",
+    issue_status: "done",
     last_comment:
       "CL 287451 已 shelve，修复 FPS 求助分享在 IM 发送失败时仍记录 MsgID=0 的问题。",
     last_comment_author_type: "agent",
@@ -232,9 +232,9 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-6",
       work_item_id: "7035395614",
-      status: "IN PROGRESS",
-      mapped_status: "in_progress",
-      done: false,
+      status: "Done",
+      mapped_status: "done",
+      done: true,
       project: "Warpath3",
       workstream: "rel_1.1.0",
     },
@@ -483,12 +483,12 @@ describe("OperationsPage", () => {
     expect(screen.getByText("设计如此")).toBeTruthy();
     expect(screen.queryByText("vcvaCnnGi")).toBeNull();
 
-    // Agent name appears for each row (six a-1 rows in the current window).
-    expect(screen.getAllByText("Fixer").length).toBe(6);
+    // Agent name appears for each visible row (the feed hides rows without a
+    // normal agent run, done issue status, and done external binding).
+    expect(screen.getAllByText("Fixer").length).toBe(5);
     expect(screen.getByText("Reviewer")).toBeTruthy();
 
     // "状态" column = ISSUE workflow status (labels from the issues namespace).
-    expect(screen.getAllByText("In Review").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
 
     // "原因/描述" column = the issue's most recent comment.
@@ -540,8 +540,8 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(screen.getByText("AI fix assessment")).toBeTruthy();
-    expect(screen.getByText("P4 details")).toBeTruthy();
-    expect(screen.getByText("Analysis report")).toBeTruthy();
+    expect(screen.getByText("Assessments")).toBeTruthy();
+    expect(screen.getByText("Insights")).toBeTruthy();
     expect(screen.getByText("BUG-93218")).toBeTruthy();
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("In stats").length).toBeGreaterThanOrEqual(1);
@@ -609,7 +609,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText("282941, 282944")).toBeTruthy();
   });
 
-  it("disables the assessment trigger until the external item is done", () => {
+  it("shows only done issues with an agent run and a done external binding", () => {
     renderWithI18n(<OperationsPage />);
 
     // t-2 (done, no assessment yet) → enabled Run assessment.
@@ -620,22 +620,11 @@ describe("OperationsPage", () => {
       true,
     );
 
-    // t-3 (external in_progress) → visible but disabled, with the reason.
-    let futureRow = screen.getByText("Future work").parentElement;
-    while (
-      futureRow &&
-      !futureRow.getAttribute("style")?.includes("grid-template-columns")
-    ) {
-      futureRow = futureRow.parentElement;
-    }
-    expect(futureRow).not.toBeNull();
-    const futureButton = within(futureRow as HTMLElement).getByRole("button", {
-      name: "Requeue assessment",
-    }) as HTMLButtonElement;
-    expect(futureButton.disabled).toBe(true);
-    expect(futureButton.getAttribute("title")).toBe(
-      "Available once the external work item is done",
-    );
+    // t-3 has an agent run, but its issue status and external mapping are not
+    // done, so it must not leak into the Operations detail table.
+    expect(screen.queryByText("Future work")).toBeNull();
+    expect(screen.queryByText("triaged")).toBeNull();
+    expect(screen.queryByText("rel_future/server")).toBeNull();
   });
 
   it("triggers a new assessment with binding_id and force=false", async () => {
@@ -702,7 +691,7 @@ describe("OperationsPage", () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    await user.click(screen.getByText("Analysis report"));
+    await user.click(screen.getByText("Insights"));
 
     expect(screen.getByText("Delivery attribution")).toBeTruthy();
     expect(screen.getByText("AI quality distribution")).toBeTruthy();
@@ -724,7 +713,7 @@ describe("OperationsPage", () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    await user.click(screen.getByText("Analysis report"));
+    await user.click(screen.getByText("Insights"));
     // Clicking a distribution row applies the filter and jumps back to detail.
     await user.click(screen.getAllByText("Human delivered")[0]!);
 
@@ -820,19 +809,14 @@ describe("OperationsPage", () => {
     expect(screen.queryByText("Login broke")).toBeNull();
   });
 
-  it("does not substitute total rows for a zero external-done funnel stage", async () => {
+  it("does not offer workstream filters from hidden ineligible rows", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
     await user.click(screen.getByLabelText("Workstream"));
-    await user.click(
-      within(await screen.findByRole("listbox")).getByText("rel_future/server"),
-    );
-
-    expect(screen.getByText("Future work")).toBeTruthy();
-    expect(screen.queryByText("Login broke")).toBeNull();
-    const stage = screen.getByText("External done").parentElement;
-    expect(stage?.textContent).toContain("0");
+    const listbox = await screen.findByRole("listbox");
+    expect(within(listbox).queryByText("rel_future/server")).toBeNull();
+    expect(within(listbox).getByText("rel_1.7.2/server")).toBeTruthy();
   });
 
   it("exports the current filtered P4 assessment rows as CSV", async () => {
@@ -903,13 +887,13 @@ describe("OperationsPage", () => {
     });
   });
 
-  it("downgrades an unknown issue status to its raw string instead of crashing", () => {
+  it("filters out rows without the Operations display prerequisites", () => {
     renderWithI18n(<OperationsPage />);
-    // The unknown status renders verbatim (no i18n key, no throw).
-    expect(screen.getByText("triaged")).toBeTruthy();
-    expect(screen.getByText("Future work")).toBeTruthy();
-    expect(screen.getByText("robot_wrote_it")).toBeTruthy();
-    expect(screen.getByText("surprisingly_fine")).toBeTruthy();
+    expect(screen.queryByText("Future work")).toBeNull();
+    expect(screen.queryByText("triaged")).toBeNull();
+    expect(screen.queryByText("robot_wrote_it")).toBeNull();
+    expect(screen.queryByText("surprisingly_fine")).toBeNull();
+    expect(screen.getByText("Login broke")).toBeTruthy();
   });
 
   it("filters rows by the comment search term and highlights the match", async () => {

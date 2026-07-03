@@ -74,8 +74,8 @@
       "pending_only": "未判定のみ"
     },
     "tabs": {
-      "detail": "P4 詳細",
-      "analysis": "分析レポート",
+      "detail": "評価詳細",
+      "analysis": "成果分析",
       "detail_hint": "外部完了、P4 証跡、AI 予測、人間レビュー。",
       "analysis_hint": "現在の絞り込み結果からの軽量集計。"
     },

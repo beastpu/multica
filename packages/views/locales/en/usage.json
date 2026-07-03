@@ -74,8 +74,8 @@
       "pending_only": "Pending judgement only"
     },
     "tabs": {
-      "detail": "P4 details",
-      "analysis": "Analysis report",
+      "detail": "Assessments",
+      "analysis": "Insights",
       "detail_hint": "External completion, P4 evidence, AI predictions, and human review.",
       "analysis_hint": "Lightweight rollups from the current filtered rows."
     },

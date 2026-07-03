@@ -74,8 +74,8 @@
       "pending_only": "판정 대기만"
     },
     "tabs": {
-      "detail": "P4 상세",
-      "analysis": "분석 보고서",
+      "detail": "평가 상세",
+      "analysis": "성과 분석",
       "detail_hint": "외부 완료, P4 증거, AI 예측, 사람 리뷰.",
       "analysis_hint": "현재 필터 결과의 간단한 집계입니다."
     },
