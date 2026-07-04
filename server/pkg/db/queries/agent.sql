@@ -1272,6 +1272,15 @@ SET assessment_status = 'completed',
 WHERE workspace_id = $1 AND feishu_binding_id = $2 AND assessment_task_id = $3
 RETURNING *;
 
+-- name: SetP4AssessmentIssue :exec
+-- Points the queue row at the projection issue for the CURRENT run. Force
+-- re-runs create a new issue and repoint; the previous issue keeps its
+-- terminal state (the issue sequence is the run history).
+UPDATE agent_fix_p4_assessment
+SET assessment_issue_id = $3,
+    updated_at = now()
+WHERE workspace_id = $1 AND feishu_binding_id = $2;
+
 -- name: FailP4AssessmentFromTask :one
 -- Never clobber a result the agent already submitted through the
 -- /p4-assessment/result endpoint: once the row is 'completed', a later

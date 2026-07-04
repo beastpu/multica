@@ -1129,8 +1129,17 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	// from posting comments so a stale daemon that runs one as a normal fix
 	// cannot pollute the issue thread. The assessment result is captured from
 	// the task output, never from a comment.
-	if h.rejectAnalysisTaskWrite(w, r, userID, uuidToString(issue.WorkspaceID), "post comments") {
-		return
+	//
+	// One precise carve-out: an analysis task MAY comment on a derived
+	// agent_work projection issue (metadata carries the server-reserved
+	// `agent_work` key) — that issue exists to hold the worker's narration.
+	// Workspace scoping is already enforced: isAnalysisTaskActor resolves the
+	// agent actor against the issue's own workspace, so a cross-workspace
+	// agent never reaches the carve-out. Real business issues stay read-only.
+	if !isAgentWorkIssue(issue) {
+		if h.rejectAnalysisTaskWrite(w, r, userID, uuidToString(issue.WorkspaceID), "post comments") {
+			return
+		}
 	}
 
 	var req CreateCommentRequest

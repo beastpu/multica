@@ -151,6 +151,13 @@ type AgentTaskQueue struct {
 	TaskCategory          string             `json:"task_category"`
 }
 
+type AgentWorkProject struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Kind        string             `json:"kind"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type Attachment struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
