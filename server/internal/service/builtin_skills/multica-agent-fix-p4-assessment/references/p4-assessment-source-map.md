@@ -59,7 +59,9 @@ for the behavior contracts the skill teaches.
   atomically leases up to N claimable rows (`pending`/`failed`/`stale`, or
   `running` with an expired lease) to the caller's task via
   `LeaseP4AssessmentsPending` (SKIP LOCKED), and returns each with an opaque
-  `ref` (internally the binding UUID), the issue summary, `lease_expires_at`
+  `ref` (internally the binding UUID), an optional `assessment_issue_id` (the
+  run's derived agent_work projection issue; empty on rows predating the
+  projection), the issue summary, `lease_expires_at`
   (`P4AssessmentLeaseDuration`, 30 minutes), and inlined evidence from
   `P4AssessmentService.Evidence`. Rows whose evidence fails to build are
   released back to the pool (`ReleaseP4AssessmentLease`).
@@ -142,7 +144,37 @@ for the behavior contracts the skill teaches.
   issue mutation from an analysis-category task in `UpdateIssue`,
   `BatchUpdateIssues`, and comment creation (`internal/handler/comment.go`), so
   even a stale daemon running the task as a normal fix cannot change status,
-  edit fields, or post comments.
+  edit fields, or post comments. One precise carve-out
+  (`isAgentWorkIssue`, `internal/handler/issue.go`): comment creation is
+  allowed when the target issue carries the server-reserved
+  `metadata.agent_work` marker — the run's own projection issue, which exists
+  to hold the worker's narration. Status/field/assignee writes stay rejected
+  even there, and the reserved metadata key itself is rejected by the user
+  metadata API (`internal/handler/issue_metadata.go`), so a real issue can
+  never be spoofed into the carve-out.
+
+## Assessment projection issue (agent_work)
+
+- `docs/agent-fix-p4-assessment-issue-design.md` defines the derived-work
+  primitive. `server/internal/service/agent_fix_assessment_projection.go`
+  implements the P4 instantiation: `P4AssessmentService.Trigger` creates one
+  projection issue per run inside its transaction
+  (`CreateAgentWorkIssue` stamps `metadata.agent_work` with
+  `kind=p4_assessment`, `source_issue_id`, `source_ref`, `trigger`,
+  `extra.prompt_version`) and points
+  `agent_fix_p4_assessment.assessment_issue_id` at it
+  (`SetP4AssessmentIssue`); a force re-run creates a NEW issue and repoints,
+  leaving the previous run's issue untouched.
+- Queue transitions project onto the issue via the guarded
+  `UpdateAgentWorkIssueStatus` (`pkg/db/queries/agent_work.sql`): lease →
+  `in_progress`, evidence release → `todo` + server failure comment, complete
+  → `done` + server result-summary comment
+  (`p4AssessmentResultComment`), task failure → `cancelled` (issue.status has
+  no `failed` value) + failure comment. Server comments are authored as the
+  leased task's agent and are best-effort (never roll back a queue
+  transition). Rows with NULL `assessment_issue_id` skip projection.
+- `agent_fix_p4_assessment` remains the single source of truth: operations
+  KPIs read only the queue table, never the projection issue's status.
 
 ## Product design baseline
 
