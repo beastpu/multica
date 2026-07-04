@@ -515,7 +515,11 @@ export function OperationsPage() {
     useState<string>(ALL_ATTRIBUTIONS);
   const [qualityFilter, setQualityFilter] = useState<string>(ALL_QUALITIES);
   const [pendingOnly, setPendingOnly] = useState(false);
-  const [activeTab, setActiveTab] = useState<OperationsTab>(DETAIL_TAB);
+  // Analysis is the default tab: operators land on the aggregate story
+  // (attribution / quality / blocker distributions); the per-ticket detail
+  // table is the drill-down surface reached from analysis charts (which set
+  // filters and switch here) or via the tab switch.
+  const [activeTab, setActiveTab] = useState<OperationsTab>(ANALYSIS_TAB);
   const [page, setPage] = useState(0);
   // `searchInput` is what the user types; `search` is the debounced term that
   // actually keys the query (so we don't refetch on every keystroke).
@@ -821,12 +825,12 @@ export function OperationsPage() {
                 onChange={setActiveTab}
                 options={[
                   {
-                    label: t(($) => $.operations.tabs.detail),
-                    value: DETAIL_TAB,
-                  },
-                  {
                     label: t(($) => $.operations.tabs.analysis),
                     value: ANALYSIS_TAB,
+                  },
+                  {
+                    label: t(($) => $.operations.tabs.detail),
+                    value: DETAIL_TAB,
                   },
                 ]}
               />

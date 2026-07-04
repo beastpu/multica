@@ -452,6 +452,15 @@ import {
 
 let exportedBlob: Blob | null = null;
 
+// Analysis is the default tab; tests exercising the per-ticket detail table
+// switch to it first. `label` is the localized tab caption ("评估明细" in zh).
+async function openAssessments(
+  user: ReturnType<typeof userEvent.setup>,
+  label = "Assessments",
+) {
+  await user.click(screen.getByText(label));
+}
+
 describe("OperationsPage", () => {
   beforeEach(() => {
     cleanup();
@@ -477,8 +486,10 @@ describe("OperationsPage", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders one row per issue with agent, issue, status, and last comment", () => {
+  it("renders one row per issue with agent, issue, status, and last comment", async () => {
+    const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     // Issue identifier + title, linked to the issue detail under the slug.
     const issueLink = screen.getByText("Login broke").closest("a");
@@ -514,13 +525,12 @@ describe("OperationsPage", () => {
   it("renders the KPI band with the headline rates and the funnel", () => {
     renderWithI18n(<OperationsPage />);
 
-    // Composition bar over 外部完成, then the two ratio cards. Direct
-    // deliveries (always-100% by construction) are a footer count on the
-    // assisted card, not a card: t-1 is the only judged direct row.
-    expect(screen.getByText("Delivery composition")).toBeTruthy();
-    expect(screen.getByText("Assisted pass rate")).toBeTruthy();
-    expect(screen.getByText("AI submitted 1 directly")).toBeTruthy();
+    // Three headline cards forming the nesting chain: contribution (produced /
+    // external done) → coverage (judged / produced) → pass rate (correct /
+    // judged).
+    expect(screen.getByText("AI contribution rate")).toBeTruthy();
     expect(screen.getByText("Assessment coverage")).toBeTruthy();
+    expect(screen.getByText("AI plan pass rate")).toBeTruthy();
     expect(screen.getByText("Delivery funnel")).toBeTruthy();
     expect(screen.getByText("Last 30 days")).toBeTruthy();
     // Funnel stages, with the verifiable-output stage as the quality pool.
@@ -536,7 +546,6 @@ describe("OperationsPage", () => {
     // name map.
     expect(screen.getByText("Done 5 · 设计如此 1")).toBeTruthy();
     // Coverage: both AI plans (t-1, t-4) reached a verdict → 2/2 = 100%.
-    // (100% can also appear in the composition read-off, hence getAllByText.)
     expect(screen.getAllByText("100%").length).toBeGreaterThanOrEqual(1);
     // Data-health footnote replaces the old no-output/undetermined cards.
     expect(screen.getByText(/no output · \d+ undetermined/)).toBeTruthy();
@@ -551,6 +560,7 @@ describe("OperationsPage", () => {
   it("renders demo-like P4 assessment evidence and quality analysis", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     expect(screen.getByText("AI fix assessment")).toBeTruthy();
     expect(screen.getByText("Assessments")).toBeTruthy();
@@ -592,6 +602,7 @@ describe("OperationsPage", () => {
   it("links external work items, swarm reviews, and CLs", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     // Feishu/Meego work item → external.url.
     const workItem = screen.getByText("BUG-93218").closest("a");
@@ -616,6 +627,7 @@ describe("OperationsPage", () => {
   it("renders quality analysis copy in Chinese locale", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />, { locale: "zh-Hans" });
+    await openAssessments(user, "评估明细");
 
     // Quality prediction badges + funnel stage labels.
     expect(screen.getByText("\u4e0d\u901a\u8fc7")).toBeTruthy();
@@ -627,8 +639,10 @@ describe("OperationsPage", () => {
     expect(screen.getByText("282941, 282944")).toBeTruthy();
   });
 
-  it("shows only done issues with an agent run and a done external binding", () => {
+  it("shows only done issues with an agent run and a done external binding", async () => {
+    const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     // t-2 (done, no assessment yet) → enabled Run assessment.
     const runButtons = screen.getAllByRole("button", {
@@ -648,6 +662,7 @@ describe("OperationsPage", () => {
   it("triggers a new assessment with binding_id and force=false", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     const enabled = screen
       .getAllByRole("button", { name: "Queue assessment" })
@@ -665,6 +680,7 @@ describe("OperationsPage", () => {
   it("reruns a completed assessment with binding_id and force=true", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     const enabled = screen
       .getAllByRole("button", { name: "Requeue assessment" })
@@ -682,6 +698,7 @@ describe("OperationsPage", () => {
   it("reruns a failed assessment with binding_id and force=true", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     let failedRow = screen.getByText("Assessment parser failed").parentElement;
     while (
@@ -756,6 +773,7 @@ describe("OperationsPage", () => {
   it("filters assessment rows by workstream, predictions, and pending-only", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     await user.click(screen.getByLabelText("Workstream"));
     await user.click(
@@ -785,6 +803,7 @@ describe("OperationsPage", () => {
   it("toggles pending-judgement-only on and off", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     const toggle = screen.getByRole("button", {
       name: "Pending judgement only",
@@ -811,6 +830,7 @@ describe("OperationsPage", () => {
   it("can reset the workstream filter back to all workstreams", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     await user.click(screen.getByLabelText("Workstream"));
     await user.click(
@@ -829,6 +849,7 @@ describe("OperationsPage", () => {
   it("uses external workstream when P4 assessment has not populated one", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     await user.click(screen.getByLabelText("Workstream"));
     await user.click(
@@ -878,8 +899,10 @@ describe("OperationsPage", () => {
     expect(csv).not.toContain("Login broke");
   });
 
-  it("renders a resize handle for each sizable column", () => {
+  it("renders a resize handle for each sizable column", async () => {
+    const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
     const handles = screen.getAllByRole("separator");
     expect(handles.length).toBe(6);
     expect(
@@ -917,8 +940,10 @@ describe("OperationsPage", () => {
     });
   });
 
-  it("filters out rows without the Operations display prerequisites", () => {
+  it("filters out rows without the Operations display prerequisites", async () => {
+    const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
     expect(screen.queryByText("Future work")).toBeNull();
     expect(screen.queryByText("triaged")).toBeNull();
     expect(screen.queryByText("robot_wrote_it")).toBeNull();
@@ -929,6 +954,7 @@ describe("OperationsPage", () => {
   it("filters rows by the comment search term and highlights the match", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     // All issues present before searching.
     expect(screen.getByText("Login broke")).toBeTruthy();
@@ -970,6 +996,7 @@ describe("OperationsPage", () => {
   it("clears the search with the clear button, restoring all rows", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     await user.type(screen.getByLabelText("Search comments"), "review");
     await waitFor(() => {
