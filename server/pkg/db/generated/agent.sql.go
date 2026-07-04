@@ -787,10 +787,11 @@ SET assessment_status = 'completed',
     warnings = $16,
     model = $17,
     leased_until = NULL,
+    last_error = '',
     assessed_at = now(),
     updated_at = now()
 WHERE workspace_id = $1 AND feishu_binding_id = $2 AND assessment_task_id = $3
-RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until
+RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until, assessment_issue_id, attempt_count, last_error
 `
 
 type CompleteP4AssessmentFromBindingParams struct {
@@ -863,6 +864,9 @@ func (q *Queries) CompleteP4AssessmentFromBinding(ctx context.Context, arg Compl
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LeasedUntil,
+		&i.AssessmentIssueID,
+		&i.AttemptCount,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -884,10 +888,11 @@ SET assessment_status = 'completed',
     summary = $14,
     warnings = $15,
     model = $16,
+    last_error = '',
     assessed_at = now(),
     updated_at = now()
 WHERE workspace_id = $1 AND assessment_task_id = $2
-RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until
+RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until, assessment_issue_id, attempt_count, last_error
 `
 
 type CompleteP4AssessmentFromTaskParams struct {
@@ -955,6 +960,9 @@ func (q *Queries) CompleteP4AssessmentFromTask(ctx context.Context, arg Complete
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LeasedUntil,
+		&i.AssessmentIssueID,
+		&i.AttemptCount,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -1500,16 +1508,18 @@ const failP4AssessmentFromTask = `-- name: FailP4AssessmentFromTask :one
 UPDATE agent_fix_p4_assessment
 SET assessment_status = 'failed',
     warnings = $3,
+    last_error = $4,
     updated_at = now()
 WHERE workspace_id = $1 AND assessment_task_id = $2
   AND assessment_status <> 'completed'
-RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until
+RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until, assessment_issue_id, attempt_count, last_error
 `
 
 type FailP4AssessmentFromTaskParams struct {
 	WorkspaceID      pgtype.UUID `json:"workspace_id"`
 	AssessmentTaskID pgtype.UUID `json:"assessment_task_id"`
 	Warnings         []byte      `json:"warnings"`
+	LastError        string      `json:"last_error"`
 }
 
 // Never clobber a result the agent already submitted through the
@@ -1517,7 +1527,12 @@ type FailP4AssessmentFromTaskParams struct {
 // task-end parse failure must not knock it back to 'failed'. The endpoint is
 // the authoritative path; task-output parsing is only a fallback.
 func (q *Queries) FailP4AssessmentFromTask(ctx context.Context, arg FailP4AssessmentFromTaskParams) (AgentFixP4Assessment, error) {
-	row := q.db.QueryRow(ctx, failP4AssessmentFromTask, arg.WorkspaceID, arg.AssessmentTaskID, arg.Warnings)
+	row := q.db.QueryRow(ctx, failP4AssessmentFromTask,
+		arg.WorkspaceID,
+		arg.AssessmentTaskID,
+		arg.Warnings,
+		arg.LastError,
+	)
 	var i AgentFixP4Assessment
 	err := row.Scan(
 		&i.ID,
@@ -1545,6 +1560,9 @@ func (q *Queries) FailP4AssessmentFromTask(ctx context.Context, arg FailP4Assess
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LeasedUntil,
+		&i.AssessmentIssueID,
+		&i.AttemptCount,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -2095,7 +2113,7 @@ func (q *Queries) GetP4AssessmentBinding(ctx context.Context, arg GetP4Assessmen
 }
 
 const getP4AssessmentByBinding = `-- name: GetP4AssessmentByBinding :one
-SELECT id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until FROM agent_fix_p4_assessment
+SELECT id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until, assessment_issue_id, attempt_count, last_error FROM agent_fix_p4_assessment
 WHERE workspace_id = $1 AND feishu_binding_id = $2
 `
 
@@ -2133,6 +2151,9 @@ func (q *Queries) GetP4AssessmentByBinding(ctx context.Context, arg GetP4Assessm
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LeasedUntil,
+		&i.AssessmentIssueID,
+		&i.AttemptCount,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -2344,6 +2365,7 @@ UPDATE agent_fix_p4_assessment a
 SET assessment_status = 'running',
     assessment_task_id = $2,
     leased_until = $3,
+    attempt_count = a.attempt_count + 1,
     updated_at = now()
 WHERE a.id IN (
   SELECT p.id FROM agent_fix_p4_assessment p
@@ -2356,7 +2378,7 @@ WHERE a.id IN (
   LIMIT $4
   FOR UPDATE SKIP LOCKED
 )
-RETURNING a.id, a.workspace_id, a.issue_id, a.feishu_binding_id, a.assessment_task_id, a.assessment_status, a.delivery_attribution_prediction, a.quality_prediction, a.prediction_reasons, a.confidence, a.workstream, a.swarm_reviews, a.ai_shelved_cls, a.swarm_change_cls, a.swarm_committed_cls, a.external_committed_cls, a.evidence, a.summary, a.warnings, a.model, a.prompt_version, a.assessed_at, a.created_at, a.updated_at, a.leased_until
+RETURNING a.id, a.workspace_id, a.issue_id, a.feishu_binding_id, a.assessment_task_id, a.assessment_status, a.delivery_attribution_prediction, a.quality_prediction, a.prediction_reasons, a.confidence, a.workstream, a.swarm_reviews, a.ai_shelved_cls, a.swarm_change_cls, a.swarm_committed_cls, a.external_committed_cls, a.evidence, a.summary, a.warnings, a.model, a.prompt_version, a.assessed_at, a.created_at, a.updated_at, a.leased_until, a.assessment_issue_id, a.attempt_count, a.last_error
 `
 
 type LeaseP4AssessmentsPendingParams struct {
@@ -2411,6 +2433,9 @@ func (q *Queries) LeaseP4AssessmentsPending(ctx context.Context, arg LeaseP4Asse
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LeasedUntil,
+			&i.AssessmentIssueID,
+			&i.AttemptCount,
+			&i.LastError,
 		); err != nil {
 			return nil, err
 		}
@@ -3406,6 +3431,13 @@ SELECT
   p4.external_committed_cls AS p4_external_committed_cls,
   p4.summary AS p4_summary,
   p4.warnings AS p4_warnings,
+  -- Queue observability for the detail rows: how many times this row was
+  -- leased, why it last failed/was released, the active lease expiry, and
+  -- which agent's batch task holds/held it.
+  COALESCE(p4.attempt_count, 0) AS p4_attempt_count,
+  COALESCE(p4.last_error, '') AS p4_last_error,
+  p4.leased_until AS p4_leased_until,
+  COALESCE(p4agent.name, '') AS p4_assessment_agent_name,
   afr.outcome AS review_outcome,
   afr.reasons AS review_reasons,
   afr.note AS review_note,
@@ -3427,6 +3459,8 @@ LEFT JOIN feishu_project_integration fpi
   ON fpi.id = fib.integration_id AND fpi.workspace_id = i.workspace_id
 LEFT JOIN agent_fix_p4_assessment p4
   ON p4.workspace_id = i.workspace_id AND p4.feishu_binding_id = fib.id
+LEFT JOIN agent_task_queue p4task ON p4task.id = p4.assessment_task_id
+LEFT JOIN agent p4agent ON p4agent.id = p4task.agent_id
 LEFT JOIN agent_fix_review afr
   ON afr.workspace_id = i.workspace_id AND afr.feishu_binding_id = fib.id
 WHERE
@@ -3486,6 +3520,10 @@ type ListWorkspaceAgentFixesRow struct {
 	P4ExternalCommittedCls          []int32            `json:"p4_external_committed_cls"`
 	P4Summary                       pgtype.Text        `json:"p4_summary"`
 	P4Warnings                      []byte             `json:"p4_warnings"`
+	P4AttemptCount                  int32              `json:"p4_attempt_count"`
+	P4LastError                     string             `json:"p4_last_error"`
+	P4LeasedUntil                   pgtype.Timestamptz `json:"p4_leased_until"`
+	P4AssessmentAgentName           string             `json:"p4_assessment_agent_name"`
 	ReviewOutcome                   pgtype.Text        `json:"review_outcome"`
 	ReviewReasons                   []string           `json:"review_reasons"`
 	ReviewNote                      pgtype.Text        `json:"review_note"`
@@ -3570,6 +3608,10 @@ func (q *Queries) ListWorkspaceAgentFixes(ctx context.Context, arg ListWorkspace
 			&i.P4ExternalCommittedCls,
 			&i.P4Summary,
 			&i.P4Warnings,
+			&i.P4AttemptCount,
+			&i.P4LastError,
+			&i.P4LeasedUntil,
+			&i.P4AssessmentAgentName,
 			&i.ReviewOutcome,
 			&i.ReviewReasons,
 			&i.ReviewNote,
@@ -3938,6 +3980,7 @@ UPDATE agent_fix_p4_assessment
 SET assessment_status = 'pending',
     assessment_task_id = NULL,
     leased_until = NULL,
+    last_error = $4,
     updated_at = now()
 WHERE workspace_id = $1 AND feishu_binding_id = $2 AND assessment_task_id = $3
   AND assessment_status = 'running'
@@ -3947,13 +3990,20 @@ type ReleaseP4AssessmentLeaseParams struct {
 	WorkspaceID      pgtype.UUID `json:"workspace_id"`
 	FeishuBindingID  pgtype.UUID `json:"feishu_binding_id"`
 	AssessmentTaskID pgtype.UUID `json:"assessment_task_id"`
+	LastError        string      `json:"last_error"`
 }
 
 // Return a leased row to the pending pool (e.g. its evidence failed to
 // build), guarded by the owning task so a stale worker can't release someone
-// else's claim.
+// else's claim. Records why in last_error — this path used to be fully
+// silent, so a row could bounce pull→release forever with no trace.
 func (q *Queries) ReleaseP4AssessmentLease(ctx context.Context, arg ReleaseP4AssessmentLeaseParams) error {
-	_, err := q.db.Exec(ctx, releaseP4AssessmentLease, arg.WorkspaceID, arg.FeishuBindingID, arg.AssessmentTaskID)
+	_, err := q.db.Exec(ctx, releaseP4AssessmentLease,
+		arg.WorkspaceID,
+		arg.FeishuBindingID,
+		arg.AssessmentTaskID,
+		arg.LastError,
+	)
 	return err
 }
 
@@ -4431,7 +4481,7 @@ ON CONFLICT (workspace_id, feishu_binding_id) DO UPDATE SET
   assessment_task_id = NULL,
   prompt_version = EXCLUDED.prompt_version,
   updated_at = now()
-RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until
+RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until, assessment_issue_id, attempt_count, last_error
 `
 
 type UpsertP4AssessmentPendingParams struct {
@@ -4475,6 +4525,9 @@ func (q *Queries) UpsertP4AssessmentPending(ctx context.Context, arg UpsertP4Ass
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LeasedUntil,
+		&i.AssessmentIssueID,
+		&i.AttemptCount,
+		&i.LastError,
 	)
 	return i, err
 }

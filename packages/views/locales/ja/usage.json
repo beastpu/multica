@@ -156,6 +156,10 @@
       "confidence": "信頼度 {{value}}",
       "no_evidence": "CL 提出記録なし"
     },
+    "assessment_obs": {
+      "lease_remaining": "残り {{minutes}} 分",
+      "attempts": "{{count}} 回試行"
+    },
     "assessment_action": {
       "run": "評価キューに追加",
       "rerun": "評価を再キュー",

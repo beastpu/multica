@@ -156,6 +156,10 @@
       "confidence": "置信度 {{value}}",
       "no_evidence": "暂无提交 CL 记录"
     },
+    "assessment_obs": {
+      "lease_remaining": "剩余 {{minutes}} 分钟",
+      "attempts": "已尝试 {{count}} 次"
+    },
     "assessment_action": {
       "run": "加入评估队列",
       "rerun": "重新排队评估",

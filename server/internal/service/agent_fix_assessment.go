@@ -29,7 +29,21 @@ const (
 	// Evidence is inlined per item, so batches stay small.
 	P4AssessmentBatchDefaultLimit = 5
 	P4AssessmentBatchMaxLimit     = 10
+
+	// last_error is an operator-facing one-liner, not a log sink — error
+	// chains from evidence building can drag whole HTTP bodies along.
+	p4AssessmentLastErrorMaxLen = 500
 )
+
+// p4AssessmentLastError shapes an error message for the last_error column:
+// single line, hard length cap.
+func p4AssessmentLastError(msg string) string {
+	msg = strings.Join(strings.Fields(msg), " ")
+	if len(msg) > p4AssessmentLastErrorMaxLen {
+		msg = msg[:p4AssessmentLastErrorMaxLen]
+	}
+	return msg
+}
 
 type P4AssessmentService struct {
 	Queries       *db.Queries
@@ -193,6 +207,7 @@ func (s *P4AssessmentService) LeasePending(ctx context.Context, workspaceID, tas
 				WorkspaceID:      workspaceID,
 				FeishuBindingID:  row.FeishuBindingID,
 				AssessmentTaskID: taskID,
+				LastError:        p4AssessmentLastError("evidence build failed: " + evidenceErr.Error()),
 			})
 			continue
 		}
@@ -670,6 +685,7 @@ func (s *P4AssessmentService) CompleteTask(ctx context.Context, task db.AgentTas
 			WorkspaceID:      s.taskWorkspaceID(task),
 			AssessmentTaskID: task.ID,
 			Warnings:         warnings,
+			LastError:        p4AssessmentLastError("task output parse failed: " + err.Error()),
 		})
 		// pgx.ErrNoRows means the row was already 'completed' — the agent
 		// submitted the result through the /p4-assessment/result endpoint, so

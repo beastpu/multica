@@ -965,6 +965,13 @@ SELECT
   p4.external_committed_cls AS p4_external_committed_cls,
   p4.summary AS p4_summary,
   p4.warnings AS p4_warnings,
+  -- Queue observability for the detail rows: how many times this row was
+  -- leased, why it last failed/was released, the active lease expiry, and
+  -- which agent's batch task holds/held it.
+  COALESCE(p4.attempt_count, 0) AS p4_attempt_count,
+  COALESCE(p4.last_error, '') AS p4_last_error,
+  p4.leased_until AS p4_leased_until,
+  COALESCE(p4agent.name, '') AS p4_assessment_agent_name,
   afr.outcome AS review_outcome,
   afr.reasons AS review_reasons,
   afr.note AS review_note,
@@ -986,6 +993,8 @@ LEFT JOIN feishu_project_integration fpi
   ON fpi.id = fib.integration_id AND fpi.workspace_id = i.workspace_id
 LEFT JOIN agent_fix_p4_assessment p4
   ON p4.workspace_id = i.workspace_id AND p4.feishu_binding_id = fib.id
+LEFT JOIN agent_task_queue p4task ON p4task.id = p4.assessment_task_id
+LEFT JOIN agent p4agent ON p4agent.id = p4task.agent_id
 LEFT JOIN agent_fix_review afr
   ON afr.workspace_id = i.workspace_id AND afr.feishu_binding_id = fib.id
 WHERE
@@ -1191,6 +1200,7 @@ SET assessment_status = 'completed',
     summary = $14,
     warnings = $15,
     model = $16,
+    last_error = '',
     assessed_at = now(),
     updated_at = now()
 WHERE workspace_id = $1 AND assessment_task_id = $2
@@ -1206,6 +1216,7 @@ UPDATE agent_fix_p4_assessment a
 SET assessment_status = 'running',
     assessment_task_id = $2,
     leased_until = $3,
+    attempt_count = a.attempt_count + 1,
     updated_at = now()
 WHERE a.id IN (
   SELECT p.id FROM agent_fix_p4_assessment p
@@ -1223,11 +1234,13 @@ RETURNING a.*;
 -- name: ReleaseP4AssessmentLease :exec
 -- Return a leased row to the pending pool (e.g. its evidence failed to
 -- build), guarded by the owning task so a stale worker can't release someone
--- else's claim.
+-- else's claim. Records why in last_error — this path used to be fully
+-- silent, so a row could bounce pull→release forever with no trace.
 UPDATE agent_fix_p4_assessment
 SET assessment_status = 'pending',
     assessment_task_id = NULL,
     leased_until = NULL,
+    last_error = sqlc.arg(last_error),
     updated_at = now()
 WHERE workspace_id = $1 AND feishu_binding_id = $2 AND assessment_task_id = $3
   AND assessment_status = 'running';
@@ -1253,6 +1266,7 @@ SET assessment_status = 'completed',
     warnings = $16,
     model = $17,
     leased_until = NULL,
+    last_error = '',
     assessed_at = now(),
     updated_at = now()
 WHERE workspace_id = $1 AND feishu_binding_id = $2 AND assessment_task_id = $3
@@ -1266,6 +1280,7 @@ RETURNING *;
 UPDATE agent_fix_p4_assessment
 SET assessment_status = 'failed',
     warnings = $3,
+    last_error = sqlc.arg(last_error),
     updated_at = now()
 WHERE workspace_id = $1 AND assessment_task_id = $2
   AND assessment_status <> 'completed'

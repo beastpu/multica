@@ -751,6 +751,12 @@ const AgentFixP4AssessmentSchema = z.object({
   external_committed_cls: AgentFixClListSchema,
   summary: z.string().default(""),
   warnings: AgentFixStringListSchema,
+  // Queue observability (older servers omit all four — defaults keep rows
+  // rendering). A non-number attempt_count degrades to 0, not a crash.
+  attempt_count: z.number().catch(0).default(0),
+  last_error: z.string().catch("").default(""),
+  leased_until: z.string().nullable().catch(null).default(null),
+  assessment_agent_name: z.string().catch("").default(""),
 }).loose();
 
 export const AgentFixHumanReviewSchema = z.object({
