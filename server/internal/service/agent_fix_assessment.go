@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -109,7 +110,19 @@ func IsP4AssessmentTask(task db.AgentTaskQueue) bool {
 // task fan-out (which used to pile hundreds of queued tasks onto one runtime)
 // no longer exists. Legacy per-binding tasks already in flight still complete
 // through CompleteTask / SubmitResult.
-func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingID pgtype.UUID, force bool) (P4AssessmentTriggerResult, error) {
+//
+// Each accepted trigger also creates the run's projection issue in the same
+// transaction and points assessment_issue_id at it; a force re-run creates a
+// NEW issue and repoints, leaving the previous run's issue untouched. See
+// agent_fix_assessment_projection.go.
+func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingID pgtype.UUID, force bool, actor P4AssessmentActor) (P4AssessmentTriggerResult, error) {
+	if actor.Trigger == "" {
+		if force {
+			actor.Trigger = P4AssessmentTriggerForceRerun
+		} else {
+			actor.Trigger = P4AssessmentTriggerManual
+		}
+	}
 	var result P4AssessmentTriggerResult
 	err := s.runInTx(ctx, func(q *db.Queries) error {
 		if err := q.LockP4AssessmentBinding(ctx, db.LockP4AssessmentBindingParams{
@@ -159,6 +172,13 @@ func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingI
 		if err != nil {
 			return err
 		}
+		projIssueID, err := s.createAssessmentProjectionIssue(ctx, q, workspaceID, bindingID, row, actor)
+		if err != nil {
+			return err
+		}
+		if projIssueID.Valid {
+			assessment.AssessmentIssueID = projIssueID
+		}
 		result = P4AssessmentTriggerResult{Assessment: assessment, Created: true}
 		return nil
 	})
@@ -173,10 +193,14 @@ func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingI
 // UUID, but the agent never needs to know or construct that. Evidence is
 // inlined so the worker needs no follow-up call per item.
 type P4AssessmentPendingItem struct {
-	Ref            string               `json:"ref"`
-	Issue          map[string]any       `json:"issue"`
-	LeaseExpiresAt string               `json:"lease_expires_at"`
-	Evidence       P4AssessmentEvidence `json:"evidence"`
+	Ref string `json:"ref"`
+	// AssessmentIssueID is this run's projection issue. The worker may post
+	// process-narration comments there (and only there — the real defect
+	// issue stays read-only). Empty on rows predating the projection.
+	AssessmentIssueID string               `json:"assessment_issue_id,omitempty"`
+	Issue             map[string]any       `json:"issue"`
+	LeaseExpiresAt    string               `json:"lease_expires_at"`
+	Evidence          P4AssessmentEvidence `json:"evidence"`
 }
 
 // LeasePending claims up to `limit` assessable rows for the worker task and
@@ -203,19 +227,39 @@ func (s *P4AssessmentService) LeasePending(ctx context.Context, workspaceID, tas
 	for _, row := range rows {
 		evidence, evidenceErr := s.Evidence(ctx, workspaceID, row.FeishuBindingID)
 		if evidenceErr != nil {
+			lastError := p4AssessmentLastError("evidence build failed: " + evidenceErr.Error())
 			_ = s.Queries.ReleaseP4AssessmentLease(ctx, db.ReleaseP4AssessmentLeaseParams{
 				WorkspaceID:      workspaceID,
 				FeishuBindingID:  row.FeishuBindingID,
 				AssessmentTaskID: taskID,
-				LastError:        p4AssessmentLastError("evidence build failed: " + evidenceErr.Error()),
+				LastError:        lastError,
 			})
+			// Projection: the run goes back to the pool, so the issue goes
+			// back to todo, and the (previously silent) release reason lands
+			// as a server comment. Both best-effort — the lease/release
+			// statements above are each atomic on their own and stay
+			// authoritative.
+			if err := projectAgentWorkIssueStatus(ctx, s.Queries, workspaceID, row.AssessmentIssueID, "todo"); err != nil {
+				slog.Warn("p4 assessment projection: release status failed",
+					"binding_id", util.UUIDToString(row.FeishuBindingID), "error", err)
+			}
+			s.postAgentWorkComment(ctx, workspaceID, taskID, row.AssessmentIssueID,
+				p4AssessmentFailureComment("evidence 构建失败，已退回待评估池", lastError))
 			continue
 		}
+		// Lease → running projects in_progress. A lease-expiry reclaim goes
+		// through this same path and re-projects the SAME issue in_progress
+		// (attempt_count is the retry signal, not a new issue).
+		if err := projectAgentWorkIssueStatus(ctx, s.Queries, workspaceID, row.AssessmentIssueID, "in_progress"); err != nil {
+			slog.Warn("p4 assessment projection: lease status failed",
+				"binding_id", util.UUIDToString(row.FeishuBindingID), "error", err)
+		}
 		items = append(items, P4AssessmentPendingItem{
-			Ref:            util.UUIDToString(row.FeishuBindingID),
-			Issue:          evidence.Issue,
-			LeaseExpiresAt: leaseUntil.UTC().Format(time.RFC3339),
-			Evidence:       evidence,
+			Ref:               util.UUIDToString(row.FeishuBindingID),
+			AssessmentIssueID: uuidStringOrEmpty(row.AssessmentIssueID),
+			Issue:             evidence.Issue,
+			LeaseExpiresAt:    leaseUntil.UTC().Format(time.RFC3339),
+			Evidence:          evidence,
 		})
 	}
 	return items, nil
@@ -260,29 +304,43 @@ func (s *P4AssessmentService) SubmitBatchResult(ctx context.Context, workspaceID
 	if err != nil {
 		return err
 	}
-	_, err = s.Queries.CompleteP4AssessmentFromBinding(ctx, db.CompleteP4AssessmentFromBindingParams{
-		WorkspaceID:                   workspaceID,
-		FeishuBindingID:               bindingID,
-		AssessmentTaskID:              taskID,
-		DeliveryAttributionPrediction: parsed.DeliveryAttributionPrediction,
-		QualityPrediction:             parsed.QualityPrediction,
-		PredictionReasons:             parsed.PredictionReasons,
-		Confidence:                    confidence,
-		Workstream:                    parsed.Workstream,
-		SwarmReviews:                  parsed.SwarmReviews,
-		AiShelvedCls:                  parsed.AIShelvedCLs,
-		SwarmChangeCls:                parsed.SwarmChangeCLs,
-		SwarmCommittedCls:             parsed.SwarmCommittedCLs,
-		ExternalCommittedCls:          parsed.ExternalCommittedCLs,
-		Evidence:                      parsed.Evidence,
-		Summary:                       parsed.Summary,
-		Warnings:                      parsed.Warnings,
-		Model:                         pgtype.Text{String: parsed.Model, Valid: parsed.Model != ""},
+	// Complete + issue projection commit together; the result-summary comment
+	// is best-effort after the commit (narration must not roll back a result).
+	var completed db.AgentFixP4Assessment
+	err = s.runInTx(ctx, func(q *db.Queries) error {
+		var completeErr error
+		completed, completeErr = q.CompleteP4AssessmentFromBinding(ctx, db.CompleteP4AssessmentFromBindingParams{
+			WorkspaceID:                   workspaceID,
+			FeishuBindingID:               bindingID,
+			AssessmentTaskID:              taskID,
+			DeliveryAttributionPrediction: parsed.DeliveryAttributionPrediction,
+			QualityPrediction:             parsed.QualityPrediction,
+			PredictionReasons:             parsed.PredictionReasons,
+			Confidence:                    confidence,
+			Workstream:                    parsed.Workstream,
+			SwarmReviews:                  parsed.SwarmReviews,
+			AiShelvedCls:                  parsed.AIShelvedCLs,
+			SwarmChangeCls:                parsed.SwarmChangeCLs,
+			SwarmCommittedCls:             parsed.SwarmCommittedCLs,
+			ExternalCommittedCls:          parsed.ExternalCommittedCLs,
+			Evidence:                      parsed.Evidence,
+			Summary:                       parsed.Summary,
+			Warnings:                      parsed.Warnings,
+			Model:                         pgtype.Text{String: parsed.Model, Valid: parsed.Model != ""},
+		})
+		if completeErr != nil {
+			return completeErr
+		}
+		return projectAgentWorkIssueStatus(ctx, q, workspaceID, completed.AssessmentIssueID, "done")
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrP4AssessmentRefNotLeased
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	s.postAgentWorkComment(ctx, workspaceID, taskID, completed.AssessmentIssueID, p4AssessmentResultComment(parsed))
+	return nil
 }
 
 func (s *P4AssessmentService) BackfillDoneBindings(ctx context.Context, workspaceID, integrationID pgtype.UUID, limit int32) (P4AssessmentBackfillResult, error) {
@@ -298,6 +356,16 @@ func (s *P4AssessmentService) BackfillDoneBindings(ctx context.Context, workspac
 		return P4AssessmentBackfillResult{}, err
 	}
 
+	// Backfill is a scan path with no human in the loop: projection issues
+	// are created by the integration's creator, mirroring what Feishu sync
+	// stamps on synced issues. A legacy integration without created_by_id
+	// yields an invalid CreatorID and the projection issue is skipped (the
+	// assessment itself still enqueues).
+	actor := P4AssessmentActor{Trigger: P4AssessmentTriggerScan, CreatorType: "member"}
+	if cfg, cfgErr := s.Queries.GetFeishuProjectIntegrationByID(ctx, integrationID); cfgErr == nil {
+		actor.CreatorID = cfg.CreatedByID
+	}
+
 	var out P4AssessmentBackfillResult
 	for _, row := range rows {
 		out.Scanned++
@@ -307,7 +375,7 @@ func (s *P4AssessmentService) BackfillDoneBindings(ctx context.Context, workspac
 			continue
 		}
 		out.Eligible++
-		result, err := s.Trigger(ctx, row.WorkspaceID, row.BindingID, false)
+		result, err := s.Trigger(ctx, row.WorkspaceID, row.BindingID, false, actor)
 		if err != nil {
 			out.Failed++
 			out.LastReason = err.Error()
@@ -681,11 +749,24 @@ func (s *P4AssessmentService) CompleteTask(ctx context.Context, task db.AgentTas
 	parsed, err := parseP4AssessmentTaskOutput(result)
 	if err != nil {
 		warnings, _ := json.Marshal([]string{"parser_error: " + err.Error()})
-		_, failErr := s.Queries.FailP4AssessmentFromTask(ctx, db.FailP4AssessmentFromTaskParams{
-			WorkspaceID:      s.taskWorkspaceID(task),
-			AssessmentTaskID: task.ID,
-			Warnings:         warnings,
-			LastError:        p4AssessmentLastError("task output parse failed: " + err.Error()),
+		workspaceID := s.taskWorkspaceID(task)
+		lastError := p4AssessmentLastError("task output parse failed: " + err.Error())
+		var failed db.AgentFixP4Assessment
+		failErr := s.runInTx(ctx, func(q *db.Queries) error {
+			var innerErr error
+			failed, innerErr = q.FailP4AssessmentFromTask(ctx, db.FailP4AssessmentFromTaskParams{
+				WorkspaceID:      workspaceID,
+				AssessmentTaskID: task.ID,
+				Warnings:         warnings,
+				LastError:        lastError,
+			})
+			if innerErr != nil {
+				return innerErr
+			}
+			// issue.status has no 'failed'; 'cancelled' is the closest
+			// terminal non-success state (see the mapping table in
+			// agent_fix_assessment_projection.go).
+			return projectAgentWorkIssueStatus(ctx, q, workspaceID, failed.AssessmentIssueID, "cancelled")
 		})
 		// pgx.ErrNoRows means the row was already 'completed' — the agent
 		// submitted the result through the /p4-assessment/result endpoint, so
@@ -696,6 +777,8 @@ func (s *P4AssessmentService) CompleteTask(ctx context.Context, task db.AgentTas
 			return failErr
 		}
 		if failErr == nil {
+			s.postAgentWorkComment(ctx, workspaceID, task.ID, failed.AssessmentIssueID,
+				p4AssessmentFailureComment("任务失败（结果解析失败）", lastError))
 			return err
 		}
 		return nil
@@ -740,25 +823,39 @@ func (s *P4AssessmentService) writeCompletedAssessment(ctx context.Context, work
 	if err != nil {
 		return err
 	}
-	_, err = s.Queries.CompleteP4AssessmentFromTask(ctx, db.CompleteP4AssessmentFromTaskParams{
-		WorkspaceID:                   workspaceID,
-		AssessmentTaskID:              assessmentTaskID,
-		DeliveryAttributionPrediction: parsed.DeliveryAttributionPrediction,
-		QualityPrediction:             parsed.QualityPrediction,
-		PredictionReasons:             parsed.PredictionReasons,
-		Confidence:                    confidence,
-		Workstream:                    parsed.Workstream,
-		SwarmReviews:                  parsed.SwarmReviews,
-		AiShelvedCls:                  parsed.AIShelvedCLs,
-		SwarmChangeCls:                parsed.SwarmChangeCLs,
-		SwarmCommittedCls:             parsed.SwarmCommittedCLs,
-		ExternalCommittedCls:          parsed.ExternalCommittedCLs,
-		Evidence:                      parsed.Evidence,
-		Summary:                       parsed.Summary,
-		Warnings:                      parsed.Warnings,
-		Model:                         pgtype.Text{String: parsed.Model, Valid: parsed.Model != ""},
+	// Complete + issue projection commit together; the result-summary comment
+	// is best-effort after the commit (see SubmitBatchResult).
+	var completed db.AgentFixP4Assessment
+	err = s.runInTx(ctx, func(q *db.Queries) error {
+		var completeErr error
+		completed, completeErr = q.CompleteP4AssessmentFromTask(ctx, db.CompleteP4AssessmentFromTaskParams{
+			WorkspaceID:                   workspaceID,
+			AssessmentTaskID:              assessmentTaskID,
+			DeliveryAttributionPrediction: parsed.DeliveryAttributionPrediction,
+			QualityPrediction:             parsed.QualityPrediction,
+			PredictionReasons:             parsed.PredictionReasons,
+			Confidence:                    confidence,
+			Workstream:                    parsed.Workstream,
+			SwarmReviews:                  parsed.SwarmReviews,
+			AiShelvedCls:                  parsed.AIShelvedCLs,
+			SwarmChangeCls:                parsed.SwarmChangeCLs,
+			SwarmCommittedCls:             parsed.SwarmCommittedCLs,
+			ExternalCommittedCls:          parsed.ExternalCommittedCLs,
+			Evidence:                      parsed.Evidence,
+			Summary:                       parsed.Summary,
+			Warnings:                      parsed.Warnings,
+			Model:                         pgtype.Text{String: parsed.Model, Valid: parsed.Model != ""},
+		})
+		if completeErr != nil {
+			return completeErr
+		}
+		return projectAgentWorkIssueStatus(ctx, q, workspaceID, completed.AssessmentIssueID, "done")
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	s.postAgentWorkComment(ctx, workspaceID, assessmentTaskID, completed.AssessmentIssueID, p4AssessmentResultComment(parsed))
+	return nil
 }
 
 func (s *P4AssessmentService) taskWorkspaceID(task db.AgentTaskQueue) pgtype.UUID {

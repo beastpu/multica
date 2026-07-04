@@ -1971,9 +1971,12 @@ type fakeP4AssessmentTrigger struct {
 	err   error
 }
 
-func (f *fakeP4AssessmentTrigger) Trigger(_ context.Context, _ pgtype.UUID, bindingID pgtype.UUID, force bool) (P4AssessmentTriggerResult, error) {
+func (f *fakeP4AssessmentTrigger) Trigger(_ context.Context, _ pgtype.UUID, bindingID pgtype.UUID, force bool, actor P4AssessmentActor) (P4AssessmentTriggerResult, error) {
 	if force {
 		return P4AssessmentTriggerResult{}, errors.New("sync trigger must use force=false")
+	}
+	if actor.Trigger != P4AssessmentTriggerScan {
+		return P4AssessmentTriggerResult{}, errors.New("sync trigger must be a scan actor")
 	}
 	f.calls = append(f.calls, bindingID)
 	return P4AssessmentTriggerResult{}, f.err

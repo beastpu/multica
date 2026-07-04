@@ -133,7 +133,7 @@ type FeishuProjectTaskService interface {
 }
 
 type FeishuProjectP4AssessmentTrigger interface {
-	Trigger(ctx context.Context, workspaceID, bindingID pgtype.UUID, force bool) (P4AssessmentTriggerResult, error)
+	Trigger(ctx context.Context, workspaceID, bindingID pgtype.UUID, force bool, actor P4AssessmentActor) (P4AssessmentTriggerResult, error)
 	BackfillDoneBindings(ctx context.Context, workspaceID, integrationID pgtype.UUID, limit int32) (P4AssessmentBackfillResult, error)
 }
 
@@ -968,7 +968,14 @@ func (s *FeishuProjectSyncService) triggerP4AssessmentForDoneBinding(ctx context
 	if !ok || mappedStatus != "done" {
 		return
 	}
-	if _, err := s.P4Assessment.Trigger(ctx, cfg.WorkspaceID, binding.ID, false); err != nil {
+	// Scan-path projection issues are created by the integration's creator —
+	// the same identity Feishu sync stamps on synced issues (there is no human
+	// in the loop here, and issue.creator_type has no 'system' value).
+	if _, err := s.P4Assessment.Trigger(ctx, cfg.WorkspaceID, binding.ID, false, P4AssessmentActor{
+		Trigger:     P4AssessmentTriggerScan,
+		CreatorType: "member",
+		CreatorID:   cfg.CreatedByID,
+	}); err != nil {
 		slog.Warn("Feishu Project sync P4 assessment trigger failed",
 			"workspace_id", UUIDString(cfg.WorkspaceID),
 			"binding_id", UUIDString(binding.ID),
