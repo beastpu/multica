@@ -156,6 +156,10 @@
       "confidence": "신뢰도 {{value}}",
       "no_evidence": "CL 제출 기록 없음"
     },
+    "assessment_obs": {
+      "lease_remaining": "{{minutes}}분 남음",
+      "attempts": "{{count}}회 시도"
+    },
     "assessment_action": {
       "run": "평가 대기열에 추가",
       "rerun": "평가 재대기",

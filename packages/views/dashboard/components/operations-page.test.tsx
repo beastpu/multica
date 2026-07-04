@@ -213,6 +213,8 @@ const FIXES = vi.hoisted(() => [
       delivery_attribution_prediction: "unknown",
       quality_prediction: "unknown",
       warnings: ["parser_error: expected a JSON object or one fenced json block"],
+      attempt_count: 3,
+      last_error: "task output parse failed: no fenced json block",
     },
   },
   {
@@ -693,6 +695,18 @@ describe("OperationsPage", () => {
         force: true,
       });
     });
+  });
+
+  it("surfaces queue observability (attempts + last error) on failed assessments", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
+
+    // t-5 failed after 3 leases with a recorded reason — the detail line under
+    // the status badge answers "why is this stuck" without psql.
+    expect(
+      screen.getByText(/3 attempts · task output parse failed/),
+    ).toBeTruthy();
   });
 
   it("reruns a failed assessment with binding_id and force=true", async () => {
