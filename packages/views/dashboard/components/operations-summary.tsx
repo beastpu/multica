@@ -4,14 +4,14 @@ import { MoveDownRight, MoveUpRight } from "lucide-react";
 import { useT } from "../../i18n";
 import type { OperationsKpis, OperationsRate } from "../operations-metrics";
 
-// Headline KPI band for the operations page. Grouped by denominator so unlike
-// bases don't masquerade as comparable cards:
-//   - a delivery-composition bar over 外部完成 (MECE by AI role) whose read-off
-//     is participation + contribution (same base, nested);
-//   - two small ratio cards — the assisted pass rate (judged plans with a
-//     committed CL, human-shipped; the always-100% direct-delivery count is a
-//     footer datum on it) and assessment coverage (over AI participation);
-//   - a muted data-health footnote, then the nested delivery funnel.
+// Headline KPI band for the operations page: three cards forming one strict
+// nesting chain — contribution (AI produced a plan / 外部完成) → coverage
+// (judged / AI produced) → pass rate (correct / judged). Each card's
+// denominator IS the previous card's numerator, so the numerators read as a
+// single shrinking pipeline (e.g. 149 → 80 → 50) and can never appear to
+// contradict each other across cards. Delivery attribution (direct/assisted)
+// lives in the analysis tab's attribution distribution; the funnel below
+// carries absolute counts and stage drop-offs.
 // `previous` carries the KPIs of the equal-length window before the selected
 // one; deltas are null (render nothing) when a window's denominator is 0 or the
 // sample is too small to be anything but noise.
@@ -147,96 +147,26 @@ export function OperationsSummary({
   const SMALL_SAMPLE = 30;
   const stableDelta = (cur: OperationsRate, prev: OperationsRate) =>
     cur.denominator < SMALL_SAMPLE ? null : deltaPoints(cur, prev);
-  const assistedDelta = stableDelta(
-    kpis.aiAssistedPassRate,
-    previous.aiAssistedPassRate,
+  const contributionDelta = stableDelta(
+    kpis.contributionRate,
+    previous.contributionRate,
   );
   const coverageDelta = stableDelta(kpis.coverageRate, previous.coverageRate);
-  // MECE composition of 外部完成 by AI role — one segment per ticket. Colour
-  // reads hottest→coldest by AI involvement (direct > assisted > unconverted >
-  // none). participation = first three segments, contribution = first two.
-  const comp = kpis.composition;
-  const compBase = Math.max(1, funnel.externalDone);
-  const segments = [
-    {
-      key: "direct",
-      label: t(($) => $.operations.summary.comp_direct),
-      count: comp.directDelivered,
-      cls: "bg-primary",
-    },
-    {
-      key: "assisted",
-      label: t(($) => $.operations.summary.comp_assisted),
-      count: comp.assisted,
-      cls: "bg-primary/55",
-    },
-    {
-      key: "unconverted",
-      label: t(($) => $.operations.summary.comp_unconverted),
-      count: comp.unconverted,
-      cls: "bg-muted-foreground/40",
-    },
-    {
-      key: "not_participated",
-      label: t(($) => $.operations.summary.comp_not_participated),
-      count: comp.notParticipated,
-      cls: "bg-muted",
-    },
-  ];
+  const passDelta = stableDelta(kpis.passRate, previous.passRate);
   return (
     <section className="grid gap-3">
-      <div className="grid gap-3 rounded-lg border bg-card p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-xs font-medium text-muted-foreground">
-            {t(($) => $.operations.summary.composition_title)}
-          </h2>
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {t(($) => $.operations.summary.comp_rates, {
-              participation: formatPercent(kpis.participationRate),
-              contribution: formatPercent(kpis.contributionRate),
-            })}
-          </span>
-        </div>
-        <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
-          {segments.map((s) =>
-            s.count > 0 ? (
-              <div
-                key={s.key}
-                className={s.cls}
-                style={{ width: `${(s.count / compBase) * 100}%` }}
-                title={`${s.label} ${s.count}`}
-              />
-            ) : null,
-          )}
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          {segments.map((s) => (
-            <span key={s.key} className="inline-flex items-center gap-1.5">
-              <span className={`h-2 w-2 rounded-full ${s.cls}`} />
-              {s.label}
-              <span className="tabular-nums text-foreground/80">{s.count}</span>
-            </span>
-          ))}
-        </div>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-3">
         <RateCard
-          label={t(($) => $.operations.summary.assisted_pass_rate)}
-          hint={t(($) => $.operations.summary.assisted_pass_rate_hint, {
-            num: kpis.aiAssistedPassRate.numerator,
-            den: kpis.aiAssistedPassRate.denominator,
+          label={t(($) => $.operations.summary.contribution_rate)}
+          hint={t(($) => $.operations.summary.contribution_rate_hint, {
+            num: kpis.contributionRate.numerator,
+            den: kpis.contributionRate.denominator,
           })}
-          rate={kpis.aiAssistedPassRate}
-          delta={assistedDelta}
+          rate={kpis.contributionRate}
+          delta={contributionDelta}
           deltaLabel={deltaLabel}
-          deltaText={deltaText(assistedDelta)}
+          deltaText={deltaText(contributionDelta)}
           upIsGood
-          // Direct deliveries (AI submitted the final CL itself) pass by
-          // construction — a plan compared to its own shipped CL — so they get
-          // a count here instead of a whole always-100% card.
-          footer={t(($) => $.operations.summary.independent_submissions, {
-            count: kpis.aiDeliveredPassRate.denominator,
-          })}
         />
         <RateCard
           label={t(($) => $.operations.summary.coverage_rate)}
@@ -248,6 +178,18 @@ export function OperationsSummary({
           delta={coverageDelta}
           deltaLabel={deltaLabel}
           deltaText={deltaText(coverageDelta)}
+          upIsGood
+        />
+        <RateCard
+          label={t(($) => $.operations.summary.pass_rate)}
+          hint={t(($) => $.operations.summary.pass_rate_hint, {
+            num: kpis.passRate.numerator,
+            den: kpis.passRate.denominator,
+          })}
+          rate={kpis.passRate}
+          delta={passDelta}
+          deltaLabel={deltaLabel}
+          deltaText={deltaText(passDelta)}
           upIsGood
         />
       </div>

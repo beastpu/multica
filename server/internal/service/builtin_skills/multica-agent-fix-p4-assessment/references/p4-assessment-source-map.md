@@ -160,13 +160,22 @@ for the behavior contracts the skill teaches.
 ## Dashboard metric contract
 
 - `packages/views/dashboard/operations-metrics.ts` computes the operations
-  dashboard KPIs from assessment rows. `isVerifiableOutput` (the AI fix-rate
-  denominator) requires a completed assessment, AI output evidence
-  (`ai_shelved_cls` or `swarm_reviews`), and a committed CL
-  (`swarm_committed_cls` or `external_committed_cls`) — warnings do not gate
-  the denominator. The pass rate is split by
-  `delivery_attribution_prediction`: `ai_delivered` and `ai_assisted` rows
-  feed separate KPIs, which is why attribution must not be guessed.
+  dashboard KPIs from assessment rows. `isVerifiableOutput` (the quality-pipeline
+  gate: judged / pass rate / coverage) requires a completed assessment and AI
+  output evidence (`ai_shelved_cls` or `swarm_reviews`) — a committed CL is NOT
+  required, because quality judges the plan's code, not whether it shipped. The
+  headline is a strict nesting chain — contribution (AI produced a plan /
+  外部完成) → coverage (judged / produced) → pass rate (`likely_correct` /
+  judged). Delivery attribution (`ai_delivered` / `ai_assisted` from
+  `delivery_attribution_prediction`) drives the analysis tab's attribution
+  distribution and the composition partition, which is why attribution must not
+  be guessed.
+- Delivery-side metrics and the missing-CL process gap read the structured
+  `*_committed_cls` arrays, not `summary` / `prediction_reasons`. This is why
+  the SKILL requires a verified submitted CL — including one confirmed only via
+  read-only P4 describe/filelog — to be written into `swarm_committed_cls` /
+  `external_committed_cls`; a submitted CL narrated only in prose is invisible
+  to these metrics and undercounts delivery.
 - `blockedWarningFamily` classifies access-blocked warnings by matching
   `unavailable|not_found|unreachable|unauthorized` and grouping into
   auth (any `unauthorized`), identification (`not_found` + cl/shelve/branch),
