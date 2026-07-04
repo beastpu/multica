@@ -1,0 +1,50 @@
+id: source.github.pr.4209
+repo: multica-ai/multica
+pr_number: 4209
+url: https://github.com/multica-ai/multica/pull/4209
+state: merged
+title: "Prevent daemon task CLI fallback to user tokens"
+author: beastpu
+base_ref: main
+head_ref: codex/agent-token-fallback-guard
+merged_at: 2026-07-02T07:08:07Z
+closed_at: 2026-07-02T07:08:07Z
+merge_commit: 0c4c3ff038715d3dff7a4a29932a7c08d46e81cc
+linked_issues:
+  - "#4204"
+  - https://github.com/multica-ai/multica/issues/4204
+changed_files:
+  - path: server/cmd/multica/cmd_agent.go
+    additions: 65
+    deletions: 10
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_agent_test.go
+    additions: 202
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_auth.go
+    additions: 5
+    deletions: 10
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_auth_test.go
+    additions: 10
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/context.go
+    additions: 61
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/execenv/execenv_test.go
+    additions: 20
+    deletions: 2
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/multica/cmd_agent_test.go
+  - path: server/cmd/multica/cmd_auth_test.go
+  - path: server/internal/daemon/execenv/execenv_test.go
+classification:
+  candidate: true
+  reasons:
+    - "merged"
+    - "linked issue detected"
+    - "test file changed"

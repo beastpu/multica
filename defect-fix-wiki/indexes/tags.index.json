@@ -6,6 +6,7 @@
     "pattern.agent.codex_app_server_exit_fail_fast",
     "pattern.agent.codex_permission_auto_grant_observability",
     "pattern.agent.sub_issue_stages_runtime_brief",
+    "pattern.cli.daemon_task_token_fallback_guard",
     "pattern.comments.resolve_aware_agent_reads"
   ],
   "agent-trigger": [
@@ -15,6 +16,7 @@
     "pattern.editor.mention_selection_identity"
   ],
   "auth": [
+    "pattern.cli.daemon_task_token_fallback_guard",
     "pattern.cli.remote_setup_callback_host",
     "pattern.skills.private_github_raw_download_auth"
   ],
@@ -32,6 +34,7 @@
     "pattern.editor.inflight_upload_external_sync_guard"
   ],
   "cli": [
+    "pattern.cli.daemon_task_token_fallback_guard",
     "pattern.cli.remote_setup_callback_host"
   ],
   "codex": [
@@ -48,6 +51,7 @@
     "pattern.runtimes.custom_runtime_args_registration_errors"
   ],
   "daemon": [
+    "pattern.cli.daemon_task_token_fallback_guard",
     "pattern.daemon.autopilot_workdir_gc_terminal",
     "pattern.daemon.claim_slow_log_observability",
     "pattern.runtimes.custom_runtime_args_registration_errors",
@@ -168,6 +172,9 @@
     "pattern.agent.chat_output_context_boundary",
     "pattern.agent.sub_issue_stages_runtime_brief"
   ],
+  "security": [
+    "pattern.cli.daemon_task_token_fallback_guard"
+  ],
   "self-host": [
     "pattern.workspace.deployment_host_url_prefix"
   ],
@@ -178,6 +185,7 @@
     "pattern.agent.codex_app_server_exit_fail_fast",
     "pattern.agent.codex_permission_auto_grant_observability",
     "pattern.agent.sub_issue_stages_runtime_brief",
+    "pattern.cli.daemon_task_token_fallback_guard",
     "pattern.cli.remote_setup_callback_host",
     "pattern.comments.resolve_aware_agent_reads",
     "pattern.daemon.autopilot_workdir_gc_terminal",
