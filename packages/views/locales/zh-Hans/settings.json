@@ -533,5 +533,31 @@
     "toast_save_failed": "保存连接失败",
     "toast_test_ok": "连接成功",
     "toast_test_failed": "无法连接 Swarm 或认证失败"
+  },
+  "assessment": {
+    "section_title": "AI 评估",
+    "title": "P4 评估智能体",
+    "description": "指定的智能体负责执行本工作区的 P4 缺陷评估。未指定前不会发起新的评估。",
+    "runtime_hint": "评估需要访问内网 P4/Swarm，智能体必须绑定在线的本地（守护进程）运行时。",
+    "agent_label": "评估智能体",
+    "select_placeholder": "选择智能体",
+    "not_configured": "未配置",
+    "agent_not_local": "需要本地运行时",
+    "no_agents": "当前工作区还没有智能体。",
+    "save": "保存",
+    "saving": "保存中...",
+    "clear": "清除",
+    "clearing": "清除中...",
+    "saved": "已保存评估智能体",
+    "cleared": "已清除评估智能体",
+    "save_failed": "保存评估智能体失败",
+    "save_failed_reason": "保存失败：{{reason}}",
+    "clear_failed": "清除评估智能体失败",
+    "create_agent": "创建评估智能体",
+    "error_agent_not_in_workspace": "所选智能体不属于当前工作区。",
+    "error_agent_archived": "所选智能体已归档。",
+    "error_agent_no_runtime": "所选智能体未绑定运行时。",
+    "error_agent_runtime_not_found": "未找到所选智能体的运行时。",
+    "error_agent_runtime_not_local": "所选智能体必须运行在本地（守护进程）运行时上。"
   }
 }

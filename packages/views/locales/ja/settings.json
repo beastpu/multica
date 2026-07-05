@@ -533,5 +533,31 @@
     "toast_save_failed": "接続を保存できませんでした",
     "toast_test_ok": "接続に成功しました",
     "toast_test_failed": "Swarm に到達できないか認証に失敗しました"
+  },
+  "assessment": {
+    "section_title": "AI 評価",
+    "title": "P4 評価エージェント",
+    "description": "指定されたエージェントがこのワークスペースの P4 不具合評価を実行します。エージェントを指定するまで新しい評価は開始されません。",
+    "runtime_hint": "評価には社内ネットワークの P4/Swarm へのアクセスが必要なため、エージェントはオンラインのローカル（デーモン）ランタイムに紐付いている必要があります。",
+    "agent_label": "評価エージェント",
+    "select_placeholder": "エージェントを選択",
+    "not_configured": "未設定",
+    "agent_not_local": "ローカルランタイムが必要",
+    "no_agents": "このワークスペースにはまだエージェントがありません。",
+    "save": "保存",
+    "saving": "保存中...",
+    "clear": "クリア",
+    "clearing": "クリア中...",
+    "saved": "評価エージェントを保存しました",
+    "cleared": "評価エージェントをクリアしました",
+    "save_failed": "評価エージェントの保存に失敗しました",
+    "save_failed_reason": "保存に失敗しました：{{reason}}",
+    "clear_failed": "評価エージェントのクリアに失敗しました",
+    "create_agent": "評価エージェントを作成",
+    "error_agent_not_in_workspace": "選択したエージェントはこのワークスペースに属していません。",
+    "error_agent_archived": "選択したエージェントはアーカイブされています。",
+    "error_agent_no_runtime": "選択したエージェントにはランタイムが紐付いていません。",
+    "error_agent_runtime_not_found": "選択したエージェントのランタイムが見つかりません。",
+    "error_agent_runtime_not_local": "選択したエージェントはローカル（デーモン）ランタイムで実行する必要があります。"
   }
 }

@@ -533,5 +533,31 @@
     "toast_save_failed": "Could not save the connection",
     "toast_test_ok": "Connection succeeded",
     "toast_test_failed": "Could not reach Swarm or authentication failed"
+  },
+  "assessment": {
+    "section_title": "AI Assessment",
+    "title": "P4 assessment agent",
+    "description": "The designated agent runs P4 defect assessments for this workspace. New assessment runs stay disabled until an agent is designated.",
+    "runtime_hint": "Assessments need internal P4/Swarm network access, so the agent must be bound to an online local (daemon) runtime.",
+    "agent_label": "Assessment agent",
+    "select_placeholder": "Select an agent",
+    "not_configured": "Not configured",
+    "agent_not_local": "Requires a local runtime",
+    "no_agents": "No agents in this workspace yet.",
+    "save": "Save",
+    "saving": "Saving...",
+    "clear": "Clear",
+    "clearing": "Clearing...",
+    "saved": "Assessment agent saved",
+    "cleared": "Assessment agent cleared",
+    "save_failed": "Failed to save the assessment agent",
+    "save_failed_reason": "Failed to save: {{reason}}",
+    "clear_failed": "Failed to clear the assessment agent",
+    "create_agent": "Create assessment agent",
+    "error_agent_not_in_workspace": "The selected agent does not belong to this workspace.",
+    "error_agent_archived": "The selected agent is archived.",
+    "error_agent_no_runtime": "The selected agent has no runtime bound.",
+    "error_agent_runtime_not_found": "The selected agent's runtime was not found.",
+    "error_agent_runtime_not_local": "The selected agent must run on a local (daemon) runtime."
   }
 }
