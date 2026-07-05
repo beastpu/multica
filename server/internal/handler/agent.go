@@ -1587,8 +1587,8 @@ type AgentFixResponse struct {
 	// the match (so the matched keyword is always visible for the frontend to
 	// highlight); otherwise it's the leading excerpt. Empty when the agent left
 	// no comment.
-	LastComment           string                        `json:"last_comment,omitempty"`
-	LastCommentAuthorType string                        `json:"last_comment_author_type,omitempty"` // always "agent" (or "" when none)
+	LastComment           string `json:"last_comment,omitempty"`
+	LastCommentAuthorType string `json:"last_comment_author_type,omitempty"` // always "agent" (or "" when none)
 	// AgentCommentCount is how many comments the agent has left on the issue
 	// in total — the dashboard's "the agent commented a plan" signal.
 	// LastComment above carries only the newest one.
@@ -1597,21 +1597,21 @@ type AgentFixResponse struct {
 	// (queued/running/completed/failed/timeout + the taskfailure taxonomy
 	// code), so the dashboard can explain a no-output ticket by its structured
 	// failure instead of guessing. Empty for binding-only rows.
-	TaskStatus        string `json:"task_status,omitempty"`
-	TaskFailureReason string `json:"task_failure_reason,omitempty"`
-	StartedAt             *string                       `json:"started_at"`
-	CompletedAt           *string                       `json:"completed_at"`
-	CreatedAt             string                        `json:"created_at"`
+	TaskStatus        string  `json:"task_status,omitempty"`
+	TaskFailureReason string  `json:"task_failure_reason,omitempty"`
+	StartedAt         *string `json:"started_at"`
+	CompletedAt       *string `json:"completed_at"`
+	CreatedAt         string  `json:"created_at"`
 	// ActivityAt is the instant the feed's trailing window filtered on: the
 	// external item's last update when bound, else the latest run activity.
 	// The dashboard splits its current/previous periods and buckets the
 	// weekly trend on this so client-side windowing matches the SQL window.
-	ActivityAt string                        `json:"activity_at,omitempty"`
-	External   *AgentFixExternalResponse     `json:"external,omitempty"`
-	P4Assessment          *AgentFixP4AssessmentResponse `json:"p4_assessment,omitempty"`
-	HumanReview           *AgentFixHumanReviewResponse  `json:"human_review,omitempty"`
-	DisplayResultStatus   string                        `json:"display_result_status,omitempty"`
-	AIJudgementEval       string                        `json:"ai_judgement_eval,omitempty"`
+	ActivityAt          string                        `json:"activity_at,omitempty"`
+	External            *AgentFixExternalResponse     `json:"external,omitempty"`
+	P4Assessment        *AgentFixP4AssessmentResponse `json:"p4_assessment,omitempty"`
+	HumanReview         *AgentFixHumanReviewResponse  `json:"human_review,omitempty"`
+	DisplayResultStatus string                        `json:"display_result_status,omitempty"`
+	AIJudgementEval     string                        `json:"ai_judgement_eval,omitempty"`
 }
 
 type AgentFixExternalResponse struct {
@@ -2140,7 +2140,13 @@ func (h *Handler) TriggerAgentFixP4Assessment(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	result, err := h.P4AssessmentService.Trigger(r.Context(), parseUUID(workspaceID), bindingID, req.Force)
+	// Manual trigger: the operator who clicked becomes the projection issue's
+	// creator. requestUserID is server-stamped by auth middleware, so this is
+	// a trusted UUID round-trip.
+	result, err := h.P4AssessmentService.Trigger(r.Context(), parseUUID(workspaceID), bindingID, req.Force, service.P4AssessmentActor{
+		CreatorType: "member",
+		CreatorID:   parseUUID(requestUserID(r)),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "P4 assessment target not found")

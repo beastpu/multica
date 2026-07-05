@@ -2535,6 +2535,15 @@ func (h *Handler) isAnalysisTaskActor(r *http.Request, userID, workspaceID strin
 	return task.TaskCategory == "analysis"
 }
 
+// isAgentWorkIssue reports whether the issue is a derived agent_work
+// projection issue — its metadata carries the server-reserved `agent_work`
+// key (written only by server-side projection code; the user metadata API
+// rejects the key). Used for the precise comment carve-out in CreateComment.
+func isAgentWorkIssue(issue db.Issue) bool {
+	_, ok := parseIssueMetadata(issue.Metadata)[service.AgentWorkMetadataKey]
+	return ok
+}
+
 // rejectAnalysisTaskWrite writes a 403 and returns true when the request is an
 // analysis task attempting a write. `action` completes the sentence "analysis
 // tasks are read-only and cannot <action>".

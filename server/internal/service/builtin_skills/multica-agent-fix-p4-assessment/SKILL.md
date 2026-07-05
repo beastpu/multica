@@ -39,11 +39,15 @@ echo "$status"; cat /tmp/pending.json
 The response is `{"items": [...]}` where each item is:
 
 ```json
-{ "ref": "<opaque>", "issue": {"title": "..."}, "lease_expires_at": "...", "evidence": {...} }
+{ "ref": "<opaque>", "assessment_issue_id": "<uuid, optional>", "issue": {"title": "..."}, "lease_expires_at": "...", "evidence": {...} }
 ```
 
 - `ref` is an OPAQUE handle. Echo it back on submit exactly as given — never
   construct, guess, or transform a ref, and never treat it as a binding id.
+- `assessment_issue_id`, when present, is this run's assessment projection
+  issue — a derived Multica issue that exists to hold your process narration.
+  See "Narrate on the projection issue" below. It may be absent on older
+  rows; then simply skip narration for that item.
 - `evidence` is inlined per item — no follow-up evidence call is needed.
 - Each item is leased to your task until `lease_expires_at` (~30 minutes).
   Submit before then or the item silently returns to the pending pool.
@@ -51,6 +55,37 @@ The response is `{"items": [...]}` where each item is:
   assessed and stop.
 - A `403` means this workspace is not allowlisted for P4 assessment — stop and
   report; do not retry.
+
+### Narrate on the projection issue
+
+Each pulled item's `assessment_issue_id` is YOUR issue for that run: you may
+post plain comments there to record the evidence chain and key judgement steps
+(which CLs you probed, what `p4 describe` showed, why you chose a prediction).
+This is optional but recommended — it is what operators read when they ask
+"what did the assessment actually check".
+
+```bash
+curl -sS -X POST \
+  "${MULTICA_SERVER_URL%/}/api/issues/<assessment_issue_id>/comments" \
+  -H "Authorization: Bearer $MULTICA_TOKEN" \
+  -H "X-Workspace-ID: $MULTICA_WORKSPACE_ID" \
+  -H "X-Agent-ID: $MULTICA_AGENT_ID" \
+  -H "X-Task-ID: $MULTICA_TASK_ID" \
+  -H "Content-Type: application/json" \
+  --data-binary '{"content": "verified shelved CL 12345 via p4 describe -S; diff matches submitted CL 12399"}'
+```
+
+Hard boundaries, server-enforced:
+
+- Comment ONLY on the `assessment_issue_id` issue. Never comment on the real
+  defect issue (the `issue` in the evidence) — the server rejects it with 403.
+- Do NOT change the projection issue's status, fields, or assignee — its
+  status is projected by the server from the assessment queue; writes are
+  rejected with 403.
+- Narration never replaces the result submit. The POST to
+  `/api/operations/assessments/result` is the only way the assessment is
+  recorded; the server also writes a structured result-summary comment on the
+  projection issue after a successful submit.
 
 For each item: classify the evidence (sections below), write the result JSON
 to a file, then submit:
@@ -176,7 +211,10 @@ output `unknown` predictions with warnings such as `p4_lookup_unavailable` or
 Do not mutate any system during assessment:
 
 - Do not write Multica issue comments, metadata, assignments, labels, or other
-  issue fields.
+  issue fields. The ONLY exception is posting plain comments on the pulled
+  item's own `assessment_issue_id` projection issue (see "Narrate on the
+  projection issue"); everything else on that issue — status, fields,
+  assignee, metadata — is still server-owned and rejected.
 - Do not change issue status.
 - Do not write `agent_fix_review`; only the human review API owns that table.
 - Do not mutate Feishu or Meego.

@@ -4043,6 +4043,27 @@ func (q *Queries) RestoreAgent(ctx context.Context, id pgtype.UUID) (Agent, erro
 	return i, err
 }
 
+const setP4AssessmentIssue = `-- name: SetP4AssessmentIssue :exec
+UPDATE agent_fix_p4_assessment
+SET assessment_issue_id = $3,
+    updated_at = now()
+WHERE workspace_id = $1 AND feishu_binding_id = $2
+`
+
+type SetP4AssessmentIssueParams struct {
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	FeishuBindingID   pgtype.UUID `json:"feishu_binding_id"`
+	AssessmentIssueID pgtype.UUID `json:"assessment_issue_id"`
+}
+
+// Points the queue row at the projection issue for the CURRENT run. Force
+// re-runs create a new issue and repoint; the previous issue keeps its
+// terminal state (the issue sequence is the run history).
+func (q *Queries) SetP4AssessmentIssue(ctx context.Context, arg SetP4AssessmentIssueParams) error {
+	_, err := q.db.Exec(ctx, setP4AssessmentIssue, arg.WorkspaceID, arg.FeishuBindingID, arg.AssessmentIssueID)
+	return err
+}
+
 const startAgentTask = `-- name: StartAgentTask :one
 UPDATE agent_task_queue
 SET status = 'running',

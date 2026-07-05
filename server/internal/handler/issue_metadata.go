@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -32,6 +33,24 @@ const (
 )
 
 var issueMetadataKeyRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$`)
+
+// reservedIssueMetadataKeys are server-owned: they mark derived agent-work
+// projection issues and are stamped only by server-side projection code
+// (service.CreateAgentWorkIssue). User set/delete must not spoof or strip
+// them — every guard and isolation rule keys on this marker. Note that this
+// applies only to the mutation endpoints; filtering (parseMetadataFilterParam)
+// deliberately still accepts the key for reads.
+var reservedIssueMetadataKeys = map[string]bool{
+	service.AgentWorkMetadataKey: true,
+}
+
+func rejectReservedIssueMetadataKey(w http.ResponseWriter, key string) bool {
+	if !reservedIssueMetadataKeys[key] {
+		return false
+	}
+	writeError(w, http.StatusBadRequest, "metadata key "+key+" is reserved and managed by the server")
+	return true
+}
 
 // SetIssueMetadataKeyRequest carries the JSON value to write under the key
 // named in the URL. Value is a RawMessage so we can preserve numeric vs.
@@ -143,6 +162,9 @@ func (h *Handler) SetIssueMetadataKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if rejectReservedIssueMetadataKey(w, key) {
+		return
+	}
 
 	var req SetIssueMetadataKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -203,6 +225,9 @@ func (h *Handler) DeleteIssueMetadataKey(w http.ResponseWriter, r *http.Request)
 	key := chi.URLParam(r, "key")
 	if err := validateIssueMetadataKey(key); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if rejectReservedIssueMetadataKey(w, key) {
 		return
 	}
 
