@@ -167,7 +167,13 @@ for the behavior contracts the skill teaches.
   `in_progress` (`StartP4AssessmentFromTask`), terminal task failure → row
   failed + issue `cancelled` (issue.status has no `failed` value) + server
   failure comment, result submit → row completed + issue `done` + server
-  result-summary comment (`p4AssessmentResultComment`). Server comments are
+  result-summary comment (`p4AssessmentResultComment`). The result comment
+  renders the two prediction enums with Chinese labels plus the raw code
+  (e.g. `人工提交（human_delivered）`), mirroring `operations.enums` in
+  `packages/views/locales/zh-Hans/usage.json`; unmapped codes fall back to
+  the raw value, and `warnings` stay untranslated machine codes — the basis
+  for the skill's language rule that `summary` / `prediction_reasons` are
+  written in Chinese with identifiers verbatim. Server comments are
   authored as the task's agent and are best-effort (never roll back a
   transition). Rows with NULL `assessment_issue_id` skip projection. No
   reverse path exists — nothing on the issue drives the row.

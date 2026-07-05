@@ -256,14 +256,46 @@ func (s *P4AssessmentService) postAgentWorkComment(ctx context.Context, workspac
 	}
 }
 
+// Chinese display labels for the assessment result enums, mirroring
+// operations.enums in packages/views/locales/zh-Hans/usage.json. The comment
+// keeps the machine code next to the label (人工提交（human_delivered）) so
+// operators can grep queue rows / metrics by the raw value.
+var p4DeliveryPredictionZh = map[string]string{
+	"ai_delivered":    "AI 提交",
+	"ai_assisted":     "AI 辅助",
+	"human_delivered": "人工提交",
+	"conflict":        "归因冲突",
+	"unattributed":    "无法归因",
+	"unknown":         "证据不足",
+}
+
+var p4QualityPredictionZh = map[string]string{
+	"likely_correct":       "通过",
+	"likely_needs_changes": "待完善",
+	"likely_wrong":         "不通过",
+	"unknown":              "无法判断",
+}
+
+// p4EnumZh renders an enum value for the result comment: known codes get
+// their Chinese label plus the raw code; unknown codes (enum drift from a
+// newer contract) fall back to the raw code unchanged instead of breaking.
+func p4EnumZh(labels map[string]string, code string) string {
+	if zh, ok := labels[code]; ok {
+		return fmt.Sprintf("%s（%s）", zh, code)
+	}
+	return code
+}
+
 // p4AssessmentResultComment renders the machine-written result summary from
 // the already-validated result payload — every projection issue gets at least
 // one structured record of the outcome even if the agent never narrates.
+// Warnings stay as raw machine codes on purpose: they are a metrics contract,
+// not display copy.
 func p4AssessmentResultComment(parsed p4AssessmentOutput) string {
 	var b strings.Builder
 	b.WriteString("**P4 评估结果**\n\n")
-	fmt.Fprintf(&b, "- 交付归因：`%s`\n", parsed.DeliveryAttributionPrediction)
-	fmt.Fprintf(&b, "- 质量判断：`%s`\n", parsed.QualityPrediction)
+	fmt.Fprintf(&b, "- 交付归因：%s\n", p4EnumZh(p4DeliveryPredictionZh, parsed.DeliveryAttributionPrediction))
+	fmt.Fprintf(&b, "- 质量判断：%s\n", p4EnumZh(p4QualityPredictionZh, parsed.QualityPrediction))
 	if parsed.Confidence != nil {
 		fmt.Fprintf(&b, "- 置信度：%.2f\n", *parsed.Confidence)
 	}

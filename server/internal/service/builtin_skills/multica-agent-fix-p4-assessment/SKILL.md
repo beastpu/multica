@@ -55,7 +55,9 @@ Your assigned assessment issue exists to hold your process narration: you may
 post plain comments there to record the evidence chain and key judgement steps
 (which CLs you probed, what `p4 describe` showed, why you chose a prediction).
 This is optional but recommended — it is what operators read when they ask
-"what did the assessment actually check".
+"what did the assessment actually check". Write narration comments in Chinese
+(the operators are a Chinese-speaking team); keep technical identifiers — CL
+numbers, commands, field names, enum values — verbatim.
 
 ```bash
 curl -sS -X POST \
@@ -386,6 +388,13 @@ prose, no envelope):
 CL arrays must contain integers only. `swarm_reviews` must be an array,
 `evidence` must be an object, and `warnings` must be an array.
 Do not include fields outside this schema.
+
+Language rule: write `summary` and every entry of `prediction_reasons` in
+Chinese — the operators reading the result comment are a Chinese-speaking
+team. Keep technical identifiers verbatim inside the Chinese text: CL numbers,
+commands, field names, and enum values (`human_delivered`, `likely_wrong`, …)
+stay as-is. `warnings` entries are machine codes consumed by metrics — do NOT
+translate them.
 
 On success the endpoint returns `{"status":"completed"}` and the server
 projects your assessment issue to done and writes the result-summary comment.
