@@ -93,6 +93,69 @@ func TestAnalysisTaskCannotComment(t *testing.T) {
 	}
 }
 
+// The narration carve-out is scoped to the task's OWN issue: an analysis task
+// holding one projection issue must not be able to comment on another run's
+// projection issue (plan C-1 guard tightening).
+func TestAnalysisTaskCannotCommentOnOtherAgentWorkIssue(t *testing.T) {
+	ownIssueID := createTestIssue(t, "own projection issue", "todo", "low")
+	t.Cleanup(func() { deleteTestIssue(t, ownIssueID) })
+	markIssueAsAgentWork(t, ownIssueID)
+	otherIssueID := createTestIssue(t, "someone else's projection issue", "todo", "low")
+	t.Cleanup(func() { deleteTestIssue(t, otherIssueID) })
+	markIssueAsAgentWork(t, otherIssueID)
+
+	agentID := createHandlerTestAgent(t, "Cross Projection Guard Agent", nil)
+	taskID := createAnalysisTaskForIssue(t, agentID, ownIssueID)
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/issues/"+otherIssueID+"/comments", map[string]any{
+		"content": "narration on the wrong issue",
+	})
+	req = withURLParam(req, "id", otherIssueID)
+	req.Header.Set("X-Agent-ID", agentID)
+	req.Header.Set("X-Task-ID", taskID)
+
+	testHandler.CreateComment(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for comment on another agent_work issue, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// Transitional guard anchor (plan C-1): a task hanging on an agent_work issue
+// is a derived-work actor even when task_category is not 'analysis' (the
+// column is retired in C-2). Writes are rejected; own-issue comments pass.
+func TestAgentWorkIssueTaskIsGuardedWithoutAnalysisCategory(t *testing.T) {
+	issueID := createTestIssue(t, "metadata-anchored guard", "todo", "low")
+	t.Cleanup(func() { deleteTestIssue(t, issueID) })
+	markIssueAsAgentWork(t, issueID)
+	agentID := createHandlerTestAgent(t, "Metadata Anchor Guard Agent", nil)
+	// Plain fix-category task — only the issue's agent_work marker anchors it.
+	taskID := createHandlerTestTaskForAgentOnIssue(t, agentID, issueID)
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPut, "/api/issues/"+issueID, map[string]any{"status": "done"})
+	req = withURLParam(req, "id", issueID)
+	req.Header.Set("X-Agent-ID", agentID)
+	req.Header.Set("X-Task-ID", taskID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403: agent_work metadata alone must anchor the guard, got %d: %s", w.Code, w.Body.String())
+	}
+	assertIssueStatus(t, issueID, "todo")
+
+	w = httptest.NewRecorder()
+	req = newRequest(http.MethodPost, "/api/issues/"+issueID+"/comments", map[string]any{
+		"content": "narration through the metadata anchor",
+	})
+	req = withURLParam(req, "id", issueID)
+	req.Header.Set("X-Agent-ID", agentID)
+	req.Header.Set("X-Task-ID", taskID)
+	testHandler.CreateComment(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for own-issue narration via metadata anchor, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAnalysisTaskCannotUpdateNonStatusField(t *testing.T) {
 	issueID := createTestIssue(t, "analysis title guard", "done", "low")
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
