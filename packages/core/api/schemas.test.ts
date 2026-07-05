@@ -71,6 +71,27 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
     });
   });
 
+  it("drops object-valued reserved keys (agent_work) instead of failing the issue", () => {
+    // Derived assessment issues carry metadata.agent_work as a nested OBJECT.
+    // A strict primitive-only record used to fail the whole IssueSchema here,
+    // blanking the issue page into the empty fallback.
+    const payload = {
+      issues: [
+        {
+          ...baseIssue,
+          metadata: {
+            flow_cl: "12345",
+            agent_work: { kind: "p4_assessment", trigger: "scan" },
+          },
+        },
+      ],
+      total: 1,
+    };
+    const parsed = ListIssuesResponseSchema.parse(payload);
+    expect(parsed.issues[0]?.metadata).toEqual({ flow_cl: "12345" });
+    expect(parsed.issues[0]?.title).toBe(baseIssue.title);
+  });
+
   it("defaults metadata to {} when the server omits it (older backend)", () => {
     const { metadata: _omit, ...issueWithoutMetadata } = baseIssue;
     const payload = { issues: [issueWithoutMetadata], total: 1 };

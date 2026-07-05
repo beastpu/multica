@@ -248,10 +248,29 @@ export const IssueTriggerPreviewSchema = z.object({
   total_count: z.number().default(0),
 }).loose();
 
-// Metadata is primitive-only by API/DB contract. Stay lenient on shape:
-// unknown keys land as `unknown` to a caller, but the field itself defaults
-// to {} so consumers never need to nil-guard `issue.metadata`.
-const IssueMetadataSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({});
+// Metadata values are primitive for the keys the UI reads (flow_cl etc.), but
+// the server also stamps OBJECT values under reserved keys (agent_work marks
+// derived assessment issues). A strict primitive-only record made one such
+// key fail the WHOLE IssueSchema and blank the issue page into the empty
+// fallback — exactly the failure class these schemas exist to prevent. Drop
+// non-primitive values instead of failing: consumers that read primitives
+// keep their contract, and reserved object keys simply don't surface here.
+const IssueMetadataSchema = z.preprocess(
+  (value) => {
+    if (value == null || typeof value !== "object" || Array.isArray(value)) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).filter(
+        ([, v]) =>
+          typeof v === "string" ||
+          typeof v === "number" ||
+          typeof v === "boolean",
+      ),
+    );
+  },
+  z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
+);
 const IssueExternalFieldsSchema = z.record(z.string(), z.string()).default({});
 
 export const IssueSchema = z.object({
