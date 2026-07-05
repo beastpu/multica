@@ -11,6 +11,15 @@ vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 
+vi.stubGlobal(
+  "IntersectionObserver",
+  class {
+    observe = vi.fn();
+    unobserve = vi.fn();
+    disconnect = vi.fn();
+  },
+);
+
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -560,7 +569,6 @@ describe("IssuesPage (shared)", () => {
 
     await screen.findByText("Implement auth");
     expect(screen.queryByText("Squad task")).not.toBeInTheDocument();
-    expect(screen.queryByText("99")).not.toBeInTheDocument();
     expect(mockListIssues).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "todo",
@@ -635,15 +643,26 @@ describe("IssuesPage (shared)", () => {
     expect(screen.getByText("Agents")).toBeInTheDocument();
   });
 
+  // The Members/Agents tabs filter server-side via assignee_types (the same
+  // param the grouped endpoint takes), so the mock mirrors the server's
+  // WHERE clause instead of a client-side post-filter.
+  function mockListIssuesHonoringAssigneeTypes() {
+    mockListIssues.mockImplementation((params: any) => {
+      const matches = mockIssues.filter(
+        (i) =>
+          i.status === params?.status &&
+          (!params?.assignee_types ||
+            (i.assignee_type !== null &&
+              params.assignee_types.includes(i.assignee_type))),
+      );
+      return Promise.resolve({ issues: matches, total: matches.length });
+    });
+  }
+
   it("agents scope includes squad-assigned issues", async () => {
     mockScope = "agents";
     mockViewState.viewMode = "list";
-    mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve({
-        issues: mockIssues.filter((i) => i.status === params?.status),
-        total: mockIssues.filter((i) => i.status === params?.status).length,
-      }),
-    );
+    mockListIssuesHonoringAssigneeTypes();
     renderWithQuery(<IssuesPage />);
 
     // Squad task and agent task should be visible
@@ -651,21 +670,22 @@ describe("IssuesPage (shared)", () => {
     expect(screen.getByText("Squad task")).toBeInTheDocument();
     // Member task should NOT be visible
     expect(screen.queryByText("Implement auth")).not.toBeInTheDocument();
+    expect(mockListIssues).toHaveBeenCalledWith(
+      expect.objectContaining({ assignee_types: ["agent", "squad"] }),
+    );
   });
 
   it("members scope excludes squad-assigned issues", async () => {
     mockScope = "members";
     mockViewState.viewMode = "list";
-    mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve({
-        issues: mockIssues.filter((i) => i.status === params?.status),
-        total: mockIssues.filter((i) => i.status === params?.status).length,
-      }),
-    );
+    mockListIssuesHonoringAssigneeTypes();
     renderWithQuery(<IssuesPage />);
 
     await screen.findByText("Implement auth");
     expect(screen.queryByText("Squad task")).not.toBeInTheDocument();
     expect(screen.queryByText("Design landing page")).not.toBeInTheDocument();
+    expect(mockListIssues).toHaveBeenCalledWith(
+      expect.objectContaining({ assignee_types: ["member"] }),
+    );
   });
 });

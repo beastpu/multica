@@ -54,6 +54,9 @@ vi.mock("./inspector/visibility-picker", () => ({
 vi.mock("../../settings/components/lark-tab", () => ({
   LarkAgentBindButton: () => null,
 }));
+vi.mock("../../settings/components/slack-tab", () => ({
+  SlackAgentBindButton: () => null,
+}));
 
 import { AgentDetailInspector } from "./agent-detail-inspector";
 
@@ -69,6 +72,8 @@ const baseAgent: Agent = {
   runtime_config: {},
   custom_args: [],
   visibility: "workspace",
+  permission_mode: "public_to",
+  invocation_targets: [{ target_type: "workspace", target_id: null }],
   status: "idle",
   max_concurrent_tasks: 1,
   model: "",

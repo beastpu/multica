@@ -103,6 +103,17 @@ export function attachmentIdFromDownloadURL(rawURL: string): string | undefined 
   return id;
 }
 
+function stripQueryAndFragment(url: string): string {
+  return url.split(/[?#]/, 1)[0] ?? "";
+}
+
+function contentReferencesURL(content: string, url?: string): boolean {
+  if (!url) return false;
+  if (content.includes(url)) return true;
+  const stable = stripQueryAndFragment(url);
+  return stable !== "" && content.includes(stable);
+}
+
 /**
  * True when `content` contains a markdown reference to `attachment` —
  * either the new stable `/api/attachments/<id>/download` shape OR the
@@ -125,6 +136,7 @@ export function contentReferencesAttachment(
     url: string;
     content_url?: string | null;
     download_url?: string | null;
+    markdown_url?: string | null;
   },
 ): boolean {
   if (!content) return false;
@@ -136,12 +148,15 @@ export function contentReferencesAttachment(
     attachment.url,
     attachment.content_url ?? "",
     attachment.download_url ?? "",
+    attachment.markdown_url ?? "",
   ].filter(Boolean);
-  if (candidates.some((candidate) => content.includes(candidate))) return true;
+  if (candidates.some((candidate) => contentReferencesURL(content, candidate))) {
+    return true;
+  }
   const comparable = candidates
     .map(comparableAttachmentUrl)
     .filter((value): value is string => Boolean(value));
-  if (comparable.some((value) => content.includes(value))) return true;
+  if (comparable.some((value) => contentReferencesURL(content, value))) return true;
   return false;
 }
 

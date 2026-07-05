@@ -28,6 +28,12 @@ type TypingIndicatorState struct {
 	DeleteFailed   bool
 }
 
+type typingIndicatorDeletion struct {
+	state      *TypingIndicatorState
+	messageID  string
+	reactionID string
+}
+
 // TypingIndicatorQueries is the narrow DB surface the manager needs.
 type TypingIndicatorQueries interface {
 	GetLarkChatSessionBindingBySession(ctx context.Context, chatSessionID pgtype.UUID) (ChatSessionBinding, error)
@@ -123,10 +129,15 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst Installation, cha
 	m.mu.Lock()
 	state.ReactionID = reactionID
 	clearRequested := state.ClearRequested
+	stateMessageID := state.MessageID
 	m.mu.Unlock()
 
 	if clearRequested {
-		m.deleteReaction(ctx, key, creds, state)
+		m.deleteReaction(ctx, key, creds, typingIndicatorDeletion{
+			state:      state,
+			messageID:  stateMessageID,
+			reactionID: reactionID,
+		})
 		return
 	}
 
@@ -145,12 +156,20 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype
 	key := uuidString(chatSessionID)
 	m.mu.Lock()
 	states := m.states[key]
+	deletions := make([]typingIndicatorDeletion, 0, len(states))
 	for _, s := range states {
 		s.ClearRequested = true
+		if s.ReactionID != "" {
+			deletions = append(deletions, typingIndicatorDeletion{
+				state:      s,
+				messageID:  s.MessageID,
+				reactionID: s.ReactionID,
+			})
+		}
 	}
 	m.mu.Unlock()
 
-	if len(states) == 0 {
+	if len(states) == 0 || len(deletions) == 0 {
 		return
 	}
 
@@ -181,11 +200,8 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype
 		return
 	}
 
-	for _, s := range states {
-		if s.ReactionID == "" {
-			continue
-		}
-		m.deleteReaction(ctx, key, creds, s)
+	for _, deletion := range deletions {
+		m.deleteReaction(ctx, key, creds, deletion)
 	}
 }
 
@@ -196,34 +212,40 @@ func (m *TypingIndicatorManager) markAddFailed(key string, state *TypingIndicato
 	m.mu.Unlock()
 }
 
-func (m *TypingIndicatorManager) deleteReaction(ctx context.Context, key string, creds InstallationCredentials, state *TypingIndicatorState) {
-	if state.ReactionID == "" {
+func (m *TypingIndicatorManager) deleteReaction(ctx context.Context, key string, creds InstallationCredentials, deletion typingIndicatorDeletion) {
+	if deletion.reactionID == "" {
 		return
 	}
 	err := m.client.DeleteMessageReaction(ctx, DeleteReactionParams{
 		InstallationID: creds,
-		MessageID:      state.MessageID,
-		ReactionID:     state.ReactionID,
+		MessageID:      deletion.messageID,
+		ReactionID:     deletion.reactionID,
 	})
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	state := deletion.state
 	if err != nil {
+		if state.ReactionID == "" {
+			return
+		}
 		state.DeleteFailed = true
 		m.log.Warn("lark typing indicator: delete reaction failed",
 			"chat_session_id", key,
-			"message_id", state.MessageID,
-			"reaction_id", state.ReactionID,
+			"message_id", deletion.messageID,
+			"reaction_id", deletion.reactionID,
 			"err", err,
 		)
 		return
 	}
-	state.ReactionID = ""
+	if state.ReactionID == deletion.reactionID {
+		state.ReactionID = ""
+	}
 	state.DeleteFailed = false
 	m.removeCompletedLocked(key)
 	m.log.Debug("lark typing indicator: reaction removed",
 		"chat_session_id", key,
-		"message_id", state.MessageID,
+		"message_id", deletion.messageID,
 	)
 }
 

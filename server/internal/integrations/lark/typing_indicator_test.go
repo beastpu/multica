@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 // fakeTypingAPIClient records reaction calls and can be programmed to fail.
 type fakeTypingAPIClient struct {
+	mu           sync.Mutex
 	addCalled    []addReactionCall
 	deleteCalled []deleteReactionCall
 	addErr       error
@@ -68,7 +70,9 @@ func (f *fakeTypingAPIClient) BatchGetUsers(context.Context, InstallationCredent
 	return nil, nil
 }
 func (f *fakeTypingAPIClient) AddMessageReaction(_ context.Context, p AddReactionParams) (string, error) {
+	f.mu.Lock()
 	f.addCalled = append(f.addCalled, addReactionCall{p.InstallationID, p.MessageID, p.EmojiType})
+	f.mu.Unlock()
 	if f.addStarted != nil {
 		close(f.addStarted)
 	}
@@ -78,7 +82,9 @@ func (f *fakeTypingAPIClient) AddMessageReaction(_ context.Context, p AddReactio
 	return f.addReturn, f.addErr
 }
 func (f *fakeTypingAPIClient) DeleteMessageReaction(_ context.Context, p DeleteReactionParams) error {
+	f.mu.Lock()
 	f.deleteCalled = append(f.deleteCalled, deleteReactionCall{p.InstallationID, p.MessageID, p.ReactionID})
+	f.mu.Unlock()
 	return f.deleteErr
 }
 

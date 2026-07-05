@@ -28,6 +28,10 @@ interface ProviderProps {
   children: ReactNode;
 }
 
+function stripQueryAndFragment(url: string): string {
+  return url.split(/[?#]/, 1)[0] ?? "";
+}
+
 function comparableUrlParts(raw: string): string | null {
   if (!raw) return null;
   try {
@@ -40,18 +44,17 @@ function comparableUrlParts(raw: string): string | null {
   }
 }
 
-function attachmentUrlMatches(attachment: Attachment, rawUrl: string): boolean {
-  if (!rawUrl) return false;
-  const candidates = [
-    attachment.url,
-    attachment.content_url,
-    attachment.download_url,
-  ].filter(Boolean);
-  if (candidates.some((candidate) => candidate === rawUrl)) return true;
+function matchesAttachmentURL(embeddedURL: string, attachmentURL?: string | null): boolean {
+  if (!embeddedURL || !attachmentURL) return false;
+  if (embeddedURL === attachmentURL) return true;
 
-  const rawParts = comparableUrlParts(rawUrl);
-  if (!rawParts) return false;
-  return candidates.some((candidate) => comparableUrlParts(candidate) === rawParts);
+  const embeddedStable = stripQueryAndFragment(embeddedURL);
+  const attachmentStable = stripQueryAndFragment(attachmentURL);
+  if (embeddedStable !== "" && embeddedStable === attachmentStable) return true;
+
+  const embeddedParts = comparableUrlParts(embeddedURL);
+  const attachmentParts = comparableUrlParts(attachmentURL);
+  return !!embeddedParts && embeddedParts === attachmentParts;
 }
 
 /**
@@ -64,8 +67,8 @@ function attachmentUrlMatches(attachment: Attachment, rawUrl: string): boolean {
  * shape; legacy comments persist whatever was in `att.url` at upload
  * time, including the short-lived `/uploads/<key>?exp&sig` pattern that
  * triggered MUL-3130. The id-from-URL extractor handles new content;
- * exact-url equality covers legacy and S3/CloudFront markdown that
- * never got the new shape.
+ * URL equivalence covers legacy and S3/CloudFront markdown that never
+ * got the new shape.
  */
 export function AttachmentDownloadProvider({ attachments, children }: ProviderProps) {
   const download = useDownloadAttachment();
@@ -73,20 +76,18 @@ export function AttachmentDownloadProvider({ attachments, children }: ProviderPr
     () => {
       const lookup = (url: string): Attachment | undefined => {
         if (!url || !attachments?.length) return undefined;
-        // Preferred path: stable `/api/attachments/<id>/download` URL.
-        // Match by id so the lookup survives a host swap (Electron vs
-        // web vs SSR) and any incidental query/fragment.
         const idFromUrl = attachmentIdFromDownloadURL(url);
         if (idFromUrl) {
           const byId = attachments.find((a) => a.id === idFromUrl);
           if (byId) return byId;
         }
-        // Legacy path: full URL equality. Covers comments persisted
-        // before MUL-3130, S3/CloudFront markdown that points
-        // straight at the CDN, and anything else where
-        // `attachments[i].url` was the literal value embedded in
-        // markdown.
-        return attachments.find((a) => attachmentUrlMatches(a, url));
+        return attachments.find(
+          (a) =>
+            matchesAttachmentURL(url, a.url) ||
+            matchesAttachmentURL(url, a.content_url) ||
+            matchesAttachmentURL(url, a.download_url) ||
+            matchesAttachmentURL(url, a.markdown_url),
+        );
       };
       return {
         resolveAttachmentId: (url) => lookup(url)?.id,
