@@ -3,234 +3,136 @@ type: design
 status: draft
 module: operations
 created: 2026-07-04
+updated: 2026-07-05
 ---
 
-# Agent 派生工作（agent_work）通用原语 与 P4 评估实例化
+# Agent 派生工作原语 与 P4 评估执行模型（方案 C：原生任务流）
 
 > Related:
 > - `docs/agent-fix-p4-assessment-next-design.md`（评估边界与 evidence 基线）
-> - `docs/agent-fix-p4-assessment-api-workflow.md`（batch pull/submit 契约）
-> - `server/internal/service/builtin_skills/multica-agent-fix-p4-assessment/`（worker 技能契约）
+> - `docs/agent-fix-p4-assessment-api-workflow.md`（batch pull/submit 契约，本设计将其退役）
+> - `server/internal/service/builtin_skills/multica-agent-fix-p4-assessment/`
 
-## Summary
+## 演进说明
 
-评估执行目前对用户是黑盒：batch worker 一次任务评多张单，无法回答
-"评估智能体正在处理哪个 issue / 某单评估遇到了什么问题 / 结果是什么"。
+- **已落地**（develop）：观测三列（迁移 133）、派生 issue 投影 + `metadata.agent_work`
+  保留键 + 写守卫（迁移 134，MR !185）。这些在方案 C 中全部保留。
+- **本次修订**：评审后放弃「batch worker + lease + dispatcher」作为长期执行模型，
+  phase 3 转向**方案 C：原生任务流**。理由见附录 Alternatives。
 
-解决它需要的四样东西——**工作投影 issue、能力智能体指定、队列驱动派发、
-隔离与写权限规则**——没有一样是 P4 专属的，且全部要落在平台共享代码上
-（评论守卫、feed 过滤、统计口径）。因此本设计分两部分：
+## Part 1 · 通用原语（保留，仅一处修订）
 
-- **Part 1**：定义平台通用的「Agent 派生工作」原语。适用于一切
-  "针对既有工作派生的 agent 后台工作，需要可追踪的叙事载体，且不得污染
-  主工作流统计"的场景（P4 评估、连通性自检、周期健康报告，未来的
-  review/回归验证 agent 等）。
-- **Part 2**：P4 评估作为第一个实例化（kind = `p4_assessment`），
-  连通性自检作为第二个（kind = `connectivity_check`），用两个消费者
-  校准抽象边界。
+`metadata.agent_work` 保留键、每次运行一个派生 issue、系统 project 懒创建、
+「评论归 agent / 状态归服务端投影」写切分、隔离清单、能力角色配置
+（workspace × capability → agent/project/并发上限）——**全部维持已落地/已设计
+的形态**。修订一处：
 
-刻意不做的：不把队列表/lease 框架化（只有一个真实队列消费者，抽象缺
-第二个样本必然抽错——业务队列留在各自模块里）。
+- ~~1.4 队列驱动派发（dispatcher）~~ **删除**。方案 C 中"指派即派发"：
+  派生 issue 创建时指派给能力 agent，平台现有的 issue-assignment→task 原生
+  链路即完成派发；任务持久在 server 端 `agent_task_queue`（Postgres），
+  daemon 重启不丢，认领用现有 prepare-lease 自愈。不再需要独立派发循环。
 
----
+## Part 2 · P4 评估的方案 C 执行模型
 
-# Part 1 · 通用原语：Agent 派生工作
-
-## 1.1 派生工作 issue（投影载体）
-
-派生工作 issue 是**普通 issue**，不引入新 issue 类型。权威标识是
-`issue.metadata` 上的 **server 保留键**（创建后只读，普通编辑路径不可
-写入/篡改该键；jsonb `@>` 已支持过滤）：
-
-```json
-{
-  "agent_work": {
-    "kind": "p4_assessment | connectivity_check | ...",
-    "source_issue_id": "<uuid, 可空>",
-    "source_ref": "<业务侧引用, 如 binding_id, 可空>",
-    "trigger": "manual | scan | force_rerun | ...",
-    "extra": { "prompt_version": "..." }
-  }
-}
-```
-
-- **每次运行一个 issue**；重跑创建新 issue，旧 issue 留存不归档——
-  issue 序列即运行历史。
-- 同一来源的历史 = `metadata @> {"agent_work":{"source_issue_id": X}}`
-  的 issue 序列（kind 可再收窄）。
-- 每个 kind 归属一个**懒创建的系统 project**（如「P4 评估」），仅作
-  组织/视图用途——守卫、隔离、查询一律认 metadata，不认 project 归属
-  （project 可被移动/改名，metadata 创建即固化）。
-- 标题约定：`<动作> <来源标识>【<外部单号>】<截断标题>`。
-
-## 1.2 写权限：评论归 agent，状态归服务端
-
-- **评论：执行该派生工作的 agent 直接写**（这是它被指派的工作项）。
-  `rejectAnalysisTaskWrite` 从"全拒"改为精确放行：analysis-task actor
-  的评论目标必须携带 `metadata.agent_work` 标记、同 workspace、且 kind
-  与该任务的工作类型一致。对真实业务 issue 的禁写一分不松。
-- **状态/字段/指派：仅服务端投影可写**。派生 issue 状态由业务侧状态机
-  同事务投影（见 1.4），agent 双写状态必然和投影打架，照旧拒绝。
-- **兜底结果评论由服务端代写**：业务完成/失败路径内写一条结构化
-  markdown 评论（数据源即业务 result payload）——保证每张派生 issue
-  无论 agent 是否叙事，至少有一条机器可读的结果；agent 评论是增量叙事。
-
-## 1.3 能力智能体：workspace 能力角色
-
-派生工作由**普通 agent** 承担，不引入新 agent 类别。workspace 级配置表
-（通用，替代按功能加列/加 env）：
-
-| 字段 | 语义 |
-|---|---|
-| `workspace_id` + `capability`（如 `p4_assessment`） | 唯一键 |
-| `agent_id` | 承担该能力的 agent |
-| `project_id` | 该 kind 的系统 project（懒创建后回填） |
-| `max_concurrent_tasks` | 派发并发上限，默认 1 |
-
-fail-closed 语义：未配置 = 该能力不启用（替代
-`P4_ASSESSMENT_WORKSPACE_ALLOWLIST` 这类 env 白名单）。
-
-**入口切分：创建在智能体入口，指定在设置。** agent 的唯一出生地是现有
-智能体创建流程（创建完活在智能体列表里，编辑/换 runtime/看任务都在那）；
-设置页只放「指定」选择器 + 「创建」深链快捷入口——深链带能力模板参数
-（预填名称/说明；需要内网执行的能力，runtime 选择器**只列在线
-daemon/local runtime**），创建完成跳回设置自动填入选择器。模板不常驻
-通用创建流程（未启用该能力的 workspace 会困惑），仅经深链可达或按能力
-可用性门控。不做自动创建：runtime 归属与凭证是用户决策，平台代选只会
-造出跑不动的 agent。
-
-指定时服务端校验 agent 存在/同 workspace/runtime 形态；网络可达性无法
-从外网 server 验证，由**连通性自检**（kind=`connectivity_check` 的派生
-工作，见 Part 2）兜底。
-
-## 1.4 队列驱动派发（dispatcher 契约）
-
-server 后台派发循环（宿主与 `feishu_project_sync_worker` 同级），循环体
-按 kind 注册，每个 kind 只需实现两个函数：
-
-```go
-type AgentWorkKind interface {
-    // 该 workspace 当前可认领的工作量（0 = 不派发）
-    ClaimableCount(ctx, workspaceID) (int, error)
-    // 创建一次批量任务，assignee = 能力角色配置的 agent
-    CreateBatchTask(ctx, workspaceID, agentID) error
-}
-```
+### 概念
 
 ```
-每 tick（≈30s）对每个已配置 (workspace, capability)：
-  ClaimableCount > 0
-  AND 能力 agent 的 runtime 在线
-  AND 该 (workspace, capability) 活跃批量任务数 < max_concurrent_tasks
-→ CreateBatchTask
+真实缺陷 issue（禁写）
+   └─ 触发（面板手动 / 定时扫描）
+        → 评估 issue（agent_work 标记，指派评估智能体）
+             → 原生 task（挂在评估 issue 上，daemon 认领，一单一会话）
+                  → agent 读 evidence → 只读 P4/Swarm 核查
+                  → 过程叙事评论（写在评估 issue）
+                  → POST 结果 → 结果表（类型化列）
 ```
 
-多副本安全：判定 + 建任务同事务，`SELECT ... FOR UPDATE` 锁能力配置行
-（或 per (workspace, capability) advisory lock）。worker 死亡 → 业务侧
-租约过期 → 工作回池 → 下一 tick 补发，全链路自愈。
+- **并发**：评估智能体的 `max_concurrent_tasks`，无需额外机制。
+- **每单独立会话**：执行日志天然按单隔离（batch 模型的交织缺陷消失）。
+- **重评**：新评估 issue + 新 task；旧 issue/结果留存为历史。
 
-## 1.5 隔离清单（每个 kind 落地时逐项验收）
+### 结果表降级（不删除）
 
-派生 issue / 派生任务不得出现在（排除条件一律认 `metadata.agent_work`）：
+`agent_fix_p4_assessment` 从「队列+结果」降级为**类型化结果读模型**：
 
-- [ ] 运营 feed（spine 按 fix 任务 + binding 组织，派生 issue 无 binding
-      天然排除——加测试锁死）
-- [ ] usage 统计与 agent 排行榜的"任务/issue 完成数"（灌水）
-- [ ] 真实 issue 的任务历史 / latest-run / 会话恢复 / 去重
-      （现有 task 侧隔离过滤保持）
-- [ ] 默认 issue 视图与看板（系统 project 默认不选中；搜索可显式进入）
-- [ ] 通知默认策略（派生 issue 状态流转不推送给来源 issue 的关注者）
+- 保留：结果列（归因/质量枚举 CHECK、confidence、CL 数组、warnings、
+  summary、evidence）、`assessment_issue_id`、binding 唯一键（面板读
+  "每缺陷最新结果"，O(1) join 不变）。
+- 职能移除：lease（`leased_until`）、pending 池语义——执行状态归 task。
+  行状态改为 task 生命周期的**单向投影**（task running→running、终态失败
+  →failed、result 端点提交→completed），无反向路径、无双向同步。
+- 不选全 JSONB 方案（C2）的原因：条件 CHECK/表达式索引虽可行，但把领域
+  约束叠进全库最热的共享表，且指标读路径从 O(1) join 变 latest-task-per-issue
+  lateral join；结果表就是这些 jsonb 抽取的物化，成本已付。
+- 历史 498 行：保留为结果存档，batch 时期的行无投影 issue，照常展示。
 
-**订阅是白送的能力**：派生工作是 issue，平台订阅/通知机制免费继承——
-想要"评估失败告警"的用户订阅该系统 project 即可，无需另建告警系统。
+### 守卫：保留，换锚点（显式记录威胁模型）
 
----
+守卫防的不是"任务挂在哪"，而是两个方案 C 改变不了的事实：evidence 必然
+携带真实 issue 身份；agent task token 是 workspace 级写能力（mention/协作
+依赖，无按-issue 写限制）。一次批量扫描期间评估 agent 手握几十个真实 issue
+ID，一次跑偏（提示词漂移/旧版 daemon/LLM 误操作）即可面状污染，且真实
+issue 状态变更会经飞书集成**状态回写**穿透到外部系统。故：
 
-# Part 2 · 实例化
+- `rejectAnalysisTaskWrite` 保留，锚点从 `task_category=='analysis'` 换为
+  「任务所挂 issue 携带 `metadata.agent_work`」：此类任务仅可评论**自己
+  所挂的派生 issue**，对一切其他 issue 的评论/状态/字段写一律拒绝。
+- 全系统从此只有一个派生工作标记（issue metadata），无并行标记需同步。
 
-## 2.1 kind = `p4_assessment`（首个消费者）
+### `task_category` 退役
 
-### 概念模型
+方案 C 下其查询隔离职责消失（评估任务挂派生 issue，按 issue 维度的
+latest-run/去重/cancel/会话恢复查询天然不命中真实 issue），守卫换锚后
+判定职责也消失。清理迁移删除该列与 130 引入的全部 `task_category='fix'`
+过滤及对应 SQL 不变量测试。**时序约束**：必须在 batch 契约退役、在途
+batch/legacy 任务排干之后（batch 任务无 issue_id，过渡期守卫仍依赖列）。
 
-```
-真实缺陷 issue（禁写，不变）
-   └─ feishu_binding ── agent_fix_p4_assessment（队列行，唯一真相，per binding 一行）
-                            │ assessment_task_id（租约 → batch task → 评估智能体）
-                            │ assessment_issue_id（当前运行的派生 issue）
-                            ▼
-                    派生 issue（agent_work.kind=p4_assessment，per RUN 一个）
-```
+### batch 契约退役与 skill 改写
 
-`agent_fix_p4_assessment` **仍是唯一真相**：运营面板全部 KPI 只读此表，
-任何指标不得读 issue 状态。
+- 退役：`GET /api/operations/assessments/pending`、
+  `POST /api/operations/assessments/result`（by-ref）、30 分钟评估租约、
+  `LeaseP4AssessmentsPending` 等查询。先标记 deprecated，排干后删除。
+- 执行契约转正 legacy per-binding 路径：task context 携带 binding，
+  `GET .../p4-evidence` 读证据、`POST .../p4-assessment/result` 提交
+  （同一 `validateP4AssessmentPayload`）。该通道现存且可用。
+- SKILL.md 改写为"处理指派给你的评估 issue"工作流：从 task context 取
+  binding → 读 evidence → 只读核查 → 叙事评论（仅限所挂评估 issue）→
+  提交结果。批量循环、ref、租约章节删除。
 
-### 数据模型（一次迁移，三列）
+### 触发与能力角色
 
-| 列 | 类型 | 语义 |
-|---|---|---|
-| `assessment_issue_id` | `uuid NULL REFERENCES issue(id) ON DELETE SET NULL` | 当前运行的派生 issue；重评时指向新 issue |
-| `attempt_count` | `int NOT NULL DEFAULT 0` | 被 lease 的累计次数 |
-| `last_error` | `text NOT NULL DEFAULT ''` | 最近失败/释放原因；完成时清空 |
+触发入口不变（面板手动 / `feishu_project_sync_worker` 扫描），收敛到
+Trigger：建评估 issue（含标记）→ 指派给能力角色配置的评估智能体 →
+原生链路建 task。未配置能力角色 = 不触发（fail-closed，替代 env 白名单）。
+「创建在智能体入口、指定在设置、深链闭环」的 provisioning 设计不变。
 
-### 创建时机（全部收敛到 `P4AssessmentService.Trigger`）
+## Rollout（修订）
 
-1. 运营面板对指定 issue 手动点击（现有 AssessmentTriggerButton 路径）；
-2. 定时扫描新增未评估单（现有 `feishu_project_sync_worker` →
-   `BackfillDoneBindings` 周期路径，不新增扫描器）。
-
-### 状态投影（同事务）
-
-| 队列行事件 | 派生 issue |
-|---|---|
-| Trigger/Upsert → `pending` | 创建新 issue（todo，指派评估智能体） |
-| Lease → `running`（attempt+1） | in_progress |
-| 租约过期重新 lease | 仍 in_progress（同一 issue，attempt+1） |
-| Release（evidence 失败退回） | todo；写 `last_error` + 服务端失败评论（消除现有静默黑洞） |
-| Complete（submit-by-ref） | done；服务端结果摘要评论 |
-| Fail | failed；`last_error` + 失败评论 |
-| force 重评 | 旧 issue 保持终态；建新 issue 并重指向 |
-
-### 执行契约增量
-
-- 仍走 batch worker（pull-by-lease）。**不回退**每单一任务/一会话的
-  旧模型；per-issue 归属靠租约字段 + 派生 issue 投影。
-- batch pull 的每个 item 返回 `assessment_issue_id`，agent 据此把过程
-  叙事/证据链评论到自己的派生 issue（写权限见 1.2）。
-- skill 文档（SKILL.md + source map）同步该契约。
-
-### 可观测性落点
-
-- 运营明细行：`running` 显示执行者智能体 + 租约剩余 + 派生 issue 链接；
-  `failed` 显示 attempt_count + last_error。
-- 评估智能体「最近工作」= 其被指派的派生 issue 列表，零新查询模型。
-- 点击派生 issue：描述（关联真实单）+ 评论时间线（执行记录）+
-  batch 任务会话链接（深挖兜底）。
-
-## 2.2 kind = `connectivity_check`（第二个消费者，校准抽象）
-
-设置页指定评估智能体后一键下发 smoke-test：`p4 -V`、evidence endpoint
-可达、Swarm 只读探测。实现即派生工作的完整复用——自检 issue（同系统
-project 或独立 project）、结果写评论、状态投影、隔离规则——**零新增
-共享代码**。它的存在证明 Part 1 的边界画对了。
-
-## Rollout
-
-1. **P0**：三列迁移；Lease/Release/Fail/Complete 写 attempt/last_error；
-   运营明细透传。（不依赖派生 issue，先解观测之痛）
-2. **通用原语 + P4 投影**：`metadata.agent_work` 保留键与守卫放行；
-   系统 project 懒创建；Trigger 建 issue；状态同事务投影；服务端结果/
-   失败评论；pull item 返回 `assessment_issue_id`；skill 文档同步；
-   隔离清单验收。
-3. **能力角色 + dispatcher + 创建流**：能力配置表替代 env 白名单；
-   智能体入口模板 + 设置深链；`AgentWorkKind` 注册式派发；连通性自检。
-4. **后续（可选）**：周期评估健康报告（kind=`health_report`，第三个
-   消费者，届时检验注册式派发）。
+1. ✅ 已落地：观测三列；派生 issue 投影 + 守卫 + 保留键（batch 模型上）。
+2. **C-1 能力角色 + 原生任务流**：能力配置表；Trigger 改为指派+原生 task；
+   守卫换锚 issue-metadata；行状态单向投影改造；skill 改写；batch 端点
+   deprecated；连通性自检（kind=connectivity_check，走同一原生链路）。
+3. **C-2 清理**：排干在途 batch 任务；删除 batch 端点/lease 查询/
+   `task_category` 列与过滤（一次清理迁移）。
 
 ## Non-goals
 
-- 不把业务队列表/lease 框架化（L3 过度抽象；业务队列留在各自模块）。
-- 不让派生工作写**来源业务 issue**（评论/状态/字段一律禁止）；对派生
-  issue 也仅放行评论，状态/字段/指派归服务端投影。
-- 不引入新的 issue 类型或 agent 类别。
-- 不引入监控/提示词优化常驻智能体。
-- 指标口径不变：运营面板全部 KPI 继续只读 `agent_fix_p4_assessment`。
+- 不删除结果表（类型化读模型保留）。
+- 不移除写守卫（威胁模型见上，作为显式决策记录）。
+- 不让派生工作写真实业务 issue；对派生 issue 也仅放行评论。
+- 不引入新 issue 类型 / agent 类别 / 监控常驻智能体。
+- 指标口径不变：面板 KPI 只读结果表。
+
+## 附录 · Alternatives（决策记录）
+
+| | A/C 原生 task（采纳） | B batch+lease（退役） |
+|---|---|---|
+| 心智模型 | issue→task→会话，零新概念 | 租约/批次两层新概念 |
+| 每单执行日志 | 独立会话，天然干净 | 会话交织，靠评论补 |
+| token/调度开销 | 每单多付固定开销（约 +25–40%，非早期估计的 5×） | 摊薄 |
+| 派发 | 指派即派发，无 dispatcher | 需队列驱动 dispatcher |
+| 持久/自愈 | server 端任务队列 + prepare-lease，等价 | 评估租约，等价 |
+| 状态机 | 单一（task），结果表为单向投影 | 单一（行），但需独立契约 |
+| 隔离 | 按 issue 天然隔离，category 可退役 | 依赖 category 过滤 |
+
+决策：B 的省钱优势不抵其概念负担与双契约维护；B 时代的产出
+（投影 issue、标记、守卫、观测列、结果表）全部被 C 复用，仅执行通道更换。
