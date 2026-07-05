@@ -118,12 +118,15 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
     expect(parsed.issues[1]?.external_fields).toEqual({});
   });
 
-  it("rejects metadata with non-primitive values (nested object)", () => {
+  it("strips non-primitive metadata values instead of rejecting the issue", () => {
+    // Rejecting used to blank the whole issue page (the agent_work incident);
+    // the schema now degrades by dropping the offending entry.
     const payload = {
-      issues: [{ ...baseIssue, metadata: { nested: { x: 1 } } }],
+      issues: [{ ...baseIssue, metadata: { nested: { x: 1 }, keep: "v" } }],
       total: 1,
     };
-    expect(ListIssuesResponseSchema.safeParse(payload).success).toBe(false);
+    const parsed = ListIssuesResponseSchema.parse(payload);
+    expect(parsed.issues[0]?.metadata).toEqual({ keep: "v" });
   });
 
   it("accepts a numeric stage", () => {
