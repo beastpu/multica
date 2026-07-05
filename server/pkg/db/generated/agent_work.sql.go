@@ -14,29 +14,35 @@ import (
 const createAgentWorkIssue = `-- name: CreateAgentWorkIssue :one
 INSERT INTO issue (
     workspace_id, title, description, status, priority,
-    creator_type, creator_id, position, number, project_id, metadata
+    creator_type, creator_id, position, number, project_id, metadata,
+    assignee_type, assignee_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10::jsonb
+    $1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10::jsonb,
+    $11, $12
 ) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage
 `
 
 type CreateAgentWorkIssueParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Title       string      `json:"title"`
-	Description pgtype.Text `json:"description"`
-	Status      string      `json:"status"`
-	Priority    string      `json:"priority"`
-	CreatorType string      `json:"creator_type"`
-	CreatorID   pgtype.UUID `json:"creator_id"`
-	Number      int32       `json:"number"`
-	ProjectID   pgtype.UUID `json:"project_id"`
-	Metadata    []byte      `json:"metadata"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	Title        string      `json:"title"`
+	Description  pgtype.Text `json:"description"`
+	Status       string      `json:"status"`
+	Priority     string      `json:"priority"`
+	CreatorType  string      `json:"creator_type"`
+	CreatorID    pgtype.UUID `json:"creator_id"`
+	Number       int32       `json:"number"`
+	ProjectID    pgtype.UUID `json:"project_id"`
+	Metadata     []byte      `json:"metadata"`
+	AssigneeType pgtype.Text `json:"assignee_type"`
+	AssigneeID   pgtype.UUID `json:"assignee_id"`
 }
 
 // Dedicated insert for projection issues: stamps the reserved agent_work
 // metadata at creation (the ordinary CreateIssue never writes metadata, and
-// the user metadata API rejects the reserved key). No assignee — phase 2 has
-// no capability agent; the executing agent is visible through its comments.
+// the user metadata API rejects the reserved key). Assignee is the workspace's
+// capability agent when one is configured (plan C-1: "指派即派发" — the native
+// task the Trigger creates in the same transaction hangs on this issue);
+// NULL assignee is the legacy env-allowlist path, which C-2 removes.
 func (q *Queries) CreateAgentWorkIssue(ctx context.Context, arg CreateAgentWorkIssueParams) (Issue, error) {
 	row := q.db.QueryRow(ctx, createAgentWorkIssue,
 		arg.WorkspaceID,
@@ -49,6 +55,8 @@ func (q *Queries) CreateAgentWorkIssue(ctx context.Context, arg CreateAgentWorkI
 		arg.Number,
 		arg.ProjectID,
 		arg.Metadata,
+		arg.AssigneeType,
+		arg.AssigneeID,
 	)
 	var i Issue
 	err := row.Scan(

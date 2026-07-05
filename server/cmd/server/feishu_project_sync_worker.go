@@ -109,7 +109,10 @@ func runFeishuProjectSyncOnce(ctx context.Context, queries *db.Queries, pool *pg
 				slog.Warn("Feishu Project mark orphan-reconciled failed", "integration_id", service.UUIDString(cfg.ID), "error", err)
 			}
 		}
-		if p4Assessment != nil && allowlist.Allows(cfg.WorkspaceID) {
+		// Fail-closed gate (plan C-1): capability role configuration is the
+		// authoritative opt-in; the env allowlist is a transitional OR
+		// condition (C-2 deletes it together with this env var).
+		if p4Assessment != nil && (allowlist.Allows(cfg.WorkspaceID) || service.P4AssessmentCapabilityConfigured(ctx, queries, cfg.WorkspaceID)) {
 			result, err := p4Assessment.BackfillDoneBindings(ctx, cfg.WorkspaceID, cfg.ID, service.P4AssessmentBackfillLimit)
 			if err != nil {
 				slog.Warn("P4 assessment historical binding backfill failed", "integration_id", service.UUIDString(cfg.ID), "project_key", cfg.ProjectKey, "error", err)

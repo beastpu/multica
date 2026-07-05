@@ -16,7 +16,9 @@ func TestBuildP4AssessmentPrompt(t *testing.T) {
 		"`multica-agent-fix-p4-assessment` skill",
 		"/api/operations/agent-fixes/binding-1/p4-evidence",
 		"read-only",
-		"Do not change the issue, comments, status, Feishu/Meego, P4, Swarm, or `agent_fix_review`",
+		"ONLY on your own assessment issue",
+		"Do not change any issue's status, fields, or assignee",
+		"Feishu/Meego, P4, Swarm, or `agent_fix_review`",
 		"exactly one JSON object",
 		"Use `unknown` and warnings",
 	} {

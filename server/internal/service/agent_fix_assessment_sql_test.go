@@ -49,6 +49,71 @@ func TestClaimSerializationSeparatesP4AssessmentFromNormalIssueTasks(t *testing.
 	}
 }
 
+// Plan C-1: the native assessment task must stay out of the normal issue-fix
+// workflow (task_category='analysis', fresh session) and must carry the
+// stale-daemon steering handoff_note.
+func TestP4AssessmentNativeTaskIsolationInvariants(t *testing.T) {
+	body, err := os.ReadFile("../../pkg/db/queries/agent.sql")
+	if err != nil {
+		t.Fatalf("read agent.sql: %v", err)
+	}
+	chunk := sqlSection(t, string(body), "CreateP4AssessmentTask")
+	for _, want := range []string{
+		"'analysis'",
+		"TRUE",
+		"handoff_note",
+	} {
+		if !strings.Contains(chunk, want) {
+			t.Fatalf("CreateP4AssessmentTask missing %q\n---\n%s", want, chunk)
+		}
+	}
+}
+
+// Plan C-1 single-direction projection: task start marks the row running,
+// counts the attempt, and must never clobber a submitted result.
+func TestP4AssessmentStartFromTaskInvariants(t *testing.T) {
+	body, err := os.ReadFile("../../pkg/db/queries/agent.sql")
+	if err != nil {
+		t.Fatalf("read agent.sql: %v", err)
+	}
+	chunk := sqlSection(t, string(body), "StartP4AssessmentFromTask")
+	for _, want := range []string{
+		"assessment_status = 'running'",
+		"attempt_count = attempt_count + 1",
+		"assessment_task_id = $2",
+		"assessment_status <> 'completed'",
+	} {
+		if !strings.Contains(chunk, want) {
+			t.Fatalf("StartP4AssessmentFromTask missing %q\n---\n%s", want, chunk)
+		}
+	}
+}
+
+// Plan C-1 capability role config: the composite PK is the upsert idempotency
+// key, and the Get joins agent + runtime so Trigger can validate agent health.
+func TestWorkspaceAgentCapabilityQueryInvariants(t *testing.T) {
+	body, err := os.ReadFile("../../pkg/db/queries/workspace_agent_capability.sql")
+	if err != nil {
+		t.Fatalf("read workspace_agent_capability.sql: %v", err)
+	}
+	sql := string(body)
+	upsert := sqlSection(t, sql, "UpsertWorkspaceAgentCapability")
+	if !strings.Contains(upsert, "ON CONFLICT (workspace_id, capability) DO UPDATE") {
+		t.Fatalf("UpsertWorkspaceAgentCapability must upsert on the composite PK\n---\n%s", upsert)
+	}
+	get := sqlSection(t, sql, "GetWorkspaceAgentCapability")
+	for _, want := range []string{
+		"JOIN agent a ON a.id = c.agent_id",
+		"a.archived_at AS agent_archived_at",
+		"a.runtime_id AS agent_runtime_id",
+		"runtime_mode",
+	} {
+		if !strings.Contains(get, want) {
+			t.Fatalf("GetWorkspaceAgentCapability missing %q\n---\n%s", want, get)
+		}
+	}
+}
+
 func TestP4AssessmentTriggerUsesBindingRowLock(t *testing.T) {
 	sql, err := os.ReadFile("../../pkg/db/queries/agent.sql")
 	if err != nil {

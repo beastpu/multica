@@ -1134,6 +1134,77 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 	return i, err
 }
 
+const createP4AssessmentTask = `-- name: CreateP4AssessmentTask :one
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, task_category, handoff_note)
+VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, 'analysis', $6)
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+`
+
+type CreateP4AssessmentTaskParams struct {
+	AgentID     pgtype.UUID `json:"agent_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	Priority    int32       `json:"priority"`
+	Context     []byte      `json:"context"`
+	HandoffNote pgtype.Text `json:"handoff_note"`
+}
+
+// Native assessment task (plan C-1): hangs on the assessment PROJECTION issue
+// (issue_id = the derived agent_work issue), agent_id = the workspace's
+// p4_assessment capability agent. task_category='analysis' keeps the task out
+// of the normal issue-fix workflow during the transition (C-2 retires the
+// column; the guard already accepts the issue's metadata.agent_work marker).
+// handoff_note carries the read-only assessment instructions: NEW daemons
+// build a dedicated assessment prompt from context.type and ignore it, OLD
+// daemons (pre-isolation) fall into the normal assignment path and DO render
+// handoff_note, which is how the server steers a stale daemon into read-only
+// JSON output without a client update.
+func (q *Queries) CreateP4AssessmentTask(ctx context.Context, arg CreateP4AssessmentTaskParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, createP4AssessmentTask,
+		arg.AgentID,
+		arg.RuntimeID,
+		arg.IssueID,
+		arg.Priority,
+		arg.Context,
+		arg.HandoffNote,
+	)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.TaskCategory,
+	)
+	return i, err
+}
+
 const createQuickCreateTask = `-- name: CreateQuickCreateTask :one
 INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
 VALUES ($1, $2, NULL, 'queued', $3, $4)
@@ -2388,6 +2459,10 @@ type LeaseP4AssessmentsPendingParams struct {
 	Limit            int32              `json:"limit"`
 }
 
+// Deprecated (plan C-1): the batch pull/lease contract is retired — Trigger
+// now creates a native task per run. Kept only so in-flight batch workers can
+// drain; C-2 deletes this query together with the pending/result-by-ref
+// endpoints and the leased_until column.
 // Batch-worker pull: atomically claim up to sqlc.arg(lease_limit) assessable
 // rows for the caller task. Claimable = pending/failed/stale, or running with
 // an expired lease (a worker that died mid-batch). SKIP LOCKED keeps
@@ -4064,6 +4139,60 @@ func (q *Queries) SetP4AssessmentIssue(ctx context.Context, arg SetP4AssessmentI
 	return err
 }
 
+const setP4AssessmentTask = `-- name: SetP4AssessmentTask :one
+UPDATE agent_fix_p4_assessment
+SET assessment_task_id = $3,
+    updated_at = now()
+WHERE workspace_id = $1 AND feishu_binding_id = $2
+RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until, assessment_issue_id, attempt_count, last_error
+`
+
+type SetP4AssessmentTaskParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	FeishuBindingID  pgtype.UUID `json:"feishu_binding_id"`
+	AssessmentTaskID pgtype.UUID `json:"assessment_task_id"`
+}
+
+// Points the queue row at the native task the Trigger created for the CURRENT
+// run (plan C-1). CompleteP4AssessmentFromTask / FailP4AssessmentFromTask /
+// StartP4AssessmentFromTask and the result-submit authorization all key on
+// this column.
+func (q *Queries) SetP4AssessmentTask(ctx context.Context, arg SetP4AssessmentTaskParams) (AgentFixP4Assessment, error) {
+	row := q.db.QueryRow(ctx, setP4AssessmentTask, arg.WorkspaceID, arg.FeishuBindingID, arg.AssessmentTaskID)
+	var i AgentFixP4Assessment
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.FeishuBindingID,
+		&i.AssessmentTaskID,
+		&i.AssessmentStatus,
+		&i.DeliveryAttributionPrediction,
+		&i.QualityPrediction,
+		&i.PredictionReasons,
+		&i.Confidence,
+		&i.Workstream,
+		&i.SwarmReviews,
+		&i.AiShelvedCls,
+		&i.SwarmChangeCls,
+		&i.SwarmCommittedCls,
+		&i.ExternalCommittedCls,
+		&i.Evidence,
+		&i.Summary,
+		&i.Warnings,
+		&i.Model,
+		&i.PromptVersion,
+		&i.AssessedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LeasedUntil,
+		&i.AssessmentIssueID,
+		&i.AttemptCount,
+		&i.LastError,
+	)
+	return i, err
+}
+
 const startAgentTask = `-- name: StartAgentTask :one
 UPDATE agent_task_queue
 SET status = 'running',
@@ -4115,6 +4244,62 @@ func (q *Queries) StartAgentTask(ctx context.Context, id pgtype.UUID) (AgentTask
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
 		&i.TaskCategory,
+	)
+	return i, err
+}
+
+const startP4AssessmentFromTask = `-- name: StartP4AssessmentFromTask :one
+UPDATE agent_fix_p4_assessment
+SET assessment_status = 'running',
+    attempt_count = attempt_count + 1,
+    updated_at = now()
+WHERE workspace_id = $1 AND assessment_task_id = $2
+  AND assessment_status <> 'completed'
+RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until, assessment_issue_id, attempt_count, last_error
+`
+
+type StartP4AssessmentFromTaskParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	AssessmentTaskID pgtype.UUID `json:"assessment_task_id"`
+}
+
+// Native task flow (plan C-1): the daemon starting the assessment task
+// projects the row to running. Keyed on the task the Trigger stamped via
+// SetP4AssessmentTask; guarded against clobbering a result the agent already
+// submitted (same rationale as FailP4AssessmentFromTask). attempt_count keeps
+// counting starts so "why is this row stuck" stays answerable.
+func (q *Queries) StartP4AssessmentFromTask(ctx context.Context, arg StartP4AssessmentFromTaskParams) (AgentFixP4Assessment, error) {
+	row := q.db.QueryRow(ctx, startP4AssessmentFromTask, arg.WorkspaceID, arg.AssessmentTaskID)
+	var i AgentFixP4Assessment
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.FeishuBindingID,
+		&i.AssessmentTaskID,
+		&i.AssessmentStatus,
+		&i.DeliveryAttributionPrediction,
+		&i.QualityPrediction,
+		&i.PredictionReasons,
+		&i.Confidence,
+		&i.Workstream,
+		&i.SwarmReviews,
+		&i.AiShelvedCls,
+		&i.SwarmChangeCls,
+		&i.SwarmCommittedCls,
+		&i.ExternalCommittedCls,
+		&i.Evidence,
+		&i.Summary,
+		&i.Warnings,
+		&i.Model,
+		&i.PromptVersion,
+		&i.AssessedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LeasedUntil,
+		&i.AssessmentIssueID,
+		&i.AttemptCount,
+		&i.LastError,
 	)
 	return i, err
 }

@@ -86,12 +86,18 @@ func truncateRunes(s string, max int) string {
 // transaction so a failed insert rolls the whole trigger back. On force
 // re-run the previous issue is left untouched (its terminal state is the run
 // history); SetP4AssessmentIssue repoints the row to the new issue.
+//
+// assigneeID is the workspace's p4_assessment capability agent (plan C-1);
+// the caller creates the native task hanging on this issue in the same
+// transaction. A zero assigneeID (legacy env-allowlist path) leaves the issue
+// unassigned.
 func (s *P4AssessmentService) createAssessmentProjectionIssue(
 	ctx context.Context,
 	q *db.Queries,
 	workspaceID, bindingID pgtype.UUID,
 	row db.GetP4AssessmentBindingRow,
 	actor P4AssessmentActor,
+	assigneeID pgtype.UUID,
 ) (pgtype.UUID, error) {
 	if actor.CreatorType == "" || !actor.CreatorID.Valid {
 		// Conservative: a scan path without a resolvable creator (e.g. a
@@ -127,17 +133,23 @@ func (s *P4AssessmentService) createAssessmentProjectionIssue(
 		return pgtype.UUID{}, err
 	}
 	identifier := fmt.Sprintf("%s-%d", workspaceIssuePrefix(ws), src.Number)
+	var assigneeType pgtype.Text
+	if assigneeID.Valid {
+		assigneeType = pgtype.Text{String: "agent", Valid: true}
+	}
 	issue, err := q.CreateAgentWorkIssue(ctx, db.CreateAgentWorkIssueParams{
-		WorkspaceID: workspaceID,
-		Title:       fmt.Sprintf("评估 %s【%s】%s", identifier, row.WorkItemID, truncateRunes(src.Title, 60)),
-		Description: pgtype.Text{String: p4AssessmentIssueDescription(identifier, src.Title, row, actor.Trigger), Valid: true},
-		Status:      "todo",
-		Priority:    "none",
-		CreatorType: actor.CreatorType,
-		CreatorID:   actor.CreatorID,
-		Number:      number,
-		ProjectID:   projectID,
-		Metadata:    metadata,
+		WorkspaceID:  workspaceID,
+		Title:        fmt.Sprintf("评估 %s【%s】%s", identifier, row.WorkItemID, truncateRunes(src.Title, 60)),
+		Description:  pgtype.Text{String: p4AssessmentIssueDescription(identifier, src.Title, row, actor.Trigger), Valid: true},
+		Status:       "todo",
+		Priority:     "none",
+		CreatorType:  actor.CreatorType,
+		CreatorID:    actor.CreatorID,
+		Number:       number,
+		ProjectID:    projectID,
+		Metadata:     metadata,
+		AssigneeType: assigneeType,
+		AssigneeID:   assigneeID,
 	})
 	if err != nil {
 		return pgtype.UUID{}, err

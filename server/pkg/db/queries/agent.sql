@@ -236,6 +236,21 @@ INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, 
 VALUES ($1, $2, NULL, 'queued', $3, $4)
 RETURNING *;
 
+-- name: CreateP4AssessmentTask :one
+-- Native assessment task (plan C-1): hangs on the assessment PROJECTION issue
+-- (issue_id = the derived agent_work issue), agent_id = the workspace's
+-- p4_assessment capability agent. task_category='analysis' keeps the task out
+-- of the normal issue-fix workflow during the transition (C-2 retires the
+-- column; the guard already accepts the issue's metadata.agent_work marker).
+-- handoff_note carries the read-only assessment instructions: NEW daemons
+-- build a dedicated assessment prompt from context.type and ignore it, OLD
+-- daemons (pre-isolation) fall into the normal assignment path and DO render
+-- handoff_note, which is how the server steers a stale daemon into read-only
+-- JSON output without a client update.
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, task_category, handoff_note)
+VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, 'analysis', $6)
+RETURNING *;
+
 -- name: LinkTaskToIssue :exec
 -- Attaches the issue a quick-create task produced back to the task row, once
 -- the agent has finished and the issue exists. Guarded by `issue_id IS NULL`
@@ -1206,7 +1221,25 @@ SET assessment_status = 'completed',
 WHERE workspace_id = $1 AND assessment_task_id = $2
 RETURNING *;
 
+-- name: StartP4AssessmentFromTask :one
+-- Native task flow (plan C-1): the daemon starting the assessment task
+-- projects the row to running. Keyed on the task the Trigger stamped via
+-- SetP4AssessmentTask; guarded against clobbering a result the agent already
+-- submitted (same rationale as FailP4AssessmentFromTask). attempt_count keeps
+-- counting starts so "why is this row stuck" stays answerable.
+UPDATE agent_fix_p4_assessment
+SET assessment_status = 'running',
+    attempt_count = attempt_count + 1,
+    updated_at = now()
+WHERE workspace_id = $1 AND assessment_task_id = $2
+  AND assessment_status <> 'completed'
+RETURNING *;
+
 -- name: LeaseP4AssessmentsPending :many
+-- Deprecated (plan C-1): the batch pull/lease contract is retired — Trigger
+-- now creates a native task per run. Kept only so in-flight batch workers can
+-- drain; C-2 deletes this query together with the pending/result-by-ref
+-- endpoints and the leased_until column.
 -- Batch-worker pull: atomically claim up to sqlc.arg(lease_limit) assessable
 -- rows for the caller task. Claimable = pending/failed/stale, or running with
 -- an expired lease (a worker that died mid-batch). SKIP LOCKED keeps
@@ -1270,6 +1303,17 @@ SET assessment_status = 'completed',
     assessed_at = now(),
     updated_at = now()
 WHERE workspace_id = $1 AND feishu_binding_id = $2 AND assessment_task_id = $3
+RETURNING *;
+
+-- name: SetP4AssessmentTask :one
+-- Points the queue row at the native task the Trigger created for the CURRENT
+-- run (plan C-1). CompleteP4AssessmentFromTask / FailP4AssessmentFromTask /
+-- StartP4AssessmentFromTask and the result-submit authorization all key on
+-- this column.
+UPDATE agent_fix_p4_assessment
+SET assessment_task_id = $3,
+    updated_at = now()
+WHERE workspace_id = $1 AND feishu_binding_id = $2
 RETURNING *;
 
 -- name: SetP4AssessmentIssue :exec

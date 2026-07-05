@@ -24,13 +24,17 @@ SELECT pg_advisory_xact_lock(hashtextextended('agent_work_project:' || sqlc.arg(
 -- name: CreateAgentWorkIssue :one
 -- Dedicated insert for projection issues: stamps the reserved agent_work
 -- metadata at creation (the ordinary CreateIssue never writes metadata, and
--- the user metadata API rejects the reserved key). No assignee — phase 2 has
--- no capability agent; the executing agent is visible through its comments.
+-- the user metadata API rejects the reserved key). Assignee is the workspace's
+-- capability agent when one is configured (plan C-1: "指派即派发" — the native
+-- task the Trigger creates in the same transaction hangs on this issue);
+-- NULL assignee is the legacy env-allowlist path, which C-2 removes.
 INSERT INTO issue (
     workspace_id, title, description, status, priority,
-    creator_type, creator_id, position, number, project_id, metadata
+    creator_type, creator_id, position, number, project_id, metadata,
+    assignee_type, assignee_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, 0, $8, $9, sqlc.arg(metadata)::jsonb
+    $1, $2, $3, $4, $5, $6, $7, 0, $8, $9, sqlc.arg(metadata)::jsonb,
+    sqlc.narg(assignee_type), sqlc.narg(assignee_id)
 ) RETURNING *;
 
 -- name: UpdateAgentWorkIssueStatus :execrows

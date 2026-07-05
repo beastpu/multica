@@ -119,9 +119,29 @@ func TestDeleteIssueMetadataRejectsReservedAgentWorkKey(t *testing.T) {
 
 // --- Trigger creates the projection issue; force re-run creates a NEW one ---
 
+// allowlistTestWorkspaceForP4 opts the shared test workspace into the
+// transitional env allowlist so Trigger's fail-closed capability gate passes
+// through the legacy branch (pending row + projection issue, no native task).
+// Native-flow tests configure a capability role instead.
+func allowlistTestWorkspaceForP4(t *testing.T) {
+	t.Helper()
+	previous := testHandler.P4AssessmentService.Allowlist
+	testHandler.P4AssessmentService.Allowlist = service.P4AssessmentAllowlist{testWorkspaceID: true}
+	t.Cleanup(func() { testHandler.P4AssessmentService.Allowlist = previous })
+}
+
 // setupP4TriggerFixture wires a done Feishu binding with a legacy status
-// mapping so Trigger's mapped-status gate passes. No assessment row exists yet.
+// mapping so Trigger's mapped-status gate passes. No assessment row exists
+// yet. The workspace is opted in through the transitional env allowlist.
 func setupP4TriggerFixture(t *testing.T) (bindingID, issueID string) {
+	t.Helper()
+	allowlistTestWorkspaceForP4(t)
+	return setupP4BindingFixture(t)
+}
+
+// setupP4BindingFixture wires the done Feishu binding only — no allowlist, no
+// capability. Callers pick their opt-in path.
+func setupP4BindingFixture(t *testing.T) (bindingID, issueID string) {
 	t.Helper()
 	ctx := context.Background()
 	issueID = createTestIssue(t, "p4 trigger projection source", "done", "low")

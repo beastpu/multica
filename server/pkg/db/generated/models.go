@@ -1153,6 +1153,15 @@ type Workspace struct {
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
 }
 
+type WorkspaceAgentCapability struct {
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	Capability         string             `json:"capability"`
+	AgentID            pgtype.UUID        `json:"agent_id"`
+	ProjectID          pgtype.UUID        `json:"project_id"`
+	MaxConcurrentTasks int32              `json:"max_concurrent_tasks"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
 type WorkspaceInvitation struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`

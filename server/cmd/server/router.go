@@ -723,6 +723,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// are admin-gated below).
 					r.Get("/runtime-profiles", h.ListRuntimeProfiles)
 					r.Get("/runtime-profiles/{profileId}", h.GetRuntimeProfile)
+					// Capability roles (plan C-1): which agent executes a
+					// capability's derived work (first: p4_assessment). The
+					// P4 assessment Trigger is fail-closed on this config.
+					r.Get("/capabilities/{capability}", h.GetWorkspaceCapability)
+					r.Put("/capabilities/{capability}", h.PutWorkspaceCapability)
+					r.Delete("/capabilities/{capability}", h.DeleteWorkspaceCapability)
 				})
 				// Admin-level access
 				r.Group(func(r chi.Router) {
@@ -1133,9 +1139,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Patch("/api/operations/agent-fixes/{bindingId}/review", h.PatchAgentFixReviewByBinding)
 			r.Put("/api/operations/agent-fixes/{issueId}/review", h.UpdateAgentFixReview)
 
-			// Batch assessment worker contract: pull leased pending items
-			// (evidence inlined, opaque ref) and submit results by ref. The
-			// worker never constructs binding ids or spawns per-binding tasks.
+			// Deprecated (plan C-1): batch assessment worker contract — pull
+			// leased pending items and submit results by ref. Retired in
+			// favor of the native per-run task flow; kept only so in-flight
+			// batch workers can drain. C-2 deletes both routes.
 			r.Get("/api/operations/assessments/pending", h.ListPendingP4Assessments)
 			r.Post("/api/operations/assessments/result", h.SubmitP4AssessmentResultByRef)
 

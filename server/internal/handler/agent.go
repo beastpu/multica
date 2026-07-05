@@ -2301,7 +2301,11 @@ func (h *Handler) requestBatchAssessmentTask(r *http.Request, workspaceID, actor
 }
 
 // ListPendingP4Assessments is the batch worker's pull
-// (GET /api/operations/assessments/pending?limit=N). Each returned item is
+// (GET /api/operations/assessments/pending?limit=N).
+//
+// Deprecated (plan C-1): the batch contract is retired — Trigger creates a
+// native per-run task instead. Kept only so in-flight batch workers can
+// drain; C-2 deletes this handler and its route. Each returned item is
 // leased to the calling task: it flips to running with a lease deadline and
 // must be submitted via /api/operations/assessments/result before the lease
 // expires, or it returns to the pending pool. Fail-closed on the same
@@ -2341,7 +2345,11 @@ func (h *Handler) ListPendingP4Assessments(w http.ResponseWriter, r *http.Reques
 }
 
 // SubmitP4AssessmentResultByRef is the batch worker's submit
-// (POST /api/operations/assessments/result). The body is the single-result
+// (POST /api/operations/assessments/result).
+//
+// Deprecated (plan C-1): the batch contract is retired — native tasks submit
+// through SubmitAgentFixP4Assessment. Kept only so in-flight batch workers
+// can drain; C-2 deletes this handler and its route. The body is the single-result
 // schema plus a `ref` echoed from the pending pull; the server maps ref back
 // to the binding and the lease guard rejects a worker whose claim was
 // reclaimed. Validation errors return 400 with the exact problem so the agent

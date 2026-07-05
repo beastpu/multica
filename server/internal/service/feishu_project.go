@@ -961,11 +961,16 @@ func (s *FeishuProjectSyncService) triggerP4AssessmentForDoneBinding(ctx context
 	if s.P4Assessment == nil {
 		return
 	}
-	if !s.P4AssessmentAllowlist.Allows(cfg.WorkspaceID) {
-		return
-	}
 	mappedStatus, ok := feishuProjectMappedLocalStatus(FeishuProjectStatusMappingFor(cfg, item.Type), item.Status)
 	if !ok || mappedStatus != "done" {
+		return
+	}
+	// Fail-closed gate (plan C-1): the capability role configuration is the
+	// authoritative opt-in; the env allowlist survives only as a transitional
+	// OR condition (C-2 deletes it). Trigger re-checks the same gate
+	// authoritatively inside its transaction — this pre-check just avoids a
+	// Trigger round-trip per done binding.
+	if !s.P4AssessmentAllowlist.Allows(cfg.WorkspaceID) && !P4AssessmentCapabilityConfigured(ctx, s.Queries, cfg.WorkspaceID) {
 		return
 	}
 	// Scan-path projection issues are created by the integration's creator —
