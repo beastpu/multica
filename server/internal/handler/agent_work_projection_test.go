@@ -172,6 +172,39 @@ func cleanupAgentWorkArtifacts(t *testing.T) {
 	testPool.Exec(ctx, `DELETE FROM issue WHERE workspace_id = $1 AND jsonb_exists(metadata, 'agent_work')`, testWorkspaceID)
 	testPool.Exec(ctx, `DELETE FROM project WHERE id IN (SELECT project_id FROM agent_work_project WHERE workspace_id = $1)`, testWorkspaceID)
 	testPool.Exec(ctx, `DELETE FROM agent_work_project WHERE workspace_id = $1`, testWorkspaceID)
+	testPool.Exec(ctx, `DELETE FROM issue_label WHERE workspace_id = $1 AND name = '评估'`, testWorkspaceID)
+}
+
+// countAssessmentLabels returns how many workspace-level「评估」labels exist —
+// the server-side ensure must never mint duplicates.
+func countAssessmentLabels(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT count(*) FROM issue_label WHERE workspace_id = $1 AND name = '评估'`,
+		testWorkspaceID,
+	).Scan(&n); err != nil {
+		t.Fatalf("count assessment labels: %v", err)
+	}
+	return n
+}
+
+// assertIssueHasAssessmentLabel checks the projection issue carries the
+// human-facing「评估」label (the authoritative marker stays metadata.agent_work).
+func assertIssueHasAssessmentLabel(t *testing.T, issueID string) {
+	t.Helper()
+	var n int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM issue_to_label il
+		JOIN issue_label l ON l.id = il.label_id
+		WHERE il.issue_id = $1 AND l.workspace_id = $2 AND l.name = '评估'`,
+		issueID, testWorkspaceID,
+	).Scan(&n); err != nil {
+		t.Fatalf("count issue assessment labels: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("projection issue %s must carry exactly one「评估」label, got %d", issueID, n)
+	}
 }
 
 func triggerP4AssessmentRequest(t *testing.T, bindingID string, force bool) *httptest.ResponseRecorder {
@@ -255,6 +288,8 @@ func TestTriggerP4AssessmentCreatesProjectionIssue(t *testing.T) {
 	if projectID == nil || mappedProject == nil || *projectID != *mappedProject {
 		t.Fatalf("projection issue must live in the mapped system project (issue=%v mapping=%v)", projectID, mappedProject)
 	}
+
+	assertIssueHasAssessmentLabel(t, projIssueID)
 }
 
 func TestForceRerunCreatesNewProjectionIssueAndRepoints(t *testing.T) {
@@ -297,5 +332,10 @@ func TestForceRerunCreatesNewProjectionIssueAndRepoints(t *testing.T) {
 	}
 	if trigger != "force_rerun" {
 		t.Fatalf("second issue agent_work.trigger = %q, want force_rerun", trigger)
+	}
+	// Repeated triggers must reuse the ONE workspace label, not mint duplicates.
+	assertIssueHasAssessmentLabel(t, secondIssueID)
+	if n := countAssessmentLabels(t); n != 1 {
+		t.Fatalf("repeated trigger must reuse the workspace「评估」label, got %d labels", n)
 	}
 }

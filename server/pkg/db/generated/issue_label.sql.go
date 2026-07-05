@@ -300,3 +300,36 @@ func (q *Queries) UpdateLabel(ctx context.Context, arg UpdateLabelParams) (Issue
 	)
 	return i, err
 }
+
+const upsertLabelByName = `-- name: UpsertLabelByName :one
+INSERT INTO issue_label (workspace_id, name, color)
+VALUES ($1, $2, $3)
+ON CONFLICT (workspace_id, LOWER(name)) DO UPDATE
+SET name = issue_label.name
+RETURNING id, workspace_id, name, color, created_at, updated_at
+`
+
+type UpsertLabelByNameParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Name        string      `json:"name"`
+	Color       string      `json:"color"`
+}
+
+// Find-or-create a workspace label by case-insensitive name, race-safe via
+// the issue_label_workspace_name_lower_idx unique index. The no-op DO UPDATE
+// (instead of DO NOTHING) keeps RETURNING populated when the label already
+// exists, and deliberately preserves the existing row's name and color so a
+// user's customization survives repeated server-side ensures.
+func (q *Queries) UpsertLabelByName(ctx context.Context, arg UpsertLabelByNameParams) (IssueLabel, error) {
+	row := q.db.QueryRow(ctx, upsertLabelByName, arg.WorkspaceID, arg.Name, arg.Color)
+	var i IssueLabel
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Color,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

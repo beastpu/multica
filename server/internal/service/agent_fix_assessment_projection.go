@@ -42,6 +42,18 @@ const (
 	P4AssessmentTriggerForceRerun = "force_rerun"
 )
 
+// Every projection issue is tagged with a workspace-level「评估」label as a
+// human-facing visual marker (list scanning, board filtering). It complements
+// metadata.agent_work, which stays the authoritative marker — guards and
+// filters keep reading metadata, never the label. The color is a neutral gray
+// (Tailwind gray-500) in the 6-digit-hex format enforced by the label API; if
+// the workspace already has a label with this name, its existing color and
+// casing are preserved.
+const (
+	p4AssessmentLabelName  = "评估"
+	p4AssessmentLabelColor = "#6b7280"
+)
+
 // P4AssessmentActor describes who/what triggered an assessment run. It
 // becomes the projection issue's creator (issue.creator_type CHECK only
 // allows member/agent — there is no 'system') and the agent_work.trigger
@@ -153,6 +165,23 @@ func (s *P4AssessmentService) createAssessmentProjectionIssue(
 	})
 	if err != nil {
 		return pgtype.UUID{}, err
+	}
+	// Same transaction as the issue insert: the label is part of the
+	// projection contract, so a failed attach rolls the trigger back.
+	label, err := q.UpsertLabelByName(ctx, db.UpsertLabelByNameParams{
+		WorkspaceID: workspaceID,
+		Name:        p4AssessmentLabelName,
+		Color:       p4AssessmentLabelColor,
+	})
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("ensure assessment label: %w", err)
+	}
+	if err := q.AttachLabelToIssue(ctx, db.AttachLabelToIssueParams{
+		IssueID:     issue.ID,
+		LabelID:     label.ID,
+		WorkspaceID: workspaceID,
+	}); err != nil {
+		return pgtype.UUID{}, fmt.Errorf("attach assessment label: %w", err)
 	}
 	if err := q.SetP4AssessmentIssue(ctx, db.SetP4AssessmentIssueParams{
 		WorkspaceID:       workspaceID,
