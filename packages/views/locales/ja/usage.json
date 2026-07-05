@@ -157,7 +157,6 @@
       "no_evidence": "CL 提出記録なし"
     },
     "assessment_obs": {
-      "lease_remaining": "残り {{minutes}} 分",
       "attempts": "{{count}} 回試行"
     },
     "assessment_action": {

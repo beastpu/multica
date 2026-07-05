@@ -157,7 +157,6 @@
       "no_evidence": "CL 제출 기록 없음"
     },
     "assessment_obs": {
-      "lease_remaining": "{{minutes}}분 남음",
       "attempts": "{{count}}회 시도"
     },
     "assessment_action": {

@@ -696,12 +696,10 @@ export interface AgentFixP4Assessment {
   external_committed_cls?: Array<string | number>;
   summary?: string;
   warnings?: string[];
-  // Queue observability: lease attempts so far, the last failure/release
-  // reason (cleared on completion), the active lease expiry, and the agent
-  // whose batch task holds/held the lease.
+  // Queue observability: run starts so far, the last failure reason
+  // (cleared on completion), and the agent whose task ran the assessment.
   attempt_count?: number;
   last_error?: string;
-  leased_until?: string | null;
   assessment_agent_name?: string;
 }
 

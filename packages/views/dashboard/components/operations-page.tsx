@@ -1803,27 +1803,20 @@ function AssessmentQualityCell({
   );
 }
 
-// Queue observability line under the status badge. Running rows show who is
-// on it and how long the lease has left; failed/pending rows show how many
-// attempts happened and the last recorded error, so "why is this stuck" is
-// answerable from the table instead of psql.
+// Queue observability line under the status badge. Running rows show which
+// agent is on it; failed/pending rows show how many attempts happened and the
+// last recorded error, so "why is this stuck" is answerable from the table
+// instead of psql.
 function AssessmentRunDetail({ p4 }: { p4?: AgentFixRecord["p4_assessment"] }) {
   const { t } = useT("usage");
   if (!p4) return null;
   const status = p4.assessment_status ?? "";
   if (status === "running") {
     const agent = (p4.assessment_agent_name ?? "").trim();
-    const minutes = leaseMinutesLeft(p4.leased_until);
-    if (!agent && minutes == null) return null;
-    const parts = [
-      agent,
-      minutes == null
-        ? ""
-        : t(($) => $.operations.assessment_obs.lease_remaining, { minutes }),
-    ].filter(Boolean);
+    if (!agent) return null;
     return (
       <span className="max-w-full truncate text-xs text-muted-foreground">
-        {parts.join(" · ")}
+        {agent}
       </span>
     );
   }
@@ -1845,17 +1838,6 @@ function AssessmentRunDetail({ p4 }: { p4?: AgentFixRecord["p4_assessment"] }) {
       {text}
     </span>
   );
-}
-
-// Whole minutes until the lease expires, or null when there is no active
-// lease (missing/unparseable timestamp or already expired).
-function leaseMinutesLeft(leasedUntil?: string | null): number | null {
-  if (!leasedUntil) return null;
-  const expiry = new Date(leasedUntil).getTime();
-  if (Number.isNaN(expiry)) return null;
-  const ms = expiry - Date.now();
-  if (ms <= 0) return null;
-  return Math.ceil(ms / 60_000);
 }
 
 function AssessmentTriggerButton({
