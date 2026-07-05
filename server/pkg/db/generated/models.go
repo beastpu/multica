@@ -71,7 +71,6 @@ type AgentFixP4Assessment struct {
 	AssessedAt                    pgtype.Timestamptz `json:"assessed_at"`
 	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                     pgtype.Timestamptz `json:"updated_at"`
-	LeasedUntil                   pgtype.Timestamptz `json:"leased_until"`
 	AssessmentIssueID             pgtype.UUID        `json:"assessment_issue_id"`
 	AttemptCount                  int32              `json:"attempt_count"`
 	LastError                     string             `json:"last_error"`
@@ -148,7 +147,6 @@ type AgentTaskQueue struct {
 	HandoffNote           pgtype.Text        `json:"handoff_note"`
 	PrepareLeaseExpiresAt pgtype.Timestamptz `json:"prepare_lease_expires_at"`
 	SquadID               pgtype.UUID        `json:"squad_id"`
-	TaskCategory          string             `json:"task_category"`
 }
 
 type AgentWorkProject struct {

@@ -115,14 +115,14 @@ func TestTriggerCreatesAssignedIssueAndNativeTask(t *testing.T) {
 
 	// The native task hangs on the PROJECTION issue and carries the legacy
 	// per-binding context contract.
-	var taskAgentID, taskIssueID, taskCategory, taskStatus string
+	var taskAgentID, taskIssueID, taskStatus string
 	var handoffNote *string
 	var forceFresh bool
 	var contextJSON []byte
 	if err := testPool.QueryRow(context.Background(), `
-		SELECT agent_id::text, issue_id::text, task_category, status, handoff_note, force_fresh_session, context
+		SELECT agent_id::text, issue_id::text, status, handoff_note, force_fresh_session, context
 		FROM agent_task_queue WHERE id = $1`, taskID,
-	).Scan(&taskAgentID, &taskIssueID, &taskCategory, &taskStatus, &handoffNote, &forceFresh, &contextJSON); err != nil {
+	).Scan(&taskAgentID, &taskIssueID, &taskStatus, &handoffNote, &forceFresh, &contextJSON); err != nil {
 		t.Fatalf("load native task: %v", err)
 	}
 	if taskAgentID != agentID {
@@ -131,8 +131,8 @@ func TestTriggerCreatesAssignedIssueAndNativeTask(t *testing.T) {
 	if taskIssueID != projIssueID {
 		t.Fatalf("task issue = %s, want projection issue %s", taskIssueID, projIssueID)
 	}
-	if taskCategory != "analysis" || taskStatus != "queued" || !forceFresh {
-		t.Fatalf("task shape = %s/%s/force_fresh=%v, want analysis/queued/true", taskCategory, taskStatus, forceFresh)
+	if taskStatus != "queued" || !forceFresh {
+		t.Fatalf("task shape = %s/force_fresh=%v, want queued/true", taskStatus, forceFresh)
 	}
 	if handoffNote == nil || *handoffNote == "" {
 		t.Fatalf("native task must carry the stale-daemon steering handoff_note")

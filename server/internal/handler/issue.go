@@ -2516,10 +2516,10 @@ type UpdateIssueRequest struct {
 // issues. The check is gated on X-Task-ID (stamped by the mat_ token
 // middleware for agent runs), so a member request is never affected.
 //
-// Transitional anchor (plan C-1): task_category == 'analysis' OR the issue
-// the task hangs on carries the reserved metadata.agent_work marker. The
-// category branch covers legacy batch/analysis tasks that hang on no issue;
-// C-2 retires the column and keeps only the issue-metadata anchor.
+// Anchor: the issue the task hangs on carries the reserved
+// metadata.agent_work marker — the single derived-work marker in the system
+// (written only by server-side projection code; the user metadata API rejects
+// the key, so a real issue can never be spoofed into this branch).
 func (h *Handler) analysisTaskForRequest(r *http.Request, userID, workspaceID string) (db.AgentTaskQueue, bool) {
 	actorType, _ := h.resolveActor(r, userID, workspaceID)
 	if actorType != "agent" {
@@ -2536,9 +2536,6 @@ func (h *Handler) analysisTaskForRequest(r *http.Request, userID, workspaceID st
 	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
 	if err != nil {
 		return db.AgentTaskQueue{}, false
-	}
-	if task.TaskCategory == "analysis" {
-		return task, true
 	}
 	if task.IssueID.Valid {
 		if taskIssue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil && isAgentWorkIssue(taskIssue) {

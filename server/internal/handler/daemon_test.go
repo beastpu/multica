@@ -597,8 +597,8 @@ func TestClaimTaskByRuntime_P4AssessmentIncludesBindingAndBuiltinSkillRef(t *tes
 
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, task_category)
-		VALUES ($1, $2, $3, 'queued', 1, $4, 'analysis')
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
+		VALUES ($1, $2, $3, 'queued', 1, $4)
 		RETURNING id
 	`, agentID, runtimeID, issueID, taskContext).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create P4 assessment task: %v", err)

@@ -237,18 +237,19 @@ VALUES ($1, $2, NULL, 'queued', $3, $4)
 RETURNING *;
 
 -- name: CreateP4AssessmentTask :one
--- Native assessment task (plan C-1): hangs on the assessment PROJECTION issue
+-- Native assessment task (plan C): hangs on the assessment PROJECTION issue
 -- (issue_id = the derived agent_work issue), agent_id = the workspace's
--- p4_assessment capability agent. task_category='analysis' keeps the task out
--- of the normal issue-fix workflow during the transition (C-2 retires the
--- column; the guard already accepts the issue's metadata.agent_work marker).
+-- p4_assessment capability agent. Workflow isolation comes from the issue
+-- itself: the projection issue's reserved metadata.agent_work marker anchors
+-- the read-only write guard, and per-issue workflow queries never meet this
+-- task through a real issue.
 -- handoff_note carries the read-only assessment instructions: NEW daemons
 -- build a dedicated assessment prompt from context.type and ignore it, OLD
 -- daemons (pre-isolation) fall into the normal assignment path and DO render
 -- handoff_note, which is how the server steers a stale daemon into read-only
 -- JSON output without a client update.
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, task_category, handoff_note)
-VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, 'analysis', $6)
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, handoff_note)
+VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, $6)
 RETURNING *;
 
 -- name: LinkTaskToIssue :exec
@@ -278,7 +279,7 @@ INSERT INTO agent_task_queue (
     status, priority, trigger_comment_id, trigger_summary, context,
     session_id, work_dir,
     attempt, max_attempts, parent_task_id, force_fresh_session, is_leader_task,
-    squad_id, task_category
+    squad_id
 )
 SELECT
     p.agent_id, p.runtime_id, p.issue_id, p.chat_session_id, p.autopilot_run_id,
@@ -288,7 +289,7 @@ SELECT
     p.attempt + 1, p.max_attempts, p.id,
     p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity',
     p.is_leader_task,
-    p.squad_id, p.task_category
+    p.squad_id
 FROM agent_task_queue p
 WHERE p.id = $1
 RETURNING *;
@@ -303,7 +304,6 @@ UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE issue_id = $1
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-  AND task_category = 'fix'
 RETURNING *;
 
 -- name: CancelAgentTasksByIssueAndAgent :many
@@ -316,7 +316,6 @@ SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE issue_id = $1
   AND agent_id = $2
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-  AND task_category = 'fix'
 RETURNING *;
 
 -- name: CancelAgentTasksByAgent :many
@@ -391,8 +390,7 @@ WHERE id = (
             AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
             AND (
               (atq.issue_id IS NOT NULL
-                AND active.issue_id = atq.issue_id
-                AND active.task_category = atq.task_category)
+                AND active.issue_id = atq.issue_id)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
               OR (
                 atq.issue_id IS NULL
@@ -518,7 +516,6 @@ RETURNING *;
 -- never picks up a bad session even when failure_reason hasn't caught up.
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
-  AND task_category = 'fix'
   AND (
     status = 'completed'
     OR (
@@ -542,7 +539,6 @@ SELECT started_at FROM agent_task_queue
 WHERE agent_id = $1
   AND issue_id = $2
   AND started_at IS NOT NULL
-  AND task_category = 'fix'
 ORDER BY started_at DESC
 LIMIT 1;
 
@@ -644,7 +640,6 @@ RETURNING *;
 WITH victims AS (
     SELECT id FROM agent_task_queue
     WHERE status = 'queued'
-      AND task_category = 'fix'
       AND created_at < now() - make_interval(secs => @ttl_secs::double precision)
     ORDER BY created_at ASC
     LIMIT @max_per_tick::int
@@ -659,7 +654,6 @@ SET status = 'failed',
 FROM victims v
 WHERE t.id = v.id
   AND t.status = 'queued'
-  AND t.task_category = 'fix'
   AND t.created_at < now() - make_interval(secs => @ttl_secs::double precision)
 RETURNING t.*;
 
@@ -683,8 +677,7 @@ FOR UPDATE;
 -- or running task for the issue.
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
 WHERE issue_id = $1
-  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-  AND task_category = 'fix';
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory');
 
 -- name: HasPendingTaskForIssue :one
 -- Returns true if there is a queued or dispatched (but not yet running) task for the issue.
@@ -693,8 +686,7 @@ WHERE issue_id = $1
 -- task already exists (natural dedup).
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = $1
-  AND status IN ('queued', 'dispatched')
-  AND task_category = 'fix';
+  AND status IN ('queued', 'dispatched');
 
 -- name: HasPendingTaskForIssueAndAgent :one
 -- Returns true if a specific agent already has a queued or dispatched task
@@ -702,15 +694,13 @@ WHERE issue_id = $1
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = $1
   AND agent_id = $2
-  AND status IN ('queued', 'dispatched')
-  AND task_category = 'fix';
+  AND status IN ('queued', 'dispatched');
 
 -- name: HasTaskForIssueAndAgent :one
 -- Returns true if a specific agent has ever had a task for the given issue.
 SELECT count(*) > 0 AS has_task FROM agent_task_queue
 WHERE issue_id = $1
-  AND agent_id = $2
-  AND task_category = 'fix';
+  AND agent_id = $2;
 
 -- name: HasPendingTaskForIssueAndAgentExcludingTriggerComment :one
 -- Same as HasPendingTaskForIssueAndAgent, but ignores tasks triggered by the
@@ -720,7 +710,6 @@ SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = @issue_id
   AND agent_id = @agent_id
   AND status IN ('queued', 'dispatched')
-  AND task_category = 'fix'
   AND trigger_comment_id IS DISTINCT FROM @exclude_trigger_comment_id::uuid;
 
 -- name: GetLatestTaskIsLeaderForIssueAndAgent :one
@@ -732,7 +721,6 @@ WHERE issue_id = @issue_id
 -- the role-blind authorID == leaderID check).
 SELECT is_leader_task FROM agent_task_queue
 WHERE issue_id = $1 AND agent_id = $2
-  AND task_category = 'fix'
 ORDER BY created_at DESC
 LIMIT 1;
 
@@ -868,9 +856,13 @@ WITH latest AS (
     atq.status AS task_status, atq.failure_reason
   FROM agent_task_queue atq
   JOIN agent ag ON ag.id = atq.agent_id
+  -- Derived agent_work issues (per-run assessment projections) are not fix
+  -- targets: their tasks must not spawn feed rows or inflate the KPIs, so the
+  -- spine skips issues carrying the server-reserved metadata marker.
+  JOIN issue ti ON ti.id = atq.issue_id
+    AND NOT jsonb_exists(ti.metadata, 'agent_work')
   WHERE ag.workspace_id = sqlc.arg('workspace_id')
     AND atq.issue_id IS NOT NULL
-    AND atq.task_category = 'fix'
   -- "Latest run" = most recent activity overall: completion if finished, else
   -- start, else when it was queued. So a fresh queued/running attempt outranks
   -- an older finished one. atq.id is a final deterministic tiebreaker.
@@ -980,12 +972,10 @@ SELECT
   p4.external_committed_cls AS p4_external_committed_cls,
   p4.summary AS p4_summary,
   p4.warnings AS p4_warnings,
-  -- Queue observability for the detail rows: how many times this row was
-  -- leased, why it last failed/was released, the active lease expiry, and
-  -- which agent's batch task holds/held it.
+  -- Queue observability for the detail rows: how many times this run was
+  -- started, why it last failed, and which agent's task ran it.
   COALESCE(p4.attempt_count, 0) AS p4_attempt_count,
   COALESCE(p4.last_error, '') AS p4_last_error,
-  p4.leased_until AS p4_leased_until,
   COALESCE(p4agent.name, '') AS p4_assessment_agent_name,
   afr.outcome AS review_outcome,
   afr.reasons AS review_reasons,

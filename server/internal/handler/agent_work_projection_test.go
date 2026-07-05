@@ -22,14 +22,14 @@ func markIssueAsAgentWork(t *testing.T, issueID string) {
 	}
 }
 
-// --- Guard carve-out: analysis tasks may narrate on their own projection issue ---
+// --- Guard carve-out: derived-work tasks may narrate on their own projection issue ---
 
 func TestAnalysisTaskCanCommentOnAgentWorkIssue(t *testing.T) {
 	issueID := createTestIssue(t, "agent work narration target", "todo", "low")
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
 	markIssueAsAgentWork(t, issueID)
 	agentID := createHandlerTestAgent(t, "Agent Work Narration Agent", nil)
-	taskID := createAnalysisTaskForIssue(t, agentID, issueID)
+	taskID := createHandlerTestTaskForAgentOnIssue(t, agentID, issueID)
 
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodPost, "/api/issues/"+issueID+"/comments", map[string]any{
@@ -60,7 +60,7 @@ func TestAnalysisTaskStillCannotUpdateAgentWorkIssueStatus(t *testing.T) {
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
 	markIssueAsAgentWork(t, issueID)
 	agentID := createHandlerTestAgent(t, "Agent Work Status Guard Agent", nil)
-	taskID := createAnalysisTaskForIssue(t, agentID, issueID)
+	taskID := createHandlerTestTaskForAgentOnIssue(t, agentID, issueID)
 
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodPut, "/api/issues/"+issueID, map[string]any{"status": "done"})

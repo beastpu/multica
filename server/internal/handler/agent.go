@@ -1640,15 +1640,13 @@ type AgentFixP4AssessmentResponse struct {
 	ExternalCommittedCLs          []int32         `json:"external_committed_cls,omitempty"`
 	Summary                       string          `json:"summary,omitempty"`
 	Warnings                      json.RawMessage `json:"warnings,omitempty"`
-	// Queue observability: how many times this row was leased, why it last
-	// failed or was released back to the pool, the active lease expiry, and
-	// which agent's batch task holds/held the lease. AttemptCount/LastError
-	// answer "why is this row stuck"; LeasedUntil + AssessmentAgentName let
-	// the dashboard render the executor and lease countdown on running rows.
-	AttemptCount        int32   `json:"attempt_count,omitempty"`
-	LastError           string  `json:"last_error,omitempty"`
-	LeasedUntil         *string `json:"leased_until,omitempty"`
-	AssessmentAgentName string  `json:"assessment_agent_name,omitempty"`
+	// Queue observability: how many times this run was started, why it last
+	// failed, and which agent's task ran it. AttemptCount/LastError answer
+	// "why is this row stuck"; AssessmentAgentName lets the dashboard render
+	// the executor on running rows.
+	AttemptCount        int32  `json:"attempt_count,omitempty"`
+	LastError           string `json:"last_error,omitempty"`
+	AssessmentAgentName string `json:"assessment_agent_name,omitempty"`
 }
 
 type AgentFixHumanReviewResponse struct {
@@ -1826,7 +1824,6 @@ func buildAgentFixP4(row db.ListWorkspaceAgentFixesRow) *AgentFixP4AssessmentRes
 		Warnings:                      jsonArrayOrNil(row.P4Warnings),
 		AttemptCount:                  row.P4AttemptCount,
 		LastError:                     row.P4LastError,
-		LeasedUntil:                   timestampToPtr(row.P4LeasedUntil),
 		AssessmentAgentName:           row.P4AssessmentAgentName,
 	}
 }

@@ -17,8 +17,8 @@ for the behavior contracts the skill teaches.
   `agent_fix_p4_assessment` to pending, creates the run's ASSESSMENT ISSUE
   (derived agent_work issue) assigned to the capability agent, creates the
   native `agent_task_queue` row hanging on that assessment issue
-  (`CreateP4AssessmentTask`: `task_category='analysis'`, fresh session,
-  stale-daemon `handoff_note`), and points `assessment_task_id` at it
+  (`CreateP4AssessmentTask`: fresh session, stale-daemon `handoff_note`),
+  and points `assessment_task_id` at it
   (`SetP4AssessmentTask`) — all in one transaction. Task context carries
   `type`, `workspace_id`, `issue_id` (the REAL defect issue),
   `feishu_binding_id`, `mode: assess_only`, and `prompt_version`.
@@ -121,9 +121,11 @@ for the behavior contracts the skill teaches.
   read-only commands such as `p4 describe -S` and treats Swarm API
   `Unauthorized` as `swarm_lookup_unavailable`, not as a reason to mutate state.
 - `server/pkg/db/queries/agent.sql` and generated sqlc code contain the
-  assessment table queries and task-isolation filters (`task_category = 'fix'`)
-  excluding assessment tasks from ordinary issue task queries, latest-run
-  views, session resume, cancellation, and dedup paths.
+  assessment table queries. Workflow isolation is structural: assessment
+  tasks hang on their own derived agent_work projection issue, so per-issue
+  queries (latest-run, session resume, cancellation, dedup) never meet them
+  through a real issue, and the operations feed spine excludes issues
+  carrying the reserved `metadata.agent_work` marker.
 - Read-only enforcement is server-side, not advisory. `CreateP4AssessmentTask`
   in `agent.sql` stamps `handoff_note` with the read-only assessment
   instructions (built by `p4AssessmentHandoffNote` in
@@ -134,10 +136,10 @@ for the behavior contracts the skill teaches.
   `Handler.rejectAnalysisTaskWrite` (`internal/handler/issue.go`) reject every
   issue mutation from a derived-work task in `UpdateIssue`,
   `BatchUpdateIssues`, and comment creation (`internal/handler/comment.go`).
-  The transitional actor anchor is `task_category == 'analysis'` OR the task's
-  own issue carrying the server-reserved `metadata.agent_work` marker (C-2
-  retires the column and keeps only the metadata anchor). One precise
-  carve-out in `CreateComment`: comment creation is allowed only when the
+  The actor anchor is the task's own issue carrying the server-reserved
+  `metadata.agent_work` marker — the single derived-work marker in the
+  system. One precise carve-out in `CreateComment`: comment creation is
+  allowed only when the
   target issue carries `metadata.agent_work` AND is the task's OWN issue
   (`task.issue_id == issue.id`) — the run's assessment issue, which exists to
   hold the worker's narration. Commenting on any other issue — real or another

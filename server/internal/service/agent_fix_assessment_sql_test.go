@@ -6,51 +6,24 @@ import (
 	"testing"
 )
 
-func TestP4AssessmentTaskIsolationSQLInvariants(t *testing.T) {
+// task_category was retired in C-2: assessment tasks hang on their own
+// derived agent_work projection issue, so per-issue workflow queries never
+// meet them through a real issue and no query may still filter on the
+// dropped column.
+func TestAgentQueriesNoLongerReferenceTaskCategory(t *testing.T) {
 	body, err := os.ReadFile("../../pkg/db/queries/agent.sql")
 	if err != nil {
 		t.Fatalf("read agent.sql: %v", err)
 	}
-	sql := string(body)
-	for _, section := range []string{
-		"CancelAgentTasksByIssue",
-		"CancelAgentTasksByIssueAndAgent",
-		"GetLastTaskSession",
-		"GetLastTaskStartedAtForIssueAndAgent",
-		"HasActiveTaskForIssue",
-		"HasPendingTaskForIssue",
-		"HasPendingTaskForIssueAndAgent",
-		"HasTaskForIssueAndAgent",
-		"HasPendingTaskForIssueAndAgentExcludingTriggerComment",
-		"GetLatestTaskIsLeaderForIssueAndAgent",
-		"ExpireStaleQueuedTasks",
-		"ListWorkspaceAgentFixes",
-	} {
-		chunk := sqlSection(t, sql, section)
-		if !strings.Contains(chunk, "task_category = 'fix'") {
-			t.Fatalf("%s must restrict to fix tasks via task_category\n---\n%s", section, chunk)
-		}
+	if strings.Contains(string(body), "task_category") {
+		t.Fatalf("agent.sql must not reference the retired task_category column")
+	}
+	if strings.Contains(string(body), "leased_until") {
+		t.Fatalf("agent.sql must not reference the retired leased_until column")
 	}
 }
 
-func TestClaimSerializationSeparatesP4AssessmentFromNormalIssueTasks(t *testing.T) {
-	sql, err := os.ReadFile("../../pkg/db/queries/agent.sql")
-	if err != nil {
-		t.Fatalf("read agent.sql: %v", err)
-	}
-	chunk := sqlSection(t, string(sql), "ClaimAgentTask")
-	for _, want := range []string{
-		"active.issue_id = atq.issue_id",
-		"active.task_category = atq.task_category",
-	} {
-		if !strings.Contains(chunk, want) {
-			t.Fatalf("ClaimAgentTask missing %q\n---\n%s", want, chunk)
-		}
-	}
-}
-
-// Plan C-1: the native assessment task must stay out of the normal issue-fix
-// workflow (task_category='analysis', fresh session) and must carry the
+// The native assessment task must run in a fresh session and carry the
 // stale-daemon steering handoff_note.
 func TestP4AssessmentNativeTaskIsolationInvariants(t *testing.T) {
 	body, err := os.ReadFile("../../pkg/db/queries/agent.sql")
@@ -59,7 +32,6 @@ func TestP4AssessmentNativeTaskIsolationInvariants(t *testing.T) {
 	}
 	chunk := sqlSection(t, string(body), "CreateP4AssessmentTask")
 	for _, want := range []string{
-		"'analysis'",
 		"TRUE",
 		"handoff_note",
 	} {
@@ -160,7 +132,10 @@ func TestOperationsFeedUsesBindingSpineWithoutAssessmentTaskPollution(t *testing
 		"fib.last_external_updated_at",
 		"COALESCE(fib.last_external_updated_at, fib.last_synced_at)",
 		"false AS has_normal_task",
-		"atq.task_category = 'fix'",
+		// Derived agent_work issues (per-run assessment projections) must not
+		// spawn feed rows — the metadata marker is the only isolation anchor
+		// now that task_category is gone.
+		"NOT jsonb_exists(ti.metadata, 'agent_work')",
 	} {
 		if !strings.Contains(chunk, want) {
 			t.Fatalf("ListWorkspaceAgentFixes missing binding spine invariant %q\n---\n%s", want, chunk)

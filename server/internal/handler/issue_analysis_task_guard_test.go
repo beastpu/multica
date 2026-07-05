@@ -7,16 +7,17 @@ import (
 	"testing"
 )
 
-func createAnalysisTaskForIssue(t *testing.T, agentID, issueID string) string {
+// createDerivedWorkTask wires the derived-work actor shape the guard anchors
+// on: a plain agent task hanging on an issue that carries the server-reserved
+// metadata.agent_work marker. Returns the task id and its own (projection)
+// issue id.
+func createDerivedWorkTask(t *testing.T, agentID string) (taskID, ownIssueID string) {
 	t.Helper()
-	taskID := createHandlerTestTaskForAgentOnIssue(t, agentID, issueID)
-	if _, err := testPool.Exec(context.Background(),
-		`UPDATE agent_task_queue SET task_category = 'analysis' WHERE id = $1`,
-		taskID,
-	); err != nil {
-		t.Fatalf("mark task as analysis: %v", err)
-	}
-	return taskID
+	ownIssueID = createTestIssue(t, "derived work projection issue", "todo", "low")
+	t.Cleanup(func() { deleteTestIssue(t, ownIssueID) })
+	markIssueAsAgentWork(t, ownIssueID)
+	taskID = createHandlerTestTaskForAgentOnIssue(t, agentID, ownIssueID)
+	return taskID, ownIssueID
 }
 
 func assertIssueStatus(t *testing.T, issueID, want string) {
@@ -33,34 +34,34 @@ func assertIssueStatus(t *testing.T, issueID, want string) {
 	}
 }
 
-func TestAnalysisTaskCannotUpdateIssueStatus(t *testing.T) {
-	issueID := createTestIssue(t, "analysis status guard", "done", "low")
-	t.Cleanup(func() { deleteTestIssue(t, issueID) })
-	agentID := createHandlerTestAgent(t, "Analysis Status Guard Agent", nil)
-	taskID := createAnalysisTaskForIssue(t, agentID, issueID)
+func TestDerivedWorkTaskCannotUpdateRealIssueStatus(t *testing.T) {
+	realIssueID := createTestIssue(t, "derived work status guard", "done", "low")
+	t.Cleanup(func() { deleteTestIssue(t, realIssueID) })
+	agentID := createHandlerTestAgent(t, "Derived Work Status Guard Agent", nil)
+	taskID, _ := createDerivedWorkTask(t, agentID)
 
 	w := httptest.NewRecorder()
-	req := newRequest(http.MethodPut, "/api/issues/"+issueID, map[string]any{"status": "in_progress"})
-	req = withURLParam(req, "id", issueID)
+	req := newRequest(http.MethodPut, "/api/issues/"+realIssueID, map[string]any{"status": "in_progress"})
+	req = withURLParam(req, "id", realIssueID)
 	req.Header.Set("X-Agent-ID", agentID)
 	req.Header.Set("X-Task-ID", taskID)
 
 	testHandler.UpdateIssue(w, req)
 	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for analysis task status update, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("expected 403 for derived-work task status update, got %d: %s", w.Code, w.Body.String())
 	}
-	assertIssueStatus(t, issueID, "done")
+	assertIssueStatus(t, realIssueID, "done")
 }
 
-func TestAnalysisTaskCannotBatchUpdateIssueStatus(t *testing.T) {
-	issueID := createTestIssue(t, "analysis batch status guard", "done", "low")
-	t.Cleanup(func() { deleteTestIssue(t, issueID) })
-	agentID := createHandlerTestAgent(t, "Analysis Batch Status Guard Agent", nil)
-	taskID := createAnalysisTaskForIssue(t, agentID, issueID)
+func TestDerivedWorkTaskCannotBatchUpdateIssues(t *testing.T) {
+	realIssueID := createTestIssue(t, "derived work batch status guard", "done", "low")
+	t.Cleanup(func() { deleteTestIssue(t, realIssueID) })
+	agentID := createHandlerTestAgent(t, "Derived Work Batch Guard Agent", nil)
+	taskID, _ := createDerivedWorkTask(t, agentID)
 
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodPost, "/api/issues/batch-update", map[string]any{
-		"issue_ids": []string{issueID},
+		"issue_ids": []string{realIssueID},
 		"updates":   map[string]any{"status": "in_progress"},
 	})
 	req.Header.Set("X-Agent-ID", agentID)
@@ -68,44 +69,41 @@ func TestAnalysisTaskCannotBatchUpdateIssueStatus(t *testing.T) {
 
 	testHandler.BatchUpdateIssues(w, req)
 	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for analysis task batch status update, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("expected 403 for derived-work task batch status update, got %d: %s", w.Code, w.Body.String())
 	}
-	assertIssueStatus(t, issueID, "done")
+	assertIssueStatus(t, realIssueID, "done")
 }
 
-func TestAnalysisTaskCannotComment(t *testing.T) {
-	issueID := createTestIssue(t, "analysis comment guard", "done", "low")
-	t.Cleanup(func() { deleteTestIssue(t, issueID) })
-	agentID := createHandlerTestAgent(t, "Analysis Comment Guard Agent", nil)
-	taskID := createAnalysisTaskForIssue(t, agentID, issueID)
+func TestDerivedWorkTaskCannotCommentOnRealIssue(t *testing.T) {
+	realIssueID := createTestIssue(t, "derived work comment guard", "done", "low")
+	t.Cleanup(func() { deleteTestIssue(t, realIssueID) })
+	agentID := createHandlerTestAgent(t, "Derived Work Comment Guard Agent", nil)
+	taskID, _ := createDerivedWorkTask(t, agentID)
 
 	w := httptest.NewRecorder()
-	req := newRequest(http.MethodPost, "/api/issues/"+issueID+"/comments", map[string]any{
+	req := newRequest(http.MethodPost, "/api/issues/"+realIssueID+"/comments", map[string]any{
 		"content": "assessment result: likely_correct",
 	})
-	req = withURLParam(req, "id", issueID)
+	req = withURLParam(req, "id", realIssueID)
 	req.Header.Set("X-Agent-ID", agentID)
 	req.Header.Set("X-Task-ID", taskID)
 
 	testHandler.CreateComment(w, req)
 	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for analysis task comment, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("expected 403 for derived-work task comment on a real issue, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
-// The narration carve-out is scoped to the task's OWN issue: an analysis task
-// holding one projection issue must not be able to comment on another run's
-// projection issue (plan C-1 guard tightening).
-func TestAnalysisTaskCannotCommentOnOtherAgentWorkIssue(t *testing.T) {
-	ownIssueID := createTestIssue(t, "own projection issue", "todo", "low")
-	t.Cleanup(func() { deleteTestIssue(t, ownIssueID) })
-	markIssueAsAgentWork(t, ownIssueID)
+// The narration carve-out is scoped to the task's OWN issue: a derived-work
+// task holding one projection issue must not be able to comment on another
+// run's projection issue.
+func TestDerivedWorkTaskCannotCommentOnOtherAgentWorkIssue(t *testing.T) {
 	otherIssueID := createTestIssue(t, "someone else's projection issue", "todo", "low")
 	t.Cleanup(func() { deleteTestIssue(t, otherIssueID) })
 	markIssueAsAgentWork(t, otherIssueID)
 
 	agentID := createHandlerTestAgent(t, "Cross Projection Guard Agent", nil)
-	taskID := createAnalysisTaskForIssue(t, agentID, ownIssueID)
+	taskID, _ := createDerivedWorkTask(t, agentID)
 
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodPost, "/api/issues/"+otherIssueID+"/comments", map[string]any{
@@ -121,16 +119,12 @@ func TestAnalysisTaskCannotCommentOnOtherAgentWorkIssue(t *testing.T) {
 	}
 }
 
-// Transitional guard anchor (plan C-1): a task hanging on an agent_work issue
-// is a derived-work actor even when task_category is not 'analysis' (the
-// column is retired in C-2). Writes are rejected; own-issue comments pass.
-func TestAgentWorkIssueTaskIsGuardedWithoutAnalysisCategory(t *testing.T) {
-	issueID := createTestIssue(t, "metadata-anchored guard", "todo", "low")
-	t.Cleanup(func() { deleteTestIssue(t, issueID) })
-	markIssueAsAgentWork(t, issueID)
+// The issue's agent_work marker is the ONLY guard anchor: the same task is
+// rejected on status writes to its own issue (status stays server-projected)
+// but passes the own-issue narration carve-out.
+func TestAgentWorkIssueMetadataAnchorsGuard(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "Metadata Anchor Guard Agent", nil)
-	// Plain fix-category task — only the issue's agent_work marker anchors it.
-	taskID := createHandlerTestTaskForAgentOnIssue(t, agentID, issueID)
+	taskID, issueID := createDerivedWorkTask(t, agentID)
 
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodPut, "/api/issues/"+issueID, map[string]any{"status": "done"})
@@ -156,20 +150,20 @@ func TestAgentWorkIssueTaskIsGuardedWithoutAnalysisCategory(t *testing.T) {
 	}
 }
 
-func TestAnalysisTaskCannotUpdateNonStatusField(t *testing.T) {
-	issueID := createTestIssue(t, "analysis title guard", "done", "low")
-	t.Cleanup(func() { deleteTestIssue(t, issueID) })
-	agentID := createHandlerTestAgent(t, "Analysis Title Guard Agent", nil)
-	taskID := createAnalysisTaskForIssue(t, agentID, issueID)
+func TestDerivedWorkTaskCannotUpdateNonStatusField(t *testing.T) {
+	realIssueID := createTestIssue(t, "derived work title guard", "done", "low")
+	t.Cleanup(func() { deleteTestIssue(t, realIssueID) })
+	agentID := createHandlerTestAgent(t, "Derived Work Title Guard Agent", nil)
+	taskID, _ := createDerivedWorkTask(t, agentID)
 
 	w := httptest.NewRecorder()
-	req := newRequest(http.MethodPut, "/api/issues/"+issueID, map[string]any{"title": "rewritten by analysis"})
-	req = withURLParam(req, "id", issueID)
+	req := newRequest(http.MethodPut, "/api/issues/"+realIssueID, map[string]any{"title": "rewritten by derived work"})
+	req = withURLParam(req, "id", realIssueID)
 	req.Header.Set("X-Agent-ID", agentID)
 	req.Header.Set("X-Task-ID", taskID)
 
 	testHandler.UpdateIssue(w, req)
 	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for analysis task non-status update, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("expected 403 for derived-work task non-status update, got %d: %s", w.Code, w.Body.String())
 	}
 }
