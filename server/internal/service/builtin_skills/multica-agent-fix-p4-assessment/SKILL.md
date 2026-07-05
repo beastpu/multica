@@ -1,21 +1,26 @@
 ---
 name: multica-agent-fix-p4-assessment
-description: "Use for Multica AI repair P4/Swarm assessment work — the batch worker loop (pull pending assessments, judge each, submit by ref) and legacy per-binding agent_fix_p4_assessment tasks. Teaches the read-only evidence workflow, inner-network P4/Swarm inspection boundaries, CL role classification, conservative unknown handling, and the strict JSON result schema."
+description: "Use for Multica AI repair P4/Swarm assessment work — you are assigned one assessment issue per run (task context carries the Feishu binding): read the task-scoped evidence, verify read-only against inner-network P4/Swarm, narrate on your own assessment issue, and POST the strict JSON result. Teaches the read-only boundaries, CL role classification, and conservative unknown handling."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(p4 *), Bash(curl *)
 ---
 
 # P4/Swarm Assessment
 
-Use this skill when the task asks you to run P4/Swarm assessment — either a
-batch worker run ("process the pending assessment queue") or a legacy task
-whose context is `agent_fix_p4_assessment`. This is assessment-only work:
-produce AI judgements; do not repair code or update external systems.
+Use this skill when your task is a P4/Swarm assessment run — the task context
+type is `agent_fix_p4_assessment` and the task is assigned to a derived
+**assessment issue** (one issue per run, created and status-managed by the
+server). This is assessment-only work: produce AI judgements; do not repair
+code or update external systems.
 
 Every contract below is traced to source in
 `references/p4-assessment-source-map.md`.
 
-## Start Here — the batch loop
+## Start Here — one run, one assessment issue
+
+You were assigned an assessment issue. The real defect issue is referenced in
+the evidence and is READ-ONLY for you; everything you write goes to your own
+assessment issue or the result endpoint.
 
 All server calls are plain HTTP with `curl` — do NOT depend on any `multica`
 CLI subcommand (installed CLI versions vary and may lack newer commands). The
@@ -24,41 +29,29 @@ daemon already injects everything you need into the task environment:
 `MULTICA_WORKSPACE_ID`, `MULTICA_AGENT_ID`, `MULTICA_TASK_ID`. Never print
 `MULTICA_TOKEN`.
 
-Pull a batch of pending assessments:
+Your task context carries the Feishu/Meego binding id (`feishu_binding_id`,
+also echoed in your opening prompt). Read the task-scoped evidence:
 
 ```bash
-status=$(curl -sS -o /tmp/pending.json -w "%{http_code}" \
-  "${MULTICA_SERVER_URL%/}/api/operations/assessments/pending?limit=5" \
+status=$(curl -sS -o /tmp/evidence.json -w "%{http_code}" \
+  "${MULTICA_SERVER_URL%/}/api/operations/agent-fixes/<binding_id>/p4-evidence" \
   -H "Authorization: Bearer $MULTICA_TOKEN" \
   -H "X-Workspace-ID: $MULTICA_WORKSPACE_ID" \
   -H "X-Agent-ID: $MULTICA_AGENT_ID" \
   -H "X-Task-ID: $MULTICA_TASK_ID")
-echo "$status"; cat /tmp/pending.json
+echo "$status"; cat /tmp/evidence.json
 ```
 
-The response is `{"items": [...]}` where each item is:
+- Evidence access is task-scoped: a `403` means this task is not the binding's
+  assessment task (or the workspace/binding in your task context does not
+  match) — stop and report; do not retry with other ids.
+- The workflow is: read evidence → classify (sections below) → optionally
+  narrate on your assessment issue → POST the result JSON. One run assesses
+  exactly one binding; there is no queue to pull or loop over.
 
-```json
-{ "ref": "<opaque>", "assessment_issue_id": "<uuid, optional>", "issue": {"title": "..."}, "lease_expires_at": "...", "evidence": {...} }
-```
+### Narrate on your assessment issue
 
-- `ref` is an OPAQUE handle. Echo it back on submit exactly as given — never
-  construct, guess, or transform a ref, and never treat it as a binding id.
-- `assessment_issue_id`, when present, is this run's assessment projection
-  issue — a derived Multica issue that exists to hold your process narration.
-  See "Narrate on the projection issue" below. It may be absent on older
-  rows; then simply skip narration for that item.
-- `evidence` is inlined per item — no follow-up evidence call is needed.
-- Each item is leased to your task until `lease_expires_at` (~30 minutes).
-  Submit before then or the item silently returns to the pending pool.
-- An empty `items` array means the queue is drained: report how many you
-  assessed and stop.
-- A `403` means this workspace is not allowlisted for P4 assessment — stop and
-  report; do not retry.
-
-### Narrate on the projection issue
-
-Each pulled item's `assessment_issue_id` is YOUR issue for that run: you may
+Your assigned assessment issue exists to hold your process narration: you may
 post plain comments there to record the evidence chain and key judgement steps
 (which CLs you probed, what `p4 describe` showed, why you chose a prediction).
 This is optional but recommended — it is what operators read when they ask
@@ -66,7 +59,7 @@ This is optional but recommended — it is what operators read when they ask
 
 ```bash
 curl -sS -X POST \
-  "${MULTICA_SERVER_URL%/}/api/issues/<assessment_issue_id>/comments" \
+  "${MULTICA_SERVER_URL%/}/api/issues/<your_assessment_issue_id>/comments" \
   -H "Authorization: Bearer $MULTICA_TOKEN" \
   -H "X-Workspace-ID: $MULTICA_WORKSPACE_ID" \
   -H "X-Agent-ID: $MULTICA_AGENT_ID" \
@@ -77,46 +70,16 @@ curl -sS -X POST \
 
 Hard boundaries, server-enforced:
 
-- Comment ONLY on the `assessment_issue_id` issue. Never comment on the real
-  defect issue (the `issue` in the evidence) — the server rejects it with 403.
-- Do NOT change the projection issue's status, fields, or assignee — its
-  status is projected by the server from the assessment queue; writes are
-  rejected with 403.
-- Narration never replaces the result submit. The POST to
-  `/api/operations/assessments/result` is the only way the assessment is
-  recorded; the server also writes a structured result-summary comment on the
-  projection issue after a successful submit.
-
-For each item: classify the evidence (sections below), write the result JSON
-to a file, then submit:
-
-```bash
-status=$(curl -sS -o /tmp/submit.json -w "%{http_code}" -X POST \
-  "${MULTICA_SERVER_URL%/}/api/operations/assessments/result" \
-  -H "Authorization: Bearer $MULTICA_TOKEN" \
-  -H "X-Workspace-ID: $MULTICA_WORKSPACE_ID" \
-  -H "X-Agent-ID: $MULTICA_AGENT_ID" \
-  -H "X-Task-ID: $MULTICA_TASK_ID" \
-  -H "Content-Type: application/json" \
-  --data-binary @result.json)
-echo "$status"; cat /tmp/submit.json
-```
-
-where `result.json` is the result schema (see "Submit the Result") plus the
-`"ref"` field carried over from the item. On a `400`, fix exactly the field
-the error names and resubmit. On a `409` your lease was reclaimed — drop that
-item and continue; it will come back in a later pull. Loop pull → assess →
-submit until a pull returns no items.
-
-### Legacy per-binding tasks
-
-A task whose context carries a `feishu_binding_id` predates the batch loop.
-For those, read evidence with the same headers from
-`GET ${MULTICA_SERVER_URL%/}/api/operations/agent-fixes/<binding_id>/p4-evidence`
-and submit to
-`POST ${MULTICA_SERVER_URL%/}/api/operations/agent-fixes/<binding_id>/p4-assessment/result`
-with the same result schema (no `ref` field). Everything else in this skill
-applies unchanged.
+- Comment ONLY on your own assessment issue (the issue this task is assigned
+  to). Never comment on the real defect issue (the `issue` in the evidence) or
+  on any other assessment issue — the server rejects both with 403.
+- Do NOT change the assessment issue's status, fields, or assignee — its
+  status is projected by the server from the run lifecycle
+  (todo → in_progress → done / cancelled); writes are rejected with 403.
+- Narration never replaces the result submit. The POST to the result endpoint
+  is the only way the assessment is recorded; the server also writes a
+  structured result-summary comment on the assessment issue after a
+  successful submit.
 
 ## Reading the evidence
 
@@ -211,10 +174,10 @@ output `unknown` predictions with warnings such as `p4_lookup_unavailable` or
 Do not mutate any system during assessment:
 
 - Do not write Multica issue comments, metadata, assignments, labels, or other
-  issue fields. The ONLY exception is posting plain comments on the pulled
-  item's own `assessment_issue_id` projection issue (see "Narrate on the
-  projection issue"); everything else on that issue — status, fields,
-  assignee, metadata — is still server-owned and rejected.
+  issue fields. The ONLY exception is posting plain comments on YOUR OWN
+  assessment issue (see "Narrate on your assessment issue"); everything else
+  on that issue — status, fields, assignee, metadata — is still server-owned
+  and rejected.
 - Do not change issue status.
 - Do not write `agent_fix_review`; only the human review API owns that table.
 - Do not mutate Feishu or Meego.
@@ -380,18 +343,29 @@ that ticket is indistinguishable from an assessment that simply didn't look.
 
 ## Submit the Result
 
-Submit each result by POSTing JSON to the batch result endpoint — this is how
-the assessment reaches the operations dashboard. Do NOT rely on printing the
-JSON as your final message; the endpoint is the authoritative path. Write the
-JSON to a file and post it with the `curl --data-binary @result.json` command
-from "Start Here" so shell quoting can't corrupt it.
+Submit the result by POSTing JSON to the binding's result endpoint — this is
+how the assessment reaches the operations dashboard. Do NOT rely on printing
+the JSON as your final message (that is only a parser fallback); the endpoint
+is the authoritative path. Write the JSON to a file and post it so shell
+quoting can't corrupt it:
+
+```bash
+status=$(curl -sS -o /tmp/submit.json -w "%{http_code}" -X POST \
+  "${MULTICA_SERVER_URL%/}/api/operations/agent-fixes/<binding_id>/p4-assessment/result" \
+  -H "Authorization: Bearer $MULTICA_TOKEN" \
+  -H "X-Workspace-ID: $MULTICA_WORKSPACE_ID" \
+  -H "X-Agent-ID: $MULTICA_AGENT_ID" \
+  -H "X-Task-ID: $MULTICA_TASK_ID" \
+  -H "Content-Type: application/json" \
+  --data-binary @result.json)
+echo "$status"; cat /tmp/submit.json
+```
 
 The request body is exactly one JSON object with this shape (no surrounding
 prose, no envelope):
 
 ```json
 {
-  "ref": "<echoed from the pending item>",
   "delivery_attribution_prediction": "unknown",
   "quality_prediction": "unknown",
   "prediction_reasons": [],
@@ -411,16 +385,15 @@ prose, no envelope):
 
 CL arrays must contain integers only. `swarm_reviews` must be an array,
 `evidence` must be an object, and `warnings` must be an array.
-Do not include fields outside this schema. (Legacy per-binding tasks POST the
-same body WITHOUT `ref` to
-`/api/operations/agent-fixes/<binding_id>/p4-assessment/result`.)
+Do not include fields outside this schema.
 
-On success the endpoint returns `{"status":"completed"}`. On a `400` it returns
-the exact validation problem (e.g. `invalid quality_prediction`,
-`confidence out of range`, an unknown field name) — read it, fix that field,
-and POST again until it succeeds. On a `409` the lease was reclaimed by
-another worker — drop the item and move on; a result that never submits
-successfully leaves the assessment unrecorded.
+On success the endpoint returns `{"status":"completed"}` and the server
+projects your assessment issue to done and writes the result-summary comment.
+On a `400` it returns the exact validation problem (e.g.
+`invalid quality_prediction`, `confidence out of range`, an unknown field
+name) — read it, fix that field, and POST again until it succeeds. A result
+that never submits successfully leaves the assessment unrecorded (the run is
+then marked failed from the task outcome).
 
 ## References
 

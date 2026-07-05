@@ -7,12 +7,27 @@ for the behavior contracts the skill teaches.
 ## Assessment task and evidence
 
 - `server/internal/service/agent_fix_assessment.go` defines
-  `P4AssessmentTaskType = "agent_fix_p4_assessment"` and
-  `P4AssessmentPromptVersion = "p4-assessment-v1"`.
-- `P4AssessmentService.Trigger` validates the binding, writes/refreshes
-  `agent_fix_p4_assessment` as pending, creates an isolated
-  `agent_task_queue` row, and stores task context with `type`, `workspace_id`,
-  `issue_id`, `feishu_binding_id`, `mode: assess_only`, and `prompt_version`.
+  `P4AssessmentTaskType = "agent_fix_p4_assessment"`,
+  `P4AssessmentPromptVersion = "p4-assessment-v1"`, and
+  `CapabilityP4Assessment = "p4_assessment"` (the workspace capability key).
+- `P4AssessmentService.Trigger` (plan C-1 native task flow) is fail-closed on
+  the workspace's `workspace_agent_capability` row (migration 135; configured
+  via `GET/PUT/DELETE /api/workspaces/{id}/capabilities/p4_assessment`). For
+  each accepted run it: validates the binding, upserts
+  `agent_fix_p4_assessment` to pending, creates the run's ASSESSMENT ISSUE
+  (derived agent_work issue) assigned to the capability agent, creates the
+  native `agent_task_queue` row hanging on that assessment issue
+  (`CreateP4AssessmentTask`: `task_category='analysis'`, fresh session,
+  stale-daemon `handoff_note`), and points `assessment_task_id` at it
+  (`SetP4AssessmentTask`) — all in one transaction. Task context carries
+  `type`, `workspace_id`, `issue_id` (the REAL defect issue),
+  `feishu_binding_id`, `mode: assess_only`, and `prompt_version`.
+  Assignment is dispatch: the daemon claims the queued task through the
+  ordinary prepare-lease channel; there is no dispatcher loop.
+  Transitional: a workspace on the env allowlist
+  (`P4_ASSESSMENT_WORKSPACE_ALLOWLIST`) without a capability row still
+  enqueues the legacy way (pending row, unassigned issue, no task); C-2
+  deletes that branch.
 - `P4AssessmentService.Evidence` backs
   `GET /api/operations/agent-fixes/{binding_id}/p4-evidence`. It returns
   binding, issue, task summaries, selected Multica comments, optional Feishu
@@ -42,51 +57,39 @@ for the behavior contracts the skill teaches.
 
 ## HTTP routes and auth boundary
 
-- `server/cmd/server/router.go` registers operations routes, including
-  assessment trigger, evidence read, the result submit route, and human review
-  routes.
+- `server/cmd/server/router.go` registers operations routes (assessment
+  trigger, evidence read, result submit, human review) and the workspace
+  capability config routes
+  (`/api/workspaces/{id}/capabilities/{capability}`,
+  `server/internal/handler/workspace_capability.go` — member-level; PUT
+  validates the agent belongs to the workspace, is not archived, and runs on a
+  daemon-served `local` runtime).
 - `server/internal/handler/agent.go` handles Operations agent-fix APIs and
   evidence access. Agent access is task-scoped: an agent token can read
   only evidence for the same workspace and Feishu binding recorded in the
-  assessment task context. `SubmitAgentFixP4Assessment` gates the result
-  submit endpoint with the same `requestTaskCanReadP4Evidence` scope, so only
-  the binding's own assessment task may write its result.
+  assessment task context (`requestTaskCanReadP4Evidence`).
+  `SubmitAgentFixP4Assessment` gates the result submit endpoint with the same
+  scope, so only the binding's own assessment task may write its result.
 
-## Batch worker contract (pull / submit-by-ref)
+## Deprecated batch worker contract (drain-only)
 
-- `GET /api/operations/assessments/pending?limit=N`
-  (`Handler.ListPendingP4Assessments` → `P4AssessmentService.LeasePending`)
-  atomically leases up to N claimable rows (`pending`/`failed`/`stale`, or
-  `running` with an expired lease) to the caller's task via
-  `LeaseP4AssessmentsPending` (SKIP LOCKED), and returns each with an opaque
-  `ref` (internally the binding UUID), an optional `assessment_issue_id` (the
-  run's derived agent_work projection issue; empty on rows predating the
-  projection), the issue summary, `lease_expires_at`
-  (`P4AssessmentLeaseDuration`, 30 minutes), and inlined evidence from
-  `P4AssessmentService.Evidence`. Rows whose evidence fails to build are
-  released back to the pool (`ReleaseP4AssessmentLease`).
-- `POST /api/operations/assessments/result`
-  (`Handler.SubmitP4AssessmentResultByRef` →
-  `P4AssessmentService.SubmitBatchResult`) strips `ref`, runs the same
-  `validateP4AssessmentPayload`, and completes the row keyed on
-  (workspace, binding, leasing task) via `CompleteP4AssessmentFromBinding`.
-  A reclaimed/unknown ref returns `ErrP4AssessmentRefNotLeased` → HTTP 409.
-- Both endpoints require an agent actor whose `X-Task-ID` task belongs to it
-  and to the workspace (`requestBatchAssessmentTask`), and are fail-closed on
-  the same `P4AssessmentAllowlist` (`P4_ASSESSMENT_WORKSPACE_ALLOWLIST`) that
-  gates auto-trigger.
-- `P4AssessmentService.Trigger` no longer spawns per-binding agent tasks: it
-  upserts the row to `pending` and the batch worker consumes the pool, so
-  assessment work does not fan out into `agent_task_queue`.
+- `GET /api/operations/assessments/pending` and
+  `POST /api/operations/assessments/result`
+  (`Handler.ListPendingP4Assessments` / `Handler.SubmitP4AssessmentResultByRef`
+  → `P4AssessmentService.LeasePending` / `SubmitBatchResult`, backed by
+  `LeaseP4AssessmentsPending` / `CompleteP4AssessmentFromBinding`) are the
+  retired batch pull/lease/submit-by-ref contract. They remain functional only
+  so in-flight batch workers can drain; C-2 deletes the routes, the queries,
+  the 30-minute lease (`leased_until`), and the env allowlist. The skill no
+  longer teaches this loop.
 
 ## Result submit and output contract
 
-- The batch path above is the primary ingestion route. The legacy per-binding
-  endpoint `POST /api/operations/agent-fixes/{binding_id}/p4-assessment/result`
-  remains for in-flight per-binding tasks: the agent POSTs the bare result
-  JSON (via `curl --data-binary @result.json` with the task-env headers — the
-  skill is CLI-version independent by design), the server validates it, and a
-  400 returns the exact validation problem so the agent can self-correct and
+- `POST /api/operations/agent-fixes/{binding_id}/p4-assessment/result` is the
+  authoritative ingestion path: the agent POSTs the bare result JSON (via
+  `curl --data-binary @result.json` with the task-env headers — the skill is
+  CLI-version independent by design), the server validates it, and a 400
+  returns the exact validation problem so the agent can self-correct and
   resubmit. This avoids parsing a free-text agent message.
 - `server/internal/service/agent_fix_assessment.go` shares one validator,
   `validateP4AssessmentPayload`: it accepts one JSON object, rejects unknown
@@ -96,10 +99,11 @@ for the behavior contracts the skill teaches.
   task-output fallback (`parseP4AssessmentTaskOutput` → `CompleteTask`) both run
   it, so the contract is identical either way.
 - `P4AssessmentService.SubmitResult`/`writeCompletedAssessment` write the
-  validated result to `agent_fix_p4_assessment`. Once a row is `completed`, the
-  guarded `FailP4AssessmentFromTask` (`WHERE assessment_status <> 'completed'`)
-  will not knock a submitted result back to `failed` when the task later ends
-  and the output-parse fallback finds nothing to parse.
+  validated result to `agent_fix_p4_assessment`, keyed on the task the Trigger
+  stamped (`assessment_task_id`). Once a row is `completed`, the guarded
+  `FailP4AssessmentFromTask` (`WHERE assessment_status <> 'completed'`) will
+  not knock a submitted result back to `failed` when the task later ends and
+  the output-parse fallback finds nothing to parse.
 - Implementation comparison is stored inside the parsed `evidence` JSON object
   rather than as dedicated columns. The shipped skill constrains
   `evidence.implementation_comparison.method_equivalence` to the binary values
@@ -130,51 +134,56 @@ for the behavior contracts the skill teaches.
   read-only commands such as `p4 describe -S` and treats Swarm API
   `Unauthorized` as `swarm_lookup_unavailable`, not as a reason to mutate state.
 - `server/pkg/db/queries/agent.sql` and generated sqlc code contain the
-  assessment table queries and task-isolation filters excluding
-  `agent_fix_p4_assessment` from ordinary issue task queries, latest-run views,
-  session resume, cancellation, and dedup paths.
+  assessment table queries and task-isolation filters (`task_category = 'fix'`)
+  excluding assessment tasks from ordinary issue task queries, latest-run
+  views, session resume, cancellation, and dedup paths.
 - Read-only enforcement is server-side, not advisory. `CreateP4AssessmentTask`
   in `agent.sql` stamps `handoff_note` with the read-only assessment
   instructions (built by `p4AssessmentHandoffNote` in
   `agent_fix_assessment.go`); a stale daemon that predates the dedicated
   assessment prompt still renders `handoff_note` on the normal assignment path,
   which is how the server steers it into JSON output without a client update.
-  Independently, `Handler.isAnalysisTaskActor` /
+  Independently, `Handler.analysisTaskForRequest` /
   `Handler.rejectAnalysisTaskWrite` (`internal/handler/issue.go`) reject every
-  issue mutation from an analysis-category task in `UpdateIssue`,
-  `BatchUpdateIssues`, and comment creation (`internal/handler/comment.go`), so
-  even a stale daemon running the task as a normal fix cannot change status,
-  edit fields, or post comments. One precise carve-out
-  (`isAgentWorkIssue`, `internal/handler/issue.go`): comment creation is
-  allowed when the target issue carries the server-reserved
-  `metadata.agent_work` marker — the run's own projection issue, which exists
-  to hold the worker's narration. Status/field/assignee writes stay rejected
-  even there, and the reserved metadata key itself is rejected by the user
-  metadata API (`internal/handler/issue_metadata.go`), so a real issue can
-  never be spoofed into the carve-out.
+  issue mutation from a derived-work task in `UpdateIssue`,
+  `BatchUpdateIssues`, and comment creation (`internal/handler/comment.go`).
+  The transitional actor anchor is `task_category == 'analysis'` OR the task's
+  own issue carrying the server-reserved `metadata.agent_work` marker (C-2
+  retires the column and keeps only the metadata anchor). One precise
+  carve-out in `CreateComment`: comment creation is allowed only when the
+  target issue carries `metadata.agent_work` AND is the task's OWN issue
+  (`task.issue_id == issue.id`) — the run's assessment issue, which exists to
+  hold the worker's narration. Commenting on any other issue — real or another
+  run's assessment issue — is rejected. Status/field/assignee writes stay
+  rejected even there, and the reserved metadata key itself is rejected by the
+  user metadata API (`internal/handler/issue_metadata.go`), so a real issue
+  can never be spoofed into the carve-out.
 
-## Assessment projection issue (agent_work)
+## Assessment issue (agent_work projection) and run lifecycle
 
 - `docs/agent-fix-p4-assessment-issue-design.md` defines the derived-work
-  primitive. `server/internal/service/agent_fix_assessment_projection.go`
-  implements the P4 instantiation: `P4AssessmentService.Trigger` creates one
-  projection issue per run inside its transaction
-  (`CreateAgentWorkIssue` stamps `metadata.agent_work` with
-  `kind=p4_assessment`, `source_issue_id`, `source_ref`, `trigger`,
-  `extra.prompt_version`) and points
-  `agent_fix_p4_assessment.assessment_issue_id` at it
-  (`SetP4AssessmentIssue`); a force re-run creates a NEW issue and repoints,
-  leaving the previous run's issue untouched.
-- Queue transitions project onto the issue via the guarded
-  `UpdateAgentWorkIssueStatus` (`pkg/db/queries/agent_work.sql`): lease →
-  `in_progress`, evidence release → `todo` + server failure comment, complete
-  → `done` + server result-summary comment
-  (`p4AssessmentResultComment`), task failure → `cancelled` (issue.status has
-  no `failed` value) + failure comment. Server comments are authored as the
-  leased task's agent and are best-effort (never roll back a queue
-  transition). Rows with NULL `assessment_issue_id` skip projection.
+  primitive and the plan C native task flow.
+  `server/internal/service/agent_fix_assessment_projection.go` implements the
+  P4 instantiation: `P4AssessmentService.Trigger` creates one assessment issue
+  per run inside its transaction (`CreateAgentWorkIssue` stamps
+  `metadata.agent_work` with `kind=p4_assessment`, `source_issue_id`,
+  `source_ref`, `trigger`, `extra.prompt_version`, and assigns the capability
+  agent) and points `agent_fix_p4_assessment.assessment_issue_id` at it
+  (`SetP4AssessmentIssue`); a force re-run creates a NEW issue (and task) and
+  repoints, leaving the previous run's issue untouched.
+- Run status is a SINGLE-DIRECTION projection of the task lifecycle
+  (`server/internal/service/task.go` hooks →
+  `P4AssessmentService.StartFromTask` / `FailFromTask` /
+  `writeCompletedAssessment`): task running → row running + issue
+  `in_progress` (`StartP4AssessmentFromTask`), terminal task failure → row
+  failed + issue `cancelled` (issue.status has no `failed` value) + server
+  failure comment, result submit → row completed + issue `done` + server
+  result-summary comment (`p4AssessmentResultComment`). Server comments are
+  authored as the task's agent and are best-effort (never roll back a
+  transition). Rows with NULL `assessment_issue_id` skip projection. No
+  reverse path exists — nothing on the issue drives the row.
 - `agent_fix_p4_assessment` remains the single source of truth: operations
-  KPIs read only the queue table, never the projection issue's status.
+  KPIs read only the queue table, never the assessment issue's status.
 
 ## Product design baseline
 
@@ -184,7 +193,7 @@ for the behavior contracts the skill teaches.
   writes only `agent_fix_p4_assessment`.
 - `docs/agent-fix-p4-assessment-api-workflow.md` defines the evidence endpoint,
   task context, server-state boundary, parser boundary, and human review API
-  ownership.
+  ownership (its batch pull/submit chapter is retired by plan C).
 - `docs/agent-fix-p4-external-dependencies.md` records external-data limits:
   Feishu/Meego fields are already-ingested compatibility evidence, and missing
   P4/Swarm evidence should produce `unknown` plus warnings rather than guesses.

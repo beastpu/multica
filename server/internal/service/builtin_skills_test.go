@@ -532,10 +532,12 @@ func TestAgentFixP4AssessmentSkillCoversReadOnlyAssessmentContract(t *testing.T)
 	}
 
 	mustContain := []string{
-		// Batch worker contract: plain curl over the task-env HTTP surface —
-		// no dependency on any installed multica CLI subcommand.
-		"/api/operations/assessments/pending",
-		"/api/operations/assessments/result",
+		// Native task flow (plan C-1): one assigned assessment issue per run,
+		// plain curl over the task-env HTTP surface — no dependency on any
+		// installed multica CLI subcommand, and no batch pull/submit loop.
+		"one issue per run",
+		"ONLY on your own assessment issue",
+		"/api/operations/agent-fixes/<binding_id>/p4-assessment/result",
 		"MULTICA_TOKEN",
 		"X-Task-ID: $MULTICA_TASK_ID",
 		"do NOT depend on any `multica`",
@@ -594,6 +596,11 @@ func TestAgentFixP4AssessmentSkillCoversReadOnlyAssessmentContract(t *testing.T)
 		"p4 submit",
 		"p4 shelve",
 		"multica issue comment add",
+		// The batch pull/lease/submit-by-ref loop is retired (plan C-1); the
+		// skill must no longer teach it.
+		"/api/operations/assessments/pending",
+		"/api/operations/assessments/result",
+		"lease_expires_at",
 	}
 	for _, forbidden := range mustNotContain {
 		if strings.Contains(body, forbidden) {
