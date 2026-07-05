@@ -344,3 +344,31 @@ func TestValidateP4AssessmentPayload(t *testing.T) {
 		}
 	}
 }
+
+// The result comment shows Chinese labels with the machine code retained,
+// and degrades to the raw code on enum drift instead of crashing or hiding
+// the value.
+func TestP4AssessmentResultCommentEnumZh(t *testing.T) {
+	got := p4AssessmentResultComment(p4AssessmentOutput{
+		DeliveryAttributionPrediction: "human_delivered",
+		QualityPrediction:             "likely_wrong",
+	})
+	if !strings.Contains(got, "- 交付归因：人工提交（human_delivered）\n") {
+		t.Errorf("delivery line missing zh label, got:\n%s", got)
+	}
+	if !strings.Contains(got, "- 质量判断：不通过（likely_wrong）\n") {
+		t.Errorf("quality line missing zh label, got:\n%s", got)
+	}
+
+	// Enum drift: an unmapped code renders as-is.
+	drift := p4AssessmentResultComment(p4AssessmentOutput{
+		DeliveryAttributionPrediction: "teleported",
+		QualityPrediction:             "unknown",
+	})
+	if !strings.Contains(drift, "- 交付归因：teleported\n") {
+		t.Errorf("unknown enum should render raw, got:\n%s", drift)
+	}
+	if !strings.Contains(drift, "- 质量判断：无法判断（unknown）\n") {
+		t.Errorf("unknown quality code should map to 无法判断, got:\n%s", drift)
+	}
+}
