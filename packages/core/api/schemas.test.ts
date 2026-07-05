@@ -23,6 +23,8 @@ import {
   TimelineEntriesSchema,
   TriggerAgentFixP4AssessmentResponseSchema,
   UserSchema,
+  WorkspaceCapabilitySchema,
+  EMPTY_WORKSPACE_CAPABILITY,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
 
@@ -787,5 +789,55 @@ describe("InboxUnreadSummarySchema", () => {
         ENDPOINT,
       ),
     ).toBe(EMPTY_INBOX_UNREAD_SUMMARY);
+  });
+});
+
+describe("WorkspaceCapabilitySchema", () => {
+  const ENDPOINT = { endpoint: "GET /api/workspaces/:id/capabilities/:capability" };
+
+  it("parses a well-formed capability and tolerates unknown extra fields", () => {
+    const parsed = parseWithFallback(
+      {
+        capability: "p4_assessment",
+        agent_id: "agent-1",
+        agent_name: "Assessor",
+        project_id: null,
+        max_concurrent_tasks: 2,
+        created_at: "2026-07-01T00:00:00Z",
+        future_field: "ignored",
+      },
+      WorkspaceCapabilitySchema,
+      EMPTY_WORKSPACE_CAPABILITY,
+      ENDPOINT,
+    );
+    expect(parsed.agent_id).toBe("agent-1");
+    expect(parsed.agent_name).toBe("Assessor");
+    expect(parsed.max_concurrent_tasks).toBe(2);
+  });
+
+  it("defaults optional fields missing from an older backend", () => {
+    const parsed = parseWithFallback(
+      { capability: "p4_assessment", agent_id: "agent-1" },
+      WorkspaceCapabilitySchema,
+      EMPTY_WORKSPACE_CAPABILITY,
+      ENDPOINT,
+    );
+    expect(parsed.agent_name).toBe("");
+    expect(parsed.project_id).toBeNull();
+    expect(parsed.max_concurrent_tasks).toBe(1);
+  });
+
+  it("returns the empty fallback for a wrong-typed body (renders as not configured)", () => {
+    expect(
+      parseWithFallback(
+        { capability: "p4_assessment", agent_id: 42 },
+        WorkspaceCapabilitySchema,
+        EMPTY_WORKSPACE_CAPABILITY,
+        ENDPOINT,
+      ),
+    ).toBe(EMPTY_WORKSPACE_CAPABILITY);
+    expect(
+      parseWithFallback(null, WorkspaceCapabilitySchema, EMPTY_WORKSPACE_CAPABILITY, ENDPOINT),
+    ).toBe(EMPTY_WORKSPACE_CAPABILITY);
   });
 });
