@@ -27,6 +27,18 @@ DELETE FROM issue_label
 WHERE id = $1 AND workspace_id = $2
 RETURNING id;
 
+-- name: UpsertLabelByName :one
+-- Find-or-create a workspace label by case-insensitive name, race-safe via
+-- the issue_label_workspace_name_lower_idx unique index. The no-op DO UPDATE
+-- (instead of DO NOTHING) keeps RETURNING populated when the label already
+-- exists, and deliberately preserves the existing row's name and color so a
+-- user's customization survives repeated server-side ensures.
+INSERT INTO issue_label (workspace_id, name, color)
+VALUES ($1, $2, $3)
+ON CONFLICT (workspace_id, LOWER(name)) DO UPDATE
+SET name = issue_label.name
+RETURNING *;
+
 -- name: AttachLabelToIssue :exec
 -- Workspace-guarded INSERT: the WHERE EXISTS clauses ensure both the issue
 -- and the label belong to the given workspace. A future caller that forgets
