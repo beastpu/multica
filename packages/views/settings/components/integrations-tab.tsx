@@ -56,6 +56,7 @@ import type {
   FeishuProjectWorkItemTypeConfig,
 } from "@multica/core/types";
 import { LarkTab } from "./lark-tab";
+import { AssessmentCapabilitySection } from "./assessment-capability-section";
 import { useT } from "../../i18n";
 import { FeishuProjectRoutingSection, type RouteRow } from "./feishu-project-routing-section";
 import { FeishuProjectWorkItemTypesSection } from "./feishu-project-work-item-types-section";
@@ -851,6 +852,10 @@ export function IntegrationsTab() {
       <section className="space-y-4">
         <h2 className="text-sm font-semibold">{t(($) => $.lark.section_title)}</h2>
         <LarkTab />
+      </section>
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold">{t(($) => $.assessment.section_title)}</h2>
+        <AssessmentCapabilitySection />
       </section>
     </div>
   );

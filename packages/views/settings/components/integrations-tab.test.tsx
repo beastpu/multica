@@ -175,6 +175,12 @@ vi.mock("./lark-tab", () => ({
   LarkTab: () => <div data-testid="lark-tab" />,
 }));
 
+// The assessment capability card has its own test file
+// (assessment-capability-section.test.tsx) — stub it out here.
+vi.mock("./assessment-capability-section", () => ({
+  AssessmentCapabilitySection: () => <div data-testid="assessment-capability-section" />,
+}));
+
 import { IntegrationsTab } from "./integrations-tab";
 
 const STR = enSettings.integrations;

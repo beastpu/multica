@@ -33,6 +33,7 @@ import type {
   TimelineEntry,
   User,
   WebhookDelivery,
+  WorkspaceCapability,
   PerforceReview,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
@@ -462,6 +463,30 @@ export const EMPTY_FEISHU_PROJECT_INTEGRATION: FeishuProjectIntegration = {
   business_line_field_name: "",
   last_synced_at: null,
   last_error: null,
+};
+
+// Workspace capability role (GET/PUT /api/workspaces/:id/capabilities/:capability).
+// Names the agent that executes a capability's derived work (first:
+// p4_assessment). "Not configured" is a 404, handled in the client — this
+// schema only guards the 200 shape.
+export const WorkspaceCapabilitySchema = z.object({
+  capability: z.string().default(""),
+  agent_id: z.string().default(""),
+  agent_name: z.string().default(""),
+  project_id: z.string().nullable().default(null),
+  max_concurrent_tasks: z.number().default(1),
+  created_at: z.string().default(""),
+}).loose();
+
+// Empty agent_id renders as "not configured" — the safe degraded state for a
+// malformed response (the user can simply re-save).
+export const EMPTY_WORKSPACE_CAPABILITY: WorkspaceCapability = {
+  capability: "",
+  agent_id: "",
+  agent_name: "",
+  project_id: null,
+  max_concurrent_tasks: 1,
+  created_at: "",
 };
 
 const FeishuProjectSyncRunSchema = z.object({

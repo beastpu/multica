@@ -533,5 +533,31 @@
     "toast_save_failed": "연결을 저장할 수 없습니다",
     "toast_test_ok": "연결에 성공했습니다",
     "toast_test_failed": "Swarm에 연결할 수 없거나 인증에 실패했습니다"
+  },
+  "assessment": {
+    "section_title": "AI 평가",
+    "title": "P4 평가 에이전트",
+    "description": "지정된 에이전트가 이 워크스페이스의 P4 결함 평가를 실행합니다. 에이전트를 지정하기 전에는 새 평가가 시작되지 않습니다.",
+    "runtime_hint": "평가에는 사내 네트워크의 P4/Swarm 접근이 필요하므로, 에이전트가 온라인 상태의 로컬(데몬) 런타임에 연결되어 있어야 합니다.",
+    "agent_label": "평가 에이전트",
+    "select_placeholder": "에이전트 선택",
+    "not_configured": "미설정",
+    "agent_not_local": "로컬 런타임 필요",
+    "no_agents": "이 워크스페이스에는 아직 에이전트가 없습니다.",
+    "save": "저장",
+    "saving": "저장 중...",
+    "clear": "지우기",
+    "clearing": "지우는 중...",
+    "saved": "평가 에이전트를 저장했습니다",
+    "cleared": "평가 에이전트를 지웠습니다",
+    "save_failed": "평가 에이전트를 저장하지 못했습니다",
+    "save_failed_reason": "저장 실패: {{reason}}",
+    "clear_failed": "평가 에이전트를 지우지 못했습니다",
+    "create_agent": "평가 에이전트 만들기",
+    "error_agent_not_in_workspace": "선택한 에이전트가 이 워크스페이스에 속해 있지 않습니다.",
+    "error_agent_archived": "선택한 에이전트는 보관 처리되었습니다.",
+    "error_agent_no_runtime": "선택한 에이전트에 연결된 런타임이 없습니다.",
+    "error_agent_runtime_not_found": "선택한 에이전트의 런타임을 찾을 수 없습니다.",
+    "error_agent_runtime_not_local": "선택한 에이전트는 로컬(데몬) 런타임에서 실행되어야 합니다."
   }
 }

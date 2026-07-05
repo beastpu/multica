@@ -142,6 +142,7 @@ import type {
   CreateBillingCheckoutSessionResponse,
   BillingCheckoutSessionStatus,
   CreateBillingPortalSessionResponse,
+  WorkspaceCapability,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -250,6 +251,8 @@ import {
   EMPTY_CANCEL_TASK_RESPONSE,
   InboxUnreadSummarySchema,
   EMPTY_INBOX_UNREAD_SUMMARY,
+  WorkspaceCapabilitySchema,
+  EMPTY_WORKSPACE_CAPABILITY,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -1735,6 +1738,55 @@ export class ApiClient {
       method: "PATCH",
       body: JSON.stringify(data),
     });
+  }
+
+  // Workspace capability roles — which agent executes a capability's derived
+  // work (first capability: "p4_assessment").
+
+  /** Returns `null` when the capability is not configured (server 404). */
+  async getWorkspaceCapability(
+    workspaceId: string,
+    capability: string,
+  ): Promise<WorkspaceCapability | null> {
+    let raw: unknown;
+    try {
+      raw = await this.fetch<unknown>(
+        `/api/workspaces/${workspaceId}/capabilities/${encodeURIComponent(capability)}`,
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return null;
+      throw err;
+    }
+    return parseWithFallback(
+      raw,
+      WorkspaceCapabilitySchema,
+      { ...EMPTY_WORKSPACE_CAPABILITY, capability },
+      { endpoint: "GET /api/workspaces/:id/capabilities/:capability" },
+    );
+  }
+
+  async putWorkspaceCapability(
+    workspaceId: string,
+    capability: string,
+    data: { agent_id: string; project_id?: string | null; max_concurrent_tasks?: number },
+  ): Promise<WorkspaceCapability> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/capabilities/${encodeURIComponent(capability)}`,
+      { method: "PUT", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      WorkspaceCapabilitySchema,
+      { ...EMPTY_WORKSPACE_CAPABILITY, capability },
+      { endpoint: "PUT /api/workspaces/:id/capabilities/:capability" },
+    );
+  }
+
+  async deleteWorkspaceCapability(workspaceId: string, capability: string): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/capabilities/${encodeURIComponent(capability)}`,
+      { method: "DELETE" },
+    );
   }
 
   // Members

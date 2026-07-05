@@ -17,7 +17,13 @@ export const workspaceKeys = {
     ["workspaces", wsId, "squads", squadId, "members-status"] as const,
   skills: (wsId: string) => ["workspaces", wsId, "skills"] as const,
   assigneeFrequency: (wsId: string) => ["workspaces", wsId, "assignee-frequency"] as const,
+  capability: (wsId: string, capability: string) =>
+    ["workspaces", wsId, "capabilities", capability] as const,
 };
+
+// Known workspace capability keys (mirrors the server's closed set in
+// server/internal/handler/workspace_capability.go).
+export const CAPABILITY_P4_ASSESSMENT = "p4_assessment";
 
 export function workspaceListOptions() {
   return queryOptions({
@@ -46,6 +52,15 @@ export function agentListOptions(wsId: string) {
     queryKey: workspaceKeys.agents(wsId),
     queryFn: () =>
       api.listAgents({ workspace_id: wsId, include_archived: true }),
+  });
+}
+
+/** Capability role config. `null` data = not configured (server 404). */
+export function workspaceCapabilityOptions(wsId: string, capability: string) {
+  return queryOptions({
+    queryKey: workspaceKeys.capability(wsId, capability),
+    queryFn: () => api.getWorkspaceCapability(wsId, capability),
+    enabled: !!wsId,
   });
 }
 
