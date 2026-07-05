@@ -52,7 +52,7 @@ func setupP4SubmitFixture(t *testing.T) (bindingID, agentID, taskID, issueID str
 		"prompt_version":    service.P4AssessmentPromptVersion,
 	})
 	if _, err := testPool.Exec(ctx,
-		`UPDATE agent_task_queue SET context = $2, task_category = 'analysis' WHERE id = $1`,
+		`UPDATE agent_task_queue SET context = $2 WHERE id = $1`,
 		taskID, taskContext,
 	); err != nil {
 		t.Fatalf("update task context: %v", err)

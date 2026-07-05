@@ -6,7 +6,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
-	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -77,43 +76,4 @@ func TestFeishuP4AssessmentTriggerAvoidsTypedNil(t *testing.T) {
 	if got := feishuP4AssessmentTrigger(wired); got == nil {
 		t.Fatalf("wired service: want non-nil trigger, got nil")
 	}
-}
-
-// TestP4AssessmentAllowlistFromEnv locks the fail-closed opt-in switch: unset or
-// blank ⇒ no workspace triggers assessment; a comma list is trimmed, lowercased,
-// and blank entries are dropped so only the named workspaces are gated in.
-func TestP4AssessmentAllowlistFromEnv(t *testing.T) {
-	const idA = "FEFE70D0-844D-4F4A-85C8-F995666DAF1F"
-	const idB = "015959f4-69b9-4f21-85b0-ff8188d22c78"
-
-	t.Run("unset disables everywhere", func(t *testing.T) {
-		t.Setenv(p4AssessmentWorkspaceAllowlistEnv, "")
-		if got := p4AssessmentAllowlistFromEnv(); got != nil {
-			t.Fatalf("blank env: want nil allowlist, got %v", got)
-		}
-	})
-
-	t.Run("blank and separator-only entries drop to nil", func(t *testing.T) {
-		t.Setenv(p4AssessmentWorkspaceAllowlistEnv, " , ,")
-		if got := p4AssessmentAllowlistFromEnv(); got != nil {
-			t.Fatalf("separator-only env: want nil allowlist, got %v", got)
-		}
-	})
-
-	t.Run("trims, lowercases, dedupes and gates only listed workspaces", func(t *testing.T) {
-		t.Setenv(p4AssessmentWorkspaceAllowlistEnv, "  "+idA+" , "+idB+" , ")
-		list := p4AssessmentAllowlistFromEnv()
-		if len(list) != 2 {
-			t.Fatalf("want 2 entries, got %d (%v)", len(list), list)
-		}
-		if !list.Allows(util.MustParseUUID(idA)) {
-			t.Fatal("uppercased env entry must match canonical lowercase workspace UUID")
-		}
-		if !list.Allows(util.MustParseUUID(idB)) {
-			t.Fatal("listed workspace must be permitted")
-		}
-		if list.Allows(util.MustParseUUID("11111111-1111-1111-1111-111111111111")) {
-			t.Fatal("unlisted workspace must be denied")
-		}
-	})
 }

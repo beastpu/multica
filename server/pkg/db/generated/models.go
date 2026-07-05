@@ -71,7 +71,6 @@ type AgentFixP4Assessment struct {
 	AssessedAt                    pgtype.Timestamptz `json:"assessed_at"`
 	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                     pgtype.Timestamptz `json:"updated_at"`
-	LeasedUntil                   pgtype.Timestamptz `json:"leased_until"`
 	AssessmentIssueID             pgtype.UUID        `json:"assessment_issue_id"`
 	AttemptCount                  int32              `json:"attempt_count"`
 	LastError                     string             `json:"last_error"`
@@ -148,7 +147,6 @@ type AgentTaskQueue struct {
 	HandoffNote           pgtype.Text        `json:"handoff_note"`
 	PrepareLeaseExpiresAt pgtype.Timestamptz `json:"prepare_lease_expires_at"`
 	SquadID               pgtype.UUID        `json:"squad_id"`
-	TaskCategory          string             `json:"task_category"`
 }
 
 type AgentWorkProject struct {
@@ -1151,6 +1149,15 @@ type Workspace struct {
 	IssuePrefix  string             `json:"issue_prefix"`
 	IssueCounter int32              `json:"issue_counter"`
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
+}
+
+type WorkspaceAgentCapability struct {
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	Capability         string             `json:"capability"`
+	AgentID            pgtype.UUID        `json:"agent_id"`
+	ProjectID          pgtype.UUID        `json:"project_id"`
+	MaxConcurrentTasks int32              `json:"max_concurrent_tasks"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
 
 type WorkspaceInvitation struct {

@@ -39,7 +39,7 @@ func TestAgentWorkProjectInsertIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestCreateAgentWorkIssueWritesMetadataAndNoAssignee(t *testing.T) {
+func TestCreateAgentWorkIssueWritesMetadataAndOptionalAssignee(t *testing.T) {
 	body, err := os.ReadFile("../../pkg/db/queries/agent_work.sql")
 	if err != nil {
 		t.Fatalf("read agent_work.sql: %v", err)
@@ -48,9 +48,12 @@ func TestCreateAgentWorkIssueWritesMetadataAndNoAssignee(t *testing.T) {
 	if !strings.Contains(chunk, "metadata") {
 		t.Fatalf("CreateAgentWorkIssue must stamp the agent_work metadata at insert time\n---\n%s", chunk)
 	}
-	for _, forbidden := range []string{"assignee_type", "assignee_id"} {
-		if strings.Contains(chunk, forbidden) {
-			t.Fatalf("CreateAgentWorkIssue must not set %s (phase 2 has no capability agent yet)\n---\n%s", forbidden, chunk)
+	// Plan C-1: the assignee is the capability agent and must stay NULLABLE
+	// (sqlc.narg) — the legacy env-allowlist path creates unassigned issues
+	// until C-2 removes it.
+	for _, want := range []string{"sqlc.narg(assignee_type)", "sqlc.narg(assignee_id)"} {
+		if !strings.Contains(chunk, want) {
+			t.Fatalf("CreateAgentWorkIssue must take a nullable assignee via %s\n---\n%s", want, chunk)
 		}
 	}
 }

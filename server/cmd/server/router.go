@@ -171,9 +171,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		AttachmentFrameAncestors: origins,
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
-	// Same fail-closed allowlist the Feishu sync worker uses for auto-trigger:
-	// it also gates the batch assessment pull/submit endpoints.
-	h.P4AssessmentService.Allowlist = p4AssessmentAllowlistFromEnv()
 	h.Metrics = opts.BusinessMetrics
 	if opts.FeatureFlags != nil {
 		h.DaemonFeatureFlags = featureflagdispatch.NewEvaluator(opts.FeatureFlags)
@@ -723,6 +720,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// are admin-gated below).
 					r.Get("/runtime-profiles", h.ListRuntimeProfiles)
 					r.Get("/runtime-profiles/{profileId}", h.GetRuntimeProfile)
+					// Capability roles (plan C-1): which agent executes a
+					// capability's derived work (first: p4_assessment). The
+					// P4 assessment Trigger is fail-closed on this config.
+					r.Get("/capabilities/{capability}", h.GetWorkspaceCapability)
+					r.Put("/capabilities/{capability}", h.PutWorkspaceCapability)
+					r.Delete("/capabilities/{capability}", h.DeleteWorkspaceCapability)
 				})
 				// Admin-level access
 				r.Group(func(r chi.Router) {
@@ -1132,12 +1135,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/api/operations/agent-fixes/{bindingId}/p4-assessment/result", h.SubmitAgentFixP4Assessment)
 			r.Patch("/api/operations/agent-fixes/{bindingId}/review", h.PatchAgentFixReviewByBinding)
 			r.Put("/api/operations/agent-fixes/{issueId}/review", h.UpdateAgentFixReview)
-
-			// Batch assessment worker contract: pull leased pending items
-			// (evidence inlined, opaque ref) and submit results by ref. The
-			// worker never constructs binding ids or spawns per-binding tasks.
-			r.Get("/api/operations/assessments/pending", h.ListPendingP4Assessments)
-			r.Post("/api/operations/assessments/result", h.SubmitP4AssessmentResultByRef)
 
 			r.Route("/api/chat/sessions", func(r chi.Router) {
 				r.Post("/", h.CreateChatSession)

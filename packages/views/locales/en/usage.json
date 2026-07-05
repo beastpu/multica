@@ -157,7 +157,6 @@
       "no_evidence": "No submitted CL record"
     },
     "assessment_obs": {
-      "lease_remaining": "{{minutes}} min left",
       "attempts": "{{count}} attempts"
     },
     "assessment_action": {

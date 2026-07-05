@@ -95,33 +95,10 @@ type FeishuProjectSyncService struct {
 	Storage      FeishuProjectStorage
 	TaskService  FeishuProjectTaskService
 	P4Assessment FeishuProjectP4AssessmentTrigger
-	// P4AssessmentAllowlist gates which workspaces auto-trigger P4 assessment
-	// on sync. Fail-closed: a nil/empty allowlist permits NO workspace, so the
-	// auto-assessment path stays off unless a workspace is explicitly opted in.
-	// The sync worker wires this from env; tests leave it empty to keep
-	// assessment off.
-	P4AssessmentAllowlist P4AssessmentAllowlist
 	// Events publishes domain events (e.g. issue:deleted from the orphan
 	// reconcile sweep) so connected clients invalidate their caches. Nil
 	// disables publishing — the DB delete still happens.
 	Events FeishuProjectEventPublisher
-}
-
-// P4AssessmentAllowlist is the set of workspaces permitted to auto-trigger P4
-// assessment on Feishu Project sync. Keys are canonical lowercase workspace
-// UUID strings. It is fail-closed: a nil or empty allowlist permits no
-// workspace, so a missing or blank config disables the auto-assessment path
-// everywhere instead of mass-triggering it.
-type P4AssessmentAllowlist map[string]bool
-
-// Allows reports whether the workspace may auto-trigger P4 assessment. The
-// query side is lowercased so an uppercased env entry still matches the
-// canonical lowercase UUID the sync path carries.
-func (a P4AssessmentAllowlist) Allows(workspaceID pgtype.UUID) bool {
-	if len(a) == 0 {
-		return false
-	}
-	return a[strings.ToLower(UUIDString(workspaceID))]
 }
 
 // FeishuProjectTaskService is the subset of *TaskService the sync path uses.
@@ -961,13 +938,13 @@ func (s *FeishuProjectSyncService) triggerP4AssessmentForDoneBinding(ctx context
 	if s.P4Assessment == nil {
 		return
 	}
-	if !s.P4AssessmentAllowlist.Allows(cfg.WorkspaceID) {
-		return
-	}
 	mappedStatus, ok := feishuProjectMappedLocalStatus(FeishuProjectStatusMappingFor(cfg, item.Type), item.Status)
 	if !ok || mappedStatus != "done" {
 		return
 	}
+	// Fail-closed gate lives inside Trigger: no workspace_agent_capability row
+	// for p4_assessment ⇒ the run is rejected before any write. The rejection
+	// is a Reason, not an error, so unconfigured workspaces stay silent here.
 	// Scan-path projection issues are created by the integration's creator —
 	// the same identity Feishu sync stamps on synced issues (there is no human
 	// in the loop here, and issue.creator_type has no 'system' value).

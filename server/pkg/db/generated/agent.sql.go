@@ -178,7 +178,7 @@ const cancelAgentTask = `-- name: CancelAgentTask :one
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 func (q *Queries) CancelAgentTask(ctx context.Context, id pgtype.UUID) (AgentTaskQueue, error) {
@@ -215,7 +215,6 @@ func (q *Queries) CancelAgentTask(ctx context.Context, id pgtype.UUID) (AgentTas
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
 	)
 	return i, err
 }
@@ -224,7 +223,7 @@ const cancelAgentTasksByAgent = `-- name: CancelAgentTasksByAgent :many
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE agent_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 // Bulk-cancel every active (queued/dispatched/running) task for an agent.
@@ -272,7 +271,6 @@ func (q *Queries) CancelAgentTasksByAgent(ctx context.Context, agentID pgtype.UU
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -288,7 +286,7 @@ const cancelAgentTasksByChatSession = `-- name: CancelAgentTasksByChatSession :m
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 // Cancels active tasks belonging to a chat session. Called from
@@ -336,7 +334,6 @@ func (q *Queries) CancelAgentTasksByChatSession(ctx context.Context, chatSession
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -353,8 +350,7 @@ UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE issue_id = $1
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-  AND task_category = 'fix'
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 // Cancels every active task on the issue and returns the affected rows so the
@@ -402,7 +398,6 @@ func (q *Queries) CancelAgentTasksByIssue(ctx context.Context, issueID pgtype.UU
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -420,8 +415,7 @@ SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE issue_id = $1
   AND agent_id = $2
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-  AND task_category = 'fix'
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 type CancelAgentTasksByIssueAndAgentParams struct {
@@ -473,7 +467,6 @@ func (q *Queries) CancelAgentTasksByIssueAndAgent(ctx context.Context, arg Cance
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -489,7 +482,7 @@ const cancelAgentTasksByTriggerComment = `-- name: CancelAgentTasksByTriggerComm
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE trigger_comment_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 // Cancels active tasks whose trigger is the given comment. Called when a
@@ -537,7 +530,6 @@ func (q *Queries) CancelAgentTasksByTriggerComment(ctx context.Context, triggerC
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -563,8 +555,7 @@ WHERE id = (
             AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
             AND (
               (atq.issue_id IS NOT NULL
-                AND active.issue_id = atq.issue_id
-                AND active.task_category = atq.task_category)
+                AND active.issue_id = atq.issue_id)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
               OR (
                 atq.issue_id IS NULL
@@ -580,7 +571,7 @@ WHERE id = (
     LIMIT 1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 type ClaimAgentTaskParams struct {
@@ -631,7 +622,6 @@ func (q *Queries) ClaimAgentTask(ctx context.Context, arg ClaimAgentTaskParams) 
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
 	)
 	return i, err
 }
@@ -715,7 +705,7 @@ const completeAgentTask = `-- name: CompleteAgentTask :one
 UPDATE agent_task_queue
 SET status = 'completed', completed_at = now(), result = $2, session_id = $3, work_dir = $4, prepare_lease_expires_at = NULL
 WHERE id = $1 AND status = 'running'
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 type CompleteAgentTaskParams struct {
@@ -764,109 +754,6 @@ func (q *Queries) CompleteAgentTask(ctx context.Context, arg CompleteAgentTaskPa
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
-	)
-	return i, err
-}
-
-const completeP4AssessmentFromBinding = `-- name: CompleteP4AssessmentFromBinding :one
-UPDATE agent_fix_p4_assessment
-SET assessment_status = 'completed',
-    delivery_attribution_prediction = $4,
-    quality_prediction = $5,
-    prediction_reasons = $6,
-    confidence = $7,
-    workstream = $8,
-    swarm_reviews = $9,
-    ai_shelved_cls = $10,
-    swarm_change_cls = $11,
-    swarm_committed_cls = $12,
-    external_committed_cls = $13,
-    evidence = $14,
-    summary = $15,
-    warnings = $16,
-    model = $17,
-    leased_until = NULL,
-    last_error = '',
-    assessed_at = now(),
-    updated_at = now()
-WHERE workspace_id = $1 AND feishu_binding_id = $2 AND assessment_task_id = $3
-RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until, assessment_issue_id, attempt_count, last_error
-`
-
-type CompleteP4AssessmentFromBindingParams struct {
-	WorkspaceID                   pgtype.UUID    `json:"workspace_id"`
-	FeishuBindingID               pgtype.UUID    `json:"feishu_binding_id"`
-	AssessmentTaskID              pgtype.UUID    `json:"assessment_task_id"`
-	DeliveryAttributionPrediction string         `json:"delivery_attribution_prediction"`
-	QualityPrediction             string         `json:"quality_prediction"`
-	PredictionReasons             []string       `json:"prediction_reasons"`
-	Confidence                    pgtype.Numeric `json:"confidence"`
-	Workstream                    string         `json:"workstream"`
-	SwarmReviews                  []byte         `json:"swarm_reviews"`
-	AiShelvedCls                  []int32        `json:"ai_shelved_cls"`
-	SwarmChangeCls                []int32        `json:"swarm_change_cls"`
-	SwarmCommittedCls             []int32        `json:"swarm_committed_cls"`
-	ExternalCommittedCls          []int32        `json:"external_committed_cls"`
-	Evidence                      []byte         `json:"evidence"`
-	Summary                       string         `json:"summary"`
-	Warnings                      []byte         `json:"warnings"`
-	Model                         pgtype.Text    `json:"model"`
-}
-
-// Batch-worker submit: keyed on the binding ref (one worker task leases many
-// bindings, so assessment_task_id alone is not unique per row here). The task
-// guard rejects a worker whose lease was reclaimed by another task.
-func (q *Queries) CompleteP4AssessmentFromBinding(ctx context.Context, arg CompleteP4AssessmentFromBindingParams) (AgentFixP4Assessment, error) {
-	row := q.db.QueryRow(ctx, completeP4AssessmentFromBinding,
-		arg.WorkspaceID,
-		arg.FeishuBindingID,
-		arg.AssessmentTaskID,
-		arg.DeliveryAttributionPrediction,
-		arg.QualityPrediction,
-		arg.PredictionReasons,
-		arg.Confidence,
-		arg.Workstream,
-		arg.SwarmReviews,
-		arg.AiShelvedCls,
-		arg.SwarmChangeCls,
-		arg.SwarmCommittedCls,
-		arg.ExternalCommittedCls,
-		arg.Evidence,
-		arg.Summary,
-		arg.Warnings,
-		arg.Model,
-	)
-	var i AgentFixP4Assessment
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.IssueID,
-		&i.FeishuBindingID,
-		&i.AssessmentTaskID,
-		&i.AssessmentStatus,
-		&i.DeliveryAttributionPrediction,
-		&i.QualityPrediction,
-		&i.PredictionReasons,
-		&i.Confidence,
-		&i.Workstream,
-		&i.SwarmReviews,
-		&i.AiShelvedCls,
-		&i.SwarmChangeCls,
-		&i.SwarmCommittedCls,
-		&i.ExternalCommittedCls,
-		&i.Evidence,
-		&i.Summary,
-		&i.Warnings,
-		&i.Model,
-		&i.PromptVersion,
-		&i.AssessedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.LeasedUntil,
-		&i.AssessmentIssueID,
-		&i.AttemptCount,
-		&i.LastError,
 	)
 	return i, err
 }
@@ -892,7 +779,7 @@ SET assessment_status = 'completed',
     assessed_at = now(),
     updated_at = now()
 WHERE workspace_id = $1 AND assessment_task_id = $2
-RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until, assessment_issue_id, attempt_count, last_error
+RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, assessment_issue_id, attempt_count, last_error
 `
 
 type CompleteP4AssessmentFromTaskParams struct {
@@ -959,7 +846,6 @@ func (q *Queries) CompleteP4AssessmentFromTask(ctx context.Context, arg Complete
 		&i.AssessedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.LeasedUntil,
 		&i.AssessmentIssueID,
 		&i.AttemptCount,
 		&i.LastError,
@@ -1068,7 +954,7 @@ VALUES (
     $9,
     $10
 )
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 type CreateAgentTaskParams struct {
@@ -1129,7 +1015,77 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
+	)
+	return i, err
+}
+
+const createP4AssessmentTask = `-- name: CreateP4AssessmentTask :one
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, force_fresh_session, handoff_note)
+VALUES ($1, $2, $3, 'queued', $4, $5, TRUE, $6)
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
+`
+
+type CreateP4AssessmentTaskParams struct {
+	AgentID     pgtype.UUID `json:"agent_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	Priority    int32       `json:"priority"`
+	Context     []byte      `json:"context"`
+	HandoffNote pgtype.Text `json:"handoff_note"`
+}
+
+// Native assessment task (plan C): hangs on the assessment PROJECTION issue
+// (issue_id = the derived agent_work issue), agent_id = the workspace's
+// p4_assessment capability agent. Workflow isolation comes from the issue
+// itself: the projection issue's reserved metadata.agent_work marker anchors
+// the read-only write guard, and per-issue workflow queries never meet this
+// task through a real issue.
+// handoff_note carries the read-only assessment instructions: NEW daemons
+// build a dedicated assessment prompt from context.type and ignore it, OLD
+// daemons (pre-isolation) fall into the normal assignment path and DO render
+// handoff_note, which is how the server steers a stale daemon into read-only
+// JSON output without a client update.
+func (q *Queries) CreateP4AssessmentTask(ctx context.Context, arg CreateP4AssessmentTaskParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, createP4AssessmentTask,
+		arg.AgentID,
+		arg.RuntimeID,
+		arg.IssueID,
+		arg.Priority,
+		arg.Context,
+		arg.HandoffNote,
+	)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
 	)
 	return i, err
 }
@@ -1137,7 +1093,7 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 const createQuickCreateTask = `-- name: CreateQuickCreateTask :one
 INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
 VALUES ($1, $2, NULL, 'queued', $3, $4)
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 type CreateQuickCreateTaskParams struct {
@@ -1189,7 +1145,6 @@ func (q *Queries) CreateQuickCreateTask(ctx context.Context, arg CreateQuickCrea
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
 	)
 	return i, err
 }
@@ -1200,7 +1155,7 @@ INSERT INTO agent_task_queue (
     status, priority, trigger_comment_id, trigger_summary, context,
     session_id, work_dir,
     attempt, max_attempts, parent_task_id, force_fresh_session, is_leader_task,
-    squad_id, task_category
+    squad_id
 )
 SELECT
     p.agent_id, p.runtime_id, p.issue_id, p.chat_session_id, p.autopilot_run_id,
@@ -1210,10 +1165,10 @@ SELECT
     p.attempt + 1, p.max_attempts, p.id,
     p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity',
     p.is_leader_task,
-    p.squad_id, p.task_category
+    p.squad_id
 FROM agent_task_queue p
 WHERE p.id = $1
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 // Clones a parent task into a fresh queued attempt. Carries forward the
@@ -1261,7 +1216,6 @@ func (q *Queries) CreateRetryTask(ctx context.Context, id pgtype.UUID) (AgentTas
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
 	)
 	return i, err
 }
@@ -1270,7 +1224,6 @@ const expireStaleQueuedTasks = `-- name: ExpireStaleQueuedTasks :many
 WITH victims AS (
     SELECT id FROM agent_task_queue
     WHERE status = 'queued'
-      AND task_category = 'fix'
       AND created_at < now() - make_interval(secs => $1::double precision)
     ORDER BY created_at ASC
     LIMIT $2::int
@@ -1285,9 +1238,8 @@ SET status = 'failed',
 FROM victims v
 WHERE t.id = v.id
   AND t.status = 'queued'
-  AND t.task_category = 'fix'
   AND t.created_at < now() - make_interval(secs => $1::double precision)
-RETURNING t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.task_category
+RETURNING t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id
 `
 
 type ExpireStaleQueuedTasksParams struct {
@@ -1358,7 +1310,6 @@ func (q *Queries) ExpireStaleQueuedTasks(ctx context.Context, arg ExpireStaleQue
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -1377,7 +1328,7 @@ WHERE id = $1
   AND runtime_id = $2
   AND status IN ('dispatched', 'waiting_local_directory')
   AND started_at IS NULL
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 type ExtendAgentTaskPrepareLeaseParams struct {
@@ -1424,7 +1375,6 @@ func (q *Queries) ExtendAgentTaskPrepareLease(ctx context.Context, arg ExtendAge
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
 	)
 	return i, err
 }
@@ -1439,7 +1389,7 @@ SET status = 'failed',
     work_dir = COALESCE($5, work_dir),
     prepare_lease_expires_at = NULL
 WHERE id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 type FailAgentTaskParams struct {
@@ -1499,7 +1449,6 @@ func (q *Queries) FailAgentTask(ctx context.Context, arg FailAgentTaskParams) (A
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
 	)
 	return i, err
 }
@@ -1512,7 +1461,7 @@ SET assessment_status = 'failed',
     updated_at = now()
 WHERE workspace_id = $1 AND assessment_task_id = $2
   AND assessment_status <> 'completed'
-RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until, assessment_issue_id, attempt_count, last_error
+RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, assessment_issue_id, attempt_count, last_error
 `
 
 type FailP4AssessmentFromTaskParams struct {
@@ -1559,7 +1508,6 @@ func (q *Queries) FailP4AssessmentFromTask(ctx context.Context, arg FailP4Assess
 		&i.AssessedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.LeasedUntil,
 		&i.AssessmentIssueID,
 		&i.AttemptCount,
 		&i.LastError,
@@ -1578,7 +1526,7 @@ WHERE (
     AND (prepare_lease_expires_at IS NULL OR prepare_lease_expires_at < now())
   )
    OR (status = 'running' AND started_at < now() - make_interval(secs => $2::double precision))
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 type FailStaleTasksParams struct {
@@ -1637,7 +1585,6 @@ func (q *Queries) FailStaleTasks(ctx context.Context, arg FailStaleTasksParams) 
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -1761,7 +1708,7 @@ func (q *Queries) GetAgentInWorkspace(ctx context.Context, arg GetAgentInWorkspa
 }
 
 const getAgentTask = `-- name: GetAgentTask :one
-SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category FROM agent_task_queue
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id FROM agent_task_queue
 WHERE id = $1
 `
 
@@ -1799,13 +1746,12 @@ func (q *Queries) GetAgentTask(ctx context.Context, id pgtype.UUID) (AgentTaskQu
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
 	)
 	return i, err
 }
 
 const getAgentTaskInWorkspace = `-- name: GetAgentTaskInWorkspace :one
-SELECT atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatched_at, atq.started_at, atq.completed_at, atq.result, atq.error, atq.created_at, atq.context, atq.runtime_id, atq.session_id, atq.work_dir, atq.trigger_comment_id, atq.chat_session_id, atq.autopilot_run_id, atq.attempt, atq.max_attempts, atq.parent_task_id, atq.failure_reason, atq.trigger_summary, atq.force_fresh_session, atq.is_leader_task, atq.wait_reason, atq.initiator_user_id, atq.handoff_note, atq.prepare_lease_expires_at, atq.squad_id, atq.task_category FROM agent_task_queue atq
+SELECT atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatched_at, atq.started_at, atq.completed_at, atq.result, atq.error, atq.created_at, atq.context, atq.runtime_id, atq.session_id, atq.work_dir, atq.trigger_comment_id, atq.chat_session_id, atq.autopilot_run_id, atq.attempt, atq.max_attempts, atq.parent_task_id, atq.failure_reason, atq.trigger_summary, atq.force_fresh_session, atq.is_leader_task, atq.wait_reason, atq.initiator_user_id, atq.handoff_note, atq.prepare_lease_expires_at, atq.squad_id FROM agent_task_queue atq
 JOIN agent a ON a.id = atq.agent_id
 WHERE atq.id = $1 AND a.workspace_id = $2
 `
@@ -1856,7 +1802,6 @@ func (q *Queries) GetAgentTaskInWorkspace(ctx context.Context, arg GetAgentTaskI
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
 	)
 	return i, err
 }
@@ -1906,7 +1851,6 @@ func (q *Queries) GetFirstAgentByOwnerInWorkspace(ctx context.Context, arg GetFi
 const getLastTaskSession = `-- name: GetLastTaskSession :one
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
-  AND task_category = 'fix'
   AND (
     status = 'completed'
     OR (
@@ -1975,7 +1919,6 @@ SELECT started_at FROM agent_task_queue
 WHERE agent_id = $1
   AND issue_id = $2
   AND started_at IS NOT NULL
-  AND task_category = 'fix'
 ORDER BY started_at DESC
 LIMIT 1
 `
@@ -2001,7 +1944,6 @@ func (q *Queries) GetLastTaskStartedAtForIssueAndAgent(ctx context.Context, arg 
 const getLatestTaskIsLeaderForIssueAndAgent = `-- name: GetLatestTaskIsLeaderForIssueAndAgent :one
 SELECT is_leader_task FROM agent_task_queue
 WHERE issue_id = $1 AND agent_id = $2
-  AND task_category = 'fix'
 ORDER BY created_at DESC
 LIMIT 1
 `
@@ -2113,7 +2055,7 @@ func (q *Queries) GetP4AssessmentBinding(ctx context.Context, arg GetP4Assessmen
 }
 
 const getP4AssessmentByBinding = `-- name: GetP4AssessmentByBinding :one
-SELECT id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until, assessment_issue_id, attempt_count, last_error FROM agent_fix_p4_assessment
+SELECT id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, assessment_issue_id, attempt_count, last_error FROM agent_fix_p4_assessment
 WHERE workspace_id = $1 AND feishu_binding_id = $2
 `
 
@@ -2150,7 +2092,6 @@ func (q *Queries) GetP4AssessmentByBinding(ctx context.Context, arg GetP4Assessm
 		&i.AssessedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.LeasedUntil,
 		&i.AssessmentIssueID,
 		&i.AttemptCount,
 		&i.LastError,
@@ -2263,7 +2204,6 @@ const hasActiveTaskForIssue = `-- name: HasActiveTaskForIssue :one
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
 WHERE issue_id = $1
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-  AND task_category = 'fix'
 `
 
 // Returns true if there is any queued, dispatched, waiting_local_directory,
@@ -2279,7 +2219,6 @@ const hasPendingTaskForIssue = `-- name: HasPendingTaskForIssue :one
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = $1
   AND status IN ('queued', 'dispatched')
-  AND task_category = 'fix'
 `
 
 // Returns true if there is a queued or dispatched (but not yet running) task for the issue.
@@ -2298,7 +2237,6 @@ SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = $1
   AND agent_id = $2
   AND status IN ('queued', 'dispatched')
-  AND task_category = 'fix'
 `
 
 type HasPendingTaskForIssueAndAgentParams struct {
@@ -2320,7 +2258,6 @@ SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = $1
   AND agent_id = $2
   AND status IN ('queued', 'dispatched')
-  AND task_category = 'fix'
   AND trigger_comment_id IS DISTINCT FROM $3::uuid
 `
 
@@ -2344,7 +2281,6 @@ const hasTaskForIssueAndAgent = `-- name: HasTaskForIssueAndAgent :one
 SELECT count(*) > 0 AS has_task FROM agent_task_queue
 WHERE issue_id = $1
   AND agent_id = $2
-  AND task_category = 'fix'
 `
 
 type HasTaskForIssueAndAgentParams struct {
@@ -2358,93 +2294,6 @@ func (q *Queries) HasTaskForIssueAndAgent(ctx context.Context, arg HasTaskForIss
 	var has_task bool
 	err := row.Scan(&has_task)
 	return has_task, err
-}
-
-const leaseP4AssessmentsPending = `-- name: LeaseP4AssessmentsPending :many
-UPDATE agent_fix_p4_assessment a
-SET assessment_status = 'running',
-    assessment_task_id = $2,
-    leased_until = $3,
-    attempt_count = a.attempt_count + 1,
-    updated_at = now()
-WHERE a.id IN (
-  SELECT p.id FROM agent_fix_p4_assessment p
-  WHERE p.workspace_id = $1
-    AND (
-      p.assessment_status IN ('pending', 'failed', 'stale')
-      OR (p.assessment_status = 'running' AND p.leased_until IS NOT NULL AND p.leased_until < now())
-    )
-  ORDER BY p.updated_at ASC
-  LIMIT $4
-  FOR UPDATE SKIP LOCKED
-)
-RETURNING a.id, a.workspace_id, a.issue_id, a.feishu_binding_id, a.assessment_task_id, a.assessment_status, a.delivery_attribution_prediction, a.quality_prediction, a.prediction_reasons, a.confidence, a.workstream, a.swarm_reviews, a.ai_shelved_cls, a.swarm_change_cls, a.swarm_committed_cls, a.external_committed_cls, a.evidence, a.summary, a.warnings, a.model, a.prompt_version, a.assessed_at, a.created_at, a.updated_at, a.leased_until, a.assessment_issue_id, a.attempt_count, a.last_error
-`
-
-type LeaseP4AssessmentsPendingParams struct {
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	AssessmentTaskID pgtype.UUID        `json:"assessment_task_id"`
-	LeasedUntil      pgtype.Timestamptz `json:"leased_until"`
-	Limit            int32              `json:"limit"`
-}
-
-// Batch-worker pull: atomically claim up to sqlc.arg(lease_limit) assessable
-// rows for the caller task. Claimable = pending/failed/stale, or running with
-// an expired lease (a worker that died mid-batch). SKIP LOCKED keeps
-// concurrent workers from double-claiming. Oldest-first so the backlog drains
-// fairly.
-func (q *Queries) LeaseP4AssessmentsPending(ctx context.Context, arg LeaseP4AssessmentsPendingParams) ([]AgentFixP4Assessment, error) {
-	rows, err := q.db.Query(ctx, leaseP4AssessmentsPending,
-		arg.WorkspaceID,
-		arg.AssessmentTaskID,
-		arg.LeasedUntil,
-		arg.Limit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AgentFixP4Assessment{}
-	for rows.Next() {
-		var i AgentFixP4Assessment
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.IssueID,
-			&i.FeishuBindingID,
-			&i.AssessmentTaskID,
-			&i.AssessmentStatus,
-			&i.DeliveryAttributionPrediction,
-			&i.QualityPrediction,
-			&i.PredictionReasons,
-			&i.Confidence,
-			&i.Workstream,
-			&i.SwarmReviews,
-			&i.AiShelvedCls,
-			&i.SwarmChangeCls,
-			&i.SwarmCommittedCls,
-			&i.ExternalCommittedCls,
-			&i.Evidence,
-			&i.Summary,
-			&i.Warnings,
-			&i.Model,
-			&i.PromptVersion,
-			&i.AssessedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.LeasedUntil,
-			&i.AssessmentIssueID,
-			&i.AttemptCount,
-			&i.LastError,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const linkTaskToIssue = `-- name: LinkTaskToIssue :exec
@@ -2582,7 +2431,7 @@ func (q *Queries) ListActiveAgentsByRuntimeForUpdate(ctx context.Context, runtim
 }
 
 const listActiveTasksByIssue = `-- name: ListActiveTasksByIssue :many
-SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category FROM agent_task_queue
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id FROM agent_task_queue
 WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
 ORDER BY created_at DESC
 `
@@ -2632,7 +2481,6 @@ func (q *Queries) ListActiveTasksByIssue(ctx context.Context, issueID pgtype.UUI
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -2776,7 +2624,7 @@ func (q *Queries) ListAgentIssueDailySummaries(ctx context.Context, arg ListAgen
 }
 
 const listAgentTasks = `-- name: ListAgentTasks :many
-SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category FROM agent_task_queue
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id FROM agent_task_queue
 WHERE agent_id = $1
 ORDER BY created_at DESC
 `
@@ -2821,7 +2669,6 @@ func (q *Queries) ListAgentTasks(ctx context.Context, agentID pgtype.UUID) ([]Ag
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -3130,7 +2977,7 @@ func (q *Queries) ListP4EvidenceTasksByIssue(ctx context.Context, arg ListP4Evid
 }
 
 const listPendingTasksByRuntime = `-- name: ListPendingTasksByRuntime :many
-SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category FROM agent_task_queue
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id FROM agent_task_queue
 WHERE runtime_id = $1 AND status IN ('queued', 'dispatched')
 ORDER BY priority DESC, created_at ASC
 `
@@ -3175,7 +3022,6 @@ func (q *Queries) ListPendingTasksByRuntime(ctx context.Context, runtimeID pgtyp
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -3188,7 +3034,7 @@ func (q *Queries) ListPendingTasksByRuntime(ctx context.Context, runtimeID pgtyp
 }
 
 const listQueuedClaimCandidatesByRuntime = `-- name: ListQueuedClaimCandidatesByRuntime :many
-SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category FROM agent_task_queue
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id FROM agent_task_queue
 WHERE runtime_id = $1 AND status = 'queued'
 ORDER BY priority DESC, created_at ASC
 `
@@ -3241,7 +3087,6 @@ func (q *Queries) ListQueuedClaimCandidatesByRuntime(ctx context.Context, runtim
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -3254,7 +3099,7 @@ func (q *Queries) ListQueuedClaimCandidatesByRuntime(ctx context.Context, runtim
 }
 
 const listTasksByIssue = `-- name: ListTasksByIssue :many
-SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category FROM agent_task_queue
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id FROM agent_task_queue
 WHERE issue_id = $1
 ORDER BY created_at DESC
 `
@@ -3299,7 +3144,6 @@ func (q *Queries) ListTasksByIssue(ctx context.Context, issueID pgtype.UUID) ([]
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -3319,9 +3163,13 @@ WITH latest AS (
     atq.status AS task_status, atq.failure_reason
   FROM agent_task_queue atq
   JOIN agent ag ON ag.id = atq.agent_id
+  -- Derived agent_work issues (per-run assessment projections) are not fix
+  -- targets: their tasks must not spawn feed rows or inflate the KPIs, so the
+  -- spine skips issues carrying the server-reserved metadata marker.
+  JOIN issue ti ON ti.id = atq.issue_id
+    AND NOT jsonb_exists(ti.metadata, 'agent_work')
   WHERE ag.workspace_id = $2
     AND atq.issue_id IS NOT NULL
-    AND atq.task_category = 'fix'
   -- "Latest run" = most recent activity overall: completion if finished, else
   -- start, else when it was queued. So a fresh queued/running attempt outranks
   -- an older finished one. atq.id is a final deterministic tiebreaker.
@@ -3431,12 +3279,10 @@ SELECT
   p4.external_committed_cls AS p4_external_committed_cls,
   p4.summary AS p4_summary,
   p4.warnings AS p4_warnings,
-  -- Queue observability for the detail rows: how many times this row was
-  -- leased, why it last failed/was released, the active lease expiry, and
-  -- which agent's batch task holds/held it.
+  -- Queue observability for the detail rows: how many times this run was
+  -- started, why it last failed, and which agent's task ran it.
   COALESCE(p4.attempt_count, 0) AS p4_attempt_count,
   COALESCE(p4.last_error, '') AS p4_last_error,
-  p4.leased_until AS p4_leased_until,
   COALESCE(p4agent.name, '') AS p4_assessment_agent_name,
   afr.outcome AS review_outcome,
   afr.reasons AS review_reasons,
@@ -3522,7 +3368,6 @@ type ListWorkspaceAgentFixesRow struct {
 	P4Warnings                      []byte             `json:"p4_warnings"`
 	P4AttemptCount                  int32              `json:"p4_attempt_count"`
 	P4LastError                     string             `json:"p4_last_error"`
-	P4LeasedUntil                   pgtype.Timestamptz `json:"p4_leased_until"`
 	P4AssessmentAgentName           string             `json:"p4_assessment_agent_name"`
 	ReviewOutcome                   pgtype.Text        `json:"review_outcome"`
 	ReviewReasons                   []string           `json:"review_reasons"`
@@ -3610,7 +3455,6 @@ func (q *Queries) ListWorkspaceAgentFixes(ctx context.Context, arg ListWorkspace
 			&i.P4Warnings,
 			&i.P4AttemptCount,
 			&i.P4LastError,
-			&i.P4LeasedUntil,
 			&i.P4AssessmentAgentName,
 			&i.ReviewOutcome,
 			&i.ReviewReasons,
@@ -3629,15 +3473,15 @@ func (q *Queries) ListWorkspaceAgentFixes(ctx context.Context, arg ListWorkspace
 }
 
 const listWorkspaceAgentTaskSnapshot = `-- name: ListWorkspaceAgentTaskSnapshot :many
-SELECT atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatched_at, atq.started_at, atq.completed_at, atq.result, atq.error, atq.created_at, atq.context, atq.runtime_id, atq.session_id, atq.work_dir, atq.trigger_comment_id, atq.chat_session_id, atq.autopilot_run_id, atq.attempt, atq.max_attempts, atq.parent_task_id, atq.failure_reason, atq.trigger_summary, atq.force_fresh_session, atq.is_leader_task, atq.wait_reason, atq.initiator_user_id, atq.handoff_note, atq.prepare_lease_expires_at, atq.squad_id, atq.task_category FROM agent_task_queue atq
+SELECT atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatched_at, atq.started_at, atq.completed_at, atq.result, atq.error, atq.created_at, atq.context, atq.runtime_id, atq.session_id, atq.work_dir, atq.trigger_comment_id, atq.chat_session_id, atq.autopilot_run_id, atq.attempt, atq.max_attempts, atq.parent_task_id, atq.failure_reason, atq.trigger_summary, atq.force_fresh_session, atq.is_leader_task, atq.wait_reason, atq.initiator_user_id, atq.handoff_note, atq.prepare_lease_expires_at, atq.squad_id FROM agent_task_queue atq
 JOIN agent a ON a.id = atq.agent_id
 WHERE a.workspace_id = $1
   AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
 
 UNION ALL
 
-SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.task_category FROM (
-  SELECT DISTINCT ON (atq.agent_id) atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatched_at, atq.started_at, atq.completed_at, atq.result, atq.error, atq.created_at, atq.context, atq.runtime_id, atq.session_id, atq.work_dir, atq.trigger_comment_id, atq.chat_session_id, atq.autopilot_run_id, atq.attempt, atq.max_attempts, atq.parent_task_id, atq.failure_reason, atq.trigger_summary, atq.force_fresh_session, atq.is_leader_task, atq.wait_reason, atq.initiator_user_id, atq.handoff_note, atq.prepare_lease_expires_at, atq.squad_id, atq.task_category
+SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id FROM (
+  SELECT DISTINCT ON (atq.agent_id) atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatched_at, atq.started_at, atq.completed_at, atq.result, atq.error, atq.created_at, atq.context, atq.runtime_id, atq.session_id, atq.work_dir, atq.trigger_comment_id, atq.chat_session_id, atq.autopilot_run_id, atq.attempt, atq.max_attempts, atq.parent_task_id, atq.failure_reason, atq.trigger_summary, atq.force_fresh_session, atq.is_leader_task, atq.wait_reason, atq.initiator_user_id, atq.handoff_note, atq.prepare_lease_expires_at, atq.squad_id
   FROM agent_task_queue atq
   JOIN agent a ON a.id = atq.agent_id
   WHERE a.workspace_id = $1
@@ -3704,7 +3548,6 @@ func (q *Queries) ListWorkspaceAgentTaskSnapshot(ctx context.Context, workspaceI
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -3739,7 +3582,7 @@ SET status = 'waiting_local_directory',
     wait_reason = $2,
     prepare_lease_expires_at = now() + make_interval(secs => $3::double precision)
 WHERE id = $1 AND status = 'dispatched'
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 type MarkAgentTaskWaitingLocalDirectoryParams struct {
@@ -3791,7 +3634,6 @@ func (q *Queries) MarkAgentTaskWaitingLocalDirectory(ctx context.Context, arg Ma
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
 	)
 	return i, err
 }
@@ -3811,7 +3653,7 @@ WHERE id = (
     LIMIT 1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 type ReclaimStaleDispatchedTaskForRuntimeParams struct {
@@ -3859,7 +3701,6 @@ func (q *Queries) ReclaimStaleDispatchedTaskForRuntime(ctx context.Context, arg 
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
 	)
 	return i, err
 }
@@ -3873,7 +3714,7 @@ SET status = 'failed',
     wait_reason = NULL,
     prepare_lease_expires_at = NULL
 WHERE runtime_id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 // Called by the daemon at startup. Atomically fails any dispatched/running/
@@ -3922,7 +3763,6 @@ func (q *Queries) RecoverOrphanedTasksForRuntime(ctx context.Context, runtimeID 
 			&i.HandoffNote,
 			&i.PrepareLeaseExpiresAt,
 			&i.SquadID,
-			&i.TaskCategory,
 		); err != nil {
 			return nil, err
 		}
@@ -3973,38 +3813,6 @@ func (q *Queries) RefreshAgentStatusFromTasks(ctx context.Context, id pgtype.UUI
 		&i.ThinkingLevel,
 	)
 	return i, err
-}
-
-const releaseP4AssessmentLease = `-- name: ReleaseP4AssessmentLease :exec
-UPDATE agent_fix_p4_assessment
-SET assessment_status = 'pending',
-    assessment_task_id = NULL,
-    leased_until = NULL,
-    last_error = $4,
-    updated_at = now()
-WHERE workspace_id = $1 AND feishu_binding_id = $2 AND assessment_task_id = $3
-  AND assessment_status = 'running'
-`
-
-type ReleaseP4AssessmentLeaseParams struct {
-	WorkspaceID      pgtype.UUID `json:"workspace_id"`
-	FeishuBindingID  pgtype.UUID `json:"feishu_binding_id"`
-	AssessmentTaskID pgtype.UUID `json:"assessment_task_id"`
-	LastError        string      `json:"last_error"`
-}
-
-// Return a leased row to the pending pool (e.g. its evidence failed to
-// build), guarded by the owning task so a stale worker can't release someone
-// else's claim. Records why in last_error — this path used to be fully
-// silent, so a row could bounce pull→release forever with no trace.
-func (q *Queries) ReleaseP4AssessmentLease(ctx context.Context, arg ReleaseP4AssessmentLeaseParams) error {
-	_, err := q.db.Exec(ctx, releaseP4AssessmentLease,
-		arg.WorkspaceID,
-		arg.FeishuBindingID,
-		arg.AssessmentTaskID,
-		arg.LastError,
-	)
-	return err
 }
 
 const restoreAgent = `-- name: RestoreAgent :one
@@ -4064,6 +3872,59 @@ func (q *Queries) SetP4AssessmentIssue(ctx context.Context, arg SetP4AssessmentI
 	return err
 }
 
+const setP4AssessmentTask = `-- name: SetP4AssessmentTask :one
+UPDATE agent_fix_p4_assessment
+SET assessment_task_id = $3,
+    updated_at = now()
+WHERE workspace_id = $1 AND feishu_binding_id = $2
+RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, assessment_issue_id, attempt_count, last_error
+`
+
+type SetP4AssessmentTaskParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	FeishuBindingID  pgtype.UUID `json:"feishu_binding_id"`
+	AssessmentTaskID pgtype.UUID `json:"assessment_task_id"`
+}
+
+// Points the queue row at the native task the Trigger created for the CURRENT
+// run (plan C-1). CompleteP4AssessmentFromTask / FailP4AssessmentFromTask /
+// StartP4AssessmentFromTask and the result-submit authorization all key on
+// this column.
+func (q *Queries) SetP4AssessmentTask(ctx context.Context, arg SetP4AssessmentTaskParams) (AgentFixP4Assessment, error) {
+	row := q.db.QueryRow(ctx, setP4AssessmentTask, arg.WorkspaceID, arg.FeishuBindingID, arg.AssessmentTaskID)
+	var i AgentFixP4Assessment
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.FeishuBindingID,
+		&i.AssessmentTaskID,
+		&i.AssessmentStatus,
+		&i.DeliveryAttributionPrediction,
+		&i.QualityPrediction,
+		&i.PredictionReasons,
+		&i.Confidence,
+		&i.Workstream,
+		&i.SwarmReviews,
+		&i.AiShelvedCls,
+		&i.SwarmChangeCls,
+		&i.SwarmCommittedCls,
+		&i.ExternalCommittedCls,
+		&i.Evidence,
+		&i.Summary,
+		&i.Warnings,
+		&i.Model,
+		&i.PromptVersion,
+		&i.AssessedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssessmentIssueID,
+		&i.AttemptCount,
+		&i.LastError,
+	)
+	return i, err
+}
+
 const startAgentTask = `-- name: StartAgentTask :one
 UPDATE agent_task_queue
 SET status = 'running',
@@ -4071,7 +3932,7 @@ SET status = 'running',
     wait_reason = NULL,
     prepare_lease_expires_at = NULL
 WHERE id = $1 AND status IN ('dispatched', 'waiting_local_directory')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, task_category
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id
 `
 
 // Transitions a task to running. Accepts either 'dispatched' (the normal
@@ -4114,7 +3975,61 @@ func (q *Queries) StartAgentTask(ctx context.Context, id pgtype.UUID) (AgentTask
 		&i.HandoffNote,
 		&i.PrepareLeaseExpiresAt,
 		&i.SquadID,
-		&i.TaskCategory,
+	)
+	return i, err
+}
+
+const startP4AssessmentFromTask = `-- name: StartP4AssessmentFromTask :one
+UPDATE agent_fix_p4_assessment
+SET assessment_status = 'running',
+    attempt_count = attempt_count + 1,
+    updated_at = now()
+WHERE workspace_id = $1 AND assessment_task_id = $2
+  AND assessment_status <> 'completed'
+RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, assessment_issue_id, attempt_count, last_error
+`
+
+type StartP4AssessmentFromTaskParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	AssessmentTaskID pgtype.UUID `json:"assessment_task_id"`
+}
+
+// Native task flow (plan C-1): the daemon starting the assessment task
+// projects the row to running. Keyed on the task the Trigger stamped via
+// SetP4AssessmentTask; guarded against clobbering a result the agent already
+// submitted (same rationale as FailP4AssessmentFromTask). attempt_count keeps
+// counting starts so "why is this row stuck" stays answerable.
+func (q *Queries) StartP4AssessmentFromTask(ctx context.Context, arg StartP4AssessmentFromTaskParams) (AgentFixP4Assessment, error) {
+	row := q.db.QueryRow(ctx, startP4AssessmentFromTask, arg.WorkspaceID, arg.AssessmentTaskID)
+	var i AgentFixP4Assessment
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.FeishuBindingID,
+		&i.AssessmentTaskID,
+		&i.AssessmentStatus,
+		&i.DeliveryAttributionPrediction,
+		&i.QualityPrediction,
+		&i.PredictionReasons,
+		&i.Confidence,
+		&i.Workstream,
+		&i.SwarmReviews,
+		&i.AiShelvedCls,
+		&i.SwarmChangeCls,
+		&i.SwarmCommittedCls,
+		&i.ExternalCommittedCls,
+		&i.Evidence,
+		&i.Summary,
+		&i.Warnings,
+		&i.Model,
+		&i.PromptVersion,
+		&i.AssessedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssessmentIssueID,
+		&i.AttemptCount,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -4502,7 +4417,7 @@ ON CONFLICT (workspace_id, feishu_binding_id) DO UPDATE SET
   assessment_task_id = NULL,
   prompt_version = EXCLUDED.prompt_version,
   updated_at = now()
-RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, leased_until, assessment_issue_id, attempt_count, last_error
+RETURNING id, workspace_id, issue_id, feishu_binding_id, assessment_task_id, assessment_status, delivery_attribution_prediction, quality_prediction, prediction_reasons, confidence, workstream, swarm_reviews, ai_shelved_cls, swarm_change_cls, swarm_committed_cls, external_committed_cls, evidence, summary, warnings, model, prompt_version, assessed_at, created_at, updated_at, assessment_issue_id, attempt_count, last_error
 `
 
 type UpsertP4AssessmentPendingParams struct {
@@ -4545,7 +4460,6 @@ func (q *Queries) UpsertP4AssessmentPending(ctx context.Context, arg UpsertP4Ass
 		&i.AssessedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.LeasedUntil,
 		&i.AssessmentIssueID,
 		&i.AttemptCount,
 		&i.LastError,

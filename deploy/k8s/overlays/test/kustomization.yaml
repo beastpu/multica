@@ -112,12 +112,6 @@ patches:
       - op: replace
         path: /data/GOOGLE_REDIRECT_URI
         value: https://multica-test.lilithgames.com/auth/callback
-      # Every test workspace is opted into P4 assessment (batch worker +
-      # sync auto-trigger). UUIDs from the test DB `workspace` table:
-      # w3-test, script-smoke-test-e39c, smoke-test-2-e7ec, test.
-      - op: replace
-        path: /data/P4_ASSESSMENT_WORKSPACE_ALLOWLIST
-        value: bed314a3-0eaf-498f-959b-7c6c8fb6c3d8,45b0205e-405b-43f6-ae0f-ef2b5999cf09,4a569f91-c2e2-461f-8822-e2a65fb2ad26,8e1b4b9b-2598-4b0c-87ae-0b62eebfdecd
 
   # Ingress: re-author host + tls + rules from scratch (drop the ship→multica
   # redirect alias — test has no legacy alias to honor), point at the test

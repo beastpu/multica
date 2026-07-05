@@ -6,45 +6,82 @@ import (
 	"testing"
 )
 
-func TestP4AssessmentTaskIsolationSQLInvariants(t *testing.T) {
+// task_category was retired in C-2: assessment tasks hang on their own
+// derived agent_work projection issue, so per-issue workflow queries never
+// meet them through a real issue and no query may still filter on the
+// dropped column.
+func TestAgentQueriesNoLongerReferenceTaskCategory(t *testing.T) {
 	body, err := os.ReadFile("../../pkg/db/queries/agent.sql")
 	if err != nil {
 		t.Fatalf("read agent.sql: %v", err)
 	}
-	sql := string(body)
-	for _, section := range []string{
-		"CancelAgentTasksByIssue",
-		"CancelAgentTasksByIssueAndAgent",
-		"GetLastTaskSession",
-		"GetLastTaskStartedAtForIssueAndAgent",
-		"HasActiveTaskForIssue",
-		"HasPendingTaskForIssue",
-		"HasPendingTaskForIssueAndAgent",
-		"HasTaskForIssueAndAgent",
-		"HasPendingTaskForIssueAndAgentExcludingTriggerComment",
-		"GetLatestTaskIsLeaderForIssueAndAgent",
-		"ExpireStaleQueuedTasks",
-		"ListWorkspaceAgentFixes",
+	if strings.Contains(string(body), "task_category") {
+		t.Fatalf("agent.sql must not reference the retired task_category column")
+	}
+	if strings.Contains(string(body), "leased_until") {
+		t.Fatalf("agent.sql must not reference the retired leased_until column")
+	}
+}
+
+// The native assessment task must run in a fresh session and carry the
+// stale-daemon steering handoff_note.
+func TestP4AssessmentNativeTaskIsolationInvariants(t *testing.T) {
+	body, err := os.ReadFile("../../pkg/db/queries/agent.sql")
+	if err != nil {
+		t.Fatalf("read agent.sql: %v", err)
+	}
+	chunk := sqlSection(t, string(body), "CreateP4AssessmentTask")
+	for _, want := range []string{
+		"TRUE",
+		"handoff_note",
 	} {
-		chunk := sqlSection(t, sql, section)
-		if !strings.Contains(chunk, "task_category = 'fix'") {
-			t.Fatalf("%s must restrict to fix tasks via task_category\n---\n%s", section, chunk)
+		if !strings.Contains(chunk, want) {
+			t.Fatalf("CreateP4AssessmentTask missing %q\n---\n%s", want, chunk)
 		}
 	}
 }
 
-func TestClaimSerializationSeparatesP4AssessmentFromNormalIssueTasks(t *testing.T) {
-	sql, err := os.ReadFile("../../pkg/db/queries/agent.sql")
+// Plan C-1 single-direction projection: task start marks the row running,
+// counts the attempt, and must never clobber a submitted result.
+func TestP4AssessmentStartFromTaskInvariants(t *testing.T) {
+	body, err := os.ReadFile("../../pkg/db/queries/agent.sql")
 	if err != nil {
 		t.Fatalf("read agent.sql: %v", err)
 	}
-	chunk := sqlSection(t, string(sql), "ClaimAgentTask")
+	chunk := sqlSection(t, string(body), "StartP4AssessmentFromTask")
 	for _, want := range []string{
-		"active.issue_id = atq.issue_id",
-		"active.task_category = atq.task_category",
+		"assessment_status = 'running'",
+		"attempt_count = attempt_count + 1",
+		"assessment_task_id = $2",
+		"assessment_status <> 'completed'",
 	} {
 		if !strings.Contains(chunk, want) {
-			t.Fatalf("ClaimAgentTask missing %q\n---\n%s", want, chunk)
+			t.Fatalf("StartP4AssessmentFromTask missing %q\n---\n%s", want, chunk)
+		}
+	}
+}
+
+// Plan C-1 capability role config: the composite PK is the upsert idempotency
+// key, and the Get joins agent + runtime so Trigger can validate agent health.
+func TestWorkspaceAgentCapabilityQueryInvariants(t *testing.T) {
+	body, err := os.ReadFile("../../pkg/db/queries/workspace_agent_capability.sql")
+	if err != nil {
+		t.Fatalf("read workspace_agent_capability.sql: %v", err)
+	}
+	sql := string(body)
+	upsert := sqlSection(t, sql, "UpsertWorkspaceAgentCapability")
+	if !strings.Contains(upsert, "ON CONFLICT (workspace_id, capability) DO UPDATE") {
+		t.Fatalf("UpsertWorkspaceAgentCapability must upsert on the composite PK\n---\n%s", upsert)
+	}
+	get := sqlSection(t, sql, "GetWorkspaceAgentCapability")
+	for _, want := range []string{
+		"JOIN agent a ON a.id = c.agent_id",
+		"a.archived_at AS agent_archived_at",
+		"a.runtime_id AS agent_runtime_id",
+		"runtime_mode",
+	} {
+		if !strings.Contains(get, want) {
+			t.Fatalf("GetWorkspaceAgentCapability missing %q\n---\n%s", want, get)
 		}
 	}
 }
@@ -95,7 +132,10 @@ func TestOperationsFeedUsesBindingSpineWithoutAssessmentTaskPollution(t *testing
 		"fib.last_external_updated_at",
 		"COALESCE(fib.last_external_updated_at, fib.last_synced_at)",
 		"false AS has_normal_task",
-		"atq.task_category = 'fix'",
+		// Derived agent_work issues (per-run assessment projections) must not
+		// spawn feed rows — the metadata marker is the only isolation anchor
+		// now that task_category is gone.
+		"NOT jsonb_exists(ti.metadata, 'agent_work')",
 	} {
 		if !strings.Contains(chunk, want) {
 			t.Fatalf("ListWorkspaceAgentFixes missing binding spine invariant %q\n---\n%s", want, chunk)
@@ -242,7 +282,7 @@ func TestP4EvidenceHandlerRequiresTaskScopedBindingForAgents(t *testing.T) {
 
 // The observability columns (attempt_count / last_error) must be maintained by
 // every queue transition, otherwise "why is this row stuck" goes back to being
-// unanswerable: lease counts attempts, release/fail record the reason,
+// unanswerable: task start counts attempts, failure records the reason,
 // completion clears it, and the operations feed exposes them per row.
 func TestP4AssessmentObservabilityColumnsMaintained(t *testing.T) {
 	body, err := os.ReadFile("../../pkg/db/queries/agent.sql")
@@ -251,33 +291,20 @@ func TestP4AssessmentObservabilityColumnsMaintained(t *testing.T) {
 	}
 	sql := string(body)
 
-	lease := sqlSection(t, sql, "LeaseP4AssessmentsPending")
-	if !strings.Contains(lease, "attempt_count = a.attempt_count + 1") {
-		t.Fatalf("LeaseP4AssessmentsPending must increment attempt_count\n---\n%s", lease)
-	}
-
-	release := sqlSection(t, sql, "ReleaseP4AssessmentLease")
-	if !strings.Contains(release, "last_error =") {
-		t.Fatalf("ReleaseP4AssessmentLease must record last_error (the silent-release black hole)\n---\n%s", release)
-	}
-
 	fail := sqlSection(t, sql, "FailP4AssessmentFromTask")
 	if !strings.Contains(fail, "last_error =") {
 		t.Fatalf("FailP4AssessmentFromTask must record last_error\n---\n%s", fail)
 	}
 
-	for _, name := range []string{"CompleteP4AssessmentFromBinding", "CompleteP4AssessmentFromTask"} {
-		chunk := sqlSection(t, sql, name)
-		if !strings.Contains(chunk, "last_error = ''") {
-			t.Fatalf("%s must clear last_error on success\n---\n%s", name, chunk)
-		}
+	complete := sqlSection(t, sql, "CompleteP4AssessmentFromTask")
+	if !strings.Contains(complete, "last_error = ''") {
+		t.Fatalf("CompleteP4AssessmentFromTask must clear last_error on success\n---\n%s", complete)
 	}
 
 	feed := sqlSection(t, sql, "ListWorkspaceAgentFixes")
 	for _, want := range []string{
 		"AS p4_attempt_count",
 		"AS p4_last_error",
-		"p4.leased_until AS p4_leased_until",
 		"AS p4_assessment_agent_name",
 	} {
 		if !strings.Contains(feed, want) {

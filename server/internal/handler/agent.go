@@ -1640,15 +1640,13 @@ type AgentFixP4AssessmentResponse struct {
 	ExternalCommittedCLs          []int32         `json:"external_committed_cls,omitempty"`
 	Summary                       string          `json:"summary,omitempty"`
 	Warnings                      json.RawMessage `json:"warnings,omitempty"`
-	// Queue observability: how many times this row was leased, why it last
-	// failed or was released back to the pool, the active lease expiry, and
-	// which agent's batch task holds/held the lease. AttemptCount/LastError
-	// answer "why is this row stuck"; LeasedUntil + AssessmentAgentName let
-	// the dashboard render the executor and lease countdown on running rows.
-	AttemptCount        int32   `json:"attempt_count,omitempty"`
-	LastError           string  `json:"last_error,omitempty"`
-	LeasedUntil         *string `json:"leased_until,omitempty"`
-	AssessmentAgentName string  `json:"assessment_agent_name,omitempty"`
+	// Queue observability: how many times this run was started, why it last
+	// failed, and which agent's task ran it. AttemptCount/LastError answer
+	// "why is this row stuck"; AssessmentAgentName lets the dashboard render
+	// the executor on running rows.
+	AttemptCount        int32  `json:"attempt_count,omitempty"`
+	LastError           string `json:"last_error,omitempty"`
+	AssessmentAgentName string `json:"assessment_agent_name,omitempty"`
 }
 
 type AgentFixHumanReviewResponse struct {
@@ -1826,7 +1824,6 @@ func buildAgentFixP4(row db.ListWorkspaceAgentFixesRow) *AgentFixP4AssessmentRes
 		Warnings:                      jsonArrayOrNil(row.P4Warnings),
 		AttemptCount:                  row.P4AttemptCount,
 		LastError:                     row.P4LastError,
-		LeasedUntil:                   timestampToPtr(row.P4LeasedUntil),
 		AssessmentAgentName:           row.P4AssessmentAgentName,
 	}
 }
@@ -2268,112 +2265,6 @@ func (h *Handler) SubmitAgentFixP4Assessment(w http.ResponseWriter, r *http.Requ
 	if err := h.P4AssessmentService.SubmitResult(r.Context(), parseUUID(workspaceID), taskUUID, body); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "P4 assessment target not found")
-			return
-		}
-		writeError(w, http.StatusBadRequest, "invalid assessment result: "+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "completed"})
-}
-
-// requestBatchAssessmentTask authorizes a batch-assessment worker call:
-// X-Task-ID must name a task owned by the calling agent, and that agent must
-// belong to the workspace. Unlike per-binding assessment tasks the worker task
-// carries no binding scope — per-item scoping is enforced by the lease
-// (assessment_task_id) instead.
-func (h *Handler) requestBatchAssessmentTask(r *http.Request, workspaceID, actorID string) (db.AgentTaskQueue, bool) {
-	taskUUID, err := util.ParseUUID(r.Header.Get("X-Task-ID"))
-	if err != nil {
-		return db.AgentTaskQueue{}, false
-	}
-	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
-	if err != nil {
-		return db.AgentTaskQueue{}, false
-	}
-	if uuidToString(task.AgentID) != actorID {
-		return db.AgentTaskQueue{}, false
-	}
-	agent, err := h.Queries.GetAgent(r.Context(), task.AgentID)
-	if err != nil {
-		return db.AgentTaskQueue{}, false
-	}
-	return task, uuidToString(agent.WorkspaceID) == workspaceID
-}
-
-// ListPendingP4Assessments is the batch worker's pull
-// (GET /api/operations/assessments/pending?limit=N). Each returned item is
-// leased to the calling task: it flips to running with a lease deadline and
-// must be submitted via /api/operations/assessments/result before the lease
-// expires, or it returns to the pending pool. Fail-closed on the same
-// workspace allowlist that gates auto-trigger.
-func (h *Handler) ListPendingP4Assessments(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if actorType != "agent" {
-		writeError(w, http.StatusForbidden, "only an assessment worker task may pull pending assessments")
-		return
-	}
-	task, ok := h.requestBatchAssessmentTask(r, workspaceID, actorID)
-	if !ok {
-		writeError(w, http.StatusForbidden, "batch assessment access denied")
-		return
-	}
-	if h.P4AssessmentService == nil {
-		writeError(w, http.StatusServiceUnavailable, "P4 assessment service unavailable")
-		return
-	}
-	if !h.P4AssessmentService.Allowlist.Allows(parseUUID(workspaceID)) {
-		writeError(w, http.StatusForbidden, "workspace is not allowlisted for P4 assessment")
-		return
-	}
-	limit := 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil {
-			limit = parsed
-		}
-	}
-	items, err := h.P4AssessmentService.LeasePending(r.Context(), parseUUID(workspaceID), task.ID, int32(limit))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to lease pending assessments")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
-}
-
-// SubmitP4AssessmentResultByRef is the batch worker's submit
-// (POST /api/operations/assessments/result). The body is the single-result
-// schema plus a `ref` echoed from the pending pull; the server maps ref back
-// to the binding and the lease guard rejects a worker whose claim was
-// reclaimed. Validation errors return 400 with the exact problem so the agent
-// can self-correct; a lost lease returns 409 so it re-pulls instead.
-func (h *Handler) SubmitP4AssessmentResultByRef(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if actorType != "agent" {
-		writeError(w, http.StatusForbidden, "only an assessment worker task may submit results")
-		return
-	}
-	task, ok := h.requestBatchAssessmentTask(r, workspaceID, actorID)
-	if !ok {
-		writeError(w, http.StatusForbidden, "batch assessment access denied")
-		return
-	}
-	if h.P4AssessmentService == nil {
-		writeError(w, http.StatusServiceUnavailable, "P4 assessment service unavailable")
-		return
-	}
-	if !h.P4AssessmentService.Allowlist.Allows(parseUUID(workspaceID)) {
-		writeError(w, http.StatusForbidden, "workspace is not allowlisted for P4 assessment")
-		return
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 512*1024))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read request body")
-		return
-	}
-	if err := h.P4AssessmentService.SubmitBatchResult(r.Context(), parseUUID(workspaceID), task.ID, body); err != nil {
-		if errors.Is(err, service.ErrP4AssessmentRefNotLeased) {
-			writeError(w, http.StatusConflict, "ref not leased by this task — re-pull the pending list")
 			return
 		}
 		writeError(w, http.StatusBadRequest, "invalid assessment result: "+err.Error())

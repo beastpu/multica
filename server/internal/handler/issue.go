@@ -2508,31 +2508,48 @@ type UpdateIssueRequest struct {
 	HandoffNote string `json:"handoff_note,omitempty"`
 }
 
-// isAnalysisTaskActor reports whether the request is an agent acting under an
-// analysis-category task (currently P4 assessment). Analysis tasks are
+// analysisTaskForRequest resolves the calling agent's task and reports
+// whether it is a derived-work (analysis) actor. Derived-work tasks are
 // read-only side channels: the server rejects every issue write and comment
-// they attempt, so a stale daemon that runs one as a normal fix still cannot
-// mutate the issue or post to it. The check is gated on X-Task-ID (stamped by
-// the mat_ token middleware for agent runs), so a member request is never
-// affected.
-func (h *Handler) isAnalysisTaskActor(r *http.Request, userID, workspaceID string) bool {
+// they attempt (with one own-issue narration carve-out in CreateComment), so
+// a stale daemon that runs one as a normal fix still cannot mutate real
+// issues. The check is gated on X-Task-ID (stamped by the mat_ token
+// middleware for agent runs), so a member request is never affected.
+//
+// Anchor: the issue the task hangs on carries the reserved
+// metadata.agent_work marker — the single derived-work marker in the system
+// (written only by server-side projection code; the user metadata API rejects
+// the key, so a real issue can never be spoofed into this branch).
+func (h *Handler) analysisTaskForRequest(r *http.Request, userID, workspaceID string) (db.AgentTaskQueue, bool) {
 	actorType, _ := h.resolveActor(r, userID, workspaceID)
 	if actorType != "agent" {
-		return false
+		return db.AgentTaskQueue{}, false
 	}
 	taskID := r.Header.Get("X-Task-ID")
 	if taskID == "" {
-		return false
+		return db.AgentTaskQueue{}, false
 	}
 	taskUUID, err := util.ParseUUID(taskID)
 	if err != nil {
-		return false
+		return db.AgentTaskQueue{}, false
 	}
 	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
 	if err != nil {
-		return false
+		return db.AgentTaskQueue{}, false
 	}
-	return task.TaskCategory == "analysis"
+	if task.IssueID.Valid {
+		if taskIssue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil && isAgentWorkIssue(taskIssue) {
+			return task, true
+		}
+	}
+	return db.AgentTaskQueue{}, false
+}
+
+// isAnalysisTaskActor reports whether the request is an agent acting under a
+// derived-work (analysis) task. See analysisTaskForRequest for the anchor.
+func (h *Handler) isAnalysisTaskActor(r *http.Request, userID, workspaceID string) bool {
+	_, ok := h.analysisTaskForRequest(r, userID, workspaceID)
+	return ok
 }
 
 // isAgentWorkIssue reports whether the issue is a derived agent_work

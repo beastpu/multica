@@ -1199,6 +1199,13 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 
 	slog.Info("task started", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskStarted(ctx, task)
+
+	// Native assessment flow (plan C-1): task running projects the assessment
+	// row to running and the projection issue to in_progress. Best-effort —
+	// the projection never blocks the task transition.
+	if IsP4AssessmentTask(task) && s.P4Assessment != nil {
+		s.P4Assessment.StartFromTask(ctx, task)
+	}
 	// Tell every connected workspace WS client that this task transitioned
 	// (dispatched | waiting_local_directory) → running. Without this, the
 	// workspace-wide `agentTaskSnapshot` query only refreshes on the 30s
@@ -1529,12 +1536,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 	if IsP4AssessmentTask(task) {
 		if s.P4Assessment != nil {
-			warnings, _ := json.Marshal([]string{"task_failed: " + failureReason})
-			_, _ = s.Queries.FailP4AssessmentFromTask(ctx, db.FailP4AssessmentFromTaskParams{
-				WorkspaceID:      s.P4Assessment.taskWorkspaceID(task),
-				AssessmentTaskID: task.ID,
-				Warnings:         warnings,
-			})
+			// Terminal task failure projects the row to failed and the
+			// projection issue to cancelled (plan C-1, single-direction).
+			s.P4Assessment.FailFromTask(ctx, task, failureReason)
 		}
 		s.ReconcileAgentStatus(ctx, task.AgentID)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, task)
