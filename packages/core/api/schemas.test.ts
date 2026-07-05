@@ -71,6 +71,27 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
     });
   });
 
+  it("drops object-valued reserved keys (agent_work) instead of failing the issue", () => {
+    // Derived assessment issues carry metadata.agent_work as a nested OBJECT.
+    // A strict primitive-only record used to fail the whole IssueSchema here,
+    // blanking the issue page into the empty fallback.
+    const payload = {
+      issues: [
+        {
+          ...baseIssue,
+          metadata: {
+            flow_cl: "12345",
+            agent_work: { kind: "p4_assessment", trigger: "scan" },
+          },
+        },
+      ],
+      total: 1,
+    };
+    const parsed = ListIssuesResponseSchema.parse(payload);
+    expect(parsed.issues[0]?.metadata).toEqual({ flow_cl: "12345" });
+    expect(parsed.issues[0]?.title).toBe(baseIssue.title);
+  });
+
   it("defaults metadata to {} when the server omits it (older backend)", () => {
     const { metadata: _omit, ...issueWithoutMetadata } = baseIssue;
     const payload = { issues: [issueWithoutMetadata], total: 1 };
@@ -97,12 +118,15 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
     expect(parsed.issues[1]?.external_fields).toEqual({});
   });
 
-  it("rejects metadata with non-primitive values (nested object)", () => {
+  it("strips non-primitive metadata values instead of rejecting the issue", () => {
+    // Rejecting used to blank the whole issue page (the agent_work incident);
+    // the schema now degrades by dropping the offending entry.
     const payload = {
-      issues: [{ ...baseIssue, metadata: { nested: { x: 1 } } }],
+      issues: [{ ...baseIssue, metadata: { nested: { x: 1 }, keep: "v" } }],
       total: 1,
     };
-    expect(ListIssuesResponseSchema.safeParse(payload).success).toBe(false);
+    const parsed = ListIssuesResponseSchema.parse(payload);
+    expect(parsed.issues[0]?.metadata).toEqual({ keep: "v" });
   });
 
   it("accepts a numeric stage", () => {
