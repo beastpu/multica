@@ -9,10 +9,10 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 )
 
-// Plan C-1 native task flow: Trigger creates the projection issue ASSIGNED to
+// Native task flow (plan C): Trigger creates the projection issue ASSIGNED to
 // the workspace's p4_assessment capability agent and a native agent task
 // hanging on that issue, all in one transaction. Fail-closed: no capability
-// row and no env allowlist ⇒ the trigger is rejected.
+// row ⇒ the trigger is rejected.
 
 // configureP4Capability inserts the capability row directly (the config API
 // has its own tests) and returns the capability agent id.
@@ -31,17 +31,7 @@ func configureP4Capability(t *testing.T, agentID string) {
 	})
 }
 
-// clearP4Allowlist pins the transitional env allowlist to empty for the test
-// so capability behavior is measured in isolation.
-func clearP4Allowlist(t *testing.T) {
-	t.Helper()
-	previous := testHandler.P4AssessmentService.Allowlist
-	testHandler.P4AssessmentService.Allowlist = nil
-	t.Cleanup(func() { testHandler.P4AssessmentService.Allowlist = previous })
-}
-
-func TestTriggerFailsClosedWithoutCapabilityOrAllowlist(t *testing.T) {
-	clearP4Allowlist(t)
+func TestTriggerFailsClosedWithoutCapability(t *testing.T) {
 	bindingID, _ := setupP4BindingFixture(t)
 
 	w := triggerP4AssessmentRequest(t, bindingID, false)
@@ -67,7 +57,6 @@ func TestTriggerFailsClosedWithoutCapabilityOrAllowlist(t *testing.T) {
 }
 
 func TestTriggerRejectsCapabilityAgentOnCloudRuntime(t *testing.T) {
-	clearP4Allowlist(t)
 	bindingID, _ := setupP4BindingFixture(t)
 	// Bypass the config API validation: a drifted row (agent later moved to a
 	// cloud runtime) must still be rejected at trigger time.
@@ -88,7 +77,6 @@ func TestTriggerRejectsCapabilityAgentOnCloudRuntime(t *testing.T) {
 }
 
 func TestTriggerCreatesAssignedIssueAndNativeTask(t *testing.T) {
-	clearP4Allowlist(t)
 	bindingID, realIssueID := setupP4BindingFixture(t)
 	agentID, _ := createLocalRuntimeAgent(t, "P4 Native Capability Agent")
 	configureP4Capability(t, agentID)
@@ -180,7 +168,6 @@ func TestTriggerCreatesAssignedIssueAndNativeTask(t *testing.T) {
 // issue in_progress; terminal task failure → row failed + issue cancelled +
 // failure comment. No reverse path.
 func TestNativeTaskLifecycleProjectsAssessmentStatus(t *testing.T) {
-	clearP4Allowlist(t)
 	bindingID, _ := setupP4BindingFixture(t)
 	agentID, _ := createLocalRuntimeAgent(t, "P4 Lifecycle Capability Agent")
 	configureP4Capability(t, agentID)
@@ -240,40 +227,5 @@ func TestNativeTaskLifecycleProjectsAssessmentStatus(t *testing.T) {
 	}
 	if comments != 1 {
 		t.Fatalf("expected 1 server failure comment on the projection issue, got %d", comments)
-	}
-}
-
-// The transitional env allowlist keeps the legacy behavior for workspaces
-// that have not configured a capability: pending row + unassigned projection
-// issue, and NO native task. C-2 deletes this branch.
-func TestTriggerAllowlistOnlyKeepsLegacyPendingPool(t *testing.T) {
-	bindingID, _ := setupP4TriggerFixture(t) // opts in via allowlist
-
-	w := triggerP4AssessmentRequest(t, bindingID, false)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp["created"] != true {
-		t.Fatalf("expected created=true on allowlisted workspace, got %v", resp)
-	}
-	if _, hasTask := resp["task_id"]; hasTask {
-		t.Fatalf("legacy allowlist path must not create a native task, got %v", resp)
-	}
-	projIssueID := loadAssessmentIssueID(t, bindingID)
-	if projIssueID == "" {
-		t.Fatalf("legacy path still creates the projection issue")
-	}
-	var assigneeID *string
-	if err := testPool.QueryRow(context.Background(),
-		`SELECT assignee_id::text FROM issue WHERE id = $1`, projIssueID,
-	).Scan(&assigneeID); err != nil {
-		t.Fatalf("load projection issue: %v", err)
-	}
-	if assigneeID != nil {
-		t.Fatalf("legacy path projection issue must be unassigned, got %v", *assigneeID)
 	}
 }

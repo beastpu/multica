@@ -171,9 +171,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		AttachmentFrameAncestors: origins,
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
-	// Same fail-closed allowlist the Feishu sync worker uses for auto-trigger:
-	// it also gates the batch assessment pull/submit endpoints.
-	h.P4AssessmentService.Allowlist = p4AssessmentAllowlistFromEnv()
 	h.Metrics = opts.BusinessMetrics
 	if opts.FeatureFlags != nil {
 		h.DaemonFeatureFlags = featureflagdispatch.NewEvaluator(opts.FeatureFlags)
@@ -1138,13 +1135,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/api/operations/agent-fixes/{bindingId}/p4-assessment/result", h.SubmitAgentFixP4Assessment)
 			r.Patch("/api/operations/agent-fixes/{bindingId}/review", h.PatchAgentFixReviewByBinding)
 			r.Put("/api/operations/agent-fixes/{issueId}/review", h.UpdateAgentFixReview)
-
-			// Deprecated (plan C-1): batch assessment worker contract — pull
-			// leased pending items and submit results by ref. Retired in
-			// favor of the native per-run task flow; kept only so in-flight
-			// batch workers can drain. C-2 deletes both routes.
-			r.Get("/api/operations/assessments/pending", h.ListPendingP4Assessments)
-			r.Post("/api/operations/assessments/result", h.SubmitP4AssessmentResultByRef)
 
 			r.Route("/api/chat/sessions", func(r chi.Router) {
 				r.Post("/", h.CreateChatSession)

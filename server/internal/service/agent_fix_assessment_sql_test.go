@@ -307,7 +307,7 @@ func TestP4EvidenceHandlerRequiresTaskScopedBindingForAgents(t *testing.T) {
 
 // The observability columns (attempt_count / last_error) must be maintained by
 // every queue transition, otherwise "why is this row stuck" goes back to being
-// unanswerable: lease counts attempts, release/fail record the reason,
+// unanswerable: task start counts attempts, failure records the reason,
 // completion clears it, and the operations feed exposes them per row.
 func TestP4AssessmentObservabilityColumnsMaintained(t *testing.T) {
 	body, err := os.ReadFile("../../pkg/db/queries/agent.sql")
@@ -316,33 +316,20 @@ func TestP4AssessmentObservabilityColumnsMaintained(t *testing.T) {
 	}
 	sql := string(body)
 
-	lease := sqlSection(t, sql, "LeaseP4AssessmentsPending")
-	if !strings.Contains(lease, "attempt_count = a.attempt_count + 1") {
-		t.Fatalf("LeaseP4AssessmentsPending must increment attempt_count\n---\n%s", lease)
-	}
-
-	release := sqlSection(t, sql, "ReleaseP4AssessmentLease")
-	if !strings.Contains(release, "last_error =") {
-		t.Fatalf("ReleaseP4AssessmentLease must record last_error (the silent-release black hole)\n---\n%s", release)
-	}
-
 	fail := sqlSection(t, sql, "FailP4AssessmentFromTask")
 	if !strings.Contains(fail, "last_error =") {
 		t.Fatalf("FailP4AssessmentFromTask must record last_error\n---\n%s", fail)
 	}
 
-	for _, name := range []string{"CompleteP4AssessmentFromBinding", "CompleteP4AssessmentFromTask"} {
-		chunk := sqlSection(t, sql, name)
-		if !strings.Contains(chunk, "last_error = ''") {
-			t.Fatalf("%s must clear last_error on success\n---\n%s", name, chunk)
-		}
+	complete := sqlSection(t, sql, "CompleteP4AssessmentFromTask")
+	if !strings.Contains(complete, "last_error = ''") {
+		t.Fatalf("CompleteP4AssessmentFromTask must clear last_error on success\n---\n%s", complete)
 	}
 
 	feed := sqlSection(t, sql, "ListWorkspaceAgentFixes")
 	for _, want := range []string{
 		"AS p4_attempt_count",
 		"AS p4_last_error",
-		"p4.leased_until AS p4_leased_until",
 		"AS p4_assessment_agent_name",
 	} {
 		if !strings.Contains(feed, want) {

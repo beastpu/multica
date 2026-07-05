@@ -119,28 +119,18 @@ func TestDeleteIssueMetadataRejectsReservedAgentWorkKey(t *testing.T) {
 
 // --- Trigger creates the projection issue; force re-run creates a NEW one ---
 
-// allowlistTestWorkspaceForP4 opts the shared test workspace into the
-// transitional env allowlist so Trigger's fail-closed capability gate passes
-// through the legacy branch (pending row + projection issue, no native task).
-// Native-flow tests configure a capability role instead.
-func allowlistTestWorkspaceForP4(t *testing.T) {
-	t.Helper()
-	previous := testHandler.P4AssessmentService.Allowlist
-	testHandler.P4AssessmentService.Allowlist = service.P4AssessmentAllowlist{testWorkspaceID: true}
-	t.Cleanup(func() { testHandler.P4AssessmentService.Allowlist = previous })
-}
-
-// setupP4TriggerFixture wires a done Feishu binding with a legacy status
-// mapping so Trigger's mapped-status gate passes. No assessment row exists
-// yet. The workspace is opted in through the transitional env allowlist.
+// setupP4TriggerFixture wires a done Feishu binding AND a p4_assessment
+// capability agent (local runtime) so Trigger's fail-closed gate passes.
+// No assessment row exists yet.
 func setupP4TriggerFixture(t *testing.T) (bindingID, issueID string) {
 	t.Helper()
-	allowlistTestWorkspaceForP4(t)
+	agentID, _ := createLocalRuntimeAgent(t, "P4 Trigger Fixture Agent")
+	configureP4Capability(t, agentID)
 	return setupP4BindingFixture(t)
 }
 
-// setupP4BindingFixture wires the done Feishu binding only — no allowlist, no
-// capability. Callers pick their opt-in path.
+// setupP4BindingFixture wires the done Feishu binding only — no capability.
+// Callers pick their opt-in path.
 func setupP4BindingFixture(t *testing.T) (bindingID, issueID string) {
 	t.Helper()
 	ctx := context.Background()
@@ -307,97 +297,5 @@ func TestForceRerunCreatesNewProjectionIssueAndRepoints(t *testing.T) {
 	}
 	if trigger != "force_rerun" {
 		t.Fatalf("second issue agent_work.trigger = %q, want force_rerun", trigger)
-	}
-}
-
-// --- Lease / submit project status onto the issue and expose assessment_issue_id ---
-
-// attachProjectionIssue creates an agent_work-marked issue and points the
-// binding's assessment row at it, simulating what Trigger does.
-func attachProjectionIssue(t *testing.T, bindingID string) (projIssueID string) {
-	t.Helper()
-	projIssueID = createTestIssue(t, "p4 assessment projection", "todo", "none")
-	t.Cleanup(func() { deleteTestIssue(t, projIssueID) })
-	markIssueAsAgentWork(t, projIssueID)
-	if _, err := testPool.Exec(context.Background(),
-		`UPDATE agent_fix_p4_assessment SET assessment_issue_id = $1 WHERE feishu_binding_id = $2`,
-		projIssueID, bindingID,
-	); err != nil {
-		t.Fatalf("attach projection issue: %v", err)
-	}
-	return projIssueID
-}
-
-func TestBatchPullProjectsInProgressAndReturnsAssessmentIssueID(t *testing.T) {
-	bindingID, agentID, taskID, _ := setupP4BatchFixture(t)
-	projIssueID := attachProjectionIssue(t, bindingID)
-
-	w := pullPendingRequest(t, agentID, taskID)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp struct {
-		Items []struct {
-			Ref               string `json:"ref"`
-			AssessmentIssueID string `json:"assessment_issue_id"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if len(resp.Items) != 1 {
-		t.Fatalf("expected 1 item, got %d: %s", len(resp.Items), w.Body.String())
-	}
-	if resp.Items[0].AssessmentIssueID != projIssueID {
-		t.Fatalf("assessment_issue_id = %q, want %q", resp.Items[0].AssessmentIssueID, projIssueID)
-	}
-	assertIssueStatus(t, projIssueID, "in_progress")
-}
-
-func TestSubmitByRefProjectsDoneAndWritesSummaryComment(t *testing.T) {
-	bindingID, agentID, taskID, _ := setupP4BatchFixture(t)
-	projIssueID := attachProjectionIssue(t, bindingID)
-
-	if w := pullPendingRequest(t, agentID, taskID); w.Code != http.StatusOK {
-		t.Fatalf("pull: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	w := submitByRefRequest(t, agentID, taskID, map[string]any{
-		"ref":                             bindingID,
-		"delivery_attribution_prediction": "ai_delivered",
-		"quality_prediction":              "likely_correct",
-		"summary":                         "verified CL 12345 delivered by agent",
-	})
-	if w.Code != http.StatusOK {
-		t.Fatalf("submit: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	assertIssueStatus(t, projIssueID, "done")
-
-	var count int
-	if err := testPool.QueryRow(context.Background(),
-		`SELECT count(*) FROM comment WHERE issue_id = $1 AND author_type = 'agent' AND author_id = $2 AND content LIKE '%ai_delivered%'`,
-		projIssueID, agentID,
-	).Scan(&count); err != nil {
-		t.Fatalf("count result comments: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("expected exactly 1 server-written result summary comment, got %d", count)
-	}
-}
-
-// Historical rows (assessment_issue_id NULL) must lease and submit without
-// error — projection is skipped, never fatal.
-func TestBatchFlowToleratesRowsWithoutProjectionIssue(t *testing.T) {
-	bindingID, agentID, taskID, _ := setupP4BatchFixture(t)
-
-	if w := pullPendingRequest(t, agentID, taskID); w.Code != http.StatusOK {
-		t.Fatalf("pull: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	w := submitByRefRequest(t, agentID, taskID, map[string]any{
-		"ref":                bindingID,
-		"quality_prediction": "unknown",
-	})
-	if w.Code != http.StatusOK {
-		t.Fatalf("submit on historical row: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 }

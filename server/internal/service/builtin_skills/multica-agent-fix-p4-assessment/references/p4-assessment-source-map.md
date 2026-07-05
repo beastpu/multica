@@ -23,11 +23,10 @@ for the behavior contracts the skill teaches.
   `type`, `workspace_id`, `issue_id` (the REAL defect issue),
   `feishu_binding_id`, `mode: assess_only`, and `prompt_version`.
   Assignment is dispatch: the daemon claims the queued task through the
-  ordinary prepare-lease channel; there is no dispatcher loop.
-  Transitional: a workspace on the env allowlist
-  (`P4_ASSESSMENT_WORKSPACE_ALLOWLIST`) without a capability row still
-  enqueues the legacy way (pending row, unassigned issue, no task); C-2
-  deletes that branch.
+  ordinary prepare-lease channel; there is no dispatcher loop. The native
+  task flow is the ONLY execution channel — the batch pull/lease/submit-by-ref
+  contract and the `P4_ASSESSMENT_WORKSPACE_ALLOWLIST` env gate were removed
+  in C-2.
 - `P4AssessmentService.Evidence` backs
   `GET /api/operations/agent-fixes/{binding_id}/p4-evidence`. It returns
   binding, issue, task summaries, selected Multica comments, optional Feishu
@@ -70,18 +69,6 @@ for the behavior contracts the skill teaches.
   assessment task context (`requestTaskCanReadP4Evidence`).
   `SubmitAgentFixP4Assessment` gates the result submit endpoint with the same
   scope, so only the binding's own assessment task may write its result.
-
-## Deprecated batch worker contract (drain-only)
-
-- `GET /api/operations/assessments/pending` and
-  `POST /api/operations/assessments/result`
-  (`Handler.ListPendingP4Assessments` / `Handler.SubmitP4AssessmentResultByRef`
-  → `P4AssessmentService.LeasePending` / `SubmitBatchResult`, backed by
-  `LeaseP4AssessmentsPending` / `CompleteP4AssessmentFromBinding`) are the
-  retired batch pull/lease/submit-by-ref contract. They remain functional only
-  so in-flight batch workers can drain; C-2 deletes the routes, the queries,
-  the 30-minute lease (`leased_until`), and the env allowlist. The skill no
-  longer teaches this loop.
 
 ## Result submit and output contract
 

@@ -30,14 +30,6 @@ const (
 	// on this configuration.
 	CapabilityP4Assessment = "p4_assessment"
 
-	// Deprecated batch-worker lease (plan C-1): a pulled row must be submitted
-	// within this window or it returns to the pending pool for the next pull.
-	// Kept only while in-flight batch workers drain; C-2 deletes it.
-	P4AssessmentLeaseDuration = 30 * time.Minute
-	// Evidence is inlined per item, so batches stay small.
-	P4AssessmentBatchDefaultLimit = 5
-	P4AssessmentBatchMaxLimit     = 10
-
 	// last_error is an operator-facing one-liner, not a log sink — error
 	// chains from evidence building can drag whole HTTP bodies along.
 	p4AssessmentLastErrorMaxLen = 500
@@ -58,13 +50,6 @@ type P4AssessmentService struct {
 	TxStarter     TxStarter
 	Task          *TaskService
 	FeishuProject *FeishuProjectClient
-	// Allowlist is the transitional env gate (P4_ASSESSMENT_WORKSPACE_ALLOWLIST).
-	// The authoritative gate is now the workspace_agent_capability row (plan
-	// C-1, fail-closed); the env allowlist survives only as an OR condition so
-	// already-opted-in workspaces keep the legacy pending-pool behavior until
-	// they configure a capability agent. C-2 deletes it together with the
-	// batch endpoints.
-	Allowlist P4AssessmentAllowlist
 }
 
 // P4AssessmentCapabilityConfigured reports whether the workspace has a
@@ -159,11 +144,6 @@ func IsP4AssessmentTask(task db.AgentTaskQueue) bool {
 //
 // Fail-closed gate: no workspace_agent_capability row for p4_assessment ⇒ the
 // trigger is rejected with reason "p4_assessment_capability_not_configured".
-// Transitional OR: a workspace on the env allowlist
-// (P4_ASSESSMENT_WORKSPACE_ALLOWLIST) but without a capability row still
-// enqueues the legacy way — pending row + unassigned projection issue, no
-// native task, drained by the deprecated batch endpoints. C-2 deletes that
-// branch together with the env allowlist.
 //
 // A force re-run creates a NEW projection issue (and task) and repoints,
 // leaving the previous run's issue untouched. See
@@ -185,16 +165,13 @@ func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingI
 		if capErr != nil && !errors.Is(capErr, pgx.ErrNoRows) {
 			return capErr
 		}
-		hasCapability := capErr == nil
-		if !hasCapability && !s.Allowlist.Allows(workspaceID) {
+		if errors.Is(capErr, pgx.ErrNoRows) {
 			result = P4AssessmentTriggerResult{Reason: "p4_assessment_capability_not_configured"}
 			return nil
 		}
-		if hasCapability {
-			if reason := p4CapabilityAgentUnavailable(capability, workspaceID); reason != "" {
-				result = P4AssessmentTriggerResult{Reason: reason}
-				return nil
-			}
+		if reason := p4CapabilityAgentUnavailable(capability, workspaceID); reason != "" {
+			result = P4AssessmentTriggerResult{Reason: reason}
+			return nil
 		}
 		if err := q.LockP4AssessmentBinding(ctx, db.LockP4AssessmentBindingParams{
 			ID:          bindingID,
@@ -243,11 +220,7 @@ func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingI
 		if err != nil {
 			return err
 		}
-		var assigneeID pgtype.UUID
-		if hasCapability {
-			assigneeID = capability.AgentID
-		}
-		projIssueID, err := s.createAssessmentProjectionIssue(ctx, q, workspaceID, bindingID, row, actor, assigneeID)
+		projIssueID, err := s.createAssessmentProjectionIssue(ctx, q, workspaceID, bindingID, row, actor, capability.AgentID)
 		if err != nil {
 			return err
 		}
@@ -255,12 +228,11 @@ func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingI
 			assessment.AssessmentIssueID = projIssueID
 		}
 		result = P4AssessmentTriggerResult{Assessment: assessment, Created: true}
-		// Native task: only when the capability agent is configured AND the run
-		// has a projection issue to hang the task on. A scan-path run without a
-		// resolvable creator gets no projection issue (see
-		// createAssessmentProjectionIssue) and therefore no native task — the
-		// row stays pending exactly like a legacy env-allowlist run.
-		if !hasCapability || !projIssueID.Valid {
+		// Native task: only when the run has a projection issue to hang the
+		// task on. A scan-path run without a resolvable creator gets no
+		// projection issue (see createAssessmentProjectionIssue) and therefore
+		// no native task — the row stays pending until a manual re-trigger.
+		if !projIssueID.Valid {
 			return nil
 		}
 		taskContext, err := json.Marshal(p4AssessmentContext{
@@ -347,169 +319,6 @@ func p4AssessmentHandoffNote(bindingID pgtype.UUID) string {
 	b.WriteString("  evidence: object   summary: string   warnings: array of strings   model: string\n\n")
 	b.WriteString("When evidence is missing or ambiguous, use \"unknown\" for the predictions and record why in warnings — never guess.\n")
 	return b.String()
-}
-
-// P4AssessmentPendingItem is one entry of the batch-worker pull. `Ref` is an
-// opaque handle the agent must echo back on submit — internally the binding
-// UUID, but the agent never needs to know or construct that. Evidence is
-// inlined so the worker needs no follow-up call per item.
-type P4AssessmentPendingItem struct {
-	Ref string `json:"ref"`
-	// AssessmentIssueID is this run's projection issue. The worker may post
-	// process-narration comments there (and only there — the real defect
-	// issue stays read-only). Empty on rows predating the projection.
-	AssessmentIssueID string               `json:"assessment_issue_id,omitempty"`
-	Issue             map[string]any       `json:"issue"`
-	LeaseExpiresAt    string               `json:"lease_expires_at"`
-	Evidence          P4AssessmentEvidence `json:"evidence"`
-}
-
-// LeasePending claims up to `limit` assessable rows for the worker task and
-// returns them with inlined evidence. Rows whose evidence fails to build are
-// released back to the pending pool instead of being returned half-empty.
-//
-// Deprecated (plan C-1): the batch pull/lease contract is retired — Trigger
-// creates a native per-run task instead. Kept only so in-flight batch workers
-// can drain; C-2 deletes it together with the pending endpoint.
-func (s *P4AssessmentService) LeasePending(ctx context.Context, workspaceID, taskID pgtype.UUID, limit int32) ([]P4AssessmentPendingItem, error) {
-	if limit <= 0 {
-		limit = P4AssessmentBatchDefaultLimit
-	}
-	if limit > P4AssessmentBatchMaxLimit {
-		limit = P4AssessmentBatchMaxLimit
-	}
-	leaseUntil := time.Now().Add(P4AssessmentLeaseDuration)
-	rows, err := s.Queries.LeaseP4AssessmentsPending(ctx, db.LeaseP4AssessmentsPendingParams{
-		WorkspaceID:      workspaceID,
-		AssessmentTaskID: taskID,
-		LeasedUntil:      pgtype.Timestamptz{Time: leaseUntil, Valid: true},
-		Limit:            limit,
-	})
-	if err != nil {
-		return nil, err
-	}
-	items := make([]P4AssessmentPendingItem, 0, len(rows))
-	for _, row := range rows {
-		evidence, evidenceErr := s.Evidence(ctx, workspaceID, row.FeishuBindingID)
-		if evidenceErr != nil {
-			lastError := p4AssessmentLastError("evidence build failed: " + evidenceErr.Error())
-			_ = s.Queries.ReleaseP4AssessmentLease(ctx, db.ReleaseP4AssessmentLeaseParams{
-				WorkspaceID:      workspaceID,
-				FeishuBindingID:  row.FeishuBindingID,
-				AssessmentTaskID: taskID,
-				LastError:        lastError,
-			})
-			// Projection: the run goes back to the pool, so the issue goes
-			// back to todo, and the (previously silent) release reason lands
-			// as a server comment. Both best-effort — the lease/release
-			// statements above are each atomic on their own and stay
-			// authoritative.
-			if err := projectAgentWorkIssueStatus(ctx, s.Queries, workspaceID, row.AssessmentIssueID, "todo"); err != nil {
-				slog.Warn("p4 assessment projection: release status failed",
-					"binding_id", util.UUIDToString(row.FeishuBindingID), "error", err)
-			}
-			s.postAgentWorkComment(ctx, workspaceID, taskID, row.AssessmentIssueID,
-				p4AssessmentFailureComment("evidence 构建失败，已退回待评估池", lastError))
-			continue
-		}
-		// Lease → running projects in_progress. A lease-expiry reclaim goes
-		// through this same path and re-projects the SAME issue in_progress
-		// (attempt_count is the retry signal, not a new issue).
-		if err := projectAgentWorkIssueStatus(ctx, s.Queries, workspaceID, row.AssessmentIssueID, "in_progress"); err != nil {
-			slog.Warn("p4 assessment projection: lease status failed",
-				"binding_id", util.UUIDToString(row.FeishuBindingID), "error", err)
-		}
-		items = append(items, P4AssessmentPendingItem{
-			Ref:               util.UUIDToString(row.FeishuBindingID),
-			AssessmentIssueID: uuidStringOrEmpty(row.AssessmentIssueID),
-			Issue:             evidence.Issue,
-			LeaseExpiresAt:    leaseUntil.UTC().Format(time.RFC3339),
-			Evidence:          evidence,
-		})
-	}
-	return items, nil
-}
-
-// ErrP4AssessmentRefNotLeased distinguishes "this ref is not leased by your
-// task" (lease expired and reclaimed, or a made-up ref) from validation
-// failures — the handler maps it to a 409 the worker can react to by
-// re-pulling.
-var ErrP4AssessmentRefNotLeased = errors.New("ref not leased by this task")
-
-// SubmitBatchResult stores an assessment result the batch worker POSTed with
-// an opaque `ref` (as returned by LeasePending). Everything except `ref` is
-// exactly the single-result schema, validated by the same code path.
-//
-// Deprecated (plan C-1): the batch submit-by-ref contract is retired — native
-// tasks submit through SubmitResult. Kept only so in-flight batch workers can
-// drain; C-2 deletes it together with the result-by-ref endpoint.
-func (s *P4AssessmentService) SubmitBatchResult(ctx context.Context, workspaceID, taskID pgtype.UUID, payload []byte) error {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &fields); err != nil {
-		return err
-	}
-	refRaw, ok := fields["ref"]
-	if !ok {
-		return fmt.Errorf("missing ref")
-	}
-	var ref string
-	if err := json.Unmarshal(refRaw, &ref); err != nil {
-		return fmt.Errorf("ref must be a string")
-	}
-	bindingID, err := util.ParseUUID(strings.TrimSpace(ref))
-	if err != nil {
-		return fmt.Errorf("invalid ref")
-	}
-	delete(fields, "ref")
-	rest, err := json.Marshal(fields)
-	if err != nil {
-		return err
-	}
-	parsed, err := validateP4AssessmentPayload(rest)
-	if err != nil {
-		return err
-	}
-	confidence, err := p4AssessmentConfidenceNumeric(parsed.Confidence)
-	if err != nil {
-		return err
-	}
-	// Complete + issue projection commit together; the result-summary comment
-	// is best-effort after the commit (narration must not roll back a result).
-	var completed db.AgentFixP4Assessment
-	err = s.runInTx(ctx, func(q *db.Queries) error {
-		var completeErr error
-		completed, completeErr = q.CompleteP4AssessmentFromBinding(ctx, db.CompleteP4AssessmentFromBindingParams{
-			WorkspaceID:                   workspaceID,
-			FeishuBindingID:               bindingID,
-			AssessmentTaskID:              taskID,
-			DeliveryAttributionPrediction: parsed.DeliveryAttributionPrediction,
-			QualityPrediction:             parsed.QualityPrediction,
-			PredictionReasons:             parsed.PredictionReasons,
-			Confidence:                    confidence,
-			Workstream:                    parsed.Workstream,
-			SwarmReviews:                  parsed.SwarmReviews,
-			AiShelvedCls:                  parsed.AIShelvedCLs,
-			SwarmChangeCls:                parsed.SwarmChangeCLs,
-			SwarmCommittedCls:             parsed.SwarmCommittedCLs,
-			ExternalCommittedCls:          parsed.ExternalCommittedCLs,
-			Evidence:                      parsed.Evidence,
-			Summary:                       parsed.Summary,
-			Warnings:                      parsed.Warnings,
-			Model:                         pgtype.Text{String: parsed.Model, Valid: parsed.Model != ""},
-		})
-		if completeErr != nil {
-			return completeErr
-		}
-		return projectAgentWorkIssueStatus(ctx, q, workspaceID, completed.AssessmentIssueID, "done")
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrP4AssessmentRefNotLeased
-	}
-	if err != nil {
-		return err
-	}
-	s.postAgentWorkComment(ctx, workspaceID, taskID, completed.AssessmentIssueID, p4AssessmentResultComment(parsed))
-	return nil
 }
 
 func (s *P4AssessmentService) BackfillDoneBindings(ctx context.Context, workspaceID, integrationID pgtype.UUID, limit int32) (P4AssessmentBackfillResult, error) {
@@ -1057,7 +866,7 @@ func (s *P4AssessmentService) writeCompletedAssessment(ctx context.Context, work
 		return err
 	}
 	// Complete + issue projection commit together; the result-summary comment
-	// is best-effort after the commit (see SubmitBatchResult).
+	// is best-effort after the commit (narration must not roll back a result).
 	var completed db.AgentFixP4Assessment
 	err = s.runInTx(ctx, func(q *db.Queries) error {
 		var completeErr error
