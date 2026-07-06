@@ -89,8 +89,6 @@
       "coverage_rate": "평가 커버리지",
       "coverage_rate_hint": "평가 완료 {{num}} / AI 산출 {{den}}",
       "health_footnote": "산출 없음 {{noOutput}} · 판단 불가 {{unjudged}}",
-      "delta_label": "이전 기간 대비",
-      "delta_points": "{{delta}}pt",
       "funnel_title": "납품 퍼널",
       "funnel_total": "총 {{count}}건",
       "stage_external_done": "외부 완료",
@@ -115,10 +113,17 @@
       "gaps_missing_cl": "작업 항목에 사람 CL 미기록",
       "failures_title": "수정 실행 실패 원인",
       "failures_none": "실패 기록 없음",
+      "failure_reason": {
+        "queued_expired": "대기 시간 초과로 미실행 ({{code}})",
+        "agent_error": "실행 오류 ({{code}})",
+        "timeout": "실행 시간 초과 ({{code}})",
+        "codex_semantic_inactivity": "진행 없음으로 중단 ({{code}})",
+        "runtime_offline": "런타임 오프라인 ({{code}})",
+        "runtime_recovery": "런타임 복구로 중단 ({{code}})",
+        "manual": "수동 취소 ({{code}})"
+      },
       "workstream_title": "Workstream 결과",
       "workstream_counts": "총 {{total}} · 판정 {{judged}} · 통과 {{passed}}",
-      "prediction_reason_title": "AI 이유 순위",
-      "no_reasons": "아직 이유 없음",
       "drill_hint": "클릭하면 상세를 필터링합니다"
     },
     "table": {

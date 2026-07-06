@@ -89,8 +89,6 @@
       "coverage_rate": "Assessment coverage",
       "coverage_rate_hint": "{{num}} assessed / {{den}} AI produced",
       "health_footnote": "{{noOutput}} no output · {{unjudged}} undetermined",
-      "delta_label": "vs previous period",
-      "delta_points": "{{delta}}pt",
       "funnel_title": "Delivery funnel",
       "funnel_total": "{{count}} records",
       "stage_external_done": "External done",
@@ -115,10 +113,17 @@
       "gaps_missing_cl": "Missing human CL on work item",
       "failures_title": "Fix-run failures",
       "failures_none": "No failed runs",
+      "failure_reason": {
+        "queued_expired": "Expired in queue ({{code}})",
+        "agent_error": "Agent execution error ({{code}})",
+        "timeout": "Execution timeout ({{code}})",
+        "codex_semantic_inactivity": "Stalled without progress ({{code}})",
+        "runtime_offline": "Runtime offline ({{code}})",
+        "runtime_recovery": "Interrupted by runtime recovery ({{code}})",
+        "manual": "Manually cancelled ({{code}})"
+      },
       "workstream_title": "Workstream outcome",
       "workstream_counts": "{{total}} total · {{judged}} judged · {{passed}} passed",
-      "prediction_reason_title": "Top AI reasons",
-      "no_reasons": "No reasons yet",
       "drill_hint": "Click to filter details"
     },
     "table": {

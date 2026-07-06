@@ -89,8 +89,6 @@
       "coverage_rate": "評価カバレッジ",
       "coverage_rate_hint": "判定済み {{num}} / AI 産出 {{den}}",
       "health_footnote": "産出なし {{noOutput}} · 判定不可 {{unjudged}}",
-      "delta_label": "前期間比",
-      "delta_points": "{{delta}}pt",
       "funnel_title": "納品ファネル",
       "funnel_total": "{{count}} 件",
       "stage_external_done": "外部完了",
@@ -115,10 +113,17 @@
       "gaps_missing_cl": "作業項目に人間の CL 未記録",
       "failures_title": "修復タスクの失敗理由",
       "failures_none": "失敗記録なし",
+      "failure_reason": {
+        "queued_expired": "キュー滞留で未実行（{{code}}）",
+        "agent_error": "実行エラー（{{code}}）",
+        "timeout": "実行タイムアウト（{{code}}）",
+        "codex_semantic_inactivity": "進捗なしで中断（{{code}}）",
+        "runtime_offline": "ランタイムオフライン（{{code}}）",
+        "runtime_recovery": "ランタイム復旧で中断（{{code}}）",
+        "manual": "手動キャンセル（{{code}}）"
+      },
       "workstream_title": "Workstream 結果",
       "workstream_counts": "計 {{total}} · 判定済み {{judged}} · 合格 {{passed}}",
-      "prediction_reason_title": "AI 理由ランキング",
-      "no_reasons": "理由はまだありません",
       "drill_hint": "クリックで明細を絞り込み"
     },
     "table": {

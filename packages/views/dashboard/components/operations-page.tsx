@@ -85,7 +85,7 @@ import {
   isVerifiableOutput,
   qualityBucket,
   qualityJudgement,
-  splitOperationsWindow,
+  trimOperationsWindow,
   swarmChangeUrl,
   swarmReviewUrl,
   type BlockedFamily,
@@ -113,9 +113,7 @@ const SEARCH_CLEAR_CLASS =
 const PAGE_SIZE = 50;
 
 // Trailing window. `1d` is the last 24h; the rest mirror the Usage dashboard's
-// daily-dimension options. 30d default matches the dashboard. The query always
-// fetches 2× the selected window so the KPI band can compare against the
-// previous equal-length period without a second endpoint.
+// daily-dimension options. 30d default matches the dashboard.
 const RANGES = [
   { label: "1d", days: 1 },
   { label: "7d", days: 7 },
@@ -539,17 +537,14 @@ export function OperationsPage() {
   }, [searchInput]);
 
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  // Fetch 2× the selected window: rows in the trailing `days` feed the table
-  // and KPIs; the window before them feeds the period-over-period deltas.
-  const fetchDays = Math.min(365, days * 2);
-  const fixesQuery = useQuery(operationsFixesOptions(wsId, fetchDays, search));
+  const fixesQuery = useQuery(operationsFixesOptions(wsId, days, search));
   const allFixes = fixesQuery.data ?? EMPTY;
   const visibleFixes = useMemo(
     () => allFixes.filter(isOperationsVisibleIssue),
     [allFixes],
   );
-  const { current: fixes, previous: previousFixes } = useMemo(
-    () => splitOperationsWindow(visibleFixes, days, viewTZ),
+  const fixes = useMemo(
+    () => trimOperationsWindow(visibleFixes, days, viewTZ),
     [visibleFixes, days, viewTZ],
   );
   // The workspace's Helix Swarm URL — one connection per workspace — turns
@@ -599,9 +594,8 @@ export function OperationsPage() {
     }));
   }, [fixes, tx]);
 
-  // One predicate shared by the current window (table + KPIs), the previous
-  // window (deltas), and the full fetch (weekly trend), so every surface
-  // reflects the same filter state.
+  // One predicate shared by the detail table, the KPI band, and the analysis
+  // distributions, so every surface reflects the same filter state.
   const matchesFilters = useMemo(() => {
     return (f: AgentFixRecord): boolean => {
       if (effectiveAgent !== ALL_AGENTS && f.agent_id !== effectiveAgent) {
@@ -639,15 +633,7 @@ export function OperationsPage() {
   ]);
 
   const rows = useMemo(() => fixes.filter(matchesFilters), [fixes, matchesFilters]);
-  const previousRows = useMemo(
-    () => previousFixes.filter(matchesFilters),
-    [previousFixes, matchesFilters],
-  );
   const kpis = useMemo(() => computeOperationsKpis(rows), [rows]);
-  const previousKpis = useMemo(
-    () => computeOperationsKpis(previousRows),
-    [previousRows],
-  );
   // Which external statuses make up the external-done stage: several raw
   // statuses can map to done (e.g. 测试通过 + 已关闭), and ops wants to see
   // the split, not just the sum. Labels resolve the same way the external
@@ -813,7 +799,6 @@ export function OperationsPage() {
           {!fixesQuery.isLoading && rows.length > 0 ? (
             <OperationsSummary
               kpis={kpis}
-              previous={previousKpis}
               externalDoneBreakdown={externalDoneBreakdown}
             />
           ) : null}
@@ -1106,20 +1091,16 @@ function OperationsAnalysis({
     blocked.completed > 0
       ? ` · ${Math.round((count / blocked.completed) * 1000) / 10}%`
       : "";
-  const predictionReasons = topReasons(
-    rows,
-    (f) => f.p4_assessment?.prediction_reasons,
-    (key) => agentFixEnumLabel(tx, "review_reason", key),
-  );
-  // Structured failure codes (taskfailure taxonomy) of the latest fix runs —
-  // raw codes on purpose: they're operator-facing identifiers, and the set
-  // grows server-side without a frontend release. Scope note: the page only
-  // shows externally-done tickets, so this explains why a *delivered* ticket
-  // ended with no AI output, not the live blocked queue.
+  // Structured failure codes (taskfailure taxonomy) of the latest fix runs.
+  // Known code families get a localized phrase with the raw code appended
+  // (operators grep logs by the code); unknown families render the raw code so
+  // the set can grow server-side without a frontend release. Scope note: the
+  // page only shows externally-done tickets, so this explains why a
+  // *delivered* ticket ended with no AI output, not the live blocked queue.
   const fixFailures = topReasons(
     rows,
     (f) => (f.task_failure_reason ? [f.task_failure_reason] : undefined),
-    (key) => key,
+    (key) => taskFailureReasonLabel(t as unknown as UsageTParams, key),
   );
   // Process gaps — each row is one fixable workflow problem, not an AI defect:
   // a plan that never landed a shelve, a delivered ticket whose human CL was
@@ -1187,13 +1168,7 @@ function OperationsAnalysis({
           onSelect={onDrillAttribution}
         />
       </div>
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,0.75fr)_minmax(0,0.75fr)_minmax(0,1.1fr)]">
-        <AnalysisCard
-          title={t(($) => $.operations.analysis.prediction_reason_title)}
-          rows={predictionReasons}
-          emptyLabel={t(($) => $.operations.analysis.no_reasons)}
-          labelMode="text"
-        />
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <AnalysisCard
           title={t(($) => $.operations.analysis.failures_title)}
           rows={fixFailures}
@@ -1407,6 +1382,43 @@ function topReasons(
       count,
       tone: "default" as Tone,
     }));
+}
+
+// Same untyped-selector trick as UsageT, plus interpolation params — for
+// labels whose translation embeds the raw value (e.g. failure codes).
+type UsageTParams = (
+  selector: (resource: any) => string,
+  params?: Record<string, unknown>,
+) => string;
+
+// The known taskfailure code families: the TaskFailureReason enum in
+// packages/core/types/agent.ts plus queued_expired (emitted by the server's
+// queue sweeper). Structured subcodes ("agent_error.provider_auth_or_access")
+// map by their family prefix.
+const TASK_FAILURE_FAMILIES = [
+  "queued_expired",
+  "agent_error",
+  "timeout",
+  "codex_semantic_inactivity",
+  "runtime_offline",
+  "runtime_recovery",
+  "manual",
+] as const;
+type TaskFailureFamily = (typeof TASK_FAILURE_FAMILIES)[number];
+
+// Localized label for a taskfailure code, e.g. "排队超时未执行（queued_expired）".
+// The full raw code stays visible (operators grep logs by it); an unknown
+// family renders the raw code so server-side taxonomy growth downgrades
+// instead of mislabeling.
+function taskFailureReasonLabel(t: UsageTParams, code: string): string {
+  const family = code.split(".")[0] ?? "";
+  if (!(TASK_FAILURE_FAMILIES as readonly string[]).includes(family)) {
+    return code;
+  }
+  return t(
+    ($) => $.operations.analysis.failure_reason[family as TaskFailureFamily],
+    { code },
+  );
 }
 
 // Drag handle for one resizable column. To keep the visible rows from

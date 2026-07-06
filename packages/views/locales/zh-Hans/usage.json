@@ -89,8 +89,6 @@
       "coverage_rate": "评估覆盖率",
       "coverage_rate_hint": "已评估 {{num}} / AI 产出 {{den}}",
       "health_footnote": "无产出 {{noOutput}} · 无法判断 {{unjudged}}",
-      "delta_label": "较上一周期",
-      "delta_points": "{{delta}}pt",
       "funnel_title": "交付漏斗",
       "funnel_total": "共 {{count}} 条记录",
       "stage_external_done": "外部完成",
@@ -115,10 +113,17 @@
       "gaps_missing_cl": "外部单未回填提交 CL",
       "failures_title": "修复任务失败原因",
       "failures_none": "无失败记录",
+      "failure_reason": {
+        "queued_expired": "排队超时未执行（{{code}}）",
+        "agent_error": "执行报错（{{code}}）",
+        "timeout": "执行超时（{{code}}）",
+        "codex_semantic_inactivity": "执行无进展中止（{{code}}）",
+        "runtime_offline": "运行时离线（{{code}}）",
+        "runtime_recovery": "运行时恢复中断（{{code}}）",
+        "manual": "手动取消（{{code}}）"
+      },
       "workstream_title": "Workstream 结果",
       "workstream_counts": "共 {{total}} · 已判定 {{judged}} · 通过 {{passed}}",
-      "prediction_reason_title": "AI 原因排行",
-      "no_reasons": "暂无原因",
       "drill_hint": "点击可筛选明细"
     },
     "table": {
