@@ -89,8 +89,6 @@
       "coverage_rate": "評価カバレッジ",
       "coverage_rate_hint": "判定済み {{num}} / AI 産出 {{den}}",
       "health_footnote": "産出なし {{noOutput}} · 判定不可 {{unjudged}}",
-      "delta_label": "前期間比",
-      "delta_points": "{{delta}}pt",
       "funnel_title": "納品ファネル",
       "funnel_total": "{{count}} 件",
       "stage_external_done": "外部完了",
@@ -117,8 +115,6 @@
       "failures_none": "失敗記録なし",
       "workstream_title": "Workstream 結果",
       "workstream_counts": "計 {{total}} · 判定済み {{judged}} · 合格 {{passed}}",
-      "prediction_reason_title": "AI 理由ランキング",
-      "no_reasons": "理由はまだありません",
       "drill_hint": "クリックで明細を絞り込み"
     },
     "table": {

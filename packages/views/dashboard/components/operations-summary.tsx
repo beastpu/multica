@@ -1,6 +1,5 @@
 "use client";
 
-import { MoveDownRight, MoveUpRight } from "lucide-react";
 import { useT } from "../../i18n";
 import type { OperationsKpis, OperationsRate } from "../operations-metrics";
 
@@ -12,34 +11,16 @@ import type { OperationsKpis, OperationsRate } from "../operations-metrics";
 // contradict each other across cards. Delivery attribution (direct/assisted)
 // lives in the analysis tab's attribution distribution; the funnel below
 // carries absolute counts and stage drop-offs.
-// `previous` carries the KPIs of the equal-length window before the selected
-// one; deltas are null (render nothing) when a window's denominator is 0 or the
-// sample is too small to be anything but noise.
 
 function formatPercent(rate: OperationsRate): string {
   if (rate.value == null) return "—";
   return `${Math.round(rate.value * 1000) / 10}%`;
 }
 
-// Delta in percentage points between two rates, or null when either side has
-// no denominator to stand on.
-function deltaPoints(
-  current: OperationsRate,
-  previous: OperationsRate,
-): number | null {
-  if (current.value == null || previous.value == null) return null;
-  return Math.round((current.value - previous.value) * 1000) / 10;
-}
-
 function RateCard({
   label,
   hint,
   rate,
-  delta,
-  deltaLabel,
-  deltaText,
-  // Whether an increase is good news (pass rate ↑ good) or bad (no-output ↑ bad).
-  upIsGood,
   // Optional extra datum under the hint (e.g. the independent-submission
   // count on the assisted card).
   footer,
@@ -47,14 +28,8 @@ function RateCard({
   label: string;
   hint: string;
   rate: OperationsRate;
-  delta: number | null;
-  deltaLabel: string;
-  deltaText: string;
-  upIsGood: boolean;
   footer?: string;
 }) {
-  const showDelta = delta != null && delta !== 0;
-  const good = delta != null && (delta > 0 ? upIsGood : !upIsGood);
   return (
     <div className="flex flex-col gap-2 rounded-lg border bg-card p-4">
       <div className="text-xs font-medium text-muted-foreground">{label}</div>
@@ -62,21 +37,6 @@ function RateCard({
         <span className="text-3xl font-semibold leading-none tabular-nums">
           {formatPercent(rate)}
         </span>
-        {showDelta ? (
-          <span
-            className={`flex items-center gap-0.5 text-xs font-medium tabular-nums ${
-              good ? "text-success" : "text-destructive"
-            }`}
-            title={deltaLabel}
-          >
-            {delta > 0 ? (
-              <MoveUpRight className="h-3 w-3" />
-            ) : (
-              <MoveDownRight className="h-3 w-3" />
-            )}
-            {deltaText}
-          </span>
-        ) : null}
       </div>
       <div className="text-xs text-muted-foreground">{hint}</div>
       {footer ? (
@@ -90,23 +50,14 @@ function RateCard({
 
 export function OperationsSummary({
   kpis,
-  previous,
   externalDoneBreakdown = [],
 }: {
   kpis: OperationsKpis;
-  previous: OperationsKpis;
   // Which external statuses make up the external-done stage (multiple raw
   // statuses can map to done), largest first, e.g. 测试通过 291 · 已关闭 36.
   externalDoneBreakdown?: Array<{ label: string; count: number }>;
 }) {
   const { t } = useT("usage");
-  const deltaLabel = t(($) => $.operations.summary.delta_label);
-  const deltaText = (delta: number | null) =>
-    delta == null
-      ? ""
-      : t(($) => $.operations.summary.delta_points, {
-          delta: `${delta > 0 ? "+" : ""}${delta}`,
-        });
   const { funnel } = kpis;
   const stages = [
     {
@@ -141,18 +92,6 @@ export function OperationsSummary({
     },
   ];
   const max = Math.max(1, ...stages.map((s) => s.count));
-  // Below this denominator the period-over-period delta is mostly sampling
-  // noise (e.g. 7/12 has a ±25pt confidence interval), so we hide it rather
-  // than imply a precision the sample can't support.
-  const SMALL_SAMPLE = 30;
-  const stableDelta = (cur: OperationsRate, prev: OperationsRate) =>
-    cur.denominator < SMALL_SAMPLE ? null : deltaPoints(cur, prev);
-  const contributionDelta = stableDelta(
-    kpis.contributionRate,
-    previous.contributionRate,
-  );
-  const coverageDelta = stableDelta(kpis.coverageRate, previous.coverageRate);
-  const passDelta = stableDelta(kpis.passRate, previous.passRate);
   return (
     <section className="grid gap-3">
       <div className="grid gap-3 sm:grid-cols-3">
@@ -163,10 +102,6 @@ export function OperationsSummary({
             den: kpis.contributionRate.denominator,
           })}
           rate={kpis.contributionRate}
-          delta={contributionDelta}
-          deltaLabel={deltaLabel}
-          deltaText={deltaText(contributionDelta)}
-          upIsGood
         />
         <RateCard
           label={t(($) => $.operations.summary.coverage_rate)}
@@ -175,10 +110,6 @@ export function OperationsSummary({
             den: kpis.coverageRate.denominator,
           })}
           rate={kpis.coverageRate}
-          delta={coverageDelta}
-          deltaLabel={deltaLabel}
-          deltaText={deltaText(coverageDelta)}
-          upIsGood
         />
         <RateCard
           label={t(($) => $.operations.summary.pass_rate)}
@@ -187,10 +118,6 @@ export function OperationsSummary({
             den: kpis.passRate.denominator,
           })}
           rate={kpis.passRate}
-          delta={passDelta}
-          deltaLabel={deltaLabel}
-          deltaText={deltaText(passDelta)}
-          upIsGood
         />
       </div>
       <div className="text-xs text-muted-foreground">

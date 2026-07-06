@@ -4,10 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { useOperationsViewStore } from "@multica/core/dashboard";
 import { renderWithI18n } from "../../test/i18n";
 
-// Fixture timestamps are relative to "now" so the page's trailing-window split
-// (selected window vs the previous equal-length window) stays deterministic no
-// matter when the tests run. All primary rows sit inside the default 30d
-// window; PREVIOUS_FIX sits in the window before it.
+// Fixture timestamps are relative to "now" so the page's trailing-window trim
+// stays deterministic no matter when the tests run. All primary rows sit
+// inside the default 30d window; the t-8 fixture sits outside it.
 const dayIso = vi.hoisted(() => {
   return (daysAgo: number) =>
     new Date(Date.now() - daysAgo * 86_400_000).toISOString();
@@ -277,8 +276,8 @@ const FIXES = vi.hoisted(() => [
       warnings: ["missing_external_cl"],
     },
   },
-  // Older than the selected 30d window (previous period) — feeds the KPI
-  // delta but must never appear in the table.
+  // Older than the selected 30d window — must never appear in the table
+  // or the KPIs.
   {
     task_id: "t-8",
     agent_id: "a-1",
@@ -519,7 +518,7 @@ describe("OperationsPage", () => {
     expect(screen.getAllByText(dayLabel(5)).length).toBeGreaterThanOrEqual(1);
   });
 
-  it("excludes previous-period rows from the table", () => {
+  it("excludes rows older than the selected window from the table", () => {
     renderWithI18n(<OperationsPage />);
     expect(screen.queryByText("Previous period fix")).toBeNull();
   });
@@ -763,9 +762,10 @@ describe("OperationsPage", () => {
       screen.getByText("agent_error.provider_auth_or_access"),
     ).toBeTruthy();
     expect(screen.getByText("Workstream outcome")).toBeTruthy();
-    expect(screen.getByText("Top AI reasons")).toBeTruthy();
+    // The free-text AI-reasons ranking is gone: same-meaning sentences
+    // fragment into distinct rows, so the card carried no signal.
+    expect(screen.queryByText("Top AI reasons")).toBeNull();
     expect(screen.getByText("rel_1.7.3/client")).toBeTruthy();
-    expect(screen.getByText("Wrong direction")).toBeTruthy();
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(1);
   });

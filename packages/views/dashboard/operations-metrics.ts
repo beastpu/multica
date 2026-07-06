@@ -5,9 +5,8 @@ import { addDaysIso, todayIso } from "../runtimes/utils";
 // Operations page metrics
 //
 // Pure derivations over the agent-fixes feed. Everything here is computed
-// client-side from GET /api/operations/agent-fixes rows: the page fetches a
-// 2× window (`days * 2`) so the trailing `days` window and the window before
-// it can be compared without a second endpoint.
+// client-side from GET /api/operations/agent-fixes rows fetched for the
+// user-selected trailing window.
 // ---------------------------------------------------------------------------
 
 // Derived delivery attribution. Extends the AI prediction with two values the
@@ -283,25 +282,19 @@ export function fixDayIso(fix: AgentFixRecord, tz: string): string {
   }
 }
 
-// Split a 2×-window fetch into the user-selected trailing window and the
-// equal-length window before it (for the KPI period-over-period delta).
-export function splitOperationsWindow(
+// Trim a fetch to the user-selected trailing window in the viewer's timezone,
+// so the client-side day axis and the SQL window agree on which rows count.
+export function trimOperationsWindow(
   fixes: AgentFixRecord[],
   days: number,
   tz: string,
-): { current: AgentFixRecord[]; previous: AgentFixRecord[] } {
+): AgentFixRecord[] {
   const today = todayIso(tz);
-  const currentCutoff = addDaysIso(today, -(days - 1));
-  const previousCutoff = addDaysIso(today, -(days * 2 - 1));
-  const current: AgentFixRecord[] = [];
-  const previous: AgentFixRecord[] = [];
-  for (const fix of fixes) {
+  const cutoff = addDaysIso(today, -(days - 1));
+  return fixes.filter((fix) => {
     const day = fixDayIso(fix, tz);
-    if (!day) continue;
-    if (day >= currentCutoff) current.push(fix);
-    else if (day >= previousCutoff) previous.push(fix);
-  }
-  return { current, previous };
+    return !!day && day >= cutoff;
+  });
 }
 
 // One ratio KPI: `value` is null when the denominator is 0 (render "—", never

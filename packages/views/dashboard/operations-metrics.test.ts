@@ -13,7 +13,7 @@ import {
   fixDayIso,
   hasMissingExternalClWarning,
   isVerifiableOutput,
-  splitOperationsWindow,
+  trimOperationsWindow,
   swarmChangeUrl,
   swarmReviewUrl,
 } from "./operations-metrics";
@@ -458,23 +458,19 @@ describe("distribution buckets reconcile with the KPI numerators", () => {
   });
 });
 
-describe("splitOperationsWindow", () => {
+describe("trimOperationsWindow", () => {
   const tz = "UTC";
   const today = new Date().toISOString();
   const daysAgo = (n: number) =>
     new Date(Date.now() - n * 86_400_000).toISOString();
 
-  it("splits rows into the trailing window and the one before it", () => {
+  it("keeps only rows inside the trailing window", () => {
     const recent = fix({ completed_at: today });
     const older = fix({ completed_at: daysAgo(10) });
     const ancient = fix({ completed_at: daysAgo(20) });
-    const { current, previous } = splitOperationsWindow(
-      [recent, older, ancient],
-      7,
-      tz,
-    );
-    expect(current).toEqual([recent]);
-    expect(previous).toEqual([older]);
+    expect(trimOperationsWindow([recent, older, ancient], 7, tz)).toEqual([
+      recent,
+    ]);
   });
 });
 
