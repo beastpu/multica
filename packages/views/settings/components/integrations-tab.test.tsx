@@ -1,7 +1,12 @@
+// @vitest-environment jsdom
+
 import { type ReactNode } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ApiError } from "@multica/core/api";
+import { configStore } from "@multica/core/config";
+import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enSettings from "../../locales/en/settings.json";
@@ -11,6 +16,19 @@ const mockReplaceRoutes = vi.hoisted(() => vi.fn());
 const mockSyncIntegration = vi.hoisted(() => vi.fn());
 const mockInvalidate = vi.hoisted(() => vi.fn());
 const mockSetQueryData = vi.hoisted(() => vi.fn());
+const MockApiError = vi.hoisted(
+  () =>
+    class ApiError extends Error {
+      status: number;
+      body: unknown;
+
+      constructor(message: string, status: number, body?: unknown) {
+        super(message);
+        this.status = status;
+        this.body = body;
+      }
+    },
+);
 
 type MemberRole = "owner" | "admin" | "member" | "guest";
 
@@ -29,6 +47,12 @@ const statusesRef = vi.hoisted(() => ({
   },
 }));
 const statusTypeRequests = vi.hoisted(() => ({ current: [] as string[] }));
+const composioErrorRef = vi.hoisted(() => ({
+  current: null as Error | null,
+}));
+const queryCallsRef = vi.hoisted(() => ({
+  current: [] as { queryKey: unknown[]; enabled?: boolean }[],
+}));
 
 // A saved integration whose credentials are complete. work_item_types carries
 // one mapped type so the collapse-by-default behavior is observable.
@@ -66,8 +90,19 @@ function configuredIntegration() {
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (opts: { queryKey: unknown[]; enabled?: boolean }) => {
-    if (opts.enabled === false) return { data: undefined, isLoading: false, isFetching: false };
+    queryCallsRef.current.push(opts);
+    if (opts.enabled === false) {
+      return { data: undefined, error: null, isError: false, isLoading: false, isFetching: false };
+    }
     const key = JSON.stringify(opts.queryKey);
+    if (key.includes("composio")) {
+      return {
+        data: undefined,
+        error: composioErrorRef.current,
+        isError: composioErrorRef.current != null,
+        isFetching: false,
+      };
+    }
     if (key.includes("members")) return { data: membersRef.current, isFetching: false };
     if (key.includes("fp-integration")) return { data: integrationRef.current, isFetching: false };
     if (key.includes("fp-routes")) return { data: routesRef.current, isFetching: false };
@@ -149,6 +184,7 @@ vi.mock("@multica/core/feishu-project/queries", () => ({
 }));
 
 vi.mock("@multica/core/api", () => ({
+  ApiError: MockApiError,
   api: {
     updateFeishuProjectIntegration: mockUpdateIntegration,
     replaceFeishuProjectRoutes: mockReplaceRoutes,
@@ -169,6 +205,10 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() },
 }));
 
+vi.mock("@multica/core/composio", () => ({
+  composioToolkitsOptions: () => ({ queryKey: ["composio", "toolkits"] }),
+}));
+
 // LarkTab drags in the whole Lark install flow — irrelevant to the Feishu
 // Project panel under test.
 vi.mock("./lark-tab", () => ({
@@ -179,6 +219,14 @@ vi.mock("./lark-tab", () => ({
 // (assessment-capability-section.test.tsx) — stub it out here.
 vi.mock("./assessment-capability-section", () => ({
   AssessmentCapabilitySection: () => <div data-testid="assessment-capability-section" />,
+}));
+
+vi.mock("./composio-tab", () => ({
+  ComposioTab: () => <div data-testid="composio-tab" />,
+}));
+
+vi.mock("./slack-tab", () => ({
+  SlackTab: () => <div data-testid="slack-tab" />,
 }));
 
 import { IntegrationsTab } from "./integrations-tab";
@@ -203,9 +251,18 @@ function resetFixtures() {
   integrationRef.current = configuredIntegration();
   routesRef.current = { routes: [] };
   statusTypeRequests.current = [];
+  composioErrorRef.current = null;
+  queryCallsRef.current = [];
+  configStore.getState().setFeatureFlags({ [COMPOSIO_MCP_APPS_FLAG]: true });
   mockUpdateIntegration.mockResolvedValue(undefined);
   mockReplaceRoutes.mockResolvedValue(undefined);
   mockInvalidate.mockResolvedValue(undefined);
+}
+
+function composioQueryCalls() {
+  return queryCallsRef.current.filter((call) =>
+    JSON.stringify(call.queryKey).includes("composio"),
+  );
 }
 
 describe("IntegrationsTab (Feishu Project panel)", () => {
@@ -400,5 +457,31 @@ describe("IntegrationsTab (Feishu Project panel)", () => {
 
     expect(statusTypeRequests.current).toContain("637c83ce54b03d5198e2d1cb");
     expect(statusTypeRequests.current).not.toContain("gd_task");
+  });
+
+  it("hides Composio and disables the toolkits query when the feature flag is off", () => {
+    configStore.getState().setFeatureFlags({ [COMPOSIO_MCP_APPS_FLAG]: false });
+
+    render(<IntegrationsTab />, { wrapper: I18nWrapper });
+
+    expect(screen.queryByTestId("composio-tab")).toBeNull();
+    const calls = composioQueryCalls();
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.enabled === false)).toBe(true);
+  });
+
+  it("shows Composio when the feature flag is on and the integration is configured", () => {
+    render(<IntegrationsTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByTestId("composio-tab")).toBeTruthy();
+    expect(composioQueryCalls()[0]?.enabled).toBe(true);
+  });
+
+  it("hides Composio when the feature flag is on but the server reports 503", () => {
+    composioErrorRef.current = new ApiError("unavailable", 503, "Service Unavailable");
+
+    render(<IntegrationsTab />, { wrapper: I18nWrapper });
+
+    expect(screen.queryByTestId("composio-tab")).toBeNull();
   });
 });
