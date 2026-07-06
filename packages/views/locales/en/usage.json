@@ -111,17 +111,6 @@
       "blocked_none": "No blocked assessments",
       "gaps_title": "Process gaps",
       "gaps_missing_cl": "Missing human CL on work item",
-      "failures_title": "Fix-run failures",
-      "failures_none": "No failed runs",
-      "failure_reason": {
-        "queued_expired": "Expired in queue ({{code}})",
-        "agent_error": "Agent execution error ({{code}})",
-        "timeout": "Execution timeout ({{code}})",
-        "codex_semantic_inactivity": "Stalled without progress ({{code}})",
-        "runtime_offline": "Runtime offline ({{code}})",
-        "runtime_recovery": "Interrupted by runtime recovery ({{code}})",
-        "manual": "Manually cancelled ({{code}})"
-      },
       "workstream_title": "Workstream outcome",
       "workstream_counts": "{{total}} total · {{judged}} judged · {{passed}} passed",
       "drill_hint": "Click to filter details"

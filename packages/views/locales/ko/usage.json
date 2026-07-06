@@ -111,17 +111,6 @@
       "blocked_none": "차단 없음",
       "gaps_title": "프로세스 갭",
       "gaps_missing_cl": "작업 항목에 사람 CL 미기록",
-      "failures_title": "수정 실행 실패 원인",
-      "failures_none": "실패 기록 없음",
-      "failure_reason": {
-        "queued_expired": "대기 시간 초과로 미실행 ({{code}})",
-        "agent_error": "실행 오류 ({{code}})",
-        "timeout": "실행 시간 초과 ({{code}})",
-        "codex_semantic_inactivity": "진행 없음으로 중단 ({{code}})",
-        "runtime_offline": "런타임 오프라인 ({{code}})",
-        "runtime_recovery": "런타임 복구로 중단 ({{code}})",
-        "manual": "수동 취소 ({{code}})"
-      },
       "workstream_title": "Workstream 결과",
       "workstream_counts": "총 {{total}} · 판정 {{judged}} · 통과 {{passed}}",
       "drill_hint": "클릭하면 상세를 필터링합니다"

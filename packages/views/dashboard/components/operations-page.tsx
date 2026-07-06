@@ -324,11 +324,6 @@ function confidenceLabel(confidence: number | null | undefined): string {
   return `${Math.round(confidence * 100)}%`;
 }
 
-function compactKey(value: string | undefined | null, fallback: string): string {
-  const key = value?.trim();
-  return key && key.length > 0 ? key : fallback;
-}
-
 function sortedUniqueOptions(
   rows: AgentFixRecord[],
   getValue: (row: AgentFixRecord) => string | undefined,
@@ -1091,17 +1086,6 @@ function OperationsAnalysis({
     blocked.completed > 0
       ? ` · ${Math.round((count / blocked.completed) * 1000) / 10}%`
       : "";
-  // Structured failure codes (taskfailure taxonomy) of the latest fix runs.
-  // Known code families get a localized phrase with the raw code appended
-  // (operators grep logs by the code); unknown families render the raw code so
-  // the set can grow server-side without a frontend release. Scope note: the
-  // page only shows externally-done tickets, so this explains why a
-  // *delivered* ticket ended with no AI output, not the live blocked queue.
-  const fixFailures = topReasons(
-    rows,
-    (f) => (f.task_failure_reason ? [f.task_failure_reason] : undefined),
-    (key) => taskFailureReasonLabel(t as unknown as UsageTParams, key),
-  );
   // Process gaps — each row is one fixable workflow problem, not an AI defect:
   // a plan that never landed a shelve, a delivered ticket whose human CL was
   // never recorded, and the unassessed backlog. Zero counts stay visible (zero
@@ -1168,19 +1152,11 @@ function OperationsAnalysis({
           onSelect={onDrillAttribution}
         />
       </div>
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-        <AnalysisCard
-          title={t(($) => $.operations.analysis.failures_title)}
-          rows={fixFailures}
-          emptyLabel={t(($) => $.operations.analysis.failures_none)}
-          labelMode="text"
-        />
-        <WorkstreamAnalysisCard
-          title={t(($) => $.operations.analysis.workstream_title)}
-          rows={workstreams}
-          onSelect={onDrillWorkstream}
-        />
-      </div>
+      <WorkstreamAnalysisCard
+        title={t(($) => $.operations.analysis.workstream_title)}
+        rows={workstreams}
+        onSelect={onDrillWorkstream}
+      />
     </div>
   );
 }
@@ -1190,7 +1166,6 @@ function AnalysisCard({
   rows,
   emptyLabel,
   onSelect,
-  labelMode = "badge",
 }: {
   title: string;
   rows: {
@@ -1205,7 +1180,6 @@ function AnalysisCard({
   // When set, each row is clickable and drills down to the detail table with
   // the matching filter applied.
   onSelect?: (key: string) => void;
-  labelMode?: "badge" | "text";
 }) {
   const { t } = useT("usage");
   const max = Math.max(1, ...rows.map((r) => r.count));
@@ -1226,18 +1200,9 @@ function AnalysisCard({
           const inner = (
             <>
               <div className="flex min-w-0 items-center justify-between gap-3">
-                {labelMode === "text" ? (
-                  <span
-                    className="min-w-0 truncate text-sm text-foreground"
-                    title={r.label}
-                  >
-                    {r.label}
-                  </span>
-                ) : (
-                  <ToneBadge tone={r.tone} className="min-w-0">
-                    {r.label}
-                  </ToneBadge>
-                )}
+                <ToneBadge tone={r.tone} className="min-w-0">
+                  {r.label}
+                </ToneBadge>
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                   {r.countLabel ?? r.count}
                 </span>
@@ -1363,62 +1328,6 @@ function groupWorkstreams(rows: AgentFixRecord[]) {
     groups.set(workstream, group);
   }
   return Array.from(groups.values()).sort((a, b) => b.total - a.total);
-}
-
-function topReasons(
-  rows: AgentFixRecord[],
-  getReasons: (row: AgentFixRecord) => string[] | undefined,
-  labelFor: (key: string) => string,
-) {
-  return Array.from(
-    countBy(rows.flatMap((row) => getReasons(row) ?? []), (reason) =>
-      compactKey(reason, "unknown"),
-    ),
-  )
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-    .map(([key, count]) => ({
-      label: labelFor(key),
-      count,
-      tone: "default" as Tone,
-    }));
-}
-
-// Same untyped-selector trick as UsageT, plus interpolation params — for
-// labels whose translation embeds the raw value (e.g. failure codes).
-type UsageTParams = (
-  selector: (resource: any) => string,
-  params?: Record<string, unknown>,
-) => string;
-
-// The known taskfailure code families: the TaskFailureReason enum in
-// packages/core/types/agent.ts plus queued_expired (emitted by the server's
-// queue sweeper). Structured subcodes ("agent_error.provider_auth_or_access")
-// map by their family prefix.
-const TASK_FAILURE_FAMILIES = [
-  "queued_expired",
-  "agent_error",
-  "timeout",
-  "codex_semantic_inactivity",
-  "runtime_offline",
-  "runtime_recovery",
-  "manual",
-] as const;
-type TaskFailureFamily = (typeof TASK_FAILURE_FAMILIES)[number];
-
-// Localized label for a taskfailure code, e.g. "排队超时未执行（queued_expired）".
-// The full raw code stays visible (operators grep logs by it); an unknown
-// family renders the raw code so server-side taxonomy growth downgrades
-// instead of mislabeling.
-function taskFailureReasonLabel(t: UsageTParams, code: string): string {
-  const family = code.split(".")[0] ?? "";
-  if (!(TASK_FAILURE_FAMILIES as readonly string[]).includes(family)) {
-    return code;
-  }
-  return t(
-    ($) => $.operations.analysis.failure_reason[family as TaskFailureFamily],
-    { code },
-  );
 }
 
 // Drag handle for one resizable column. To keep the visible rows from
