@@ -1091,15 +1091,16 @@ function OperationsAnalysis({
     blocked.completed > 0
       ? ` · ${Math.round((count / blocked.completed) * 1000) / 10}%`
       : "";
-  // Structured failure codes (taskfailure taxonomy) of the latest fix runs —
-  // raw codes on purpose: they're operator-facing identifiers, and the set
-  // grows server-side without a frontend release. Scope note: the page only
-  // shows externally-done tickets, so this explains why a *delivered* ticket
-  // ended with no AI output, not the live blocked queue.
+  // Structured failure codes (taskfailure taxonomy) of the latest fix runs.
+  // Known code families get a localized phrase with the raw code appended
+  // (operators grep logs by the code); unknown families render the raw code so
+  // the set can grow server-side without a frontend release. Scope note: the
+  // page only shows externally-done tickets, so this explains why a
+  // *delivered* ticket ended with no AI output, not the live blocked queue.
   const fixFailures = topReasons(
     rows,
     (f) => (f.task_failure_reason ? [f.task_failure_reason] : undefined),
-    (key) => key,
+    (key) => taskFailureReasonLabel(t as unknown as UsageTParams, key),
   );
   // Process gaps — each row is one fixable workflow problem, not an AI defect:
   // a plan that never landed a shelve, a delivered ticket whose human CL was
@@ -1381,6 +1382,43 @@ function topReasons(
       count,
       tone: "default" as Tone,
     }));
+}
+
+// Same untyped-selector trick as UsageT, plus interpolation params — for
+// labels whose translation embeds the raw value (e.g. failure codes).
+type UsageTParams = (
+  selector: (resource: any) => string,
+  params?: Record<string, unknown>,
+) => string;
+
+// The known taskfailure code families: the TaskFailureReason enum in
+// packages/core/types/agent.ts plus queued_expired (emitted by the server's
+// queue sweeper). Structured subcodes ("agent_error.provider_auth_or_access")
+// map by their family prefix.
+const TASK_FAILURE_FAMILIES = [
+  "queued_expired",
+  "agent_error",
+  "timeout",
+  "codex_semantic_inactivity",
+  "runtime_offline",
+  "runtime_recovery",
+  "manual",
+] as const;
+type TaskFailureFamily = (typeof TASK_FAILURE_FAMILIES)[number];
+
+// Localized label for a taskfailure code, e.g. "排队超时未执行（queued_expired）".
+// The full raw code stays visible (operators grep logs by it); an unknown
+// family renders the raw code so server-side taxonomy growth downgrades
+// instead of mislabeling.
+function taskFailureReasonLabel(t: UsageTParams, code: string): string {
+  const family = code.split(".")[0] ?? "";
+  if (!(TASK_FAILURE_FAMILIES as readonly string[]).includes(family)) {
+    return code;
+  }
+  return t(
+    ($) => $.operations.analysis.failure_reason[family as TaskFailureFamily],
+    { code },
+  );
 }
 
 // Drag handle for one resizable column. To keep the visible rows from

@@ -252,7 +252,8 @@ const FIXES = vi.hoisted(() => [
     last_comment: "",
     last_comment_author_type: "",
     // The latest run hard-failed with a structured taskfailure code — the
-    // analysis tab's fix-run failures card surfaces the raw code.
+    // analysis tab's fix-run failures card localizes its family and keeps
+    // the raw code visible.
     task_status: "failed",
     task_failure_reason: "agent_error.provider_auth_or_access",
     started_at: null,
@@ -756,10 +757,13 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Missing human CL on work item")).toBeTruthy();
     expect(screen.getAllByText("Plan, no record").length).toBeGreaterThanOrEqual(1);
     // Fix-run failures card: t-7's latest run failed with a structured
-    // taskfailure code, shown raw.
+    // taskfailure code — its family is localized and the raw code stays
+    // visible for log grepping.
     expect(screen.getByText("Fix-run failures")).toBeTruthy();
     expect(
-      screen.getByText("agent_error.provider_auth_or_access"),
+      screen.getByText(
+        "Agent execution error (agent_error.provider_auth_or_access)",
+      ),
     ).toBeTruthy();
     expect(screen.getByText("Workstream outcome")).toBeTruthy();
     // The free-text AI-reasons ranking is gone: same-meaning sentences
@@ -768,6 +772,15 @@ describe("OperationsPage", () => {
     expect(screen.getByText("rel_1.7.3/client")).toBeTruthy();
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("localizes fix-run failure codes in Chinese with the raw code visible", () => {
+    renderWithI18n(<OperationsPage />, { locale: "zh-Hans" });
+    // Analysis is the default tab; t-7's structured code renders as the
+    // Chinese family phrase with the full machine code in parentheses.
+    expect(
+      screen.getByText("执行报错（agent_error.provider_auth_or_access）"),
+    ).toBeTruthy();
   });
 
   it("drills down from an analysis distribution into the filtered detail table", async () => {

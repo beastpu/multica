@@ -113,6 +113,15 @@
       "gaps_missing_cl": "外部单未回填提交 CL",
       "failures_title": "修复任务失败原因",
       "failures_none": "无失败记录",
+      "failure_reason": {
+        "queued_expired": "排队超时未执行（{{code}}）",
+        "agent_error": "执行报错（{{code}}）",
+        "timeout": "执行超时（{{code}}）",
+        "codex_semantic_inactivity": "执行无进展中止（{{code}}）",
+        "runtime_offline": "运行时离线（{{code}}）",
+        "runtime_recovery": "运行时恢复中断（{{code}}）",
+        "manual": "手动取消（{{code}}）"
+      },
       "workstream_title": "Workstream 结果",
       "workstream_counts": "共 {{total}} · 已判定 {{judged}} · 通过 {{passed}}",
       "drill_hint": "点击可筛选明细"
