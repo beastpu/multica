@@ -154,11 +154,11 @@ export type MyIssuesFilter = Pick<
   ListIssuesParams,
   | "assignee_id"
   | "assignee_ids"
+  | "assignee_types"
   | "creator_id"
   | "project_id"
   | "involves_user_id"
   | "priorities"
-  | "assignee_types"
   | "assignee_filters"
   | "include_no_assignee"
   | "creator_filters"

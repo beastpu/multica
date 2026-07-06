@@ -22,7 +22,9 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflagdispatch"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
+	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -30,6 +32,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
 // randomID returns a random 16-byte hex string used as a request ID for
@@ -111,6 +114,7 @@ type Handler struct {
 	DaemonProfileRefresh  RuntimeProfileRefreshNotifier
 	Bus                   *events.Bus
 	TaskService           *service.TaskService
+	P4AssessmentService   *service.P4AssessmentService
 	IssueService          *service.IssueService
 	AutopilotService      *service.AutopilotService
 	EmailService          *service.EmailService
@@ -118,6 +122,7 @@ type Handler struct {
 	ModelListStore        ModelListStore
 	LocalSkillListStore   LocalSkillListStore
 	LocalSkillImportStore LocalSkillImportStore
+	FeatureFlags          *featureflag.Service
 	DaemonFeatureFlags    *featureflagdispatch.Evaluator
 	LivenessStore         LivenessStore
 	HeartbeatScheduler    HeartbeatScheduler
@@ -163,6 +168,10 @@ type Handler struct {
 	// UI consults IsConfigured() to decide whether to surface install
 	// entry points.
 	LarkAPIClient lark.APIClient
+	// Composio integration (MUL-3720). Nil when COMPOSIO_API_KEY is unset;
+	// the composio HTTP handlers return 503 in that case. Wired in
+	// cmd/server/router.go after handler.New.
+	Composio *composio.Service
 	// ChannelSupervisor owns the per-installation supervisor goroutines
 	// that hold the §4.4 WS lease and drive each channel.Channel
 	// (MUL-3620 generalized the Feishu-only Hub into this channel-agnostic
@@ -182,7 +191,20 @@ type Handler struct {
 	// delivering events, to flush debounced run triggers and join in-flight
 	// reply goroutines. Built unconditionally (even without Lark).
 	ChannelRouter *engine.Router
-	cfg           Config
+	// SlackInstall owns the bring-your-own-app Slack install lifecycle (register
+	// pasted tokens / list / revoke) and the at-rest encryption of each app's bot
+	// + app tokens (MUL-3666). Nil unless MULTICA_SLACK_SECRET_KEY is set.
+	SlackInstall *slack.InstallService
+	// SlackBindingTokens mints/redeems the user-binding tokens behind the
+	// "link your Slack account" prompt (MUL-3666). Nil unless Slack is
+	// configured (MULTICA_SLACK_SECRET_KEY set).
+	SlackBindingTokens *slack.BindingTokenService
+	// SlackHistory backs the agent-facing `multica chat history` command: it
+	// reads a chat session's bound Slack conversation on demand (MUL-3871). Nil
+	// unless Slack is configured; GetChatChannelHistory then reports "no channel
+	// integration". A future platform satisfies the same reader interface.
+	SlackHistory ChatChannelHistoryReader
+	cfg          Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
@@ -215,6 +237,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
+	p4AssessmentSvc := service.NewP4AssessmentService(queries, txStarter, taskSvc)
+	taskSvc.P4Assessment = p4AssessmentSvc
 	return &Handler{
 		Queries:               queries,
 		DB:                    executor,
@@ -224,6 +248,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		DaemonProfileRefresh:  daemonProfileRefresh,
 		Bus:                   bus,
 		TaskService:           taskSvc,
+		P4AssessmentService:   p4AssessmentSvc,
 		IssueService:          service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
 		AutopilotService:      service.NewAutopilotService(queries, txStarter, bus, taskSvc),
 		EmailService:          emailService,

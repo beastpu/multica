@@ -15,6 +15,9 @@ import (
 // post with `--content-file`) because the shell-layer corruption it guards
 // against is not specific to any one provider or host (MUL-2904, #4182).
 func BuildPrompt(task Task, provider string) string {
+	if isP4AssessmentTask(task) {
+		return buildP4AssessmentPrompt(task)
+	}
 	if task.ChatSessionID != "" {
 		return buildChatPrompt(task)
 	}
@@ -39,6 +42,23 @@ func BuildPrompt(task Task, provider string) string {
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Start with `multica issue comment list %s --recent 10 --output json` to read the 10 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. Resolved threads come back folded — `--full` to expand. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
+	return b.String()
+}
+
+func isP4AssessmentTask(task Task) bool {
+	return task.Kind == "agent_fix_p4_assessment" || task.P4AssessmentBindingID != ""
+}
+
+func buildP4AssessmentPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running a read-only P4/Swarm assessment for a completed external work item.\n\n")
+	fmt.Fprintf(&b, "Your assessment issue ID: %s\n", task.IssueID)
+	fmt.Fprintf(&b, "Feishu/Meego binding ID: %s\n\n", task.P4AssessmentBindingID)
+	b.WriteString("Use the built-in `multica-agent-fix-p4-assessment` skill for the full workflow, safety boundaries, CL role classification, and output schema.\n\n")
+	b.WriteString("First fetch task-scoped Multica evidence with:\n\n")
+	fmt.Fprintf(&b, "multica api get /api/operations/agent-fixes/%s/p4-evidence\n\n", task.P4AssessmentBindingID)
+	b.WriteString("You may inspect inner-network Swarm/P4 only with read-only commands or APIs. You may post plain progress-narration comments ONLY on your own assessment issue above. Do not change any issue's status, fields, or assignee, and do not touch the real defect issue, Feishu/Meego, P4, Swarm, or `agent_fix_review` — the server rejects every such write.\n\n")
+	b.WriteString("Submit the result by POSTing the assessment JSON to the result endpoint documented in the skill; as a fallback, your final output must satisfy the assessment parser: exactly one JSON object, or one fenced ```json block containing exactly one JSON object. Do not add natural-language text outside the JSON. Use `unknown` and warnings when evidence is missing.\n")
 	return b.String()
 }
 
@@ -190,6 +210,28 @@ func buildChatPrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as a chat assistant for a Multica workspace.\n")
 	b.WriteString("A user is chatting with you directly. Respond to their message.\n\n")
+	// Channel awareness (MUL-3871). When the session is backed by an IM channel,
+	// the agent must KNOW it is operating inside that channel — otherwise an ask
+	// like "what did you just talk about" sends it to read Multica instead of the
+	// Slack conversation. State it explicitly, point reads at the channel (not
+	// Multica), and teach the two read commands, telling the agent which to start
+	// with based on where it was @mentioned. A web-only chat session gets no such
+	// block — its history is the Multica chat_session the agent already resumes.
+	if task.ChatChannelType != "" {
+		platform := channelDisplayName(task.ChatChannelType)
+		fmt.Fprintf(&b, "You are operating inside a %s conversation — not the Multica web app. This conversation and its history live in %s, NOT in Multica; never look in Multica issues or comments for it. The message below may be only what triggered you. Read the conversation with:\n", platform, platform)
+		b.WriteString("- `multica chat history --output json` — the channel overview: recent top-level messages, each thread tagged with a `thread_id` and `reply_count`. It does NOT expand thread contents.\n")
+		b.WriteString("- `multica chat thread [<thread_id>] --output json` — read one thread's messages; omit the id to read the thread you are in, or pass a `thread_id` from the overview to read a specific thread.\n")
+		if task.ChatInThread {
+			b.WriteString("You were @mentioned inside a thread: start with `multica chat thread` to read it; if you need the wider channel, run `multica chat history` and open a specific thread with `multica chat thread <thread_id>`.\n")
+		} else {
+			b.WriteString("You were @mentioned at the channel top level: start with `multica chat history` to see the channel, then read a specific thread's contents with `multica chat thread <thread_id>`.\n")
+		}
+		// These reads are the agent's private context-gathering; narrating them
+		// into a chat reply reads as noise (the user reported every reply being
+		// prefixed with "我先读取…"). Tell the agent to keep them out of its answer.
+		b.WriteString("Do these reads SILENTLY as an internal step — they are how you gather context, not part of your answer. Do NOT narrate them: your reply must not begin with what you are about to read or just read (no \"我先读取…\" / \"let me read the history / open the thread\"). Reply to the user with your answer only.\n\n")
+	}
 	if task.Agent != nil && len(task.Agent.Skills) > 0 {
 		refs := ExtractSlashSkills(task.ChatMessage)
 		if len(refs) > 0 {
@@ -241,6 +283,16 @@ func buildChatPrompt(task Task) string {
 		b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
 	}
 	return b.String()
+}
+
+// channelDisplayName renders a chat_channel_type for prompt copy.
+func channelDisplayName(channelType string) string {
+	switch channelType {
+	case "slack":
+		return "Slack"
+	default:
+		return channelType
+	}
 }
 
 // buildAutopilotPrompt constructs a prompt for run_only autopilot tasks.

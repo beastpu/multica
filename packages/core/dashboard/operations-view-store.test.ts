@@ -40,6 +40,9 @@ describe("useOperationsViewStore", () => {
     // Untouched columns keep their defaults.
     expect(widths.agent).toBe(OPERATIONS_DEFAULT_WIDTHS.agent);
     expect(widths.status).toBe(OPERATIONS_DEFAULT_WIDTHS.status);
+    expect(widths.attribution).toBe(OPERATIONS_DEFAULT_WIDTHS.attribution);
+    expect(widths.quality).toBe(OPERATIONS_DEFAULT_WIDTHS.quality);
+    expect(widths.time).toBe(OPERATIONS_DEFAULT_WIDTHS.time);
   });
 
   it("resetColumnWidths restores every default", () => {
@@ -70,6 +73,11 @@ describe("operations view store merge", () => {
     expect(merged.columnWidths.issue).toBe(OPERATIONS_DEFAULT_WIDTHS.issue);
     expect(merged.columnWidths.agent).toBe(OPERATIONS_DEFAULT_WIDTHS.agent);
     expect(merged.columnWidths.status).toBe(200);
+    expect(merged.columnWidths.attribution).toBe(
+      OPERATIONS_DEFAULT_WIDTHS.attribution,
+    );
+    expect(merged.columnWidths.quality).toBe(OPERATIONS_DEFAULT_WIDTHS.quality);
+    expect(merged.columnWidths.time).toBe(OPERATIONS_DEFAULT_WIDTHS.time);
   });
 
   it("clamps an out-of-range persisted width", () => {

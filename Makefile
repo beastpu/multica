@@ -37,25 +37,27 @@ define REQUIRE_ENV
 	fi
 endef
 
-# Self-hosting requires Docker Compose v2 (the `docker compose` CLI plugin).
+# Self-hosting requires the Docker Compose CLI plugin (`docker compose`).
 # The self-host compose files use compose-spec syntax (top-level `name:`, no
 # `version:`) that the legacy v1 `docker-compose` standalone cannot parse, so we
 # fail early with an actionable message instead of a cryptic CLI parse error
 # (e.g. "unknown shorthand flag: 'f' in -f") when the plugin is missing or v1.
 # Keep the message short and OS-agnostic: per-OS install steps belong in docs.
 define REQUIRE_COMPOSE
-	@if ! $(COMPOSE) version >/dev/null 2>&1; then \
-		echo "Docker Compose v2 ('docker compose') was not found."; \
-		echo "Self-hosting requires the Compose v2 CLI plugin; legacy 'docker-compose' v1 is not supported."; \
+	@if ! compose_version=$$($(COMPOSE) version --short 2>/dev/null); then \
+		echo "Docker Compose ('docker compose') was not found."; \
+		echo "Self-hosting requires the Compose CLI plugin; legacy 'docker-compose' v1 is not supported."; \
 		echo "Install Docker Compose from https://docs.docker.com/compose/install/ and verify with: docker compose version"; \
 		exit 1; \
 	fi; \
-	if ! $(COMPOSE) version --short 2>/dev/null | grep -Eq '^v?2\.'; then \
-		echo "'$(COMPOSE)' is not Docker Compose v2."; \
-		echo "Self-hosting requires the Compose v2 CLI plugin; legacy 'docker-compose' v1 is not supported."; \
-		echo "Install Docker Compose from https://docs.docker.com/compose/install/ and verify with: docker compose version"; \
-		exit 1; \
-	fi
+	case "$$compose_version" in \
+		1.*|v1.*) \
+			echo "'$(COMPOSE)' is legacy Docker Compose v1 ($$compose_version)."; \
+			echo "Self-hosting requires the Compose CLI plugin; legacy 'docker-compose' v1 is not supported."; \
+			echo "Install Docker Compose from https://docs.docker.com/compose/install/ and verify with: docker compose version"; \
+			exit 1; \
+			;; \
+	esac
 endef
 
 # Default target changed from selfhost to help: bare `make` now prints this help
@@ -334,6 +336,13 @@ migrate-down: ## Create the target DB if needed, then roll back database migrati
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
 	cd server && go run ./cmd/migrate down
+
+seed: ## Seed the current database with the Operations/P4 assessment demo workspace
+	$(REQUIRE_ENV)
+	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
+	cd server && go run ./cmd/migrate up
+	@$(COMPOSE) exec -T postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -v ON_ERROR_STOP=1 < scripts/seed-operations-demo.sql
+	@echo "✓ Seeded Operations demo data. Open workspace slug: operations-demo"
 
 sqlc: ## Regenerate sqlc code
 	cd server && sqlc generate

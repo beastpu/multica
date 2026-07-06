@@ -22,13 +22,15 @@ const inboxNotifyTimeout = 10 * time.Second
 type InboxNotifierQueries interface {
 	GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error)
 	GetWorkspace(ctx context.Context, id pgtype.UUID) (db.Workspace, error)
-	ClaimLarkInboxNotificationDelivery(ctx context.Context, arg db.ClaimLarkInboxNotificationDeliveryParams) (bool, error)
-	GetLarkInboxIssueCard(ctx context.Context, arg db.GetLarkInboxIssueCardParams) (db.LarkInboxIssueCard, error)
-	ListActiveLarkUserBindingsByMember(ctx context.Context, arg db.ListActiveLarkUserBindingsByMemberParams) ([]db.ListActiveLarkUserBindingsByMemberRow, error)
-	ListLarkInboxIssueCardItems(ctx context.Context, arg db.ListLarkInboxIssueCardItemsParams) ([]db.InboxItem, error)
+	ClaimLarkInboxNotificationDelivery(ctx context.Context, arg ClaimInboxNotificationDeliveryParams) (bool, error)
+	GetLarkInboxIssueCard(ctx context.Context, arg GetInboxIssueCardParams) (InboxIssueCard, error)
+	ListActiveLarkUserBindingsByMember(ctx context.Context, arg ListInboxNotificationBindingsParams) ([]InboxNotificationBinding, error)
+	ListLarkInboxIssueCardItems(ctx context.Context, arg ListInboxIssueCardItemsParams) ([]db.InboxItem, error)
 	TouchLarkInboxIssueCard(ctx context.Context, id pgtype.UUID) error
-	UpsertLarkInboxIssueCard(ctx context.Context, arg db.UpsertLarkInboxIssueCardParams) (db.LarkInboxIssueCard, error)
+	UpsertLarkInboxIssueCard(ctx context.Context, arg UpsertInboxIssueCardParams) (InboxIssueCard, error)
 }
+
+var _ InboxNotifierQueries = (*ChannelStore)(nil)
 
 type InboxNotifier struct {
 	queries     InboxNotifierQueries
@@ -97,7 +99,7 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 	if err != nil {
 		return fmt.Errorf("parse recipient_id: %w", err)
 	}
-	rows, err := n.queries.ListActiveLarkUserBindingsByMember(ctx, db.ListActiveLarkUserBindingsByMemberParams{
+	rows, err := n.queries.ListActiveLarkUserBindingsByMember(ctx, ListInboxNotificationBindingsParams{
 		WorkspaceID:   workspaceID,
 		MulticaUserID: recipientID,
 	})
@@ -111,10 +113,10 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 	if !ok {
 		return nil
 	}
-	claimed, err := n.queries.ClaimLarkInboxNotificationDelivery(ctx, db.ClaimLarkInboxNotificationDeliveryParams{
+	claimed, err := n.queries.ClaimLarkInboxNotificationDelivery(ctx, ClaimInboxNotificationDeliveryParams{
 		InboxItemID:    itemID,
-		InstallationID: row.LarkInstallation.ID,
-		LarkOpenID:     row.LarkUserBinding.LarkOpenID,
+		InstallationID: row.Installation.ID,
+		ChannelUserID:  row.UserBinding.ChannelUserID,
 	})
 	if err != nil {
 		return fmt.Errorf("claim lark inbox notification delivery: %w", err)
@@ -122,20 +124,20 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 	if !claimed {
 		return nil
 	}
-	creds, err := n.installationCredentials(row.LarkInstallation)
+	creds, err := n.installationCredentials(row.Installation)
 	if err != nil {
 		return err
 	}
 	if isMergeableLarkInboxNotification(item) {
 		return n.sendOrPatchInboxIssueCard(ctx, creds, row, workspaceID, recipientID, item)
 	}
-	cardJSON, err := n.renderInboxNotificationCard(ctx, workspaceID, item)
+	cardJSON, err := n.renderInboxNotificationCard(ctx, workspaceID, row, recipientID, item)
 	if err != nil {
 		return fmt.Errorf("render inbox card: %w", err)
 	}
 	if _, err := n.client.SendDirectInteractiveCard(ctx, SendDirectCardParams{
 		InstallationID: creds,
-		OpenID:         OpenID(row.LarkUserBinding.LarkOpenID),
+		OpenID:         OpenID(row.UserBinding.ChannelUserID),
 		CardJSON:       cardJSON,
 	}); err != nil {
 		return fmt.Errorf("send inbox dm: %w", err)
@@ -143,26 +145,8 @@ func (n *InboxNotifier) notify(ctx context.Context, payload any) error {
 	return nil
 }
 
-func (n *InboxNotifier) installationCredentials(inst db.LarkInstallation) (InstallationCredentials, error) {
-	domainInst := Installation{
-		ID:                 inst.ID,
-		WorkspaceID:        inst.WorkspaceID,
-		AgentID:            inst.AgentID,
-		AppID:              inst.AppID,
-		AppSecretEncrypted: inst.AppSecretEncrypted,
-		TenantKey:          inst.TenantKey,
-		BotOpenID:          inst.BotOpenID,
-		InstallerUserID:    inst.InstallerUserID,
-		Status:             inst.Status,
-		WsLeaseToken:       inst.WsLeaseToken,
-		WsLeaseExpiresAt:   inst.WsLeaseExpiresAt,
-		InstalledAt:        inst.InstalledAt,
-		CreatedAt:          inst.CreatedAt,
-		UpdatedAt:          inst.UpdatedAt,
-		BotUnionID:         inst.BotUnionID,
-		Region:             inst.Region,
-	}
-	secret, err := n.credentials.DecryptAppSecret(domainInst)
+func (n *InboxNotifier) installationCredentials(inst Installation) (InstallationCredentials, error) {
+	secret, err := n.credentials.DecryptAppSecret(inst)
 	if err != nil {
 		return InstallationCredentials{}, fmt.Errorf("decrypt app_secret: %w", err)
 	}
@@ -211,7 +195,7 @@ func inboxNotificationItemFromPayload(payload any) (inboxNotificationItem, bool)
 	return item, item.WorkspaceID != "" && item.RecipientID != ""
 }
 
-func selectInboxNotificationBinding(ctx context.Context, queries InboxNotifierQueries, rows []db.ListActiveLarkUserBindingsByMemberRow, item inboxNotificationItem) (db.ListActiveLarkUserBindingsByMemberRow, bool) {
+func selectInboxNotificationBinding(ctx context.Context, queries InboxNotifierQueries, rows []InboxNotificationBinding, item inboxNotificationItem) (InboxNotificationBinding, bool) {
 	if item.ActorType != nil && *item.ActorType == "agent" && item.ActorID != nil {
 		if actorID, err := scanUUID(*item.ActorID); err == nil {
 			if row, ok := selectInboxNotificationBindingByAgent(rows, actorID); ok {
@@ -229,7 +213,7 @@ func selectInboxNotificationBinding(ctx context.Context, queries InboxNotifierQu
 			}
 		}
 	}
-	return db.ListActiveLarkUserBindingsByMemberRow{}, false
+	return InboxNotificationBinding{}, false
 }
 
 func isMergeableLarkInboxNotification(item inboxNotificationItem) bool {
@@ -244,19 +228,19 @@ func isMergeableLarkInboxNotification(item inboxNotificationItem) bool {
 	}
 }
 
-func selectInboxNotificationBindingByAgent(rows []db.ListActiveLarkUserBindingsByMemberRow, agentID pgtype.UUID) (db.ListActiveLarkUserBindingsByMemberRow, bool) {
+func selectInboxNotificationBindingByAgent(rows []InboxNotificationBinding, agentID pgtype.UUID) (InboxNotificationBinding, bool) {
 	for _, row := range rows {
-		if row.LarkInstallation.AgentID == agentID {
+		if row.Installation.AgentID == agentID {
 			return row, true
 		}
 	}
-	return db.ListActiveLarkUserBindingsByMemberRow{}, false
+	return InboxNotificationBinding{}, false
 }
 
 func (n *InboxNotifier) sendOrPatchInboxIssueCard(
 	ctx context.Context,
 	creds InstallationCredentials,
-	row db.ListActiveLarkUserBindingsByMemberRow,
+	row InboxNotificationBinding,
 	workspaceID pgtype.UUID,
 	recipientID pgtype.UUID,
 	item inboxNotificationItem,
@@ -269,17 +253,17 @@ func (n *InboxNotifier) sendOrPatchInboxIssueCard(
 	if err != nil {
 		return fmt.Errorf("render inbox issue card: %w", err)
 	}
-	card, err := n.queries.GetLarkInboxIssueCard(ctx, db.GetLarkInboxIssueCardParams{
+	card, err := n.queries.GetLarkInboxIssueCard(ctx, GetInboxIssueCardParams{
 		WorkspaceID:    workspaceID,
 		RecipientID:    recipientID,
 		IssueID:        issueID,
-		InstallationID: row.LarkInstallation.ID,
-		LarkOpenID:     row.LarkUserBinding.LarkOpenID,
+		InstallationID: row.Installation.ID,
+		ChannelUserID:  row.UserBinding.ChannelUserID,
 	})
-	if err == nil && card.LarkCardMessageID != "" {
+	if err == nil && card.ChannelCardMessageID != "" {
 		if err := n.client.PatchInteractiveCard(ctx, PatchCardParams{
 			InstallationID:    creds,
-			LarkCardMessageID: card.LarkCardMessageID,
+			LarkCardMessageID: card.ChannelCardMessageID,
 			CardJSON:          cardJSON,
 		}); err != nil {
 			return fmt.Errorf("patch inbox issue card: %w", err)
@@ -294,19 +278,19 @@ func (n *InboxNotifier) sendOrPatchInboxIssueCard(
 	}
 	messageID, err := n.client.SendDirectInteractiveCard(ctx, SendDirectCardParams{
 		InstallationID: creds,
-		OpenID:         OpenID(row.LarkUserBinding.LarkOpenID),
+		OpenID:         OpenID(row.UserBinding.ChannelUserID),
 		CardJSON:       cardJSON,
 	})
 	if err != nil {
 		return fmt.Errorf("send inbox issue card: %w", err)
 	}
-	if _, err := n.queries.UpsertLarkInboxIssueCard(ctx, db.UpsertLarkInboxIssueCardParams{
-		WorkspaceID:       workspaceID,
-		RecipientID:       recipientID,
-		IssueID:           issueID,
-		InstallationID:    row.LarkInstallation.ID,
-		LarkOpenID:        row.LarkUserBinding.LarkOpenID,
-		LarkCardMessageID: messageID,
+	if _, err := n.queries.UpsertLarkInboxIssueCard(ctx, UpsertInboxIssueCardParams{
+		WorkspaceID:          workspaceID,
+		RecipientID:          recipientID,
+		IssueID:              issueID,
+		InstallationID:       row.Installation.ID,
+		ChannelUserID:        row.UserBinding.ChannelUserID,
+		ChannelCardMessageID: messageID,
 	}); err != nil {
 		return fmt.Errorf("record inbox issue card: %w", err)
 	}
@@ -314,7 +298,7 @@ func (n *InboxNotifier) sendOrPatchInboxIssueCard(
 }
 
 func (n *InboxNotifier) renderInboxIssueCard(ctx context.Context, workspaceID, recipientID, issueID pgtype.UUID, current inboxNotificationItem) (string, error) {
-	rows, err := n.queries.ListLarkInboxIssueCardItems(ctx, db.ListLarkInboxIssueCardItemsParams{
+	rows, err := n.queries.ListLarkInboxIssueCardItems(ctx, ListInboxIssueCardItemsParams{
 		WorkspaceID: workspaceID,
 		RecipientID: recipientID,
 		IssueID:     issueID,
@@ -382,7 +366,7 @@ func (n *InboxNotifier) renderInboxIssueCard(ctx context.Context, workspaceID, r
 	return string(raw), nil
 }
 
-func (n *InboxNotifier) renderInboxNotificationCard(ctx context.Context, workspaceID pgtype.UUID, item inboxNotificationItem) (string, error) {
+func (n *InboxNotifier) renderInboxNotificationCard(ctx context.Context, workspaceID pgtype.UUID, row InboxNotificationBinding, recipientID pgtype.UUID, item inboxNotificationItem) (string, error) {
 	issue, workspace := n.inboxNotificationContext(ctx, workspaceID, item)
 	identifier := inboxIssueIdentifier(issue, workspace)
 	headerTitle := inboxNotificationHeaderTitle(identifier, item.Title)
@@ -409,19 +393,12 @@ func (n *InboxNotifier) renderInboxNotificationCard(ctx context.Context, workspa
 			},
 		},
 	}
-	if issueURL := n.issueURL(workspace, item); issueURL != "" {
+	if actions := n.inboxNotificationActions(workspaceID, row, recipientID, item, workspace); len(actions) > 0 {
 		card["elements"] = append(card["elements"].([]any),
 			map[string]any{"tag": "hr"},
 			map[string]any{
-				"tag": "action",
-				"actions": []any{
-					map[string]any{
-						"tag":  "button",
-						"text": map[string]any{"tag": "plain_text", "content": "在 Multica 中查看"},
-						"url":  issueURL,
-						"type": "primary",
-					},
-				},
+				"tag":     "action",
+				"actions": actions,
 			},
 		)
 	}
@@ -430,6 +407,98 @@ func (n *InboxNotifier) renderInboxNotificationCard(ctx context.Context, workspa
 		return "", err
 	}
 	return string(raw), nil
+}
+
+func (n *InboxNotifier) inboxNotificationActions(workspaceID pgtype.UUID, row InboxNotificationBinding, recipientID pgtype.UUID, item inboxNotificationItem, workspace *db.Workspace) []any {
+	actions := make([]any, 0, 3)
+	if confirm, cancel, ok := issueConfirmationCardValues(workspaceID, row, recipientID, item, time.Now()); ok {
+		actions = append(actions,
+			map[string]any{
+				"tag":   "button",
+				"text":  map[string]any{"tag": "plain_text", "content": confirm.Message},
+				"type":  "primary",
+				"value": confirm,
+			},
+			map[string]any{
+				"tag":   "button",
+				"text":  map[string]any{"tag": "plain_text", "content": cancel.Message},
+				"type":  "default",
+				"value": cancel,
+			},
+		)
+	}
+	if issueURL := n.issueURL(workspace, item); issueURL != "" {
+		buttonType := "primary"
+		if len(actions) > 0 {
+			buttonType = "default"
+		}
+		actions = append(actions, map[string]any{
+			"tag":  "button",
+			"text": map[string]any{"tag": "plain_text", "content": "在 Multica 中查看"},
+			"url":  issueURL,
+			"type": buttonType,
+		})
+	}
+	return actions
+}
+
+func issueConfirmationCardValues(workspaceID pgtype.UUID, row InboxNotificationBinding, recipientID pgtype.UUID, item inboxNotificationItem, now time.Time) (issueConfirmationCardValue, issueConfirmationCardValue, bool) {
+	issueID := ""
+	if item.IssueID != nil {
+		issueID = strings.TrimSpace(*item.IssueID)
+	}
+	if item.Type != "new_comment" ||
+		item.ActorType == nil || *item.ActorType != "agent" ||
+		item.Body == nil ||
+		issueID == "" {
+		return issueConfirmationCardValue{}, issueConfirmationCardValue{}, false
+	}
+	confirmMessage, ok := confirmationReplyMessage(*item.Body)
+	if !ok {
+		return issueConfirmationCardValue{}, issueConfirmationCardValue{}, false
+	}
+	parentCommentID := inboxNotificationCommentID(item.Details)
+	if parentCommentID == "" || row.UserBinding.ChannelUserID == "" {
+		return issueConfirmationCardValue{}, issueConfirmationCardValue{}, false
+	}
+	if _, err := scanUUID(issueID); err != nil {
+		return issueConfirmationCardValue{}, issueConfirmationCardValue{}, false
+	}
+	if _, err := scanUUID(parentCommentID); err != nil {
+		return issueConfirmationCardValue{}, issueConfirmationCardValue{}, false
+	}
+	issuedAt := now.Unix()
+	expiresAt := now.Add(confirmationCardTTL).Unix()
+	base := issueConfirmationCardValue{
+		Kind:            issueConfirmationCardActionKind,
+		WorkspaceID:     uuidString(workspaceID),
+		IssueID:         issueID,
+		ParentCommentID: parentCommentID,
+		RecipientID:     uuidString(recipientID),
+		AllowedOpenID:   row.UserBinding.ChannelUserID,
+		IssuedAtUnix:    issuedAt,
+		ExpiresAtUnix:   expiresAt,
+	}
+	confirm := base
+	confirm.Action = confirmationActionConfirm
+	confirm.Message = confirmMessage
+	cancel := base
+	cancel.Action = confirmationActionCancel
+	cancel.Message = confirmationCancelMessage(confirmMessage)
+	return confirm, cancel, true
+}
+
+func inboxNotificationCommentID(details json.RawMessage) string {
+	if len(details) == 0 {
+		return ""
+	}
+	var d struct {
+		CommentID string `json:"comment_id"`
+	}
+	if err := json.Unmarshal(details, &d); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(d.CommentID)
 }
 
 func mergeableLarkInboxNotificationTypes() []string {

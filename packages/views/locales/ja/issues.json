@@ -26,6 +26,12 @@
     "none": "ステージなし",
     "value": "ステージ {{n}}"
   },
+  "p4_assessment": {
+    "p4": "P4",
+    "ai": "AI 評価",
+    "review": "人手レビュー",
+    "open": "評価"
+  },
   "scope": {
     "all_label": "すべて",
     "all_description": "このワークスペースのすべてのイシュー",
@@ -88,7 +94,8 @@
     "card_due_date": "期限",
     "card_project": "プロジェクト",
     "card_labels": "ラベル",
-    "card_child_progress": "サブイシューの進捗"
+    "card_child_progress": "サブイシューの進捗",
+    "show_sub_issues": "サブイシューを表示"
   },
   "view": {
     "tooltip_board": "ボード表示",
@@ -333,6 +340,7 @@
   },
   "agent_activity": {
     "hover_header_other": "作業中のエージェント {{count}} 件",
+    "hover_header_tasks_other": "作業中のタスク {{count}} 件",
     "hover_header_queued_other": "待機中のエージェント {{count}} 件",
     "status_running": "作業中",
     "status_queued": "待機中",

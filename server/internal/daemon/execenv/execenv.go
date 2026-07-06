@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/runtimeapps"
 )
 
 // RepoContextForEnv describes a workspace repo available for checkout.
@@ -64,6 +66,7 @@ type PrepareParams struct {
 // TaskContextForEnv is the subset of task context used for writing context files.
 type TaskContextForEnv struct {
 	IssueID                 string
+	P4AssessmentBindingID   string // non-empty for read-only P4/Swarm assessment tasks
 	TriggerCommentID        string // comment that triggered this task (empty for on_assign)
 	TriggerThreadID         string // root comment ID for the triggering thread; falls back to TriggerCommentID when empty
 	NewCommentCount         int    // issue-wide comments since this agent's last run (excludes its own and the injected trigger)
@@ -93,6 +96,10 @@ type TaskContextForEnv struct {
 	// non-empty so every agent in the workspace sees the same shared context,
 	// regardless of issue / chat / autopilot / quick-create.
 	WorkspaceContext string
+	// ConnectedApps lists per-run external app capabilities mounted through
+	// MCP overlays. Rendered briefly so the agent can map app names such as
+	// Notion to the actual MCP server name (`composio`).
+	ConnectedApps []runtimeapps.ConnectedApp
 	// RequestingUserName + RequestingUserProfileDescription describe the
 	// human the agent is acting on behalf of. v1 sources them from the
 	// runtime owner (the user who registered the daemon). Rendered into the

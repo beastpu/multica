@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  AgentFixHumanReviewSchema,
   AgentFixRecordListSchema,
   AppConfigSchema,
   DashboardAgentRunTimeListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
+  CreateFeedbackResponseSchema,
   DuplicateIssueErrorBodySchema,
   EMPTY_FEISHU_PROJECT_INTEGRATION,
+  EMPTY_CREATE_FEEDBACK_RESPONSE,
   EMPTY_INBOX_UNREAD_SUMMARY,
   EMPTY_USER,
   FeishuProjectIntegrationSchema,
@@ -20,7 +23,10 @@ import {
   SquadListSchema,
   SquadSchema,
   TimelineEntriesSchema,
+  TriggerAgentFixP4AssessmentResponseSchema,
   UserSchema,
+  WorkspaceCapabilitySchema,
+  EMPTY_WORKSPACE_CAPABILITY,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
 
@@ -67,6 +73,27 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
     });
   });
 
+  it("drops object-valued reserved keys (agent_work) instead of failing the issue", () => {
+    // Derived assessment issues carry metadata.agent_work as a nested OBJECT.
+    // A strict primitive-only record used to fail the whole IssueSchema here,
+    // blanking the issue page into the empty fallback.
+    const payload = {
+      issues: [
+        {
+          ...baseIssue,
+          metadata: {
+            flow_cl: "12345",
+            agent_work: { kind: "p4_assessment", trigger: "scan" },
+          },
+        },
+      ],
+      total: 1,
+    };
+    const parsed = ListIssuesResponseSchema.parse(payload);
+    expect(parsed.issues[0]?.metadata).toEqual({ flow_cl: "12345" });
+    expect(parsed.issues[0]?.title).toBe(baseIssue.title);
+  });
+
   it("defaults metadata to {} when the server omits it (older backend)", () => {
     const { metadata: _omit, ...issueWithoutMetadata } = baseIssue;
     const payload = { issues: [issueWithoutMetadata], total: 1 };
@@ -93,12 +120,15 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
     expect(parsed.issues[1]?.external_fields).toEqual({});
   });
 
-  it("rejects metadata with non-primitive values (nested object)", () => {
+  it("strips non-primitive metadata values instead of rejecting the issue", () => {
+    // Rejecting used to blank the whole issue page (the agent_work incident);
+    // the schema now degrades by dropping the offending entry.
     const payload = {
-      issues: [{ ...baseIssue, metadata: { nested: { x: 1 } } }],
+      issues: [{ ...baseIssue, metadata: { nested: { x: 1 }, keep: "v" } }],
       total: 1,
     };
-    expect(ListIssuesResponseSchema.safeParse(payload).success).toBe(false);
+    const parsed = ListIssuesResponseSchema.parse(payload);
+    expect(parsed.issues[0]?.metadata).toEqual({ keep: "v" });
   });
 
   it("accepts a numeric stage", () => {
@@ -205,6 +235,38 @@ describe("TimelineEntriesSchema", () => {
     ]);
 
     expect(parsed[0]?.source_task_id).toBe("task-1");
+  });
+});
+
+describe("CreateFeedbackResponseSchema", () => {
+  const ENDPOINT = { endpoint: "POST /api/feedback" };
+
+  it("parses a well-formed response and preserves extra fields", () => {
+    const parsed = parseWithFallback(
+      { id: "feedback-1", created_at: "2026-06-26T00:00:00Z", future_field: true },
+      CreateFeedbackResponseSchema,
+      EMPTY_CREATE_FEEDBACK_RESPONSE,
+      ENDPOINT,
+    );
+    expect(parsed).toMatchObject({
+      id: "feedback-1",
+      created_at: "2026-06-26T00:00:00Z",
+      future_field: true,
+    });
+  });
+
+  it("returns the empty fallback for malformed feedback responses", () => {
+    expect(
+      parseWithFallback(
+        { id: 123, created_at: "2026-06-26T00:00:00Z" },
+        CreateFeedbackResponseSchema,
+        EMPTY_CREATE_FEEDBACK_RESPONSE,
+        ENDPOINT,
+      ),
+    ).toBe(EMPTY_CREATE_FEEDBACK_RESPONSE);
+    expect(
+      parseWithFallback(null, CreateFeedbackResponseSchema, EMPTY_CREATE_FEEDBACK_RESPONSE, ENDPOINT),
+    ).toBe(EMPTY_CREATE_FEEDBACK_RESPONSE);
   });
 });
 
@@ -464,6 +526,127 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
     expect(parsed[0]?.last_comment_author_type).toBe("agent");
   });
 
+  it("keeps agent_comment_count absent when missing or malformed", () => {
+    // Old servers omit the field; the dashboard falls back to last_comment.
+    // The distinction "absent" vs 0 must survive parsing, and a drifted type
+    // degrades to absent instead of dropping the row.
+    const parsed = AgentFixRecordListSchema.parse([
+      { task_id: "t1" },
+      { task_id: "t2", agent_comment_count: 3 },
+      { task_id: "t3", agent_comment_count: "many" },
+    ]);
+    expect(parsed).toHaveLength(3);
+    expect(parsed[0]?.agent_comment_count).toBeUndefined();
+    expect(parsed[1]?.agent_comment_count).toBe(3);
+    expect(parsed[2]?.agent_comment_count).toBeUndefined();
+  });
+
+  it("keeps optional P4 assessment fields while tolerating unknown enum strings", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      {
+        task_id: "t1",
+        external: {
+          binding_id: "binding-1",
+          work_item_id: "BUG-93218",
+          status: "Done",
+          mapped_status: "done",
+          done: true,
+          project: "Warpath3",
+        },
+        p4_assessment: {
+          assessment_status: "completed",
+          delivery_attribution_prediction: "future_attribution",
+          quality_prediction: "future_quality",
+          confidence: 0.86,
+          workstream: "rel_1.7.2/server",
+          swarm_reviews: [
+            {
+              id: 11872,
+              review_id: "SW-11872",
+              changes: [282941],
+              commits: [283006],
+              swarm_branch: "main",
+              event_type: "review.committed",
+              sent_at: "2026-06-29T04:05:06Z",
+            },
+          ],
+          ai_shelved_cls: [282941],
+          external_committed_cls: [283006],
+        },
+        human_review: {
+          outcome: "future_outcome",
+          reasons: ["future_reason"],
+        },
+        display_result_status: "future_display_status",
+        ai_judgement_eval: "future_eval",
+      },
+    ]);
+    expect(parsed[0]?.external?.binding_id).toBe("binding-1");
+    expect(parsed[0]?.external?.work_item_id).toBe("BUG-93218");
+    expect(parsed[0]?.p4_assessment?.workstream).toBe("rel_1.7.2/server");
+    expect(parsed[0]?.p4_assessment?.delivery_attribution_prediction).toBe(
+      "future_attribution",
+    );
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.review_id).toBe(
+      "SW-11872",
+    );
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.id).toBe(11872);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.changes).toEqual([
+      282941,
+    ]);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.commits).toEqual([
+      283006,
+    ]);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.swarm_branch).toBe("main");
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.event_type).toBe(
+      "review.committed",
+    );
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.sent_at).toBe(
+      "2026-06-29T04:05:06Z",
+    );
+    expect(parsed[0]?.human_review?.outcome).toBe("future_outcome");
+    expect(parsed[0]?.ai_judgement_eval).toBe("future_eval");
+  });
+
+  it("normalizes missing and null P4 evidence arrays to stable empty arrays", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      {
+        task_id: "t1",
+        p4_assessment: {
+          swarm_reviews: [
+            {
+              review_id: "SW-11872",
+              changes: null,
+              commits: null,
+              swarm_branch: null,
+              event_type: null,
+              sent_at: null,
+            },
+          ],
+          ai_shelved_cls: null,
+          swarm_change_cls: null,
+          swarm_committed_cls: null,
+          external_committed_cls: null,
+          prediction_reasons: null,
+          warnings: null,
+        },
+      },
+    ]);
+
+    const p4 = parsed[0]?.p4_assessment;
+    expect(p4?.swarm_reviews?.[0]?.changes).toEqual([]);
+    expect(p4?.swarm_reviews?.[0]?.commits).toEqual([]);
+    expect(p4?.swarm_reviews?.[0]?.swarm_branch).toBe("");
+    expect(p4?.swarm_reviews?.[0]?.event_type).toBe("");
+    expect(p4?.swarm_reviews?.[0]?.sent_at).toBe("");
+    expect(p4?.ai_shelved_cls).toEqual([]);
+    expect(p4?.swarm_change_cls).toEqual([]);
+    expect(p4?.swarm_committed_cls).toEqual([]);
+    expect(p4?.external_committed_cls).toEqual([]);
+    expect(p4?.prediction_reasons).toEqual([]);
+    expect(p4?.warnings).toEqual([]);
+  });
+
   it("returns the fallback (never throws) when a field has the wrong type", () => {
     // issue_status arriving as a number is a hard schema violation; the UI
     // path must degrade to the fallback rather than throw a white-screen.
@@ -474,6 +657,113 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
       { endpoint: "GET /api/operations/agent-fixes (test)" },
     );
     expect(parsed).toEqual([]);
+  });
+
+  it("coerces a non-array CL field (agent emitted a bare string) to [] instead of blanking the row", () => {
+    // Regression: an assessment where swarm_reviews[].commits arrived as the
+    // string "unknown" failed z.array() and collapsed the ENTIRE feed to the
+    // empty fallback ("暂无记录"). The field must degrade to [], row intact.
+    const parsed = AgentFixRecordListSchema.parse([
+      {
+        task_id: "t1",
+        issue_status: "done",
+        p4_assessment: {
+          assessment_status: "completed",
+          delivery_attribution_prediction: "human_delivered",
+          quality_prediction: "likely_wrong",
+          ai_shelved_cls: "unknown",
+          swarm_reviews: [
+            { review: 259294, status: "pending", commits: "unknown", changes: "n/a" },
+          ],
+        },
+      },
+    ]);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.p4_assessment?.ai_shelved_cls).toEqual([]);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.commits).toEqual([]);
+    expect(parsed[0]?.p4_assessment?.swarm_reviews?.[0]?.changes).toEqual([]);
+  });
+
+  it("drops only the malformed row, keeping valid rows (one bad record never blanks the table)", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      { task_id: "good-1", issue_status: "done" },
+      "garbage-not-an-object",
+      { task_id: "bad", issue_status: 123 }, // number where string required
+      { task_id: "good-2", issue_status: "in_review" },
+    ]);
+    expect(parsed.map((r) => r.task_id)).toEqual(["good-1", "good-2"]);
+  });
+
+  it("drops non-string prediction_reasons/warnings entries and non-object swarm reviews", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      {
+        task_id: "t1",
+        p4_assessment: {
+          prediction_reasons: ["ok", 42, null, "fine"],
+          warnings: "not-an-array",
+          swarm_reviews: ["junk", { review_id: "SW-1" }, 7],
+        },
+      },
+    ]);
+    const p4 = parsed[0]?.p4_assessment;
+    expect(p4?.prediction_reasons).toEqual(["ok", "fine"]);
+    expect(p4?.warnings).toEqual([]);
+    expect(p4?.swarm_reviews).toHaveLength(1);
+    expect(p4?.swarm_reviews?.[0]?.review_id).toBe("SW-1");
+  });
+
+  it("parses the P4 assessment trigger response with drift-tolerant defaults", () => {
+    const parsed = TriggerAgentFixP4AssessmentResponseSchema.parse({
+      created: true,
+      assessment_id: "assessment-1",
+      task_id: "task-1",
+    });
+    expect(parsed).toEqual({
+      created: true,
+      reason: "",
+      assessment_id: "assessment-1",
+      assessment_status: "",
+      task_id: "task-1",
+    });
+    const fallback = parseWithFallback(
+      { created: "yes" },
+      TriggerAgentFixP4AssessmentResponseSchema,
+      { created: false, reason: "", assessment_status: "" },
+      { endpoint: "POST /api/operations/agent-fixes/p4-assessments (test)" },
+    );
+    expect(fallback).toEqual({
+      created: false,
+      reason: "",
+      assessment_status: "",
+    });
+  });
+
+  it("parses the human review response with drift-tolerant defaults", () => {
+    const parsed = AgentFixHumanReviewSchema.parse({
+      outcome: "accepted",
+      reasons: ["complete_usable"],
+    });
+    expect(parsed).toEqual({
+      outcome: "accepted",
+      reasons: ["complete_usable"],
+      note: "",
+      reviewer_id: "",
+      reviewed_at: null,
+    });
+
+    const fallback = parseWithFallback(
+      { outcome: "accepted", reasons: "complete_usable" },
+      AgentFixHumanReviewSchema,
+      { outcome: "", reasons: [], note: "", reviewer_id: "", reviewed_at: null },
+      { endpoint: "PATCH /api/operations/agent-fixes/:bindingId/review (test)" },
+    );
+    expect(fallback).toEqual({
+      outcome: "",
+      reasons: [],
+      note: "",
+      reviewer_id: "",
+      reviewed_at: null,
+    });
   });
 });
 
@@ -518,6 +808,24 @@ describe("AppConfigSchema cdn_signed drift", () => {
     const parsed = AppConfigSchema.parse({ cdn_signed: true });
     expect(parsed.cdn_signed).toBe(true);
   });
+
+  it("parses frontend feature flag decisions", () => {
+    const parsed = AppConfigSchema.parse({
+      feature_flags: {
+        composio_mcp_apps: true,
+        malformed_future_flag: "yes",
+      },
+    });
+    expect(parsed.feature_flags).toEqual({
+      composio_mcp_apps: true,
+      malformed_future_flag: false,
+    });
+  });
+
+  it("defaults malformed feature_flags to an empty object", () => {
+    const parsed = AppConfigSchema.parse({ feature_flags: ["not", "an", "object"] });
+    expect(parsed.feature_flags).toEqual({});
+  });
 });
 
 describe("InboxUnreadSummarySchema", () => {
@@ -557,5 +865,55 @@ describe("InboxUnreadSummarySchema", () => {
         ENDPOINT,
       ),
     ).toBe(EMPTY_INBOX_UNREAD_SUMMARY);
+  });
+});
+
+describe("WorkspaceCapabilitySchema", () => {
+  const ENDPOINT = { endpoint: "GET /api/workspaces/:id/capabilities/:capability" };
+
+  it("parses a well-formed capability and tolerates unknown extra fields", () => {
+    const parsed = parseWithFallback(
+      {
+        capability: "p4_assessment",
+        agent_id: "agent-1",
+        agent_name: "Assessor",
+        project_id: null,
+        max_concurrent_tasks: 2,
+        created_at: "2026-07-01T00:00:00Z",
+        future_field: "ignored",
+      },
+      WorkspaceCapabilitySchema,
+      EMPTY_WORKSPACE_CAPABILITY,
+      ENDPOINT,
+    );
+    expect(parsed.agent_id).toBe("agent-1");
+    expect(parsed.agent_name).toBe("Assessor");
+    expect(parsed.max_concurrent_tasks).toBe(2);
+  });
+
+  it("defaults optional fields missing from an older backend", () => {
+    const parsed = parseWithFallback(
+      { capability: "p4_assessment", agent_id: "agent-1" },
+      WorkspaceCapabilitySchema,
+      EMPTY_WORKSPACE_CAPABILITY,
+      ENDPOINT,
+    );
+    expect(parsed.agent_name).toBe("");
+    expect(parsed.project_id).toBeNull();
+    expect(parsed.max_concurrent_tasks).toBe(1);
+  });
+
+  it("returns the empty fallback for a wrong-typed body (renders as not configured)", () => {
+    expect(
+      parseWithFallback(
+        { capability: "p4_assessment", agent_id: 42 },
+        WorkspaceCapabilitySchema,
+        EMPTY_WORKSPACE_CAPABILITY,
+        ENDPOINT,
+      ),
+    ).toBe(EMPTY_WORKSPACE_CAPABILITY);
+    expect(
+      parseWithFallback(null, WorkspaceCapabilitySchema, EMPTY_WORKSPACE_CAPABILITY, ENDPOINT),
+    ).toBe(EMPTY_WORKSPACE_CAPABILITY);
   });
 });

@@ -26,6 +26,12 @@
     "none": "No stage",
     "value": "Stage {{n}}"
   },
+  "p4_assessment": {
+    "p4": "P4",
+    "ai": "AI assessment",
+    "review": "Human review",
+    "open": "Assessment"
+  },
   "scope": {
     "all_label": "All",
     "all_description": "All issues in this workspace",
@@ -90,7 +96,8 @@
     "card_due_date": "Due date",
     "card_project": "Project",
     "card_labels": "Labels",
-    "card_child_progress": "Sub-issue progress"
+    "card_child_progress": "Sub-issue progress",
+    "show_sub_issues": "Show sub-issues"
   },
   "view": {
     "tooltip_board": "Board view",
@@ -346,6 +353,8 @@
   "agent_activity": {
     "hover_header_one": "{{count}} agent working",
     "hover_header_other": "{{count}} agents working",
+    "hover_header_tasks_one": "{{count}} task working",
+    "hover_header_tasks_other": "{{count}} tasks working",
     "hover_header_queued_one": "{{count}} agent queued",
     "hover_header_queued_other": "{{count}} agents queued",
     "status_running": "Working",

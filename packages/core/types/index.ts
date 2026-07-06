@@ -4,6 +4,9 @@ export type {
   AgentStatus,
   AgentRuntimeMode,
   AgentVisibility,
+  AgentPermissionMode,
+  AgentInvocationTarget,
+  AgentInvocationTargetInput,
   AgentTask,
   AgentActivityBucket,
   AgentRunCount,
@@ -41,6 +44,10 @@ export type {
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
   AgentFixRecord,
+  AgentFixHumanReview,
+  TriggerAgentFixP4AssessmentRequest,
+  TriggerAgentFixP4AssessmentResponse,
+  UpdateAgentFixReviewRequest,
   RuntimeUpdate,
   RuntimeUpdateStatus,
   RuntimeModel,
@@ -61,7 +68,7 @@ export type {
   IssueUsageSummary,
 } from "./agent";
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES } from "./agent";
-export type { Workspace, WorkspaceRepo, Member, MemberRole, User, MemberWithUser, Invitation } from "./workspace";
+export type { Workspace, WorkspaceRepo, WorkspaceCapability, Member, MemberRole, User, MemberWithUser, Invitation } from "./workspace";
 export type { InboxItem, InboxSeverity, InboxItemType, InboxWorkspaceUnread } from "./inbox";
 export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences, NotificationPreferenceResponse } from "./notification-preference";
 export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, Reaction } from "./comment";
@@ -148,12 +155,25 @@ export type {
   RedeemLarkBindingTokenResponse,
 } from "./lark";
 export type {
+  ComposioToolkit,
+  ComposioConnection,
+  ComposioConnectInitResponse,
+} from "./composio";
+export type {
+  SlackInstallation,
+  ListSlackInstallationsResponse,
+  RegisterSlackBYORequest,
+  RedeemSlackBindingTokenResponse,
+} from "./slack";
+export type {
   Autopilot,
   AutopilotStatus,
   AutopilotExecutionMode,
   AutopilotAssigneeType,
   AutopilotSubscriber,
   AutopilotSubscriberInput,
+  AutopilotCollaborator,
+  AutopilotCollaboratorsResponse,
   AutopilotTrigger,
   AutopilotTriggerKind,
   AutopilotRun,

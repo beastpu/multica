@@ -517,6 +517,102 @@ func TestProjectsAndResourcesSkillCoversDurableContext(t *testing.T) {
 	}
 }
 
+func TestAgentFixP4AssessmentSkillCoversReadOnlyAssessmentContract(t *testing.T) {
+	skill, ok := findSkill(t, "multica-agent-fix-p4-assessment")
+	if !ok {
+		return
+	}
+	fm, body, _ := splitFrontmatter(skill.Content)
+
+	if got := strings.TrimSpace(fm["user-invocable"]); got != "false" {
+		t.Errorf("user-invocable = %q, want false", got)
+	}
+	if got := strings.TrimSpace(fm["allowed-tools"]); !strings.Contains(got, "Bash(multica *)") || !strings.Contains(got, "Bash(p4 *)") {
+		t.Errorf("allowed-tools = %q, want multica and read-only P4 access", got)
+	}
+
+	mustContain := []string{
+		// Native task flow (plan C-1): one assigned assessment issue per run,
+		// plain curl over the task-env HTTP surface — no dependency on any
+		// installed multica CLI subcommand, and no batch pull/submit loop.
+		"one issue per run",
+		"ONLY on your own assessment issue",
+		"/api/operations/agent-fixes/<binding_id>/p4-assessment/result",
+		"MULTICA_TOKEN",
+		"X-Task-ID: $MULTICA_TASK_ID",
+		"do NOT depend on any `multica`",
+		"/api/operations/agent-fixes/<binding_id>/p4-evidence",
+		"Read-only inner-network lookup",
+		"Do not write Multica issue comments",
+		"Do not change issue status",
+		"Do not write `agent_fix_review`",
+		"Do not mutate Feishu or Meego",
+		"Do not mutate P4 or Swarm",
+		"AI shelve CL",
+		"Swarm companion CL",
+		"human continuation CL",
+		"final submitted CL",
+		"Compare Implementations",
+		"`p4 describe -du <submitted_cl>`",
+		"`evidence.implementation_comparison`",
+		"`method_equivalence`: `equivalent` or `not_equivalent`",
+		"There is no middle state",
+		"method-equivalent to the AI/Swarm",
+		"external_fields are compatibility evidence",
+		"`cl_candidates[]`",
+		"`review_candidates[]`",
+		"`flow_cl`",
+		"`flow_review`",
+		"`comments[]` are Multica issue comments, not Feishu/Meego comments",
+		"`external_comments[]`",
+		"`_field_linked_story`",
+		"`external_evidence_errors[]`",
+		"Do not call Feishu/Meego APIs",
+		"p4 describe -S -s <shelved_cl>",
+		"`p4 opened -c <cl>` can say no files are",
+		"Swarm read APIs may return `Unauthorized`",
+		"swarm_lookup_unavailable",
+		"swarm_review_not_committed",
+		"missing_external_cl",
+		"`changes[]` only proves review",
+		"Swarm `commits[]`",
+		"`swarm_branch`, `event_type`, and `sent_at` as supporting context only",
+		"restricted `raw_payload`",
+		"Do not include fields outside this schema",
+		"does not introduce GitHub PR support",
+		"delivery_attribution_prediction",
+		"quality_prediction",
+		"unknown",
+		"warnings",
+		"references/p4-assessment-source-map.md",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(body, want) {
+			t.Errorf("agent-fix-p4-assessment skill missing %q", want)
+		}
+	}
+
+	mustNotContain := []string{
+		"p4 submit",
+		"p4 shelve",
+		"multica issue comment add",
+		// The batch pull/lease/submit-by-ref loop is retired (plan C-1); the
+		// skill must no longer teach it.
+		"/api/operations/assessments/pending",
+		"/api/operations/assessments/result",
+		"lease_expires_at",
+	}
+	for _, forbidden := range mustNotContain {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("agent-fix-p4-assessment skill should not include executable write path %q", forbidden)
+		}
+	}
+
+	if !skillHasFile(skill, "references/p4-assessment-source-map.md") {
+		t.Errorf("agent-fix-p4-assessment skill missing supporting file references/p4-assessment-source-map.md")
+	}
+}
+
 func findSkill(t *testing.T, name string) (AgentSkillData, bool) {
 	t.Helper()
 	for _, s := range loadBuiltinSkills() {

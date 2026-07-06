@@ -34,7 +34,11 @@ var (
 
 func newNamedRedisClient(base *redis.Options, suffix string) *redis.Client {
 	opts := *base
-	opts.ClientName = redisClientName(opts.ClientName, suffix)
+	if envBool("REDIS_DISABLE_CLIENT_NAME", false) {
+		opts.ClientName = ""
+	} else {
+		opts.ClientName = redisClientName(opts.ClientName, suffix)
+	}
 	return redis.NewClient(&opts)
 }
 
@@ -63,6 +67,7 @@ func shardedRelayConfigFromEnv() realtime.ShardedStreamRelayConfig {
 	cfg.StreamMaxLen = envPositiveInt64("REALTIME_RELAY_STREAM_MAXLEN", cfg.StreamMaxLen)
 	cfg.ReadCount = envPositiveInt64("REALTIME_RELAY_XREAD_COUNT", cfg.ReadCount)
 	cfg.ReadBlock = envDuration("REALTIME_RELAY_XREAD_BLOCK", cfg.ReadBlock)
+	cfg.ReplayGrace = envDuration("REALTIME_RELAY_REPLAY_GRACE", cfg.ReplayGrace)
 	return cfg
 }
 
@@ -115,6 +120,19 @@ func envDuration(name string, def time.Duration) time.Duration {
 	v, err := time.ParseDuration(raw)
 	if err != nil || v <= 0 {
 		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def.String(), "error", err)
+		return def
+	}
+	return v
+}
+
+func envBool(name string, def bool) bool {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def, "error", err)
 		return def
 	}
 	return v
@@ -224,6 +242,9 @@ func main() {
 		if err != nil {
 			slog.Error("invalid REDIS_URL — falling back to in-memory hub", "error", err)
 		} else {
+			if envBool("REDIS_DISABLE_CLIENT_NAME", false) {
+				slog.Info("redis: CLIENT SETNAME disabled (REDIS_DISABLE_CLIENT_NAME=true) for managed Redis compatibility")
+			}
 			storeRedis = newNamedRedisClient(opts, "store")
 			relayWriteRedis = newNamedRedisClient(opts, "realtime-write")
 
@@ -359,6 +380,13 @@ func main() {
 	taskSvc := service.NewTaskService(queries, pool, hub, bus, daemonWakeup)
 	taskSvc.Analytics = analyticsClient
 	taskSvc.Metrics = businessMetrics
+	// The Feishu Project sync worker (started below) reads taskSvc.P4Assessment
+	// to backfill and trigger P4 assessments. handler.New wires its own
+	// TaskService identically; this is the parallel wiring for the worker-side
+	// instance. Without it the worker boxes a nil *P4AssessmentService into the
+	// trigger interface (a typed nil that passes != nil checks) and panics in
+	// BackfillDoneBindings on the first done binding.
+	taskSvc.P4Assessment = service.NewP4AssessmentService(queries, pool, taskSvc)
 	autopilotSvc := service.NewAutopilotService(queries, pool, bus, taskSvc)
 	registerAutopilotListeners(bus, autopilotSvc)
 

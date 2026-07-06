@@ -10,10 +10,8 @@ import enAgents from "../../../locales/en/agents.json";
 import enSettings from "../../../locales/en/settings.json";
 
 // IntegrationsTab's job is to pick which copy sits beside the bind entry
-// based on (configured / install_supported / role). The bind entry itself
-// is the shared LarkAgentBindButton, exhaustively covered in
-// lark-tab.test.tsx — here we stub it to a marker so the tests assert the
-// branch selection, not the install flow.
+// based on (configured / install_supported / role). The bind entries
+// themselves are covered by their settings-tab tests; here they are markers.
 type MemberRole = "owner" | "admin" | "member" | "guest";
 
 const membersRef = vi.hoisted(() => ({
@@ -26,15 +24,24 @@ const installationsRef = vi.hoisted(() => ({
     install_supported: true,
   },
 }));
+const slackInstallationsRef = vi.hoisted(() => ({
+  current: {
+    installations: [] as unknown[],
+    configured: true,
+    install_supported: true,
+  },
+}));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (opts: { queryKey: unknown[]; enabled?: boolean }) => {
     if (opts.enabled === false) return { data: undefined };
     const key = JSON.stringify(opts.queryKey);
     if (key.includes("members")) return { data: membersRef.current };
+    if (key.includes("slack")) return { data: slackInstallationsRef.current };
     if (key.includes("installations")) return { data: installationsRef.current };
     return { data: undefined };
   },
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   queryOptions: <T,>(opts: T) => opts,
 }));
 
@@ -53,6 +60,13 @@ vi.mock("@multica/core/lark", () => ({
   }),
 }));
 
+vi.mock("@multica/core/slack", () => ({
+  slackInstallationsOptions: () => ({
+    queryKey: ["slack", "installations"],
+    queryFn: vi.fn(),
+  }),
+}));
+
 vi.mock("@multica/core/auth", () => {
   const useAuthStore = Object.assign(
     (sel?: (s: { user: { id: string } }) => unknown) =>
@@ -65,6 +79,12 @@ vi.mock("@multica/core/auth", () => {
 vi.mock("../../../settings/components/lark-tab", () => ({
   LarkAgentBindButton: ({ agentId }: { agentId: string }) => (
     <div data-testid="lark-bind-button" data-agent-id={agentId} />
+  ),
+}));
+
+vi.mock("../../../settings/components/slack-tab", () => ({
+  SlackAgentBindButton: ({ agentId }: { agentId: string }) => (
+    <div data-testid="slack-bind-button" data-agent-id={agentId} />
   ),
 }));
 
@@ -86,6 +106,8 @@ const agent: Agent = {
   runtime_config: {},
   custom_args: [],
   visibility: "workspace",
+  permission_mode: "public_to",
+  invocation_targets: [{ target_type: "workspace", target_id: null }],
   status: "idle",
   max_concurrent_tasks: 1,
   model: "",
@@ -113,19 +135,25 @@ function resetFixtures() {
     configured: true,
     install_supported: true,
   };
+  slackInstallationsRef.current = {
+    installations: [],
+    configured: true,
+    install_supported: true,
+  };
 }
 
 describe("IntegrationsTab", () => {
   beforeEach(resetFixtures);
 
-  it("renders the shared bind entry for an owner when Lark is configured and supported", () => {
+  it("renders the shared bind entry for both platforms for an owner when configured and supported", () => {
     renderTab(<IntegrationsTab agent={agent} />);
     expect(screen.getByText("Lark")).toBeTruthy();
-    const button = screen.getByTestId("lark-bind-button");
-    expect(button.getAttribute("data-agent-id")).toBe("agent-1");
+    expect(screen.getByText("Slack")).toBeTruthy();
+    expect(screen.getByTestId("lark-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
+    expect(screen.getByTestId("slack-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
   });
 
-  it("shows the coming-soon notice when the install transport is not wired", () => {
+  it("shows the coming-soon notice when the Lark install transport is not wired", () => {
     installationsRef.current = {
       installations: [],
       configured: true,
@@ -151,25 +179,24 @@ describe("IntegrationsTab", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     renderTab(<IntegrationsTab agent={agent} />);
     expect(screen.getByTestId("lark-bind-button")).toBeTruthy();
+    expect(screen.getByTestId("slack-bind-button")).toBeTruthy();
   });
 
-  it("points members at Settings instead of a dead button when they don't own the agent", () => {
+  it("points members at Settings with one role notice when they cannot manage the agent", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     renderTab(
       <IntegrationsTab agent={{ ...agent, owner_id: "someone-else" }} />,
     );
     expect(
       screen.getByText(
-        /Only the agent owner or workspace owners and admins can bind a Lark Bot/i,
+        /Only the agent owner or workspace owners and admins can bind/i,
       ),
     ).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
+    expect(screen.queryByTestId("slack-bind-button")).toBeNull();
   });
 
   it("renders the bind entry (not coming-soon) when installs are unavailable but the agent is already bound", () => {
-    // install_supported governs only NEW installs; an already-bound agent
-    // must still surface its connected state instead of "coming soon"
-    // (regression for the must-fix on MUL-2988).
     installationsRef.current = {
       installations: [{ agent_id: "agent-1", status: "active" }],
       configured: true,

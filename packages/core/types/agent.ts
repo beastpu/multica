@@ -4,6 +4,47 @@ export type AgentRuntimeMode = "local" | "cloud";
 
 export type AgentVisibility = "workspace" | "private";
 
+// ---------------------------------------------------------------------------
+// Agent invocation permissions (MUL-3963)
+//
+// `permission_mode` + `invocation_targets` are the AUTHORITATIVE gate for who
+// may TRIGGER / assign / @mention / chat an agent. The legacy `visibility`
+// field REMAINS but is now DERIVED on the backend from these two: a
+// `public_to` agent WITH a workspace target maps to `visibility: "workspace"`;
+// everything else (private, or public_to scoped only to member/team targets)
+// maps to `visibility: "private"`.
+//
+// Invocation semantics:
+//   - owner: always
+//   - permission_mode "private": ONLY the owner (workspace admins no longer
+//     bypass — the key behavior change vs the old visibility model)
+//   - permission_mode "public_to" + workspace target: any workspace member
+//   - permission_mode "public_to" + member target: only the matching user
+//   - team target: reserved, INERT in v1 (never grants)
+// ---------------------------------------------------------------------------
+
+export type AgentPermissionMode = "private" | "public_to";
+
+/**
+ * A single invocation grant on an agent. `target_id` is `null` for the
+ * workspace target (the grant covers every workspace member); it carries the
+ * member / team id for the scoped grants.
+ */
+export interface AgentInvocationTarget {
+  target_type: "workspace" | "member" | "team";
+  target_id: string | null;
+}
+
+/**
+ * Wire shape for invocation targets on CREATE / UPDATE requests. For a
+ * workspace target the client may omit `target_id` (the backend fills the
+ * workspace id); member / team targets REQUIRE it.
+ */
+export interface AgentInvocationTargetInput {
+  target_type: "workspace" | "member" | "team";
+  target_id?: string;
+}
+
 // Runtime visibility is a separate axis from agent visibility — different
 // vocabulary because it gates a different action. "private" (default) means
 // only the runtime owner and workspace admins can bind agents to it;
@@ -68,6 +109,7 @@ export const RUNTIME_PROFILE_PROTOCOL_FAMILIES = [
   "kimi",
   "kiro",
   "antigravity",
+  "qoder",
 ] as const;
 
 export type RuntimeProtocolFamily =
@@ -281,7 +323,36 @@ export interface Agent {
    * Older backends omit this field; treat `undefined` as false.
    */
   mcp_config_redacted?: boolean;
+  /**
+   * The subset of Composio toolkit slugs this agent is allowed to mount as
+   * MCP servers at task dispatch — but only when the run originator is the
+   * agent owner (MUL-3869 / MUL-3721). `null`/`[]`/omitted all mean "no
+   * overlay regardless of who triggers". Owner-only data: the server hands
+   * it through verbatim to the owner and redacts it to `undefined` +
+   * `composio_toolkit_allowlist_redacted=true` for everyone else (same
+   * contract as `mcp_config`). Treat `undefined` as "unknown — assume none".
+   */
+  composio_toolkit_allowlist?: string[];
+  /**
+   * True when the server stripped `composio_toolkit_allowlist` from this
+   * response because the caller is not the agent owner. The MCP tab is
+   * creator-only so a redacted value should never reach the editor, but the
+   * UI renders a "hidden" fallback defensively. Older backends omit this
+   * field; treat `undefined` as false.
+   */
+  composio_toolkit_allowlist_redacted?: boolean;
   visibility: AgentVisibility;
+  /**
+   * Authoritative invocation permission mode (MUL-3963). The `visibility`
+   * field above is DERIVED from this on the backend. The current backend
+   * always returns this field.
+   */
+  permission_mode: AgentPermissionMode;
+  /**
+   * Invocation grants backing `permission_mode === "public_to"` (empty for a
+   * private agent). See `AgentInvocationTarget`.
+   */
+  invocation_targets: AgentInvocationTarget[];
   status: AgentStatus;
   max_concurrent_tasks: number;
   model: string;
@@ -327,6 +398,16 @@ export interface CreateAgentRequest {
   custom_env?: Record<string, string>;
   custom_args?: string[];
   visibility?: AgentVisibility;
+  /**
+   * Invocation permission mode (MUL-3963). When present it is authoritative;
+   * when absent the backend maps the legacy `visibility` field
+   * (private -> private, workspace -> public_to + workspace target). On
+   * UPDATE, permission changes are OWNER-ONLY (the backend silently ignores
+   * these fields from non-owner admins).
+   */
+  permission_mode?: AgentPermissionMode;
+  /** Invocation grants — see `AgentInvocationTargetInput`. */
+  invocation_targets?: AgentInvocationTargetInput[];
   max_concurrent_tasks?: number;
   model?: string;
   /** Optional runtime-native reasoning/effort token. See `Agent.thinking_level`. */
@@ -377,6 +458,16 @@ export interface CreateAgentFromTemplateRequest {
   runtime_id: string;
   model?: string;
   visibility?: AgentVisibility;
+  /**
+   * Invocation permission mode (MUL-3963). When present it is authoritative;
+   * when absent the backend maps the legacy `visibility` field
+   * (private -> private, workspace -> public_to + workspace target). On
+   * UPDATE, permission changes are OWNER-ONLY (the backend silently ignores
+   * these fields from non-owner admins).
+   */
+  permission_mode?: AgentPermissionMode;
+  /** Invocation grants — see `AgentInvocationTargetInput`. */
+  invocation_targets?: AgentInvocationTargetInput[];
   max_concurrent_tasks?: number;
   /** Optional overrides applied to the template before creation. nil/omit
    *  uses the template's own value. */
@@ -432,7 +523,29 @@ export interface UpdateAgentRequest {
    *     validate / translate it according to their own MCP integration
    */
   mcp_config?: unknown | null;
+  /**
+   * Composio toolkit allowlist. Tri-state semantics, mirroring the backend
+   * gate (MUL-3869):
+   *   - field omitted → no change
+   *   - `null` → clear the column (no MCP overlay for anyone)
+   *   - string[] → wholesale replace; the server lowercases / trims / dedupes
+   *     the slugs before persisting
+   * Writes are silently dropped server-side unless the caller is the agent
+   * owner, so the UI only ever exposes this field through the creator-only
+   * MCP tab.
+   */
+  composio_toolkit_allowlist?: string[] | null;
   visibility?: AgentVisibility;
+  /**
+   * Invocation permission mode (MUL-3963). When present it is authoritative;
+   * when absent the backend maps the legacy `visibility` field
+   * (private -> private, workspace -> public_to + workspace target). On
+   * UPDATE, permission changes are OWNER-ONLY (the backend silently ignores
+   * these fields from non-owner admins).
+   */
+  permission_mode?: AgentPermissionMode;
+  /** Invocation grants — see `AgentInvocationTargetInput`. */
+  invocation_targets?: AgentInvocationTargetInput[];
   status?: AgentStatus;
   max_concurrent_tasks?: number;
   model?: string;
@@ -632,9 +745,8 @@ export interface DashboardRunTimeDaily {
 
 // One row of the Usage page's Operations tab: one issue an agent has worked
 // on, carrying only the LATEST agent run for that issue. `issue_status` is the
-// issue's workflow status (the "状态" column); `last_comment` is the issue's
-// most recent comment/reply (member or agent — the "原因/描述" column),
-// truncated to a short leading snippet. Backed by GET /api/operations/agent-fixes.
+// issue's workflow status; `last_comment` is the agent's most recent issue
+// comment, truncated by the API. Backed by GET /api/operations/agent-fixes.
 export interface AgentFixRecord {
   task_id: string;
   agent_id: string;
@@ -644,12 +756,103 @@ export interface AgentFixRecord {
   issue_title: string;
   // Issue workflow status: backlog/todo/in_progress/in_review/done/blocked/cancelled.
   issue_status: string;
-  // Most recent comment on the issue (truncated). Empty/absent when none.
+  // Most recent agent comment on the issue (truncated). Empty/absent when none.
   last_comment?: string;
-  last_comment_author_type?: string; // "member" | "agent"
+  last_comment_author_type?: string; // "agent" or ""
+  // Total agent comments on the issue. Absent on older servers (fall back to
+  // last_comment) and when zero (omitempty).
+  agent_comment_count?: number;
+  // The latest run's own state: queued/running/completed/failed/timeout plus
+  // the structured taskfailure code (e.g. "agent_error.provider_auth_or_access")
+  // when it failed. Absent on older servers and binding-only rows.
+  task_status?: string;
+  task_failure_reason?: string;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  // The instant the feed's trailing window filtered on (external item's last
+  // update when bound, else latest run activity). KPI/trend windowing splits
+  // on this; absent on older servers, in which case run timestamps are used.
+  activity_at?: string;
+  external?: AgentFixExternalRecord;
+  p4_assessment?: AgentFixP4Assessment;
+  human_review?: AgentFixHumanReview;
+  display_result_status?: string;
+  ai_judgement_eval?: string;
+}
+
+export interface AgentFixExternalRecord {
+  binding_id?: string;
+  work_item_id?: string;
+  status?: string;
+  status_name?: string;
+  mapped_status?: string;
+  done?: boolean;
+  project?: string;
+  version?: string;
+  workstream?: string;
+  final_cl?: string;
+  url?: string;
+}
+
+export interface AgentFixP4Assessment {
+  assessment_status?: string;
+  delivery_attribution_prediction?: string;
+  quality_prediction?: string;
+  prediction_reasons?: string[];
+  confidence?: number | null;
+  workstream?: string;
+  swarm_reviews?: AgentFixSwarmReview[];
+  ai_shelved_cls?: Array<string | number>;
+  swarm_change_cls?: Array<string | number>;
+  swarm_committed_cls?: Array<string | number>;
+  external_committed_cls?: Array<string | number>;
+  summary?: string;
+  warnings?: string[];
+  // Queue observability: run starts so far, the last failure reason
+  // (cleared on completion), and the agent whose task ran the assessment.
+  attempt_count?: number;
+  last_error?: string;
+  assessment_agent_name?: string;
+}
+
+export interface AgentFixSwarmReview {
+  id?: string | number;
+  review_id?: string | number;
+  state?: string;
+  url?: string;
+  changes?: Array<string | number>;
+  commits?: Array<string | number>;
+  swarm_branch?: string;
+  event_type?: string;
+  sent_at?: string;
+}
+
+export interface AgentFixHumanReview {
+  outcome?: string;
+  reasons?: string[];
+  note?: string;
+  reviewer_id?: string;
+  reviewed_at?: string | null;
+}
+
+export interface UpdateAgentFixReviewRequest {
+  outcome: string;
+  reasons?: string[];
+  note?: string;
+}
+
+export interface TriggerAgentFixP4AssessmentRequest {
+  binding_id: string;
+  force?: boolean;
+}
+
+export interface TriggerAgentFixP4AssessmentResponse {
+  created: boolean;
+  reason: string;
+  assessment_id?: string;
+  assessment_status?: string;
+  task_id?: string;
 }
 
 export type RuntimeUpdateStatus =

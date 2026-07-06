@@ -38,6 +38,41 @@ ON CONFLICT (workspace_id, agent_id, channel_type) DO UPDATE SET
     updated_at        = now()
 RETURNING *;
 
+-- name: UpsertChannelInstallationByAppID :one
+-- Team-keyed install / re-install for channels whose natural identity is the
+-- platform workspace, not the (agent) pairing. Slack: one Slack workspace
+-- (team_id, stored as config->>'app_id') maps to exactly one installation, so
+-- re-connecting it — even to represent a DIFFERENT agent in the SAME Multica
+-- workspace — UPDATES the existing row (moving agent_id) instead of colliding
+-- with the (channel_type, app_id) unique index. Contrast UpsertChannelInstallation,
+-- whose conflict key is (workspace_id, agent_id, channel_type): right for Feishu
+-- (one app per agent), wrong for Slack.
+--
+-- The `WHERE channel_installation.workspace_id = EXCLUDED.workspace_id` fences
+-- the conflict update to the SAME Multica workspace: a team already owned by a
+-- DIFFERENT workspace updates no row and RETURNING is empty (pgx.ErrNoRows),
+-- which the caller maps to ErrTeamOwnedByAnotherWorkspace. This is the ATOMIC
+-- cross-workspace guard — a plain SELECT before the upsert cannot stop two
+-- workspaces racing to OAuth the same team (both read no rows, then one inserts
+-- and the other's conflict-update would silently steal it). A re-connect that
+-- would move the team to an agent already holding a different Slack install in
+-- the same workspace still trips the (workspace_id, agent_id, channel_type)
+-- unique constraint — a genuine conflict the OAuth callback turns into a redirect.
+INSERT INTO channel_installation (
+    workspace_id, agent_id, channel_type, config, installer_user_id
+) VALUES (
+    $1, $2, $3, $4, $5
+)
+ON CONFLICT (channel_type, (config ->> 'app_id')) DO UPDATE SET
+    agent_id          = EXCLUDED.agent_id,
+    config            = EXCLUDED.config,
+    installer_user_id = EXCLUDED.installer_user_id,
+    status            = 'active',
+    installed_at      = now(),
+    updated_at        = now()
+WHERE channel_installation.workspace_id = EXCLUDED.workspace_id
+RETURNING *;
+
 -- name: GetChannelInstallation :one
 -- Scoped by channel_type: a per-channel caller (e.g. the Feishu store)
 -- must never resolve another channel's installation by guessing its UUID.
@@ -192,12 +227,128 @@ RETURNING *;
 SELECT * FROM channel_user_binding
 WHERE installation_id = $1 AND channel_user_id = $2;
 
+-- name: ListActiveChannelLarkUserBindingsByMember :many
+-- Outbound inbox notifications: find the recipient's bound Feishu accounts in
+-- this workspace, with the active bot installation needed for credentials.
+-- The member join restores the membership proof that used to be guaranteed by
+-- lark_user_binding's composite FK before channel_* removed database FKs.
+SELECT sqlc.embed(cub), sqlc.embed(ci)
+FROM channel_user_binding cub
+JOIN channel_installation ci ON ci.id = cub.installation_id
+JOIN member m ON m.workspace_id = cub.workspace_id
+             AND m.user_id = cub.multica_user_id
+WHERE cub.workspace_id = $1
+  AND cub.multica_user_id = $2
+  AND cub.channel_type = 'feishu'
+  AND ci.channel_type = 'feishu'
+  AND ci.workspace_id = cub.workspace_id
+  AND ci.status = 'active'
+ORDER BY cub.bound_at DESC;
+
+-- name: FindReusableChannelUserBinding :one
+-- Cross-installation account-link reuse (MUL-3911). When a platform user
+-- messages an installation they have NOT linked, but the SAME user id is already
+-- bound to ANOTHER installation in the SAME Multica workspace + SAME Slack team,
+-- the inbound identity step reuses that link instead of re-prompting. Slack user
+-- ids are stable within a team, so an identical channel_user_id denotes the same
+-- human across that team's apps. The match is fenced to one workspace AND one
+-- team (installation config->>'team_id'): a Slack team can be connected to two
+-- different Multica workspaces, and a user may hold different Multica accounts in
+-- each, so reuse must cross neither boundary. Most-recently-bound wins. The
+-- caller re-checks membership and materializes a fresh per-installation binding.
+--
+-- team_id is pinned ::text so sqlc types the arg as a string instead of
+-- attributing the bare param to the JSONB config column (mirrors
+-- GetChannelInstallationByAppID's app_id cast).
+SELECT b.* FROM channel_user_binding b
+JOIN channel_installation ci ON ci.id = b.installation_id
+WHERE b.workspace_id = sqlc.arg('workspace_id')
+  AND b.channel_type = sqlc.arg('channel_type')
+  AND b.channel_user_id = sqlc.arg('channel_user_id')
+  AND ci.config ->> 'team_id' = sqlc.arg('team_id')::text
+ORDER BY b.bound_at DESC
+LIMIT 1;
+
 -- name: DeleteChannelUserBindingsByWorkspaceMember :exec
 -- Application-layer integrity (replaces the old member-FK ON DELETE
 -- CASCADE): prune every binding for a user who has been removed from a
 -- workspace, across all installations in that workspace.
 DELETE FROM channel_user_binding
 WHERE workspace_id = $1 AND multica_user_id = $2;
+
+-- =====================
+-- channel_inbox_notification_delivery
+-- =====================
+
+-- name: ClaimChannelLarkInboxNotificationDelivery :one
+-- Claims one outbound Feishu inbox notification delivery. Keyed by the durable
+-- inbox_item row plus concrete channel installation and recipient open_id so
+-- repeated inbox:new events, duplicate bus subscribers, or multi-replica
+-- handling cannot send duplicate DMs.
+WITH ins AS (
+    INSERT INTO channel_inbox_notification_delivery (
+        inbox_item_id,
+        installation_id,
+        channel_type,
+        channel_user_id
+    ) VALUES ($1, $2, 'feishu', $3)
+    ON CONFLICT DO NOTHING
+    RETURNING true AS claimed
+)
+SELECT COALESCE((SELECT claimed FROM ins), false)::boolean AS claimed;
+
+-- =====================
+-- channel_inbox_issue_card
+-- =====================
+
+-- name: GetChannelLarkInboxIssueCard :one
+SELECT *
+FROM channel_inbox_issue_card
+WHERE workspace_id = $1
+  AND recipient_id = $2
+  AND issue_id = $3
+  AND installation_id = $4
+  AND channel_type = 'feishu'
+  AND channel_user_id = $5;
+
+-- name: UpsertChannelLarkInboxIssueCard :one
+INSERT INTO channel_inbox_issue_card (
+    workspace_id,
+    recipient_id,
+    issue_id,
+    installation_id,
+    channel_type,
+    channel_user_id,
+    channel_card_message_id
+) VALUES ($1, $2, $3, $4, 'feishu', $5, $6)
+ON CONFLICT (
+    workspace_id,
+    recipient_id,
+    issue_id,
+    installation_id,
+    channel_type,
+    channel_user_id
+)
+DO UPDATE SET
+    channel_card_message_id = EXCLUDED.channel_card_message_id,
+    updated_at = now()
+RETURNING *;
+
+-- name: TouchChannelLarkInboxIssueCard :exec
+UPDATE channel_inbox_issue_card
+SET updated_at = now()
+WHERE id = $1;
+
+-- name: ListChannelLarkInboxIssueCardItems :many
+SELECT *
+FROM inbox_item
+WHERE workspace_id = $1
+  AND recipient_type = 'member'
+  AND recipient_id = $2
+  AND issue_id = $3
+  AND type = ANY(sqlc.arg('types')::text[])
+ORDER BY created_at ASC, id ASC
+LIMIT 20;
 
 -- =====================
 -- channel_chat_session_binding
@@ -245,6 +396,17 @@ WHERE chat_session_id = $1;
 -- CASCADE): drop the binding when its chat_session is deleted.
 DELETE FROM channel_chat_session_binding
 WHERE chat_session_id = $1;
+
+-- name: DeleteChannelChatSessionBindingsByInstallation :exec
+-- Retire every chat-session binding for an installation. Used when an
+-- installation is re-pointed to a different agent (Slack re-connect): each
+-- existing chat_session is permanently tied to the agent it was created under,
+-- so reusing it would keep routing the conversation to the OLD agent. Dropping
+-- the bindings forces the next inbound message to create a fresh session under
+-- the new agent. The chat_session rows are preserved for history; only the
+-- channel binding is removed.
+DELETE FROM channel_chat_session_binding
+WHERE installation_id = $1 AND channel_type = $2;
 
 -- =====================
 -- channel_inbound_message_dedup

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // LarkJSONFrameDecoder decodes the JSON event payload Lark nests
@@ -16,8 +17,8 @@ import (
 //
 // Three outcomes:
 //
-//   - (msg, true,  nil) — `im.message.receive_v1` event. The Hub
-//     forwards through the Dispatcher.
+//   - (msg, true,  nil) — `im.message.receive_v1` or Multica-owned
+//     `card.action.trigger` event. The Hub forwards through the Dispatcher.
 //   - (zero, false, nil) — heartbeat-shaped JSON or an event_type we
 //     don't yet handle (im.chat.access_event_v1, etc.). The connector
 //     drops these silently and still sends a 200 ACK to Lark so the
@@ -52,7 +53,11 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst Installation) (Inboun
 		return InboundMessage{}, false, nil
 	}
 
-	if env.Header.EventType != "im.message.receive_v1" {
+	switch env.Header.EventType {
+	case "im.message.receive_v1":
+	case "card.action.trigger":
+		return d.decodeCardActionTrigger(env)
+	default:
 		return InboundMessage{}, false, nil
 	}
 
@@ -116,6 +121,99 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst Installation) (Inboun
 	return msg, true, nil
 }
 
+func (d *LarkJSONFrameDecoder) decodeCardActionTrigger(env larkEventEnvelope) (InboundMessage, bool, error) {
+	if env.Event == nil {
+		return InboundMessage{}, false, errors.New("card.action.trigger with empty event payload")
+	}
+	var evt larkCardActionTriggerEvent
+	if err := json.Unmarshal(env.Event, &evt); err != nil {
+		return InboundMessage{}, false, fmt.Errorf("card action event: %w", err)
+	}
+	if value, ok := parseConfirmationCardValue(evt.Action.Value); ok {
+		operatorOpenID := evt.operatorOpenID()
+		if operatorOpenID == "" {
+			return InboundMessage{}, false, errors.New("card.action.trigger missing operator open_id")
+		}
+		return d.decodeChatConfirmationCardAction(env, evt, value, operatorOpenID)
+	}
+	if value, ok := parseIssueConfirmationCardValue(evt.Action.Value); ok {
+		operatorOpenID := evt.operatorOpenID()
+		if operatorOpenID == "" {
+			return InboundMessage{}, false, errors.New("card.action.trigger missing operator open_id")
+		}
+		return d.decodeIssueConfirmationCardAction(env, evt, value, operatorOpenID)
+	}
+	return InboundMessage{}, false, nil
+}
+
+func (d *LarkJSONFrameDecoder) decodeChatConfirmationCardAction(env larkEventEnvelope, evt larkCardActionTriggerEvent, value confirmationCardValue, operatorOpenID string) (InboundMessage, bool, error) {
+	if value.expired(time.Now()) {
+		return InboundMessage{}, false, nil
+	}
+	if value.AllowedOpenID != operatorOpenID {
+		return InboundMessage{}, false, nil
+	}
+	chatID := value.ChatID
+	if chatID == "" {
+		chatID = evt.chatID()
+	}
+	if chatID == "" {
+		return InboundMessage{}, false, errors.New("card.action.trigger missing chat_id")
+	}
+	messageID := evt.messageID()
+	if messageID == "" {
+		messageID = "card_action:" + value.TaskID + ":" + value.Action
+	}
+	body := strings.TrimSpace(value.Message)
+	if body == "" {
+		var ok bool
+		body, ok = confirmationActionMessage(value.Action, "")
+		if !ok {
+			return InboundMessage{}, false, nil
+		}
+	}
+	return InboundMessage{
+		EventType:      env.Header.EventType,
+		EventID:        env.Header.EventID,
+		AppID:          env.Header.AppID,
+		ChatID:         ChatID(chatID),
+		ChatType:       normalizeChatType(value.ChatType),
+		MessageID:      messageID,
+		SenderOpenID:   OpenID(operatorOpenID),
+		Body:           body,
+		CommandBody:    body,
+		MessageType:    "text",
+		CreateTime:     env.Header.CreateTime,
+		ThreadID:       value.ThreadID,
+		AddressedToBot: true,
+	}, true, nil
+}
+
+func (d *LarkJSONFrameDecoder) decodeIssueConfirmationCardAction(env larkEventEnvelope, evt larkCardActionTriggerEvent, value issueConfirmationCardValue, operatorOpenID string) (InboundMessage, bool, error) {
+	if value.expired(time.Now()) {
+		return InboundMessage{}, false, nil
+	}
+	if value.AllowedOpenID != operatorOpenID {
+		return InboundMessage{}, false, nil
+	}
+	action := value.toAction()
+	return InboundMessage{
+		EventType:    env.Header.EventType,
+		EventID:      env.Header.EventID,
+		AppID:        env.Header.AppID,
+		ChatID:       ChatID(evt.chatID()),
+		ChatType:     ChatTypeP2P,
+		MessageID:    value.dedupMessageID(operatorOpenID),
+		SenderOpenID: OpenID(operatorOpenID),
+		MessageType:  "interactive",
+		CreateTime:   env.Header.CreateTime,
+		CardAction: &InboundCardAction{
+			CardMessageID:     evt.messageID(),
+			IssueConfirmation: &action,
+		},
+	}, true, nil
+}
+
 // larkEventEnvelope mirrors the outer JSON Lark wraps every push in.
 type larkEventEnvelope struct {
 	Schema string          `json:"schema"`
@@ -162,6 +260,62 @@ type larkMessageReceiveEvent struct {
 		// is the signal that an @-mention happened inside a thread.
 		ThreadID string `json:"thread_id"`
 	} `json:"message"`
+}
+
+type larkCardActionTriggerEvent struct {
+	Operator struct {
+		OpenID     string        `json:"open_id"`
+		OperatorID larkUserIDRef `json:"operator_id"`
+		UserID     larkUserIDRef `json:"user_id"`
+	} `json:"operator"`
+	OpenID        string `json:"open_id"`
+	OpenMessageID string `json:"open_message_id"`
+	MessageID     string `json:"message_id"`
+	Context       struct {
+		OpenChatID    string `json:"open_chat_id"`
+		OpenMessageID string `json:"open_message_id"`
+		MessageID     string `json:"message_id"`
+	} `json:"context"`
+	Action struct {
+		Tag   string          `json:"tag"`
+		Value json.RawMessage `json:"value"`
+	} `json:"action"`
+}
+
+type larkUserIDRef struct {
+	OpenID  string `json:"open_id"`
+	UnionID string `json:"union_id"`
+	UserID  string `json:"user_id"`
+}
+
+func (e larkCardActionTriggerEvent) operatorOpenID() string {
+	switch {
+	case e.Operator.OperatorID.OpenID != "":
+		return e.Operator.OperatorID.OpenID
+	case e.Operator.UserID.OpenID != "":
+		return e.Operator.UserID.OpenID
+	case e.Operator.OpenID != "":
+		return e.Operator.OpenID
+	default:
+		return e.OpenID
+	}
+}
+
+func (e larkCardActionTriggerEvent) chatID() string {
+	return e.Context.OpenChatID
+}
+
+func (e larkCardActionTriggerEvent) messageID() string {
+	switch {
+	case e.Context.OpenMessageID != "":
+		return e.Context.OpenMessageID
+	case e.Context.MessageID != "":
+		return e.Context.MessageID
+	case e.OpenMessageID != "":
+		return e.OpenMessageID
+	default:
+		return e.MessageID
+	}
 }
 
 type larkMention struct {

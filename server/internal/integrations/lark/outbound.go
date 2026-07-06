@@ -146,6 +146,7 @@ type PatcherQueries interface {
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
 	GetLarkInstallation(ctx context.Context, id pgtype.UUID) (Installation, error)
 	GetLarkChatSessionBindingBySession(ctx context.Context, chatSessionID pgtype.UUID) (ChatSessionBinding, error)
+	ListActiveLarkUserBindingsByMember(ctx context.Context, arg ListInboxNotificationBindingsParams) ([]InboxNotificationBinding, error)
 	GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.UUID) (OutboundCardMessage, error)
 	CreateLarkOutboundCardMessage(ctx context.Context, arg CreateOutboundCardMessageParams) (OutboundCardMessage, error)
 	UpdateLarkOutboundCardStatus(ctx context.Context, arg UpdateOutboundCardStatusParams) error
@@ -162,9 +163,9 @@ type CredentialsResolver interface {
 // tests typically override Renderer / Now / Logger.
 type PatcherConfig struct {
 	// Renderer drives the error card template used on the EventTaskFailed
-	// path. The success path (EventChatDone) bypasses the renderer
-	// entirely — it sends the raw assistant reply as a plain text IM
-	// message — so this only matters for the failure branch.
+	// path. The normal EventChatDone path bypasses the renderer and sends
+	// the raw assistant reply as text / markdown; confirmation prompts use
+	// their own button-card template.
 	Renderer Renderer
 	Now      func() time.Time
 	Logger   *slog.Logger
@@ -184,13 +185,13 @@ func (c PatcherConfig) withDefaults() PatcherConfig {
 }
 
 // Patcher reacts to task-lifecycle events on the event bus and forwards
-// chat replies to Lark as plain text IM messages. It is the outbound
+// chat replies to Lark as native-feeling IM replies. It is the outbound
 // side of §4.5 — but the original "thinking → streaming → final card"
 // lifecycle was reduced to a single plain-text reply on EventChatDone
 // after Bohan reported the card chrome made replies feel like system
-// notifications. The error path is the one survivor of card rendering:
-// failed runs surface as a short error card on EventTaskFailed because
-// the visual distinction from a normal reply is genuinely useful.
+// notifications. The surviving card cases are deliberate: markdown replies
+// need a markdown-rendering card, confirmation prompts need buttons, and failed
+// runs need a visually distinct error card.
 //
 // Scope:
 //
@@ -198,8 +199,8 @@ func (c PatcherConfig) withDefaults() PatcherConfig {
 //     produce outbound. Tasks born from the web UI or autopilot pass
 //     through unchanged.
 //
-//   - Each EventChatDone yields one Lark text message; there is no
-//     streaming, no throttling, no DB row to track card-state.
+//   - Each EventChatDone yields one Lark reply; there is no streaming,
+//     throttling, or DB row to track card-state.
 //
 //   - Multi-replica safety is inherited from the inbound WS lease: at
 //     most one replica holds the installation lease at a time, the
@@ -325,7 +326,7 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 
 	switch e.Type {
 	case protocol.EventChatDone:
-		return p.sendChatReply(ctx, creds, binding, e.Payload)
+		return p.sendChatReply(ctx, creds, inst, binding, taskID, e.Payload)
 	case protocol.EventTaskFailed:
 		return p.fail(ctx, creds, binding, taskID, agentName, e.Payload)
 	}
@@ -354,12 +355,20 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 // the task without producing visible output, which only happens for
 // edge cases like a chat task that just acknowledged a system event;
 // not emitting a message there is the right product call.
-func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentials, binding ChatSessionBinding, payload any) error {
+func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentials, inst Installation, binding ChatSessionBinding, taskID pgtype.UUID, payload any) error {
 	content := chatDoneContent(payload)
 	if content == "" {
 		return nil
 	}
 	target := threadReplyTarget(binding)
+	if chatReplyNeedsConfirmationAction(content) {
+		if allowedOpenID, ok := p.confirmationAllowedOpenID(ctx, inst.WorkspaceID, binding.InstallationID, taskID); ok {
+			return p.sendConfirmationCard(ctx, creds, binding, taskID, allowedOpenID, content, target)
+		}
+		p.cfg.Logger.Warn("lark: confirmation prompt fell back to native reply because requester binding was unavailable",
+			"task_id", uuidString(taskID),
+			"chat_type", binding.ChatType)
+	}
 	if containsMarkdown(content) {
 		return sendWithThreadFallback(p.cfg.Logger, "send markdown card", target, func(t ReplyTarget) error {
 			_, err := p.client.SendMarkdownCard(ctx, SendMarkdownCardParams{
@@ -380,6 +389,45 @@ func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentia
 		})
 		return err
 	})
+}
+
+func (p *Patcher) sendConfirmationCard(ctx context.Context, creds InstallationCredentials, binding ChatSessionBinding, taskID pgtype.UUID, allowedOpenID, content string, target ReplyTarget) error {
+	cardJSON, err := renderConfirmationCard(content, binding, uuidString(taskID), allowedOpenID, p.cfg.Now())
+	if err != nil {
+		return fmt.Errorf("render confirmation card: %w", err)
+	}
+	return sendWithThreadFallback(p.cfg.Logger, "send confirmation card", target, func(t ReplyTarget) error {
+		_, err := p.client.SendInteractiveCard(ctx, SendCardParams{
+			InstallationID: creds,
+			ChatID:         ChatID(binding.ChannelChatID),
+			CardJSON:       cardJSON,
+			ReplyTarget:    t,
+		})
+		return err
+	})
+}
+
+func (p *Patcher) confirmationAllowedOpenID(ctx context.Context, workspaceID, installationID, taskID pgtype.UUID) (string, bool) {
+	if !workspaceID.Valid || !installationID.Valid || !taskID.Valid {
+		return "", false
+	}
+	task, err := p.queries.GetAgentTask(ctx, taskID)
+	if err != nil || !task.InitiatorUserID.Valid {
+		return "", false
+	}
+	rows, err := p.queries.ListActiveLarkUserBindingsByMember(ctx, ListInboxNotificationBindingsParams{
+		WorkspaceID:   workspaceID,
+		MulticaUserID: task.InitiatorUserID,
+	})
+	if err != nil {
+		return "", false
+	}
+	for _, row := range rows {
+		if uuidEqual(row.Installation.ID, installationID) && row.UserBinding.ChannelUserID != "" {
+			return row.UserBinding.ChannelUserID, true
+		}
+	}
+	return "", false
 }
 
 // threadReplyTarget derives the outbound reply target from the chat

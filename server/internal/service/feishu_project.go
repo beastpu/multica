@@ -34,10 +34,13 @@ const (
 	feishuProjectBaseURL = "https://project.feishu.cn"
 	feishuProjectMCPURL  = "https://project.feishu.cn/mcp_server/v1"
 
-	feishuProjectSyncPageSize      = 100
-	feishuProjectInitialLookback   = 24 * time.Hour
-	feishuProjectManualLookback    = 30 * 24 * time.Hour
-	feishuProjectIncrementalReplay = 10 * time.Minute
+	feishuProjectSyncPageSize = 100
+	// The work_item/{type}/query detail endpoint rejects requests with more
+	// than 50 work_item_ids, so page-sized batches must be chunked down.
+	feishuProjectDetailQueryBatchSize = 50
+	feishuProjectInitialLookback      = 24 * time.Hour
+	feishuProjectManualLookback       = 30 * 24 * time.Hour
+	feishuProjectIncrementalReplay    = 10 * time.Minute
 	// feishuProjectDefaultManualLookbackDays / feishuProjectMaxManualLookbackDays
 	// bound a user-selected manual-sync window. Feishu Project enforces a
 	// monthly open-platform quota, so an unbounded lookback could exhaust it;
@@ -86,11 +89,12 @@ type FeishuProjectTxStarter interface {
 }
 
 type FeishuProjectSyncService struct {
-	Queries     *db.Queries
-	Tx          FeishuProjectTxStarter
-	Client      *FeishuProjectClient
-	Storage     FeishuProjectStorage
-	TaskService FeishuProjectTaskService
+	Queries      *db.Queries
+	Tx           FeishuProjectTxStarter
+	Client       *FeishuProjectClient
+	Storage      FeishuProjectStorage
+	TaskService  FeishuProjectTaskService
+	P4Assessment FeishuProjectP4AssessmentTrigger
 	// Events publishes domain events (e.g. issue:deleted from the orphan
 	// reconcile sweep) so connected clients invalidate their caches. Nil
 	// disables publishing — the DB delete still happens.
@@ -102,6 +106,12 @@ type FeishuProjectSyncService struct {
 type FeishuProjectTaskService interface {
 	CancelTasksForIssue(ctx context.Context, issueID pgtype.UUID) error
 	EnqueueTaskForIssue(ctx context.Context, issue db.Issue, triggerCommentID ...pgtype.UUID) (db.AgentTaskQueue, error)
+	EnqueueTaskForSquadLeader(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, squadID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error)
+}
+
+type FeishuProjectP4AssessmentTrigger interface {
+	Trigger(ctx context.Context, workspaceID, bindingID pgtype.UUID, force bool, actor P4AssessmentActor) (P4AssessmentTriggerResult, error)
+	BackfillDoneBindings(ctx context.Context, workspaceID, integrationID pgtype.UUID, limit int32) (P4AssessmentBackfillResult, error)
 }
 
 type FeishuProjectStorage interface {
@@ -180,6 +190,12 @@ type FeishuProjectWorkItem struct {
 	Attachments        []FeishuProjectAttachment
 	BusinessLineTokens []FeishuBusinessLineToken
 	FieldValues        map[string][]string
+	RelatedWorkItems   []FeishuProjectRelatedWorkItem
+	// ExternalFieldsIncomplete marks items whose detail-field lookup failed,
+	// so FieldValues may be missing external sync fields that Meego actually
+	// has. The binding update then preserves previously synced values instead
+	// of clearing them.
+	ExternalFieldsIncomplete bool
 }
 
 type FeishuProjectLabelSyncRule struct {
@@ -228,6 +244,19 @@ type FeishuProjectAttachment struct {
 type FeishuProjectStatusOption struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
+}
+
+type FeishuProjectComment struct {
+	ID        string
+	Operator  string
+	Content   string
+	CreatedAt time.Time
+}
+
+type FeishuProjectRelatedWorkItem struct {
+	Type   string
+	ID     string
+	Source string
 }
 
 type feishuProjectSyncTiming struct {
@@ -312,11 +341,42 @@ func (s *FeishuProjectSyncService) SyncWithRunAndOptions(ctx context.Context, cf
 	var maxObservedUpdatedAtMs atomic.Int64
 	totalCount := 0
 	for _, typ := range enabledFeishuProjectTypes(cfg) {
+		externalFieldKeys, externalFieldKeysErr := s.Client.ListExternalFieldKeys(ctx, cfg, typ)
+		if externalFieldKeysErr != nil {
+			slog.Warn("Feishu Project external field metadata lookup failed",
+				"integration_id", UUIDString(cfg.ID),
+				"workspace_id", UUIDString(cfg.WorkspaceID),
+				"project_key", cfg.ProjectKey,
+				"work_item_type", typ,
+				"error", externalFieldKeysErr,
+			)
+		}
 		err := s.Client.QueryWorkItemPagesWithOptions(ctx, cfg, typ, fullSync, opts, func(page FeishuProjectWorkItemPage) error {
 			if page.Total > totalCount {
 				totalCount = page.Total
 			}
 			s.updateRunProgress(ctx, run.ID, summary, totalCount, page.PageNum, typ)
+			if len(externalFieldKeys) > 0 && len(page.Items) > 0 {
+				enriched, err := s.Client.QueryWorkItemFieldValues(ctx, cfg, typ, feishuProjectWorkItemIDs(page.Items), externalFieldKeys)
+				if err != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					slog.Warn("Feishu Project external field value lookup failed",
+						"integration_id", UUIDString(cfg.ID),
+						"workspace_id", UUIDString(cfg.WorkspaceID),
+						"project_key", cfg.ProjectKey,
+						"work_item_type", typ,
+						"page_num", page.PageNum,
+						"error", err,
+					)
+					markFeishuProjectExternalFieldsIncomplete(page.Items)
+				} else {
+					mergeFeishuProjectWorkItemFieldValues(page.Items, enriched)
+				}
+			} else if externalFieldKeysErr != nil {
+				markFeishuProjectExternalFieldsIncomplete(page.Items)
+			}
 			workerCount := feishuProjectSyncWorkers
 			if len(page.Items) < workerCount {
 				workerCount = len(page.Items)
@@ -547,6 +607,12 @@ func FeishuProjectStatusMappingFor(cfg db.FeishuProjectIntegration, typ string) 
 	if entry := feishuProjectTypeConfigFor(cfg, typ); entry != nil {
 		return entry.StatusMapping
 	}
+	if len(cfg.StatusMapping) > 0 {
+		var legacy map[string]string
+		if err := json.Unmarshal(cfg.StatusMapping, &legacy); err == nil {
+			return legacy
+		}
+	}
 	return nil
 }
 
@@ -619,6 +685,7 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	}
 	mappedPriority := mapFeishuPriority(item.Priority)
 	externalFields := feishuProjectExternalFields(item)
+	finalCLLookupComplete := s.enrichFeishuProjectFinalCL(ctx, cfg, item, externalFields)
 
 	phaseStarted := time.Now()
 	binding, bindingErr := s.Queries.GetFeishuProjectIssueBindingByExternal(ctx, db.GetFeishuProjectIssueBindingByExternalParams{
@@ -630,6 +697,12 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	var issue db.Issue
 	issueFound := false
 	if bindingErr == nil {
+		if !finalCLLookupComplete {
+			preserveFeishuProjectExternalField(binding.ExternalFields, externalFields, "final_cl")
+		}
+		if item.ExternalFieldsIncomplete {
+			preserveFeishuProjectExternalBranchFields(binding.ExternalFields, externalFields)
+		}
 		phaseStarted = time.Now()
 		fetched, lookupErr := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: binding.IssueID, WorkspaceID: cfg.WorkspaceID})
 		timing.issueLookup += time.Since(phaseStarted)
@@ -739,10 +812,12 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 			s.reconcileSyncedIssueTasks(ctx, issue)
 			// Advance the binding watermark so the next sync's short-circuit fires.
 			phaseStarted = time.Now()
-			if _, err := s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item)); err != nil {
+			binding, err := s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParamsWithExternalFields(cfg, issue.ID, item, externalFields))
+			if err != nil {
 				return "skipped", 0, err
 			}
 			timing.bindingUpsert += time.Since(phaseStarted)
+			s.triggerP4AssessmentForDoneBinding(ctx, cfg, item, binding)
 			if labelsChanged || externalFieldsChanged {
 				s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 				return "updated", 0, nil
@@ -768,13 +843,17 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 			return "skipped", 0, err
 		}
 		phaseStarted = time.Now()
-		_, _ = s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item))
+		binding, bindingErr := s.Queries.UpsertFeishuProjectIssueBinding(ctx, bindingParamsWithExternalFields(cfg, issue.ID, item, externalFields))
 		timing.bindingUpsert += time.Since(phaseStarted)
+		if bindingErr != nil {
+			return "skipped", 0, bindingErr
+		}
 		if _, err := s.syncIssueLabels(ctx, cfg, item, issue.ID); err != nil {
 			return "skipped", 0, err
 		}
 		s.ensureExternalAssigneeSubscriber(ctx, cfg, item, issue.ID)
 		s.reconcileSyncedIssueTasks(ctx, updatedIssue)
+		s.triggerP4AssessmentForDoneBinding(ctx, cfg, item, binding)
 		return "updated", 0, nil
 	}
 
@@ -812,7 +891,8 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 	if err != nil {
 		return "skipped", 0, err
 	}
-	if _, err := qtx.UpsertFeishuProjectIssueBinding(ctx, bindingParams(cfg, issue.ID, item)); err != nil {
+	binding, err = qtx.UpsertFeishuProjectIssueBinding(ctx, bindingParamsWithExternalFields(cfg, issue.ID, item, externalFields))
+	if err != nil {
 		return "skipped", 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -850,7 +930,37 @@ func (s *FeishuProjectSyncService) syncWorkItem(ctx context.Context, cfg db.Feis
 		return "created", 0, err
 	}
 	s.reconcileSyncedIssueTasks(ctx, issue)
+	s.triggerP4AssessmentForDoneBinding(ctx, cfg, item, binding)
 	return "created", 0, nil
+}
+
+func (s *FeishuProjectSyncService) triggerP4AssessmentForDoneBinding(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, binding db.FeishuProjectIssueBinding) {
+	if s.P4Assessment == nil {
+		return
+	}
+	mappedStatus, ok := feishuProjectMappedLocalStatus(FeishuProjectStatusMappingFor(cfg, item.Type), item.Status)
+	if !ok || mappedStatus != "done" {
+		return
+	}
+	// Fail-closed gate lives inside Trigger: no workspace_agent_capability row
+	// for p4_assessment ⇒ the run is rejected before any write. The rejection
+	// is a Reason, not an error, so unconfigured workspaces stay silent here.
+	// Scan-path projection issues are created by the integration's creator —
+	// the same identity Feishu sync stamps on synced issues (there is no human
+	// in the loop here, and issue.creator_type has no 'system' value).
+	if _, err := s.P4Assessment.Trigger(ctx, cfg.WorkspaceID, binding.ID, false, P4AssessmentActor{
+		Trigger:     P4AssessmentTriggerScan,
+		CreatorType: "member",
+		CreatorID:   cfg.CreatedByID,
+	}); err != nil {
+		slog.Warn("Feishu Project sync P4 assessment trigger failed",
+			"workspace_id", UUIDString(cfg.WorkspaceID),
+			"binding_id", UUIDString(binding.ID),
+			"work_item_type", item.Type,
+			"work_item_id", item.ID,
+			"error", err,
+		)
+	}
 }
 
 func (s *FeishuProjectSyncService) reconcileLocalStatusDrift(ctx context.Context, cfg db.FeishuProjectIntegration, syncStartedAt time.Time) (int, error) {
@@ -1078,7 +1188,14 @@ func (s *FeishuProjectSyncService) reconcileSyncedIssueTasks(ctx context.Context
 }
 
 func (s *FeishuProjectSyncService) enqueueSyncedIssueIfNeeded(ctx context.Context, issue db.Issue) {
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
+	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
+		return
+	}
+	if issue.AssigneeType.String == "squad" {
+		s.enqueueSyncedSquadIssueIfNeeded(ctx, issue)
+		return
+	}
+	if issue.AssigneeType.String != "agent" {
 		return
 	}
 	hasTask, err := s.Queries.HasTaskForIssueAndAgent(ctx, db.HasTaskForIssueAndAgentParams{
@@ -1097,22 +1214,52 @@ func (s *FeishuProjectSyncService) enqueueSyncedIssueIfNeeded(ctx context.Contex
 	}
 }
 
+func (s *FeishuProjectSyncService) enqueueSyncedSquadIssueIfNeeded(ctx context.Context, issue db.Issue) {
+	squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+		ID:          issue.AssigneeID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("Feishu Project sync squad lookup failed", "issue_id", UUIDString(issue.ID), "squad_id", UUIDString(issue.AssigneeID), "error", err)
+		return
+	}
+	if squad.ArchivedAt.Valid {
+		return
+	}
+	hasTask, err := s.Queries.HasTaskForIssueAndAgent(ctx, db.HasTaskForIssueAndAgentParams{
+		IssueID: issue.ID,
+		AgentID: squad.LeaderID,
+	})
+	if err != nil {
+		slog.Warn("Feishu Project sync squad task dedup check failed", "issue_id", UUIDString(issue.ID), "squad_id", UUIDString(squad.ID), "leader_id", UUIDString(squad.LeaderID), "error", err)
+		return
+	}
+	if hasTask {
+		return
+	}
+	if _, err := s.TaskService.EnqueueTaskForSquadLeader(ctx, issue, squad.LeaderID, squad.ID, pgtype.UUID{}); err != nil {
+		slog.Warn("Feishu Project sync squad leader task enqueue failed", "issue_id", UUIDString(issue.ID), "squad_id", UUIDString(squad.ID), "leader_id", UUIDString(squad.LeaderID), "error", err)
+	}
+}
+
 // resolveAssignee picks the issue assignee for a synced work item. The chain is:
 //
 //  1. Current local agent/squad assignee — existing Multica agent ownership is
 //     intentionally local-authoritative. Feishu has no equivalent agent assignee,
 //     so periodic syncs must not demote a manually assigned agent back to the
 //     external human owner.
-//  2. Owner's agent — only if cfg.AssignOpenItemsToOwnerAgent is on AND the local status
-//     is in an "assignable" state (currently "todo"). For non-assignable states (e.g.
-//     in_progress, done) we preserve currentType/currentID so we don't fight with a
-//     manual reassignment that happened in Multica.
-//  3. Owner as workspace member — the normal case when the Meego owner exists in
+//  2. Owner-created squad — only if cfg.AssignOpenItemsToOwnerAgent is on AND the
+//     local status is in an "assignable" state (currently "todo"). For non-assignable
+//     states (e.g. in_progress, done) we preserve currentType/currentID so we don't
+//     fight with a manual reassignment that happened in Multica.
+//  3. Owner's agent — same gate as owner squad. This is the single-agent fallback
+//     for users who have not created a squad in this workspace.
+//  4. Owner as workspace member — the normal case when the Meego owner exists in
 //     Multica as a workspace member.
-//  4. Route's fallback agent — last resort when the owner can't be resolved at all
+//  5. Route's fallback agent — last resort when the owner can't be resolved at all
 //     (left Meego / never joined Multica / typo'd email). Per-route so different
 //     business lines can have different triage handlers.
-//  5. Empty — nothing matched.
+//  6. Empty — nothing matched.
 //
 // The fallback is intentionally below member resolution: 兜底 means "use when nothing
 // else fits", so if the human owner is in the workspace they should still own the item
@@ -1125,6 +1272,9 @@ func (s *FeishuProjectSyncService) resolveAssignee(ctx context.Context, cfg db.F
 		return currentType, currentID
 	}
 	if cfg.AssignOpenItemsToOwnerAgent {
+		if t, id := s.resolveOwnerCreatedSquad(ctx, cfg.WorkspaceID, item.OwnerEmail); id.Valid {
+			return t, id
+		}
 		if t, id := s.resolveOwnerAgent(ctx, cfg.WorkspaceID, item.OwnerEmail); id.Valid {
 			return t, id
 		}
@@ -1322,6 +1472,27 @@ func (s *FeishuProjectSyncService) resolveOwnerMember(ctx context.Context, works
 	return pgtype.Text{String: "member", Valid: true}, user.ID
 }
 
+func (s *FeishuProjectSyncService) resolveOwnerCreatedSquad(ctx context.Context, workspaceID pgtype.UUID, email string) (pgtype.Text, pgtype.UUID) {
+	if strings.TrimSpace(email) == "" {
+		return pgtype.Text{}, pgtype.UUID{}
+	}
+	user, err := s.Queries.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(email)))
+	if err != nil {
+		return pgtype.Text{}, pgtype.UUID{}
+	}
+	if _, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: user.ID, WorkspaceID: workspaceID}); err != nil {
+		return pgtype.Text{}, pgtype.UUID{}
+	}
+	squad, err := s.Queries.GetFirstSquadByCreatorInWorkspace(ctx, db.GetFirstSquadByCreatorInWorkspaceParams{
+		WorkspaceID: workspaceID,
+		CreatorID:   user.ID,
+	})
+	if err != nil {
+		return pgtype.Text{}, pgtype.UUID{}
+	}
+	return pgtype.Text{String: "squad", Valid: true}, squad.ID
+}
+
 func (s *FeishuProjectSyncService) ensureExternalAssigneeSubscriber(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, issueID pgtype.UUID) {
 	if s.Queries == nil || !issueID.Valid {
 		return
@@ -1454,6 +1625,10 @@ func sameNullableUUID(a, b pgtype.UUID) bool {
 }
 
 func bindingParams(cfg db.FeishuProjectIntegration, issueID pgtype.UUID, item FeishuProjectWorkItem) db.UpsertFeishuProjectIssueBindingParams {
+	return bindingParamsWithExternalFields(cfg, issueID, item, feishuProjectExternalFields(item))
+}
+
+func bindingParamsWithExternalFields(cfg db.FeishuProjectIntegration, issueID pgtype.UUID, item FeishuProjectWorkItem, externalFields map[string]string) db.UpsertFeishuProjectIssueBindingParams {
 	return db.UpsertFeishuProjectIssueBindingParams{
 		WorkspaceID:        cfg.WorkspaceID,
 		IntegrationID:      cfg.ID,
@@ -1468,12 +1643,16 @@ func bindingParams(cfg db.FeishuProjectIntegration, issueID pgtype.UUID, item Fe
 			Valid:  item.Status != "",
 		},
 		LastExternalUpdatedAt: pgtype.Timestamptz{Time: item.UpdatedAt, Valid: !item.UpdatedAt.IsZero()},
-		ExternalFields:        feishuProjectExternalFieldsJSON(item),
+		ExternalFields:        feishuProjectExternalFieldsMapJSON(externalFields),
 	}
 }
 
 func feishuProjectExternalFieldsJSON(item FeishuProjectWorkItem) []byte {
-	b, err := json.Marshal(feishuProjectExternalFields(item))
+	return feishuProjectExternalFieldsMapJSON(feishuProjectExternalFields(item))
+}
+
+func feishuProjectExternalFieldsMapJSON(fields map[string]string) []byte {
+	b, err := json.Marshal(fields)
 	if err != nil {
 		return []byte("{}")
 	}
@@ -1518,9 +1697,130 @@ func feishuProjectExternalFields(item FeishuProjectWorkItem) map[string]string {
 	return fields
 }
 
+func (s *FeishuProjectSyncService) enrichFeishuProjectFinalCL(ctx context.Context, cfg db.FeishuProjectIntegration, item FeishuProjectWorkItem, fields map[string]string) bool {
+	if fields == nil {
+		return false
+	}
+	client := s.Client
+	if client == nil {
+		client = NewFeishuProjectClient()
+	}
+	var all []FeishuProjectComment
+	complete := true
+	if comments, err := client.ListWorkItemComments(ctx, cfg, item.Type, item.ID); err == nil {
+		all = append(all, comments...)
+	} else {
+		complete = false
+		slog.Debug("Feishu Project final CL comment lookup skipped",
+			"workspace_id", UUIDString(cfg.WorkspaceID),
+			"project_key", cfg.ProjectKey,
+			"work_item_type", item.Type,
+			"work_item_id", item.ID,
+			"error", err)
+	}
+	related := item.RelatedWorkItems
+	if len(related) == 0 {
+		if items, err := client.ListRelatedWorkItems(ctx, cfg, item.Type, item.ID); err == nil {
+			related = items
+		} else {
+			complete = false
+		}
+	}
+	for _, rel := range related {
+		if strings.TrimSpace(rel.Type) == "" || strings.TrimSpace(rel.ID) == "" {
+			continue
+		}
+		comments, err := client.ListWorkItemComments(ctx, cfg, rel.Type, rel.ID)
+		if err != nil {
+			complete = false
+			slog.Debug("Feishu Project related final CL comment lookup skipped",
+				"workspace_id", UUIDString(cfg.WorkspaceID),
+				"project_key", cfg.ProjectKey,
+				"work_item_type", rel.Type,
+				"work_item_id", rel.ID,
+				"source", rel.Source,
+				"error", err)
+			continue
+		}
+		all = append(all, comments...)
+	}
+	if cl := feishuProjectLatestSubmittedCLFromComments(all); cl != "" {
+		fields["final_cl"] = cl
+	}
+	return complete
+}
+
+func preserveFeishuProjectExternalField(raw []byte, fields map[string]string, key string) {
+	if fields == nil || strings.TrimSpace(fields[key]) != "" || len(bytes.TrimSpace(raw)) == 0 {
+		return
+	}
+	var existing map[string]string
+	if err := json.Unmarshal(raw, &existing); err != nil {
+		return
+	}
+	if value := strings.TrimSpace(existing[key]); value != "" {
+		fields[key] = value
+	}
+}
+
+var feishuProjectSubmittedCLCommentREs = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(?:final\s+cl|submitted\s+cl|committed\s+cl|changelist|change\s*list)\s*[:=#-]?\s*(\d{4,})\b`),
+	regexp.MustCompile(`(?i)\bCL[:#\s]+(\d{4,})\b[^\n\r]*(?:submitted|committed|--\s*submitted|已\s*提交|已\s*submit)\b`),
+	regexp.MustCompile(`(?i)(?:提交|提交到|最终提交)[^\n\r]{0,24}\bCL[:#\s]*(\d{4,})\b`),
+}
+
+func feishuProjectLatestSubmittedCLFromComments(comments []FeishuProjectComment) string {
+	bestCL := ""
+	bestIdx := -1
+	var bestTime time.Time
+	for idx, comment := range comments {
+		cl := feishuProjectSubmittedCLFromText(comment.Content)
+		if cl == "" {
+			continue
+		}
+		if bestIdx < 0 ||
+			(!comment.CreatedAt.IsZero() && (bestTime.IsZero() || comment.CreatedAt.After(bestTime))) ||
+			(comment.CreatedAt.Equal(bestTime) && idx > bestIdx) ||
+			(comment.CreatedAt.IsZero() && bestTime.IsZero() && idx > bestIdx) {
+			bestCL = cl
+			bestIdx = idx
+			bestTime = comment.CreatedAt
+		}
+	}
+	return bestCL
+}
+
+func feishuProjectSubmittedCLFromText(text string) string {
+	for _, re := range feishuProjectSubmittedCLCommentREs {
+		matches := re.FindAllStringSubmatch(text, -1)
+		if len(matches) == 0 {
+			continue
+		}
+		for i := len(matches) - 1; i >= 0; i-- {
+			if len(matches[i]) > 1 {
+				return matches[i][1]
+			}
+		}
+	}
+	return ""
+}
+
+// Canonical display names produced by feishuProjectExternalFieldDisplayName.
+// Kept in sync with its switch arms so the incomplete-lookup preservation
+// path covers every external field the sync can produce.
+var feishuProjectExternalFieldDisplayNames = []string{"提交记录", "提交分支", "开发分支"}
+
+func preserveFeishuProjectExternalBranchFields(raw []byte, fields map[string]string) {
+	for _, key := range feishuProjectExternalFieldDisplayNames {
+		preserveFeishuProjectExternalField(raw, fields, key)
+	}
+}
+
 func feishuProjectExternalFieldDisplayName(name string) string {
 	name = strings.TrimSpace(name)
 	switch {
+	case strings.EqualFold(name, "field_6e908d") || strings.Contains(name, "提交记录"):
+		return "提交记录"
 	case strings.Contains(name, "提交分支"):
 		return "提交分支"
 	case strings.Contains(name, "开发分支"):
@@ -2276,6 +2576,40 @@ func (c *FeishuProjectClient) QueryWorkItemPagesWithOptions(ctx context.Context,
 	return fmt.Errorf("Feishu Project sync stopped after %d pages; narrow the sync scope", feishuProjectSyncMaxPages)
 }
 
+func (c *FeishuProjectClient) QueryWorkItemFieldValues(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType string, workItemIDs, fieldKeys []string) ([]FeishuProjectWorkItem, error) {
+	workItemIDs = dedupeTrimmedStrings(workItemIDs)
+	fieldKeys = dedupeTrimmedStrings(fieldKeys)
+	if len(workItemIDs) == 0 || len(fieldKeys) == 0 {
+		return nil, nil
+	}
+	urlType := workItemType
+	if typeEntry := feishuProjectTypeConfigFor(cfg, workItemType); typeEntry != nil && strings.TrimSpace(typeEntry.APIName) != "" {
+		urlType = strings.TrimSpace(typeEntry.APIName)
+	}
+	var out []FeishuProjectWorkItem
+	for start := 0; start < len(workItemIDs); start += feishuProjectDetailQueryBatchSize {
+		end := start + feishuProjectDetailQueryBatchSize
+		if end > len(workItemIDs) {
+			end = len(workItemIDs)
+		}
+		req := map[string]any{
+			"work_item_ids": workItemIDs[start:end],
+			"fields":        fieldKeys,
+			"expand": map[string]any{
+				"need_multi_text":        true,
+				"need_user_detail":       true,
+				"relation_fields_detail": true,
+			},
+		}
+		payload, err := c.openAPI(ctx, cfg, http.MethodPost, fmt.Sprintf("/open_api/%s/work_item/%s/query", cfg.ProjectKey, workItemType), req)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, parseFeishuProjectSearch(payload, workItemType, urlType, cfg.ProjectKey, strings.TrimSpace(cfg.BusinessLineFieldKey))...)
+	}
+	return out, nil
+}
+
 func feishuProjectWorkItemStatusFilter(statuses []string) []map[string]any {
 	out := make([]map[string]any, 0, len(statuses))
 	for _, status := range statuses {
@@ -2362,6 +2696,14 @@ func (c *FeishuProjectClient) WorkItemStatusOptions(ctx context.Context, cfg db.
 		return nil, err
 	}
 	statuses = parseFeishuProjectStatusOptions(payload)
+	if len(statuses) > 0 {
+		return statuses, nil
+	}
+	fieldAllPayload, err := c.openAPI(ctx, cfg, http.MethodPost, fmt.Sprintf("/open_api/%s/field/all", cfg.ProjectKey), map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+	statuses = parseFeishuProjectScopedStatusOptions(fieldAllPayload, workItemType)
 	if len(statuses) == 0 {
 		return nil, fmt.Errorf("Feishu Project %s status metadata is empty", workItemType)
 	}
@@ -2430,6 +2772,14 @@ func (c *FeishuProjectClient) ListWorkItemFields(ctx context.Context, cfg db.Fei
 		return nil, err
 	}
 	return parseFeishuProjectFieldMetas(payload, workItemType), nil
+}
+
+func (c *FeishuProjectClient) ListExternalFieldKeys(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType string) ([]string, error) {
+	fields, err := c.ListWorkItemFields(ctx, cfg, workItemType)
+	if err != nil {
+		return nil, err
+	}
+	return feishuProjectExternalFieldKeys(fields), nil
 }
 
 // ListFieldOptions returns the option tree of a specific work-item field. Used by
@@ -2554,6 +2904,44 @@ func (c *FeishuProjectClient) TransitionStatus(ctx context.Context, cfg db.Feish
 		"transition_id": transitionIDValue,
 	})
 	return err
+}
+
+func (c *FeishuProjectClient) ListWorkItemComments(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType, workItemID string) ([]FeishuProjectComment, error) {
+	workItemType = feishuProjectWorkItemAPIName(cfg, workItemType)
+	workItemID = strings.TrimSpace(workItemID)
+	if workItemType == "" || workItemID == "" {
+		return nil, fmt.Errorf("work item type and id are required")
+	}
+	payload, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/work_item/%s/%s/comments", cfg.ProjectKey, workItemType, workItemID), nil)
+	if err != nil {
+		return nil, err
+	}
+	return parseFeishuProjectComments(payload), nil
+}
+
+func (c *FeishuProjectClient) ListRelatedWorkItems(ctx context.Context, cfg db.FeishuProjectIntegration, workItemType, workItemID string) ([]FeishuProjectRelatedWorkItem, error) {
+	var related []FeishuProjectRelatedWorkItem
+	err := c.QueryWorkItemPagesWithOptions(ctx, cfg, workItemType, false, FeishuProjectSyncOptions{WorkItemID: workItemID}, func(page FeishuProjectWorkItemPage) error {
+		for _, item := range page.Items {
+			if item.ID == strings.TrimSpace(workItemID) {
+				related = append(related, item.RelatedWorkItems...)
+				return nil
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return dedupeFeishuProjectRelatedWorkItems(related), nil
+}
+
+func feishuProjectWorkItemAPIName(cfg db.FeishuProjectIntegration, workItemType string) string {
+	workItemType = strings.TrimSpace(workItemType)
+	if entry := feishuProjectTypeConfigFor(cfg, workItemType); entry != nil && strings.TrimSpace(entry.APIName) != "" {
+		return strings.TrimSpace(entry.APIName)
+	}
+	return workItemType
 }
 
 func (c *FeishuProjectClient) openAPI(ctx context.Context, cfg db.FeishuProjectIntegration, method, path string, body any) (map[string]any, error) {
@@ -3176,6 +3564,96 @@ func parseFeishuProjectMQL(payload map[string]any, typ, projectKey string) []Fei
 	return out
 }
 
+func parseFeishuProjectComments(payload map[string]any) []FeishuProjectComment {
+	rows := feishuProjectCommentRows(payload["data"])
+	out := make([]FeishuProjectComment, 0, len(rows))
+	for _, rowAny := range rows {
+		row, _ := rowAny.(map[string]any)
+		if row == nil {
+			continue
+		}
+		comment := FeishuProjectComment{
+			ID:        strings.TrimSpace(firstNonEmpty(fmt.Sprint(row["id"]), fmt.Sprint(row["comment_id"]))),
+			Operator:  strings.TrimSpace(firstNonEmpty(fmt.Sprint(row["operator"]), fmt.Sprint(row["user_key"]))),
+			Content:   strings.TrimSpace(feishuProjectCommentContent(row["content"])),
+			CreatedAt: feishuProjectCommentCreatedAt(row),
+		}
+		if comment.ID == "" && comment.Content == "" {
+			continue
+		}
+		out = append(out, comment)
+	}
+	return out
+}
+
+func feishuProjectCommentRows(data any) []any {
+	switch v := data.(type) {
+	case []any:
+		return v
+	case map[string]any:
+		for _, key := range []string{"list", "items", "comments"} {
+			if rows, ok := v[key].([]any); ok {
+				return rows
+			}
+		}
+	}
+	return nil
+}
+
+func feishuProjectCommentContent(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if s := strings.TrimSpace(feishuProjectCommentContent(item)); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, "\n")
+	case map[string]any:
+		for _, key := range []string{"text", "content", "value", "insert"} {
+			if s := strings.TrimSpace(feishuProjectCommentContent(v[key])); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func feishuProjectCommentCreatedAt(row map[string]any) time.Time {
+	for _, key := range []string{"created_at", "create_time", "created_time"} {
+		if t := feishuProjectUnixTime(row[key]); !t.IsZero() {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+func feishuProjectUnixTime(value any) time.Time {
+	var n int64
+	switch v := value.(type) {
+	case int64:
+		n = v
+	case int:
+		n = int64(v)
+	case float64:
+		n = int64(v)
+	case json.Number:
+		n, _ = v.Int64()
+	case string:
+		n, _ = strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	}
+	if n <= 0 {
+		return time.Time{}
+	}
+	if n > 1_000_000_000_000 {
+		return time.UnixMilli(n).UTC()
+	}
+	return time.Unix(n, 0).UTC()
+}
+
 func feishuProjectMQLCount(payload map[string]any) (int, bool) {
 	rows, _ := payload["list"].([]any)
 	for _, rowAny := range rows {
@@ -3227,76 +3705,60 @@ func parseFeishuProjectSearch(payload map[string]any, typ, urlType, projectKey, 
 	rows, _ := payload["data"].([]any)
 	for _, rowAny := range rows {
 		row, _ := rowAny.(map[string]any)
-		id := firstNonEmpty(feishuProjectIDString(row["id"]), feishuProjectIDString(row["work_item_id"]))
+		attr, _ := row["work_item_attribute"].(map[string]any)
+		id := firstNonEmpty(
+			feishuProjectIDString(row["id"]),
+			feishuProjectIDString(row["work_item_id"]),
+			feishuProjectIDString(attr["work_item_id"]),
+		)
 		if id == "" {
 			continue
 		}
 		record := map[string]string{
-			"name":               fmt.Sprint(row["name"]),
+			"name":               firstNonEmpty(fmt.Sprint(row["name"]), fmt.Sprint(row["work_item_name"]), fmt.Sprint(attr["work_item_name"])),
 			"priority":           fmt.Sprint(row["priority"]),
 			"work_item_priority": fmt.Sprint(row["work_item_priority"]),
 			"sub_stage":          fmt.Sprint(row["sub_stage"]),
 			"current_status":     fmt.Sprint(row["current_status"]),
-			"work_item_status":   feishuProjectStatusValue(row["work_item_status"]),
+			"work_item_status":   firstNonEmpty(feishuProjectStatusValue(row["work_item_status"]), feishuProjectStatusValue(attr["work_item_status"])),
 			"current_status_key": feishuProjectStatusValue(row["current_status_key"]),
 		}
-		if ts := feishuProjectTime(row["updated_at"]); !ts.IsZero() {
+		if ts := firstNonZeroTime(feishuProjectTime(row["updated_at"]), feishuProjectTime(attr["update_time"])); !ts.IsZero() {
 			record["updated_at"] = ts.Format(time.RFC3339Nano)
 		}
 		userEmails := feishuProjectUserEmails(row)
 		fieldValues := map[string][]string{}
 		var businessLineTokens []FeishuBusinessLineToken
-		fields, _ := row["fields"].([]any)
+		var relatedWorkItems []FeishuProjectRelatedWorkItem
 		var attachments []FeishuProjectAttachment
 		// Index each field by both its field_key and its Chinese display name. Two spaces
 		// can give the same logical field different names (经办人 vs 处理人 vs 负责人)
-		// — sometimes even custom field_keys like `field_xxx` — so downstream lookups
+		// - sometimes even custom field_keys like `field_xxx` - so downstream lookups
 		// (notably owner-email extraction) need to try by display name too.
-		for _, fieldAny := range fields {
-			field, _ := fieldAny.(map[string]any)
-			key := firstNonEmpty(fmt.Sprint(field["field_key"]), fmt.Sprint(field["field_alias"]))
-			if key == "" {
+		for _, field := range feishuProjectAllFieldMaps(row) {
+			key := feishuProjectFieldKey(field)
+			displayName := feishuFieldDisplayName(field)
+			if key == "" && displayName == "" {
 				continue
 			}
+			payload := feishuProjectFieldValuePayload(field)
 			attachments = append(attachments, feishuProjectOpenAPIFieldAttachments(field)...)
 			value := feishuProjectOpenAPIFieldValue(field)
-			displayName := feishuFieldDisplayName(field)
 			if feishuProjectIsOwnerField(key, displayName) {
-				value = firstNonEmpty(feishuProjectOpenAPIOwnerFieldValue(field["field_value"]), value)
+				value = firstNonEmpty(feishuProjectOpenAPIOwnerFieldValue(payload), value)
 			}
 			if value != "" {
-				record[key] = value
+				if key != "" {
+					record[key] = value
+				}
 				if displayName != "" {
 					record[displayName] = value
 				}
 			}
-			addFeishuProjectFieldValues(fieldValues, key, displayName, feishuProjectOpenAPIFieldValues(field["field_value"]))
-			if businessLineFieldKey != "" && key == businessLineFieldKey {
-				businessLineTokens = extractBusinessLineTokens(field["field_value"])
-			}
-		}
-		multiTexts, _ := row["multi_texts"].([]any)
-		for _, fieldAny := range multiTexts {
-			field, _ := fieldAny.(map[string]any)
-			key := fmt.Sprint(field["field_key"])
-			if key == "" {
-				continue
-			}
-			attachments = append(attachments, feishuProjectOpenAPIFieldAttachments(field)...)
-			value := feishuProjectOpenAPIFieldValue(field)
-			displayName := feishuFieldDisplayName(field)
-			if feishuProjectIsOwnerField(key, displayName) {
-				value = firstNonEmpty(feishuProjectOpenAPIOwnerFieldValue(field["field_value"]), value)
-			}
-			if value != "" {
-				record[key] = value
-				if displayName != "" {
-					record[displayName] = value
-				}
-			}
-			addFeishuProjectFieldValues(fieldValues, key, displayName, feishuProjectOpenAPIFieldValues(field["field_value"]))
+			relatedWorkItems = append(relatedWorkItems, feishuProjectRelatedWorkItemsFromField(key, displayName, field)...)
+			addFeishuProjectFieldValues(fieldValues, key, displayName, feishuProjectOpenAPIFieldValues(payload))
 			if businessLineFieldKey != "" && len(businessLineTokens) == 0 && key == businessLineFieldKey {
-				businessLineTokens = extractBusinessLineTokens(field["field_value"])
+				businessLineTokens = extractBusinessLineTokens(payload)
 			}
 		}
 		description, descriptionAttachments := normalizeFeishuProjectDescription(record["description"])
@@ -3316,6 +3778,7 @@ func parseFeishuProjectSearch(payload map[string]any, typ, urlType, projectKey, 
 			Attachments:        dedupeFeishuProjectAttachments(attachments),
 			BusinessLineTokens: businessLineTokens,
 			FieldValues:        fieldValues,
+			RelatedWorkItems:   dedupeFeishuProjectRelatedWorkItems(relatedWorkItems),
 		})
 	}
 	return out
@@ -3340,6 +3803,56 @@ func addFeishuProjectFieldValues(out map[string][]string, key, displayName strin
 			}
 			out[k] = append(out[k], v)
 			seenVals[v] = true
+		}
+	}
+}
+
+func feishuProjectWorkItemIDs(items []FeishuProjectWorkItem) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return dedupeTrimmedStrings(ids)
+}
+
+func markFeishuProjectExternalFieldsIncomplete(items []FeishuProjectWorkItem) {
+	for i := range items {
+		items[i].ExternalFieldsIncomplete = true
+	}
+}
+
+func mergeFeishuProjectWorkItemFieldValues(items []FeishuProjectWorkItem, enriched []FeishuProjectWorkItem) {
+	byID := make(map[string]FeishuProjectWorkItem, len(enriched))
+	for _, item := range enriched {
+		if id := strings.TrimSpace(item.ID); id != "" {
+			byID[id] = item
+		}
+	}
+	for i := range items {
+		extra, ok := byID[strings.TrimSpace(items[i].ID)]
+		if !ok || len(extra.FieldValues) == 0 {
+			continue
+		}
+		if items[i].FieldValues == nil {
+			items[i].FieldValues = map[string][]string{}
+		}
+		for key, values := range extra.FieldValues {
+			key = strings.TrimSpace(key)
+			if key == "" || key == "<nil>" {
+				continue
+			}
+			seen := map[string]bool{}
+			for _, existing := range items[i].FieldValues[key] {
+				seen[existing] = true
+			}
+			for _, value := range values {
+				value = strings.TrimSpace(value)
+				if value == "" || value == "<nil>" || seen[value] {
+					continue
+				}
+				items[i].FieldValues[key] = append(items[i].FieldValues[key], value)
+				seen[value] = true
+			}
 		}
 	}
 }
@@ -3390,12 +3903,12 @@ func feishuProjectOperatorRoleEmail(row map[string]any, userEmails map[string]st
 		}
 	}
 	for _, field := range feishuProjectAllFieldMaps(row) {
-		key := firstNonEmpty(fmt.Sprint(field["field_key"]), fmt.Sprint(field["field_alias"]))
+		key := feishuProjectFieldKey(field)
 		fieldType := strings.TrimSpace(fmt.Sprint(field["field_type_key"]))
 		if key != "role_owners" && fieldType != "role_owners" {
 			continue
 		}
-		if email := feishuProjectRoleOwnersFieldEmail(field["field_value"], userEmails); email != "" {
+		if email := feishuProjectRoleOwnersFieldEmail(feishuProjectFieldValuePayload(field), userEmails); email != "" {
 			return email
 		}
 	}
@@ -3414,6 +3927,21 @@ func feishuProjectAllFieldMaps(row map[string]any) []map[string]any {
 		}
 	}
 	return out
+}
+
+func feishuProjectFieldKey(field map[string]any) string {
+	return firstNonEmpty(
+		fmt.Sprint(field["field_key"]),
+		fmt.Sprint(field["field_alias"]),
+		fmt.Sprint(field["key"]),
+	)
+}
+
+func feishuProjectFieldValuePayload(field map[string]any) any {
+	if value, ok := field["field_value"]; ok && value != nil {
+		return value
+	}
+	return field["value"]
 }
 
 func feishuProjectIsOperatorRole(role map[string]any) bool {
@@ -3697,13 +4225,13 @@ func feishuProjectOpenAPIOwnerFieldValue(value any) string {
 	return strings.Join(values, ", ")
 }
 
-// parseFeishuProjectFieldMetas walks the /field/all response (payload["data"] is a flat
-// list) and returns (field_key, field_name, field_type) triples, deduped by key. If
+// parseFeishuProjectFieldMetas walks the /field/all response and returns
+// (field_key, field_name, field_type) triples, deduped by key. If
 // workItemType is non-empty, entries are kept only when their work_item_scopes list
 // contains it — /field/all is project-wide and includes fields scoped to other types
 // (e.g. story-only fields) that the caller doesn't want in this dropdown.
 func parseFeishuProjectFieldMetas(payload map[string]any, workItemType string) []FeishuProjectFieldMeta {
-	data, _ := payload["data"].([]any)
+	data := feishuProjectFieldMetaRows(payload)
 	seen := map[string]bool{}
 	out := make([]FeishuProjectFieldMeta, 0, len(data))
 	want := strings.TrimSpace(workItemType)
@@ -3727,6 +4255,37 @@ func parseFeishuProjectFieldMetas(payload map[string]any, workItemType string) [
 		seen[key] = true
 	}
 	return out
+}
+
+func feishuProjectFieldMetaRows(payload map[string]any) []any {
+	if data, ok := payload["data"].([]any); ok {
+		return data
+	}
+	dataMap, _ := payload["data"].(map[string]any)
+	for _, key := range []string{"fields", "field_list", "list", "items"} {
+		if rows, ok := dataMap[key].([]any); ok {
+			return rows
+		}
+	}
+	return nil
+}
+
+func feishuProjectExternalFieldKeys(fields []FeishuProjectFieldMeta) []string {
+	seen := map[string]bool{}
+	keys := make([]string, 0, len(fields))
+	for _, field := range fields {
+		key := strings.TrimSpace(field.Key)
+		if key == "" || key == "<nil>" || seen[key] {
+			continue
+		}
+		if feishuProjectExternalFieldDisplayName(field.Name) == "" &&
+			feishuProjectExternalFieldDisplayName(key) == "" {
+			continue
+		}
+		keys = append(keys, key)
+		seen[key] = true
+	}
+	return keys
 }
 
 func feishuProjectFieldScopeMatches(scopesAny any, workItemType string) bool {
@@ -3805,20 +4364,8 @@ func parseFeishuProjectStatusOptions(payload map[string]any) []FeishuProjectStat
 	walk = func(v any) bool {
 		switch x := v.(type) {
 		case map[string]any:
-			if fmt.Sprint(x["field_key"]) == "work_item_status" || fmt.Sprint(x["field_type"]) == "_work_item_status" || fmt.Sprint(x["field_type_key"]) == "_work_item_status" {
-				options, _ := x["option"].([]any)
-				if len(options) == 0 {
-					options, _ = x["options"].([]any)
-				}
-				for _, optionAny := range options {
-					option, _ := optionAny.(map[string]any)
-					key := firstNonEmpty(fmt.Sprint(option["option_id"]), fmt.Sprint(option["value"]))
-					name := firstNonEmpty(fmt.Sprint(option["option_name"]), fmt.Sprint(option["label"]))
-					if key == "" || key == "<nil>" {
-						continue
-					}
-					out = append(out, FeishuProjectStatusOption{Key: key, Name: firstNonEmpty(name, key)})
-				}
+			if feishuProjectIsStatusField(x) {
+				out = append(out, feishuProjectStatusOptionsFromField(x)...)
 				return true
 			}
 			for _, child := range x {
@@ -3836,6 +4383,60 @@ func parseFeishuProjectStatusOptions(payload map[string]any) []FeishuProjectStat
 		return false
 	}
 	walk(payload)
+	return out
+}
+
+func parseFeishuProjectScopedStatusOptions(payload map[string]any, workItemType string) []FeishuProjectStatusOption {
+	workItemType = strings.TrimSpace(workItemType)
+	if workItemType == "" {
+		return nil
+	}
+	var out []FeishuProjectStatusOption
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if feishuProjectIsStatusField(x) {
+				if feishuProjectFieldScopeMatches(x["work_item_scopes"], workItemType) {
+					out = append(out, feishuProjectStatusOptionsFromField(x)...)
+				}
+				return
+			}
+			for _, child := range x {
+				walk(child)
+			}
+		case []any:
+			for _, child := range x {
+				walk(child)
+			}
+		}
+	}
+	walk(payload)
+	return appendFeishuProjectStatuses(nil, out...)
+}
+
+func feishuProjectIsStatusField(field map[string]any) bool {
+	return fmt.Sprint(field["field_key"]) == "work_item_status" ||
+		fmt.Sprint(field["field_type"]) == "_work_item_status" ||
+		fmt.Sprint(field["field_type_key"]) == "_work_item_status" ||
+		fmt.Sprint(field["field_type_key"]) == "work_item_status"
+}
+
+func feishuProjectStatusOptionsFromField(field map[string]any) []FeishuProjectStatusOption {
+	options, _ := field["option"].([]any)
+	if len(options) == 0 {
+		options, _ = field["options"].([]any)
+	}
+	out := make([]FeishuProjectStatusOption, 0, len(options))
+	for _, optionAny := range options {
+		option, _ := optionAny.(map[string]any)
+		key := firstNonEmpty(fmt.Sprint(option["option_id"]), fmt.Sprint(option["value"]), fmt.Sprint(option["key"]), fmt.Sprint(option["id"]))
+		name := firstNonEmpty(fmt.Sprint(option["option_name"]), fmt.Sprint(option["label"]), fmt.Sprint(option["name"]))
+		if key == "" {
+			continue
+		}
+		out = append(out, FeishuProjectStatusOption{Key: key, Name: firstNonEmpty(name, key)})
+	}
 	return out
 }
 
@@ -4002,8 +4603,66 @@ func feishuProjectOpenAPIFieldValues(value any) []string {
 	return out
 }
 
+func feishuProjectRelatedWorkItemsFromField(key, displayName string, field map[string]any) []FeishuProjectRelatedWorkItem {
+	if !feishuProjectLinkedStoryField(key, displayName) {
+		return nil
+	}
+	values := feishuProjectOpenAPIFieldValues(feishuProjectFieldValuePayload(field))
+	out := make([]FeishuProjectRelatedWorkItem, 0, len(values))
+	for _, value := range values {
+		id := strings.TrimSpace(value)
+		if id == "" || !feishuProjectNumericID(id) {
+			continue
+		}
+		out = append(out, FeishuProjectRelatedWorkItem{
+			Type:   "story",
+			ID:     id,
+			Source: firstNonEmpty(strings.TrimSpace(key), strings.TrimSpace(displayName), "_field_linked_story"),
+		})
+	}
+	return out
+}
+
+func feishuProjectLinkedStoryField(key, displayName string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key + " " + displayName))
+	return strings.Contains(normalized, "linked_story") ||
+		strings.Contains(normalized, "关联需求") ||
+		strings.Contains(normalized, "关联的需求")
+}
+
+func feishuProjectNumericID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func dedupeFeishuProjectRelatedWorkItems(items []FeishuProjectRelatedWorkItem) []FeishuProjectRelatedWorkItem {
+	seen := map[string]bool{}
+	out := make([]FeishuProjectRelatedWorkItem, 0, len(items))
+	for _, item := range items {
+		item.Type = strings.TrimSpace(item.Type)
+		item.ID = strings.TrimSpace(item.ID)
+		if item.Type == "" || item.ID == "" {
+			continue
+		}
+		key := item.Type + "\x00" + item.ID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, item)
+	}
+	return out
+}
+
 func feishuProjectOpenAPIFieldValue(field map[string]any) string {
-	value := field["field_value"]
+	value := feishuProjectFieldValuePayload(field)
 	switch v := value.(type) {
 	case nil:
 		return ""
@@ -4065,7 +4724,8 @@ func feishuProjectMQLAttachments(row map[string]any) []FeishuProjectAttachment {
 
 func feishuProjectOpenAPIFieldAttachments(field map[string]any) []FeishuProjectAttachment {
 	var out []FeishuProjectAttachment
-	out = append(out, feishuProjectRichTextAttachments(field["field_value"])...)
+	value := feishuProjectFieldValuePayload(field)
+	out = append(out, feishuProjectRichTextAttachments(value)...)
 	var walk func(any)
 	walk = func(v any) {
 		switch x := v.(type) {
@@ -4082,7 +4742,7 @@ func feishuProjectOpenAPIFieldAttachments(field map[string]any) []FeishuProjectA
 			}
 		}
 	}
-	walk(field["field_value"])
+	walk(value)
 	return dedupeFeishuProjectAttachments(out)
 }
 
@@ -4494,6 +5154,29 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func dedupeTrimmedStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || value == "<nil>" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func firstNonZeroTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Time{}
 }
 
 var feishuProjectEmailRe = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)

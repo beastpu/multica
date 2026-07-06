@@ -246,12 +246,14 @@ function absolutizeMediaURL(rawUrl: string): string {
 //     query is the auth and can load natively.
 //  4. `record.content_url` — private-bucket inline proxy used by the default
 //     proxy/presign mode.
-//  5. `record.markdown_url` — the durable, server-policy-aligned URL.
+//  5. Local disk `record.url` — self-host LocalStorage without
+//     LOCAL_UPLOAD_BASE_URL stores a site-relative `/uploads/...` path.
+//  6. `record.markdown_url` — the durable, server-policy-aligned URL.
 //     Beats raw `record.url` because it never points at a private
 //     bucket (must-fix 2 from MUL-3192 review).
-//  6. `record.url` — legacy fallback for responses that omit
+//  7. `record.url` — legacy fallback for responses that omit
 //     `markdown_url` (a backend old enough to predate MUL-3192).
-//  7. The input URL — when there's no record at all.
+//  8. The input URL — when there's no record at all.
 function pickInlineMediaURL(
   record: AttachmentRecord,
   fallback: string,
@@ -265,7 +267,6 @@ function pickInlineMediaURL(
   ) {
     return dl;
   }
-  if (record.url && /[?&](exp|sig)=/i.test(record.url)) return record.url;
   if (
     !cdnSigned &&
     storageURLMatchesCdnDomain(record.url, cdnDomain) &&
@@ -273,10 +274,18 @@ function pickInlineMediaURL(
   ) {
     return record.url;
   }
+  if (record.url && /[?&](exp|sig)=/i.test(record.url)) return record.url;
   if (record.content_url) return record.content_url;
+  if (isSiteRelativeLocalUploadURL(record.url)) return record.url;
   if (record.markdown_url) return record.markdown_url;
   if (record.url) return record.url;
   return fallback;
+}
+
+function isSiteRelativeLocalUploadURL(rawURL: string): boolean {
+  if (!rawURL || !rawURL.startsWith("/")) return false;
+  const path = rawURL.split(/[?#]/, 1)[0] ?? "";
+  return path === "/uploads" || path.startsWith("/uploads/");
 }
 
 function storageURLMatchesCdnDomain(rawURL: string, cdnDomain: string): boolean {

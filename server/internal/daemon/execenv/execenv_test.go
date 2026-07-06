@@ -134,6 +134,24 @@ func TestPrepareDirectoryMode(t *testing.T) {
 		}
 	}
 
+	markerContent, err := os.ReadFile(filepath.Join(env.WorkDir, TaskContextMarkerRelPath))
+	if err != nil {
+		t.Fatalf("failed to read task context marker: %v", err)
+	}
+	var marker struct {
+		ManagedBy string `json:"managed_by"`
+		IssueID   string `json:"issue_id"`
+	}
+	if err := json.Unmarshal(markerContent, &marker); err != nil {
+		t.Fatalf("task context marker unmarshal: %v\n%s", err, string(markerContent))
+	}
+	if marker.ManagedBy != TaskContextMarkerManagedBy {
+		t.Fatalf("marker managed_by = %q, want %q", marker.ManagedBy, TaskContextMarkerManagedBy)
+	}
+	if marker.IssueID != "a1b2c3d4-e5f6-7890-abcd-ef1234567890" {
+		t.Fatalf("marker issue_id = %q, want issue id", marker.IssueID)
+	}
+
 	// Verify skill files.
 	skillContent, err := os.ReadFile(filepath.Join(env.WorkDir, ".agent_context", "skills", "code-review", "SKILL.md"))
 	if err != nil {
@@ -320,7 +338,7 @@ func TestPrepareWithRepoContext(t *testing.T) {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if name != ".agent_context" && name != "CLAUDE.md" && name != ".claude" {
+		if name != ".agent_context" && name != ".multica" && name != "CLAUDE.md" && name != ".claude" {
 			t.Errorf("unexpected entry in workdir: %s", name)
 		}
 	}
@@ -967,6 +985,40 @@ func TestInjectRuntimeConfigNoSkills(t *testing.T) {
 	}
 }
 
+func TestWriteContextFilesP4AssessmentBuiltinSkill(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ctx := TaskContextForEnv{
+		IssueID: "issue-1",
+		AgentSkills: []SkillContextForEnv{
+			{
+				Name:        "multica-agent-fix-p4-assessment",
+				Description: "Use for Multica AI repair P4/Swarm assessment tasks.",
+				Content:     "Use `multica api get /api/operations/agent-fixes/<binding_id>/p4-evidence`.",
+				Files: []SkillFileContextForEnv{
+					{Path: "references/p4-assessment-source-map.md", Content: "source map"},
+				},
+			},
+		},
+	}
+	if err := writeContextFiles(dir, "claude", ctx, nil); err != nil {
+		t.Fatalf("writeContextFiles: %v", err)
+	}
+
+	skillPath := filepath.Join(dir, ".claude", "skills", "multica-agent-fix-p4-assessment", "SKILL.md")
+	content, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("read P4 assessment skill: %v", err)
+	}
+	if got := string(content); !strings.Contains(got, "name: multica-agent-fix-p4-assessment") || !strings.Contains(got, "p4-evidence") {
+		t.Fatalf("unexpected P4 assessment skill content:\n%s", got)
+	}
+	refPath := filepath.Join(dir, ".claude", "skills", "multica-agent-fix-p4-assessment", "references", "p4-assessment-source-map.md")
+	if _, err := os.Stat(refPath); err != nil {
+		t.Fatalf("supporting reference not written: %v", err)
+	}
+}
+
 func TestWriteContextFilesCopilotNativeSkills(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1461,7 +1513,7 @@ func TestPrepareWithRepoContextOpencode(t *testing.T) {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if name != ".agent_context" && name != "AGENTS.md" {
+		if name != ".agent_context" && name != ".multica" && name != "AGENTS.md" {
 			t.Errorf("unexpected entry in workdir: %s", name)
 		}
 	}
@@ -1984,6 +2036,53 @@ func TestPrepareCodexHomeSeedsFromShared(t *testing.T) {
 	}
 	if string(data) != "Use superpowers." {
 		t.Errorf("plugin cache skill content = %q", data)
+	}
+}
+
+func TestPrepareCodexHomeCopiesRelativeModelCatalog(t *testing.T) {
+	// Cannot use t.Parallel() with t.Setenv.
+
+	sharedHome := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sharedHome, "config.toml"), []byte(`model_catalog_json = "cc-switch-model-catalog.json"`), 0o644); err != nil {
+		t.Fatalf("write shared config.toml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sharedHome, "cc-switch-model-catalog.json"), []byte(`{"models":[{"model":"deepseek-v4-flash"}]}`), 0o644); err != nil {
+		t.Fatalf("write shared model catalog: %v", err)
+	}
+	t.Setenv("CODEX_HOME", sharedHome)
+
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
+		t.Fatalf("prepareCodexHome failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(codexHome, "cc-switch-model-catalog.json"))
+	if err != nil {
+		t.Fatalf("read per-task model catalog: %v", err)
+	}
+	if string(data) != `{"models":[{"model":"deepseek-v4-flash"}]}` {
+		t.Errorf("per-task model catalog = %q", data)
+	}
+}
+
+func TestPrepareCodexHomeReportsMissingModelCatalogPath(t *testing.T) {
+	// Cannot use t.Parallel() with t.Setenv.
+
+	sharedHome := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sharedHome, "config.toml"), []byte(`model_catalog_json = "missing-catalog.json"`), 0o644); err != nil {
+		t.Fatalf("write shared config.toml: %v", err)
+	}
+	t.Setenv("CODEX_HOME", sharedHome)
+
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	err := prepareCodexHome(codexHome, testLogger())
+	if err == nil {
+		t.Fatal("expected prepareCodexHome to fail for missing model catalog")
+	}
+	for _, want := range []string{"model_catalog_json", "missing-catalog.json", filepath.Join(sharedHome, "missing-catalog.json")} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
 	}
 }
 

@@ -58,6 +58,10 @@ import type {
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
   AgentFixRecord,
+  AgentFixHumanReview,
+  TriggerAgentFixP4AssessmentRequest,
+  TriggerAgentFixP4AssessmentResponse,
+  UpdateAgentFixReviewRequest,
   RuntimeUpdate,
   RuntimeModelListRequest,
   RuntimeLocalSkillListRequest,
@@ -101,6 +105,7 @@ import type {
   UpdateAutopilotTriggerRequest,
   ListAutopilotsResponse,
   GetAutopilotResponse,
+  AutopilotCollaboratorsResponse,
   ListAutopilotRunsResponse,
   ListWebhookDeliveriesResponse,
   WebhookDelivery,
@@ -126,6 +131,13 @@ import type {
   BeginLarkInstallResponse,
   LarkInstallStatusResponse,
   RedeemLarkBindingTokenResponse,
+  ComposioToolkit,
+  ComposioConnection,
+  ComposioConnectInitResponse,
+  SlackInstallation,
+  ListSlackInstallationsResponse,
+  RegisterSlackBYORequest,
+  RedeemSlackBindingTokenResponse,
   Squad,
   SquadMember,
   SquadMemberStatusListResponse,
@@ -138,8 +150,10 @@ import type {
   CreateBillingCheckoutSessionResponse,
   BillingCheckoutSessionStatus,
   CreateBillingPortalSessionResponse,
+  WorkspaceCapability,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
+import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
 import type {
   CloudRuntimeNode,
   CreateCloudRuntimeNodeRequest,
@@ -165,6 +179,8 @@ import {
   DashboardRunTimeDailyListSchema,
   DashboardUsageByAgentListSchema,
   AgentFixRecordListSchema,
+  AgentFixHumanReviewSchema,
+  TriggerAgentFixP4AssessmentResponseSchema,
   DashboardUsageDailyListSchema,
   EMPTY_AGENT_TEMPLATE_DETAIL,
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
@@ -242,8 +258,12 @@ import {
   EMPTY_PERFORCE_CONNECTION_RESPONSE,
   EMPTY_PERFORCE_REVIEWS_RESPONSE,
   EMPTY_CANCEL_TASK_RESPONSE,
+  CreateFeedbackResponseSchema,
+  EMPTY_CREATE_FEEDBACK_RESPONSE,
   InboxUnreadSummarySchema,
   EMPTY_INBOX_UNREAD_SUMMARY,
+  WorkspaceCapabilitySchema,
+  EMPTY_WORKSPACE_CAPABILITY,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -585,6 +605,7 @@ export class ApiClient {
     if (params?.assignee_types?.length) search.set("assignee_types", params.assignee_types.join(","));
     if (params?.assignee_id) search.set("assignee_id", params.assignee_id);
     if (params?.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
+    if (params?.assignee_types?.length) search.set("assignee_types", params.assignee_types.join(","));
     if (params?.creator_id) search.set("creator_id", params.creator_id);
     if (params?.project_id) search.set("project_id", params.project_id);
     if (params?.involves_user_id) search.set("involves_user_id", params.involves_user_id);
@@ -714,10 +735,14 @@ export class ApiClient {
     message: string;
     url?: string;
     workspace_id?: string;
-  }): Promise<{ id: string; created_at: string }> {
-    return this.fetch("/api/feedback", {
+    kind?: FeedbackKind;
+  }): Promise<CreateFeedbackResponse> {
+    const raw = await this.fetch<unknown>("/api/feedback", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, CreateFeedbackResponseSchema, EMPTY_CREATE_FEEDBACK_RESPONSE, {
+      endpoint: "POST /api/feedback",
     });
   }
 
@@ -1473,6 +1498,54 @@ export class ApiClient {
     );
   }
 
+  async updateAgentFixReview(
+    issueId: string,
+    data: UpdateAgentFixReviewRequest,
+    bindingId?: string,
+  ): Promise<AgentFixHumanReview> {
+    const path = bindingId
+      ? `/api/operations/agent-fixes/${encodeURIComponent(bindingId)}/review`
+      : `/api/operations/agent-fixes/${encodeURIComponent(issueId)}/review`;
+    const raw = await this.fetch<unknown>(
+      path,
+      {
+        method: bindingId ? "PATCH" : "PUT",
+        body: JSON.stringify(data),
+      },
+    );
+    return parseWithFallback<AgentFixHumanReview>(
+      raw,
+      AgentFixHumanReviewSchema,
+      { outcome: "", reasons: [], note: "", reviewer_id: "", reviewed_at: null },
+      {
+        endpoint: bindingId
+          ? "PATCH /api/operations/agent-fixes/:bindingId/review"
+          : "PUT /api/operations/agent-fixes/:issueId/review",
+      },
+    );
+  }
+
+  async triggerAgentFixP4Assessment(
+    data: TriggerAgentFixP4AssessmentRequest,
+  ): Promise<TriggerAgentFixP4AssessmentResponse> {
+    const raw = await this.fetch<unknown>(
+      "/api/operations/agent-fixes/p4-assessments",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          binding_id: data.binding_id,
+          force: data.force === true,
+        }),
+      },
+    );
+    return parseWithFallback<TriggerAgentFixP4AssessmentResponse>(
+      raw,
+      TriggerAgentFixP4AssessmentResponseSchema,
+      { created: false, reason: "", assessment_status: "" },
+      { endpoint: "POST /api/operations/agent-fixes/p4-assessments" },
+    );
+  }
+
   async initiateUpdate(
     runtimeId: string,
     targetVersion: string,
@@ -1681,6 +1754,55 @@ export class ApiClient {
       method: "PATCH",
       body: JSON.stringify(data),
     });
+  }
+
+  // Workspace capability roles — which agent executes a capability's derived
+  // work (first capability: "p4_assessment").
+
+  /** Returns `null` when the capability is not configured (server 404). */
+  async getWorkspaceCapability(
+    workspaceId: string,
+    capability: string,
+  ): Promise<WorkspaceCapability | null> {
+    let raw: unknown;
+    try {
+      raw = await this.fetch<unknown>(
+        `/api/workspaces/${workspaceId}/capabilities/${encodeURIComponent(capability)}`,
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return null;
+      throw err;
+    }
+    return parseWithFallback(
+      raw,
+      WorkspaceCapabilitySchema,
+      { ...EMPTY_WORKSPACE_CAPABILITY, capability },
+      { endpoint: "GET /api/workspaces/:id/capabilities/:capability" },
+    );
+  }
+
+  async putWorkspaceCapability(
+    workspaceId: string,
+    capability: string,
+    data: { agent_id: string; project_id?: string | null; max_concurrent_tasks?: number },
+  ): Promise<WorkspaceCapability> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/capabilities/${encodeURIComponent(capability)}`,
+      { method: "PUT", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(
+      raw,
+      WorkspaceCapabilitySchema,
+      { ...EMPTY_WORKSPACE_CAPABILITY, capability },
+      { endpoint: "PUT /api/workspaces/:id/capabilities/:capability" },
+    );
+  }
+
+  async deleteWorkspaceCapability(workspaceId: string, capability: string): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/capabilities/${encodeURIComponent(capability)}`,
+      { method: "DELETE" },
+    );
   }
 
   // Members
@@ -2243,6 +2365,22 @@ export class ApiClient {
     await this.fetch(`/api/autopilots/${id}`, { method: "DELETE" });
   }
 
+  // Grant a workspace member explicit write access to the autopilot. Both
+  // grant and revoke return the full updated collaborator list so callers can
+  // refresh without a second round-trip.
+  async grantAutopilotAccess(id: string, userId: string): Promise<AutopilotCollaboratorsResponse> {
+    return this.fetch(`/api/autopilots/${id}/collaborators`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    });
+  }
+
+  async revokeAutopilotAccess(id: string, userId: string): Promise<AutopilotCollaboratorsResponse> {
+    return this.fetch(`/api/autopilots/${id}/collaborators/${userId}`, {
+      method: "DELETE",
+    });
+  }
+
   async triggerAutopilot(id: string): Promise<AutopilotRun> {
     return this.fetch(`/api/autopilots/${id}/trigger`, { method: "POST" });
   }
@@ -2545,6 +2683,71 @@ export class ApiClient {
 
   async redeemLarkBindingToken(token: string): Promise<RedeemLarkBindingTokenResponse> {
     return this.fetch(`/api/lark/binding/redeem`, {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    });
+  }
+
+  // Composio integration (MUL-3720). All routes are user-scoped (a connection
+  // belongs to a user, not a workspace), so none take a workspaceId.
+
+  /** The project's connectable Composio toolkits (those with an enabled auth
+   * config). Since MUL-4009 the backend filters out non-connectable toolkits,
+   * so every entry has `connectable: true`. A resolver/upstream failure is a
+   * 502 rather than an empty list. */
+  async listComposioToolkits(): Promise<ComposioToolkit[]> {
+    return this.fetch(`/api/integrations/composio/toolkits`);
+  }
+
+  /** The caller's active Composio connections. */
+  async listComposioConnections(): Promise<ComposioConnection[]> {
+    return this.fetch(`/api/integrations/composio/connections`);
+  }
+
+  /** Starts a hosted Composio connect flow for a toolkit and returns the
+   * redirect URL the browser should be sent to. */
+  async beginComposioConnect(toolkitSlug: string): Promise<ComposioConnectInitResponse> {
+    return this.fetch(`/api/integrations/composio/connect/init`, {
+      method: "POST",
+      body: JSON.stringify({ toolkit_slug: toolkitSlug }),
+    });
+  }
+
+  /** Disconnects a Composio connection the caller owns. */
+  async deleteComposioConnection(connectionId: string): Promise<void> {
+    await this.fetch(`/api/integrations/composio/connections/${connectionId}`, {
+      method: "DELETE",
+    });
+  }
+
+  // Slack integration (MUL-3666)
+  async listSlackInstallations(workspaceId: string): Promise<ListSlackInstallationsResponse> {
+    return this.fetch(`/api/workspaces/${workspaceId}/slack/installations`);
+  }
+
+  // registerSlackBYO performs a bring-your-own-app install: the admin pastes the
+  // bot token (xoxb-) + app-level token (xapp-) of the Slack app they created,
+  // and the backend validates + persists it, returning the new installation.
+  async registerSlackBYO(
+    workspaceId: string,
+    agentId: string,
+    body: RegisterSlackBYORequest,
+  ): Promise<SlackInstallation> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    return this.fetch(`/api/workspaces/${workspaceId}/slack/install/byo?${search.toString()}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async deleteSlackInstallation(workspaceId: string, installationId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/slack/installations/${installationId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async redeemSlackBindingToken(token: string): Promise<RedeemSlackBindingTokenResponse> {
+    return this.fetch(`/api/slack/binding/redeem`, {
       method: "POST",
       body: JSON.stringify({ token }),
     });

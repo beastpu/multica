@@ -33,9 +33,11 @@ import type {
   TimelineEntry,
   User,
   WebhookDelivery,
+  WorkspaceCapability,
   PerforceReview,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
+import type { CreateFeedbackResponse } from "../feedback/types";
 
 export interface AppConfigResponse {
   cdn_domain: string;
@@ -52,6 +54,7 @@ export interface AppConfigResponse {
   daemon_server_url?: string;
   daemon_app_url?: string;
   workspace_creation_disabled?: boolean;
+  feature_flags?: Record<string, boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +186,14 @@ const BooleanWithDefaultSchema = (fallback: boolean) =>
     z.boolean().default(fallback),
   );
 
+const FeatureFlagsSchema = z.preprocess(
+  (value) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : undefined,
+  z.record(z.string(), BooleanWithDefaultSchema(false)).default({}),
+);
+
 export const AppConfigSchema = z.object({
   cdn_domain: z.string().default(""),
   cdn_signed: BooleanWithDefaultSchema(false),
@@ -194,6 +205,7 @@ export const AppConfigSchema = z.object({
   daemon_server_url: OptionalStringSchema,
   daemon_app_url: OptionalStringSchema,
   workspace_creation_disabled: BooleanWithDefaultSchema(false).optional(),
+  feature_flags: FeatureFlagsSchema,
 }).loose();
 
 export const EMPTY_APP_CONFIG: AppConfigResponse = {
@@ -204,6 +216,17 @@ export const EMPTY_APP_CONFIG: AppConfigResponse = {
   daemon_server_url: "",
   daemon_app_url: "",
   workspace_creation_disabled: false,
+  feature_flags: {},
+};
+
+export const CreateFeedbackResponseSchema = z.object({
+  id: z.string(),
+  created_at: z.string(),
+}).loose();
+
+export const EMPTY_CREATE_FEEDBACK_RESPONSE: CreateFeedbackResponse = {
+  id: "",
+  created_at: "",
 };
 
 export const CommentSchema = z.object({
@@ -247,10 +270,29 @@ export const IssueTriggerPreviewSchema = z.object({
   total_count: z.number().default(0),
 }).loose();
 
-// Metadata is primitive-only by API/DB contract. Stay lenient on shape:
-// unknown keys land as `unknown` to a caller, but the field itself defaults
-// to {} so consumers never need to nil-guard `issue.metadata`.
-const IssueMetadataSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({});
+// Metadata values are primitive for the keys the UI reads (flow_cl etc.), but
+// the server also stamps OBJECT values under reserved keys (agent_work marks
+// derived assessment issues). A strict primitive-only record made one such
+// key fail the WHOLE IssueSchema and blank the issue page into the empty
+// fallback — exactly the failure class these schemas exist to prevent. Drop
+// non-primitive values instead of failing: consumers that read primitives
+// keep their contract, and reserved object keys simply don't surface here.
+const IssueMetadataSchema = z.preprocess(
+  (value) => {
+    if (value == null || typeof value !== "object" || Array.isArray(value)) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).filter(
+        ([, v]) =>
+          typeof v === "string" ||
+          typeof v === "number" ||
+          typeof v === "boolean",
+      ),
+    );
+  },
+  z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
+);
 const IssueExternalFieldsSchema = z.record(z.string(), z.string()).default({});
 
 export const IssueSchema = z.object({
@@ -462,6 +504,30 @@ export const EMPTY_FEISHU_PROJECT_INTEGRATION: FeishuProjectIntegration = {
   business_line_field_name: "",
   last_synced_at: null,
   last_error: null,
+};
+
+// Workspace capability role (GET/PUT /api/workspaces/:id/capabilities/:capability).
+// Names the agent that executes a capability's derived work (first:
+// p4_assessment). "Not configured" is a 404, handled in the client — this
+// schema only guards the 200 shape.
+export const WorkspaceCapabilitySchema = z.object({
+  capability: z.string().default(""),
+  agent_id: z.string().default(""),
+  agent_name: z.string().default(""),
+  project_id: z.string().nullable().default(null),
+  max_concurrent_tasks: z.number().default(1),
+  created_at: z.string().default(""),
+}).loose();
+
+// Empty agent_id renders as "not configured" — the safe degraded state for a
+// malformed response (the user can simply re-save).
+export const EMPTY_WORKSPACE_CAPABILITY: WorkspaceCapability = {
+  capability: "",
+  agent_id: "",
+  agent_name: "",
+  project_id: null,
+  max_concurrent_tasks: 1,
+  created_at: "",
 };
 
 const FeishuProjectSyncRunSchema = z.object({
@@ -676,11 +742,102 @@ const DashboardRunTimeDailySchema = z.object({
 
 export const DashboardRunTimeDailyListSchema = z.array(DashboardRunTimeDailySchema);
 
+const AgentFixClSchema = z.union([z.string(), z.number()]);
+// Coerce anything that isn't a clean CL array into []. Real agent output has
+// put a bare string ("unknown") where a CL array is expected; without this,
+// z.array() fails and — because the failure bubbles up through
+// AgentFixP4AssessmentSchema to AgentFixRecordListSchema — blanks the ENTIRE
+// operations table (one junk field takes down every row). Non string|number
+// elements are dropped too so a single bad entry can't fail the array.
+const AgentFixClListSchema = z.preprocess(
+  (value) =>
+    Array.isArray(value)
+      ? value.filter((e) => typeof e === "string" || typeof e === "number")
+      : [],
+  z.array(AgentFixClSchema).default([]),
+);
+// Same defense for string arrays (prediction_reasons, warnings): a non-array
+// degrades to [] and non-string elements are dropped instead of failing.
+const AgentFixStringListSchema = z.preprocess(
+  (value) =>
+    Array.isArray(value) ? value.filter((e) => typeof e === "string") : [],
+  z.array(z.string()).default([]),
+);
+const AgentFixStringSchema = z
+  .union([z.string(), z.null()])
+  .default("")
+  .transform((value) => value ?? "");
+
+const AgentFixSwarmReviewSchema = z.object({
+  id: AgentFixClSchema.optional(),
+  review_id: AgentFixClSchema.optional(),
+  state: AgentFixStringSchema,
+  url: AgentFixStringSchema,
+  changes: AgentFixClListSchema,
+  commits: AgentFixClListSchema,
+  swarm_branch: AgentFixStringSchema,
+  event_type: AgentFixStringSchema,
+  sent_at: AgentFixStringSchema,
+}).loose();
+
+const AgentFixExternalRecordSchema = z.object({
+  binding_id: z.string().default(""),
+  work_item_id: z.string().default(""),
+  status: z.string().default(""),
+  status_name: z.string().default(""),
+  mapped_status: z.string().default(""),
+  done: z.boolean().optional(),
+  project: z.string().default(""),
+  version: z.string().default(""),
+  workstream: z.string().default(""),
+  final_cl: z.string().default(""),
+  url: z.string().default(""),
+}).loose();
+
+const AgentFixP4AssessmentSchema = z.object({
+  assessment_status: z.string().default(""),
+  delivery_attribution_prediction: z.string().default(""),
+  quality_prediction: z.string().default(""),
+  prediction_reasons: AgentFixStringListSchema,
+  confidence: z.number().nullable().optional(),
+  workstream: z.string().default(""),
+  // Drop non-array values and non-object elements before validating each
+  // review, so a malformed swarm_reviews entry degrades to nothing instead of
+  // failing the whole record.
+  swarm_reviews: z.preprocess(
+    (value) =>
+      Array.isArray(value)
+        ? value.filter((e) => e != null && typeof e === "object")
+        : [],
+    z.array(AgentFixSwarmReviewSchema).default([]),
+  ),
+  ai_shelved_cls: AgentFixClListSchema,
+  swarm_change_cls: AgentFixClListSchema,
+  swarm_committed_cls: AgentFixClListSchema,
+  external_committed_cls: AgentFixClListSchema,
+  summary: z.string().default(""),
+  warnings: AgentFixStringListSchema,
+  // Queue observability (older servers omit all three — defaults keep rows
+  // rendering). A non-number attempt_count degrades to 0, not a crash.
+  attempt_count: z.number().catch(0).default(0),
+  last_error: z.string().catch("").default(""),
+  assessment_agent_name: z.string().catch("").default(""),
+}).loose();
+
+export const AgentFixHumanReviewSchema = z.object({
+  outcome: z.string().default(""),
+  reasons: z.array(z.string()).default([]),
+  note: z.string().default(""),
+  reviewer_id: z.string().default(""),
+  reviewed_at: z.string().nullable().default(null),
+}).loose();
+
 // Operations-tab feed (GET /api/operations/agent-fixes). Same leniency rules
 // as the dashboard schemas: strings default to "" (no enum narrowing —
-// `issue_status` survives server-side enum drift and renders a generic
-// fallback downstream), nullable timestamps default to null, `.loose()` keeps
-// unknown fields. A single malformed row degrades that field, not the array.
+// server-side enum drift renders a generic fallback downstream), nullable
+// timestamps default to null, `.loose()` keeps unknown fields. P4 assessment
+// fields are optional so older rows and sparse external bindings keep the old
+// table usable.
 const AgentFixRecordSchema = z.object({
   task_id: z.string().default(""),
   agent_id: z.string().default(""),
@@ -691,12 +848,44 @@ const AgentFixRecordSchema = z.object({
   issue_status: z.string().default(""),
   last_comment: z.string().default(""),
   last_comment_author_type: z.string().default(""),
+  // Absent (old server / zero + omitempty) must stay absent — the dashboard
+  // falls back to last_comment then. A drifted type degrades to absent
+  // instead of dropping the row.
+  agent_comment_count: z.number().optional().catch(undefined),
+  task_status: z.string().default(""),
+  task_failure_reason: z.string().default(""),
   started_at: z.string().nullable().default(null),
   completed_at: z.string().nullable().default(null),
   created_at: z.string().default(""),
+  activity_at: z.string().default(""),
+  external: AgentFixExternalRecordSchema.optional(),
+  p4_assessment: AgentFixP4AssessmentSchema.optional(),
+  human_review: AgentFixHumanReviewSchema.optional(),
+  display_result_status: z.string().default(""),
+  ai_judgement_eval: z.string().default(""),
 }).loose();
 
-export const AgentFixRecordListSchema = z.array(AgentFixRecordSchema);
+// Parse each row independently and drop the ones that fail, rather than letting
+// a single malformed record fail `z.array(...)` and collapse the whole feed to
+// the empty fallback (the "暂无记录" blank-table bug). This is the list-level
+// backstop for the field-level coercions above: even a field we haven't
+// hardened yet can only ever cost its own row, never the entire table.
+export const AgentFixRecordListSchema = z
+  .array(z.unknown())
+  .transform((rows) =>
+    rows.flatMap((row) => {
+      const parsed = AgentFixRecordSchema.safeParse(row);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  );
+
+export const TriggerAgentFixP4AssessmentResponseSchema = z.object({
+  created: z.boolean().default(false),
+  reason: z.string().default(""),
+  assessment_id: z.string().optional(),
+  assessment_status: z.string().default(""),
+  task_id: z.string().optional(),
+}).loose();
 
 // ---------------------------------------------------------------------------
 // Runtime usage schemas — the runtime-detail page's four usage endpoints
@@ -875,13 +1064,45 @@ export const EMPTY_AGENT_TEMPLATE_DETAIL: AgentTemplate = {
   instructions: "",
 };
 
+// ---------------------------------------------------------------------------
+// Agent invocation permissions (MUL-3963)
+//
+// Full agent request/response payloads are NOT zod-validated today — the API
+// client returns them typed directly (see client.ts `listAgents` /
+// `getAgent` / `createAgent`), so there is no `AgentSchema` /
+// `CreateAgentRequestSchema` / `UpdateAgentRequestSchema` to extend here.
+// These lenient, exported fragments encode the new permission fields so any
+// future agent schema — and the from-template minimal agent below — can reuse
+// them. Per this file's convention the enum stays lenient (a future
+// server-side value degrades to the strict default rather than failing the
+// parse), and the target array defaults to `[]`.
+// ---------------------------------------------------------------------------
+
+export const AgentPermissionModeSchema = z
+  .enum(["private", "public_to"])
+  .catch("private");
+
+export const AgentInvocationTargetSchema = z
+  .object({
+    target_type: z.string(),
+    target_id: z.string().nullable().optional().transform((v) => v ?? null),
+  })
+  .loose();
+
+export const AgentInvocationTargetsSchema = z
+  .array(AgentInvocationTargetSchema)
+  .default([]);
+
 // `agent` is a full Agent record — schematising every field would duplicate
 // a 50-field interface and bit-rot fast. We keep it loose and require only
 // `id`, the one field the create-from-template flow consumes (used to
 // navigate to the new agent's detail page). Downstream code already
-// optional-chains the rest.
+// optional-chains the rest. The permission fields are parsed leniently when
+// present so the from-template response carries a well-formed access shape.
 const MinimalAgentSchema = z.object({
   id: z.string(),
+  permission_mode: AgentPermissionModeSchema.optional(),
+  invocation_targets: AgentInvocationTargetsSchema.optional(),
 }).loose();
 
 export const CreateAgentFromTemplateResponseSchema = z.object({
@@ -1090,6 +1311,10 @@ const AutopilotListItemSchema = z.object({
   trigger_kinds: z.array(z.string()).optional(),
   next_run_at: z.string().nullable().optional(),
   last_run_status: z.string().nullable().optional(),
+  // Per-caller write capability; absent on older servers (treated as unknown).
+  can_write: z.boolean().optional(),
+  // Narrower per-caller access-management capability (detail endpoint only).
+  can_manage_access: z.boolean().optional(),
 }).loose();
 
 export const ListAutopilotsResponseSchema = z.object({

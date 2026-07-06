@@ -19,6 +19,20 @@ export interface Workspace {
   updated_at: string;
 }
 
+/**
+ * Workspace capability role: which agent executes a capability's derived
+ * work (first capability: `p4_assessment`). One row per (workspace,
+ * capability); GET returns 404 when the capability is not configured.
+ */
+export interface WorkspaceCapability {
+  capability: string;
+  agent_id: string;
+  agent_name: string;
+  project_id: string | null;
+  max_concurrent_tasks: number;
+  created_at: string;
+}
+
 export interface Member {
   id: string;
   workspace_id: string;

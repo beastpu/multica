@@ -64,7 +64,7 @@ func (q *Queries) GetPerforceConnectionByWorkspace(ctx context.Context, workspac
 }
 
 const getPerforceReviewByWorkspaceReviewID = `-- name: GetPerforceReviewByWorkspaceReviewID :one
-SELECT id, workspace_id, review_id, title, state, html_url, author, shelved_cl, committed_cl, review_created_at, review_updated_at, created_at, updated_at FROM perforce_review
+SELECT id, workspace_id, review_id, title, state, html_url, author, shelved_cl, committed_cl, review_created_at, review_updated_at, created_at, updated_at, changes, commits, swarm_branch, event_type, sent_at, raw_payload FROM perforce_review
 WHERE workspace_id = $1 AND review_id = $2
 `
 
@@ -90,6 +90,12 @@ func (q *Queries) GetPerforceReviewByWorkspaceReviewID(ctx context.Context, arg 
 		&i.ReviewUpdatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Changes,
+		&i.Commits,
+		&i.SwarmBranch,
+		&i.EventType,
+		&i.SentAt,
+		&i.RawPayload,
 	)
 	return i, err
 }
@@ -194,7 +200,7 @@ func (q *Queries) ListPerforceConnectionsBySwarmURL(ctx context.Context, swarmUr
 }
 
 const listReviewsByIssue = `-- name: ListReviewsByIssue :many
-SELECT pr.id, pr.workspace_id, pr.review_id, pr.title, pr.state, pr.html_url, pr.author, pr.shelved_cl, pr.committed_cl, pr.review_created_at, pr.review_updated_at, pr.created_at, pr.updated_at FROM perforce_review pr
+SELECT pr.id, pr.workspace_id, pr.review_id, pr.title, pr.state, pr.html_url, pr.author, pr.shelved_cl, pr.committed_cl, pr.review_created_at, pr.review_updated_at, pr.created_at, pr.updated_at, pr.changes, pr.commits, pr.swarm_branch, pr.event_type, pr.sent_at, pr.raw_payload FROM perforce_review pr
 JOIN issue_perforce_review ipr ON ipr.perforce_review_id = pr.id
 WHERE ipr.issue_id = $1
 ORDER BY pr.review_created_at DESC
@@ -223,6 +229,12 @@ func (q *Queries) ListReviewsByIssue(ctx context.Context, issueID pgtype.UUID) (
 			&i.ReviewUpdatedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Changes,
+			&i.Commits,
+			&i.SwarmBranch,
+			&i.EventType,
+			&i.SentAt,
+			&i.RawPayload,
 		); err != nil {
 			return nil, err
 		}
@@ -288,10 +300,13 @@ const upsertPerforceReview = `-- name: UpsertPerforceReview :one
 
 INSERT INTO perforce_review (
     workspace_id, review_id, title, state, html_url, author,
-    shelved_cl, committed_cl, review_created_at, review_updated_at
+    shelved_cl, committed_cl, review_created_at, review_updated_at,
+    changes, commits, swarm_branch, event_type, sent_at, raw_payload
 ) VALUES (
-    $1, $2, $3, $4, $5, $8,
-    $9, $10, $6, $7
+    $1, $2, $3, $4, $5, $11,
+    $12, $13, $6, $7,
+    $8, $9, $14, $15,
+    $16, $10
 )
 ON CONFLICT (workspace_id, review_id) DO UPDATE SET
     title = EXCLUDED.title,
@@ -301,8 +316,17 @@ ON CONFLICT (workspace_id, review_id) DO UPDATE SET
     shelved_cl = EXCLUDED.shelved_cl,
     committed_cl = COALESCE(EXCLUDED.committed_cl, perforce_review.committed_cl),
     review_updated_at = EXCLUDED.review_updated_at,
+    changes = EXCLUDED.changes,
+    commits = CASE
+        WHEN cardinality(EXCLUDED.commits) > 0 THEN EXCLUDED.commits
+        ELSE perforce_review.commits
+    END,
+    swarm_branch = EXCLUDED.swarm_branch,
+    event_type = EXCLUDED.event_type,
+    sent_at = EXCLUDED.sent_at,
+    raw_payload = EXCLUDED.raw_payload,
     updated_at = now()
-RETURNING id, workspace_id, review_id, title, state, html_url, author, shelved_cl, committed_cl, review_created_at, review_updated_at, created_at, updated_at
+RETURNING id, workspace_id, review_id, title, state, html_url, author, shelved_cl, committed_cl, review_created_at, review_updated_at, created_at, updated_at, changes, commits, swarm_branch, event_type, sent_at, raw_payload
 `
 
 type UpsertPerforceReviewParams struct {
@@ -313,9 +337,15 @@ type UpsertPerforceReviewParams struct {
 	HtmlUrl         string             `json:"html_url"`
 	ReviewCreatedAt pgtype.Timestamptz `json:"review_created_at"`
 	ReviewUpdatedAt pgtype.Timestamptz `json:"review_updated_at"`
+	Changes         []int32            `json:"changes"`
+	Commits         []int32            `json:"commits"`
+	RawPayload      []byte             `json:"raw_payload"`
 	Author          pgtype.Text        `json:"author"`
 	ShelvedCl       pgtype.Int4        `json:"shelved_cl"`
 	CommittedCl     pgtype.Int4        `json:"committed_cl"`
+	SwarmBranch     pgtype.Text        `json:"swarm_branch"`
+	EventType       pgtype.Text        `json:"event_type"`
+	SentAt          pgtype.Timestamptz `json:"sent_at"`
 }
 
 // =====================
@@ -333,9 +363,15 @@ func (q *Queries) UpsertPerforceReview(ctx context.Context, arg UpsertPerforceRe
 		arg.HtmlUrl,
 		arg.ReviewCreatedAt,
 		arg.ReviewUpdatedAt,
+		arg.Changes,
+		arg.Commits,
+		arg.RawPayload,
 		arg.Author,
 		arg.ShelvedCl,
 		arg.CommittedCl,
+		arg.SwarmBranch,
+		arg.EventType,
+		arg.SentAt,
 	)
 	var i PerforceReview
 	err := row.Scan(
@@ -352,6 +388,12 @@ func (q *Queries) UpsertPerforceReview(ctx context.Context, arg UpsertPerforceRe
 		&i.ReviewUpdatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Changes,
+		&i.Commits,
+		&i.SwarmBranch,
+		&i.EventType,
+		&i.SentAt,
+		&i.RawPayload,
 	)
 	return i, err
 }

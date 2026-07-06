@@ -101,8 +101,27 @@ func (h *Handler) HandleP4SwarmWebhook(w http.ResponseWriter, r *http.Request) {
 		Description: p.Review.Description,
 		ShelvedCL:   maxChangelist(p.Review.Changes),
 		CommittedCL: maxChangelist(p.Review.Commits),
+		Changes:     append([]int64(nil), p.Review.Changes...),
+		Commits:     append([]int64(nil), p.Review.Commits...),
+		SwarmBranch: p.Swarm.Branch,
+		EventType:   p.EventType,
+		SentAt:      parseOptionalRFC3339(p.SentAt),
+		RawPayload:  body,
 		CreatedAt:   time.Unix(p.Review.Created, 0).UTC(),
 		UpdatedAt:   time.Unix(p.Review.Updated, 0).UTC(),
+	}
+
+	// Per-project strategy dispatch. A project (identified by its Swarm URL)
+	// may be configured in perforce_project_strategy to run a bespoke
+	// capability (e.g. create-per-event) instead of the default
+	// link-to-existing-issue flow below. Checked first so that path stays fully
+	// independent of perforce_connection — a strategy row is its own opt-in.
+	if handled, status, err := h.dispatchPerforceStrategy(ctx, swarmURL, review); err != nil {
+		writeError(w, http.StatusInternalServerError, "process strategy failed")
+		return
+	} else if handled {
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": status})
+		return
 	}
 
 	candidates, err := h.Queries.ListPerforceConnectionsBySwarmURL(ctx, swarmURL)
@@ -196,4 +215,15 @@ func maxChangelist(xs []int64) *int64 {
 		}
 	}
 	return &m
+}
+
+func parseOptionalRFC3339(s string) time.Time {
+	if strings.TrimSpace(s) == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }

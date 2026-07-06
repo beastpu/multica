@@ -33,6 +33,115 @@ describe("ApiClient", () => {
     }
   });
 
+  it("uses binding_id and force for the P4 assessment trigger endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          created: true,
+          reason: "created",
+          assessment_status: "pending",
+          task_id: "task-1",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    const result = await client.triggerAgentFixP4Assessment({
+      binding_id: "binding-1",
+      force: false,
+    });
+
+    expect(result).toMatchObject({
+      created: true,
+      reason: "created",
+      assessment_status: "pending",
+      task_id: "task-1",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/operations/agent-fixes/p4-assessments",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ binding_id: "binding-1", force: false }),
+      }),
+    );
+  });
+
+  it("uses binding_id as the preferred human review endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          outcome: "accepted",
+          reasons: ["complete_usable"],
+          note: "Looks good.",
+          reviewer_id: "user-1",
+          reviewed_at: "2026-06-29T01:00:00Z",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    const result = await client.updateAgentFixReview(
+      "issue-1",
+      {
+        outcome: "accepted",
+        reasons: ["complete_usable"],
+        note: "Looks good.",
+      },
+      "binding-1",
+    );
+
+    expect(result).toMatchObject({
+      outcome: "accepted",
+      reasons: ["complete_usable"],
+      note: "Looks good.",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/operations/agent-fixes/binding-1/review",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          outcome: "accepted",
+          reasons: ["complete_usable"],
+          note: "Looks good.",
+        }),
+      }),
+    );
+  });
+
+  it("falls back to the legacy issue_id human review endpoint when binding_id is missing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ outcome: "unreviewed" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.updateAgentFixReview("issue-1", {
+      outcome: "unreviewed",
+      reasons: [],
+      note: "",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/operations/agent-fixes/issue-1/review",
+      expect.objectContaining({
+        method: "PUT",
+      }),
+    );
+  });
+
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ autopilots: [], runs: [], total: 0 }), {
@@ -150,6 +259,59 @@ describe("ApiClient", () => {
     expect(headers["X-Client-Platform"]).toBeUndefined();
     expect(headers["X-Client-Version"]).toBeUndefined();
     expect(headers["X-Client-OS"]).toBeUndefined();
+  });
+
+  it("posts feedback kind and parses the response through the schema", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: "feedback-1", created_at: "2026-06-26T00:00:00Z" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    const response = await client.createFeedback({
+      message: "Desktop route crashed",
+      url: "app://desktop/acme/issues",
+      workspace_id: "ws-1",
+      kind: "bug",
+    });
+
+    expect(response).toEqual({
+      id: "feedback-1",
+      created_at: "2026-06-26T00:00:00Z",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/feedback",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          message: "Desktop route crashed",
+          url: "app://desktop/acme/issues",
+          workspace_id: "ws-1",
+          kind: "bug",
+        }),
+      }),
+    );
+  });
+
+  it("falls back to an empty feedback response when the server shape drifts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ id: 42, created_at: "2026-06-26T00:00:00Z" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createFeedback({ message: "hello" })).resolves.toEqual({
+      id: "",
+      created_at: "",
+    });
   });
 
   it("uses the expected HTTP contract for comment trigger preview and suppress", async () => {

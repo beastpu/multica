@@ -45,7 +45,10 @@ import {
   feishuProjectRoutesOptions,
   feishuProjectSyncOptions,
 } from "@multica/core/feishu-project/queries";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
+import { composioToolkitsOptions } from "@multica/core/composio";
+import { useFeatureEnabled } from "@multica/core/config";
+import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import type {
   FeishuProjectBusinessLineNode,
   FeishuProjectFieldMeta,
@@ -56,6 +59,9 @@ import type {
   FeishuProjectWorkItemTypeConfig,
 } from "@multica/core/types";
 import { LarkTab } from "./lark-tab";
+import { ComposioTab } from "./composio-tab";
+import { SlackTab } from "./slack-tab";
+import { AssessmentCapabilitySection } from "./assessment-capability-section";
 import { useT } from "../../i18n";
 import { FeishuProjectRoutingSection, type RouteRow } from "./feishu-project-routing-section";
 import { FeishuProjectWorkItemTypesSection } from "./feishu-project-work-item-types-section";
@@ -434,6 +440,17 @@ export function IntegrationsTab() {
       setSyncingFeishu(false);
     }
   }
+
+  const composioEnabled = useFeatureEnabled(COMPOSIO_MCP_APPS_FLAG, false);
+  // Composio is hidden entirely until the feature is enabled and a key is
+  // configured server-side. A 503 from the toolkits endpoint means the server
+  // withheld the integration despite the frontend flag being on.
+  const composioToolkits = useQuery({
+    ...composioToolkitsOptions(),
+    enabled: composioEnabled,
+  });
+  const composioUnconfigured =
+    composioToolkits.error instanceof ApiError && composioToolkits.error.status === 503;
 
   return (
     <div className="space-y-10">
@@ -851,6 +868,20 @@ export function IntegrationsTab() {
       <section className="space-y-4">
         <h2 className="text-sm font-semibold">{t(($) => $.lark.section_title)}</h2>
         <LarkTab />
+      </section>
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold">{t(($) => $.assessment.section_title)}</h2>
+        <AssessmentCapabilitySection />
+      </section>
+      {composioEnabled && !composioUnconfigured && (
+        <section className="space-y-4">
+          <h2 className="text-sm font-semibold">{t(($) => $.composio.section_title)}</h2>
+          <ComposioTab />
+        </section>
+      )}
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold">{t(($) => $.slack.section_title)}</h2>
+        <SlackTab />
       </section>
     </div>
   );

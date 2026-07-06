@@ -1,6 +1,7 @@
 package lark
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -373,15 +374,34 @@ func NewPongFrame(serviceID int32) *Frame {
 // and nil Data slice both marshal to JSON null in stdlib encoding/json,
 // which is what the server expects to receive.
 func NewAckFrame(inbound *Frame, codeOK bool) *Frame {
+	return NewAckFrameWithData(inbound, codeOK, nil)
+}
+
+// NewAckFrameWithData is the card-callback variant of NewAckFrame. The
+// official SDK wraps callback responses in Response.data as a []byte, which
+// stdlib JSON serializes as a base64 string; the long-connection server
+// decodes that field before applying card.action.trigger responses.
+func NewAckFrameWithData(inbound *Frame, codeOK bool, data []byte) *Frame {
 	code := 200
 	if !codeOK {
 		code = 500
 	}
-	payload := fmt.Sprintf(`{"code":%d,"headers":null,"data":null}`, code)
+	payload, err := json.Marshal(struct {
+		Code    int               `json:"code"`
+		Headers map[string]string `json:"headers"`
+		Data    []byte            `json:"data"`
+	}{
+		Code:    code,
+		Headers: nil,
+		Data:    data,
+	})
+	if err != nil {
+		payload = []byte(fmt.Sprintf(`{"code":%d,"headers":null,"data":null}`, code))
+	}
 	return &Frame{
 		Method:  inbound.Method,
 		Service: inbound.Service,
 		Headers: inbound.Headers,
-		Payload: []byte(payload),
+		Payload: payload,
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -133,6 +134,157 @@ func TestFeishuProjectPluginTokenCachesAndRefreshes(t *testing.T) {
 	}
 }
 
+func TestFeishuProjectListWorkItemCommentsUsesIntegrationAuthAndAPIName(t *testing.T) {
+	var sawComments bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/issue/7030670417/comments":
+			sawComments = true
+			if r.Method != http.MethodGet {
+				t.Fatalf("method = %s, want GET", r.Method)
+			}
+			if got := r.Header.Get("X-PLUGIN-TOKEN"); got != "plugin-token" {
+				t.Fatalf("X-PLUGIN-TOKEN = %q", got)
+			}
+			if got := r.Header.Get("X-USER-KEY"); got != "actor-user" {
+				t.Fatalf("X-USER-KEY = %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": [{
+					"id": "comment-1",
+					"operator": "actor-user",
+					"created_at": 1778933232000,
+					"content": "ChangeList: 283198 --Submitted\nSwarm Review: [#283199](http://w3-swarm.lilithgame.com/reviews/283199)"
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	comments, err := client.ListWorkItemComments(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+		ActorUserKey: pgtype.Text{String: "actor-user", Valid: true},
+		WorkItemTypes: feishuTestIssueTypes(`{
+			"vcvaCnnGi": "done"
+		}`),
+	}, "issue", "7030670417")
+	if err != nil {
+		t.Fatalf("ListWorkItemComments: %v", err)
+	}
+	if !sawComments {
+		t.Fatal("comments endpoint was not called")
+	}
+	if len(comments) != 1 {
+		t.Fatalf("len(comments) = %d", len(comments))
+	}
+	if comments[0].ID != "comment-1" || comments[0].Operator != "actor-user" || !strings.Contains(comments[0].Content, "ChangeList: 283198") {
+		t.Fatalf("comment = %#v", comments[0])
+	}
+	if comments[0].CreatedAt.Format(time.RFC3339) != "2026-05-16T12:07:12Z" {
+		t.Fatalf("created_at = %s", comments[0].CreatedAt.Format(time.RFC3339))
+	}
+}
+
+func TestFeishuProjectListRelatedWorkItemsFindsLinkedStory(t *testing.T) {
+	var sawFilter bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/filter":
+			sawFilter = true
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode filter request: %v", err)
+			}
+			if got := req["work_item_ids"]; !jsonEqual(got, []any{"7030670417"}) {
+				t.Fatalf("work_item_ids = %#v", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": [{
+					"id": 7030670417,
+					"name": "bug",
+					"work_item_status": {"state_key": "OPEN", "name": "新建"},
+					"fields": [
+						{"field_key":"resolve_version","field_type_key":"work_item_related_multi_select","field_value":[6692313662]},
+						{"field_key":"_field_linked_story","field_type_key":"work_item_related_select","field_value":7031382520}
+					]
+				}],
+				"pagination": {"page_num": 1, "page_size": 100, "total": 1}
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	related, err := client.ListRelatedWorkItems(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+		WorkItemTypes: feishuTestIssueTypes(`{
+			"OPEN": "todo"
+		}`),
+	}, "issue", "7030670417")
+	if err != nil {
+		t.Fatalf("ListRelatedWorkItems: %v", err)
+	}
+	if !sawFilter {
+		t.Fatal("filter endpoint was not called")
+	}
+	if len(related) != 1 {
+		t.Fatalf("related = %#v", related)
+	}
+	if related[0].Type != "story" || related[0].ID != "7031382520" || related[0].Source != "_field_linked_story" {
+		t.Fatalf("related[0] = %#v", related[0])
+	}
+}
+
+func TestFeishuProjectLatestSubmittedCLFromCommentsUsesLastSubmittedComment(t *testing.T) {
+	comments := []FeishuProjectComment{
+		{
+			Content:   "CL 287451 已 shelve，等待 review",
+			CreatedAt: time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC),
+		},
+		{
+			Content:   "ChangeList: 284805 --Submitted",
+			CreatedAt: time.Date(2026, 7, 1, 11, 0, 0, 0, time.UTC),
+		},
+		{
+			Content:   "submitted CL 284806",
+			CreatedAt: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+		},
+	}
+
+	if got := feishuProjectLatestSubmittedCLFromComments(comments); got != "284806" {
+		t.Fatalf("latest submitted CL = %q, want 284806", got)
+	}
+}
+
+func TestFeishuProjectLatestSubmittedCLFromCommentsIgnoresShelvedCL(t *testing.T) {
+	comments := []FeishuProjectComment{
+		{Content: "CL 287451 已 shelve，修复 FPS 求助分享在 IM 发送失败时仍记录 MsgID=0 的问题。"},
+	}
+
+	if got := feishuProjectLatestSubmittedCLFromComments(comments); got != "" {
+		t.Fatalf("latest submitted CL = %q, want empty", got)
+	}
+}
+
 func TestFeishuProjectIssueStatusOptionsFallsBackToFieldMetadata(t *testing.T) {
 	var sawMetadataAPI bool
 
@@ -183,6 +335,78 @@ func TestFeishuProjectIssueStatusOptionsFallsBackToFieldMetadata(t *testing.T) {
 		t.Fatal("metadata API was not called")
 	}
 	if len(statuses) != 2 || statuses[0].Key != "OPEN" || statuses[1].Key != "CLOSED" {
+		t.Fatalf("statuses = %#v", statuses)
+	}
+}
+
+func TestFeishuProjectIssueStatusOptionsFallsBackToScopedFieldAll(t *testing.T) {
+	const customType = "6a13bb3ce220420f55e6429d"
+	var sawFieldAll bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/template_list/" + customType:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":[{"template_id":"template-1"}]}`))
+		case "/open_api/project-key/template_detail/template-1":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"state_flow_confs":[]}}`))
+		case "/open_api/project-key/work_item/" + customType + "/meta":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"fields":[]}}`))
+		case "/open_api/project-key/field/all":
+			sawFieldAll = true
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": [
+					{
+						"field_key": "work_item_status",
+						"field_type_key": "work_item_status",
+						"work_item_scopes": ["issue"],
+						"option": [
+							{"option_id": "OPEN", "option_name": "新建"}
+						]
+					},
+					{
+						"field_key": "work_item_status",
+						"field_type_key": "work_item_status",
+						"work_item_scopes": ["` + customType + `"],
+						"option": [
+							{"option_id": "started", "option_name": "开始"},
+							{"option_id": "_g3pyz3q3", "option_name": "进行中"}
+						]
+					}
+				]
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{
+		HTTPClient: server.Client(),
+		BaseURL:    server.URL,
+	}
+	statuses, err := client.WorkItemStatusOptions(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+	}, customType)
+	if err != nil {
+		t.Fatalf("IssueStatusOptions: %v", err)
+	}
+	if !sawFieldAll {
+		t.Fatal("field/all API was not called")
+	}
+	if len(statuses) != 2 || statuses[0].Key != "started" || statuses[1].Key != "_g3pyz3q3" {
 		t.Fatalf("statuses = %#v", statuses)
 	}
 }
@@ -1417,6 +1641,178 @@ func TestFeishuProjectQueryWorkItemsTargetedIDSkipsStatusMappingGuard(t *testing
 	}
 }
 
+func TestFeishuProjectListExternalFieldKeysUsesDisplayNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/field/all":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": {"fields": [
+					{"field_key":"field_467c5f","field_name":"提交分支","field_type_key":"multi-select","work_item_scopes":["issue"]},
+					{"field_key":"field_d7788a","field_name":"开发分支（QA不用手动改，这个字段QA不用维护）","field_type_key":"multi-select","work_item_scopes":["issue"]},
+					{"field_key":"field_priority","field_name":"优先级","field_type_key":"select","work_item_scopes":["issue"]},
+					{"field_key":"field_story_branch","field_name":"提交分支","field_type_key":"multi-select","work_item_scopes":["story"]}
+				]}
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	keys, err := client.ListExternalFieldKeys(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+	}, "issue")
+	if err != nil {
+		t.Fatalf("ListExternalFieldKeys: %v", err)
+	}
+	want := []string{"field_467c5f", "field_d7788a"}
+	if !jsonEqual(keys, want) {
+		t.Fatalf("keys = %#v, want %#v", keys, want)
+	}
+}
+
+func TestFeishuProjectQueryWorkItemFieldValuesParsesDetailFields(t *testing.T) {
+	var request map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/issue/query":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode query request: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"err_code": 0,
+				"data": [{
+					"work_item_attribute": {
+						"work_item_id": "7037722588",
+						"work_item_name": "branch-item",
+						"work_item_status": {"key": "OPEN", "name": "未开始"},
+						"update_time": "2026-07-03T20:20:59+08:00"
+					},
+					"work_item_fields": [{
+						"key": "field_467c5f",
+						"name": "提交分支",
+						"value": [{"label": "1.7.2(dev or rel)", "value": "f_8ckn0o_"}]
+					}]
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	items, err := client.QueryWorkItemFieldValues(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+	}, "issue", []string{"7037722588"}, []string{"field_467c5f"})
+	if err != nil {
+		t.Fatalf("QueryWorkItemFieldValues: %v", err)
+	}
+	if !jsonEqual(request["work_item_ids"], []any{"7037722588"}) {
+		t.Fatalf("work_item_ids = %#v", request["work_item_ids"])
+	}
+	if !jsonEqual(request["fields"], []any{"field_467c5f"}) {
+		t.Fatalf("fields = %#v", request["fields"])
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	got := feishuProjectExternalFields(items[0])
+	want := map[string]string{"提交分支": "1.7.2(dev or rel)"}
+	if !jsonEqual(got, want) {
+		t.Fatalf("external fields = %#v, want %#v; values=%#v", got, want, items[0].FieldValues)
+	}
+}
+
+// The detail query endpoint rejects more than 50 work_item_ids per request, so
+// a page-sized (100) batch must be split into ≤50-id chunks and the results
+// merged back together.
+func TestFeishuProjectQueryWorkItemFieldValuesChunksBatches(t *testing.T) {
+	var batchSizes []int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open_api/authen/plugin_token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
+		case "/open_api/project-key/work_item/issue/query":
+			var req struct {
+				WorkItemIDs []string `json:"work_item_ids"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode query request: %v", err)
+			}
+			batchSizes = append(batchSizes, len(req.WorkItemIDs))
+			rows := make([]string, 0, len(req.WorkItemIDs))
+			for _, id := range req.WorkItemIDs {
+				rows = append(rows, fmt.Sprintf(`{"work_item_attribute":{"work_item_id":"%s"}}`, id))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"err_code":0,"data":[%s]}`, strings.Join(rows, ","))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	ids := make([]string, 0, 120)
+	for i := range 120 {
+		ids = append(ids, fmt.Sprintf("70377%05d", i))
+	}
+	client := &FeishuProjectClient{HTTPClient: server.Client(), BaseURL: server.URL}
+	items, err := client.QueryWorkItemFieldValues(context.Background(), db.FeishuProjectIntegration{
+		ProjectKey:   "project-key",
+		PluginID:     "plugin-id",
+		PluginSecret: "plugin-secret",
+	}, "issue", ids, []string{"field_467c5f"})
+	if err != nil {
+		t.Fatalf("QueryWorkItemFieldValues: %v", err)
+	}
+	if !jsonEqual(batchSizes, []int{50, 50, 20}) {
+		t.Fatalf("batch sizes = %v, want [50 50 20]", batchSizes)
+	}
+	if len(items) != 120 {
+		t.Fatalf("len(items) = %d, want 120", len(items))
+	}
+	if items[0].ID != ids[0] || items[119].ID != ids[119] {
+		t.Fatalf("merged items lost order: first=%s last=%s", items[0].ID, items[119].ID)
+	}
+}
+
+// When the detail-field lookup fails, the sync must not clear branch fields
+// that a previous successful sync stored on the binding.
+func TestFeishuProjectPreserveExternalBranchFieldsOnIncompleteLookup(t *testing.T) {
+	raw := []byte(`{"提交分支":"1.7.2(dev or rel)","开发分支":"feature/foo","final_cl":"12345"}`)
+	fields := map[string]string{"开发分支": "feature/bar"}
+	preserveFeishuProjectExternalBranchFields(raw, fields)
+	want := map[string]string{
+		"提交分支": "1.7.2(dev or rel)", // restored from binding
+		"开发分支": "feature/bar",       // fresh value wins over stored one
+	}
+	if !jsonEqual(fields, want) {
+		t.Fatalf("fields = %#v, want %#v", fields, want)
+	}
+	if _, ok := fields["final_cl"]; ok {
+		t.Fatalf("final_cl must stay owned by the final-CL preservation path, got %q", fields["final_cl"])
+	}
+}
+
 // Regression: a custom plugin/radio field like "BUG提单助手" (field_c1f194) is
 // silently dropped from /work_item/{type}/meta but appears in /field/all with its
 // inline options (是/否). Before the fix, the missing-from-/meta path fell through
@@ -1548,8 +1944,9 @@ func TestListFieldOptionsReturnsNilWhenNoInlineOptionsAnywhere(t *testing.T) {
 // fakeFeishuTaskService records reconcileSyncedIssueTasks side effects so the
 // cancel-only-on-terminal-status contract can be verified without a database.
 type fakeFeishuTaskService struct {
-	cancelled []pgtype.UUID
-	enqueued  []pgtype.UUID
+	cancelled       []pgtype.UUID
+	enqueued        []pgtype.UUID
+	enqueuedLeaders []pgtype.UUID
 }
 
 func (f *fakeFeishuTaskService) CancelTasksForIssue(_ context.Context, issueID pgtype.UUID) error {
@@ -1560,6 +1957,32 @@ func (f *fakeFeishuTaskService) CancelTasksForIssue(_ context.Context, issueID p
 func (f *fakeFeishuTaskService) EnqueueTaskForIssue(_ context.Context, issue db.Issue, _ ...pgtype.UUID) (db.AgentTaskQueue, error) {
 	f.enqueued = append(f.enqueued, issue.ID)
 	return db.AgentTaskQueue{}, nil
+}
+
+func (f *fakeFeishuTaskService) EnqueueTaskForSquadLeader(_ context.Context, issue db.Issue, leaderID pgtype.UUID, _ pgtype.UUID, _ pgtype.UUID) (db.AgentTaskQueue, error) {
+	f.enqueued = append(f.enqueued, issue.ID)
+	f.enqueuedLeaders = append(f.enqueuedLeaders, leaderID)
+	return db.AgentTaskQueue{}, nil
+}
+
+type fakeP4AssessmentTrigger struct {
+	calls []pgtype.UUID
+	err   error
+}
+
+func (f *fakeP4AssessmentTrigger) Trigger(_ context.Context, _ pgtype.UUID, bindingID pgtype.UUID, force bool, actor P4AssessmentActor) (P4AssessmentTriggerResult, error) {
+	if force {
+		return P4AssessmentTriggerResult{}, errors.New("sync trigger must use force=false")
+	}
+	if actor.Trigger != P4AssessmentTriggerScan {
+		return P4AssessmentTriggerResult{}, errors.New("sync trigger must be a scan actor")
+	}
+	f.calls = append(f.calls, bindingID)
+	return P4AssessmentTriggerResult{}, f.err
+}
+
+func (f *fakeP4AssessmentTrigger) BackfillDoneBindings(_ context.Context, _, _ pgtype.UUID, _ int32) (P4AssessmentBackfillResult, error) {
+	return P4AssessmentBackfillResult{}, nil
 }
 
 func issueWithID(seed byte) pgtype.UUID {
@@ -1587,6 +2010,48 @@ func TestReconcileSyncedIssueTasksCancelsOnTerminalStatus(t *testing.T) {
 				t.Fatalf("terminal status %q: enqueued %d times, want 0", status, len(fake.enqueued))
 			}
 		})
+	}
+}
+
+func TestTriggerP4AssessmentForDoneBindingOnlyMappedDone(t *testing.T) {
+	cfg := db.FeishuProjectIntegration{
+		WorkspaceID: issueWithID(10),
+		WorkItemTypes: []byte(`[
+			{"type_key":"issue","status_mapping":{"DONE_KEY":"done","OPEN_KEY":"todo"}}
+		]`),
+	}
+	binding := db.FeishuProjectIssueBinding{ID: issueWithID(11)}
+
+	trigger := &fakeP4AssessmentTrigger{}
+	svc := &FeishuProjectSyncService{P4Assessment: trigger}
+	svc.triggerP4AssessmentForDoneBinding(context.Background(), cfg, FeishuProjectWorkItem{Type: "issue", ID: "BUG-1", Status: "OPEN_KEY"}, binding)
+	if len(trigger.calls) != 0 {
+		t.Fatalf("non-done status triggered assessment %d times", len(trigger.calls))
+	}
+
+	// Done status reaches Trigger; the fail-closed capability gate lives
+	// INSIDE Trigger (see TestTriggerFailsClosedWithoutCapability in the
+	// handler package), so the sync path forwards every done binding.
+	svc.triggerP4AssessmentForDoneBinding(context.Background(), cfg, FeishuProjectWorkItem{Type: "issue", ID: "BUG-1", Status: "DONE_KEY"}, binding)
+	if len(trigger.calls) != 1 || trigger.calls[0] != binding.ID {
+		t.Fatalf("done status trigger calls = %#v, want binding %s", trigger.calls, UUIDString(binding.ID))
+	}
+}
+
+func TestTriggerP4AssessmentForDoneBindingBestEffort(t *testing.T) {
+	cfg := db.FeishuProjectIntegration{
+		WorkspaceID: issueWithID(12),
+		WorkItemTypes: []byte(`[
+			{"type_key":"issue","status_mapping":{"DONE_KEY":"done"}}
+		]`),
+	}
+	trigger := &fakeP4AssessmentTrigger{err: errors.New("temporary trigger failure")}
+	svc := &FeishuProjectSyncService{P4Assessment: trigger}
+
+	svc.triggerP4AssessmentForDoneBinding(context.Background(), cfg, FeishuProjectWorkItem{Type: "issue", ID: "BUG-2", Status: "DONE_KEY"}, db.FeishuProjectIssueBinding{ID: issueWithID(13)})
+
+	if len(trigger.calls) != 1 {
+		t.Fatalf("best-effort trigger calls = %d, want 1", len(trigger.calls))
 	}
 }
 

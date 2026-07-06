@@ -29,13 +29,28 @@ func runFeishuProjectSyncWorker(ctx context.Context, queries *db.Queries, pool *
 	}
 }
 
+// feishuP4AssessmentTrigger resolves the P4 assessment trigger from a
+// TaskService, guarding on the concrete *P4AssessmentService pointer rather than
+// the interface. Assigning a nil *P4AssessmentService straight into the
+// FeishuProjectP4AssessmentTrigger interface would yield a non-nil "typed nil"
+// that passes `!= nil` checks and then panics on a nil-receiver method call —
+// the startup crash this guards against. Returning a true nil interface keeps
+// the downstream backfill/trigger guards honest.
+func feishuP4AssessmentTrigger(taskSvc *service.TaskService) service.FeishuProjectP4AssessmentTrigger {
+	if taskSvc == nil || taskSvc.P4Assessment == nil {
+		return nil
+	}
+	return taskSvc.P4Assessment
+}
+
 func runFeishuProjectSyncOnce(ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, store service.FeishuProjectStorage, taskSvc *service.TaskService, bus *events.Bus) {
 	configs, err := queries.ListEnabledFeishuProjectIntegrations(ctx)
 	if err != nil {
 		slog.Warn("Feishu Project sync scan failed", "error", err)
 		return
 	}
-	svc := &service.FeishuProjectSyncService{Queries: queries, Tx: pool, Client: service.NewFeishuProjectClient(), Storage: store, TaskService: taskSvc, Events: bus}
+	p4Assessment := feishuP4AssessmentTrigger(taskSvc)
+	svc := &service.FeishuProjectSyncService{Queries: queries, Tx: pool, Client: service.NewFeishuProjectClient(), Storage: store, TaskService: taskSvc, P4Assessment: p4Assessment, Events: bus}
 	now := time.Now()
 	for _, cfg := range configs {
 		locked, unlock, err := service.TryAcquireFeishuProjectSyncLock(ctx, pool, cfg.ID)
@@ -57,6 +72,16 @@ func runFeishuProjectSyncOnce(ctx context.Context, queries *db.Queries, pool *pg
 				slog.Warn("Feishu Project orphan reconcile failed", "integration_id", service.UUIDString(cfg.ID), "project_key", cfg.ProjectKey, "error", err)
 			} else if err := queries.MarkFeishuProjectIntegrationOrphanReconciled(ctx, cfg.ID); err != nil {
 				slog.Warn("Feishu Project mark orphan-reconciled failed", "integration_id", service.UUIDString(cfg.ID), "error", err)
+			}
+		}
+		// Fail-closed gate: the workspace_agent_capability row is the only
+		// opt-in for auto assessment. No capability ⇒ no backfill scan.
+		if p4Assessment != nil && service.P4AssessmentCapabilityConfigured(ctx, queries, cfg.WorkspaceID) {
+			result, err := p4Assessment.BackfillDoneBindings(ctx, cfg.WorkspaceID, cfg.ID, service.P4AssessmentBackfillLimit)
+			if err != nil {
+				slog.Warn("P4 assessment historical binding backfill failed", "integration_id", service.UUIDString(cfg.ID), "project_key", cfg.ProjectKey, "error", err)
+			} else if result.Triggered > 0 || result.Failed > 0 {
+				slog.Info("P4 assessment historical binding backfill finished", "integration_id", service.UUIDString(cfg.ID), "project_key", cfg.ProjectKey, "scanned", result.Scanned, "eligible", result.Eligible, "triggered", result.Triggered, "skipped", result.Skipped, "failed", result.Failed, "last_reason", result.LastReason)
 			}
 		}
 		unlock()

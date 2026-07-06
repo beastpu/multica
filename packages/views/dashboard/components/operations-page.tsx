@@ -6,10 +6,30 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
   type RefObject,
 } from "react";
-import { Radar, Search, X } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  ExternalLink,
+  List,
+  Play,
+  Radar,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { Badge } from "@multica/ui/components/ui/badge";
+import { Button } from "@multica/ui/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@multica/ui/components/ui/popover";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Input } from "@multica/ui/components/ui/input";
 import {
@@ -22,29 +42,78 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { paths, useWorkspaceSlug } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
+import { perforceConnectionOptions } from "@multica/core/perforce/queries";
+import { feishuProjectIssueStatusesOptions } from "@multica/core/feishu-project/queries";
 import {
   operationsFixesOptions,
+  useTriggerAgentFixP4Assessment,
   useOperationsViewStore,
   clampOperationsColumnWidth,
   OPERATIONS_DEFAULT_WIDTHS,
   OPERATIONS_COLUMN_KEYS,
   type OperationsColumnKey,
 } from "@multica/core/dashboard";
-import type { AgentFixRecord, IssueStatus } from "@multica/core/types";
+import type {
+  AgentFixRecord,
+  IssueStatus,
+} from "@multica/core/types";
 import { PageHeader } from "../../layout/page-header";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { StatusIcon } from "../../issues/components/status-icon";
 import { AppLink } from "../../navigation";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { useT } from "../../i18n";
+import {
+  ToneBadge,
+  agentFixEnumLabel,
+  agentFixEnumTone,
+  type Tone,
+  type UsageT,
+} from "./agent-fix-review";
+import { OperationsSummary } from "./operations-summary";
 import { Segmented } from "./segmented";
+import {
+  AI_PLAN_NO_RECORD,
+  UNASSESSED,
+  attributionBucket,
+  computeBlockedStats,
+  computeOperationsKpis,
+  deriveAttribution,
+  fixDayIso,
+  hasMissingExternalClWarning,
+  isPendingJudgement,
+  isVerifiableOutput,
+  qualityBucket,
+  qualityJudgement,
+  trimOperationsWindow,
+  swarmChangeUrl,
+  swarmReviewUrl,
+  type BlockedFamily,
+} from "../operations-metrics";
 
 const ALL_AGENTS = "__all__";
-const ALL_STATUSES = "__all__";
+const ALL_WORKSTREAMS = "__all__";
+const ALL_ATTRIBUTIONS = "__all__";
+const ALL_QUALITIES = "__all__";
+const DETAIL_TAB = "detail";
+const ANALYSIS_TAB = "analysis";
+type OperationsTab = typeof DETAIL_TAB | typeof ANALYSIS_TAB;
+type SelectOption = { value: string; label: string };
+
+const FILTER_SELECT_TRIGGER_CLASS =
+  "h-8 rounded-md border-0 bg-transparent px-2.5 text-xs text-muted-foreground shadow-none hover:bg-background/70 hover:text-foreground focus-visible:ring-2";
+const SEARCH_INPUT_CLASS =
+  "h-8 w-full rounded-lg border-border/70 bg-muted/25 pl-8 pr-7 text-base shadow-none transition-colors hover:bg-muted/35 focus-visible:border-ring focus-visible:bg-background sm:w-[260px] md:text-sm [&::-webkit-search-cancel-button]:appearance-none";
+const SEARCH_CLEAR_CLASS =
+  "absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
+
+// Detail-table page size. The full window is fetched once (a few thousand rows
+// at most) and paged purely in the UI so the client-side filters keep covering
+// the whole window.
+const PAGE_SIZE = 50;
 
 // Trailing window. `1d` is the last 24h; the rest mirror the Usage dashboard's
-// daily-dimension options (a flat record list has no weekly chart grain). 30d
-// default matches the dashboard.
+// daily-dimension options. 30d default matches the dashboard.
 const RANGES = [
   { label: "1d", days: 1 },
   { label: "7d", days: 7 },
@@ -75,12 +144,11 @@ function isKnownIssueStatus(s: string): s is IssueStatus {
 const EMPTY: AgentFixRecord[] = [];
 
 // --- Resizable-column layout -------------------------------------------------
-// Column order: 智能体 · 关联 issue · 状态 · 原因/描述(flex) · 时间(fixed last).
-// agent/issue/status are user-resizable (widths held as CSS vars on the card,
-// persisted via the operations view store). 原因/描述 is the flex filler that
-// soaks up slack, and 时间 is a fixed slim date column pinned last.
-const REASON_MIN_PX = 220;
-const TIME_PX = 96;
+// Column order: Issue, external state, agent, submitted CL record, delivery
+// attribution, AI quality analysis, date. The external status column stays
+// fixed; the rest are user-resizable. The legacy `status` width slot backs the
+// submitted-CL column so stored preferences remain scoped to this page.
+const EXTERNAL_PX = 138;
 const COLUMN_GAP_PX = 12; // matches gap-3
 const CARD_PADDING_X_PX = 32; // px-4 on the header + each row (16 × 2)
 
@@ -88,10 +156,12 @@ const COLUMN_VAR: Record<OperationsColumnKey, string> = {
   agent: "--ops-col-agent",
   issue: "--ops-col-issue",
   status: "--ops-col-status",
+  attribution: "--ops-col-attribution",
+  quality: "--ops-col-quality",
+  time: "--ops-col-time",
 };
 
-// Resolved from the CSS vars the card carries; reason flexes, time is fixed.
-const GRID_TEMPLATE = `var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.issue}) var(${COLUMN_VAR.status}) minmax(${REASON_MIN_PX}px, 1fr) ${TIME_PX}px`;
+const GRID_TEMPLATE = `var(${COLUMN_VAR.issue}) ${EXTERNAL_PX}px var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.status}) var(${COLUMN_VAR.attribution}) var(${COLUMN_VAR.quality}) var(${COLUMN_VAR.time})`;
 
 const GRID_STYLE: CSSProperties = { gridTemplateColumns: GRID_TEMPLATE };
 
@@ -105,9 +175,11 @@ function operationsMinWidth(w: Record<OperationsColumnKey, number>): number {
     w.agent +
     w.issue +
     w.status +
-    REASON_MIN_PX +
-    TIME_PX +
-    COLUMN_GAP_PX * 4 +
+    w.attribution +
+    w.quality +
+    w.time +
+    EXTERNAL_PX +
+    COLUMN_GAP_PX * 6 +
     CARD_PADDING_X_PX
   );
 }
@@ -119,33 +191,255 @@ function cardStyle(w: Record<OperationsColumnKey, number>): CSSProperties {
     [COLUMN_VAR.agent]: `${w.agent}px`,
     [COLUMN_VAR.issue]: `${w.issue}px`,
     [COLUMN_VAR.status]: `${w.status}px`,
+    [COLUMN_VAR.attribution]: `${w.attribution}px`,
+    [COLUMN_VAR.quality]: `${w.quality}px`,
+    [COLUMN_VAR.time]: `${w.time}px`,
     minWidth: `${operationsMinWidth(w)}px`,
   } as CSSProperties;
-}
-
-// Day-granularity label for a fix's time axis, in the viewer's timezone — the
-// same calendar the usage dashboard slices on, so "按天" lines up across both
-// pages. en-CA yields a locale-neutral YYYY-MM-DD; a bad tz falls back to the
-// raw ISO day.
-function formatDay(iso: string | null, tz: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  try {
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: tz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(d);
-  } catch {
-    return iso.slice(0, 10);
-  }
 }
 
 // Debounce delay before a typed search term hits the server. Long enough to
 // coalesce a burst of keystrokes, short enough to feel responsive.
 const SEARCH_DEBOUNCE_MS = 300;
+
+function compactList(values: Array<string | number> | undefined): string {
+  return (values ?? [])
+    .map((v) => String(v).trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function extractToken(text: string, patterns: RegExp[]): string {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return "";
+}
+
+function derivedEvidence(fix: AgentFixRecord) {
+  const comment = fix.last_comment ?? "";
+  const p4 = fix.p4_assessment;
+  const reviewChanges = compactList(
+    (p4?.swarm_reviews ?? []).flatMap((review) => review.changes ?? []),
+  );
+  const reviewCommits = compactList(
+    (p4?.swarm_reviews ?? []).flatMap((review) => review.commits ?? []),
+  );
+  const swarm =
+    firstSwarmReview(fix) ||
+    extractToken(comment, [
+      /\b(SW-\d+)\b/i,
+      /\bswarm(?:\s+review)?[:#\s]+(\d+)\b/i,
+    ]);
+  const shelve =
+    compactList(p4?.ai_shelved_cls) ||
+    extractToken(comment, [
+      /\bshelv(?:e|ed)?(?:\s+CL)?[:#\s]+(\d+)\b/i,
+      /\bpending\s+P4\s+CL[:#\s]+(\d+)\b/i,
+      /\bCL[:#\s]+(\d+)\b[^\n\r]*(?:shelv(?:e|ed)|已\s*shelve|已\s*shelved)\b/i,
+    ]);
+  const finalCl =
+    String(fix.external?.final_cl ?? "").trim() ||
+    compactList(p4?.external_committed_cls) ||
+    compactList(p4?.swarm_committed_cls);
+  return {
+    workstream:
+      String(p4?.workstream ?? "").trim() ||
+      String(fix.external?.workstream ?? "").trim() ||
+      firstSwarmReviewField(fix, "swarm_branch"),
+    swarm,
+    shelve,
+    swarmChanges: compactList(p4?.swarm_change_cls) || reviewChanges,
+    swarmCommits: compactList(p4?.swarm_committed_cls) || reviewCommits,
+    swarmBranch: firstSwarmReviewField(fix, "swarm_branch"),
+    eventType: firstSwarmReviewField(fix, "event_type"),
+    sentAt: firstSwarmReviewField(fix, "sent_at"),
+    finalCl,
+  };
+}
+
+function firstSwarmReview(fix: AgentFixRecord): string {
+  const review = fix.p4_assessment?.swarm_reviews?.find(
+    (r) => String(r.review_id ?? r.id ?? "").trim().length > 0,
+  );
+  return String(review?.review_id ?? review?.id ?? "").trim();
+}
+
+// The URL of the first swarm review, when the webhook payload carried one —
+// preferred over rebuilding from the connection base.
+function firstSwarmReviewUrl(fix: AgentFixRecord): string {
+  const review = fix.p4_assessment?.swarm_reviews?.find(
+    (r) => String(r.url ?? "").trim().length > 0,
+  );
+  return String(review?.url ?? "").trim();
+}
+
+function firstSwarmReviewField(
+  fix: AgentFixRecord,
+  field: "swarm_branch" | "event_type" | "sent_at",
+): string {
+  const review = fix.p4_assessment?.swarm_reviews?.find(
+    (r) => String(r[field] ?? "").trim().length > 0,
+  );
+  return String(review?.[field] ?? "").trim();
+}
+
+function hasP4Assessment(fix: AgentFixRecord): boolean {
+  const p4 = fix.p4_assessment;
+  if (!p4) return false;
+  return Boolean(
+      p4.assessment_status ||
+      p4.delivery_attribution_prediction ||
+      p4.quality_prediction ||
+      p4.workstream ||
+      derivedEvidence(fix).swarm ||
+      derivedEvidence(fix).shelve ||
+      derivedEvidence(fix).finalCl,
+  );
+}
+
+function hasP4Signal(fix: AgentFixRecord): boolean {
+  if (hasP4Assessment(fix)) return true;
+  const evidence = derivedEvidence(fix);
+  return Boolean(evidence.swarm || evidence.shelve || evidence.finalCl);
+}
+
+function isOperationsVisibleIssue(fix: AgentFixRecord): boolean {
+  const external = fix.external;
+  const hasAgentRun = fix.task_id.trim().length > 0;
+  const hasExternalBinding = (external?.binding_id ?? "").trim().length > 0;
+  const externalDone =
+    external?.done === true || external?.mapped_status === "done";
+  return (
+    hasAgentRun &&
+    fix.issue_status === "done" &&
+    hasExternalBinding &&
+    externalDone
+  );
+}
+
+function confidenceLabel(confidence: number | null | undefined): string {
+  if (typeof confidence !== "number" || Number.isNaN(confidence)) return "";
+  return `${Math.round(confidence * 100)}%`;
+}
+
+function sortedUniqueOptions(
+  rows: AgentFixRecord[],
+  getValue: (row: AgentFixRecord) => string | undefined,
+): string[] {
+  return Array.from(
+    new Set(rows.map((row) => getValue(row)?.trim()).filter(Boolean) as string[]),
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+export const OPERATIONS_P4_CSV_HEADERS = [
+  "Issue",
+  "Issue Title",
+  "External Work Item ID",
+  "External URL",
+  "External Status",
+  "External Done",
+  "Project",
+  "Version",
+  "Workstream",
+  "Agent",
+  "AI Assessment Status",
+  "AI Attribution Prediction",
+  "Derived Attribution",
+  "AI Quality Prediction",
+  "Confidence",
+  "Swarm Review",
+  "Swarm Changes",
+  "Swarm Commits",
+  "Swarm Branch",
+  "Swarm Event Type",
+  "Swarm Sent At",
+  "AI Shelve CL",
+  "Swarm Change CL",
+  "Final CL",
+  "Summary",
+  "Warnings",
+] as const;
+
+function csvCell(value: string | number | boolean | null | undefined): string {
+  const text = value == null ? "" : String(value);
+  if (!/[",\r\n]/.test(text)) return text;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function csvList(values: Array<string | number> | undefined): string {
+  return (values ?? [])
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+    .join("; ");
+}
+
+function csvSwarmReviews(fix: AgentFixRecord): string {
+  return (fix.p4_assessment?.swarm_reviews ?? [])
+    .map((review) => String(review.review_id ?? review.id ?? "").trim())
+    .filter(Boolean)
+    .join("; ");
+}
+
+export function buildOperationsP4AssessmentCsv(rows: AgentFixRecord[]): string {
+  const lines = [
+    OPERATIONS_P4_CSV_HEADERS.map(csvCell).join(","),
+    ...rows.map((fix) => {
+      const p4 = fix.p4_assessment;
+      const evidence = derivedEvidence(fix);
+      const values = [
+        fix.issue_identifier,
+        fix.issue_title,
+        fix.external?.work_item_id,
+        fix.external?.url,
+        fix.external?.status,
+        fix.external?.done,
+        fix.external?.project,
+        fix.external?.version,
+        evidence.workstream,
+        fix.agent_name,
+        p4?.assessment_status,
+        p4?.delivery_attribution_prediction,
+        deriveAttribution(fix),
+        p4?.quality_prediction,
+        confidenceLabel(p4?.confidence),
+        csvSwarmReviews(fix) || evidence.swarm,
+        csvList(p4?.swarm_reviews?.flatMap((review) => review.changes ?? [])) ||
+          csvList(p4?.swarm_change_cls),
+        csvList(p4?.swarm_reviews?.flatMap((review) => review.commits ?? [])) ||
+          csvList(p4?.swarm_committed_cls),
+        evidence.swarmBranch,
+        evidence.eventType,
+        evidence.sentAt,
+        csvList(p4?.ai_shelved_cls) || evidence.shelve,
+        csvList(p4?.swarm_change_cls),
+        evidence.finalCl,
+        p4?.summary,
+        csvList(p4?.warnings),
+      ];
+      return values.map(csvCell).join(",");
+    }),
+  ];
+  return `\uFEFF${lines.join("\r\n")}\r\n`;
+}
+
+function downloadTextFile(filename: string, text: string): void {
+  const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportFilename(): string {
+  const day = new Date().toISOString().slice(0, 10);
+  return `multica-p4-assessment-${day}.csv`;
+}
 
 // One run of a highlighted snippet: `match` segments are the keyword hits.
 interface HighlightPart {
@@ -181,12 +475,13 @@ export function splitHighlight(text: string, keyword: string): HighlightPart[] {
 }
 
 /**
- * Operations page — a left-sidebar section sitting under Usage. One row per
- * issue an agent has worked on (the latest run only), showing the agent, the
- * issue, the run day, the issue's workflow status, and the agent's most recent
- * comment. A search box filters by that comment's text (server-side, on the
- * agent's latest comment) and highlights the match. Lives at
- * `/{slug}/operations`; backed by GET /api/operations/agent-fixes.
+ * Operations page — AI fix assessment. One row per issue an agent has worked
+ * on (the latest run only), joining the external work item state, P4/Swarm
+ * evidence, and the AI's delivery/quality analysis. Quality is AI-judged —
+ * there is no human review step. A KPI band (pass rate split by AI-delivered
+ * vs AI-assisted / delivery share / no-output rate + delivery funnel) sits
+ * above the detail table. Lives at `/{slug}/operations`; backed by
+ * GET /api/operations/agent-fixes.
  */
 export function OperationsPage() {
   const { t } = useT("usage");
@@ -208,11 +503,25 @@ export function OperationsPage() {
   );
   const [days, setDays] = useState<OpsRange>(30);
   const [agentFilter, setAgentFilter] = useState<string>(ALL_AGENTS);
-  const [statusFilter, setStatusFilter] = useState<string>(ALL_STATUSES);
+  const [workstreamFilter, setWorkstreamFilter] = useState<string>(ALL_WORKSTREAMS);
+  const [attributionFilter, setAttributionFilter] =
+    useState<string>(ALL_ATTRIBUTIONS);
+  const [qualityFilter, setQualityFilter] = useState<string>(ALL_QUALITIES);
+  const [pendingOnly, setPendingOnly] = useState(false);
+  // Analysis is the default tab: operators land on the aggregate story
+  // (attribution / quality / blocker distributions); the per-ticket detail
+  // table is the drill-down surface reached from analysis charts (which set
+  // filters and switch here) or via the tab switch.
+  const [activeTab, setActiveTab] = useState<OperationsTab>(ANALYSIS_TAB);
+  const [page, setPage] = useState(0);
   // `searchInput` is what the user types; `search` is the debounced term that
   // actually keys the query (so we don't refetch on every keystroke).
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [triggeringBindingId, setTriggeringBindingId] = useState<string | null>(
+    null,
+  );
+  const triggerAssessment = useTriggerAgentFixP4Assessment();
 
   useEffect(() => {
     const id = setTimeout(
@@ -224,7 +533,31 @@ export function OperationsPage() {
 
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const fixesQuery = useQuery(operationsFixesOptions(wsId, days, search));
-  const fixes = fixesQuery.data ?? EMPTY;
+  const allFixes = fixesQuery.data ?? EMPTY;
+  const visibleFixes = useMemo(
+    () => allFixes.filter(isOperationsVisibleIssue),
+    [allFixes],
+  );
+  const fixes = useMemo(
+    () => trimOperationsWindow(visibleFixes, days, viewTZ),
+    [visibleFixes, days, viewTZ],
+  );
+  // The workspace's Helix Swarm URL — one connection per workspace — turns
+  // review IDs and CL numbers into links. Absent connection → plain text.
+  const { data: perforceData } = useQuery(perforceConnectionOptions(wsId));
+  const swarmBase = perforceData?.connection?.swarm_url ?? "";
+  const hasExternalStatuses = visibleFixes.some((fix) => !!fix.external?.status);
+  const { data: feishuStatusData } = useQuery(
+    feishuProjectIssueStatusesOptions(wsId, hasExternalStatuses),
+  );
+  const feishuStatusNames = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const status of feishuStatusData?.statuses ?? []) {
+      if (status.key && status.name) out.set(status.key, status.name);
+    }
+    return out;
+  }, [feishuStatusData]);
+  const tx = t as unknown as UsageT;
 
   // Validate the picked agent against the current workspace's list so a stale
   // id (deleted agent, or a leftover after a workspace switch) doesn't silently
@@ -234,17 +567,107 @@ export function OperationsPage() {
     return agents.some((a) => a.id === agentFilter) ? agentFilter : ALL_AGENTS;
   }, [agentFilter, agents]);
 
-  const rows = useMemo(() => {
-    return fixes.filter((f) => {
+  const workstreamOptions = useMemo<SelectOption[]>(() => {
+    return sortedUniqueOptions(fixes, (f) => derivedEvidence(f).workstream).map(
+      (value) => ({ value, label: value }),
+    );
+  }, [fixes]);
+
+  const attributionOptions = useMemo<SelectOption[]>(() => {
+    return sortedUniqueOptions(fixes, attributionBucket).map((value) => ({
+      value,
+      label: agentFixEnumLabel(tx, "attribution", value),
+    }));
+  }, [fixes, tx]);
+
+  const qualityOptions = useMemo<SelectOption[]>(() => {
+    return sortedUniqueOptions(fixes, (f) =>
+      qualityBucket(f),
+    ).map((value) => ({
+      value,
+      label: agentFixEnumLabel(tx, "quality", value),
+    }));
+  }, [fixes, tx]);
+
+  // One predicate shared by the detail table, the KPI band, and the analysis
+  // distributions, so every surface reflects the same filter state.
+  const matchesFilters = useMemo(() => {
+    return (f: AgentFixRecord): boolean => {
       if (effectiveAgent !== ALL_AGENTS && f.agent_id !== effectiveAgent) {
         return false;
       }
-      if (statusFilter !== ALL_STATUSES && f.issue_status !== statusFilter) {
+      if (
+        workstreamFilter !== ALL_WORKSTREAMS &&
+        derivedEvidence(f).workstream !== workstreamFilter
+      ) {
+        return false;
+      }
+      if (
+        attributionFilter !== ALL_ATTRIBUTIONS &&
+        attributionBucket(f) !== attributionFilter
+      ) {
+        return false;
+      }
+      if (
+        qualityFilter !== ALL_QUALITIES &&
+        qualityBucket(f) !== qualityFilter
+      ) {
+        return false;
+      }
+      if (pendingOnly && !isPendingJudgement(f)) {
         return false;
       }
       return true;
-    });
-  }, [fixes, effectiveAgent, statusFilter]);
+    };
+  }, [
+    effectiveAgent,
+    workstreamFilter,
+    attributionFilter,
+    qualityFilter,
+    pendingOnly,
+  ]);
+
+  const rows = useMemo(() => fixes.filter(matchesFilters), [fixes, matchesFilters]);
+  const kpis = useMemo(() => computeOperationsKpis(rows), [rows]);
+  // Which external statuses make up the external-done stage: several raw
+  // statuses can map to done (e.g. 测试通过 + 已关闭), and ops wants to see
+  // the split, not just the sum. Labels resolve the same way the external
+  // status column does.
+  const externalDoneBreakdown = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const f of rows) {
+      if (f.external?.done !== true) continue;
+      const raw = f.external?.status ?? "";
+      // Empty labels still count (bucketed as "—") so the breakdown always
+      // sums to the external-done stage count.
+      const label =
+        f.external?.status_name || feishuStatusNames.get(raw) || raw || "—";
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [rows, feishuStatusNames]);
+
+  // UI pagination over the filtered rows. Any filter / window / search change
+  // snaps back to the first page.
+  useEffect(() => {
+    setPage(0);
+  }, [
+    days,
+    effectiveAgent,
+    workstreamFilter,
+    attributionFilter,
+    qualityFilter,
+    pendingOnly,
+    search,
+  ]);
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pagedRows = useMemo(
+    () => rows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE),
+    [rows, safePage],
+  );
 
   // "状态" column = issue workflow status (reused from the issues namespace);
   // unknown server values render raw so enum drift downgrades, not crashes.
@@ -253,34 +676,104 @@ export function OperationsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader className="h-auto min-h-12 flex-wrap justify-between gap-y-1.5 px-5 py-1.5 sm:py-0">
+      <PageHeader className="h-auto min-h-14 flex-col items-stretch gap-2 px-5 py-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 items-center gap-2">
           <Radar className="h-4 w-4 shrink-0 text-muted-foreground" />
           <h1 className="truncate text-sm font-medium">{t(($) => $.operations.title)}</h1>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <nav
+          role="toolbar"
+          aria-label={t(($) => $.operations.title)}
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-2 lg:justify-end"
+        >
           <SearchBox value={searchInput} onChange={setSearchInput} />
-          <AgentFilter
-            agents={agents}
-            value={agentFilter}
-            onChange={setAgentFilter}
-          />
-          <StatusFilter value={statusFilter} onChange={setStatusFilter} />
+          <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-lg border border-border/70 bg-muted/25 p-1">
+            <AgentFilter
+              agents={agents}
+              value={agentFilter}
+              onChange={setAgentFilter}
+            />
+            <ValueFilter
+              ariaLabel={t(($) => $.operations.filter.workstream)}
+              value={workstreamFilter}
+              allValue={ALL_WORKSTREAMS}
+              allLabel={t(($) => $.operations.filter.workstream_all)}
+              options={workstreamOptions}
+              onChange={setWorkstreamFilter}
+            />
+            <ValueFilter
+              ariaLabel={t(($) => $.operations.filter.attribution)}
+              value={attributionFilter}
+              allValue={ALL_ATTRIBUTIONS}
+              allLabel={t(($) => $.operations.filter.attribution_all)}
+              options={attributionOptions}
+              onChange={setAttributionFilter}
+            />
+            <ValueFilter
+              ariaLabel={t(($) => $.operations.filter.quality)}
+              value={qualityFilter}
+              allValue={ALL_QUALITIES}
+              allLabel={t(($) => $.operations.filter.quality_all)}
+              options={qualityOptions}
+              onChange={setQualityFilter}
+            />
+          </div>
+          <Button
+            type="button"
+            aria-pressed={pendingOnly}
+            variant="outline"
+            size="sm"
+            onClick={() => setPendingOnly((v) => !v)}
+            className={`h-8 rounded-lg px-3 text-xs shadow-none transition-colors ${
+              pendingOnly
+                ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+                : "border-border/70 bg-muted/25 text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+            }`}
+          >
+            {t(($) => $.operations.filter.pending_only)}
+          </Button>
           <Segmented
             value={days}
             onChange={setDays}
             options={RANGES.map((r) => ({ label: r.label, value: r.days }))}
           />
-        </div>
+        </nav>
       </PageHeader>
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[1600px] space-y-4 p-6">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-muted-foreground">
-              {t(($) => $.operations.subtitle)}
-            </p>
+            <div className="min-w-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <p className="text-xs font-medium text-foreground">
+                  {t(($) => $.operations.assessment_title)}
+                </p>
+                <Badge variant="outline" className="text-muted-foreground">
+                  {t(($) => $.operations.range_label, { days })}
+                </Badge>
+              </div>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {t(($) => $.operations.subtitle)}
+              </p>
+            </div>
             <div className="flex shrink-0 items-center gap-3">
+              {!fixesQuery.isLoading && rows.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    downloadTextFile(
+                      exportFilename(),
+                      buildOperationsP4AssessmentCsv(rows),
+                    )
+                  }
+                  className="h-8"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  {t(($) => $.operations.export_csv)}
+                </Button>
+              ) : null}
               {widthsModified ? (
                 <button
                   type="button"
@@ -298,105 +791,233 @@ export function OperationsPage() {
             </div>
           </div>
 
+          {!fixesQuery.isLoading && rows.length > 0 ? (
+            <OperationsSummary
+              kpis={kpis}
+              externalDoneBreakdown={externalDoneBreakdown}
+            />
+          ) : null}
+
+          {!fixesQuery.isLoading && rows.length > 0 ? (
+            <div className="flex items-center justify-between gap-3">
+              <Segmented
+                value={activeTab}
+                onChange={setActiveTab}
+                options={[
+                  {
+                    label: t(($) => $.operations.tabs.analysis),
+                    value: ANALYSIS_TAB,
+                  },
+                  {
+                    label: t(($) => $.operations.tabs.detail),
+                    value: DETAIL_TAB,
+                  },
+                ]}
+              />
+              <span className="text-xs text-muted-foreground">
+                {activeTab === DETAIL_TAB
+                  ? t(($) => $.operations.tabs.detail_hint)
+                  : t(($) => $.operations.tabs.analysis_hint)}
+              </span>
+            </div>
+          ) : null}
+
           {fixesQuery.isLoading ? (
             <OperationsSkeleton />
           ) : rows.length === 0 ? (
             <OperationsEmpty search={search} />
+          ) : activeTab === ANALYSIS_TAB ? (
+            <OperationsAnalysis
+              rows={rows}
+              onDrillAttribution={(key) => {
+                setAttributionFilter(key);
+                setActiveTab(DETAIL_TAB);
+              }}
+              onDrillQuality={(key) => {
+                setQualityFilter(key);
+                setActiveTab(DETAIL_TAB);
+              }}
+              onDrillWorkstream={(key) => {
+                setWorkstreamFilter(key);
+                setActiveTab(DETAIL_TAB);
+              }}
+            />
           ) : (
-            // overflow-x-auto: when a dragged column outgrows the viewport the
-            // table scrolls horizontally instead of crushing its fixed columns.
-            <div className="overflow-x-auto">
-              <div
-                ref={cardRef}
-                className="rounded-lg border bg-card"
-                style={cardStyle(columnWidths)}
-              >
-                {/* Header — Agent · Issue · Status · Reason(flex) · Date(last).
-                    agent/issue/status carry a drag handle on their right edge. */}
+            <>
+              {/* overflow-x-auto: when a dragged column outgrows the viewport the
+                  table scrolls horizontally instead of crushing its fixed columns. */}
+              <div className="overflow-x-auto">
                 <div
-                  className="grid items-center gap-3 border-b px-4 py-2 text-xs font-medium text-muted-foreground"
-                  style={GRID_STYLE}
+                  ref={cardRef}
+                  className="rounded-lg border bg-card"
+                  style={cardStyle(columnWidths)}
                 >
-                  <HeaderCell
-                    columnKey="agent"
-                    cardRef={cardRef}
-                    label={t(($) => $.operations.table.agent)}
-                  />
-                  <HeaderCell
-                    columnKey="issue"
-                    cardRef={cardRef}
-                    label={t(($) => $.operations.table.issue)}
-                  />
-                  <HeaderCell
-                    columnKey="status"
-                    cardRef={cardRef}
-                    label={t(($) => $.operations.table.status)}
-                  />
-                  <span className="truncate">
-                    {t(($) => $.operations.table.reason)}
-                  </span>
-                  <span className="truncate">
-                    {t(($) => $.operations.table.time)}
-                  </span>
-                </div>
-                <div className="divide-y">
-                  {rows.map((f) => {
-                    const agent = agents.find((a) => a.id === f.agent_id);
-                    const comment = (f.last_comment ?? "").trim();
-                    // Day axis: latest run's completion day, falling back to
-                    // start/created when it has no completed_at (running/queued).
-                    const day = formatDay(
-                      f.completed_at ?? f.started_at ?? f.created_at,
-                      viewTZ,
-                    );
-                    return (
-                      <div
-                        key={f.issue_id || f.task_id}
-                        className="grid items-center gap-3 px-4 py-2.5"
-                        style={GRID_STYLE}
-                      >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <ActorAvatar
-                            actorType="agent"
-                            actorId={f.agent_id}
-                            size={22}
-                            enableHoverCard
-                          />
-                          <span className="truncate text-sm">
-                            {agent?.name ?? f.agent_name}
-                          </span>
-                        </div>
-                        <IssueCell fix={f} slug={slug} />
-                        <div className="flex min-w-0 items-center gap-1.5">
-                          {isKnownIssueStatus(f.issue_status) && (
-                            <StatusIcon
-                              status={f.issue_status}
-                              className="h-3.5 w-3.5"
-                            />
-                          )}
-                          <span className="truncate text-sm">
-                            {issueStatusLabel(f.issue_status)}
-                          </span>
-                        </div>
-                        <span
-                          className="truncate text-xs text-muted-foreground"
-                          title={comment || undefined}
+                  {/* Header: issue, external status, agent, evidence, predictions, review, date. */}
+                  <div
+                    className="grid items-center gap-3 border-b px-4 py-2 text-xs font-medium text-muted-foreground"
+                    style={GRID_STYLE}
+                  >
+                    <HeaderCell
+                      columnKey="issue"
+                      cardRef={cardRef}
+                      label={t(($) => $.operations.table.issue)}
+                    />
+                    <span className="truncate">
+                      {t(($) => $.operations.table.external_status)}
+                    </span>
+                    <HeaderCell
+                      columnKey="agent"
+                      cardRef={cardRef}
+                      label={t(($) => $.operations.table.agent)}
+                    />
+                    <HeaderCell
+                      columnKey="status"
+                      cardRef={cardRef}
+                      label={t(($) => $.operations.table.p4_evidence)}
+                    />
+                    <HeaderCell
+                      columnKey="attribution"
+                      cardRef={cardRef}
+                      label={t(($) => $.operations.table.ai_attribution)}
+                    />
+                    <HeaderCell
+                      columnKey="quality"
+                      cardRef={cardRef}
+                      label={t(($) => $.operations.table.ai_quality)}
+                    />
+                    <HeaderCell
+                      columnKey="time"
+                      cardRef={cardRef}
+                      label={t(($) => $.operations.table.time)}
+                    />
+                  </div>
+                  <div className="divide-y">
+                    {pagedRows.map((f) => {
+                      const agent = agents.find((a) => a.id === f.agent_id);
+                      const comment = (f.last_comment ?? "").trim();
+                      // Day axis: latest run's completion day, falling back to
+                      // start/created when it has no completed_at (running/queued).
+                      const day = fixDayIso(f, viewTZ);
+                      return (
+                        <div
+                          key={f.issue_id || f.task_id}
+                          className="grid items-start gap-3 px-4 py-3"
+                          style={GRID_STYLE}
                         >
-                          {comment ? (
-                            <ReasonText text={comment} keyword={search} />
-                          ) : (
-                            t(($) => $.operations.no_reason)
-                          )}
-                        </span>
-                        <span className="whitespace-nowrap text-xs text-muted-foreground tabular-nums">
-                          {day}
-                        </span>
-                      </div>
-                    );
-                  })}
+                          <IssueCell
+                            fix={f}
+                            slug={slug}
+                            issueStatusLabel={issueStatusLabel(f.issue_status)}
+                            comment={comment}
+                            search={search}
+                          />
+                          <ExternalStatusCell
+                            fix={f}
+                            statusNames={feishuStatusNames}
+                          />
+                          <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                            <ActorAvatar
+                              actorType="agent"
+                              actorId={f.agent_id}
+                              size={22}
+                              enableHoverCard
+                            />
+                            <span className="min-w-0 truncate text-sm">
+                              {agent?.name ?? f.agent_name}
+                            </span>
+                          </div>
+                          <P4EvidenceCell fix={f} swarmBase={swarmBase} />
+                          <PredictionCell
+                            value={deriveAttribution(f)}
+                            kind="attribution"
+                            detail={confidenceLabel(f.p4_assessment?.confidence)}
+                          />
+                          <AssessmentQualityCell
+                            fix={f}
+                            pending={
+                              triggerAssessment.isPending &&
+                              triggeringBindingId === f.external?.binding_id
+                            }
+                            onTrigger={(bindingId, force) => {
+                              setTriggeringBindingId(bindingId);
+                              triggerAssessment.mutate(
+                                { binding_id: bindingId, force },
+                                {
+                                  onSuccess: () => {
+                                    toast.success(
+                                      force
+                                        ? t(
+                                            ($) =>
+                                              $.operations.assessment_action
+                                                .rerun_started,
+                                          )
+                                        : t(
+                                            ($) =>
+                                              $.operations.assessment_action
+                                                .run_started,
+                                          ),
+                                    );
+                                  },
+                                  onError: (err) => {
+                                    toast.error(
+                                      err instanceof Error && err.message
+                                        ? err.message
+                                        : t(
+                                            ($) =>
+                                              $.operations.assessment_action
+                                                .failed,
+                                          ),
+                                    );
+                                  },
+                                  onSettled: () => {
+                                    setTriggeringBindingId(null);
+                                  },
+                                },
+                              );
+                            }}
+                          />
+                          <span className="min-w-0 overflow-hidden truncate whitespace-nowrap text-xs text-muted-foreground tabular-nums">
+                            {day}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-            </div>
+              {pageCount > 1 ? (
+                <div className="flex items-center justify-end gap-2">
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {t(($) => $.operations.pagination.page_of, {
+                      page: safePage + 1,
+                      pages: pageCount,
+                    })}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    aria-label={t(($) => $.operations.pagination.prev)}
+                    disabled={safePage === 0}
+                    onClick={() => setPage(safePage - 1)}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    aria-label={t(($) => $.operations.pagination.next)}
+                    disabled={safePage >= pageCount - 1}
+                    onClick={() => setPage(safePage + 1)}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : null}
+            </>
           )}
         </div>
       </div>
@@ -429,10 +1050,291 @@ function HeaderCell({
   );
 }
 
-// Drag handle for one resizable column. To keep ~185 rows from re-rendering on
-// every pointer move, the drag writes the column's CSS var (and the scroll
-// floor) straight onto the card element and only commits the final width to the
-// store on release. Double-click restores this column's default width.
+function OperationsAnalysis({
+  rows,
+  onDrillAttribution,
+  onDrillQuality,
+  onDrillWorkstream,
+}: {
+  rows: AgentFixRecord[];
+  onDrillAttribution: (key: string) => void;
+  onDrillQuality: (key: string) => void;
+  onDrillWorkstream: (key: string) => void;
+}) {
+  const { t } = useT("usage");
+  const tx = t as unknown as UsageT;
+  // Bucketed the same way the filters and KPI numerators are, so each
+  // distribution slice reconciles exactly (e.g. 无法判断 = the undetermined
+  // KPI numerator; 未评估 = rows without a completed assessment).
+  const attribution = countBy(rows, attributionBucket);
+  const quality = countBy(rows, qualityBucket);
+  const workstreams = groupWorkstreams(rows);
+  const blocked = computeBlockedStats(rows);
+  const blockedFamilyLabel = (family: BlockedFamily): string =>
+    family === "auth"
+      ? t(($) => $.operations.analysis.blocked_auth)
+      : family === "identification"
+        ? t(($) => $.operations.analysis.blocked_identification)
+        : family === "swarm"
+          ? t(($) => $.operations.analysis.blocked_swarm)
+          : family === "p4"
+            ? t(($) => $.operations.analysis.blocked_p4)
+            : family === "evidence_endpoint"
+              ? t(($) => $.operations.analysis.blocked_evidence)
+              : t(($) => $.operations.analysis.blocked_misc);
+  const blockedShare = (count: number): string =>
+    blocked.completed > 0
+      ? ` · ${Math.round((count / blocked.completed) * 1000) / 10}%`
+      : "";
+  // Process gaps — each row is one fixable workflow problem, not an AI defect:
+  // a plan that never landed a shelve, a delivered ticket whose human CL was
+  // never recorded, and the unassessed backlog. Zero counts stay visible (zero
+  // is the healthy state worth confirming).
+  const gaps = [
+    {
+      key: AI_PLAN_NO_RECORD,
+      label: agentFixEnumLabel(tx, "attribution", AI_PLAN_NO_RECORD),
+      count: attribution.get(AI_PLAN_NO_RECORD) ?? 0,
+      tone: "warning" as Tone,
+    },
+    {
+      label: t(($) => $.operations.analysis.gaps_missing_cl),
+      count: rows.filter(hasMissingExternalClWarning).length,
+      tone: "warning" as Tone,
+    },
+    {
+      key: UNASSESSED,
+      label: agentFixEnumLabel(tx, "attribution", UNASSESSED),
+      count: attribution.get(UNASSESSED) ?? 0,
+      tone: "muted" as Tone,
+    },
+  ];
+  return (
+    <div className="grid min-w-0 gap-4">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-2 2xl:grid-cols-4">
+        <AnalysisCard
+          title={t(($) => $.operations.analysis.attribution_title)}
+          rows={Array.from(attribution.entries()).map(([key, count]) => ({
+            key,
+            label: agentFixEnumLabel(tx, "attribution", key),
+            count,
+            tone: agentFixEnumTone("attribution", key),
+          }))}
+          onSelect={onDrillAttribution}
+        />
+        <AnalysisCard
+          title={t(($) => $.operations.analysis.quality_title)}
+          rows={Array.from(quality.entries()).map(([key, count]) => ({
+            key,
+            label: agentFixEnumLabel(tx, "quality", key),
+            count,
+            tone: agentFixEnumTone("quality", key),
+          }))}
+          onSelect={onDrillQuality}
+        />
+        {/* Access-blocked share among completed assessments: which system
+            (Swarm auth / P4 / evidence endpoint) kept evidence unreachable. */}
+        <AnalysisCard
+          title={t(($) => $.operations.analysis.blocked_title, {
+            completed: blocked.completed,
+          })}
+          rows={blocked.families.map(({ family, count }) => ({
+            label: blockedFamilyLabel(family),
+            count,
+            countLabel: `${count}${blockedShare(count)}`,
+            tone: "warning" as Tone,
+          }))}
+          emptyLabel={t(($) => $.operations.analysis.blocked_none)}
+        />
+        <AnalysisCard
+          title={t(($) => $.operations.analysis.gaps_title)}
+          rows={gaps}
+          onSelect={onDrillAttribution}
+        />
+      </div>
+      <WorkstreamAnalysisCard
+        title={t(($) => $.operations.analysis.workstream_title)}
+        rows={workstreams}
+        onSelect={onDrillWorkstream}
+      />
+    </div>
+  );
+}
+
+function AnalysisCard({
+  title,
+  rows,
+  emptyLabel,
+  onSelect,
+}: {
+  title: string;
+  rows: {
+    key?: string;
+    label: string;
+    count: number;
+    // Optional display override for the right-hand number (e.g. "12 · 26%").
+    countLabel?: string;
+    tone: Tone;
+  }[];
+  emptyLabel?: string;
+  // When set, each row is clickable and drills down to the detail table with
+  // the matching filter applied.
+  onSelect?: (key: string) => void;
+}) {
+  const { t } = useT("usage");
+  const max = Math.max(1, ...rows.map((r) => r.count));
+  return (
+    <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
+      <div className="flex min-w-0 items-baseline justify-between gap-3 border-b px-4 py-3">
+        <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
+        {onSelect ? (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {t(($) => $.operations.analysis.drill_hint)}
+          </span>
+        ) : null}
+      </div>
+      <div className="grid min-w-0 gap-3 p-4">
+        {rows.length === 0 ? (
+          <div className="text-sm text-muted-foreground">{emptyLabel ?? "—"}</div>
+        ) : rows.map((r) => {
+          const inner = (
+            <>
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <ToneBadge tone={r.tone} className="min-w-0">
+                  {r.label}
+                </ToneBadge>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {r.countLabel ?? r.count}
+                </span>
+              </div>
+              <div className="h-1.5 min-w-0 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary"
+                  style={{ width: `${Math.max(8, (r.count / max) * 100)}%` }}
+                />
+              </div>
+            </>
+          );
+          if (onSelect && r.key) {
+            return (
+              <button
+                key={r.label}
+                type="button"
+                onClick={() => onSelect(r.key!)}
+                title={r.label}
+                className="grid min-w-0 gap-1.5 rounded-md text-left transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {inner}
+              </button>
+            );
+          }
+          return (
+            <div key={r.label} title={r.label} className="grid min-w-0 gap-1.5">
+              {inner}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function WorkstreamAnalysisCard({
+  title,
+  rows,
+  onSelect,
+}: {
+  title: string;
+  rows: {
+    workstream: string;
+    total: number;
+    judged: number;
+    passed: number;
+  }[];
+  onSelect: (key: string) => void;
+}) {
+  const { t } = useT("usage");
+  const max = Math.max(1, ...rows.map((r) => r.total));
+  return (
+    <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
+      <div className="flex min-w-0 items-baseline justify-between gap-3 border-b px-4 py-3">
+        <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {t(($) => $.operations.analysis.drill_hint)}
+        </span>
+      </div>
+      <div className="grid max-h-[420px] min-w-0 gap-3 overflow-y-auto p-4 pr-3">
+        {rows.map((r) => (
+          <button
+            key={r.workstream}
+            type="button"
+            onClick={() => onSelect(r.workstream)}
+            title={r.workstream}
+            className="grid min-w-0 gap-1.5 rounded-md text-left transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+              <span className="min-w-0 truncate font-mono text-xs text-foreground">
+                {r.workstream}
+              </span>
+              <span className="shrink-0 text-right text-xs text-muted-foreground tabular-nums">
+                {t(($) => $.operations.analysis.workstream_counts, r)}
+              </span>
+            </div>
+            <div className="h-1.5 min-w-0 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary"
+                style={{ width: `${Math.max(8, (r.total / max) * 100)}%` }}
+              />
+            </div>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function countBy<T>(items: T[], keyFn: (item: T) => string): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const item of items) {
+    const key = keyFn(item);
+    out.set(key, (out.get(key) ?? 0) + 1);
+  }
+  return out;
+}
+
+function groupWorkstreams(rows: AgentFixRecord[]) {
+  const groups = new Map<
+    string,
+    {
+      workstream: string;
+      total: number;
+      judged: number;
+      passed: number;
+    }
+  >();
+  for (const row of rows) {
+    const workstream = derivedEvidence(row).workstream || "unknown";
+    const group =
+      groups.get(workstream) ??
+      { workstream, total: 0, judged: 0, passed: 0 };
+    group.total += 1;
+    // Same scope as the funnel's 已判定/通过 (fix-rate pool), so the
+    // per-workstream numbers sum to the funnel stages.
+    if (isVerifiableOutput(row)) {
+      const quality = qualityJudgement(row);
+      if (quality !== "") group.judged += 1;
+      if (quality === "likely_correct") group.passed += 1;
+    }
+    groups.set(workstream, group);
+  }
+  return Array.from(groups.values()).sort((a, b) => b.total - a.total);
+}
+
+// Drag handle for one resizable column. To keep the visible rows from
+// re-rendering on every pointer move, the drag writes the column's CSS var
+// (and the scroll floor) straight onto the card element and only commits the
+// final width to the store on release. Double-click restores this column's
+// default width.
 function ColumnResizeHandle({
   columnKey,
   cardRef,
@@ -512,31 +1414,526 @@ function ColumnResizeHandle({
 function IssueCell({
   fix,
   slug,
+  issueStatusLabel,
+  comment,
+  search,
 }: {
   fix: AgentFixRecord;
   slug: string | null;
+  issueStatusLabel: string;
+  comment: string;
+  search: string;
 }) {
   const inner = (
-    <>
-      <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
-        {fix.issue_identifier}
-      </span>
-      <span className="truncate text-sm">{fix.issue_title}</span>
-    </>
+    <div className="grid min-w-0 gap-1 overflow-hidden">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
+          {fix.issue_identifier || "—"}
+        </span>
+        <span className="truncate text-sm font-medium group-hover:underline">
+          {fix.issue_title || "—"}
+        </span>
+      </div>
+      <div className="flex min-w-0 items-center gap-1.5">
+        {isKnownIssueStatus(fix.issue_status) && (
+          <StatusIcon status={fix.issue_status} className="h-3.5 w-3.5" />
+        )}
+        <span className="truncate text-xs text-muted-foreground">
+          {issueStatusLabel || "—"}
+        </span>
+        {fix.external?.project ? (
+          <>
+            <span className="text-muted-foreground/50">·</span>
+            <span className="truncate text-xs text-muted-foreground">
+              {fix.external.project}
+            </span>
+          </>
+        ) : null}
+        {fix.external?.version ? (
+          <>
+            <span className="text-muted-foreground/50">·</span>
+            <span className="truncate text-xs text-muted-foreground">
+              {fix.external.version}
+            </span>
+          </>
+        ) : null}
+      </div>
+      {comment ? (
+        <p
+          className="truncate text-xs text-muted-foreground"
+          title={comment}
+        >
+          <ReasonText text={comment} keyword={search} />
+        </p>
+      ) : null}
+    </div>
   );
   // Link to the issue when we know the workspace slug; fall back to plain text
   // so a missing slug (rendered before workspace resolves) never breaks the row.
-  if (slug && fix.issue_id) {
+  if (slug && fix.issue_id && fix.issue_identifier) {
     return (
       <AppLink
         href={paths.workspace(slug).issueDetail(fix.issue_identifier)}
-        className="flex min-w-0 items-center gap-2 hover:underline"
+        className="group block min-w-0 overflow-hidden"
       >
         {inner}
       </AppLink>
     );
   }
-  return <div className="flex min-w-0 items-center gap-2">{inner}</div>;
+  return <div className="min-w-0 overflow-hidden">{inner}</div>;
+}
+
+function ExternalStatusCell({
+  fix,
+  statusNames,
+}: {
+  fix: AgentFixRecord;
+  statusNames: Map<string, string>;
+}) {
+  const { t } = useT("usage");
+  const done = fix.external?.done;
+  const rawStatus = fix.external?.status ?? "";
+  const status =
+    fix.external?.status_name ||
+    statusNames.get(rawStatus) ||
+    rawStatus ||
+    t(($) => $.operations.no_reason);
+  const workItemId = fix.external?.work_item_id ?? "";
+  const workItemUrl = fix.external?.url ?? "";
+  return (
+    <div className="grid min-w-0 gap-1">
+      <ToneBadge
+        tone={done === true ? "success" : done === false ? "warning" : "muted"}
+      >
+        {status}
+      </ToneBadge>
+      {workItemId ? (
+        workItemUrl ? (
+          <a
+            href={workItemUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex min-w-0 items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline"
+          >
+            <span className="truncate">{workItemId}</span>
+            <ExternalLink className="h-3 w-3 shrink-0" />
+          </a>
+        ) : (
+          <span className="truncate font-mono text-xs text-muted-foreground">
+            {workItemId}
+          </span>
+        )
+      ) : null}
+      {typeof done === "boolean" ? (
+        <span className="truncate text-xs text-muted-foreground">
+          {done
+            ? t(($) => $.operations.external.in_stats)
+            : t(($) => $.operations.external.out_of_stats)}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function P4EvidenceCell({
+  fix,
+  swarmBase,
+}: {
+  fix: AgentFixRecord;
+  swarmBase: string;
+}) {
+  const { t } = useT("usage");
+  const p4 = fix.p4_assessment;
+  const evidence = derivedEvidence(fix);
+  const swarmUrl =
+    firstSwarmReviewUrl(fix) || swarmReviewUrl(swarmBase, evidence.swarm);
+  const primaryCl = evidence.finalCl
+    ? { label: t(($) => $.operations.p4.final_cl), value: evidence.finalCl }
+    : evidence.shelve
+      ? { label: t(($) => $.operations.p4.shelve), value: evidence.shelve }
+      : null;
+  const detailRows = [
+    evidence.swarm
+      ? {
+          label: t(($) => $.operations.p4.swarm),
+          value: evidence.swarm,
+          href: swarmUrl,
+        }
+      : null,
+    evidence.swarmChanges
+      ? {
+          label: t(($) => $.operations.p4.changes),
+          value: evidence.swarmChanges,
+        }
+      : null,
+    evidence.swarmCommits
+      ? {
+          label: t(($) => $.operations.p4.commits),
+          value: evidence.swarmCommits,
+        }
+      : null,
+    evidence.swarmBranch
+      ? {
+          label: t(($) => $.operations.p4.branch),
+          value: evidence.swarmBranch,
+        }
+      : null,
+    evidence.eventType
+      ? { label: t(($) => $.operations.p4.event), value: evidence.eventType }
+      : null,
+    evidence.sentAt
+      ? { label: t(($) => $.operations.p4.sent_at), value: evidence.sentAt }
+      : null,
+    p4?.warnings?.length
+      ? {
+          label: t(($) => $.operations.p4.warnings),
+          value: p4.warnings.join(", "),
+        }
+      : null,
+  ].filter(Boolean) as Array<{ label: string; value: string; href?: string }>;
+  const meta = [
+    evidence.workstream
+      ? `${t(($) => $.operations.p4.workstream)} ${evidence.workstream}`
+      : "",
+    p4?.warnings?.length
+      ? t(($) => $.operations.p4.warning_count, {
+          count: p4.warnings.length,
+        })
+      : "",
+  ].filter(Boolean);
+  if (!hasP4Signal(fix)) {
+    return (
+      <span className="text-xs text-muted-foreground">
+        {t(($) => $.operations.p4.no_evidence)}
+      </span>
+    );
+  }
+  return (
+    <div className="grid min-w-0 gap-1.5 justify-items-start overflow-hidden">
+      <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-hidden">
+        {primaryCl ? (
+          <ClListBadge
+            label={primaryCl.label}
+            cls={primaryCl.value}
+            swarmBase={swarmBase}
+          />
+        ) : evidence.swarm ? (
+          <EvidenceBadge href={swarmUrl}>
+            {t(($) => $.operations.p4.swarm_value, { value: evidence.swarm })}
+          </EvidenceBadge>
+        ) : null}
+        {detailRows.length > 0 ? (
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 min-w-0 max-w-full gap-1 px-1.5 text-xs text-muted-foreground"
+                >
+                  <List className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {t(($) => $.operations.p4.details)}
+                  </span>
+                </Button>
+              }
+            />
+            <PopoverContent align="end" className="w-80 gap-2">
+              <div className="text-xs font-medium">
+                {t(($) => $.operations.p4.details)}
+              </div>
+              <div className="grid gap-2">
+                {detailRows.map(({ label, value, href }) => (
+                  <div key={label} className="grid gap-0.5">
+                    <div className="text-[11px] uppercase text-muted-foreground">
+                      {label}
+                    </div>
+                    {href ? (
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex min-w-0 items-center gap-1 break-words text-xs hover:underline"
+                      >
+                        <span className="min-w-0 break-all">{value}</span>
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                      </a>
+                    ) : (
+                      <div className="break-words text-xs">{value}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+        ) : null}
+      </div>
+      {meta.length > 0 ? (
+        <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-hidden text-xs text-muted-foreground">
+          {meta.map((item, index) => (
+            <span
+              key={item}
+              className={index === 0 ? "min-w-0 truncate" : "shrink-0"}
+            >
+              {index > 0 ? "· " : ""}
+              {item}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AssessmentStatusBadge({ value }: { value?: string }) {
+  const { t } = useT("usage");
+  const tx = t as unknown as UsageT;
+  return (
+    <ToneBadge tone={assessmentTone(value)}>
+      {agentFixEnumLabel(tx, "assessment", value || "missing")}
+    </ToneBadge>
+  );
+}
+
+function AssessmentQualityCell({
+  fix,
+  pending,
+  onTrigger,
+}: {
+  fix: AgentFixRecord;
+  pending: boolean;
+  onTrigger: (bindingId: string, force: boolean) => void;
+}) {
+  return (
+    <div className="grid min-w-0 gap-1.5 justify-items-start overflow-hidden">
+      <PredictionCell
+        value={fix.p4_assessment?.quality_prediction}
+        kind="quality"
+      />
+      <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 overflow-hidden">
+        <AssessmentStatusBadge value={fix.p4_assessment?.assessment_status} />
+        <AssessmentTriggerButton
+          fix={fix}
+          pending={pending}
+          onTrigger={onTrigger}
+        />
+      </div>
+      <AssessmentRunDetail p4={fix.p4_assessment} />
+    </div>
+  );
+}
+
+// Queue observability line under the status badge. Running rows show which
+// agent is on it; failed/pending rows show how many attempts happened and the
+// last recorded error, so "why is this stuck" is answerable from the table
+// instead of psql.
+function AssessmentRunDetail({ p4 }: { p4?: AgentFixRecord["p4_assessment"] }) {
+  const { t } = useT("usage");
+  if (!p4) return null;
+  const status = p4.assessment_status ?? "";
+  if (status === "running") {
+    const agent = (p4.assessment_agent_name ?? "").trim();
+    if (!agent) return null;
+    return (
+      <span className="max-w-full truncate text-xs text-muted-foreground">
+        {agent}
+      </span>
+    );
+  }
+  const attempts = p4.attempt_count ?? 0;
+  const lastError = (p4.last_error ?? "").trim();
+  if (!lastError && attempts <= 1) return null;
+  const parts = [
+    attempts > 1
+      ? t(($) => $.operations.assessment_obs.attempts, { count: attempts })
+      : "",
+    lastError,
+  ].filter(Boolean);
+  const text = parts.join(" · ");
+  return (
+    <span
+      className="max-w-full truncate text-xs text-muted-foreground"
+      title={text}
+    >
+      {text}
+    </span>
+  );
+}
+
+function AssessmentTriggerButton({
+  fix,
+  pending,
+  onTrigger,
+}: {
+  fix: AgentFixRecord;
+  pending: boolean;
+  onTrigger: (bindingId: string, force: boolean) => void;
+}) {
+  const { t } = useT("usage");
+  const bindingId = fix.external?.binding_id ?? "";
+  if (!bindingId) {
+    return null;
+  }
+  // Assessment needs the external work item to be done first. Render the
+  // button disabled with an explanation instead of hiding it, so users learn
+  // what unblocks it rather than wondering where it went.
+  const externalDone = fix.external?.mapped_status === "done";
+
+  const status = fix.p4_assessment?.assessment_status ?? "";
+  const assessmentActive = status === "pending" || status === "running";
+  const hasAssessment = status !== "";
+  const force = hasAssessment && !assessmentActive;
+  const disabled = pending || assessmentActive || !externalDone;
+  const label = pending
+    ? t(($) => $.operations.assessment_action.starting)
+    : assessmentActive
+      ? t(($) => $.operations.assessment_action.in_progress)
+      : hasAssessment
+        ? t(($) => $.operations.assessment_action.rerun)
+        : t(($) => $.operations.assessment_action.run);
+  const Icon = hasAssessment ? RefreshCw : Play;
+  const compact = hasAssessment;
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={disabled}
+      title={
+        !externalDone
+          ? t(($) => $.operations.assessment_action.blocked_external)
+          : compact
+            ? label
+            : undefined
+      }
+      onClick={() => onTrigger(bindingId, force)}
+      className={
+        compact
+          ? "h-7 w-7 shrink-0 px-0 text-xs"
+          : "h-7 min-w-0 max-w-full px-2 text-xs"
+      }
+    >
+      <Icon className="h-3.5 w-3.5 shrink-0" />
+      {compact ? (
+        <span className="sr-only">{label}</span>
+      ) : (
+        <span className="min-w-0 max-w-28 truncate">{label}</span>
+      )}
+    </Button>
+  );
+}
+
+function EvidenceBadge({
+  children,
+  href,
+}: {
+  children: ReactNode;
+  href?: string;
+}) {
+  const badge = (
+    <Badge
+      variant="outline"
+      className="max-w-full justify-start truncate border-border bg-muted font-mono text-muted-foreground"
+    >
+      <span className="truncate">{children}</span>
+    </Badge>
+  );
+  if (href) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="min-w-0 max-w-full hover:opacity-80"
+      >
+        {badge}
+      </a>
+    );
+  }
+  return badge;
+}
+
+// Evidence badge for one or more changelist numbers ("282941, 283006"). Each
+// CL links to the Swarm change page when the workspace has a Swarm URL.
+function ClListBadge({
+  label,
+  cls,
+  swarmBase,
+}: {
+  label: string;
+  cls: string;
+  swarmBase: string;
+}) {
+  const items = cls
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+  return (
+    <Badge
+      variant="outline"
+      className="max-w-full justify-start truncate border-border bg-muted font-mono text-muted-foreground"
+    >
+      <span className="truncate">
+        {label}{" "}
+        {items.map((cl, i) => {
+          const url = swarmChangeUrl(swarmBase, cl);
+          return (
+            <span key={cl}>
+              {i > 0 ? ", " : ""}
+              {url ? (
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline-offset-2 hover:text-foreground hover:underline"
+                >
+                  {cl}
+                </a>
+              ) : (
+                cl
+              )}
+            </span>
+          );
+        })}
+      </span>
+    </Badge>
+  );
+}
+
+function PredictionCell({
+  value,
+  kind,
+  detail,
+}: {
+  value?: string;
+  kind: "attribution" | "quality";
+  detail?: string;
+}) {
+  const { t } = useT("usage");
+  const tx = t as unknown as UsageT;
+  const label = agentFixEnumLabel(tx, kind, value);
+  return (
+    <div className="grid min-w-0 gap-1 justify-items-start overflow-hidden">
+      <ToneBadge tone={agentFixEnumTone(kind, value)}>{label}</ToneBadge>
+      {detail ? (
+        <span className="truncate text-xs text-muted-foreground">
+          {t(($) => $.operations.p4.confidence, { value: detail })}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function assessmentTone(value?: string): Tone {
+  const key = value?.trim();
+  if (!key || key === "missing") return "warning";
+  if (key === "completed") return "success";
+  if (key === "failed") return "danger";
+  if (key === "running") return "info";
+  if (key === "stale") return "warning";
+  return "default";
 }
 
 // Renders the "原因/描述" comment snippet, highlighting every occurrence of the
@@ -573,7 +1970,7 @@ function SearchBox({
 }) {
   const { t } = useT("usage");
   return (
-    <div className="relative">
+    <div className="relative min-w-[220px] flex-1 sm:flex-none">
       <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
       <Input
         type="search"
@@ -581,14 +1978,14 @@ function SearchBox({
         onChange={(e) => onChange(e.target.value)}
         placeholder={t(($) => $.operations.search_placeholder)}
         aria-label={t(($) => $.operations.search_placeholder)}
-        className="h-8 w-[200px] pl-8 pr-7 text-sm [&::-webkit-search-cancel-button]:appearance-none"
+        className={SEARCH_INPUT_CLASS}
       />
       {value ? (
         <button
           type="button"
           onClick={() => onChange("")}
           aria-label={t(($) => $.operations.search_clear)}
-          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
+          className={SEARCH_CLEAR_CLASS}
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -608,10 +2005,15 @@ function AgentFilter({
 }) {
   const { t } = useT("usage");
   const allLabel = t(($) => $.operations.filter.all_agents);
+  const ariaLabel = t(($) => $.operations.table.agent);
   const selected = agents.find((a) => a.id === value);
   return (
     <Select value={value} onValueChange={(v) => onChange(v ?? ALL_AGENTS)}>
-      <SelectTrigger size="sm" className="min-w-[160px]">
+      <SelectTrigger
+        size="sm"
+        aria-label={ariaLabel}
+        className={`${FILTER_SELECT_TRIGGER_CLASS} min-w-[150px] max-w-[190px]`}
+      >
         <SelectValue>
           {() => (
             <span className="truncate">
@@ -634,46 +2036,74 @@ function AgentFilter({
   );
 }
 
-// Filters rows by the ISSUE workflow status (the "状态" column). Labels reuse
-// the issues namespace so they match the rest of the product.
-function StatusFilter({
+function ValueFilter({
+  ariaLabel,
   value,
+  allValue,
+  allLabel,
+  options,
   onChange,
 }: {
+  ariaLabel: string;
   value: string;
+  allValue: string;
+  allLabel: string;
+  options: SelectOption[];
   onChange: (v: string) => void;
 }) {
-  const { t } = useT("usage");
-  const { t: tIssues } = useT("issues");
-  const allLabel = t(($) => $.operations.filter.status_all);
-  const label = (s: string) =>
-    isKnownIssueStatus(s) ? tIssues(($) => $.status[s]) : s;
+  const selected = options.find((option) => option.value === value);
   return (
-    <Select value={value} onValueChange={(v) => onChange(v ?? ALL_STATUSES)}>
-      <SelectTrigger size="sm" className="min-w-[130px]">
-        <SelectValue>
-          {() => (
-            <span className="truncate">
-              {value === ALL_STATUSES ? allLabel : label(value)}
-            </span>
-          )}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent align="start" alignItemWithTrigger={false}>
-        <SelectItem value={ALL_STATUSES}>{allLabel}</SelectItem>
-        {ISSUE_STATUSES.map((s) => (
-          <SelectItem key={s} value={s}>
-            {label(s)}
+    <div className="flex items-center gap-0.5">
+      <Select value={value} onValueChange={(v) => onChange(v ?? allValue)}>
+        <SelectTrigger
+          size="sm"
+          aria-label={ariaLabel}
+          className={`${FILTER_SELECT_TRIGGER_CLASS} min-w-[138px] max-w-[180px]`}
+        >
+          <SelectValue>
+            {() => (
+              <span className="truncate">
+                {value === allValue ? allLabel : selected?.label ?? value}
+              </span>
+            )}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent
+          align="start"
+          alignItemWithTrigger={false}
+          className="max-h-72"
+        >
+          <SelectItem value={allValue}>
+            <span className="truncate">{allLabel}</span>
           </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              <span className="truncate">{option.label}</span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {value !== allValue ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={allLabel}
+          title={allLabel}
+          className="h-7 w-7 shrink-0 rounded-md text-muted-foreground hover:bg-background/70 hover:text-foreground"
+          onClick={() => onChange(allValue)}
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
 function OperationsSkeleton() {
   return (
     <div className="space-y-2">
+      <Skeleton className="h-24 rounded-lg" />
       <Skeleton className="h-9 rounded-lg" />
       <Skeleton className="h-48 rounded-lg" />
     </div>

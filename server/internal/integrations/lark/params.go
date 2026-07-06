@@ -68,6 +68,48 @@ type CreateUserBindingParams struct {
 	UnionID        pgtype.Text
 }
 
+// ListInboxNotificationBindingsParams looks up all active Feishu bindings for
+// a Multica member recipient in one workspace.
+type ListInboxNotificationBindingsParams struct {
+	WorkspaceID   pgtype.UUID
+	MulticaUserID pgtype.UUID
+}
+
+// ClaimInboxNotificationDeliveryParams claims one direct inbox notification
+// delivery for a concrete Feishu installation + user.
+type ClaimInboxNotificationDeliveryParams struct {
+	InboxItemID    pgtype.UUID
+	InstallationID pgtype.UUID
+	ChannelUserID  string
+}
+
+// GetInboxIssueCardParams locates the merged issue card for a recipient.
+type GetInboxIssueCardParams struct {
+	WorkspaceID    pgtype.UUID
+	RecipientID    pgtype.UUID
+	IssueID        pgtype.UUID
+	InstallationID pgtype.UUID
+	ChannelUserID  string
+}
+
+// UpsertInboxIssueCardParams records the latest merged issue card message id.
+type UpsertInboxIssueCardParams struct {
+	WorkspaceID          pgtype.UUID
+	RecipientID          pgtype.UUID
+	IssueID              pgtype.UUID
+	InstallationID       pgtype.UUID
+	ChannelUserID        string
+	ChannelCardMessageID string
+}
+
+// ListInboxIssueCardItemsParams loads mergeable inbox items for one issue card.
+type ListInboxIssueCardItemsParams struct {
+	WorkspaceID pgtype.UUID
+	RecipientID pgtype.UUID
+	IssueID     pgtype.UUID
+	Types       []string
+}
+
 // GetChatSessionBindingParams looks up a chat binding by its channel chat id.
 type GetChatSessionBindingParams struct {
 	InstallationID pgtype.UUID

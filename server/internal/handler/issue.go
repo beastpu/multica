@@ -954,6 +954,18 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		statusFilter = pgtype.Text{String: s, Valid: true}
 	}
 
+	// assignee_types narrows the list to issues assigned to the given actor
+	// kinds (member / agent / squad). Mirrors the same param on
+	// ListGroupedIssues so the workspace Members/Agents tabs can filter
+	// server-side instead of post-filtering loaded pages on the client.
+	assigneeTypesFilter := splitCommaParam(r.URL.Query().Get("assignee_types"))
+	for _, assigneeType := range assigneeTypesFilter {
+		if !isIssueActorType(assigneeType) {
+			writeError(w, http.StatusBadRequest, "invalid assignee_types")
+			return
+		}
+	}
+
 	// scheduled=true restricts the result to issues that have at least one of
 	// start_date / due_date set. Used by the Project Gantt view, which only
 	// renders schedulable rows and shouldn't pay for the full project list.
@@ -1030,6 +1042,9 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(assigneeIdsFilter) > 0 {
 		where = append(where, fmt.Sprintf("i.assignee_id = ANY(%s::uuid[])", addArg(assigneeIdsFilter)))
+	}
+	if len(assigneeTypesFilter) > 0 {
+		where = append(where, fmt.Sprintf("i.assignee_type = ANY(%s::text[])", addArg(assigneeTypesFilter)))
 	}
 	if creatorFilter.Valid {
 		where = append(where, fmt.Sprintf("i.creator_id = %s::uuid", addArg(creatorFilter)))
@@ -2508,6 +2523,70 @@ type UpdateIssueRequest struct {
 	HandoffNote string `json:"handoff_note,omitempty"`
 }
 
+// analysisTaskForRequest resolves the calling agent's task and reports
+// whether it is a derived-work (analysis) actor. Derived-work tasks are
+// read-only side channels: the server rejects every issue write and comment
+// they attempt (with one own-issue narration carve-out in CreateComment), so
+// a stale daemon that runs one as a normal fix still cannot mutate real
+// issues. The check is gated on X-Task-ID (stamped by the mat_ token
+// middleware for agent runs), so a member request is never affected.
+//
+// Anchor: the issue the task hangs on carries the reserved
+// metadata.agent_work marker — the single derived-work marker in the system
+// (written only by server-side projection code; the user metadata API rejects
+// the key, so a real issue can never be spoofed into this branch).
+func (h *Handler) analysisTaskForRequest(r *http.Request, userID, workspaceID string) (db.AgentTaskQueue, bool) {
+	actorType, _ := h.resolveActor(r, userID, workspaceID)
+	if actorType != "agent" {
+		return db.AgentTaskQueue{}, false
+	}
+	taskID := r.Header.Get("X-Task-ID")
+	if taskID == "" {
+		return db.AgentTaskQueue{}, false
+	}
+	taskUUID, err := util.ParseUUID(taskID)
+	if err != nil {
+		return db.AgentTaskQueue{}, false
+	}
+	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
+	if err != nil {
+		return db.AgentTaskQueue{}, false
+	}
+	if task.IssueID.Valid {
+		if taskIssue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil && isAgentWorkIssue(taskIssue) {
+			return task, true
+		}
+	}
+	return db.AgentTaskQueue{}, false
+}
+
+// isAnalysisTaskActor reports whether the request is an agent acting under a
+// derived-work (analysis) task. See analysisTaskForRequest for the anchor.
+func (h *Handler) isAnalysisTaskActor(r *http.Request, userID, workspaceID string) bool {
+	_, ok := h.analysisTaskForRequest(r, userID, workspaceID)
+	return ok
+}
+
+// isAgentWorkIssue reports whether the issue is a derived agent_work
+// projection issue — its metadata carries the server-reserved `agent_work`
+// key (written only by server-side projection code; the user metadata API
+// rejects the key). Used for the precise comment carve-out in CreateComment.
+func isAgentWorkIssue(issue db.Issue) bool {
+	_, ok := parseIssueMetadata(issue.Metadata)[service.AgentWorkMetadataKey]
+	return ok
+}
+
+// rejectAnalysisTaskWrite writes a 403 and returns true when the request is an
+// analysis task attempting a write. `action` completes the sentence "analysis
+// tasks are read-only and cannot <action>".
+func (h *Handler) rejectAnalysisTaskWrite(w http.ResponseWriter, r *http.Request, userID, workspaceID, action string) bool {
+	if !h.isAnalysisTaskActor(r, userID, workspaceID) {
+		return false
+	}
+	writeError(w, http.StatusForbidden, "analysis tasks are read-only and cannot "+action)
+	return true
+}
+
 func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	prevIssue, ok := h.loadIssueForUser(w, r, id)
@@ -2516,6 +2595,13 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := requestUserID(r)
 	workspaceID := uuidToString(prevIssue.WorkspaceID)
+
+	// Analysis tasks (P4 assessment) are read-only: block every issue mutation,
+	// not just status, so a stale daemon running one as a normal fix cannot
+	// touch the issue.
+	if h.rejectAnalysisTaskWrite(w, r, userID, workspaceID, "modify issues") {
+		return
+	}
 
 	// Read body as raw bytes so we can detect which fields were explicitly sent.
 	bodyBytes, err := io.ReadAll(r.Body)
@@ -2792,7 +2878,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	// loops in PR #2918). The helper guards on transition + parent state and
 	// fails best-effort.
 	if statusChanged {
-		h.notifyParentOfChildDone(r.Context(), prevIssue, issue, actorType, actorID)
+		h.notifyParentOfChildDone(r.Context(), prevIssue, issue)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -2842,7 +2928,7 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 			return http.StatusBadRequest, "cannot assign to archived agent"
 		}
 		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-		if !h.canAccessPrivateAgent(ctx, agent, actorType, actorID, workspaceID) {
+		if !h.canInvokeAgent(ctx, agent, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), workspaceID) {
 			return http.StatusForbidden, "cannot assign to private agent"
 		}
 		return 0, ""
@@ -2862,7 +2948,7 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 			return http.StatusBadRequest, "squad leader is archived; cannot assign to this squad"
 		}
 		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-		if !h.canAccessPrivateAgent(ctx, leader, actorType, actorID, workspaceID) {
+		if !h.canInvokeAgent(ctx, leader, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), workspaceID) {
 			return http.StatusForbidden, "cannot assign to squad with private leader"
 		}
 		return 0, ""
@@ -2883,35 +2969,39 @@ func (h *Handler) shouldEnqueueAgentTask(ctx context.Context, issue db.Issue) bo
 	return h.isAgentAssigneeReady(ctx, issue)
 }
 
-// shouldEnqueueOnComment returns true if a member comment on this issue should
-// trigger the assigned agent. Fires for any status — comments are
+// shouldEnqueueAssigneeFallback returns true when comment routing can fall back
+// to the issue's assigned agent. Fires for any status — comments are
 // conversational and can happen at any stage, including after completion
 // (e.g. follow-up questions on a done issue).
 //
-// Mirrors the private-agent gate that computeMentionedAgentCommentTriggers applies on the
+// Mirrors the private-agent gate that resolveMentionedAgentCommentTriggers applies on the
 // @mention path: once an owner/admin assigns a private agent to an issue, the
 // agent's UUID is "welded" onto the issue and remains visible to every member
 // who can view it. Without this check any of those members could dispatch a new
 // task to the private agent simply by commenting (#3300).
-func (h *Handler) shouldEnqueueOnComment(ctx context.Context, issue db.Issue, actorType, actorID string, opts commentTriggerComputeOptions) bool {
+func (h *Handler) shouldEnqueueAssigneeFallback(ctx context.Context, issue db.Issue, actorType, actorID string, opts commentTriggerComputeOptions) bool {
+	_, hasPending, ok := h.assigneeFallbackAgent(ctx, issue, actorType, actorID, opts)
+	return ok && !hasPending
+}
+
+func (h *Handler) assigneeFallbackAgent(ctx context.Context, issue db.Issue, actorType, actorID string, opts commentTriggerComputeOptions) (db.Agent, bool, bool) {
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
-		return false
+		return db.Agent{}, false, false
 	}
 	agent, err := h.Queries.GetAgent(ctx, issue.AssigneeID)
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
-		return false
+		return db.Agent{}, false, false
 	}
-	if !h.canAccessPrivateAgent(ctx, agent, actorType, actorID, uuidToString(issue.WorkspaceID)) {
-		return false
+	if !h.canInvokeAgent(ctx, agent, actorType, actorID, opts.OriginatorUserID, uuidToString(issue.WorkspaceID)) {
+		return db.Agent{}, false, false
 	}
-	// Coalescing queue: allow enqueue when a task is running (so the agent
-	// picks up new comments on the next cycle) but skip if this agent already
-	// has a pending task (natural dedup for rapid-fire comments).
+	// Coalescing queue: pending is still a valid route target, but callers
+	// that actually enqueue tasks use this flag to avoid piling on duplicates.
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, issue.AssigneeID, opts)
-	if err != nil || hasPending {
-		return false
+	if err != nil {
+		return db.Agent{}, false, false
 	}
-	return true
+	return agent, hasPending, true
 }
 
 // isAgentRunningOnIssue reports whether the calling agent's current task
@@ -3053,6 +3143,15 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"updated": 0})
 		return
 	}
+	workspaceID := h.resolveWorkspaceID(r)
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	// Analysis tasks (P4 assessment) are read-only: block the whole batch write.
+	if h.rejectAnalysisTaskWrite(w, r, userID, workspaceID, "modify issues") {
+		return
+	}
 	if req.Updates.Status != nil {
 		if !validateIssueEnum(w, "status", *req.Updates.Status, validIssueStatuses) {
 			return
@@ -3062,12 +3161,6 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if !validateIssueEnum(w, "priority", *req.Updates.Priority, validIssuePriorities) {
 			return
 		}
-	}
-
-	workspaceID := h.resolveWorkspaceID(r)
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
 	}
 	updated := 0
 	for _, issueID := range req.IssueIDs {
@@ -3286,7 +3379,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		// Platform-driven parent notification, mirrored from UpdateIssue
 		// (MUL-2538). Best-effort; failure does not abort the batch.
 		if statusChanged {
-			h.notifyParentOfChildDone(r.Context(), prevIssue, issue, actorType, actorID)
+			h.notifyParentOfChildDone(r.Context(), prevIssue, issue)
 		}
 
 		updated++
