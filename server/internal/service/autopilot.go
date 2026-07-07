@@ -401,6 +401,7 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	// route to the resolved leader as the executing agent (Path A from
 	// MUL-2429); agent-assigned autopilots go through the standard issue
 	// path. Both code paths land in agent_task_queue with agent_id = leader.
+	originatorUserID := autopilotOriginator(ap)
 	if ap.AssigneeType == "squad" {
 		// Fail-closed invocation gate: verify the autopilot creator may still
 		// invoke the leader under the permission model. Catches configs that
@@ -409,11 +410,11 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 		if !s.canCreatorInvokeAgent(ctx, ap, leader) {
 			return fmt.Errorf("autopilot creator cannot access private squad leader")
 		}
-		if _, err := s.TaskSvc.EnqueueTaskForSquadLeader(ctx, issue, leader.ID, ap.AssigneeID, pgtype.UUID{}); err != nil {
+		if _, err := s.TaskSvc.EnqueueTaskForSquadLeaderWithOriginator(ctx, issue, leader.ID, ap.AssigneeID, originatorUserID); err != nil {
 			return fmt.Errorf("enqueue squad leader task: %w", err)
 		}
 	} else {
-		if _, err := s.TaskSvc.EnqueueTaskForIssue(ctx, issue); err != nil {
+		if _, err := s.TaskSvc.EnqueueTaskForIssueWithOriginator(ctx, issue, originatorUserID); err != nil {
 			return fmt.Errorf("enqueue task for issue: %w", err)
 		}
 	}
@@ -555,11 +556,16 @@ func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot,
 		return &errDispatchSkipped{reason: formatAdmissionReason(ap, "creator cannot access private squad leader")}
 	}
 
+	originatorUserID := autopilotOriginator(ap)
+	runtimeMCPOverlay := s.TaskSvc.buildRuntimeMCPOverlay(ctx, originatorUserID, agent)
 	task, err := s.Queries.CreateAutopilotTask(ctx, db.CreateAutopilotTaskParams{
-		AgentID:        agent.ID,
-		RuntimeID:      agent.RuntimeID,
-		Priority:       0,
-		AutopilotRunID: run.ID,
+		AgentID:              agent.ID,
+		RuntimeID:            agent.RuntimeID,
+		Priority:             0,
+		AutopilotRunID:       run.ID,
+		OriginatorUserID:     originatorUserID,
+		RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
+		RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
 		// Snapshot the autopilot title so task rows self-describe later
 		// without joining back to autopilot. Truncated for the same
 		// transmission-cost reason as comment-driven summaries.
@@ -980,6 +986,13 @@ func autopilotSquadAttribution(ap db.Autopilot) pgtype.UUID {
 	return pgtype.UUID{}
 }
 
+func autopilotOriginator(ap db.Autopilot) pgtype.UUID {
+	if ap.CreatedByType == "member" && ap.CreatedByID.Valid {
+		return ap.CreatedByID
+	}
+	return pgtype.UUID{}
+}
+
 // recordSkippedRun persists a `skipped` autopilot_run with the given reason
 // and emits the same WS / analytics signals that a normal terminal transition
 // would. Returns the run + nil error so callers (scheduler tick, manual
@@ -1381,6 +1394,7 @@ func (s *AutopilotService) getIssuePrefix(workspaceID pgtype.UUID) string {
 //   - public_to agent -> workspace target admits any workspace-member creator
 //     (and agent-created autopilots as workspace principals); member target
 //     admits the matching creator; team targets are inert.
+//
 // Fail-closed on any lookup error.
 func (s *AutopilotService) canCreatorInvokeAgent(ctx context.Context, ap db.Autopilot, agent db.Agent) bool {
 	creatorID := util.UUIDToString(ap.CreatedByID)
