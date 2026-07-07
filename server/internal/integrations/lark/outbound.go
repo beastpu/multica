@@ -373,7 +373,7 @@ func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentia
 		return sendWithThreadFallback(p.cfg.Logger, "send markdown card", target, func(t ReplyTarget) error {
 			_, err := p.client.SendMarkdownCard(ctx, SendMarkdownCardParams{
 				InstallationID: creds,
-				ChatID:         ChatID(binding.ChannelChatID),
+				ChatID:         outboundChatID(binding),
 				Markdown:       content,
 				ReplyTarget:    t,
 			})
@@ -383,7 +383,7 @@ func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentia
 	return sendWithThreadFallback(p.cfg.Logger, "send text message", target, func(t ReplyTarget) error {
 		_, err := p.client.SendTextMessage(ctx, SendTextParams{
 			InstallationID: creds,
-			ChatID:         ChatID(binding.ChannelChatID),
+			ChatID:         outboundChatID(binding),
 			Text:           content,
 			ReplyTarget:    t,
 		})
@@ -399,7 +399,7 @@ func (p *Patcher) sendConfirmationCard(ctx context.Context, creds InstallationCr
 	return sendWithThreadFallback(p.cfg.Logger, "send confirmation card", target, func(t ReplyTarget) error {
 		_, err := p.client.SendInteractiveCard(ctx, SendCardParams{
 			InstallationID: creds,
-			ChatID:         ChatID(binding.ChannelChatID),
+			ChatID:         outboundChatID(binding),
 			CardJSON:       cardJSON,
 			ReplyTarget:    t,
 		})
@@ -428,6 +428,21 @@ func (p *Patcher) confirmationAllowedOpenID(ctx context.Context, workspaceID, in
 		}
 	}
 	return "", false
+}
+
+// outboundChatID recovers the real Lark chat id from the chat binding. The
+// channel_chat_id may be a composite "chat:thread" topic-isolation key, so
+// the real chat id is read from the binding config (larkBindingConfig);
+// pre-topic rows (config "{}") route by the key itself, which for them IS the
+// real chat id.
+func outboundChatID(b ChatSessionBinding) ChatID {
+	if len(b.Config) > 0 {
+		var cfg larkBindingConfig
+		if err := json.Unmarshal(b.Config, &cfg); err == nil && cfg.ChatID != "" {
+			return ChatID(cfg.ChatID)
+		}
+	}
+	return ChatID(b.ChannelChatID)
 }
 
 // threadReplyTarget derives the outbound reply target from the chat
@@ -521,7 +536,7 @@ func (p *Patcher) fail(ctx context.Context, creds InstallationCredentials, bindi
 	return sendWithThreadFallback(p.cfg.Logger, "send error card", threadReplyTarget(binding), func(t ReplyTarget) error {
 		_, err := p.client.SendInteractiveCard(ctx, SendCardParams{
 			InstallationID: creds,
-			ChatID:         ChatID(binding.ChannelChatID),
+			ChatID:         outboundChatID(binding),
 			CardJSON:       render.JSON,
 			ReplyTarget:    t,
 		})
