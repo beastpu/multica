@@ -39,10 +39,12 @@ const DefaultRecentContextSize = 10
 // "@bot 总结一下" into a body that already carries the referenced
 // conversation inline.
 //
-// It is best-effort by contract: every fetch failure degrades to a
-// visible placeholder block and Enrich NEVER returns an error or blocks
-// ingestion. A message with nothing to expand (no parent_id, not a
-// merge_forward) is returned untouched without any network call.
+// It is best-effort by contract: user-attached quote/forward fetch failures
+// degrade to a visible placeholder block and Enrich NEVER returns an error or
+// blocks ingestion. Implicit recent-context fetch failures are logged and
+// omitted so internal error markup is not persisted as user-visible chat text.
+// A message with nothing to expand (no parent_id, not a merge_forward) is
+// returned untouched without any network call.
 type Enricher interface {
 	Enrich(ctx context.Context, msg InboundMessage, creds InstallationCredentials) InboundMessage
 }
@@ -189,9 +191,7 @@ func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds 
 	// Phase 3 — render broadest-to-narrowest with the complete name map.
 	var b strings.Builder
 	if wantRecent {
-		if recentErr != nil {
-			b.WriteString(recentContextErrorBlock())
-		} else if len(recentItems) > 0 {
+		if recentErr == nil && len(recentItems) > 0 {
 			b.WriteString(e.renderRecentContextBlock(recentItems, names))
 		}
 	}
@@ -274,9 +274,8 @@ func (e *inboundEnricher) resolveNames(ctx context.Context, creds InstallationCr
 // parent (which gets its own <quoted_message> block) filtered out, sorted
 // oldest-first. The window is anchored to the trigger message's time so
 // it captures the conversation up to the @-mention rather than whatever
-// is newest by the time this fetch runs. A fetch failure is returned to
-// the caller (which renders the documented placeholder); it never blocks
-// ingestion.
+// is newest by the time this fetch runs. A fetch failure is returned to the
+// caller (which omits this implicit context); it never blocks ingestion.
 func (e *inboundEnricher) fetchRecentItems(ctx context.Context, creds InstallationCredentials, msg InboundMessage) ([]LarkMessage, error) {
 	items, err := e.client.ListChatMessages(ctx, creds, ListMessagesParams{
 		ChatID:   msg.ChatID,
@@ -335,10 +334,6 @@ func (e *inboundEnricher) renderRecentContextBlock(kept []LarkMessage, names map
 	}
 	return fmt.Sprintf("<recent_context count=\"%d\">\n%s\n</recent_context>",
 		len(kept), strings.Join(lines, "\n"))
-}
-
-func recentContextErrorBlock() string {
-	return "<recent_context type=\"error\">[unable to fetch recent context]</recent_context>"
 }
 
 // renderQuotedBlock renders a <quoted_message> block from the already-

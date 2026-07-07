@@ -271,9 +271,10 @@ func TestEnrichForwardedResolvesNames(t *testing.T) {
 	}
 }
 
-// TestEnrichRecentContextFetchError degrades to a visible placeholder on
-// a list failure, without blocking ingestion or dropping the user's body.
-func TestEnrichRecentContextFetchError(t *testing.T) {
+// TestEnrichRecentContextFetchErrorOmitsBlock verifies the implicit group
+// context prefetch fails closed: keep the user's own body, but do not persist
+// an internal error block as user-visible chat text.
+func TestEnrichRecentContextFetchErrorOmitsBlock(t *testing.T) {
 	t.Parallel()
 	fake := newEnricherFake()
 	fake.errByChat["oc_g"] = errors.New("boom")
@@ -288,9 +289,7 @@ func TestEnrichRecentContextFetchError(t *testing.T) {
 
 	out := enrich(t, fake, in, groupCfg())
 
-	want := `<recent_context type="error">[unable to fetch recent context]</recent_context>
-
-在干嘛`
+	want := `在干嘛`
 	if out.Body != want {
 		t.Errorf("body\n got = %q\nwant = %q", out.Body, want)
 	}
