@@ -270,12 +270,17 @@ func renderConfirmationCard(content string, binding ChatSessionBinding, taskID, 
 	cancelMessage := confirmationCancelMessage(confirmMessage)
 	issuedAt := now.Unix()
 	expiresAt := now.Add(confirmationCardTTL).Unix()
+	// The value rides back through decodeChatConfirmationCardAction and
+	// re-enters the inbound pipeline, so ChatID must be the REAL chat id
+	// (a composite topic binding key is not a valid Lark chat id); together
+	// with ThreadID it re-derives the same per-topic session key.
+	chatID := string(outboundChatID(binding))
 	confirm := confirmationCardValue{
 		Kind:          confirmationCardActionKind,
 		Action:        confirmationActionConfirm,
 		Message:       confirmMessage,
 		TaskID:        taskID,
-		ChatID:        binding.ChannelChatID,
+		ChatID:        chatID,
 		ChatType:      binding.ChatType,
 		AllowedOpenID: allowedOpenID,
 		IssuedAtUnix:  issuedAt,
@@ -286,7 +291,7 @@ func renderConfirmationCard(content string, binding ChatSessionBinding, taskID, 
 		Action:        confirmationActionCancel,
 		Message:       cancelMessage,
 		TaskID:        taskID,
-		ChatID:        binding.ChannelChatID,
+		ChatID:        chatID,
 		ChatType:      binding.ChatType,
 		AllowedOpenID: allowedOpenID,
 		IssuedAtUnix:  issuedAt,

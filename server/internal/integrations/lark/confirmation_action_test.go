@@ -4,7 +4,38 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+// TestRenderConfirmationCardEmbedsRealChatID pins the card round-trip for
+// per-topic sessions: the value the button carries back through
+// decodeChatConfirmationCardAction must hold the REAL chat id (a composite
+// binding key is not a valid Lark chat id, and the recomputed session key
+// must land back in the same per-topic session via chat_id + thread_id).
+func TestRenderConfirmationCardEmbedsRealChatID(t *testing.T) {
+	t.Parallel()
+	binding := ChatSessionBinding{
+		ChannelChatID: "oc_real:omt_topic1",
+		Config:        []byte(`{"chat_id":"oc_real"}`),
+		ChatType:      "group",
+		LastThreadID:  pgtype.Text{String: "omt_topic1", Valid: true},
+	}
+	cardJSON, err := renderConfirmationCard("是否确认？【确认执行】", binding, "task-1", "ou_user", time.Unix(1700000000, 0))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(cardJSON, `\"chat_id\":\"oc_real\"`) && !strings.Contains(cardJSON, `"chat_id":"oc_real"`) {
+		t.Fatalf("card value must embed the real chat id, got: %s", cardJSON)
+	}
+	if strings.Contains(cardJSON, "oc_real:omt_topic1") {
+		t.Fatalf("card value must not leak the composite binding key: %s", cardJSON)
+	}
+	if !strings.Contains(cardJSON, "omt_topic1") {
+		t.Fatalf("card value must keep the thread id for session re-routing: %s", cardJSON)
+	}
+}
 
 func TestRenderIssueConfirmationResolvedCardRemovesActions(t *testing.T) {
 	t.Parallel()
