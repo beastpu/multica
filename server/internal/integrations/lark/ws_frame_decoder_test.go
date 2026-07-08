@@ -168,8 +168,11 @@ func TestLarkJSONFrameDecoderChatAskCardAction(t *testing.T) {
 	if msg.ChatID != "oc_group" || msg.ChatType != ChatTypeGroup {
 		t.Fatalf("chat routing mismatch: %q %q", msg.ChatID, msg.ChatType)
 	}
-	if msg.MessageID != "chat_ask:0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f:evt-ask-1" {
-		t.Fatalf("MessageID = %q", msg.MessageID)
+	// The dispatched message id must be the REAL clicked-card id (used as the
+	// reply target and the typing reaction target — a synthetic id 400s
+	// there), not a fabricated string.
+	if msg.MessageID != "om_ask_card_1" {
+		t.Fatalf("MessageID = %q, want the real card message id", msg.MessageID)
 	}
 	if msg.CardAction == nil || msg.CardAction.ChatAsk == nil {
 		t.Fatalf("expected chat ask card action, got %+v", msg.CardAction)
