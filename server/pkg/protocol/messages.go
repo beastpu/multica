@@ -102,6 +102,37 @@ type ChatDonePayload struct {
 	CreatedAt     string `json:"created_at,omitempty"`
 }
 
+// ChatAskPayload is broadcast on EventChatAsk when an agent declares a
+// structured ask (docs/chat-ask-structured-signal-spec.md). Channel
+// integrations render it: confirm/choice as an interactive card, input as a
+// plain question.
+type ChatAskPayload struct {
+	AskID         string   `json:"ask_id"`
+	ChatSessionID string   `json:"chat_session_id"`
+	TaskID        string   `json:"task_id"`
+	Type          string   `json:"type"`
+	Message       string   `json:"message"`
+	Action        string   `json:"action,omitempty"`
+	Options       []string `json:"options,omitempty"`
+	Hint          string   `json:"hint,omitempty"`
+	ExpiresAtUnix int64    `json:"expires_at_unix"`
+}
+
+// ChatAskResolvedPayload is broadcast on EventChatAskResolved when a pending
+// ask leaves the pending state. Channels patch the rendered card into the
+// matching receipt form (answered / superseded).
+type ChatAskResolvedPayload struct {
+	AskID         string `json:"ask_id"`
+	ChatSessionID string `json:"chat_session_id"`
+	TaskID        string `json:"task_id"`
+	Status        string `json:"status"`
+	Message       string `json:"message,omitempty"`
+	AnswerText    string `json:"answer_text,omitempty"`
+	// ChannelMessageID is the IM message hosting the rendered card; empty
+	// when the ask was never delivered to a channel (nothing to patch).
+	ChannelMessageID string `json:"channel_message_id,omitempty"`
+}
+
 // ChatSessionReadPayload is broadcast when the creator marks a session as read.
 // Fires to other devices so their unread counts stay in sync.
 type ChatSessionReadPayload struct {

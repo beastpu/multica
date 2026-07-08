@@ -150,6 +150,7 @@ type PatcherQueries interface {
 	GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.UUID) (OutboundCardMessage, error)
 	CreateLarkOutboundCardMessage(ctx context.Context, arg CreateOutboundCardMessageParams) (OutboundCardMessage, error)
 	UpdateLarkOutboundCardStatus(ctx context.Context, arg UpdateOutboundCardStatusParams) error
+	UpdateChatAskChannelMessage(ctx context.Context, arg db.UpdateChatAskChannelMessageParams) error
 }
 
 // CredentialsResolver decrypts an installation's app_secret for the
@@ -261,6 +262,11 @@ func (p *Patcher) SetTypingIndicatorManager(m *TypingIndicatorManager) {
 func (p *Patcher) Register(bus *events.Bus) {
 	bus.Subscribe(protocol.EventTaskFailed, p.handleEvent)
 	bus.Subscribe(protocol.EventChatDone, p.handleEvent)
+	// Structured asks (docs/chat-ask-structured-signal-spec.md): render the
+	// declared interaction, and patch the card into its receipt form once
+	// the ask leaves the pending state.
+	bus.Subscribe(protocol.EventChatAsk, p.handleEvent)
+	bus.Subscribe(protocol.EventChatAskResolved, p.handleEvent)
 }
 
 func (p *Patcher) handleEvent(e events.Event) {
@@ -329,6 +335,18 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 		return p.sendChatReply(ctx, creds, inst, binding, taskID, e.Payload)
 	case protocol.EventTaskFailed:
 		return p.fail(ctx, creds, binding, taskID, agentName, e.Payload)
+	case protocol.EventChatAsk:
+		payload, ok := chatAskPayloadFromEvent(e.Payload)
+		if !ok {
+			return nil
+		}
+		return p.sendChatAsk(ctx, creds, inst, binding, payload)
+	case protocol.EventChatAskResolved:
+		payload, ok := chatAskResolvedPayloadFromEvent(e.Payload)
+		if !ok {
+			return nil
+		}
+		return p.patchChatAskResolved(ctx, creds, payload)
 	}
 	return nil
 }
@@ -572,6 +590,20 @@ func taskAndSessionFromEvent(e events.Event) (taskID, chatSessionID pgtype.UUID,
 			}
 		}
 	case protocol.ChatDonePayload:
+		if !taskID.Valid {
+			_ = taskID.Scan(p.TaskID)
+		}
+		if !chatSessionID.Valid {
+			_ = chatSessionID.Scan(p.ChatSessionID)
+		}
+	case protocol.ChatAskPayload:
+		if !taskID.Valid {
+			_ = taskID.Scan(p.TaskID)
+		}
+		if !chatSessionID.Valid {
+			_ = chatSessionID.Scan(p.ChatSessionID)
+		}
+	case protocol.ChatAskResolvedPayload:
 		if !taskID.Valid {
 			_ = taskID.Scan(p.TaskID)
 		}

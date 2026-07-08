@@ -183,7 +183,11 @@ func (c *Client) ClaimTask(ctx context.Context, runtimeID string) (*Task, error)
 	var resp struct {
 		Task *Task `json:"task"`
 	}
-	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/claim", runtimeID), map[string]any{}, &resp); err != nil {
+	// supports_chat_ask: capability self-report — this build's bundled CLI
+	// ships `multica chat ask`, so the server may teach it in the chat
+	// prompt. Old servers ignore the field.
+	body := map[string]any{"supports_chat_ask": true}
+	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/claim", runtimeID), body, &resp); err != nil {
 		return nil, err
 	}
 	return resp.Task, nil

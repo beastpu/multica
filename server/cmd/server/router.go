@@ -220,6 +220,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// is the single shared inbound handler injected into every Channel.
 	channelRegistry := channel.NewRegistry()
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{Logger: slog.Default()})
+	// Text preemption for structured chat asks (spec R4): any user message
+	// entering a session resolves its pending ask.
+	channelRouter.SetAskResolver(h)
 	// Debounce the per-session run trigger so a burst of messages collapses
 	// into one agent run instead of one per message (MUL-2968).
 	channelRouter.EnableRunBatching(engine.DefaultChatRunBatchWindow)
@@ -1341,6 +1344,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// thread (?id for a specific one, else the thread the session is in).
 			r.Get("/api/chat/history", h.GetChatChannelHistory)
 			r.Get("/api/chat/thread", h.GetChatThread)
+			// Structured ask: the agent declares "I need the user" with a
+			// typed interaction (confirm / choice / input) instead of the
+			// channel guessing from reply text. Same task-token scoping as
+			// the reads above.
+			r.Post("/api/chat/ask", h.PostChatAsk)
 
 			// Inbox
 			r.Route("/api/inbox", func(r chi.Router) {

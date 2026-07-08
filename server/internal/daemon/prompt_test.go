@@ -309,6 +309,42 @@ func TestBuildChatPromptChannelAwareness(t *testing.T) {
 	})
 }
 
+// TestBuildChatPromptAskContract: the structured-ask contract appears only
+// when the session's channel renders asks (ChatAskSupported), and it teaches
+// the type-by-own-state rule — confirm needs a statable --action, missing
+// information means input, and buttons never come from reply phrasing.
+func TestBuildChatPromptAskContract(t *testing.T) {
+	out := buildChatPrompt(Task{
+		ChatSessionID:    "sess-1",
+		ChatAskSupported: true,
+		ChatMessage:      "帮我查下域名",
+	})
+	for _, want := range []string{
+		"multica chat ask",
+		"--type confirm",
+		"--type choice",
+		"--type input",
+		"--action",
+		"use `--type input`",
+		"never from your reply text",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("ask contract missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+
+	// Sessions whose channel cannot render asks (web-only, Slack today)
+	// must not be taught the command — an unrendered ask reaches no one.
+	for _, task := range []Task{
+		{ChatSessionID: "sess-1", ChatMessage: "hi"},
+		{ChatSessionID: "sess-1", ChatChannelType: "slack", ChatMessage: "hi"},
+	} {
+		if out := buildChatPrompt(task); strings.Contains(out, "multica chat ask") {
+			t.Fatalf("prompt without ask support must not teach chat ask:\n%s", out)
+		}
+	}
+}
+
 func TestBuildChatPromptSlashSkills(t *testing.T) {
 	t.Run("injects selected skills block", func(t *testing.T) {
 		task := Task{

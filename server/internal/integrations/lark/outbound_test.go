@@ -33,6 +33,8 @@ type fakePatcherQueries struct {
 	created         []CreateOutboundCardMessageParams
 	createReturn    OutboundCardMessage
 	statusUpdates   []UpdateOutboundCardStatusParams
+
+	askMessageUpdates []db.UpdateChatAskChannelMessageParams
 }
 
 func (f *fakePatcherQueries) GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error) {
@@ -66,6 +68,12 @@ func (f *fakePatcherQueries) UpdateLarkOutboundCardStatus(ctx context.Context, a
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.statusUpdates = append(f.statusUpdates, arg)
+	return nil
+}
+func (f *fakePatcherQueries) UpdateChatAskChannelMessage(ctx context.Context, arg db.UpdateChatAskChannelMessageParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.askMessageUpdates = append(f.askMessageUpdates, arg)
 	return nil
 }
 

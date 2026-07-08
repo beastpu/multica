@@ -74,6 +74,13 @@ const (
 	EventChatSessionRead    = "chat:session_read"
 	EventChatSessionDeleted = "chat:session_deleted"
 	EventChatSessionUpdated = "chat:session_updated"
+	// EventChatAsk fires when an agent declares a structured ask
+	// (docs/chat-ask-structured-signal-spec.md); channel integrations
+	// render it (card or text). EventChatAskResolved fires when a pending
+	// ask leaves the pending state (answered / superseded), so the channel
+	// can patch the rendered card into its receipt form.
+	EventChatAsk         = "chat:ask"
+	EventChatAskResolved = "chat:ask_resolved"
 
 	// Project events
 	EventProjectCreated         = "project:created"

@@ -2,6 +2,7 @@ package lark
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -120,6 +121,136 @@ func TestLarkJSONFrameDecoderCardActionConfirm(t *testing.T) {
 	}
 	if !msg.AddressedToBot {
 		t.Error("card action must be treated as addressed to the bot")
+	}
+}
+
+// TestLarkJSONFrameDecoderChatAskCardAction: an ask-card click decodes into
+// a text-shaped message (Body = the answer) plus the ChatAsk card action the
+// handler validates against the stored row. Wrong operators are dropped.
+func TestLarkJSONFrameDecoderChatAskCardAction(t *testing.T) {
+	t.Parallel()
+	value, err := json.Marshal(chatAskCardValue{
+		Kind:          chatAskCardActionKind,
+		AskID:         "0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f",
+		Choice:        chatAskChoiceApprove,
+		Reply:         "确认：触发流水线 X",
+		ChatType:      "group",
+		AllowedOpenID: "ou_requester",
+		IssuedAtUnix:  time.Now().Add(-time.Minute).Unix(),
+		ExpiresAtUnix: time.Now().Add(time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	raw := []byte(`{
+		"schema":"2.0",
+		"header":{
+			"event_id":"evt-ask-1",
+			"event_type":"card.action.trigger",
+			"app_id":"cli_app_x",
+			"create_time":"1719999999000"
+		},
+		"event":{
+			"operator":{"operator_id":{"open_id":"ou_requester"}},
+			"context":{"open_chat_id":"oc_group","open_message_id":"om_ask_card_1"},
+			"action":{"tag":"button","value":` + string(value) + `}
+		}
+	}`)
+
+	d := NewLarkJSONFrameDecoder()
+	msg, ok, err := d.Decode(raw, Installation{})
+	if err != nil || !ok {
+		t.Fatalf("Decode ok=%v err=%v", ok, err)
+	}
+	if msg.Body != "确认：触发流水线 X" || msg.CommandBody != msg.Body {
+		t.Fatalf("Body = %q", msg.Body)
+	}
+	if msg.ChatID != "oc_group" || msg.ChatType != ChatTypeGroup {
+		t.Fatalf("chat routing mismatch: %q %q", msg.ChatID, msg.ChatType)
+	}
+	if msg.MessageID != "chat_ask:0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f:evt-ask-1" {
+		t.Fatalf("MessageID = %q", msg.MessageID)
+	}
+	if msg.CardAction == nil || msg.CardAction.ChatAsk == nil {
+		t.Fatalf("expected chat ask card action, got %+v", msg.CardAction)
+	}
+	if msg.CardAction.CardMessageID != "om_ask_card_1" {
+		t.Fatalf("CardMessageID = %q", msg.CardAction.CardMessageID)
+	}
+	ask := msg.CardAction.ChatAsk
+	if ask.AskID != "0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f" || ask.Choice != chatAskChoiceApprove || ask.Reply != msg.Body {
+		t.Fatalf("chat ask action payload: %+v", ask)
+	}
+
+	// Wrong operator: dropped without dispatch.
+	rawWrong := []byte(strings.Replace(string(raw), `"open_id":"ou_requester"`, `"open_id":"ou_other"`, 1))
+	if _, ok, err := d.Decode(rawWrong, Installation{}); ok || err != nil {
+		t.Fatalf("wrong operator must be dropped: ok=%v err=%v", ok, err)
+	}
+}
+
+// TestLarkJSONFrameDecoderCardActionAcksResolvedCard: a valid chat
+// confirmation click must carry a pre-rendered card.action.trigger response
+// so the connector's ACK replaces the card (buttons disappear, outcome shows)
+// instead of leaving it clickable with no feedback.
+func TestLarkJSONFrameDecoderCardActionAcksResolvedCard(t *testing.T) {
+	t.Parallel()
+	value, err := json.Marshal(confirmationCardValue{
+		Kind:          confirmationCardActionKind,
+		Action:        confirmationActionConfirm,
+		Message:       "确认执行",
+		Content:       "是否触发流水线 `私服更新重启-main`？",
+		TaskID:        "task-ack",
+		ChatID:        "oc_group",
+		ChatType:      "group",
+		AllowedOpenID: "ou_requester",
+		IssuedAtUnix:  time.Now().Add(-time.Minute).Unix(),
+		ExpiresAtUnix: time.Now().Add(time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	raw := []byte(`{
+		"schema":"2.0",
+		"header":{
+			"event_id":"evt-card-ack",
+			"event_type":"card.action.trigger",
+			"app_id":"cli_app_x",
+			"create_time":"1719999999000"
+		},
+		"event":{
+			"operator":{"operator_id":{"open_id":"ou_requester"}},
+			"context":{"open_chat_id":"oc_group","open_message_id":"om_card_ack"},
+			"action":{"tag":"button","value":` + string(value) + `}
+		}
+	}`)
+
+	d := NewLarkJSONFrameDecoder()
+	msg, ok, err := d.Decode(raw, Installation{})
+	if err != nil || !ok {
+		t.Fatalf("Decode ok=%v err=%v", ok, err)
+	}
+	if msg.Body != "确认执行" {
+		t.Fatalf("Body = %q", msg.Body)
+	}
+	if msg.CardActionResponseJSON == "" {
+		t.Fatal("chat confirmation click must carry a resolved-card ACK response")
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(msg.CardActionResponseJSON), &resp); err != nil {
+		t.Fatalf("ack response is not valid JSON: %v\n%s", err, msg.CardActionResponseJSON)
+	}
+	card, _ := resp["card"].(map[string]any)
+	if card == nil || card["type"] != "raw" {
+		t.Fatalf("ack response must wrap a raw card: %v", resp)
+	}
+	if containsCardTag(card["data"], "action") {
+		t.Fatalf("resolved card must not keep buttons: %s", msg.CardActionResponseJSON)
+	}
+	for _, want := range []string{"已确认", "确认执行", "是否触发流水线"} {
+		if !strings.Contains(msg.CardActionResponseJSON, want) {
+			t.Fatalf("ack response missing %q: %s", want, msg.CardActionResponseJSON)
+		}
 	}
 }
 

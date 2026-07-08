@@ -366,6 +366,24 @@ type ChannelUserBinding struct {
 	BoundAt        pgtype.Timestamptz `json:"bound_at"`
 }
 
+type ChatAsk struct {
+	ID               pgtype.UUID        `json:"id"`
+	ChatSessionID    pgtype.UUID        `json:"chat_session_id"`
+	TaskID           pgtype.UUID        `json:"task_id"`
+	Type             string             `json:"type"`
+	Message          string             `json:"message"`
+	Action           string             `json:"action"`
+	Options          []byte             `json:"options"`
+	Hint             string             `json:"hint"`
+	Status           string             `json:"status"`
+	Answer           []byte             `json:"answer"`
+	AnsweredBy       string             `json:"answered_by"`
+	AnsweredAt       pgtype.Timestamptz `json:"answered_at"`
+	ChannelMessageID string             `json:"channel_message_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+}
+
 type ChatMessage struct {
 	ID            pgtype.UUID        `json:"id"`
 	ChatSessionID pgtype.UUID        `json:"chat_session_id"`

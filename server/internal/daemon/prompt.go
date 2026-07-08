@@ -232,6 +232,19 @@ func buildChatPrompt(task Task) string {
 		// prefixed with "我先读取…"). Tell the agent to keep them out of its answer.
 		b.WriteString("Do these reads SILENTLY as an internal step — they are how you gather context, not part of your answer. Do NOT narrate them: your reply must not begin with what you are about to read or just read (no \"我先读取…\" / \"let me read the history / open the thread\"). Reply to the user with your answer only.\n\n")
 	}
+	// Structured ask contract (docs/chat-ask-structured-signal-spec.md).
+	// Gated on the channel actually rendering asks — teaching the command to
+	// a session whose channel drops the event would send questions into the
+	// void. The type rule is deliberately framed by the agent's OWN state so
+	// it never asks for missing information with confirm buttons (the exact
+	// misjudgment the old text heuristic produced).
+	if task.ChatAskSupported {
+		b.WriteString("When you need the USER before you can continue, declare it with `multica chat ask` — the channel renders the matching UI from your declaration, never from your reply text:\n")
+		b.WriteString("- `multica chat ask --type confirm --message <question> --action <exactly what will run upon approval>` — ONLY when the action is fully specified and you could execute it immediately once approved. The user gets approve/cancel buttons.\n")
+		b.WriteString("- `multica chat ask --type choice --message <question> --option <A> --option <B>` (2-6 options) — when the answer is one of a small set you already know.\n")
+		b.WriteString("- `multica chat ask --type input --message <question> [--hint <example>]` — when you are MISSING information (a value, an id, a full domain name, …). The user answers by typing; no buttons.\n")
+		b.WriteString("If you cannot state `--action` concretely, you are missing information: use `--type input`. Never phrase your reply hoping the platform adds buttons. After asking, end your turn with a short status (or nothing) — do NOT restate the question in your reply text; the user's answer arrives as the next message.\n\n")
+	}
 	if task.Agent != nil && len(task.Agent.Skills) > 0 {
 		refs := ExtractSlashSkills(task.ChatMessage)
 		if len(refs) > 0 {
