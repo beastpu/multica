@@ -65,12 +65,35 @@ func (c *feishuChannel) Connect(ctx context.Context) error {
 				}
 				return DispatchResult{}, nil
 			}
-			return c.cardActions.HandleLarkCardAction(emitCtx, lm)
+			res, err := c.cardActions.HandleLarkCardAction(emitCtx, lm)
+			if err != nil || !res.DispatchAsChatText {
+				return res, err
+			}
+			// A valid chat-ask click carries the user's answer: after the
+			// card handler transitioned the ask, the answer text enters the
+			// session through the ordinary chat pipeline (its dedup absorbs
+			// Lark retries). A dispatch failure NACKs the frame so Lark
+			// redelivers; the answered ask row makes the redo idempotent.
+			if c.handler == nil {
+				return res, errors.New("lark: inbound handler not configured")
+			}
+			text := lm
+			text.CardAction = nil
+			if err := c.handler(emitCtx, channelMessageFromLark(text)); err != nil {
+				return DispatchResult{}, err
+			}
+			return res, nil
 		}
 		if c.handler == nil {
 			return DispatchResult{}, errors.New("lark: inbound handler not configured")
 		}
-		return DispatchResult{}, c.handler(emitCtx, channelMessageFromLark(lm))
+		if err := c.handler(emitCtx, channelMessageFromLark(lm)); err != nil {
+			return DispatchResult{}, err
+		}
+		// Chat confirmation clicks travel as ordinary text but still owe
+		// Lark a card update: return the pre-rendered resolved card so the
+		// connector's ACK removes the buttons. Empty for normal messages.
+		return DispatchResult{CardActionResponseJSON: lm.CardActionResponseJSON}, nil
 	})
 }
 

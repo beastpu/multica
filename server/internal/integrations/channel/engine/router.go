@@ -45,7 +45,21 @@ type Router struct {
 
 	pendingFreshMu sync.Mutex
 	pendingFresh   map[string]bool
+
+	askResolver AskResolver
 }
+
+// AskResolver resolves a pending structured ask when a user message enters a
+// chat session (text preemption, docs/chat-ask-structured-signal-spec.md R4:
+// the pending ask is a one-shot nonce — any later utterance in the session
+// invalidates it, whatever its content). Implementations must be best-effort
+// and non-blocking-ish: the Router calls it inline on the ingest path.
+type AskResolver interface {
+	ResolveAskOnUserMessage(ctx context.Context, sessionID pgtype.UUID, senderUserID pgtype.UUID, text string)
+}
+
+// SetAskResolver installs the optional text-preemption hook.
+func (r *Router) SetAskResolver(a AskResolver) { r.askResolver = a }
 
 // Config tunes the Router. Zero values default.
 type RouterConfig struct {
@@ -280,6 +294,13 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	postAppendFinalize := finalizeNone
 	if !appendRes.DedupMarked {
 		postAppendFinalize = finalizeMark
+	}
+
+	// 6.5 Text preemption for structured asks: this durably-appended message
+	// resolves whatever ask was pending in the session. Best-effort — the
+	// message itself already landed.
+	if r.askResolver != nil {
+		r.askResolver.ResolveAskOnUserMessage(ctx, sessionID, identity.UserID, msg.Text)
 	}
 
 	res := Result{

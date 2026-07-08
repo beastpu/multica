@@ -201,6 +201,143 @@ func TestFeishuChannel_RoutesCardActionOutsideChatHandler(t *testing.T) {
 	}
 }
 
+// resultCapturingConnector records the DispatchResult the channel returns
+// for one emitted message — the value the WS connector would place in the
+// card.action.trigger ACK.
+type resultCapturingConnector struct {
+	msg InboundMessage
+	res DispatchResult
+	err error
+}
+
+func (c *resultCapturingConnector) Run(ctx context.Context, inst Installation, emit EventEmitter) error {
+	c.res, c.err = emit(ctx, c.msg)
+	return nil
+}
+
+// TestFeishuChannel_ChatAskClickDispatchesAnswer: a valid ask click first
+// runs the card handler (state machine + receipt ACK), then dispatches the
+// answer text through the ordinary chat handler. A stale click (handler says
+// DispatchAsChatText=false) must not reach the chat handler.
+func TestFeishuChannel_ChatAskClickDispatchesAnswer(t *testing.T) {
+	msg := InboundMessage{
+		EventID:      "evt-ask-click",
+		AppID:        "cli",
+		ChatID:       "oc_group",
+		ChatType:     ChatTypeGroup,
+		MessageID:    "chat_ask:ask-1:evt-ask-click",
+		SenderOpenID: "ou_requester",
+		Body:         "确认：触发流水线 X",
+		MessageType:  "text",
+		CardAction: &InboundCardAction{
+			CardMessageID: "om_ask_card",
+			ChatAsk: &ChatAskCardAction{
+				AskID:         "ask-1",
+				Choice:        chatAskChoiceApprove,
+				Reply:         "确认：触发流水线 X",
+				AllowedOpenID: "ou_requester",
+			},
+		},
+	}
+
+	cardHandler := &recordingCardActionHandler{response: DispatchResult{
+		CardActionResponseJSON: `{"card":{"type":"raw","data":{}}}`,
+		DispatchAsChatText:     true,
+	}}
+	var dispatched []channel.InboundMessage
+	conn := &resultCapturingConnector{msg: msg}
+	fc := &feishuChannel{
+		inst:        Installation{AppID: "cli", Region: "feishu"},
+		conn:        conn,
+		cardActions: cardHandler,
+		handler: func(_ context.Context, m channel.InboundMessage) error {
+			dispatched = append(dispatched, m)
+			return nil
+		},
+	}
+	if err := fc.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if conn.err != nil {
+		t.Fatalf("emit: %v", conn.err)
+	}
+	if cardHandler.calls != 1 {
+		t.Fatalf("card handler calls = %d", cardHandler.calls)
+	}
+	if len(dispatched) != 1 || dispatched[0].Text != "确认：触发流水线 X" {
+		t.Fatalf("answer text not dispatched: %+v", dispatched)
+	}
+	if conn.res.CardActionResponseJSON == "" {
+		t.Fatal("receipt ACK lost on dispatch")
+	}
+
+	// Stale click: no dispatch.
+	cardHandler = &recordingCardActionHandler{response: DispatchResult{
+		CardActionResponseJSON: `{"card":{"type":"raw","data":{}}}`,
+	}}
+	dispatched = nil
+	conn = &resultCapturingConnector{msg: msg}
+	fc.conn = conn
+	fc.cardActions = cardHandler
+	if err := fc.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if len(dispatched) != 0 {
+		t.Fatalf("stale click must not dispatch: %+v", dispatched)
+	}
+	if conn.res.CardActionResponseJSON == "" {
+		t.Fatal("stale click still needs its receipt ACK")
+	}
+}
+
+// TestFeishuChannel_ChatConfirmationClickThreadsAckResponse: a chat
+// confirmation click is dispatched as ordinary chat text, but its
+// resolved-card ACK must still reach the connector so the card updates.
+func TestFeishuChannel_ChatConfirmationClickThreadsAckResponse(t *testing.T) {
+	msg := InboundMessage{
+		EventID:                "evt-chat-card",
+		AppID:                  "cli",
+		ChatID:                 "oc_group",
+		ChatType:               ChatTypeGroup,
+		MessageID:              "om_card_1",
+		SenderOpenID:           "ou_requester",
+		Body:                   "确认执行",
+		MessageType:            "text",
+		CardActionResponseJSON: `{"card":{"type":"raw","data":{}}}`,
+	}
+
+	conn := &resultCapturingConnector{msg: msg}
+	fc := &feishuChannel{
+		inst:    Installation{AppID: "cli", Region: "feishu"},
+		conn:    conn,
+		handler: func(context.Context, channel.InboundMessage) error { return nil },
+	}
+	if err := fc.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if conn.err != nil {
+		t.Fatalf("emit: %v", conn.err)
+	}
+	if conn.res.CardActionResponseJSON != msg.CardActionResponseJSON {
+		t.Fatalf("ACK response not threaded: %+v", conn.res)
+	}
+
+	// A failed dispatch must NOT confirm the card: the connector NACKs on
+	// error and Lark retries, so no resolved-card response may leak out.
+	conn = &resultCapturingConnector{msg: msg}
+	fc.conn = conn
+	fc.handler = func(context.Context, channel.InboundMessage) error { return context.DeadlineExceeded }
+	if err := fc.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if conn.err == nil {
+		t.Fatal("handler error must propagate to the connector")
+	}
+	if conn.res.CardActionResponseJSON != "" {
+		t.Fatalf("failed dispatch must not return a resolved card: %+v", conn.res)
+	}
+}
+
 func TestOutboundReplyTarget(t *testing.T) {
 	if got := outboundReplyTarget(channel.OutboundMessage{}); got.IsSet() {
 		t.Fatalf("no ReplyTo must yield an unset target, got %+v", got)

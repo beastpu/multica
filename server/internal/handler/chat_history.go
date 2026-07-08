@@ -13,6 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // ChatChannelHistoryReader reads a chat session's bound IM-channel history. The
@@ -44,7 +45,7 @@ type ChatChannelHistoryResponse struct {
 // recent top-level messages, each thread tagged with its id + reply count (no
 // thread contents). The agent drills into a thread with `multica chat thread`.
 func (h *Handler) GetChatChannelHistory(w http.ResponseWriter, r *http.Request) {
-	sessionID, ok := h.chatHistorySession(w, r)
+	session, _, ok := h.taskChatSession(w, r)
 	if !ok {
 		return
 	}
@@ -52,8 +53,8 @@ func (h *Handler) GetChatChannelHistory(w http.ResponseWriter, r *http.Request) 
 		h.writeNoChannelIntegration(w)
 		return
 	}
-	page, err := h.SlackHistory.ChannelOverview(r.Context(), sessionID, historyOptionsFrom(r))
-	h.respondChatHistory(w, r, sessionID, page, err)
+	page, err := h.SlackHistory.ChannelOverview(r.Context(), session.ID, historyOptionsFrom(r))
+	h.respondChatHistory(w, r, session.ID, page, err)
 }
 
 // GetChatThread serves `multica chat thread [id]` — one thread's messages. With
@@ -61,7 +62,7 @@ func (h *Handler) GetChatChannelHistory(w http.ResponseWriter, r *http.Request) 
 // channel stays server-pinned to the session, so the id is only a within-channel
 // locator.
 func (h *Handler) GetChatThread(w http.ResponseWriter, r *http.Request) {
-	sessionID, ok := h.chatHistorySession(w, r)
+	session, _, ok := h.taskChatSession(w, r)
 	if !ok {
 		return
 	}
@@ -70,39 +71,40 @@ func (h *Handler) GetChatThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	threadID := r.URL.Query().Get("id")
-	page, err := h.SlackHistory.Thread(r.Context(), sessionID, threadID, historyOptionsFrom(r))
-	h.respondChatHistory(w, r, sessionID, page, err)
+	page, err := h.SlackHistory.Thread(r.Context(), session.ID, threadID, historyOptionsFrom(r))
+	h.respondChatHistory(w, r, session.ID, page, err)
 }
 
-// chatHistorySession authorizes the request and returns the caller's own chat
-// session. It is authorized by the task-scoped token alone: middleware stamps
-// the token's task into X-Actor-Source=task_token + X-Task-ID (a normal JWT /
-// mul_ PAT leaves X-Actor-Source empty and does NOT strip a client-forged
-// X-Task-ID), so requiring the task-token actor is load-bearing — without it a
-// member could forge X-Task-ID and read another session's history.
-func (h *Handler) chatHistorySession(w http.ResponseWriter, r *http.Request) (pgtype.UUID, bool) {
+// taskChatSession authorizes the request and returns the caller's own chat
+// session and task. It is authorized by the task-scoped token alone:
+// middleware stamps the token's task into X-Actor-Source=task_token +
+// X-Task-ID (a normal JWT / mul_ PAT leaves X-Actor-Source empty and does NOT
+// strip a client-forged X-Task-ID), so requiring the task-token actor is
+// load-bearing — without it a member could forge X-Task-ID and act on another
+// session. Shared by the chat history reads and PostChatAsk.
+func (h *Handler) taskChatSession(w http.ResponseWriter, r *http.Request) (db.ChatSession, db.AgentTaskQueue, bool) {
 	if r.Header.Get("X-Actor-Source") != "task_token" {
-		writeError(w, http.StatusForbidden, "chat history is only available from within an agent task")
-		return pgtype.UUID{}, false
+		writeError(w, http.StatusForbidden, "this command is only available from within an agent task")
+		return db.ChatSession{}, db.AgentTaskQueue{}, false
 	}
 	taskIDHeader := r.Header.Get("X-Task-ID")
 	if taskIDHeader == "" {
 		writeError(w, http.StatusBadRequest, "missing task context")
-		return pgtype.UUID{}, false
+		return db.ChatSession{}, db.AgentTaskQueue{}, false
 	}
 	taskUUID, err := util.ParseUUID(taskIDHeader)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid task id")
-		return pgtype.UUID{}, false
+		return db.ChatSession{}, db.AgentTaskQueue{}, false
 	}
 	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "task not found")
-		return pgtype.UUID{}, false
+		return db.ChatSession{}, db.AgentTaskQueue{}, false
 	}
 	if !task.ChatSessionID.Valid {
 		writeError(w, http.StatusBadRequest, "this task is not a chat task")
-		return pgtype.UUID{}, false
+		return db.ChatSession{}, db.AgentTaskQueue{}, false
 	}
 	// Defense in depth: load the session and confirm it lives in the token's
 	// stamped workspace. The token→task binding already guarantees the agent can
@@ -110,13 +112,13 @@ func (h *Handler) chatHistorySession(w http.ResponseWriter, r *http.Request) (pg
 	session, err := h.Queries.GetChatSession(r.Context(), task.ChatSessionID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "chat session not found")
-		return pgtype.UUID{}, false
+		return db.ChatSession{}, db.AgentTaskQueue{}, false
 	}
 	if ws := ctxWorkspaceID(r.Context()); ws != "" && uuidToString(session.WorkspaceID) != ws {
 		writeError(w, http.StatusForbidden, "chat session does not belong to this workspace")
-		return pgtype.UUID{}, false
+		return db.ChatSession{}, db.AgentTaskQueue{}, false
 	}
-	return task.ChatSessionID, true
+	return session, task, true
 }
 
 // respondChatHistory writes the shared response: a note (200) when the session

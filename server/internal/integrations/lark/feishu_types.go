@@ -58,6 +58,13 @@ type InboundMessage struct {
 	// CardAction is populated for Multica-owned interactive-card callbacks
 	// whose business semantics should not be routed as ordinary chat text.
 	CardAction *InboundCardAction
+
+	// CardActionResponseJSON is a pre-rendered card.action.trigger callback
+	// response for card clicks that are dispatched as ordinary chat text
+	// (chat confirmation buttons). After the dispatch succeeds, the channel
+	// copies it into DispatchResult so the connector's ACK replaces the card
+	// and the buttons stop inviting another click.
+	CardActionResponseJSON string
 }
 
 type InboundCardAction struct {
@@ -66,6 +73,19 @@ type InboundCardAction struct {
 	// successful action so stale buttons disappear from the chat.
 	CardMessageID     string
 	IssueConfirmation *IssueConfirmationCardAction
+	ChatAsk           *ChatAskCardAction
+}
+
+// ChatAskCardAction is a click on a structured chat ask card
+// (docs/chat-ask-structured-signal-spec.md). The card handler validates it
+// against the stored chat_ask row; on a valid click the channel dispatches
+// Reply into the chat session as the user's answer.
+type ChatAskCardAction struct {
+	AskID         string
+	Choice        string
+	Reply         string
+	AllowedOpenID string
+	ExpiresAtUnix int64
 }
 
 type IssueConfirmationCardAction struct {
@@ -120,4 +140,10 @@ type DispatchResult struct {
 	// message PATCH calls can return success without updating the clicked
 	// card in the user's client.
 	CardActionResponseJSON string
+	// DispatchAsChatText tells the channel that, after this card-action
+	// verdict, the message body should ALSO be dispatched through the
+	// ordinary chat handler (a valid chat-ask click carries the user's
+	// answer as text). False for stale clicks: expired / superseded /
+	// already-answered asks must not re-enter the session.
+	DispatchAsChatText bool
 }

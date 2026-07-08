@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -1252,6 +1253,17 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
 	start := time.Now()
 
+	// Optional capability self-report. Old daemons post an empty body; a
+	// decode failure is treated the same (all capabilities absent) — the
+	// claim itself must never fail on this.
+	var claimReq struct {
+		// SupportsChatAsk: this daemon's CLI ships `multica chat ask`.
+		// Gates the ask contract in the chat prompt so an older CLI is
+		// never taught a command it doesn't have.
+		SupportsChatAsk bool `json:"supports_chat_ask"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&claimReq)
+
 	var (
 		outcome                  = "unauth"
 		authMs, claimMs, buildMs int64
@@ -1644,6 +1656,19 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				resp.ChatChannelType = string(slack.TypeSlack)
 				resp.ChatInThread = binding.LastThreadID.Valid && binding.LastThreadID.String != "" &&
 					binding.LastThreadID.String != binding.LastMessageID.String
+			}
+			// Structured asks need BOTH ends capable: a channel that renders
+			// them (only Feishu ships a renderer today) AND a daemon whose
+			// CLI has `multica chat ask` (capability self-reported on the
+			// claim body). Either one missing → the prompt stays silent and
+			// the agent asks in plain text.
+			if claimReq.SupportsChatAsk {
+				if _, berr := h.Queries.GetChannelChatSessionBindingBySession(r.Context(), db.GetChannelChatSessionBindingBySessionParams{
+					ChatSessionID: cs.ID,
+					ChannelType:   string(channel.TypeFeishu),
+				}); berr == nil {
+					resp.ChatAskSupported = true
+				}
 			}
 			if ws, err := h.Queries.GetWorkspace(r.Context(), cs.WorkspaceID); err == nil && ws.Repos != nil {
 				var repos []RepoData
