@@ -167,10 +167,17 @@ func (d *LarkJSONFrameDecoder) decodeChatAskCardAction(env larkEventEnvelope, ev
 	if chatID == "" {
 		return InboundMessage{}, false, errors.New("card.action.trigger missing chat_id")
 	}
-	// One id per click event: Lark retries of the same click reuse the
-	// event id (Router dedup absorbs them); a different click gets a fresh
-	// id and is instead rejected by the ask's answered state.
-	messageID := "chat_ask:" + value.AskID + ":" + env.Header.EventID
+	// Use the REAL clicked-card message id as the dispatched message id, like
+	// the legacy confirmation path: it flows into the reply-target
+	// (last_message_id) and the typing reaction, both of which call Lark with
+	// this id — a synthetic id 400s there (a topic session would even thread
+	// the agent's reply onto it). Router dedup on the card id also gives
+	// first-click-wins for free. Fall back to a synthetic id only when the
+	// event omits the message id (should not happen for a card action).
+	messageID := evt.messageID()
+	if messageID == "" {
+		messageID = "chat_ask:" + value.AskID + ":" + env.Header.EventID
+	}
 	return InboundMessage{
 		EventType:      env.Header.EventType,
 		EventID:        env.Header.EventID,
