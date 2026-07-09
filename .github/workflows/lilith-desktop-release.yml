@@ -294,8 +294,146 @@ jobs:
             echo "  ✓ $name"
           done
 
+  # ───────────────────────────────────────────────────────────────────────
+  # Standalone `multica` CLI publish (Linux amd64 + arm64).
+  #
+  # The CLI is normally bundled inside the Desktop app; this job also ships
+  # it as a standalone download for servers / remote dev boxes / headless
+  # setups. Go cross-compiles both arches from a single Linux runner
+  # (CGO_ENABLED=0), so there's no need for the Desktop matrix here.
+  #
+  # OSS layout (same `downloads/` prefix the Go proxy serves):
+  #   downloads/multica-cli-<version>-linux-amd64.tar.gz   ← versioned, immutable
+  #   downloads/multica-cli-<version>-linux-arm64.tar.gz   ← versioned, immutable
+  #   downloads/multica-cli-<version>-checksums.txt        ← versioned, immutable (self-update SHA-256)
+  #   downloads/latest-cli.txt                             ← mutable version pointer
+  #   downloads/install.sh                                 ← mutable bootstrap script
+  #
+  # `install.sh` reads latest-cli.txt for the version, then downloads the
+  # matching tarball — both produced by THIS job, so the pointer never
+  # names a tarball that isn't up yet. Users install with:
+  #   curl -fsSL https://multica.lilithgames.com/api/downloads/install.sh | bash
+  # ───────────────────────────────────────────────────────────────────────
+  cli:
+    needs: guard
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+      AWS_DEFAULT_REGION: ${{ vars.OSS_REGION || 'oss-cn-shanghai' }}
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # ldflags read `git rev-parse` for the commit
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Build CLI tarballs (linux amd64 + arm64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Version must match what latest-cli.txt advertises (published
+          # below) and what Desktop derives from `git describe` on the same
+          # tag: the tag with any leading `v` stripped.
+          version="${{ needs.guard.outputs.tag }}"
+          version="${version#v}"
+          commit="$(git rev-parse --short HEAD)"
+          date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ldflags="-X main.version=${version} -X main.commit=${commit} -X main.date=${date}"
+
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            work="$(mktemp -d)"
+            echo "::group::build linux/${arch}"
+            (cd server && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+              go build -ldflags "$ldflags" -o "$work/multica" ./cmd/multica)
+            tar -czf "dist/multica-cli-${version}-linux-${arch}.tar.gz" -C "$work" multica
+            echo "::endgroup::"
+          done
+
+          # Versioned checksum manifest for `multica update` SHA-256 verification.
+          # Names are bare (no path), matching what the CLI looks up.
+          (cd dist && sha256sum multica-cli-${version}-linux-*.tar.gz \
+            > "multica-cli-${version}-checksums.txt")
+
+          # Mutable version pointer install.sh / self-update read to resolve the tarball.
+          printf '%s\n' "$version" > dist/latest-cli.txt
+          # The bootstrap script itself, served from the same origin.
+          cp scripts/install-cli.sh dist/install.sh
+          ls -la dist/
+
+      - name: Force virtual-hosted addressing for OSS
+        shell: bash
+        run: aws configure set default.s3.addressing_style virtual
+
+      - name: Upload CLI artifacts to OSS
+        env:
+          BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ep="$OSS_ENDPOINT"
+          case "$ep" in
+            http://*|https://*) ;;
+            *) ep="https://$ep" ;;
+          esac
+          # Upload versioned tarballs (immutable) BEFORE the mutable
+          # pointer + script, so a client never resolves latest-cli.txt to
+          # a tarball that isn't up yet.
+          upload() {
+            local file="$1" cache="$2"
+            local name; name="$(basename "$file")"
+            echo "::group::Uploading $name"
+            aws s3 cp "$file" "s3://$BUCKET/downloads/$name" \
+              --endpoint-url "$ep" \
+              --cache-control "$cache" \
+              --only-show-errors
+            echo "::endgroup::"
+          }
+          for f in dist/multica-cli-*.tar.gz dist/multica-cli-*-checksums.txt; do
+            upload "$f" "max-age=31536000, immutable"
+          done
+          upload dist/latest-cli.txt "max-age=60"
+          upload dist/install.sh "max-age=60"
+
+      - name: Verify uploads landed on OSS
+        env:
+          BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ep="$OSS_ENDPOINT"
+          case "$ep" in
+            http://*|https://*) ;;
+            *) ep="https://$ep" ;;
+          esac
+          for file in dist/multica-cli-*.tar.gz dist/multica-cli-*-checksums.txt dist/latest-cli.txt dist/install.sh; do
+            name="$(basename "$file")"
+            key="downloads/$name"
+            found=$(aws s3api list-objects-v2 \
+              --bucket "$BUCKET" \
+              --prefix "$key" \
+              --endpoint-url "$ep" \
+              --query "Contents[?Key=='$key'].Key | [0]" \
+              --output text)
+            if [ "$found" != "$key" ]; then
+              echo "::error::MISSING on OSS: s3://$BUCKET/$key"
+              exit 1
+            fi
+            echo "  ✓ $name"
+          done
+
   summary:
-    needs: [guard, build]
+    needs: [guard, build, cli]
     runs-on: ubuntu-latest
     steps:
       - name: Summary
@@ -314,4 +452,8 @@ jobs:
             echo "- \`<api>/api/downloads/latest-mac.yml\` (macOS)"
             echo "- \`<api>/api/downloads/latest.yml\` (Windows x64)"
             echo "- \`<api>/api/downloads/latest-linux.yml\` (Linux)"
+            echo ""
+            echo "CLI (Linux amd64 + arm64) installs from the same origin:"
+            echo ""
+            echo "    curl -fsSL <api>/api/downloads/install.sh | bash"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -5,8 +5,13 @@ import { Check, Copy, Terminal } from "lucide-react";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { useLocale } from "../../i18n";
 
+// Installs the CLI from Lilith's own download origin — the same host the
+// Desktop app downloads from (see server/internal/handler/downloads.go).
+// The script + the versioned tarballs it fetches are published to OSS by
+// the `cli` job in .github/workflows/lilith-desktop-release.yml. CLI is
+// shipped for Linux amd64 + arm64.
 const INSTALL_CMD =
-  "curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash";
+  "curl -fsSL https://multica.lilithgames.com/api/downloads/install.sh | bash";
 const SETUP_CMD = "multica setup";
 
 /**
