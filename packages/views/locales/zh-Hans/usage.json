@@ -90,7 +90,7 @@
       "pass_rate_hint": "判对 {{num}} / 已评估 {{den}}",
       "coverage_rate": "评估覆盖率",
       "coverage_rate_hint": "已评估 {{num}} / AI 产出 {{den}}",
-      "health_footnote": "无产出 {{noOutput}} · 无法判断 {{unjudged}}",
+      "health_footnote": "未评估 {{unassessed}} · 外部单未回填提交 CL {{missingCl}}",
       "stage_judged": "已判定",
       "overview": "最近 {{days}} 天外部完成 {{done}} 单，AI 参与交付 {{participated}} 单：AI 提交 {{direct}}、AI 辅助 {{assisted}}、参与未转化 {{unconverted}}；已判定的 AI 方案通过率 {{passRate}}。",
       "composition_title": "AI 交付构成",
@@ -98,7 +98,8 @@
       "composition_direct": "AI 提交",
       "composition_assisted": "AI 辅助",
       "composition_unconverted": "参与未转化",
-      "composition_empty": "当前窗口没有 AI 参与的外部完成单。"
+      "composition_empty": "当前窗口没有 AI 参与的外部完成单。",
+      "health_footnote_hint": "未评估 = 评估尚未完成的单（队列状态）；未回填 CL = 外部单已完成但任何证据源都没有提交 CL 记录"
     },
     "fetch_cap_notice": "已达单次拉取上限 {{limit}} 条，当前窗口可能未完整覆盖",
     "drawer": {
@@ -125,9 +126,8 @@
       "blocked_evidence": "证据接口不可用",
       "blocked_misc": "其他受阻",
       "blocked_none": "无受阻记录",
-      "gaps_title": "流程缺口",
-      "gaps_missing_cl": "外部单未回填提交 CL",
-      "drill_hint": "点击可筛选明细"
+      "drill_hint": "点击可筛选明细",
+      "completed_caption": "完成评估 {{count}}"
     },
     "table": {
       "issue": "关联 issue",

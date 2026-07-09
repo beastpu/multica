@@ -257,11 +257,10 @@ describe("computeOperationsKpis", () => {
     // Quality (plan-quality, one rate): 1 of 2 judged is likely_correct.
     expect(kpis.passRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
     expect(kpis.passRate.denominator).toBe(kpis.coverageRate.numerator);
-    // Demoted health counts. noOutput = the unattributed-with-no-shelve row.
-    // unjudged = every completed assessment without a verdict: aiUnjudged
-    // (unknown quality) AND noOutput (no quality at all).
-    expect(kpis.noOutput).toBe(1);
-    expect(kpis.unjudged).toBe(2);
+    // Demoted health counts. unassessed = notDone (no assessment at all);
+    // no fixture carries the missing_external_cl warning.
+    expect(kpis.unassessed).toBe(1);
+    expect(kpis.missingExternalCl).toBe(0);
   });
 
   it("counts a verifiable row regardless of noisy warnings", () => {
@@ -380,7 +379,6 @@ describe("computeOperationsKpis", () => {
     expect(kpis.funnel.aiEngaged).toBe(1);
     expect(kpis.funnel.aiPlanned).toBe(0);
     expect(kpis.composition.notParticipated).toBe(1);
-    expect(kpis.noOutput).toBe(1);
   });
 
   it("returns null rates on empty input instead of fake zeros", () => {
@@ -388,8 +386,8 @@ describe("computeOperationsKpis", () => {
     expect(kpis.contributionRate.value).toBeNull();
     expect(kpis.passRate.value).toBeNull();
     expect(kpis.coverageRate.value).toBeNull();
-    expect(kpis.noOutput).toBe(0);
-    expect(kpis.unjudged).toBe(0);
+    expect(kpis.unassessed).toBe(0);
+    expect(kpis.missingExternalCl).toBe(0);
   });
 
   it("does not count an unknown or drifting quality value as judged", () => {
@@ -444,17 +442,15 @@ describe("distribution buckets reconcile with the KPI numerators", () => {
     expect(attributionBucket(passed)).toBe("ai_delivered");
   });
 
-  it("quality-card unknown equals the undetermined footnote count", () => {
+  it("unassessed bucket count equals the footnote's queue backlog", () => {
     const rows = [completedUnknown, running, failed, neverAssessed, passed];
     const kpis = computeOperationsKpis(rows);
-    const unknownInCard = rows.filter((r) => qualityBucket(r) === "unknown").length;
-    // The reported mismatch (208 vs 157) came from counting unfinished
-    // assessments as "unknown" in the card; with the bucket split both
-    // surfaces count exactly the completed-without-verdict rows.
-    expect(unknownInCard).toBe(kpis.unjudged);
+    // The footnote's 未评估 and the (card-excluded) unassessed bucket count
+    // the same rows, so the queue backlog reads identically everywhere.
     expect(
       rows.filter((r) => qualityBucket(r) === UNASSESSED).length,
-    ).toBe(3);
+    ).toBe(kpis.unassessed);
+    expect(kpis.unassessed).toBe(3);
   });
 });
 

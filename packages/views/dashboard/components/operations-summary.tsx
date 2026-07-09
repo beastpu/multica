@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronRight } from "lucide-react";
 import { useT } from "../../i18n";
 import type {
   DeliveryComposition,
@@ -62,8 +63,9 @@ function RateCard({
         type="button"
         onClick={onClick}
         title={clickHint}
-        className="flex flex-col gap-2 rounded-lg border bg-card p-4 text-left transition-colors hover:border-border hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="group relative flex flex-col gap-2 rounded-lg border bg-card p-4 text-left transition-[transform,border-color,box-shadow] hover:-translate-y-px hover:border-border hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
       >
+        <ChevronRight className="absolute right-3 top-3 h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
         {inner}
       </button>
     );
@@ -144,16 +146,21 @@ function CompositionBar({
         </p>
       ) : (
         <>
-          <div className="mt-3 flex h-3 overflow-hidden rounded-full">
+          {/* iOS-storage-style bar: thin gaps between segments, rounded
+              outer ends, and a floating count label on hover. */}
+          <div className="mt-3.5 flex h-6 gap-0.5">
             {segments
               .filter((s) => s.count > 0)
               .map((s) => (
                 <div
                   key={s.key}
-                  className={`${s.className} min-w-1`}
+                  className={`${s.className} group relative min-w-1 rounded-[3px] transition-transform first:rounded-l-lg last:rounded-r-lg hover:scale-y-110 motion-reduce:transition-none`}
                   style={{ flexGrow: s.count }}
-                  title={`${s.label} ${s.count} · ${pct(s.count)}`}
-                />
+                >
+                  <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-2.5 py-1.5 text-[11px] font-medium leading-none text-background opacity-0 transition-opacity group-hover:opacity-100 tabular-nums">
+                    {s.label} {s.count} · {pct(s.count)}
+                  </span>
+                </div>
               ))}
           </div>
           <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1">
@@ -252,10 +259,13 @@ export function OperationsSummary({
           clickHint={t(($) => $.operations.drawer.card_hint)}
         />
       </div>
-      <div className="text-xs text-muted-foreground">
+      <div
+        className="w-fit text-xs text-muted-foreground tabular-nums"
+        title={t(($) => $.operations.summary.health_footnote_hint)}
+      >
         {t(($) => $.operations.summary.health_footnote, {
-          noOutput: kpis.noOutput,
-          unjudged: kpis.unjudged,
+          unassessed: kpis.unassessed,
+          missingCl: kpis.missingExternalCl,
         })}
       </div>
     </section>

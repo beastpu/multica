@@ -90,7 +90,7 @@
       "pass_rate_hint": "{{num}} correct / {{den}} assessed",
       "coverage_rate": "Assessment coverage",
       "coverage_rate_hint": "{{num}} assessed / {{den}} AI produced",
-      "health_footnote": "{{noOutput}} no output · {{unjudged}} undetermined",
+      "health_footnote": "{{unassessed}} unassessed · {{missingCl}} missing human CL",
       "stage_judged": "Judged",
       "overview": "Last {{days}} days: {{done}} external done, AI involved in {{participated}} deliveries — {{direct}} AI delivered, {{assisted}} AI assisted, {{unconverted}} unconverted; judged AI plan pass rate {{passRate}}.",
       "composition_title": "AI delivery composition",
@@ -98,7 +98,8 @@
       "composition_direct": "AI delivered",
       "composition_assisted": "AI assisted",
       "composition_unconverted": "Involved, unconverted",
-      "composition_empty": "No AI-involved external-done tickets in this window."
+      "composition_empty": "No AI-involved external-done tickets in this window.",
+      "health_footnote_hint": "Unassessed = assessment not completed yet (queue state); missing human CL = the external item is done but no submitted CL exists in any evidence source"
     },
     "fetch_cap_notice": "Hit the {{limit}}-row fetch cap — this window may be incomplete",
     "drawer": {
@@ -125,9 +126,8 @@
       "blocked_evidence": "Evidence API unavailable",
       "blocked_misc": "Other",
       "blocked_none": "No blocked assessments",
-      "gaps_title": "Process gaps",
-      "gaps_missing_cl": "Missing human CL on work item",
-      "drill_hint": "Click to filter details"
+      "drill_hint": "Click to filter details",
+      "completed_caption": "{{count}} assessed"
     },
     "table": {
       "issue": "Issue",

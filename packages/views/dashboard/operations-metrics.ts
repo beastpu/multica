@@ -380,10 +380,12 @@ export interface OperationsKpis {
   // 产出没能被验证(证据受阻),通过率只建立在少数可见样本上。
   coverageRate: OperationsRate;
   // Demoted data-health counts (rendered as a muted footnote, not a headline
-  // card): AI produced no record (no-output + plan-no-record) / assessment
-  // completed without a verdict.
-  noOutput: number;
-  unjudged: number;
+  // card): rows whose assessment hasn't completed (the queue backlog) and
+  // done tickets missing a recorded human CL (work-item hygiene, not an AI
+  // defect). Everything else about completed assessments lives in the two
+  // analysis distributions.
+  unassessed: number;
+  missingExternalCl: number;
 }
 
 export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
@@ -398,15 +400,13 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   let verifiable = 0;
   let judged = 0;
   let passed = 0;
-  let noOutput = 0;
-  let unjudged = 0;
+  let unassessed = 0;
+  let missingExternalCl = 0;
   for (const fix of rows) {
     const done = fix.external?.done === true;
     if (done) externalDone += 1;
-    const attribution = deriveAttribution(fix);
-    if (attribution === AI_NO_OUTPUT || attribution === AI_PLAN_NO_RECORD) {
-      noOutput += 1;
-    }
+    if (fix.p4_assessment?.assessment_status !== "completed") unassessed += 1;
+    if (hasMissingExternalClWarning(fix)) missingExternalCl += 1;
     const planned = aiProducedPlan(fix);
     if (planned) aiPlanned += 1;
     // Engagement is looser than participation: a comment-only plan counts as
@@ -426,9 +426,7 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
       else if (role === "unconverted") unconverted += 1;
       else notParticipated += 1;
     }
-    const completed = fix.p4_assessment?.assessment_status === "completed";
     const quality = qualityJudgement(fix);
-    if (completed && quality === "") unjudged += 1;
     if (!isVerifiableOutput(fix)) continue;
     verifiable += 1;
     if (quality !== "") {
@@ -453,8 +451,8 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     contributionRate: rate(participatedAll, externalDone),
     passRate: rate(passed, judged),
     coverageRate: rate(judged, participatedAll),
-    noOutput,
-    unjudged,
+    unassessed,
+    missingExternalCl,
   };
 }
 

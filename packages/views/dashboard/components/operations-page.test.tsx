@@ -519,8 +519,9 @@ describe("OperationsPage", () => {
     expect(screen.getByTitle("Done 5 · 设计如此 1")).toBeTruthy();
     // Coverage: both AI plans (t-1, t-4) reached a verdict → 2/2 = 100%.
     expect(screen.getAllByText("100%").length).toBeGreaterThanOrEqual(1);
-    // Data-health footnote replaces the old no-output/undetermined cards.
-    expect(screen.getByText(/no output · \d+ undetermined/)).toBeTruthy();
+    // Data-health footnote: the queue backlog + work-item hygiene gap —
+    // states that live in no distribution card, so nothing counts twice.
+    expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
 
   it("renders the plain-language overview and the delivery composition bar", () => {
@@ -829,9 +830,15 @@ describe("OperationsPage", () => {
     // Process-gaps card: t-7 carries missing_external_cl with no committed CL
     // (its warning is a data gap, not an access block — the blocked card above
     // must stay empty). Zero-count rows stay visible.
-    expect(screen.getByText("Process gaps")).toBeTruthy();
-    expect(screen.getByText("Missing human CL on work item")).toBeTruthy();
-    expect(screen.getAllByText("Plan, no record").length).toBeGreaterThanOrEqual(1);
+    // The process-gaps card is gone: its unique datum (missing human CL)
+    // moved into the KPI band's health footnote, and its other rows were
+    // duplicates of the two distributions. Cards now show completed-
+    // assessment verdicts only, so the unassessed row is gone too.
+    expect(screen.queryByText("Process gaps")).toBeNull();
+    expect(screen.queryByText("Missing human CL on work item")).toBeNull();
+    expect(screen.queryByText("Not assessed")).toBeNull();
+    // Shared denominator caption on both cards.
+    expect(screen.getAllByText(/\d+ assessed · Click to filter details/).length).toBe(2);
     // The per-workstream outcome card is gone (workstream is a page-level
     // dimension now, not an analysis distribution); the free-text AI-reasons
     // ranking is gone too — same-meaning sentences fragment into distinct
