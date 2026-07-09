@@ -90,7 +90,7 @@
       "pass_rate_hint": "合格 {{num}} / 判定済み {{den}}",
       "coverage_rate": "評価カバレッジ",
       "coverage_rate_hint": "判定済み {{num}} / AI 産出 {{den}}",
-      "health_footnote": "産出なし {{noOutput}} · 判定不可 {{unjudged}}",
+      "health_footnote": "未評価 {{unassessed}} · 提出 CL 未記入 {{missingCl}}",
       "stage_judged": "判定済み",
       "overview": "直近 {{days}} 日の外部完了 {{done}} 件のうち AI 関与は {{participated}} 件：AI が交付 {{direct}}、AI が支援 {{assisted}}、関与・未転換 {{unconverted}}。判定済み AI 提案の合格率は {{passRate}}。",
       "composition_title": "AI 納品構成",
@@ -98,7 +98,8 @@
       "composition_direct": "AI が交付",
       "composition_assisted": "AI が支援",
       "composition_unconverted": "関与・未転換",
-      "composition_empty": "この期間に AI が関与した外部完了チケットはありません。"
+      "composition_empty": "この期間に AI が関与した外部完了チケットはありません。",
+      "health_footnote_hint": "未評価 = 評価が未完了の件（キュー状態）；CL 未記入 = 外部チケットは完了しているが、どの証跡にも提出 CL の記録がない"
     },
     "fetch_cap_notice": "取得上限 {{limit}} 件に達したため、この期間は完全にカバーされていない可能性があります",
     "drawer": {
@@ -125,9 +126,8 @@
       "blocked_evidence": "エビデンス API 不可",
       "blocked_misc": "その他",
       "blocked_none": "ブロックなし",
-      "gaps_title": "プロセスギャップ",
-      "gaps_missing_cl": "作業項目に人間の CL 未記録",
-      "drill_hint": "クリックで明細を絞り込み"
+      "drill_hint": "クリックで明細を絞り込み",
+      "completed_caption": "評価完了 {{count}}"
     },
     "table": {
       "issue": "Issue",

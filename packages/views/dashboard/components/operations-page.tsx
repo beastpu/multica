@@ -78,7 +78,6 @@ import {
 } from "./operations-drawers";
 import { Segmented } from "./segmented";
 import {
-  AI_PLAN_NO_RECORD,
   UNASSESSED,
   attributionBucket,
   computeOperationsKpis,
@@ -87,7 +86,6 @@ import {
   firstSwarmReviewUrl,
   hasP4Signal,
   fixDayIso,
-  hasMissingExternalClWarning,
   isPendingJudgement,
   qualityBucket,
   trimOperationsWindow,
@@ -953,80 +951,64 @@ function OperationsAnalysis({
 }) {
   const { t } = useT("usage");
   const tx = t as unknown as UsageT;
-  // Bucketed the same way the filters and KPI numerators are, so each
-  // distribution slice reconciles exactly (e.g. 无法判断 = the undetermined
-  // KPI numerator; 未评估 = rows without a completed assessment).
+  // Both cards show COMPLETED-assessment verdicts only, over the same
+  // denominator (the caption's 完成评估 N) so their numbers reconcile
+  // against each other. The unassessed backlog is a queue state, not a
+  // verdict — it lives in the KPI band's health footnote, exactly once.
   const attribution = countBy(rows, attributionBucket);
   const quality = countBy(rows, qualityBucket);
-  // Process gaps — each row is one fixable workflow problem, not an AI defect:
-  // a plan that never landed a shelve, a delivered ticket whose human CL was
-  // never recorded, and the unassessed backlog. Zero counts stay visible (zero
-  // is the healthy state worth confirming).
-  const gaps = [
-    {
-      key: AI_PLAN_NO_RECORD,
-      label: agentFixEnumLabel(tx, "attribution", AI_PLAN_NO_RECORD),
-      count: attribution.get(AI_PLAN_NO_RECORD) ?? 0,
-      tone: "warning" as Tone,
-    },
-    {
-      label: t(($) => $.operations.analysis.gaps_missing_cl),
-      count: rows.filter(hasMissingExternalClWarning).length,
-      tone: "warning" as Tone,
-    },
-    {
-      key: UNASSESSED,
-      label: agentFixEnumLabel(tx, "attribution", UNASSESSED),
-      count: attribution.get(UNASSESSED) ?? 0,
-      tone: "muted" as Tone,
-    },
-  ];
+  attribution.delete(UNASSESSED);
+  quality.delete(UNASSESSED);
+  const completed = rows.filter(
+    (f) => f.p4_assessment?.assessment_status === "completed",
+  ).length;
+  const distRows = (
+    counts: Map<string, number>,
+    kind: "attribution" | "quality",
+  ) =>
+    Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([key, count]) => ({
+        key,
+        label: agentFixEnumLabel(tx, kind, key),
+        count,
+        tone: agentFixEnumTone(kind, key),
+      }));
   return (
-    <div className="grid min-w-0 gap-4">
-      <div className="grid min-w-0 gap-4 xl:grid-cols-3">
-        <AnalysisCard
-          title={t(($) => $.operations.analysis.attribution_title)}
-          rows={Array.from(attribution.entries()).map(([key, count]) => ({
-            key,
-            label: agentFixEnumLabel(tx, "attribution", key),
-            count,
-            tone: agentFixEnumTone("attribution", key),
-          }))}
-          onSelect={onDrillAttribution}
-        />
-        <AnalysisCard
-          title={t(($) => $.operations.analysis.quality_title)}
-          rows={Array.from(quality.entries()).map(([key, count]) => ({
-            key,
-            label: agentFixEnumLabel(tx, "quality", key),
-            count,
-            tone: agentFixEnumTone("quality", key),
-          }))}
-          onSelect={onDrillQuality}
-        />
-        <AnalysisCard
-          title={t(($) => $.operations.analysis.gaps_title)}
-          rows={gaps}
-          onSelect={onDrillAttribution}
-        />
-      </div>
+    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
+      <AnalysisCard
+        title={t(($) => $.operations.analysis.attribution_title)}
+        completed={completed}
+        rows={distRows(attribution, "attribution")}
+        onSelect={onDrillAttribution}
+      />
+      <AnalysisCard
+        title={t(($) => $.operations.analysis.quality_title)}
+        completed={completed}
+        rows={distRows(quality, "quality")}
+        onSelect={onDrillQuality}
+      />
     </div>
   );
 }
 
+// One distribution card: single-line rows — tone badge, a shared-scale bar,
+// and count · share-of-completed — sorted largest first by the caller.
 function AnalysisCard({
   title,
+  completed,
   rows,
   emptyLabel,
   onSelect,
 }: {
   title: string;
+  // The shared denominator (completed assessments) shown in the caption and
+  // backing every row's percentage.
+  completed: number;
   rows: {
     key?: string;
     label: string;
     count: number;
-    // Optional display override for the right-hand number (e.g. "12 · 26%").
-    countLabel?: string;
     tone: Tone;
   }[];
   emptyLabel?: string;
@@ -1036,38 +1018,44 @@ function AnalysisCard({
 }) {
   const { t } = useT("usage");
   const max = Math.max(1, ...rows.map((r) => r.count));
+  const share = (count: number) =>
+    completed > 0 ? ` · ${Math.round((count / completed) * 100)}%` : "";
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
       <div className="flex min-w-0 items-baseline justify-between gap-3 border-b px-4 py-3">
         <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
-        {onSelect ? (
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {t(($) => $.operations.analysis.drill_hint)}
-          </span>
-        ) : null}
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+          {t(($) => $.operations.analysis.completed_caption, {
+            count: completed,
+          })}
+          {onSelect ? ` · ${t(($) => $.operations.analysis.drill_hint)}` : ""}
+        </span>
       </div>
-      <div className="grid min-w-0 gap-3 p-4">
+      <div className="grid min-w-0 gap-1 p-3">
         {rows.length === 0 ? (
-          <div className="text-sm text-muted-foreground">{emptyLabel ?? "—"}</div>
+          <div className="px-1 py-1 text-sm text-muted-foreground">
+            {emptyLabel ?? "—"}
+          </div>
         ) : rows.map((r) => {
           const inner = (
             <>
-              <div className="flex min-w-0 items-center justify-between gap-3">
-                <ToneBadge tone={r.tone} className="min-w-0">
-                  {r.label}
-                </ToneBadge>
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {r.countLabel ?? r.count}
-                </span>
-              </div>
+              <ToneBadge tone={r.tone} className="min-w-0 justify-self-start">
+                {r.label}
+              </ToneBadge>
               <div className="h-1.5 min-w-0 overflow-hidden rounded-full bg-muted">
                 <div
                   className="h-full rounded-full bg-primary"
-                  style={{ width: `${Math.max(8, (r.count / max) * 100)}%` }}
+                  style={{ width: `${Math.max(4, (r.count / max) * 100)}%` }}
                 />
               </div>
+              <span className="text-right text-xs text-muted-foreground tabular-nums">
+                {r.count}
+                {share(r.count)}
+              </span>
             </>
           );
+          const rowClass =
+            "grid min-w-0 grid-cols-[128px_minmax(0,1fr)_84px] items-center gap-3 rounded-md px-1.5 py-1";
           if (onSelect && r.key) {
             return (
               <button
@@ -1075,14 +1063,14 @@ function AnalysisCard({
                 type="button"
                 onClick={() => onSelect(r.key!)}
                 title={r.label}
-                className="grid min-w-0 gap-1.5 rounded-md text-left transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className={`${rowClass} text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
               >
                 {inner}
               </button>
             );
           }
           return (
-            <div key={r.label} title={r.label} className="grid min-w-0 gap-1.5">
+            <div key={r.label} title={r.label} className={rowClass}>
               {inner}
             </div>
           );
