@@ -257,7 +257,6 @@
       "save_failed": "保存人工验收失败"
     },
     "no_reason": "—",
-    "export_csv": "导出 CSV",
     "caption": "{{count}} 条记录",
     "resize_column": "调整{{column}}列宽",
     "reset_columns": "重置列宽",
