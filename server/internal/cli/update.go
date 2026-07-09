@@ -8,7 +8,6 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,19 +20,29 @@ import (
 	"time"
 )
 
-// ChecksumManifestName is the asset name GoReleaser publishes for the
-// checksum manifest (`checksum.name_template: "checksums.txt"` in
-// .goreleaser.yml). Kept as a constant rather than inlined so a future rename
-// changes one place.
-const ChecksumManifestName = "checksums.txt"
-
 const DefaultUpdateDownloadTimeout = 120 * time.Second
 
-// GitHubRelease is the subset of the GitHub releases API response we need.
+// DefaultDownloadBaseURL is Lilith's release download host — the same origin
+// the Desktop app and the /download page pull installers from (see
+// server/internal/handler/downloads.go and apps/desktop/electron-builder.yml).
+// Self-update fetches the CLI tarball, its checksum manifest and the version
+// pointer from here. Overridable via MULTICA_DOWNLOAD_BASE (self-host / tests).
+const DefaultDownloadBaseURL = "https://multica.lilithgames.com/api/downloads"
+
+// downloadBaseURL resolves the release host, honoring the MULTICA_DOWNLOAD_BASE
+// override. Trailing slashes are trimmed so callers can append "/<file>".
+func downloadBaseURL() string {
+	if v := strings.TrimSpace(os.Getenv("MULTICA_DOWNLOAD_BASE")); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return DefaultDownloadBaseURL
+}
+
+// GitHubRelease carries the latest CLI release tag. The name is retained for
+// compatibility with the daemon auto-update loop and its tests; the source is
+// now Lilith's OSS download host (latest-cli.txt), not the GitHub API.
 type GitHubRelease struct {
-	TagName string               `json:"tag_name"`
-	HTMLURL string               `json:"html_url"`
-	Assets  []GitHubReleaseAsset `json:"assets"`
+	TagName string
 }
 
 // IsReleaseVersion reports whether v looks like a tagged release version
@@ -119,11 +128,6 @@ func parseReleaseVersion(v string) ([3]int, bool) {
 	return out, true
 }
 
-type GitHubReleaseAsset struct {
-	Name               string `json:"name"`
-	BrowserDownloadURL string `json:"browser_download_url"`
-}
-
 func releaseArchiveExtension(goos string) string {
 	if goos == "windows" {
 		return "zip"
@@ -139,43 +143,23 @@ func normalizeReleaseTag(targetVersion string) string {
 	return tag
 }
 
-func releaseAssetCandidates(targetVersion, goos, goarch string) []string {
-	tag := normalizeReleaseTag(targetVersion)
-	version := strings.TrimPrefix(tag, "v")
-	ext := releaseArchiveExtension(goos)
-	// Prefer the versioned name (current scheme); fall back to the legacy
-	// `multica_{os}_{arch}` name for releases that still ship it.
-	return []string{
-		fmt.Sprintf("multica-cli-%s-%s-%s.%s", version, goos, goarch, ext),
-		fmt.Sprintf("multica_%s_%s.%s", goos, goarch, ext),
-	}
+// releaseArchiveName is the OSS object name for the CLI tarball of a given
+// version + platform, matching what the `cli` job in
+// .github/workflows/lilith-desktop-release.yml publishes:
+//
+//	multica-cli-<version>-<goos>-<goarch>.<tar.gz|zip>
+func releaseArchiveName(version, goos, goarch string) string {
+	v := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	return fmt.Sprintf("multica-cli-%s-%s-%s.%s", v, goos, goarch, releaseArchiveExtension(goos))
 }
 
-func findReleaseAsset(assets []GitHubReleaseAsset, targetVersion, goos, goarch string) (*GitHubReleaseAsset, error) {
-	for _, candidate := range releaseAssetCandidates(targetVersion, goos, goarch) {
-		for i := range assets {
-			if assets[i].Name == candidate {
-				return &assets[i], nil
-			}
-		}
-	}
-
-	candidates := strings.Join(releaseAssetCandidates(targetVersion, goos, goarch), ", ")
-	return nil, fmt.Errorf("no matching release asset for %s/%s (tried: %s)", goos, goarch, candidates)
-}
-
-// findChecksumManifestAsset locates the GoReleaser-generated checksums.txt
-// among a release's assets. Required for the direct-download path's SHA-256
-// verification — if it is missing we refuse to replace the binary rather
-// than fall back to unverified install, because the auto-update poller runs
-// unattended and an unverified binary swap is a supply-chain risk.
-func findChecksumManifestAsset(assets []GitHubReleaseAsset) (*GitHubReleaseAsset, error) {
-	for i := range assets {
-		if assets[i].Name == ChecksumManifestName {
-			return &assets[i], nil
-		}
-	}
-	return nil, fmt.Errorf("checksum manifest %q not present in release", ChecksumManifestName)
+// checksumManifestName is the OSS object name for a release's checksum
+// manifest. It is versioned (and therefore immutable), so a fetched manifest
+// always corresponds to the tarball named by releaseArchiveName for the same
+// version — no chance of pairing a tarball with a stale, overwritten manifest.
+func checksumManifestName(version string) string {
+	v := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	return fmt.Sprintf("multica-cli-%s-checksums.txt", v)
 }
 
 // parseChecksumManifest reads a GoReleaser-style "<sha256>  <filename>"
@@ -221,55 +205,36 @@ func verifyAssetSHA256(data []byte, expectedHex, assetName string) error {
 	return nil
 }
 
-func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/tags/"+tag, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
-	}
-
-	var release GitHubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
-	}
-	return &release, nil
-}
-
-// FetchLatestRelease fetches the latest release tag from the multica GitHub repo.
+// FetchLatestRelease reads the current CLI version from Lilith's OSS version
+// pointer (latest-cli.txt) — the mutable file the `cli` release job overwrites
+// on every publish. The returned tag feeds IsNewerVersion / UpdateViaDownload.
 func FetchLatestRelease() (*GitHubRelease, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/latest", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := client.Do(req)
+	url := downloadBaseURL() + "/latest-cli.txt"
+	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("version pointer returned %d from %s", resp.StatusCode, url)
 	}
 
-	var release GitHubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	// The pointer is a short one-line version string; cap the read so a
+	// misconfigured object can't stream unbounded data into the daemon.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
+	if err != nil {
 		return nil, err
 	}
-	return &release, nil
+	version := strings.TrimSpace(string(body))
+	if i := strings.IndexAny(version, "\r\n"); i >= 0 {
+		version = strings.TrimSpace(version[:i])
+	}
+	if version == "" {
+		return nil, fmt.Errorf("empty version pointer at %s", url)
+	}
+	return &GitHubRelease{TagName: version}, nil
 }
 
 // knownBrewPrefixes lists the install roots Homebrew uses on each platform.
@@ -370,27 +335,26 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 		return "", fmt.Errorf("resolve symlink: %w", err)
 	}
 
-	tag := normalizeReleaseTag(targetVersion)
-	release, err := fetchReleaseByTag(tag)
-	if err != nil {
-		return "", fmt.Errorf("fetch release metadata: %w", err)
+	// Lilith publishes the standalone CLI for Linux only; on macOS / Windows
+	// the CLI ships inside the Desktop app, which owns its own updates. There
+	// is no OSS artifact to fetch on those platforms, so fail with a pointer
+	// to the download page rather than a bare 404.
+	if runtime.GOOS != "linux" {
+		return "", fmt.Errorf("no standalone CLI build for %s/%s; the CLI ships inside the Desktop app — see %s/download",
+			runtime.GOOS, runtime.GOARCH, "https://multica.lilithgames.com")
 	}
-	asset, err := findReleaseAsset(release.Assets, tag, runtime.GOOS, runtime.GOARCH)
-	if err != nil {
-		return "", err
-	}
-	manifestAsset, err := findChecksumManifestAsset(release.Assets)
-	if err != nil {
-		return "", err
-	}
-	downloadURL := asset.BrowserDownloadURL
-	assetName := asset.Name
 
-	// Pull the checksum manifest first so a release that is half-published
-	// (archives uploaded but checksums.txt not yet) fails before we eat the
-	// archive's bandwidth.
+	base := downloadBaseURL()
+	version := strings.TrimPrefix(normalizeReleaseTag(targetVersion), "v")
+	assetName := releaseArchiveName(version, runtime.GOOS, runtime.GOARCH)
+	downloadURL := base + "/" + assetName
+
+	// Pull the checksum manifest first so a half-published release (tarball
+	// uploaded but checksums not yet) fails before we eat the archive's
+	// bandwidth. The manifest is versioned + immutable on OSS, so it always
+	// corresponds to the tarball named above.
 	timeout := updateDownloadTimeoutOrDefault(downloadTimeout)
-	manifestData, err := fetchURLBytes(manifestAsset.BrowserDownloadURL, timeout)
+	manifestData, err := fetchURLBytes(base+"/"+checksumManifestName(version), timeout)
 	if err != nil {
 		return "", fmt.Errorf("download checksum manifest: %w", err)
 	}

@@ -193,6 +193,27 @@ func IsSafeDownloadFilename(name string) bool {
 	return true
 }
 
+// isShortCacheDownload reports whether filename is a mutable object that
+// gets overwritten in place on every release — so it must carry a short
+// cache TTL rather than the default immutable, year-long one. Three
+// classes qualify:
+//   - latest-*.yml / latest.yml : electron-updater poll manifests.
+//   - latest-cli.txt            : the CLI version pointer install.sh reads.
+//   - install.sh                : the CLI bootstrap script itself.
+//
+// Everything else is a versioned artifact (version baked into the
+// filename) and therefore safe to cache indefinitely.
+func isShortCacheDownload(filename string) bool {
+	if filename == "install.sh" {
+		return true
+	}
+	if strings.HasPrefix(filename, "latest") &&
+		(strings.HasSuffix(filename, ".yml") || strings.HasSuffix(filename, ".txt")) {
+		return true
+	}
+	return false
+}
+
 // GetDownloadFile streams a single artifact from OSS through to the
 // client. Mounted at `/api/downloads/{filename}`. Serves both the
 // installer binaries and the `latest-*.yml` metadata files that
@@ -250,15 +271,17 @@ func (h *Handler) GetDownloadFile(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", *out.ETag)
 	}
 	// Cache lifetime depends on the artifact class:
-	//   - latest-*.yml is the electron-updater poll target; clients need
-	//     a fresh-enough copy that a republish becomes visible quickly.
-	//     Short TTL (60s) here matches what the upload step in
-	//     .github/workflows/lilith-desktop-release.yml sets on the OSS
+	//   - Mutable pointers (latest-*.yml poll targets, the latest-cli.txt
+	//     CLI version pointer, and the install.sh bootstrap script) are
+	//     overwritten in place every release; clients need a fresh-enough
+	//     copy that a republish becomes visible quickly. Short TTL (60s)
+	//     matches what the upload steps in
+	//     .github/workflows/lilith-desktop-release.yml set on the OSS
 	//     object metadata.
-	//   - Versioned installer filenames are immutable by contract — the
-	//     version-in-filename scheme means a re-launched same-release
-	//     desktop can reuse its cached dmg indefinitely.
-	if strings.HasPrefix(filename, "latest") && strings.HasSuffix(filename, ".yml") {
+	//   - Versioned installer / CLI filenames are immutable by contract —
+	//     the version-in-filename scheme means a re-launched same-release
+	//     desktop can reuse its cached dmg (or CLI tarball) indefinitely.
+	if isShortCacheDownload(filename) {
 		w.Header().Set("Cache-Control", "public, max-age=60")
 	} else {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")

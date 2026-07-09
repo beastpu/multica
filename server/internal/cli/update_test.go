@@ -3,102 +3,102 @@ package cli
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestReleaseAssetCandidates(t *testing.T) {
-	tests := []struct {
-		name          string
-		targetVersion string
-		goos          string
-		goarch        string
-		wantAssets    []string
-	}{
-		{
-			name:          "darwin prefers versioned then legacy candidate",
-			targetVersion: "v1.2.3",
-			goos:          "darwin",
-			goarch:        "arm64",
-			wantAssets: []string{
-				"multica-cli-1.2.3-darwin-arm64.tar.gz",
-				"multica_darwin_arm64.tar.gz",
-			},
-		},
-		{
-			name:          "linux normalizes missing v in versioned candidate",
-			targetVersion: "1.2.3",
-			goos:          "linux",
-			goarch:        "amd64",
-			wantAssets: []string{
-				"multica-cli-1.2.3-linux-amd64.tar.gz",
-				"multica_linux_amd64.tar.gz",
-			},
-		},
-		{
-			name:          "windows uses zip assets",
-			targetVersion: "1.2.3",
-			goos:          "windows",
-			goarch:        "amd64",
-			wantAssets: []string{
-				"multica-cli-1.2.3-windows-amd64.zip",
-				"multica_windows_amd64.zip",
-			},
-		},
-	}
+func TestDownloadBaseURL(t *testing.T) {
+	t.Run("default when unset", func(t *testing.T) {
+		t.Setenv("MULTICA_DOWNLOAD_BASE", "")
+		if got := downloadBaseURL(); got != DefaultDownloadBaseURL {
+			t.Fatalf("got %q, want %q", got, DefaultDownloadBaseURL)
+		}
+	})
+	t.Run("override trims trailing slash", func(t *testing.T) {
+		t.Setenv("MULTICA_DOWNLOAD_BASE", "https://example.test/dl/")
+		if got := downloadBaseURL(); got != "https://example.test/dl" {
+			t.Fatalf("got %q", got)
+		}
+	})
+}
 
+func TestFetchLatestRelease(t *testing.T) {
+	t.Run("reads version pointer", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/latest-cli.txt" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = io.WriteString(w, "0.2.34\n")
+		}))
+		defer srv.Close()
+		t.Setenv("MULTICA_DOWNLOAD_BASE", srv.URL)
+
+		rel, err := FetchLatestRelease()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if rel.TagName != "0.2.34" {
+			t.Fatalf("TagName = %q, want 0.2.34", rel.TagName)
+		}
+	})
+
+	t.Run("errors on empty pointer", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, "\n")
+		}))
+		defer srv.Close()
+		t.Setenv("MULTICA_DOWNLOAD_BASE", srv.URL)
+		if _, err := FetchLatestRelease(); err == nil {
+			t.Fatal("expected error for empty version pointer")
+		}
+	})
+
+	t.Run("errors on non-200", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+		t.Setenv("MULTICA_DOWNLOAD_BASE", srv.URL)
+		if _, err := FetchLatestRelease(); err == nil {
+			t.Fatal("expected error for 404 pointer")
+		}
+	})
+}
+
+func TestReleaseArchiveName(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		goos    string
+		goarch  string
+		want    string
+	}{
+		{"linux amd64 tar.gz", "1.2.3", "linux", "amd64", "multica-cli-1.2.3-linux-amd64.tar.gz"},
+		{"linux arm64 tar.gz", "1.2.3", "linux", "arm64", "multica-cli-1.2.3-linux-arm64.tar.gz"},
+		{"strips leading v", "v1.2.3", "linux", "amd64", "multica-cli-1.2.3-linux-amd64.tar.gz"},
+		{"windows uses zip", "1.2.3", "windows", "amd64", "multica-cli-1.2.3-windows-amd64.zip"},
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := releaseAssetCandidates(tt.targetVersion, tt.goos, tt.goarch)
-			if len(got) != len(tt.wantAssets) {
-				t.Fatalf("candidate count mismatch: got %d, want %d", len(got), len(tt.wantAssets))
-			}
-			for i := range got {
-				if got[i] != tt.wantAssets[i] {
-					t.Fatalf("candidate[%d] mismatch: got %q, want %q", i, got[i], tt.wantAssets[i])
-				}
+			if got := releaseArchiveName(tt.version, tt.goos, tt.goarch); got != tt.want {
+				t.Fatalf("releaseArchiveName = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestFindReleaseAsset(t *testing.T) {
-	t.Run("prefers versioned asset when both names exist", func(t *testing.T) {
-		assets := []GitHubReleaseAsset{
-			{Name: "multica_darwin_amd64.tar.gz", BrowserDownloadURL: "old"},
-			{Name: "multica-cli-1.2.3-darwin-amd64.tar.gz", BrowserDownloadURL: "new"},
-		}
-
-		got, err := findReleaseAsset(assets, "v1.2.3", "darwin", "amd64")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.Name != "multica-cli-1.2.3-darwin-amd64.tar.gz" {
-			t.Fatalf("asset mismatch: got %q", got.Name)
-		}
-	})
-
-	t.Run("falls back to legacy asset when versioned is absent", func(t *testing.T) {
-		assets := []GitHubReleaseAsset{
-			{Name: "multica_linux_amd64.tar.gz", BrowserDownloadURL: "old"},
-		}
-
-		got, err := findReleaseAsset(assets, "1.2.3", "linux", "amd64")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.Name != "multica_linux_amd64.tar.gz" {
-			t.Fatalf("asset mismatch: got %q", got.Name)
-		}
-	})
-
-	t.Run("returns error when no candidate matches", func(t *testing.T) {
-		_, err := findReleaseAsset([]GitHubReleaseAsset{{Name: "checksums.txt"}}, "1.2.3", "linux", "amd64")
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-	})
+func TestChecksumManifestName(t *testing.T) {
+	if got := checksumManifestName("1.2.3"); got != "multica-cli-1.2.3-checksums.txt" {
+		t.Fatalf("checksumManifestName = %q", got)
+	}
+	if got := checksumManifestName("v1.2.3"); got != "multica-cli-1.2.3-checksums.txt" {
+		t.Fatalf("checksumManifestName should strip leading v, got %q", got)
+	}
 }
 
 func TestIsReleaseVersion(t *testing.T) {
@@ -152,32 +152,6 @@ func TestIsNewerVersion(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFindChecksumManifestAsset(t *testing.T) {
-	t.Run("finds checksums.txt among assets", func(t *testing.T) {
-		assets := []GitHubReleaseAsset{
-			{Name: "multica-cli-1.2.3-darwin-arm64.tar.gz"},
-			{Name: "checksums.txt", BrowserDownloadURL: "https://example/checksums.txt"},
-			{Name: "multica-cli-1.2.3-linux-amd64.tar.gz"},
-		}
-		got, err := findChecksumManifestAsset(assets)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.Name != "checksums.txt" || got.BrowserDownloadURL != "https://example/checksums.txt" {
-			t.Fatalf("got %+v", got)
-		}
-	})
-
-	t.Run("returns error when manifest missing", func(t *testing.T) {
-		_, err := findChecksumManifestAsset([]GitHubReleaseAsset{
-			{Name: "multica-cli-1.2.3-darwin-arm64.tar.gz"},
-		})
-		if err == nil {
-			t.Fatal("expected error when checksums.txt is absent")
-		}
-	})
 }
 
 func TestParseChecksumManifest(t *testing.T) {

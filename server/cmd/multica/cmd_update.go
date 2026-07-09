@@ -56,12 +56,13 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	// Not installed via brew — download binary directly from GitHub Releases.
+	// Not installed via brew — download the binary directly from Lilith's
+	// download host (same origin the Desktop app updates from).
 	if latest == nil {
-		return fmt.Errorf("could not determine latest version; check https://github.com/multica-ai/multica/releases/latest")
+		return fmt.Errorf("could not determine latest version; check https://multica.lilithgames.com/download")
 	}
 	targetVersion := latest.TagName
-	fmt.Fprintf(os.Stderr, "Downloading %s from GitHub Releases...\n", targetVersion)
+	fmt.Fprintf(os.Stderr, "Downloading %s from multica.lilithgames.com...\n", targetVersion)
 	output, err := cli.UpdateViaDownloadWithTimeout(targetVersion, updateDownloadTimeout)
 	if err != nil {
 		return fmt.Errorf("update failed: %w", err)
