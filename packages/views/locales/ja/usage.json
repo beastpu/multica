@@ -73,7 +73,9 @@
       "attribution_all": "すべての帰属",
       "quality": "AI 品質予測",
       "quality_all": "すべての品質",
-      "pending_only": "未判定のみ"
+      "pending_only": "未判定のみ",
+      "reset": "フィルターをリセット",
+      "scope_note": "フィルターはこの明細のみに適用され、上部の統計には影響しません"
     },
     "tabs": {
       "detail": "評価詳細",
@@ -132,8 +134,6 @@
       "blocked_none": "ブロックなし",
       "gaps_title": "プロセスギャップ",
       "gaps_missing_cl": "作業項目に人間の CL 未記録",
-      "workstream_title": "Workstream 結果",
-      "workstream_counts": "計 {{total}} · 判定済み {{judged}} · 合格 {{passed}}",
       "drill_hint": "クリックで明細を絞り込み"
     },
     "table": {

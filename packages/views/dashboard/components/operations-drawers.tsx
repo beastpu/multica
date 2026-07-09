@@ -21,6 +21,8 @@ import {
   type UsageT,
 } from "./agent-fix-review";
 import {
+  blockedWarningFamily,
+  computeBlockedStats,
   deliveryRole,
   deriveAttribution,
   derivedEvidence,
@@ -30,6 +32,7 @@ import {
   isVerifiableOutput,
   qualityJudgement,
   swarmReviewUrl,
+  type BlockedFamily,
 } from "../operations-metrics";
 
 // ---------------------------------------------------------------------------
@@ -82,9 +85,71 @@ function cardTitle(card: OperationsCardKey, t: ReturnType<typeof useT<"usage">>[
       : t(($) => $.operations.summary.pass_rate);
 }
 
+function blockedFamilyLabel(
+  family: BlockedFamily,
+  t: ReturnType<typeof useT<"usage">>["t"],
+): string {
+  return family === "auth"
+    ? t(($) => $.operations.analysis.blocked_auth)
+    : family === "identification"
+      ? t(($) => $.operations.analysis.blocked_identification)
+      : family === "swarm"
+        ? t(($) => $.operations.analysis.blocked_swarm)
+        : family === "p4"
+          ? t(($) => $.operations.analysis.blocked_p4)
+          : family === "evidence_endpoint"
+            ? t(($) => $.operations.analysis.blocked_evidence)
+            : t(($) => $.operations.analysis.blocked_misc);
+}
+
+// Access-blocked completed assessments grouped per family, as drawer branches
+// (key prefix `blocked_`). Rendered under the coverage panel and scoped to
+// the SAME pool as the coverage rate (AI-produced rows), so the section's
+// counts nest inside the card it explains instead of quoting a wider
+// all-assessments axis. Blocks that erased the plan artifact itself drop the
+// row out of this pool — those surface in the attribution story (no output /
+// insufficient evidence), not here. Same dedup rule as computeBlockedStats:
+// a row counts once per family it hits.
+const BLOCKED_FAMILY_ORDER: BlockedFamily[] = [
+  "auth",
+  "identification",
+  "swarm",
+  "p4",
+  "evidence_endpoint",
+  "other",
+];
+
+function blockedBranches(
+  rows: AgentFixRecord[],
+  t: ReturnType<typeof useT<"usage">>["t"],
+): BranchDef[] {
+  const byFamily = new Map<BlockedFamily, AgentFixRecord[]>();
+  for (const fix of rows) {
+    if (fix.p4_assessment?.assessment_status !== "completed") continue;
+    const families = new Set<BlockedFamily>();
+    for (const warning of fix.p4_assessment?.warnings ?? []) {
+      const family = blockedWarningFamily(String(warning));
+      if (family) families.add(family);
+    }
+    for (const family of families) {
+      const list = byFamily.get(family) ?? [];
+      list.push(fix);
+      byFamily.set(family, list);
+    }
+  }
+  return BLOCKED_FAMILY_ORDER.filter((family) => byFamily.has(family)).map(
+    (family) => ({
+      key: `blocked_${family}`,
+      label: blockedFamilyLabel(family, t),
+      rows: byFamily.get(family)!,
+    }),
+  );
+}
+
 // The branch partition of one card's pool. Contribution splits the AI-involved
-// deliveries by role; coverage splits them by whether a verdict exists; pass
-// splits the judged pool by verdict.
+// deliveries by role; coverage splits them by whether a verdict exists (plus
+// the access-blocked families explaining the unjudged share); pass splits the
+// judged pool by verdict.
 function cardBranches(
   card: OperationsCardKey,
   rows: AgentFixRecord[],
@@ -128,6 +193,7 @@ function cardBranches(
         rows: participated.filter((f) => !judged(f)),
         drill: { pendingOnly: true },
       },
+      ...blockedBranches(participated, t),
     ];
   }
   const judgedRows = participated.filter(
@@ -253,8 +319,49 @@ function CardPanel({
   onStateChange: (state: OperationsSheetState) => void;
 }) {
   const branches = cardBranches(card, rows, t, tx);
-  const total = branches.reduce((sum, b) => sum + b.rows.length, 0);
-  const max = Math.max(1, ...branches.map((b) => b.rows.length));
+  // Blocked-family branches (coverage card) render as their own section with
+  // shares over completed assessments, not over the main partition.
+  const mainBranches = branches.filter((b) => !b.key.startsWith("blocked_"));
+  const blocked = branches.filter((b) => b.key.startsWith("blocked_"));
+  // Coverage pool = AI-produced rows; the blocked section's "completed" count
+  // is measured inside it so it aligns with the card's denominator.
+  const completed =
+    card === "coverage"
+      ? computeBlockedStats(rows.filter((f) => deliveryRole(f) !== "none"))
+          .completed
+      : 0;
+  const total = mainBranches.reduce((sum, b) => sum + b.rows.length, 0);
+  const max = Math.max(1, ...mainBranches.map((b) => b.rows.length));
+  const branchButton = (
+    branch: BranchDef,
+    share: string,
+    fill: number,
+  ) => (
+    <button
+      key={branch.key}
+      type="button"
+      onClick={() =>
+        onStateChange({ kind: "branch", card, branch: branch.key })
+      }
+      className="grid gap-1.5 rounded-md p-2 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className="min-w-0 truncate text-sm">{branch.label}</span>
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+          {branch.rows.length}
+          {share}
+        </span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-primary"
+          style={{
+            width: `${Math.max(branch.rows.length > 0 ? 6 : 0, fill)}%`,
+          }}
+        />
+      </div>
+    </button>
+  );
   return (
     <>
       <SheetHeader>
@@ -264,34 +371,39 @@ function CardPanel({
         </SheetDescription>
       </SheetHeader>
       <div className="grid gap-1 px-4 pb-6">
-        {branches.map((branch) => (
-          <button
-            key={branch.key}
-            type="button"
-            onClick={() =>
-              onStateChange({ kind: "branch", card, branch: branch.key })
-            }
-            className="grid gap-1.5 rounded-md p-2 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <span className="min-w-0 truncate text-sm">{branch.label}</span>
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                {branch.rows.length}
-                {total > 0
-                  ? ` · ${Math.round((branch.rows.length / total) * 100)}%`
-                  : ""}
-              </span>
+        {mainBranches.map((branch) =>
+          branchButton(
+            branch,
+            total > 0
+              ? ` · ${Math.round((branch.rows.length / total) * 100)}%`
+              : "",
+            (branch.rows.length / max) * 100,
+          ),
+        )}
+        {card === "coverage" ? (
+          <>
+            <div className="mt-3 border-t pt-3 text-xs font-medium text-muted-foreground">
+              {t(($) => $.operations.analysis.blocked_title, { completed })}
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full bg-primary"
-                style={{
-                  width: `${Math.max(branch.rows.length > 0 ? 6 : 0, (branch.rows.length / max) * 100)}%`,
-                }}
-              />
-            </div>
-          </button>
-        ))}
+            {blocked.length === 0 ? (
+              <p className="p-2 text-xs text-muted-foreground">
+                {t(($) => $.operations.analysis.blocked_none)}
+              </p>
+            ) : (
+              blocked.map((branch) =>
+                branchButton(
+                  branch,
+                  completed > 0
+                    ? ` · ${Math.round((branch.rows.length / completed) * 100)}%`
+                    : "",
+                  (branch.rows.length /
+                    Math.max(1, ...blocked.map((b) => b.rows.length))) *
+                    100,
+                ),
+              )
+            )}
+          </>
+        ) : null}
       </div>
     </>
   );

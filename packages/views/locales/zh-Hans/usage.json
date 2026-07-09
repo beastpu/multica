@@ -73,7 +73,9 @@
       "attribution_all": "全部归因",
       "quality": "AI 质量预判",
       "quality_all": "全部质量",
-      "pending_only": "仅看待判定"
+      "pending_only": "仅看待判定",
+      "reset": "重置筛选",
+      "scope_note": "筛选仅作用于明细，不影响上方统计"
     },
     "tabs": {
       "detail": "评估明细",
@@ -132,8 +134,6 @@
       "blocked_none": "无受阻记录",
       "gaps_title": "流程缺口",
       "gaps_missing_cl": "外部单未回填提交 CL",
-      "workstream_title": "Workstream 结果",
-      "workstream_counts": "共 {{total}} · 已判定 {{judged}} · 通过 {{passed}}",
       "drill_hint": "点击可筛选明细"
     },
     "table": {
