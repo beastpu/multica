@@ -19,6 +19,7 @@ import {
   Radar,
   RefreshCw,
   Search,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -71,6 +72,11 @@ import {
   type UsageT,
 } from "./agent-fix-review";
 import { OperationsSummary } from "./operations-summary";
+import {
+  OperationsSheet,
+  type OperationsDrillFilter,
+  type OperationsSheetState,
+} from "./operations-drawers";
 import { Segmented } from "./segmented";
 import {
   AI_PLAN_NO_RECORD,
@@ -79,6 +85,9 @@ import {
   computeBlockedStats,
   computeOperationsKpis,
   deriveAttribution,
+  derivedEvidence,
+  firstSwarmReviewUrl,
+  hasP4Signal,
   fixDayIso,
   hasMissingExternalClWarning,
   isPendingJudgement,
@@ -121,6 +130,11 @@ const RANGES = [
   { label: "90d", days: 90 },
 ] as const;
 type OpsRange = (typeof RANGES)[number]["days"];
+
+// Mirrors the SQL LIMIT in ListWorkspaceAgentFixes. A fetch that fills it may
+// have dropped the window's oldest rows, so the page flags possibly-partial
+// coverage instead of presenting the stats as complete.
+const FETCH_LIMIT = 2000;
 
 // The "状态" column mirrors the issues UI: the same StatusIcon + the label
 // from the `issues` i18n namespace. These are the known values; an unknown
@@ -201,109 +215,6 @@ function cardStyle(w: Record<OperationsColumnKey, number>): CSSProperties {
 // Debounce delay before a typed search term hits the server. Long enough to
 // coalesce a burst of keystrokes, short enough to feel responsive.
 const SEARCH_DEBOUNCE_MS = 300;
-
-function compactList(values: Array<string | number> | undefined): string {
-  return (values ?? [])
-    .map((v) => String(v).trim())
-    .filter(Boolean)
-    .join(", ");
-}
-
-function extractToken(text: string, patterns: RegExp[]): string {
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match?.[1]) return match[1];
-  }
-  return "";
-}
-
-function derivedEvidence(fix: AgentFixRecord) {
-  const comment = fix.last_comment ?? "";
-  const p4 = fix.p4_assessment;
-  const reviewChanges = compactList(
-    (p4?.swarm_reviews ?? []).flatMap((review) => review.changes ?? []),
-  );
-  const reviewCommits = compactList(
-    (p4?.swarm_reviews ?? []).flatMap((review) => review.commits ?? []),
-  );
-  const swarm =
-    firstSwarmReview(fix) ||
-    extractToken(comment, [
-      /\b(SW-\d+)\b/i,
-      /\bswarm(?:\s+review)?[:#\s]+(\d+)\b/i,
-    ]);
-  const shelve =
-    compactList(p4?.ai_shelved_cls) ||
-    extractToken(comment, [
-      /\bshelv(?:e|ed)?(?:\s+CL)?[:#\s]+(\d+)\b/i,
-      /\bpending\s+P4\s+CL[:#\s]+(\d+)\b/i,
-      /\bCL[:#\s]+(\d+)\b[^\n\r]*(?:shelv(?:e|ed)|已\s*shelve|已\s*shelved)\b/i,
-    ]);
-  const finalCl =
-    String(fix.external?.final_cl ?? "").trim() ||
-    compactList(p4?.external_committed_cls) ||
-    compactList(p4?.swarm_committed_cls);
-  return {
-    workstream:
-      String(p4?.workstream ?? "").trim() ||
-      String(fix.external?.workstream ?? "").trim() ||
-      firstSwarmReviewField(fix, "swarm_branch"),
-    swarm,
-    shelve,
-    swarmChanges: compactList(p4?.swarm_change_cls) || reviewChanges,
-    swarmCommits: compactList(p4?.swarm_committed_cls) || reviewCommits,
-    swarmBranch: firstSwarmReviewField(fix, "swarm_branch"),
-    eventType: firstSwarmReviewField(fix, "event_type"),
-    sentAt: firstSwarmReviewField(fix, "sent_at"),
-    finalCl,
-  };
-}
-
-function firstSwarmReview(fix: AgentFixRecord): string {
-  const review = fix.p4_assessment?.swarm_reviews?.find(
-    (r) => String(r.review_id ?? r.id ?? "").trim().length > 0,
-  );
-  return String(review?.review_id ?? review?.id ?? "").trim();
-}
-
-// The URL of the first swarm review, when the webhook payload carried one —
-// preferred over rebuilding from the connection base.
-function firstSwarmReviewUrl(fix: AgentFixRecord): string {
-  const review = fix.p4_assessment?.swarm_reviews?.find(
-    (r) => String(r.url ?? "").trim().length > 0,
-  );
-  return String(review?.url ?? "").trim();
-}
-
-function firstSwarmReviewField(
-  fix: AgentFixRecord,
-  field: "swarm_branch" | "event_type" | "sent_at",
-): string {
-  const review = fix.p4_assessment?.swarm_reviews?.find(
-    (r) => String(r[field] ?? "").trim().length > 0,
-  );
-  return String(review?.[field] ?? "").trim();
-}
-
-function hasP4Assessment(fix: AgentFixRecord): boolean {
-  const p4 = fix.p4_assessment;
-  if (!p4) return false;
-  return Boolean(
-      p4.assessment_status ||
-      p4.delivery_attribution_prediction ||
-      p4.quality_prediction ||
-      p4.workstream ||
-      derivedEvidence(fix).swarm ||
-      derivedEvidence(fix).shelve ||
-      derivedEvidence(fix).finalCl,
-  );
-}
-
-function hasP4Signal(fix: AgentFixRecord): boolean {
-  if (hasP4Assessment(fix)) return true;
-  const evidence = derivedEvidence(fix);
-  return Boolean(evidence.swarm || evidence.shelve || evidence.finalCl);
-}
 
 function isOperationsVisibleIssue(fix: AgentFixRecord): boolean {
   const external = fix.external;
@@ -514,6 +425,8 @@ export function OperationsPage() {
   // filters and switch here) or via the tab switch.
   const [activeTab, setActiveTab] = useState<OperationsTab>(ANALYSIS_TAB);
   const [page, setPage] = useState(0);
+  // Right-side drawer: rate-card breakdown / branch ticket list / one issue.
+  const [sheet, setSheet] = useState<OperationsSheetState>(null);
   // `searchInput` is what the user types; `search` is the debounced term that
   // actually keys the query (so we don't refetch on every keystroke).
   const [searchInput, setSearchInput] = useState("");
@@ -674,6 +587,24 @@ export function OperationsPage() {
   const issueStatusLabel = (s: string) =>
     isKnownIssueStatus(s) ? tIssues(($) => $.status[s]) : s;
 
+  // External status resolution shared with the drawer — same fallback chain
+  // the ExternalStatusCell uses.
+  const externalStatusLabel = (f: AgentFixRecord): string =>
+    f.external?.status_name ||
+    feishuStatusNames.get(f.external?.status ?? "") ||
+    f.external?.status ||
+    "";
+
+  // A drawer branch's "view all" jump: apply the matching detail filter,
+  // switch to the detail table, close the drawer.
+  const applyDrill = (filter: OperationsDrillFilter) => {
+    if (filter.attribution) setAttributionFilter(filter.attribution);
+    if (filter.quality) setQualityFilter(filter.quality);
+    if (filter.pendingOnly) setPendingOnly(true);
+    setActiveTab(DETAIL_TAB);
+    setSheet(null);
+  };
+
   return (
     <div className="flex h-full flex-col">
       <PageHeader className="h-auto min-h-14 flex-col items-stretch gap-2 px-5 py-2 lg:flex-row lg:items-center lg:justify-between">
@@ -751,6 +682,14 @@ export function OperationsPage() {
                 <Badge variant="outline" className="text-muted-foreground">
                   {t(($) => $.operations.range_label, { days })}
                 </Badge>
+                {allFixes.length >= FETCH_LIMIT ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <TriangleAlert className="h-3 w-3 shrink-0" />
+                    {t(($) => $.operations.fetch_cap_notice, {
+                      limit: FETCH_LIMIT,
+                    })}
+                  </span>
+                ) : null}
               </div>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {t(($) => $.operations.subtitle)}
@@ -794,6 +733,8 @@ export function OperationsPage() {
           {!fixesQuery.isLoading && rows.length > 0 ? (
             <OperationsSummary
               kpis={kpis}
+              days={days}
+              onCardClick={(card) => setSheet({ kind: "card", card })}
               externalDoneBreakdown={externalDoneBreakdown}
             />
           ) : null}
@@ -901,8 +842,16 @@ export function OperationsPage() {
                       return (
                         <div
                           key={f.issue_id || f.task_id}
-                          className="grid items-start gap-3 px-4 py-3"
+                          className="grid cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/30"
                           style={GRID_STYLE}
+                          // Row click opens the issue drawer; clicks on the
+                          // row's own links/buttons/popovers keep their
+                          // behavior.
+                          onClick={(e) => {
+                            const el = e.target as HTMLElement;
+                            if (el.closest("a,button,[role='dialog']")) return;
+                            setSheet({ kind: "issue", fix: f });
+                          }}
                         >
                           <IssueCell
                             fix={f}
@@ -1021,6 +970,17 @@ export function OperationsPage() {
           )}
         </div>
       </div>
+      <OperationsSheet
+        state={sheet}
+        onStateChange={setSheet}
+        rows={rows}
+        slug={slug}
+        swarmBase={swarmBase}
+        viewTZ={viewTZ}
+        issueStatusLabel={issueStatusLabel}
+        externalStatusLabel={externalStatusLabel}
+        onDrill={applyDrill}
+      />
     </div>
   );
 }

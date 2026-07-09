@@ -216,6 +216,18 @@ export function isVerifiableOutput(fix: AgentFixRecord): boolean {
   );
 }
 
+// AI's role in one ticket's delivery — the single source for the composition
+// bar, the KPI loop, and the card-breakdown drawer, so their counts always
+// reconcile. "none" = no AI involvement (no plan artifact, not attributed).
+export type DeliveryRole = "direct" | "assisted" | "unconverted" | "none";
+
+export function deliveryRole(fix: AgentFixRecord): DeliveryRole {
+  const attribution = deriveAttribution(fix);
+  if (attribution === "ai_delivered") return "direct";
+  if (attribution === "ai_assisted") return "assisted";
+  return aiProducedPlan(fix) ? "unconverted" : "none";
+}
+
 // Per-family counts of access-blocked completed assessments, for the analysis
 // card. A row counts once per family it hits (a row with both p4 and swarm
 // block warnings contributes to both), plus the completed total for shares.
@@ -395,8 +407,6 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     if (attribution === AI_NO_OUTPUT || attribution === AI_PLAN_NO_RECORD) {
       noOutput += 1;
     }
-    const contributed =
-      attribution === "ai_delivered" || attribution === "ai_assisted";
     const planned = aiProducedPlan(fix);
     if (planned) aiPlanned += 1;
     // Engagement is looser than participation: a comment-only plan counts as
@@ -405,13 +415,15 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     if (planned || hasAgentPlanComment(fix)) aiEngaged += 1;
     // Participation counts contribution too: an ai_delivered row whose shelve
     // wasn't captured in ai_shelved_cls must still count as involvement, so
-    // contribution ⊆ participation always holds.
-    const participated = planned || contributed;
-    if (participated) participatedAll += 1;
+    // contribution ⊆ participation always holds. deliveryRole encodes exactly
+    // that (direct/assisted from attribution, unconverted from the plan
+    // artifact), so role !== "none" ⇔ participated.
+    const role = deliveryRole(fix);
+    if (role !== "none") participatedAll += 1;
     if (done) {
-      if (attribution === "ai_delivered") directDelivered += 1;
-      else if (attribution === "ai_assisted") assisted += 1;
-      else if (participated) unconverted += 1;
+      if (role === "direct") directDelivered += 1;
+      else if (role === "assisted") assisted += 1;
+      else if (role === "unconverted") unconverted += 1;
       else notParticipated += 1;
     }
     const completed = fix.p4_assessment?.assessment_status === "completed";
@@ -444,6 +456,117 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     noOutput,
     unjudged,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Evidence derivation — the normalized P4/Swarm evidence view over one row.
+//
+// Structured assessment fields win; legacy comment-regex extraction is the
+// fallback for rows written before the assessment pipeline existed. Shared by
+// the detail table cells, the CSV export, and the drawers.
+// ---------------------------------------------------------------------------
+
+function compactList(values: Array<string | number> | undefined): string {
+  return (values ?? [])
+    .map((v) => String(v).trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function extractToken(text: string, patterns: RegExp[]): string {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return "";
+}
+
+export function derivedEvidence(fix: AgentFixRecord) {
+  const comment = fix.last_comment ?? "";
+  const p4 = fix.p4_assessment;
+  const reviewChanges = compactList(
+    (p4?.swarm_reviews ?? []).flatMap((review) => review.changes ?? []),
+  );
+  const reviewCommits = compactList(
+    (p4?.swarm_reviews ?? []).flatMap((review) => review.commits ?? []),
+  );
+  const swarm =
+    firstSwarmReview(fix) ||
+    extractToken(comment, [
+      /\b(SW-\d+)\b/i,
+      /\bswarm(?:\s+review)?[:#\s]+(\d+)\b/i,
+    ]);
+  const shelve =
+    compactList(p4?.ai_shelved_cls) ||
+    extractToken(comment, [
+      /\bshelv(?:e|ed)?(?:\s+CL)?[:#\s]+(\d+)\b/i,
+      /\bpending\s+P4\s+CL[:#\s]+(\d+)\b/i,
+      /\bCL[:#\s]+(\d+)\b[^\n\r]*(?:shelv(?:e|ed)|已\s*shelve|已\s*shelved)\b/i,
+    ]);
+  const finalCl =
+    String(fix.external?.final_cl ?? "").trim() ||
+    compactList(p4?.external_committed_cls) ||
+    compactList(p4?.swarm_committed_cls);
+  return {
+    workstream:
+      String(p4?.workstream ?? "").trim() ||
+      String(fix.external?.workstream ?? "").trim() ||
+      firstSwarmReviewField(fix, "swarm_branch"),
+    swarm,
+    shelve,
+    swarmChanges: compactList(p4?.swarm_change_cls) || reviewChanges,
+    swarmCommits: compactList(p4?.swarm_committed_cls) || reviewCommits,
+    swarmBranch: firstSwarmReviewField(fix, "swarm_branch"),
+    eventType: firstSwarmReviewField(fix, "event_type"),
+    sentAt: firstSwarmReviewField(fix, "sent_at"),
+    finalCl,
+  };
+}
+
+function firstSwarmReview(fix: AgentFixRecord): string {
+  const review = fix.p4_assessment?.swarm_reviews?.find(
+    (r) => String(r.review_id ?? r.id ?? "").trim().length > 0,
+  );
+  return String(review?.review_id ?? review?.id ?? "").trim();
+}
+
+// The URL of the first swarm review, when the webhook payload carried one —
+// preferred over rebuilding from the connection base.
+export function firstSwarmReviewUrl(fix: AgentFixRecord): string {
+  const review = fix.p4_assessment?.swarm_reviews?.find(
+    (r) => String(r.url ?? "").trim().length > 0,
+  );
+  return String(review?.url ?? "").trim();
+}
+
+function firstSwarmReviewField(
+  fix: AgentFixRecord,
+  field: "swarm_branch" | "event_type" | "sent_at",
+): string {
+  const review = fix.p4_assessment?.swarm_reviews?.find(
+    (r) => String(r[field] ?? "").trim().length > 0,
+  );
+  return String(review?.[field] ?? "").trim();
+}
+
+function hasP4Assessment(fix: AgentFixRecord): boolean {
+  const p4 = fix.p4_assessment;
+  if (!p4) return false;
+  return Boolean(
+      p4.assessment_status ||
+      p4.delivery_attribution_prediction ||
+      p4.quality_prediction ||
+      p4.workstream ||
+      derivedEvidence(fix).swarm ||
+      derivedEvidence(fix).shelve ||
+      derivedEvidence(fix).finalCl,
+  );
+}
+
+export function hasP4Signal(fix: AgentFixRecord): boolean {
+  if (hasP4Assessment(fix)) return true;
+  const evidence = derivedEvidence(fix);
+  return Boolean(evidence.swarm || evidence.shelve || evidence.finalCl);
 }
 
 // Builds the Swarm links for evidence chips. `base` is the workspace's Helix
