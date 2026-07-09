@@ -548,6 +548,90 @@ describe("OperationsPage", () => {
     expect(screen.getByText(/no output · \d+ undetermined/)).toBeTruthy();
   });
 
+  it("renders the plain-language overview and the delivery composition bar", () => {
+    renderWithI18n(<OperationsPage />);
+
+    // The overview sentence reconciles exactly with the composition bar,
+    // scoped to AI-involved deliveries (pure human fixes are excluded):
+    // 2 involved = 1 direct (t-1) + 0 assisted + 1 unconverted (t-4,
+    // human-delivered with an AI shelve); pass rate is 1 passed / 2 judged.
+    expect(
+      screen.getByText(
+        "Last 30 days: 6 external done, AI involved in 2 deliveries — 1 AI delivered, 0 AI assisted, 1 unconverted; judged AI plan pass rate 50%.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("AI delivery composition")).toBeTruthy();
+    expect(screen.getByText("AI involved 2 / 6 external done")).toBeTruthy();
+    // The pure-human bucket is not rendered anywhere.
+    expect(screen.queryByText("No AI involvement")).toBeNull();
+  });
+
+  it("opens the rate-card breakdown drawer and drills into the detail table", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    // The whole contribution card is a button opening the breakdown drawer.
+    await user.click(
+      screen.getByRole("button", { name: /AI contribution rate/ }),
+    );
+    const dialog = screen.getByRole("dialog");
+    // Composition branches with counts — t-1 is the only direct delivery.
+    await user.click(
+      within(dialog).getByRole("button", { name: /AI delivered/ }),
+    );
+    // Branch panel lists t-1's ticket card.
+    expect(within(dialog).getByText("Login broke")).toBeTruthy();
+    // Jump to the detail table with the attribution filter applied.
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "View all in the detail table",
+      }),
+    );
+    expect(screen.getAllByText("MUL-7").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("Parser cleanup")).toBeNull();
+  });
+
+  it("opens the issue drawer from a breakdown ticket card", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    await user.click(
+      screen.getByRole("button", { name: /AI contribution rate/ }),
+    );
+    const dialog = screen.getByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: /AI delivered/ }),
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: /Login broke/ }),
+    );
+    // Issue panel: summary and judgement-basis enum labels surface here.
+    expect(
+      within(dialog).getByText("AI shelve was submitted as the final CL."),
+    ).toBeTruthy();
+    expect(within(dialog).getByText("Complete")).toBeTruthy();
+    // Back returns to the branch list.
+    await user.click(within(dialog).getByRole("button", { name: "Back" }));
+    expect(within(dialog).getByText("Login broke")).toBeTruthy();
+  });
+
+  it("opens the issue drawer from a detail-table row", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
+
+    // Click a non-interactive cell (the day text) of t-1's row; links and
+    // buttons inside the row keep their own behavior.
+    const [dayCell] = screen.getAllByText(dayLabel(6));
+    expect(dayCell).toBeTruthy();
+    await user.click(dayCell!);
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText("AI shelve was submitted as the final CL."),
+    ).toBeTruthy();
+    expect(within(dialog).getByText("Open issue")).toBeTruthy();
+  });
+
   it("derives AI no output for completed assessments without an AI shelve", () => {
     renderWithI18n(<OperationsPage />);
     // t-7: unattributed prediction + empty ai_shelved_cls → derived label.

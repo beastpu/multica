@@ -96,7 +96,28 @@
       "stage_ai_planned": "生成 shelve/Swarm 记录",
       "stage_verifiable": "产出可验证",
       "stage_judged": "已判定",
-      "stage_passed": "通过"
+      "stage_passed": "通过",
+      "overview": "最近 {{days}} 天外部完成 {{done}} 单，AI 参与交付 {{participated}} 单：AI 提交 {{direct}}、AI 辅助 {{assisted}}、参与未转化 {{unconverted}}；已判定的 AI 方案通过率 {{passRate}}。",
+      "composition_title": "AI 交付构成",
+      "composition_total": "AI 参与 {{count}} / 外部完成 {{total}}",
+      "composition_direct": "AI 提交",
+      "composition_assisted": "AI 辅助",
+      "composition_unconverted": "参与未转化",
+      "composition_empty": "当前窗口没有 AI 参与的外部完成单。"
+    },
+    "fetch_cap_notice": "已达单次拉取上限 {{limit}} 条，当前窗口可能未完整覆盖",
+    "drawer": {
+      "card_hint": "点击查看拆解明细",
+      "back": "返回",
+      "view_all": "在明细中查看全部",
+      "more": "还有 {{count}} 条未展示",
+      "empty": "当前分组没有记录",
+      "unjudged": "未判定",
+      "open_issue": "打开 issue",
+      "status": "状态",
+      "summary": "评估摘要",
+      "no_summary": "暂无评估摘要",
+      "reasons": "判断依据"
     },
     "analysis": {
       "attribution_title": "交付归因分布",

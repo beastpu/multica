@@ -96,7 +96,28 @@
       "stage_ai_planned": "Shelve/Swarm record",
       "stage_verifiable": "Verifiable output",
       "stage_judged": "Judged",
-      "stage_passed": "Passed"
+      "stage_passed": "Passed",
+      "overview": "Last {{days}} days: {{done}} external done, AI involved in {{participated}} deliveries — {{direct}} AI delivered, {{assisted}} AI assisted, {{unconverted}} unconverted; judged AI plan pass rate {{passRate}}.",
+      "composition_title": "AI delivery composition",
+      "composition_total": "AI involved {{count}} / {{total}} external done",
+      "composition_direct": "AI delivered",
+      "composition_assisted": "AI assisted",
+      "composition_unconverted": "Involved, unconverted",
+      "composition_empty": "No AI-involved external-done tickets in this window."
+    },
+    "fetch_cap_notice": "Hit the {{limit}}-row fetch cap — this window may be incomplete",
+    "drawer": {
+      "card_hint": "Click to see the breakdown",
+      "back": "Back",
+      "view_all": "View all in the detail table",
+      "more": "{{count}} more not shown",
+      "empty": "No records in this group",
+      "unjudged": "Not judged",
+      "open_issue": "Open issue",
+      "status": "Status",
+      "summary": "Assessment summary",
+      "no_summary": "No assessment summary yet.",
+      "reasons": "Judgement basis"
     },
     "analysis": {
       "attribution_title": "Delivery attribution",

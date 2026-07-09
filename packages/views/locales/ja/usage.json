@@ -96,7 +96,28 @@
       "stage_ai_planned": "shelve/Swarm 記録",
       "stage_verifiable": "産出検証可能",
       "stage_judged": "判定済み",
-      "stage_passed": "合格"
+      "stage_passed": "合格",
+      "overview": "直近 {{days}} 日の外部完了 {{done}} 件のうち AI 関与は {{participated}} 件：AI が交付 {{direct}}、AI が支援 {{assisted}}、関与・未転換 {{unconverted}}。判定済み AI 提案の合格率は {{passRate}}。",
+      "composition_title": "AI 納品構成",
+      "composition_total": "AI 関与 {{count}} / 外部完了 {{total}}",
+      "composition_direct": "AI が交付",
+      "composition_assisted": "AI が支援",
+      "composition_unconverted": "関与・未転換",
+      "composition_empty": "この期間に AI が関与した外部完了チケットはありません。"
+    },
+    "fetch_cap_notice": "取得上限 {{limit}} 件に達したため、この期間は完全にカバーされていない可能性があります",
+    "drawer": {
+      "card_hint": "クリックして内訳を表示",
+      "back": "戻る",
+      "view_all": "明細で全件を見る",
+      "more": "他 {{count}} 件は未表示",
+      "empty": "このグループに記録はありません",
+      "unjudged": "未判定",
+      "open_issue": "issue を開く",
+      "status": "ステータス",
+      "summary": "評価サマリー",
+      "no_summary": "評価サマリーはまだありません。",
+      "reasons": "判定根拠"
     },
     "analysis": {
       "attribution_title": "納品帰属の分布",
