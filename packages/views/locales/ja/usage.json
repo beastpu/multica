@@ -257,7 +257,6 @@
       "save_failed": "レビューの保存に失敗しました"
     },
     "no_reason": "—",
-    "export_csv": "CSV をエクスポート",
     "caption": "{{count}} 件",
     "resize_column": "{{column}}列の幅を調整",
     "reset_columns": "列幅をリセット",

@@ -257,7 +257,6 @@
       "save_failed": "검토 저장 실패"
     },
     "no_reason": "—",
-    "export_csv": "CSV 내보내기",
     "caption": "{{count}}개 기록",
     "resize_column": "{{column}} 열 너비 조정",
     "reset_columns": "열 너비 초기화",

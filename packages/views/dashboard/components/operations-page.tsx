@@ -12,7 +12,6 @@ import {
 import {
   ChevronLeft,
   ChevronRight,
-  Download,
   ExternalLink,
   List,
   Play,
@@ -238,114 +237,6 @@ function sortedUniqueOptions(
   return Array.from(
     new Set(rows.map((row) => getValue(row)?.trim()).filter(Boolean) as string[]),
   ).sort((a, b) => a.localeCompare(b));
-}
-
-export const OPERATIONS_P4_CSV_HEADERS = [
-  "Issue",
-  "Issue Title",
-  "External Work Item ID",
-  "External URL",
-  "External Status",
-  "External Done",
-  "Project",
-  "Version",
-  "Workstream",
-  "Agent",
-  "AI Assessment Status",
-  "AI Attribution Prediction",
-  "Derived Attribution",
-  "AI Quality Prediction",
-  "Confidence",
-  "Swarm Review",
-  "Swarm Changes",
-  "Swarm Commits",
-  "Swarm Branch",
-  "Swarm Event Type",
-  "Swarm Sent At",
-  "AI Shelve CL",
-  "Swarm Change CL",
-  "Final CL",
-  "Summary",
-  "Warnings",
-] as const;
-
-function csvCell(value: string | number | boolean | null | undefined): string {
-  const text = value == null ? "" : String(value);
-  if (!/[",\r\n]/.test(text)) return text;
-  return `"${text.replace(/"/g, '""')}"`;
-}
-
-function csvList(values: Array<string | number> | undefined): string {
-  return (values ?? [])
-    .map((value) => String(value).trim())
-    .filter(Boolean)
-    .join("; ");
-}
-
-function csvSwarmReviews(fix: AgentFixRecord): string {
-  return (fix.p4_assessment?.swarm_reviews ?? [])
-    .map((review) => String(review.review_id ?? review.id ?? "").trim())
-    .filter(Boolean)
-    .join("; ");
-}
-
-export function buildOperationsP4AssessmentCsv(rows: AgentFixRecord[]): string {
-  const lines = [
-    OPERATIONS_P4_CSV_HEADERS.map(csvCell).join(","),
-    ...rows.map((fix) => {
-      const p4 = fix.p4_assessment;
-      const evidence = derivedEvidence(fix);
-      const values = [
-        fix.issue_identifier,
-        fix.issue_title,
-        fix.external?.work_item_id,
-        fix.external?.url,
-        fix.external?.status,
-        fix.external?.done,
-        fix.external?.project,
-        fix.external?.version,
-        evidence.workstream,
-        fix.agent_name,
-        p4?.assessment_status,
-        p4?.delivery_attribution_prediction,
-        deriveAttribution(fix),
-        p4?.quality_prediction,
-        confidenceLabel(p4?.confidence),
-        csvSwarmReviews(fix) || evidence.swarm,
-        csvList(p4?.swarm_reviews?.flatMap((review) => review.changes ?? [])) ||
-          csvList(p4?.swarm_change_cls),
-        csvList(p4?.swarm_reviews?.flatMap((review) => review.commits ?? [])) ||
-          csvList(p4?.swarm_committed_cls),
-        evidence.swarmBranch,
-        evidence.eventType,
-        evidence.sentAt,
-        csvList(p4?.ai_shelved_cls) || evidence.shelve,
-        csvList(p4?.swarm_change_cls),
-        evidence.finalCl,
-        p4?.summary,
-        csvList(p4?.warnings),
-      ];
-      return values.map(csvCell).join(",");
-    }),
-  ];
-  return `\uFEFF${lines.join("\r\n")}\r\n`;
-}
-
-function downloadTextFile(filename: string, text: string): void {
-  const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-function exportFilename(): string {
-  const day = new Date().toISOString().slice(0, 10);
-  return `multica-p4-assessment-${day}.csv`;
 }
 
 // One run of a highlighted snippet: `match` segments are the keyword hits.
@@ -700,23 +591,6 @@ export function OperationsPage() {
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-3">
-              {!isLoading && tableRows.length > 0 ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    downloadTextFile(
-                      exportFilename(),
-                      buildOperationsP4AssessmentCsv(tableRows),
-                    )
-                  }
-                  className="h-8"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  {t(($) => $.operations.export_csv)}
-                </Button>
-              ) : null}
               {widthsModified ? (
                 <button
                   type="button"

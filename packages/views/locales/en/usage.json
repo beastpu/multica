@@ -257,7 +257,6 @@
       "save_failed": "Failed to save review"
     },
     "no_reason": "—",
-    "export_csv": "Export CSV",
     "caption": "{{count}} records",
     "resize_column": "Resize {{column}} column",
     "reset_columns": "Reset columns",

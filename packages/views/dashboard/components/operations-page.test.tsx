@@ -442,13 +442,7 @@ vi.mock("../../common/actor-avatar", () => ({
   ),
 }));
 
-import {
-  OperationsPage,
-  buildOperationsP4AssessmentCsv,
-  splitHighlight,
-} from "./operations-page";
-
-let exportedBlob: Blob | null = null;
+import { OperationsPage, splitHighlight } from "./operations-page";
 
 // Analysis is the default tab; tests exercising the per-ticket detail table
 // switch to it first. `label` is the localized tab caption ("评估明细" in zh).
@@ -465,19 +459,6 @@ describe("OperationsPage", () => {
     // Each test starts from the default column layout, regardless of prior runs.
     useOperationsViewStore.getState().resetColumnWidths();
     TRIGGER_ASSESSMENT.mockClear();
-    exportedBlob = null;
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: vi.fn((blob: Blob) => {
-        exportedBlob = blob;
-        return "blob:operations-p4-assessment";
-      }),
-    });
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      value: vi.fn(),
-    });
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -975,35 +956,6 @@ describe("OperationsPage", () => {
     expect(within(listbox).getByText("rel_1.7.2/server")).toBeTruthy();
   });
 
-  it("exports the current filtered P4 assessment rows as CSV", async () => {
-    const user = userEvent.setup();
-    renderWithI18n(<OperationsPage />);
-
-    await user.click(screen.getByLabelText("Workstream"));
-    await user.click(
-      within(await screen.findByRole("listbox")).getByText("rel_1.7.3/client"),
-    );
-    await user.click(screen.getByText("Export CSV"));
-
-    expect(exportedBlob).not.toBeNull();
-    const csv = await exportedBlob!.text();
-    expect(csv).toContain("Issue,Issue Title,External Work Item ID");
-    expect(csv).toContain(
-      "Swarm Review,Swarm Changes,Swarm Commits,Swarm Branch,Swarm Event Type,Swarm Sent At",
-    );
-    expect(csv).toContain("MUL-10,Client crash,BUG-10000");
-    expect(csv).toContain("rel_1.7.3/client");
-    expect(csv).toContain("SW-11900");
-    expect(csv).toContain("283111; 283112");
-    expect(csv).toContain("release/client");
-    expect(csv).toContain("review.updated");
-    expect(csv).toContain("2026-06-04T00:30:00Z");
-    expect(csv).toContain("283111");
-    expect(csv).toContain("283222");
-    expect(csv).toContain("likely_wrong");
-    expect(csv).not.toContain("Login broke");
-  });
-
   it("renders a resize handle for each sizable column", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
@@ -1152,31 +1104,5 @@ describe("splitHighlight", () => {
   it("treats the keyword literally (no regex/wildcard semantics)", () => {
     const parts = splitHighlight("100% done now", "%");
     expect(parts.filter((p) => p.match).map((p) => p.text)).toEqual(["%"]);
-  });
-});
-
-describe("buildOperationsP4AssessmentCsv", () => {
-  it("writes a BOM, stable headers, escaped cells, arrays, and sparse fields", () => {
-    const csv = buildOperationsP4AssessmentCsv([
-      {
-        ...(FIXES[0] as any),
-        issue_title: 'Login, "broke"',
-        p4_assessment: {
-          ...((FIXES[0] as any).p4_assessment ?? {}),
-          summary: "first line\nsecond line",
-        },
-      },
-      { ...(FIXES[1] as any), external: undefined },
-    ]);
-
-    expect(csv.startsWith("\uFEFF")).toBe(true);
-    expect(csv).toContain("Issue,Issue Title,External Work Item ID");
-    expect(csv).toContain("Derived Attribution");
-    expect(csv).toContain('MUL-7,"Login, ""broke""",BUG-93218');
-    expect(csv).toContain('"first line\nsecond line"');
-    expect(csv).toContain("SW-11872");
-    expect(csv).toContain("282941");
-    expect(csv).toContain("283006");
-    expect(csv).toContain("MUL-8,Parser cleanup,,,,,,,,Fixer");
   });
 });
