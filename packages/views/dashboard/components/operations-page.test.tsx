@@ -177,7 +177,7 @@ const FIXES = vi.hoisted(() => [
       ],
       ai_shelved_cls: [283111],
       external_committed_cls: [283222],
-      warnings: ["final CL differs from AI shelve"],
+      warnings: ["final CL differs from AI shelve", "p4_shelve_unavailable"],
     },
     human_review: {
       outcome: "needs_changes",
@@ -267,9 +267,10 @@ const FIXES = vi.hoisted(() => [
       delivery_attribution_prediction: "unattributed",
       quality_prediction: "unknown",
       ai_shelved_cls: [],
-      // Canonical data-gap warning (not an access block): the external item
-      // is done but no submitted CL exists in any evidence source.
-      warnings: ["missing_external_cl"],
+      // One data-gap warning (missing_external_cl — not an access block) and
+      // one access block (auth family), so the coverage drawer's blocked
+      // section has a row while the process-gaps card keeps its count.
+      warnings: ["missing_external_cl", "swarm_api_unauthorized"],
     },
   },
   // Older than the selected 30d window — must never appear in the table
@@ -591,6 +592,30 @@ describe("OperationsPage", () => {
     expect(screen.queryByText("Parser cleanup")).toBeNull();
   });
 
+  it("shows the blocked-evidence breakdown inside the coverage drawer", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    await user.click(
+      screen.getByRole("button", { name: /Assessment coverage/ }),
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Judged")).toBeTruthy();
+    expect(within(dialog).getByText("Not judged")).toBeTruthy();
+    // Scoped to the coverage pool (AI-produced rows): t-1 and t-4 are the
+    // completed assessments inside it. t-7's auth block is on a no-output
+    // row — outside this pool, so it must NOT appear here (it belongs to the
+    // attribution story instead).
+    expect(
+      within(dialog).getByText("Evidence access blocked (2 completed)"),
+    ).toBeTruthy();
+    expect(within(dialog).queryByText("Auth failed")).toBeNull();
+    await user.click(
+      within(dialog).getByRole("button", { name: /P4 \/ shelve unreachable/ }),
+    );
+    expect(within(dialog).getByText("Client crash")).toBeTruthy();
+  });
+
   it("opens the issue drawer from a breakdown ticket card", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
@@ -823,23 +848,23 @@ describe("OperationsPage", () => {
 
     expect(screen.getByText("Delivery attribution")).toBeTruthy();
     expect(screen.getByText("AI quality distribution")).toBeTruthy();
-    // Blocked-evidence card: none of the current fixtures carry an
-    // access-blocked warning, so the empty copy shows.
+    // The blocked-evidence card moved into the coverage card's drawer — it
+    // explains the unjudged share, so it lives with the rate it explains.
     expect(
-      screen.getByText(/Evidence access blocked \(\d+ completed\)/),
-    ).toBeTruthy();
-    expect(screen.getByText("No blocked assessments")).toBeTruthy();
+      screen.queryByText(/Evidence access blocked \(\d+ completed\)/),
+    ).toBeNull();
     // Process-gaps card: t-7 carries missing_external_cl with no committed CL
     // (its warning is a data gap, not an access block — the blocked card above
     // must stay empty). Zero-count rows stay visible.
     expect(screen.getByText("Process gaps")).toBeTruthy();
     expect(screen.getByText("Missing human CL on work item")).toBeTruthy();
     expect(screen.getAllByText("Plan, no record").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Workstream outcome")).toBeTruthy();
-    // The free-text AI-reasons ranking is gone: same-meaning sentences
-    // fragment into distinct rows, so the card carried no signal.
+    // The per-workstream outcome card is gone (workstream is a page-level
+    // dimension now, not an analysis distribution); the free-text AI-reasons
+    // ranking is gone too — same-meaning sentences fragment into distinct
+    // rows, so the card carried no signal.
+    expect(screen.queryByText("Workstream outcome")).toBeNull();
     expect(screen.queryByText("Top AI reasons")).toBeNull();
-    expect(screen.getByText("rel_1.7.3/client")).toBeTruthy();
     expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(1);
   });
@@ -1063,11 +1088,20 @@ describe("OperationsPage", () => {
     expect(
       Array.from(marks).some((m) => m.textContent?.toLowerCase() === "review"),
     ).toBe(true);
+
+    // Detail filters never bend the stats: the overview still reports the
+    // full page-level pool while the table is narrowed by the search.
+    expect(
+      screen.getByText(
+        "Last 30 days: 6 external done, AI involved in 2 deliveries — 1 AI delivered, 0 AI assisted, 1 unconverted; judged AI plan pass rate 50%.",
+      ),
+    ).toBeTruthy();
   });
 
   it("shows a search-specific empty state when nothing matches", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     await user.type(
       screen.getByLabelText("Search comments"),

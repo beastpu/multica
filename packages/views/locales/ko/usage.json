@@ -73,7 +73,9 @@
       "attribution_all": "모든 귀속",
       "quality": "AI 품질 예측",
       "quality_all": "모든 품질",
-      "pending_only": "판정 대기만"
+      "pending_only": "판정 대기만",
+      "reset": "필터 재설정",
+      "scope_note": "필터는 이 목록에만 적용되며 위 통계에는 영향을 주지 않습니다"
     },
     "tabs": {
       "detail": "평가 상세",
@@ -132,8 +134,6 @@
       "blocked_none": "차단 없음",
       "gaps_title": "프로세스 갭",
       "gaps_missing_cl": "작업 항목에 사람 CL 미기록",
-      "workstream_title": "Workstream 결과",
-      "workstream_counts": "총 {{total}} · 판정 {{judged}} · 통과 {{passed}}",
       "drill_hint": "클릭하면 상세를 필터링합니다"
     },
     "table": {

@@ -73,7 +73,9 @@
       "attribution_all": "All attribution",
       "quality": "AI quality prediction",
       "quality_all": "All quality",
-      "pending_only": "Pending judgement only"
+      "pending_only": "Pending judgement only",
+      "reset": "Reset filters",
+      "scope_note": "Filters apply to this table only — the stats above don't change"
     },
     "tabs": {
       "detail": "Assessments",
@@ -132,8 +134,6 @@
       "blocked_none": "No blocked assessments",
       "gaps_title": "Process gaps",
       "gaps_missing_cl": "Missing human CL on work item",
-      "workstream_title": "Workstream outcome",
-      "workstream_counts": "{{total}} total · {{judged}} judged · {{passed}} passed",
       "drill_hint": "Click to filter details"
     },
     "table": {

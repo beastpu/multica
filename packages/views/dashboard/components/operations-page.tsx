@@ -82,7 +82,6 @@ import {
   AI_PLAN_NO_RECORD,
   UNASSESSED,
   attributionBucket,
-  computeBlockedStats,
   computeOperationsKpis,
   deriveAttribution,
   derivedEvidence,
@@ -91,13 +90,10 @@ import {
   fixDayIso,
   hasMissingExternalClWarning,
   isPendingJudgement,
-  isVerifiableOutput,
   qualityBucket,
-  qualityJudgement,
   trimOperationsWindow,
   swarmChangeUrl,
   swarmReviewUrl,
-  type BlockedFamily,
 } from "../operations-metrics";
 
 const ALL_AGENTS = "__all__";
@@ -445,16 +441,32 @@ export function OperationsPage() {
   }, [searchInput]);
 
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const fixesQuery = useQuery(operationsFixesOptions(wsId, days, search));
-  const allFixes = fixesQuery.data ?? EMPTY;
+  // Two feeds over the same window: the stats feed (no search term) backs the
+  // KPI band / analysis / drawers, the table feed (server-side comment search)
+  // backs the detail table. With no search term they are the same cached
+  // query. This split is what keeps detail filters from bending the stats.
+  const statsQuery = useQuery(operationsFixesOptions(wsId, days, ""));
+  const tableQuery = useQuery(operationsFixesOptions(wsId, days, search));
+  const allFixes = statsQuery.data ?? EMPTY;
   const visibleFixes = useMemo(
     () => allFixes.filter(isOperationsVisibleIssue),
     [allFixes],
   );
-  const fixes = useMemo(
+  // Window-trimmed pools, before any filter.
+  const windowFixes = useMemo(
     () => trimOperationsWindow(visibleFixes, days, viewTZ),
     [visibleFixes, days, viewTZ],
   );
+  const tableWindowFixes = useMemo(
+    () =>
+      trimOperationsWindow(
+        (tableQuery.data ?? EMPTY).filter(isOperationsVisibleIssue),
+        days,
+        viewTZ,
+      ),
+    [tableQuery.data, days, viewTZ],
+  );
+  const isLoading = statsQuery.isLoading || tableQuery.isLoading;
   // The workspace's Helix Swarm URL — one connection per workspace — turns
   // review IDs and CL numbers into links. Absent connection → plain text.
   const { data: perforceData } = useQuery(perforceConnectionOptions(wsId));
@@ -481,38 +493,45 @@ export function OperationsPage() {
   }, [agentFilter, agents]);
 
   const workstreamOptions = useMemo<SelectOption[]>(() => {
-    return sortedUniqueOptions(fixes, (f) => derivedEvidence(f).workstream).map(
-      (value) => ({ value, label: value }),
-    );
-  }, [fixes]);
+    return sortedUniqueOptions(windowFixes, (f) =>
+      derivedEvidence(f).workstream,
+    ).map((value) => ({ value, label: value }));
+  }, [windowFixes]);
+
+  // The stats pool: page-level dimensions only (window + workstream). The KPI
+  // band, composition bar, analysis distributions, and drawers all read this.
+  const statsRows = useMemo(
+    () =>
+      workstreamFilter === ALL_WORKSTREAMS
+        ? windowFixes
+        : windowFixes.filter(
+            (f) => derivedEvidence(f).workstream === workstreamFilter,
+          ),
+    [windowFixes, workstreamFilter],
+  );
 
   const attributionOptions = useMemo<SelectOption[]>(() => {
-    return sortedUniqueOptions(fixes, attributionBucket).map((value) => ({
+    return sortedUniqueOptions(statsRows, attributionBucket).map((value) => ({
       value,
       label: agentFixEnumLabel(tx, "attribution", value),
     }));
-  }, [fixes, tx]);
+  }, [statsRows, tx]);
 
   const qualityOptions = useMemo<SelectOption[]>(() => {
-    return sortedUniqueOptions(fixes, (f) =>
+    return sortedUniqueOptions(statsRows, (f) =>
       qualityBucket(f),
     ).map((value) => ({
       value,
       label: agentFixEnumLabel(tx, "quality", value),
     }));
-  }, [fixes, tx]);
+  }, [statsRows, tx]);
 
-  // One predicate shared by the detail table, the KPI band, and the analysis
-  // distributions, so every surface reflects the same filter state.
-  const matchesFilters = useMemo(() => {
+  // Detail-only filters (agent / attribution / quality / pending). They — and
+  // the comment search — narrow ONLY the detail table, never the stats above,
+  // so a narrowed table can't masquerade as a changed rate (demo decision ⑥).
+  const matchesDetailFilters = useMemo(() => {
     return (f: AgentFixRecord): boolean => {
       if (effectiveAgent !== ALL_AGENTS && f.agent_id !== effectiveAgent) {
-        return false;
-      }
-      if (
-        workstreamFilter !== ALL_WORKSTREAMS &&
-        derivedEvidence(f).workstream !== workstreamFilter
-      ) {
         return false;
       }
       if (
@@ -532,23 +551,43 @@ export function OperationsPage() {
       }
       return true;
     };
-  }, [
-    effectiveAgent,
-    workstreamFilter,
-    attributionFilter,
-    qualityFilter,
-    pendingOnly,
-  ]);
+  }, [effectiveAgent, attributionFilter, qualityFilter, pendingOnly]);
 
-  const rows = useMemo(() => fixes.filter(matchesFilters), [fixes, matchesFilters]);
-  const kpis = useMemo(() => computeOperationsKpis(rows), [rows]);
+  const tableRows = useMemo(
+    () =>
+      tableWindowFixes.filter(
+        (f) =>
+          (workstreamFilter === ALL_WORKSTREAMS ||
+            derivedEvidence(f).workstream === workstreamFilter) &&
+          matchesDetailFilters(f),
+      ),
+    [tableWindowFixes, workstreamFilter, matchesDetailFilters],
+  );
+
+  const detailFiltersDirty =
+    search.trim() !== "" ||
+    effectiveAgent !== ALL_AGENTS ||
+    attributionFilter !== ALL_ATTRIBUTIONS ||
+    qualityFilter !== ALL_QUALITIES ||
+    pendingOnly;
+
+  const resetDetailFilters = () => {
+    setSearchInput("");
+    setSearch("");
+    setAgentFilter(ALL_AGENTS);
+    setAttributionFilter(ALL_ATTRIBUTIONS);
+    setQualityFilter(ALL_QUALITIES);
+    setPendingOnly(false);
+  };
+
+  const kpis = useMemo(() => computeOperationsKpis(statsRows), [statsRows]);
   // Which external statuses make up the external-done stage: several raw
   // statuses can map to done (e.g. 测试通过 + 已关闭), and ops wants to see
   // the split, not just the sum. Labels resolve the same way the external
   // status column does.
   const externalDoneBreakdown = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const f of rows) {
+    for (const f of statsRows) {
       if (f.external?.done !== true) continue;
       const raw = f.external?.status ?? "";
       // Empty labels still count (bucketed as "—") so the breakdown always
@@ -560,7 +599,7 @@ export function OperationsPage() {
     return Array.from(counts.entries())
       .map(([label, count]) => ({ label, count }))
       .sort((a, b) => b.count - a.count);
-  }, [rows, feishuStatusNames]);
+  }, [statsRows, feishuStatusNames]);
 
   // UI pagination over the filtered rows. Any filter / window / search change
   // snaps back to the first page.
@@ -575,11 +614,11 @@ export function OperationsPage() {
     pendingOnly,
     search,
   ]);
-  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(tableRows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pagedRows = useMemo(
-    () => rows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE),
-    [rows, safePage],
+    () => tableRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE),
+    [tableRows, safePage],
   );
 
   // "状态" column = issue workflow status (reused from the issues namespace);
@@ -612,57 +651,22 @@ export function OperationsPage() {
           <Radar className="h-4 w-4 shrink-0 text-muted-foreground" />
           <h1 className="truncate text-sm font-medium">{t(($) => $.operations.title)}</h1>
         </div>
+        {/* Page-level dimensions only (demo decision ⑥): the time window and
+            the workstream scope everything — stats, analysis, drawers, table.
+            All other filters live on the detail table and narrow only it. */}
         <nav
           role="toolbar"
           aria-label={t(($) => $.operations.title)}
           className="flex min-w-0 flex-1 flex-wrap items-center gap-2 lg:justify-end"
         >
-          <SearchBox value={searchInput} onChange={setSearchInput} />
-          <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-lg border border-border/70 bg-muted/25 p-1">
-            <AgentFilter
-              agents={agents}
-              value={agentFilter}
-              onChange={setAgentFilter}
-            />
-            <ValueFilter
-              ariaLabel={t(($) => $.operations.filter.workstream)}
-              value={workstreamFilter}
-              allValue={ALL_WORKSTREAMS}
-              allLabel={t(($) => $.operations.filter.workstream_all)}
-              options={workstreamOptions}
-              onChange={setWorkstreamFilter}
-            />
-            <ValueFilter
-              ariaLabel={t(($) => $.operations.filter.attribution)}
-              value={attributionFilter}
-              allValue={ALL_ATTRIBUTIONS}
-              allLabel={t(($) => $.operations.filter.attribution_all)}
-              options={attributionOptions}
-              onChange={setAttributionFilter}
-            />
-            <ValueFilter
-              ariaLabel={t(($) => $.operations.filter.quality)}
-              value={qualityFilter}
-              allValue={ALL_QUALITIES}
-              allLabel={t(($) => $.operations.filter.quality_all)}
-              options={qualityOptions}
-              onChange={setQualityFilter}
-            />
-          </div>
-          <Button
-            type="button"
-            aria-pressed={pendingOnly}
-            variant="outline"
-            size="sm"
-            onClick={() => setPendingOnly((v) => !v)}
-            className={`h-8 rounded-lg px-3 text-xs shadow-none transition-colors ${
-              pendingOnly
-                ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
-                : "border-border/70 bg-muted/25 text-muted-foreground hover:bg-muted/45 hover:text-foreground"
-            }`}
-          >
-            {t(($) => $.operations.filter.pending_only)}
-          </Button>
+          <ValueFilter
+            ariaLabel={t(($) => $.operations.filter.workstream)}
+            value={workstreamFilter}
+            allValue={ALL_WORKSTREAMS}
+            allLabel={t(($) => $.operations.filter.workstream_all)}
+            options={workstreamOptions}
+            onChange={setWorkstreamFilter}
+          />
           <Segmented
             value={days}
             onChange={setDays}
@@ -696,7 +700,7 @@ export function OperationsPage() {
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-3">
-              {!fixesQuery.isLoading && rows.length > 0 ? (
+              {!isLoading && tableRows.length > 0 ? (
                 <Button
                   type="button"
                   variant="outline"
@@ -704,7 +708,7 @@ export function OperationsPage() {
                   onClick={() =>
                     downloadTextFile(
                       exportFilename(),
-                      buildOperationsP4AssessmentCsv(rows),
+                      buildOperationsP4AssessmentCsv(tableRows),
                     )
                   }
                   className="h-8"
@@ -722,15 +726,15 @@ export function OperationsPage() {
                   {t(($) => $.operations.reset_columns)}
                 </button>
               ) : null}
-              {!fixesQuery.isLoading && rows.length > 0 ? (
+              {!isLoading && tableRows.length > 0 ? (
                 <span className="text-xs text-muted-foreground">
-                  {t(($) => $.operations.caption, { count: rows.length })}
+                  {t(($) => $.operations.caption, { count: tableRows.length })}
                 </span>
               ) : null}
             </div>
           </div>
 
-          {!fixesQuery.isLoading && rows.length > 0 ? (
+          {!isLoading && statsRows.length > 0 ? (
             <OperationsSummary
               kpis={kpis}
               days={days}
@@ -739,7 +743,7 @@ export function OperationsPage() {
             />
           ) : null}
 
-          {!fixesQuery.isLoading && rows.length > 0 ? (
+          {!isLoading && statsRows.length > 0 ? (
             <div className="flex items-center justify-between gap-3">
               <Segmented
                 value={activeTab}
@@ -763,13 +767,13 @@ export function OperationsPage() {
             </div>
           ) : null}
 
-          {fixesQuery.isLoading ? (
+          {isLoading ? (
             <OperationsSkeleton />
-          ) : rows.length === 0 ? (
-            <OperationsEmpty search={search} />
+          ) : statsRows.length === 0 ? (
+            <OperationsEmpty search="" />
           ) : activeTab === ANALYSIS_TAB ? (
             <OperationsAnalysis
-              rows={rows}
+              rows={statsRows}
               onDrillAttribution={(key) => {
                 setAttributionFilter(key);
                 setActiveTab(DETAIL_TAB);
@@ -778,13 +782,65 @@ export function OperationsPage() {
                 setQualityFilter(key);
                 setActiveTab(DETAIL_TAB);
               }}
-              onDrillWorkstream={(key) => {
-                setWorkstreamFilter(key);
-                setActiveTab(DETAIL_TAB);
-              }}
             />
           ) : (
             <>
+              {/* Detail-only filters (demo decision ⑥): they narrow this table
+                  and the CSV export, never the stats above. */}
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <SearchBox value={searchInput} onChange={setSearchInput} />
+                <AgentFilter
+                  agents={agents}
+                  value={agentFilter}
+                  onChange={setAgentFilter}
+                />
+                <ValueFilter
+                  ariaLabel={t(($) => $.operations.filter.attribution)}
+                  value={attributionFilter}
+                  allValue={ALL_ATTRIBUTIONS}
+                  allLabel={t(($) => $.operations.filter.attribution_all)}
+                  options={attributionOptions}
+                  onChange={setAttributionFilter}
+                />
+                <ValueFilter
+                  ariaLabel={t(($) => $.operations.filter.quality)}
+                  value={qualityFilter}
+                  allValue={ALL_QUALITIES}
+                  allLabel={t(($) => $.operations.filter.quality_all)}
+                  options={qualityOptions}
+                  onChange={setQualityFilter}
+                />
+                <Button
+                  type="button"
+                  aria-pressed={pendingOnly}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPendingOnly((v) => !v)}
+                  className={`h-8 rounded-lg px-3 text-xs shadow-none transition-colors ${
+                    pendingOnly
+                      ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+                      : "border-border/70 bg-muted/25 text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+                  }`}
+                >
+                  {t(($) => $.operations.filter.pending_only)}
+                </Button>
+                {detailFiltersDirty ? (
+                  <button
+                    type="button"
+                    onClick={resetDetailFilters}
+                    className="text-xs text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
+                  >
+                    {t(($) => $.operations.filter.reset)}
+                  </button>
+                ) : null}
+                <span className="ml-auto hidden text-xs text-muted-foreground/70 lg:inline">
+                  {t(($) => $.operations.filter.scope_note)}
+                </span>
+              </div>
+              {tableRows.length === 0 ? (
+                <OperationsEmpty search={search} />
+              ) : (
+              <>
               {/* overflow-x-auto: when a dragged column outgrows the viewport the
                   table scrolls horizontally instead of crushing its fixed columns. */}
               <div className="overflow-x-auto">
@@ -966,6 +1022,8 @@ export function OperationsPage() {
                   </Button>
                 </div>
               ) : null}
+              </>
+              )}
             </>
           )}
         </div>
@@ -973,7 +1031,7 @@ export function OperationsPage() {
       <OperationsSheet
         state={sheet}
         onStateChange={setSheet}
-        rows={rows}
+        rows={statsRows}
         slug={slug}
         swarmBase={swarmBase}
         viewTZ={viewTZ}
@@ -1014,12 +1072,10 @@ function OperationsAnalysis({
   rows,
   onDrillAttribution,
   onDrillQuality,
-  onDrillWorkstream,
 }: {
   rows: AgentFixRecord[];
   onDrillAttribution: (key: string) => void;
   onDrillQuality: (key: string) => void;
-  onDrillWorkstream: (key: string) => void;
 }) {
   const { t } = useT("usage");
   const tx = t as unknown as UsageT;
@@ -1028,24 +1084,6 @@ function OperationsAnalysis({
   // KPI numerator; 未评估 = rows without a completed assessment).
   const attribution = countBy(rows, attributionBucket);
   const quality = countBy(rows, qualityBucket);
-  const workstreams = groupWorkstreams(rows);
-  const blocked = computeBlockedStats(rows);
-  const blockedFamilyLabel = (family: BlockedFamily): string =>
-    family === "auth"
-      ? t(($) => $.operations.analysis.blocked_auth)
-      : family === "identification"
-        ? t(($) => $.operations.analysis.blocked_identification)
-        : family === "swarm"
-          ? t(($) => $.operations.analysis.blocked_swarm)
-          : family === "p4"
-            ? t(($) => $.operations.analysis.blocked_p4)
-            : family === "evidence_endpoint"
-              ? t(($) => $.operations.analysis.blocked_evidence)
-              : t(($) => $.operations.analysis.blocked_misc);
-  const blockedShare = (count: number): string =>
-    blocked.completed > 0
-      ? ` · ${Math.round((count / blocked.completed) * 1000) / 10}%`
-      : "";
   // Process gaps — each row is one fixable workflow problem, not an AI defect:
   // a plan that never landed a shelve, a delivered ticket whose human CL was
   // never recorded, and the unassessed backlog. Zero counts stay visible (zero
@@ -1071,7 +1109,7 @@ function OperationsAnalysis({
   ];
   return (
     <div className="grid min-w-0 gap-4">
-      <div className="grid min-w-0 gap-4 xl:grid-cols-2 2xl:grid-cols-4">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-3">
         <AnalysisCard
           title={t(($) => $.operations.analysis.attribution_title)}
           rows={Array.from(attribution.entries()).map(([key, count]) => ({
@@ -1092,31 +1130,12 @@ function OperationsAnalysis({
           }))}
           onSelect={onDrillQuality}
         />
-        {/* Access-blocked share among completed assessments: which system
-            (Swarm auth / P4 / evidence endpoint) kept evidence unreachable. */}
-        <AnalysisCard
-          title={t(($) => $.operations.analysis.blocked_title, {
-            completed: blocked.completed,
-          })}
-          rows={blocked.families.map(({ family, count }) => ({
-            label: blockedFamilyLabel(family),
-            count,
-            countLabel: `${count}${blockedShare(count)}`,
-            tone: "warning" as Tone,
-          }))}
-          emptyLabel={t(($) => $.operations.analysis.blocked_none)}
-        />
         <AnalysisCard
           title={t(($) => $.operations.analysis.gaps_title)}
           rows={gaps}
           onSelect={onDrillAttribution}
         />
       </div>
-      <WorkstreamAnalysisCard
-        title={t(($) => $.operations.analysis.workstream_title)}
-        rows={workstreams}
-        onSelect={onDrillWorkstream}
-      />
     </div>
   );
 }
@@ -1199,60 +1218,6 @@ function AnalysisCard({
   );
 }
 
-function WorkstreamAnalysisCard({
-  title,
-  rows,
-  onSelect,
-}: {
-  title: string;
-  rows: {
-    workstream: string;
-    total: number;
-    judged: number;
-    passed: number;
-  }[];
-  onSelect: (key: string) => void;
-}) {
-  const { t } = useT("usage");
-  const max = Math.max(1, ...rows.map((r) => r.total));
-  return (
-    <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
-      <div className="flex min-w-0 items-baseline justify-between gap-3 border-b px-4 py-3">
-        <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {t(($) => $.operations.analysis.drill_hint)}
-        </span>
-      </div>
-      <div className="grid max-h-[420px] min-w-0 gap-3 overflow-y-auto p-4 pr-3">
-        {rows.map((r) => (
-          <button
-            key={r.workstream}
-            type="button"
-            onClick={() => onSelect(r.workstream)}
-            title={r.workstream}
-            className="grid min-w-0 gap-1.5 rounded-md text-left transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-              <span className="min-w-0 truncate font-mono text-xs text-foreground">
-                {r.workstream}
-              </span>
-              <span className="shrink-0 text-right text-xs text-muted-foreground tabular-nums">
-                {t(($) => $.operations.analysis.workstream_counts, r)}
-              </span>
-            </div>
-            <div className="h-1.5 min-w-0 overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full bg-primary"
-                style={{ width: `${Math.max(8, (r.total / max) * 100)}%` }}
-              />
-            </div>
-          </button>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function countBy<T>(items: T[], keyFn: (item: T) => string): Map<string, number> {
   const out = new Map<string, number>();
   for (const item of items) {
@@ -1260,34 +1225,6 @@ function countBy<T>(items: T[], keyFn: (item: T) => string): Map<string, number>
     out.set(key, (out.get(key) ?? 0) + 1);
   }
   return out;
-}
-
-function groupWorkstreams(rows: AgentFixRecord[]) {
-  const groups = new Map<
-    string,
-    {
-      workstream: string;
-      total: number;
-      judged: number;
-      passed: number;
-    }
-  >();
-  for (const row of rows) {
-    const workstream = derivedEvidence(row).workstream || "unknown";
-    const group =
-      groups.get(workstream) ??
-      { workstream, total: 0, judged: 0, passed: 0 };
-    group.total += 1;
-    // Same scope as the funnel's 已判定/通过 (fix-rate pool), so the
-    // per-workstream numbers sum to the funnel stages.
-    if (isVerifiableOutput(row)) {
-      const quality = qualityJudgement(row);
-      if (quality !== "") group.judged += 1;
-      if (quality === "likely_correct") group.passed += 1;
-    }
-    groups.set(workstream, group);
-  }
-  return Array.from(groups.values()).sort((a, b) => b.total - a.total);
 }
 
 // Drag handle for one resizable column. To keep the visible rows from
