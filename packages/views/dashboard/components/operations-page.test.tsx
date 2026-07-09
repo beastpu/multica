@@ -529,20 +529,13 @@ describe("OperationsPage", () => {
     expect(screen.getByText("AI contribution rate")).toBeTruthy();
     expect(screen.getByText("Assessment coverage")).toBeTruthy();
     expect(screen.getByText("AI plan pass rate")).toBeTruthy();
-    expect(screen.getByText("Delivery funnel")).toBeTruthy();
     expect(screen.getByText("Last 30 days")).toBeTruthy();
-    // Funnel stages, with the verifiable-output stage as the quality pool.
-    expect(screen.getByText("External done")).toBeTruthy();
-    expect(screen.getByText("AI engaged")).toBeTruthy();
-    expect(
-      screen.getAllByText("Shelve/Swarm record").length,
-    ).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Verifiable output")).toBeTruthy();
-    expect(screen.getByText("Judged")).toBeTruthy();
-        // External-done splits by resolved status label: five fixtures carry the
-    // raw "Done" status and t-1 resolves vcvaCnnGi → 设计如此 via the status
-    // name map.
-    expect(screen.getByText("Done 5 · 设计如此 1")).toBeTruthy();
+    // The delivery funnel is gone — its stages are all readable from the
+    // nested rate cards + drawers; the external-done status split moved to a
+    // hover on the composition bar's total. Five fixtures carry the raw
+    // "Done" status and t-1 resolves vcvaCnnGi → 设计如此 via the name map.
+    expect(screen.queryByText("Delivery funnel")).toBeNull();
+    expect(screen.getByTitle("Done 5 · 设计如此 1")).toBeTruthy();
     // Coverage: both AI plans (t-1, t-4) reached a verdict → 2/2 = 100%.
     expect(screen.getAllByText("100%").length).toBeGreaterThanOrEqual(1);
     // Data-health footnote replaces the old no-output/undetermined cards.
@@ -735,9 +728,8 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />, { locale: "zh-Hans" });
     await openAssessments(user, "评估明细");
 
-    // Quality prediction badges + funnel stage labels.
+    // Quality prediction badges (不通过 / 通过) in the localized table.
     expect(screen.getByText("\u4e0d\u901a\u8fc7")).toBeTruthy();
-    expect(screen.getByText("\u5df2\u5224\u5b9a")).toBeTruthy();
     expect(screen.getAllByText("\u901a\u8fc7").length).toBeGreaterThanOrEqual(1);
 
     // The submitted-CL record popover still opens with the localized trigger.
