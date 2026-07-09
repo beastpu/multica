@@ -856,6 +856,67 @@ func TestDaemonRegister_WithDaemonToken(t *testing.T) {
 	testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 }
 
+func TestDaemonRegister_CloudRuntimeMode(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/register", map[string]any{
+		"workspace_id": testWorkspaceID,
+		"daemon_id":    "test-daemon-cloud-mode",
+		"device_name":  "cloud-node",
+		"runtime_mode": "cloud",
+		"runtimes": []map[string]any{
+			{"name": "cloud-runtime", "type": "claude", "version": "1.0.0", "status": "online"},
+		},
+	}, testWorkspaceID, "test-daemon-cloud-mode")
+
+	testHandler.DaemonRegister(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("DaemonRegister cloud mode: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND daemon_id = $2`,
+			testWorkspaceID, "test-daemon-cloud-mode")
+	})
+
+	var runtimeMode, visibility string
+	if err := testPool.QueryRow(ctx, `
+		SELECT runtime_mode, visibility FROM agent_runtime
+		WHERE workspace_id = $1 AND daemon_id = $2
+	`, testWorkspaceID, "test-daemon-cloud-mode").Scan(&runtimeMode, &visibility); err != nil {
+		t.Fatalf("read cloud runtime row: %v", err)
+	}
+	if runtimeMode != "cloud" {
+		t.Fatalf("runtime_mode = %q, want cloud", runtimeMode)
+	}
+	if visibility != "public" {
+		t.Fatalf("visibility = %q, want public (cloud runtimes are workspace-shared)", visibility)
+	}
+}
+
+func TestDaemonRegister_InvalidRuntimeMode(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/register", map[string]any{
+		"workspace_id": testWorkspaceID,
+		"daemon_id":    "test-daemon-bad-mode",
+		"runtime_mode": "hybrid",
+		"runtimes": []map[string]any{
+			{"name": "r", "type": "claude", "version": "1.0.0", "status": "online"},
+		},
+	}, testWorkspaceID, "test-daemon-bad-mode")
+
+	testHandler.DaemonRegister(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for runtime_mode=hybrid, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestDaemonRegister_RecordsRuntimeProfileRegistrationFailure(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

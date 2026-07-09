@@ -179,7 +179,12 @@ type DaemonRegisterRequest struct {
 	DeviceName      string   `json:"device_name"`
 	CLIVersion      string   `json:"cli_version"` // multica CLI version
 	LaunchedBy      string   `json:"launched_by"` // "desktop" when spawned by the Electron app
-	Runtimes        []struct {
+	// RuntimeMode marks every runtime in this registration as "local"
+	// (default, empty accepted) or "cloud" (fleet-provisioned node, e.g. a
+	// kubefleet pod). Cloud runtimes are inserted with visibility "public"
+	// so any workspace member can bind agents to the shared node.
+	RuntimeMode string `json:"runtime_mode"`
+	Runtimes    []struct {
 		Name    string `json:"name"`
 		Type    string `json:"type"`
 		Version string `json:"version"` // agent CLI version (claude/codex)
@@ -299,6 +304,19 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	req.WorkspaceID = uuidToString(wsUUID)
 
+	runtimeMode := strings.TrimSpace(req.RuntimeMode)
+	if runtimeMode == "" {
+		runtimeMode = "local"
+	}
+	if runtimeMode != "local" && runtimeMode != "cloud" {
+		writeError(w, http.StatusBadRequest, "runtime_mode must be \"local\" or \"cloud\"")
+		return
+	}
+	visibility := "private"
+	if runtimeMode == "cloud" {
+		visibility = "public"
+	}
+
 	// Verify workspace access and resolve owner.
 	// Daemon tokens (mdt_) prove workspace access directly; OwnerID will be zero
 	// (the SQL COALESCE preserves any existing owner on upsert).
@@ -383,12 +401,13 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 				WorkspaceID: wsUUID,
 				DaemonID:    strToText(req.DaemonID),
 				Name:        name,
-				RuntimeMode: "local",
+				RuntimeMode: runtimeMode,
 				Provider:    provider,
 				Status:      status,
 				DeviceInfo:  deviceInfo,
 				Metadata:    metadata,
 				OwnerID:     ownerID,
+				Visibility:  visibility,
 				ProfileID:   profileUUID,
 			})
 			if err != nil {
@@ -428,12 +447,13 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 				WorkspaceID: wsUUID,
 				DaemonID:    strToText(req.DaemonID),
 				Name:        name,
-				RuntimeMode: "local",
+				RuntimeMode: runtimeMode,
 				Provider:    provider,
 				Status:      status,
 				DeviceInfo:  deviceInfo,
 				Metadata:    metadata,
 				OwnerID:     ownerID,
+				Visibility:  visibility,
 			})
 			if err != nil {
 				obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.RuntimeFailed(
@@ -551,12 +571,13 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: wsUUID,
 			DaemonID:    strToText(req.DaemonID),
 			Name:        name,
-			RuntimeMode: "local",
+			RuntimeMode: runtimeMode,
 			Provider:    profile.ProtocolFamily,
 			Status:      "offline",
 			DeviceInfo:  deviceInfo,
 			Metadata:    metadata,
 			OwnerID:     ownerID,
+			Visibility:  visibility,
 			ProfileID:   profileUUID,
 		}); err != nil {
 			slog.Warn("failed to record runtime profile registration failure",

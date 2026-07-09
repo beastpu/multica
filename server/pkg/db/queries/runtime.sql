@@ -43,8 +43,11 @@ INSERT INTO agent_runtime (
     device_info,
     metadata,
     owner_id,
+    visibility,
     last_seen_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+-- visibility only applies on INSERT; conflicts keep the existing value so a
+-- manual toggle via UpdateAgentRuntimeVisibility survives re-registration.
 -- Built-in runtimes carry no profile_id. The arbiter is the partial unique
 -- index from migration 121 (WHERE profile_id IS NULL); the predicate must be
 -- spelled out so Postgres selects that partial index, not the custom-runtime
@@ -79,9 +82,10 @@ INSERT INTO agent_runtime (
     device_info,
     metadata,
     owner_id,
+    visibility,
     profile_id,
     last_seen_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
 ON CONFLICT (workspace_id, daemon_id, profile_id) WHERE profile_id IS NOT NULL
 DO UPDATE SET
     name = EXCLUDED.name,

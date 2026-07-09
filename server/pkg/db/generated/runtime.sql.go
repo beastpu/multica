@@ -930,8 +930,9 @@ INSERT INTO agent_runtime (
     device_info,
     metadata,
     owner_id,
+    visibility,
     last_seen_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
 ON CONFLICT (workspace_id, daemon_id, provider) WHERE profile_id IS NULL
 DO UPDATE SET
     name = EXCLUDED.name,
@@ -955,6 +956,7 @@ type UpsertAgentRuntimeParams struct {
 	DeviceInfo  string      `json:"device_info"`
 	Metadata    []byte      `json:"metadata"`
 	OwnerID     pgtype.UUID `json:"owner_id"`
+	Visibility  string      `json:"visibility"`
 }
 
 type UpsertAgentRuntimeRow struct {
@@ -980,6 +982,8 @@ type UpsertAgentRuntimeRow struct {
 // (xmax = 0) AS inserted distinguishes a fresh insert (true) from an upsert
 // that updated an existing row (false). Analytics reads this to fire
 // runtime_registered/runtime_ready only on first-time registration.
+// visibility only applies on INSERT; conflicts keep the existing value so a
+// manual toggle via UpdateAgentRuntimeVisibility survives re-registration.
 // Built-in runtimes carry no profile_id. The arbiter is the partial unique
 // index from migration 121 (WHERE profile_id IS NULL); the predicate must be
 // spelled out so Postgres selects that partial index, not the custom-runtime
@@ -995,6 +999,7 @@ func (q *Queries) UpsertAgentRuntime(ctx context.Context, arg UpsertAgentRuntime
 		arg.DeviceInfo,
 		arg.Metadata,
 		arg.OwnerID,
+		arg.Visibility,
 	)
 	var i UpsertAgentRuntimeRow
 	err := row.Scan(
@@ -1030,9 +1035,10 @@ INSERT INTO agent_runtime (
     device_info,
     metadata,
     owner_id,
+    visibility,
     profile_id,
     last_seen_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
 ON CONFLICT (workspace_id, daemon_id, profile_id) WHERE profile_id IS NOT NULL
 DO UPDATE SET
     name = EXCLUDED.name,
@@ -1057,6 +1063,7 @@ type UpsertAgentRuntimeWithProfileParams struct {
 	DeviceInfo  string      `json:"device_info"`
 	Metadata    []byte      `json:"metadata"`
 	OwnerID     pgtype.UUID `json:"owner_id"`
+	Visibility  string      `json:"visibility"`
 	ProfileID   pgtype.UUID `json:"profile_id"`
 }
 
@@ -1098,6 +1105,7 @@ func (q *Queries) UpsertAgentRuntimeWithProfile(ctx context.Context, arg UpsertA
 		arg.DeviceInfo,
 		arg.Metadata,
 		arg.OwnerID,
+		arg.Visibility,
 		arg.ProfileID,
 	)
 	var i UpsertAgentRuntimeWithProfileRow
