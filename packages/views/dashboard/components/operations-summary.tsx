@@ -82,9 +82,12 @@ function RateCard({
 function CompositionBar({
   composition,
   externalDone,
+  externalDoneBreakdown = [],
 }: {
   composition: DeliveryComposition;
   externalDone: number;
+  // Which external statuses make up 外部完成 — shown on hover over the total.
+  externalDoneBreakdown?: Array<{ label: string; count: number }>;
 }) {
   const { t } = useT("usage");
   const segments = [
@@ -117,7 +120,18 @@ function CompositionBar({
         <h2 className="text-xs font-medium text-muted-foreground">
           {t(($) => $.operations.summary.composition_title)}
         </h2>
-        <span className="text-xs text-muted-foreground tabular-nums">
+        <span
+          className="text-xs text-muted-foreground tabular-nums"
+          // Hover reveals which external statuses sum to 外部完成 (multiple
+          // raw statuses can map to done), e.g. 测试通过 291 · 已关闭 36.
+          title={
+            externalDoneBreakdown.length > 0
+              ? externalDoneBreakdown
+                  .map((entry) => `${entry.label} ${entry.count}`)
+                  .join(" · ")
+              : undefined
+          }
+        >
           {t(($) => $.operations.summary.composition_total, {
             count: participated,
             total: externalDone,
@@ -182,39 +196,6 @@ export function OperationsSummary({
 }) {
   const { t } = useT("usage");
   const { funnel, composition } = kpis;
-  const stages = [
-    {
-      key: "external_done",
-      label: t(($) => $.operations.summary.stage_external_done),
-      count: funnel.externalDone,
-    },
-    {
-      key: "ai_engaged",
-      label: t(($) => $.operations.summary.stage_ai_engaged),
-      count: funnel.aiEngaged,
-    },
-    {
-      key: "ai_planned",
-      label: t(($) => $.operations.summary.stage_ai_planned),
-      count: funnel.aiPlanned,
-    },
-    {
-      key: "verifiable",
-      label: t(($) => $.operations.summary.stage_verifiable),
-      count: funnel.verifiable,
-    },
-    {
-      key: "judged",
-      label: t(($) => $.operations.summary.stage_judged),
-      count: funnel.judged,
-    },
-    {
-      key: "passed",
-      label: t(($) => $.operations.summary.stage_passed),
-      count: funnel.passed,
-    },
-  ];
-  const max = Math.max(1, ...stages.map((s) => s.count));
   return (
     <section className="grid gap-3">
       {/* Plain-language overview: AI-involved deliveries only (pure human
@@ -237,6 +218,7 @@ export function OperationsSummary({
       <CompositionBar
         composition={composition}
         externalDone={funnel.externalDone}
+        externalDoneBreakdown={externalDoneBreakdown}
       />
       <div className="grid gap-3 sm:grid-cols-3">
         <RateCard
@@ -275,51 +257,6 @@ export function OperationsSummary({
           noOutput: kpis.noOutput,
           unjudged: kpis.unjudged,
         })}
-      </div>
-      <div className="rounded-lg border bg-card p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-xs font-medium text-muted-foreground">
-            {t(($) => $.operations.summary.funnel_title)}
-          </h2>
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {t(($) => $.operations.summary.funnel_total, {
-              count: funnel.total,
-            })}
-          </span>
-        </div>
-        <div className="mt-3 grid gap-2">
-          {stages.map((stage) => (
-            <div key={stage.key} className="grid gap-1">
-              <div className="grid grid-cols-[88px_minmax(0,1fr)_48px] items-center gap-3">
-                <span className="truncate text-xs text-muted-foreground">
-                  {stage.label}
-                </span>
-                <div className="h-2 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-primary"
-                    style={{
-                      width: `${Math.max(stage.count > 0 ? 4 : 0, (stage.count / max) * 100)}%`,
-                    }}
-                  />
-                </div>
-                <span className="text-right text-xs font-medium tabular-nums">
-                  {stage.count}
-                </span>
-              </div>
-              {stage.key === "external_done" &&
-              externalDoneBreakdown.length > 0 ? (
-                <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
-                  <span aria-hidden="true" />
-                  <span className="truncate text-xs text-muted-foreground tabular-nums">
-                    {externalDoneBreakdown
-                      .map((entry) => `${entry.label} ${entry.count}`)
-                      .join(" · ")}
-                  </span>
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
       </div>
     </section>
   );
