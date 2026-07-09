@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -13,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -20,6 +23,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
+	"github.com/multica-ai/multica/server/internal/cloudruntime/kubefleet"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflagdispatch"
@@ -626,15 +630,42 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.MembershipCache = auth.NewMembershipCache(rdb)
 
 	// Cloud PAT verifier: validates mcn_ tokens against Multica Cloud
-	// Fleet. Returns nil when no Fleet URL is configured — the Auth /
+	// Fleet. Stays untyped-nil when no Fleet URL is configured — the Auth /
 	// DaemonAuth middlewares treat nil as "mcn_ not supported" and
 	// reject with 401, instead of falling through to mul_/JWT paths.
 	// Reuses MULTICA_CLOUD_FLEET_URL (the same URL the cloud-runtime
 	// proxy uses) so a deployment doesn't need a second config knob.
-	cloudPATVerifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{
+	var cloudPATVerifier middleware.CloudPATVerifier
+	if remote := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{
 		FleetBaseURL: signupConfig.CloudRuntimeFleetURL,
 		Redis:        rdb,
-	})
+	}); remote != nil {
+		cloudPATVerifier = remote
+	}
+
+	// In-process k8s fleet: MULTICA_CLOUD_RUNTIME_PROVIDER=k8s swaps the
+	// remote Fleet proxy for kubefleet (one namespace per workspace, one
+	// Deployment per node) and verifies mcn_ node PATs against the local
+	// cloud_node_token table instead of a remote Fleet.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("MULTICA_CLOUD_RUNTIME_PROVIDER")), "k8s") {
+		serverURL := strings.TrimSpace(os.Getenv("MULTICA_CLOUD_RUNTIME_SERVER_URL"))
+		if serverURL == "" {
+			serverURL = signupConfig.PublicURL
+		}
+		fleet, err := kubefleet.New(kubefleet.Config{
+			Image:           os.Getenv("MULTICA_CLOUD_RUNTIME_IMAGE"),
+			ServerURL:       serverURL,
+			KubeAPIURL:      os.Getenv("MULTICA_CLOUD_RUNTIME_KUBE_API_URL"),
+			NamespacePrefix: os.Getenv("MULTICA_CLOUD_RUNTIME_NAMESPACE_PREFIX"),
+			NodeTokenTTL:    envDuration("MULTICA_CLOUD_RUNTIME_NODE_TOKEN_TTL", 0),
+		}, queries)
+		if err != nil {
+			slog.Error("cloud runtime provider k8s configured but unusable", "error", err)
+			os.Exit(1)
+		}
+		h.CloudRuntime = fleet
+		cloudPATVerifier = &auth.LocalCloudPATVerifier{Lookup: cloudNodeTokenLookup(queries)}
+	}
 
 	// Empty-claim cache: lets the daemon poll path skip a Postgres
 	// scan when a recent check confirmed the runtime had no queued
@@ -1550,6 +1581,27 @@ func splitAndTrim(s string) []string {
 		}
 	}
 	return res
+}
+
+// cloudNodeTokenLookup resolves a hashed mcn_ token against the local
+// cloud_node_token table for auth.LocalCloudPATVerifier. Unknown or expired
+// hashes map to ErrCloudPATInvalid (→ 401); any other DB failure maps to
+// ErrCloudPATUnavailable (→ 503) so a transient outage doesn't tell clients
+// to discard a still-valid token.
+func cloudNodeTokenLookup(queries *db.Queries) func(ctx context.Context, tokenHash string) (auth.CloudPATIdentity, error) {
+	return func(ctx context.Context, tokenHash string) (auth.CloudPATIdentity, error) {
+		row, err := queries.GetCloudNodeTokenByHash(ctx, tokenHash)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return auth.CloudPATIdentity{}, auth.ErrCloudPATInvalid
+			}
+			return auth.CloudPATIdentity{}, fmt.Errorf("%w: %v", auth.ErrCloudPATUnavailable, err)
+		}
+		return auth.CloudPATIdentity{
+			OwnerID:    util.UUIDToString(row.OwnerID),
+			InstanceID: row.NodeName,
+		}, nil
+	}
 }
 
 func cloudRuntimeFleetURLFromEnv() string {
