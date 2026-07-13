@@ -147,22 +147,26 @@ function CompositionBar({
                 />
               ))}
           </div>
-          <div className="mt-2.5 grid gap-2 sm:grid-cols-3">
+          <div className="mt-2.5 grid gap-x-6 gap-y-2 sm:grid-cols-3">
             {segments.map((segment) => (
-              <span
+              <div
                 key={segment.key}
-                className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+                className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
               >
-                <span
-                  aria-hidden="true"
-                  className={`h-2 w-2 shrink-0 rounded-full ${segment.className}`}
-                />
-                <span className="leading-tight">{segment.label}</span>
-                <span className="ml-auto font-medium text-foreground tabular-nums">
-                  {segment.count}
+                <span className="inline-flex min-w-0 items-center gap-1.5">
+                  <span
+                    aria-hidden="true"
+                    className={`h-2 w-2 shrink-0 rounded-full ${segment.className}`}
+                  />
+                  <span className="leading-tight">{segment.label}</span>
                 </span>
-                <span className="tabular-nums">· {pct(segment.count)}</span>
-              </span>
+                <span className="shrink-0 tabular-nums">
+                  <span className="font-medium text-foreground">
+                    {segment.count}
+                  </span>{" "}
+                  · {pct(segment.count)}
+                </span>
+              </div>
             ))}
           </div>
         </>
