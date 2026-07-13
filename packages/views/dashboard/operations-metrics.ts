@@ -235,6 +235,82 @@ export function isAiParticipated(fix: AgentFixRecord): boolean {
   return deliveryRole(fix) !== "none";
 }
 
+// The contribution opportunity pool is the issue's CURRENT Agent assignment,
+// not the agent from its latest task. New servers expose the current assignee
+// explicitly. Older servers omit both fields, so fall back to agent_id to keep
+// installed desktop clients useful during a staggered server rollout.
+export function isAssignedToAgent(fix: AgentFixRecord): boolean {
+  if (
+    fix.issue_assignee_type !== undefined ||
+    fix.issue_assignee_id !== undefined
+  ) {
+    return (
+      fix.issue_assignee_type === "agent" &&
+      (fix.issue_assignee_id ?? "").trim() !== ""
+    );
+  }
+  return fix.agent_id.trim() !== "";
+}
+
+// The quality drawer population: an eligible ticket that AI participated in
+// and whose assessment agent finished evaluating it. This deliberately also
+// contains `unknown` so operators can diagnose excluded outcomes; KPI
+// denominators apply qualityJudgement separately and only count explicit
+// pass / needs-changes / fail results.
+export function isAiParticipatedAndAssessed(fix: AgentFixRecord): boolean {
+  return (
+    isExternalDone(fix) &&
+    isAssignedToAgent(fix) &&
+    isAiParticipated(fix) &&
+    isAssessmentCompleted(fix)
+  );
+}
+
+export type UnconvertedReason =
+  | "evidence_unconfirmed"
+  | "human_delivered"
+  | "attribution_conflict";
+
+// Why an assigned ticket with a recognizable AI plan did not become a
+// confirmed AI delivery. These buckets are mutually exclusive and only apply
+// to the unconverted delivery role.
+export function unconvertedReason(
+  fix: AgentFixRecord,
+): UnconvertedReason | null {
+  if (deliveryRole(fix) !== "unconverted") return null;
+  const prediction =
+    fix.p4_assessment?.delivery_attribution_prediction?.trim() || "unknown";
+  if (prediction === "human_delivered") return "human_delivered";
+  if (prediction === "conflict") return "attribution_conflict";
+  return "evidence_unconfirmed";
+}
+
+export type NoPlanReason =
+  | "task_cancelled"
+  | "assessment_incomplete"
+  | "comment_only"
+  | "no_visible_output";
+
+// Primary reason an assigned ticket has no recognizable shelve/Swarm plan.
+// Cancellation wins first. An assessment that explicitly started but did not
+// complete is an assessment gap. Otherwise a completed task/assessment is
+// classified by the visible evidence it left. This ordering keeps the buckets
+// MECE while preserving older completed-task rows that predate assessments.
+export function noPlanReason(fix: AgentFixRecord): NoPlanReason | null {
+  if (deliveryRole(fix) !== "none") return null;
+  if (fix.task_status?.trim() === "cancelled") return "task_cancelled";
+  if (fix.p4_assessment && !isAssessmentCompleted(fix)) {
+    return "assessment_incomplete";
+  }
+  if (
+    fix.task_status?.trim() === "completed" ||
+    isAssessmentCompleted(fix)
+  ) {
+    return hasAgentPlanComment(fix) ? "comment_only" : "no_visible_output";
+  }
+  return "assessment_incomplete";
+}
+
 export function isExternalDone(fix: AgentFixRecord): boolean {
   return (
     fix.external?.done === true || fix.external?.mapped_status === "done"
@@ -370,17 +446,14 @@ export interface OperationsKpis {
   funnel: OperationsFunnel;
   // MECE breakdown of eligible reporting rows by AI role.
   composition: DeliveryComposition;
-  // AI repair contribution: eligible rows with AI participation / all
-  // eligible rows. The page defines eligibility as Feishu 测试通过 plus a
-  // synced Multica issue at done. Binding-only rows stay in the denominator so
-  // missing Agent assignment and missing dispatch remain visible problems.
+  // AI repair contribution: assigned-to-Agent rows with a recognizable AI
+  // plan / all rows currently assigned to an Agent.
   contributionRate: OperationsRate;
-  // Shared denominator for quality, automatic, and assisted repair: AI
-  // participated and produced one explicit quality result (pass / needs
-  // changes / fail). Unknown and unrecognised values are excluded.
+  // Shared denominator for quality, automatic, and assisted repair: assigned
+  // rows where AI participated and produced an explicit quality judgement.
+  // Unknown/unrecognised results stay visible in the drawer but are excluded.
   judgedCount: number;
-  // AI-marked pass / all AI-judged plans. Unknown or missing judgements stay
-  // outside the denominator instead of being treated as quality failures.
+  // AI-marked pass / all explicitly judged AI-handled plans.
   qualityRate: OperationsRate;
   automaticRate: OperationsRate;
   // AI-assisted includes both attributed assisted delivery and an AI plan that
@@ -412,7 +485,8 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   let assistedFixes = 0;
   for (const fix of rows) {
     const done = isExternalDone(fix);
-    if (done) externalDone += 1;
+    if (!done || !isAssignedToAgent(fix)) continue;
+    externalDone += 1;
     if (fix.p4_assessment?.assessment_status !== "completed") unassessed += 1;
     if (hasMissingExternalClWarning(fix)) missingExternalCl += 1;
     const planned = aiProducedPlan(fix);
@@ -424,16 +498,14 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     // Delivery role is also the canonical contribution/pickup predicate.
     const role = deliveryRole(fix);
     const participated = role !== "none";
-    if (done && participated) handled += 1;
-    if (done) {
-      if (role === "direct") directDelivered += 1;
-      else if (role === "assisted") assisted += 1;
-      else if (role === "unconverted") unconverted += 1;
-      else notParticipated += 1;
-    }
+    if (participated) handled += 1;
+    if (role === "direct") directDelivered += 1;
+    else if (role === "assisted") assisted += 1;
+    else if (role === "unconverted") unconverted += 1;
+    else notParticipated += 1;
     const quality = qualityJudgement(fix);
     if (isVerifiableOutput(fix)) verifiable += 1;
-    if (!done || !participated || quality === "") continue;
+    if (!participated || quality === "") continue;
     judged += 1;
     // Automatic repair requires both direct AI delivery and a passing quality
     // judgement. A direct submission with unknown/failed quality is not an
@@ -444,7 +516,7 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   }
   return {
     funnel: {
-      total: rows.length,
+      total: externalDone,
       externalDone,
       aiEngaged,
       aiPlanned,

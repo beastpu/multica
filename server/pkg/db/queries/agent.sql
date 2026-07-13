@@ -1222,6 +1222,8 @@ SELECT
   i.number AS issue_number,
   i.title AS issue_title,
   i.status AS issue_status,
+  COALESCE(i.assignee_type, '') AS issue_assignee_type,
+  i.assignee_id AS issue_assignee_id,
   i.description AS issue_description,
   spine.started_at,
   spine.completed_at,

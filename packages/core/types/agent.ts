@@ -779,6 +779,10 @@ export interface AgentFixRecord {
   issue_title: string;
   // Issue workflow status: backlog/todo/in_progress/in_review/done/blocked/cancelled.
   issue_status: string;
+  // Current issue assignee. Optional for compatibility with older servers;
+  // agent_id above is the latest task's agent and can be historical.
+  issue_assignee_type?: string;
+  issue_assignee_id?: string;
   // Most recent agent comment on the issue (truncated). Empty/absent when none.
   last_comment?: string;
   last_comment_author_type?: string; // "agent" or ""

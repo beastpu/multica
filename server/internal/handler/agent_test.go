@@ -246,6 +246,13 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	doneIssue := mkIssue("Fix the login bug", "done")
 	reviewIssue := mkIssue("Refactor the parser", "in_review")
 	unassignedIssue := mkIssue("External done without Agent", "done")
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET assignee_type = 'agent', assignee_id = $2
+		WHERE id = $1
+	`, reviewIssue, agentID); err != nil {
+		t.Fatalf("assign review issue to agent: %v", err)
+	}
 
 	mkTask := func(query string, args ...any) string {
 		var id string
@@ -488,6 +495,12 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	if done.AgentName != "fixes-agent" {
 		t.Errorf("done.AgentName = %q, want fixes-agent", done.AgentName)
 	}
+	// The latest task's agent is not the issue's current assignee. This issue
+	// has task history but is currently unassigned, so the two signals must stay
+	// distinct for the Operations denominator.
+	if done.IssueAssigneeType != "" || done.IssueAssigneeID != "" {
+		t.Errorf("done current assignee = %q/%q, want unassigned", done.IssueAssigneeType, done.IssueAssigneeID)
+	}
 	if done.IssueTitle != "Fix the login bug" {
 		t.Errorf("done.IssueTitle = %q", done.IssueTitle)
 	}
@@ -505,6 +518,9 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	}
 	if review.IssueStatus != "in_review" {
 		t.Errorf("review.IssueStatus = %q, want in_review", review.IssueStatus)
+	}
+	if review.IssueAssigneeType != "agent" || review.IssueAssigneeID != agentID {
+		t.Errorf("review current assignee = %q/%q, want agent/%s", review.IssueAssigneeType, review.IssueAssigneeID, agentID)
 	}
 	// The agent's comment, not the newer member "收到" — the column tracks the
 	// agent's own closing action.

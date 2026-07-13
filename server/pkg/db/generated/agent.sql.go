@@ -3934,6 +3934,8 @@ SELECT
   i.number AS issue_number,
   i.title AS issue_title,
   i.status AS issue_status,
+  COALESCE(i.assignee_type, '') AS issue_assignee_type,
+  i.assignee_id AS issue_assignee_id,
   i.description AS issue_description,
   spine.started_at,
   spine.completed_at,
@@ -4047,6 +4049,8 @@ type ListWorkspaceAgentFixesRow struct {
 	IssueNumber                     int32              `json:"issue_number"`
 	IssueTitle                      string             `json:"issue_title"`
 	IssueStatus                     string             `json:"issue_status"`
+	IssueAssigneeType               string             `json:"issue_assignee_type"`
+	IssueAssigneeID                 pgtype.UUID        `json:"issue_assignee_id"`
 	IssueDescription                pgtype.Text        `json:"issue_description"`
 	StartedAt                       pgtype.Timestamptz `json:"started_at"`
 	CompletedAt                     pgtype.Timestamptz `json:"completed_at"`
@@ -4141,6 +4145,8 @@ func (q *Queries) ListWorkspaceAgentFixes(ctx context.Context, arg ListWorkspace
 			&i.IssueNumber,
 			&i.IssueTitle,
 			&i.IssueStatus,
+			&i.IssueAssigneeType,
+			&i.IssueAssigneeID,
 			&i.IssueDescription,
 			&i.StartedAt,
 			&i.CompletedAt,

@@ -306,9 +306,12 @@ against the final delivery (the implementation comparison above). It is never
 a grade of a human-authored fix. When there is no verified AI output evidence
 (no AI shelve CL and no Swarm review), or the AI output evidence could not be
 accessed, output `quality_prediction: "unknown"` — do not judge the human fix
-in its place. The operations dashboard computes the AI fix rate only from
-tickets whose AI output evidence was reachable, so a wrongly-graded human fix
-corrupts the metric.
+in its place. The operations dashboard computes quality, automatic-repair,
+and assisted-repair rates only from currently Agent-assigned tickets where AI
+produced a recognizable plan and the assessment returned an explicit quality
+judgement (`likely_correct`, `likely_needs_changes`, or `likely_wrong`). An
+`unknown` judgement remains visible for diagnosis but is excluded from those
+rate denominators, so a wrongly-graded human fix corrupts the metric.
 
 Prefer `unknown` with warnings over guessing. Useful warnings include:
 

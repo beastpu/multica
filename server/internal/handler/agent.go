@@ -1970,6 +1970,10 @@ type AgentFixResponse struct {
 	IssueIdentifier string `json:"issue_identifier"`
 	IssueTitle      string `json:"issue_title"`
 	IssueStatus     string `json:"issue_status"` // issue workflow status: backlog/todo/in_progress/in_review/done/blocked/cancelled
+	// IssueAssigneeType / IssueAssigneeID are the issue's CURRENT assignee.
+	// AgentID above remains the agent from the latest task and may be historical.
+	IssueAssigneeType string `json:"issue_assignee_type"`
+	IssueAssigneeID   string `json:"issue_assignee_id"`
 	// LastComment is the agent's most recent comment on the issue, truncated to
 	// a short snippet. When a search term is in play the snippet is centered on
 	// the match (so the matched keyword is always visible for the frontend to
@@ -2356,6 +2360,8 @@ func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request
 			IssueIdentifier:       prefix + "-" + strconv.Itoa(int(row.IssueNumber)),
 			IssueTitle:            row.IssueTitle,
 			IssueStatus:           row.IssueStatus,
+			IssueAssigneeType:     row.IssueAssigneeType,
+			IssueAssigneeID:       uuidToString(row.IssueAssigneeID),
 			LastComment:           commentSnippetAround(row.LastComment, search),
 			LastCommentAuthorType: row.LastCommentAuthorType,
 			AgentCommentCount:     row.AgentCommentCount,
