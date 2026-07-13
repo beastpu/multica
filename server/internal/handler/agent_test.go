@@ -196,9 +196,9 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 	}
 }
 
-// TestListWorkspaceAgentFixes covers the Usage-page Operations-tab feed. Its
-// contract: ONE row per issue an agent has worked on, carrying the latest run,
-// the issue's workflow status, and the issue's most recent comment. The
+// TestListWorkspaceAgentFixes covers the Operations feed. Its contract: one
+// row per recent normal Agent run or external-done binding, including bindings
+// without an Agent assignment. The
 // fixtures exercise the branches the SQL/handler must get right:
 //   - an issue with two runs collapses to ONE row, using the LATEST run
 //   - the "status" column is the issue's workflow status (not the task status)
@@ -211,6 +211,21 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	ctx := context.Background()
 
 	agentID := createHandlerTestAgent(t, "fixes-agent", []byte(`{}`))
+	// Operations is a workspace-wide dashboard, so a regular member must see
+	// rows produced by a private Agent they do not own. Agent visibility only
+	// governs Agent access/invocation; it must not filter aggregate operations
+	// reporting.
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent
+		SET visibility = 'private', permission_mode = 'private'
+		WHERE id = $1
+	`, agentID); err != nil {
+		t.Fatalf("make operations fixture agent private: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `DELETE FROM agent_invocation_target WHERE agent_id = $1`, agentID); err != nil {
+		t.Fatalf("remove private agent invocation targets: %v", err)
+	}
+	viewerID := createPermissionTestMember(t, "operations-private-agent-viewer@example.test")
 
 	// issue.number is UNIQUE (workspace_id, number); allocate MAX+1 per row
 	// so we don't collide with rows other tests left in the shared fixture
@@ -230,6 +245,7 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	}
 	doneIssue := mkIssue("Fix the login bug", "done")
 	reviewIssue := mkIssue("Refactor the parser", "in_review")
+	unassignedIssue := mkIssue("External done without Agent", "done")
 
 	mkTask := func(query string, args ...any) string {
 		var id string
@@ -335,6 +351,21 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	}
 	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM feishu_project_issue_binding WHERE id = $1`, bindingID) })
 
+	var unassignedBindingID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO feishu_project_issue_binding (
+			workspace_id, integration_id, issue_id, project_key, work_item_type,
+			work_item_id, external_identifier, external_status_label
+		)
+		VALUES ($1, $2, $3, 'OperationsFixture', 'issue', 'BUG-93219', 'BUG-93219', 'Done')
+		RETURNING id
+	`, testWorkspaceID, integrationID, unassignedIssue).Scan(&unassignedBindingID); err != nil {
+		t.Fatalf("insert unassigned feishu binding: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM feishu_project_issue_binding WHERE id = $1`, unassignedBindingID)
+	})
+
 	var p4AssessmentID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_fix_p4_assessment (
@@ -422,7 +453,9 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	`, agentID, testRuntimeID)
 
 	w := httptest.NewRecorder()
-	testHandler.ListWorkspaceAgentFixes(w, newRequest(http.MethodGet, "/api/operations/agent-fixes", nil))
+	req := newRequest(http.MethodGet, "/api/operations/agent-fixes", nil)
+	req.Header.Set("X-User-ID", viewerID)
+	testHandler.ListWorkspaceAgentFixes(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("ListWorkspaceAgentFixes: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
@@ -538,11 +571,46 @@ func TestListWorkspaceAgentFixes(t *testing.T) {
 	if review.AIJudgementEval != "match" {
 		t.Errorf("review.AIJudgementEval = %q, want match", review.AIJudgementEval)
 	}
+	unassigned, ok := byIssue[unassignedIssue]
+	if !ok {
+		t.Fatalf("external-done issue without Agent not returned")
+	}
+	if unassigned.TaskID != "" || unassigned.AgentID != "" || unassigned.AgentName != "" {
+		t.Errorf("unassigned row task/agent = %q/%q/%q, want all empty", unassigned.TaskID, unassigned.AgentID, unassigned.AgentName)
+	}
+	if unassigned.External == nil || !unassigned.External.Done {
+		t.Errorf("unassigned.External = %#v, want external done binding", unassigned.External)
+	}
 
 	for _, f := range fixes {
 		if f.TaskID == issuelessTaskID {
 			t.Errorf("task with no linked issue must be excluded from the fix feed")
 		}
+	}
+}
+
+func TestListWorkspaceAgentFixesRejectsNonMember(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	var outsiderID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user" (name, email)
+		VALUES ('Operations outsider', 'operations-outsider@example.test')
+		RETURNING id
+	`).Scan(&outsiderID); err != nil {
+		t.Fatalf("create operations outsider: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, outsiderID) })
+
+	req := newRequest(http.MethodGet, "/api/operations/agent-fixes", nil)
+	req.Header.Set("X-User-ID", outsiderID)
+	w := httptest.NewRecorder()
+	testHandler.ListWorkspaceAgentFixes(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("non-member status = %d, want 404; body=%s", w.Code, w.Body.String())
 	}
 }
 

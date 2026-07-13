@@ -22,7 +22,6 @@ import {
 } from "./agent-fix-review";
 import {
   blockedWarningFamily,
-  computeBlockedStats,
   deliveryRole,
   deriveAttribution,
   derivedEvidence,
@@ -45,7 +44,11 @@ import {
 // the KPI cards it was opened from.
 // ---------------------------------------------------------------------------
 
-export type OperationsCardKey = "contribution" | "coverage" | "pass";
+export type OperationsCardKey =
+  | "contribution"
+  | "quality"
+  | "automatic"
+  | "assisted";
 
 export type OperationsSheetState =
   | { kind: "card"; card: OperationsCardKey }
@@ -70,6 +73,12 @@ interface BranchDef {
   key: string;
   label: string;
   rows: AgentFixRecord[];
+  section?:
+    | "main"
+    | "assessment"
+    | "assessment_reason"
+    | "unhandled"
+    | "attribution";
   drill?: OperationsDrillFilter;
 }
 
@@ -77,12 +86,17 @@ interface BranchDef {
 // narrower filter) is the intended path, mirroring the detail table's paging.
 const LIST_CAP = 60;
 
-function cardTitle(card: OperationsCardKey, t: ReturnType<typeof useT<"usage">>["t"]): string {
+function cardTitle(
+  card: OperationsCardKey,
+  t: ReturnType<typeof useT<"usage">>["t"],
+): string {
   return card === "contribution"
     ? t(($) => $.operations.summary.contribution_rate)
-    : card === "coverage"
-      ? t(($) => $.operations.summary.coverage_rate)
-      : t(($) => $.operations.summary.pass_rate);
+    : card === "quality"
+      ? t(($) => $.operations.summary.quality_rate)
+      : card === "automatic"
+        ? t(($) => $.operations.summary.automatic_rate)
+        : t(($) => $.operations.summary.assisted_rate);
 }
 
 function blockedFamilyLabel(
@@ -102,14 +116,6 @@ function blockedFamilyLabel(
             : t(($) => $.operations.analysis.blocked_misc);
 }
 
-// Access-blocked completed assessments grouped per family, as drawer branches
-// (key prefix `blocked_`). Rendered under the coverage panel and scoped to
-// the SAME pool as the coverage rate (AI-produced rows), so the section's
-// counts nest inside the card it explains instead of quoting a wider
-// all-assessments axis. Blocks that erased the plan artifact itself drop the
-// row out of this pool — those surface in the attribution story (no output /
-// insufficient evidence), not here. Same dedup rule as computeBlockedStats:
-// a row counts once per family it hits.
 const BLOCKED_FAMILY_ORDER: BlockedFamily[] = [
   "auth",
   "identification",
@@ -125,7 +131,6 @@ function blockedBranches(
 ): BranchDef[] {
   const byFamily = new Map<BlockedFamily, AgentFixRecord[]>();
   for (const fix of rows) {
-    if (fix.p4_assessment?.assessment_status !== "completed") continue;
     const families = new Set<BlockedFamily>();
     for (const warning of fix.p4_assessment?.warnings ?? []) {
       const family = blockedWarningFamily(String(warning));
@@ -142,14 +147,45 @@ function blockedBranches(
       key: `blocked_${family}`,
       label: blockedFamilyLabel(family, t),
       rows: byFamily.get(family)!,
+      section: "assessment_reason",
     }),
   );
 }
 
-// The branch partition of one card's pool. Contribution splits the AI-involved
-// deliveries by role; coverage splits them by whether a verdict exists (plus
-// the access-blocked families explaining the unjudged share); pass splits the
-// judged pool by verdict.
+function hasBlockedAssessment(fix: AgentFixRecord): boolean {
+  if (fix.p4_assessment?.assessment_status === "failed") return true;
+  return (fix.p4_assessment?.warnings ?? []).some(
+    (warning) => blockedWarningFamily(String(warning)) !== null,
+  );
+}
+
+function failedAssessmentBranches(
+  rows: AgentFixRecord[],
+  t: ReturnType<typeof useT<"usage">>["t"],
+): BranchDef[] {
+  const byReason = new Map<string, AgentFixRecord[]>();
+  for (const fix of rows) {
+    if (fix.p4_assessment?.assessment_status !== "failed") continue;
+    const hasFamilyReason = (fix.p4_assessment?.warnings ?? []).some(
+      (warning) => blockedWarningFamily(String(warning)) !== null,
+    );
+    if (hasFamilyReason) continue;
+    const reason =
+      fix.p4_assessment?.last_error?.trim() ||
+      fix.task_failure_reason?.trim() ||
+      t(($) => $.operations.drawer.assessment_failed);
+    const list = byReason.get(reason) ?? [];
+    list.push(fix);
+    byReason.set(reason, list);
+  }
+  return Array.from(byReason.entries()).map(([reason, reasonRows], index) => ({
+    key: `assessment_failed_${index}`,
+    label: reason,
+    rows: reasonRows,
+    section: "assessment_reason",
+  }));
+}
+
 function cardBranches(
   card: OperationsCardKey,
   rows: AgentFixRecord[],
@@ -157,56 +193,144 @@ function cardBranches(
   tx: UsageT,
 ): BranchDef[] {
   if (card === "contribution") {
+    const handled = rows.filter((f) => f.task_id.trim() !== "");
+    const unhandled = rows.filter((f) => f.task_id.trim() === "");
+    const blocked = handled.filter(hasBlockedAssessment);
+    const completed = handled.filter(
+      (f) =>
+        f.p4_assessment?.assessment_status === "completed" &&
+        !hasBlockedAssessment(f),
+    );
+    const pending = handled.filter(
+      (f) => !blocked.includes(f) && !completed.includes(f),
+    );
     return [
+      {
+        key: "handled",
+        label: t(($) => $.operations.drawer.handled),
+        rows: handled,
+        section: "main",
+      },
+      {
+        key: "unhandled",
+        label: t(($) => $.operations.drawer.unhandled),
+        rows: unhandled,
+        section: "main",
+      },
+      {
+        key: "assessment_completed",
+        label: t(($) => $.operations.drawer.assessment_completed),
+        rows: completed,
+        section: "assessment",
+      },
+      {
+        key: "assessment_blocked",
+        label: t(($) => $.operations.drawer.assessment_blocked),
+        rows: blocked,
+        section: "assessment",
+      },
+      {
+        key: "assessment_pending",
+        label: t(($) => $.operations.drawer.assessment_pending),
+        rows: pending,
+        section: "assessment",
+      },
+      ...blockedBranches(blocked, t),
+      ...failedAssessmentBranches(blocked, t),
+      {
+        key: "no_agent",
+        label: t(($) => $.operations.drawer.no_agent),
+        rows: unhandled.filter((f) => f.agent_id.trim() === ""),
+        section: "unhandled",
+      },
+      {
+        key: "not_dispatched",
+        label: t(($) => $.operations.drawer.not_dispatched),
+        rows: unhandled.filter((f) => f.agent_id.trim() !== ""),
+        section: "unhandled",
+      },
       {
         key: "direct",
         label: t(($) => $.operations.summary.composition_direct),
         rows: rows.filter((f) => deliveryRole(f) === "direct"),
+        section: "attribution",
         drill: { attribution: "ai_delivered" },
       },
       {
         key: "assisted",
-        label: t(($) => $.operations.summary.composition_assisted),
-        rows: rows.filter((f) => deliveryRole(f) === "assisted"),
-        drill: { attribution: "ai_assisted" },
-      },
-      {
-        key: "unconverted",
-        label: t(($) => $.operations.summary.composition_unconverted),
-        rows: rows.filter((f) => deliveryRole(f) === "unconverted"),
+        label: t(($) => $.operations.summary.assisted_with_unconverted),
+        rows: rows.filter((f) => {
+          const role = deliveryRole(f);
+          return role === "assisted" || role === "unconverted";
+        }),
+        section: "attribution",
       },
     ];
   }
-  const participated = rows.filter((f) => deliveryRole(f) !== "none");
-  if (card === "coverage") {
-    const judged = (f: AgentFixRecord) =>
-      isVerifiableOutput(f) && qualityJudgement(f) !== "";
+  const fixable = rows.filter(isVerifiableOutput);
+  if (card === "quality") {
     return [
       {
-        key: "judged",
-        label: t(($) => $.operations.summary.stage_judged),
-        rows: participated.filter(judged),
+        key: "likely_correct",
+        label: agentFixEnumLabel(tx, "quality", "likely_correct"),
+        rows: fixable.filter((f) => qualityJudgement(f) === "likely_correct"),
+        drill: { quality: "likely_correct" },
       },
       {
-        key: "unjudged",
-        label: t(($) => $.operations.drawer.unjudged),
-        rows: participated.filter((f) => !judged(f)),
+        key: "likely_needs_changes",
+        label: agentFixEnumLabel(tx, "quality", "likely_needs_changes"),
+        rows: fixable.filter(
+          (f) => qualityJudgement(f) === "likely_needs_changes",
+        ),
+        drill: { quality: "likely_needs_changes" },
+      },
+      {
+        key: "likely_wrong",
+        label: agentFixEnumLabel(tx, "quality", "likely_wrong"),
+        rows: fixable.filter((f) => qualityJudgement(f) === "likely_wrong"),
+        drill: { quality: "likely_wrong" },
+      },
+      {
+        key: "unknown",
+        label: agentFixEnumLabel(tx, "quality", "unknown"),
+        rows: fixable.filter((f) => qualityJudgement(f) === ""),
         drill: { pendingOnly: true },
       },
-      ...blockedBranches(participated, t),
     ];
   }
-  const judgedRows = participated.filter(
-    (f) => isVerifiableOutput(f) && qualityJudgement(f) !== "",
-  );
-  return ["likely_correct", "likely_needs_changes", "likely_wrong"].map(
-    (quality) => ({
-      key: quality,
-      label: agentFixEnumLabel(tx, "quality", quality),
-      rows: judgedRows.filter((f) => qualityJudgement(f) === quality),
-      drill: { quality },
-    }),
-  );
+  if (card === "automatic") {
+    return [
+      {
+        key: "automatic",
+        label: t(($) => $.operations.summary.composition_direct),
+        rows: fixable.filter((f) => deliveryRole(f) === "direct"),
+        drill: { attribution: "ai_delivered" },
+      },
+      {
+        key: "not_automatic",
+        label: t(($) => $.operations.drawer.not_automatic),
+        rows: fixable.filter((f) => deliveryRole(f) !== "direct"),
+      },
+    ];
+  }
+  return [
+    {
+      key: "assisted",
+      label: t(($) => $.operations.summary.assisted_with_unconverted),
+      rows: fixable.filter((f) => {
+        const role = deliveryRole(f);
+        return role === "assisted" || role === "unconverted";
+      }),
+    },
+    {
+      key: "not_assisted",
+      label: t(($) => $.operations.drawer.not_assisted),
+      rows: fixable.filter((f) => {
+        const role = deliveryRole(f);
+        return role !== "assisted" && role !== "unconverted";
+      }),
+    },
+  ];
 }
 
 export function OperationsSheet({
@@ -319,27 +443,17 @@ function CardPanel({
   onStateChange: (state: OperationsSheetState) => void;
 }) {
   const branches = cardBranches(card, rows, t, tx);
-  // Blocked-family branches (coverage card) render as their own section with
-  // shares over completed assessments, not over the main partition.
-  const mainBranches = branches.filter((b) => !b.key.startsWith("blocked_"));
-  const blocked = branches.filter((b) => b.key.startsWith("blocked_"));
-  // Coverage pool = AI-produced rows; the blocked section's "completed" count
-  // is measured inside it so it aligns with the card's denominator.
-  const completed =
-    card === "coverage"
-      ? computeBlockedStats(rows.filter((f) => deliveryRole(f) !== "none"))
-          .completed
-      : 0;
+  const mainBranches = branches.filter((b) => (b.section ?? "main") === "main");
   const total = mainBranches.reduce((sum, b) => sum + b.rows.length, 0);
-  const max = Math.max(1, ...mainBranches.map((b) => b.rows.length));
   const branchButton = (
     branch: BranchDef,
-    share: string,
-    fill: number,
+    denominator: number,
+    max: number,
   ) => (
     <button
       key={branch.key}
       type="button"
+      title={branch.label}
       onClick={() =>
         onStateChange({ kind: "branch", card, branch: branch.key })
       }
@@ -349,14 +463,19 @@ function CardPanel({
         <span className="min-w-0 truncate text-sm">{branch.label}</span>
         <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
           {branch.rows.length}
-          {share}
+          {denominator > 0
+            ? ` · ${Math.round((branch.rows.length / denominator) * 100)}%`
+            : ""}
         </span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
         <div
           className="h-full rounded-full bg-primary"
           style={{
-            width: `${Math.max(branch.rows.length > 0 ? 6 : 0, fill)}%`,
+            width: `${Math.max(
+              branch.rows.length > 0 ? 6 : 0,
+              (branch.rows.length / Math.max(1, max)) * 100,
+            )}%`,
           }}
         />
       </div>
@@ -371,39 +490,60 @@ function CardPanel({
         </SheetDescription>
       </SheetHeader>
       <div className="grid gap-1 px-4 pb-6">
-        {mainBranches.map((branch) =>
-          branchButton(
-            branch,
-            total > 0
-              ? ` · ${Math.round((branch.rows.length / total) * 100)}%`
-              : "",
-            (branch.rows.length / max) * 100,
-          ),
+        {([
+          "main",
+          "assessment",
+          "assessment_reason",
+          "unhandled",
+          "attribution",
+        ] as const).map(
+          (section) => {
+            const sectionBranches = branches.filter(
+              (branch) => (branch.section ?? "main") === section,
+            );
+            if (sectionBranches.length === 0) return null;
+            const denominator =
+              section === "assessment" || section === "assessment_reason"
+                ? rows.filter((f) => f.task_id.trim() !== "").length
+                : section === "unhandled"
+                  ? rows.filter((f) => f.task_id.trim() === "").length
+                  : section === "attribution"
+                    ? rows.length
+                    : total;
+            const max = Math.max(
+              1,
+              ...sectionBranches.map((branch) => branch.rows.length),
+            );
+            return (
+              <div
+                key={section}
+                className={
+                  section === "main"
+                    ? "grid gap-1"
+                    : "mt-3 grid gap-1 border-t pt-3"
+                }
+              >
+                {section !== "main" ? (
+                  <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">
+                    {section === "assessment"
+                      ? t(($) => $.operations.drawer.handled_breakdown)
+                      : section === "assessment_reason"
+                        ? t(($) => $.operations.drawer.blocked_reasons)
+                        : section === "unhandled"
+                          ? t(($) => $.operations.drawer.unhandled_reasons)
+                          : t(
+                              ($) =>
+                                $.operations.drawer.attribution_breakdown,
+                            )}
+                  </div>
+                ) : null}
+                {sectionBranches.map((branch) =>
+                  branchButton(branch, denominator, max),
+                )}
+              </div>
+            );
+          },
         )}
-        {card === "coverage" ? (
-          <>
-            <div className="mt-3 border-t pt-3 text-xs font-medium text-muted-foreground">
-              {t(($) => $.operations.analysis.blocked_title, { completed })}
-            </div>
-            {blocked.length === 0 ? (
-              <p className="p-2 text-xs text-muted-foreground">
-                {t(($) => $.operations.analysis.blocked_none)}
-              </p>
-            ) : (
-              blocked.map((branch) =>
-                branchButton(
-                  branch,
-                  completed > 0
-                    ? ` · ${Math.round((branch.rows.length / completed) * 100)}%`
-                    : "",
-                  (branch.rows.length /
-                    Math.max(1, ...blocked.map((b) => b.rows.length))) *
-                    100,
-                ),
-              )
-            )}
-          </>
-        ) : null}
       </div>
     </>
   );

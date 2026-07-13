@@ -2298,16 +2298,15 @@ func agentFixOutcomeRank(outcome string) (int, bool) {
 	}
 }
 
-// ListWorkspaceAgentFixes returns the Operations-tab feed for the Usage page:
-// one row per issue an agent has worked on (the latest run only), within the
-// trailing `days` window (default 30, capped at 365), newest-first. Each row
-// carries the issue's workflow status and its most recent comment. Per-agent
-// visibility is enforced against accessibleAgentIDs, mirroring
-// ListWorkspaceAgentTaskSnapshot — a member only sees agents they may view.
+// ListWorkspaceAgentFixes returns the Operations feed: one row per recent
+// external binding or normal Agent run, newest-first. External-done bindings
+// remain visible without an Agent assignee or task so the dashboard can use
+// them as its full incoming denominator and explain unhandled items. Operations
+// is workspace-wide reporting: every workspace member sees the same feed,
+// regardless of Agent visibility or ownership.
 func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
-	member, ok := h.workspaceMember(w, r, workspaceID)
-	if !ok {
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return
 	}
 
@@ -2335,19 +2334,9 @@ func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
-		return
-	}
-
 	prefix := h.getIssuePrefix(r.Context(), wsUUID)
 	resp := make([]AgentFixResponse, 0, len(rows))
 	for _, row := range rows {
-		if _, ok := allowed[uuidToString(row.AgentID)]; !ok {
-			continue
-		}
 		external := buildAgentFixExternal(row)
 		if !row.HasNormalTask && (external == nil || external.MappedStatus != "done") {
 			continue

@@ -1126,8 +1126,9 @@ SELECT t.* FROM (
 
 -- name: ListWorkspaceAgentFixes :many
 -- One row per issue that either has a recent normal agent run or a recent
--- Feishu/Meego binding. The binding spine lets Operations show external done
--- work items even when no normal issue task exists. An issue may have many
+-- Feishu/Meego binding. The binding spine lets Operations show every external
+-- done work item, including items without an Agent assignee or normal issue
+-- task. An issue may have many
 -- runs (several agents, or one agent retried) — DISTINCT ON (issue_id) keeps
 -- just the newest normal task (by completion, then created_at). Columns:
 --   - agent_name  → who ran the latest attempt (the "智能体" column)
@@ -1191,7 +1192,10 @@ spine AS (
 
   SELECT
     NULL::uuid AS task_id,
-    i.assignee_id AS agent_id,
+    CASE
+      WHEN i.assignee_type = 'agent' THEN i.assignee_id
+      ELSE NULL::uuid
+    END AS agent_id,
     fib.issue_id,
     NULL::timestamptz AS started_at,
     NULL::timestamptz AS completed_at,
@@ -1203,15 +1207,13 @@ spine AS (
   JOIN issue i ON i.id = fib.issue_id AND i.workspace_id = fib.workspace_id
   LEFT JOIN latest ON latest.issue_id = fib.issue_id
   WHERE fib.workspace_id = sqlc.arg('workspace_id')
-    AND i.assignee_type = 'agent'
-    AND i.assignee_id IS NOT NULL
     AND latest.issue_id IS NULL
     AND COALESCE(fib.last_external_updated_at, fib.last_synced_at) > now() - make_interval(days => sqlc.arg('days')::int)
 )
 SELECT
   spine.task_id,
   spine.agent_id,
-  a.name AS agent_name,
+  COALESCE(a.name, '') AS agent_name,
   i.id AS issue_id,
   i.number AS issue_number,
   i.title AS issue_title,
@@ -1280,7 +1282,7 @@ SELECT
   afr.reviewer_id AS review_reviewer_id,
   afr.reviewed_at AS review_reviewed_at
 FROM spine
-JOIN agent a ON a.id = spine.agent_id
+LEFT JOIN agent a ON a.id = spine.agent_id
 JOIN issue i ON i.id = spine.issue_id
 LEFT JOIN LATERAL (
   SELECT c.content, c.author_type

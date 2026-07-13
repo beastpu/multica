@@ -273,6 +273,29 @@ const FIXES = vi.hoisted(() => [
       warnings: ["missing_external_cl", "swarm_api_unauthorized"],
     },
   },
+  // External done, synced from Meegle, but no Agent was assigned and no normal
+  // repair task exists. It must stay in the contribution denominator and
+  // explain the unhandled reason.
+  {
+    task_id: "",
+    agent_id: "",
+    agent_name: "",
+    issue_id: "i-9",
+    issue_identifier: "MUL-13",
+    issue_title: "No agent pickup",
+    issue_status: "done",
+    started_at: null,
+    completed_at: null,
+    created_at: dayIso(1),
+    external: {
+      binding_id: "binding-9",
+      work_item_id: "BUG-10003",
+      status: "Done",
+      mapped_status: "done",
+      done: true,
+      project: "Warpath3",
+    },
+  },
   // Older than the selected 30d window — must never appear in the table
   // or the KPIs.
   {
@@ -312,6 +335,8 @@ const AGENTS = vi.hoisted(() => [
 ]);
 
 const TRIGGER_ASSESSMENT = vi.hoisted(() => vi.fn());
+const FIXES_QUERY_ERROR = vi.hoisted(() => ({ value: false }));
+const REFRESH_FIXES = vi.hoisted(() => vi.fn());
 
 // useQuery is keyed: the operations-fixes options carry "operations-fixes" in
 // their key, with the debounced search term as the last key segment; the agent
@@ -328,6 +353,14 @@ vi.mock("@tanstack/react-query", async () => {
     ...actual,
     useQuery: (opts: { queryKey: unknown[] }) => {
       if (opts.queryKey.includes("operations-fixes")) {
+        if (FIXES_QUERY_ERROR.value) {
+          return {
+            data: undefined,
+            isLoading: false,
+            isError: true,
+            refetch: REFRESH_FIXES,
+          };
+        }
         const term = String(
           opts.queryKey[opts.queryKey.length - 1] ?? "",
         ).toLowerCase();
@@ -336,7 +369,12 @@ vi.mock("@tanstack/react-query", async () => {
               (f.last_comment ?? "").toLowerCase().includes(term),
             )
           : FIXES;
-        return { data, isLoading: false };
+        return {
+          data,
+          isLoading: false,
+          isError: false,
+          refetch: REFRESH_FIXES,
+        };
       }
       if (opts.queryKey.includes("agents")) {
         return { data: AGENTS, isLoading: false };
@@ -444,13 +482,14 @@ vi.mock("../../common/actor-avatar", () => ({
 
 import { OperationsPage, splitHighlight } from "./operations-page";
 
-// Analysis is the default tab; tests exercising the per-ticket detail table
-// switch to it first. `label` is the localized tab caption ("评估明细" in zh).
 async function openAssessments(
   user: ReturnType<typeof userEvent.setup>,
   label = "Assessments",
 ) {
-  await user.click(screen.getByText(label));
+  // The detail table is now the only main-page surface; attribution and
+  // quality distributions moved into their KPI drawers.
+  void user;
+  void label;
 }
 
 describe("OperationsPage", () => {
@@ -459,6 +498,8 @@ describe("OperationsPage", () => {
     // Each test starts from the default column layout, regardless of prior runs.
     useOperationsViewStore.getState().resetColumnWidths();
     TRIGGER_ASSESSMENT.mockClear();
+    FIXES_QUERY_ERROR.value = false;
+    REFRESH_FIXES.mockClear();
   });
 
   afterEach(() => {
@@ -501,45 +542,36 @@ describe("OperationsPage", () => {
     expect(screen.queryByText("Previous period fix")).toBeNull();
   });
 
-  it("renders the KPI band with the headline rates and the funnel", () => {
+  it("shows a recoverable error state when the operations feed fails", async () => {
+    FIXES_QUERY_ERROR.value = true;
+    const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    // Three headline cards forming the nesting chain: contribution (produced /
-    // external done) → coverage (judged / produced) → pass rate (correct /
-    // judged).
-    expect(screen.getByText("AI contribution rate")).toBeTruthy();
-    expect(screen.getByText("Assessment coverage")).toBeTruthy();
-    expect(screen.getByText("AI plan pass rate")).toBeTruthy();
+    expect(screen.getByText("Could not load operations data")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Reload" }));
+    expect(REFRESH_FIXES).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders the four operator KPI cards", () => {
+    renderWithI18n(<OperationsPage />);
+
+    expect(screen.getByText("AI repair contribution")).toBeTruthy();
+    expect(screen.getByText("AI repair quality")).toBeTruthy();
+    expect(screen.getByText("AI automatic repairs")).toBeTruthy();
+    expect(screen.getByText("AI-assisted repairs")).toBeTruthy();
     expect(screen.getByText("Last 30 days")).toBeTruthy();
-    // The delivery funnel is gone — its stages are all readable from the
-    // nested rate cards + drawers; the external-done status split moved to a
-    // hover on the composition bar's total. Five fixtures carry the raw
-    // "Done" status and t-1 resolves vcvaCnnGi → 设计如此 via the name map.
-    expect(screen.queryByText("Delivery funnel")).toBeNull();
-    expect(screen.getByTitle("Done 5 · 设计如此 1")).toBeTruthy();
-    // Coverage: both AI plans (t-1, t-4) reached a verdict → 2/2 = 100%.
-    expect(screen.getAllByText("100%").length).toBeGreaterThanOrEqual(1);
-    // Data-health footnote: the queue backlog + work-item hygiene gap —
-    // states that live in no distribution card, so nothing counts twice.
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
 
-  it("renders the plain-language overview and the delivery composition bar", () => {
+  it("renders the plain-language pickup overview without duplicate charts", () => {
     renderWithI18n(<OperationsPage />);
 
-    // The overview sentence reconciles exactly with the composition bar,
-    // scoped to AI-involved deliveries (pure human fixes are excluded):
-    // 2 involved = 1 direct (t-1) + 0 assisted + 1 unconverted (t-4,
-    // human-delivered with an AI shelve); pass rate is 1 passed / 2 judged.
     expect(
       screen.getByText(
-        "Last 30 days: 6 external done, AI involved in 2 deliveries — 1 AI delivered, 0 AI assisted, 1 unconverted; judged AI plan pass rate 50%.",
+        "Last 30 days: 7 external done, 6 picked up by AI, with 2 verifiable AI repair plans.",
       ),
     ).toBeTruthy();
-    expect(screen.getByText("AI delivery composition")).toBeTruthy();
-    expect(screen.getByText("AI involved 2 / 6 external done")).toBeTruthy();
-    // The pure-human bucket is not rendered anywhere.
-    expect(screen.queryByText("No AI involvement")).toBeNull();
+    expect(screen.queryByText("AI delivery composition")).toBeNull();
   });
 
   it("opens the rate-card breakdown drawer and drills into the detail table", async () => {
@@ -548,12 +580,12 @@ describe("OperationsPage", () => {
 
     // The whole contribution card is a button opening the breakdown drawer.
     await user.click(
-      screen.getByRole("button", { name: /AI contribution rate/ }),
+      screen.getByRole("button", { name: /AI repair contribution/ }),
     );
     const dialog = screen.getByRole("dialog");
     // Composition branches with counts — t-1 is the only direct delivery.
     await user.click(
-      within(dialog).getByRole("button", { name: /AI delivered/ }),
+      within(dialog).getByRole("button", { name: /AI automatic repair/ }),
     );
     // Branch panel lists t-1's ticket card.
     expect(within(dialog).getByText("Login broke")).toBeTruthy();
@@ -567,24 +599,36 @@ describe("OperationsPage", () => {
     expect(screen.queryByText("Parser cleanup")).toBeNull();
   });
 
-  it("shows the blocked-evidence breakdown inside the coverage drawer", async () => {
+  it("keeps unassigned external-done items in contribution and explains why", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    expect(screen.getByText("No agent pickup")).toBeTruthy();
+    expect(screen.getByText("No Agent assigned")).toBeTruthy();
+    expect(screen.getByText("6 picked up by AI / 7 total incoming")).toBeTruthy();
+
+    await user.click(
+      screen.getByRole("button", { name: /AI repair contribution/ }),
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Why AI did not pick it up")).toBeTruthy();
+    await user.click(
+      within(dialog).getByRole("button", { name: /No Agent assigned/ }),
+    );
+    expect(within(dialog).getByText("No agent pickup")).toBeTruthy();
+  });
+
+  it("shows assessment blockers inside the contribution drawer", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
     await user.click(
-      screen.getByRole("button", { name: /Assessment coverage/ }),
+      screen.getByRole("button", { name: /AI repair contribution/ }),
     );
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Judged")).toBeTruthy();
-    expect(within(dialog).getByText("Not judged")).toBeTruthy();
-    // Scoped to the coverage pool (AI-produced rows): t-1 and t-4 are the
-    // completed assessments inside it. t-7's auth block is on a no-output
-    // row — outside this pool, so it must NOT appear here (it belongs to the
-    // attribution story instead).
-    expect(
-      within(dialog).getByText("Evidence access blocked (2 completed)"),
-    ).toBeTruthy();
-    expect(within(dialog).queryByText("Auth failed")).toBeNull();
+    expect(within(dialog).getByText("Picked-up items")).toBeTruthy();
+    expect(within(dialog).getByText("Assessment blocker reasons")).toBeTruthy();
+    expect(within(dialog).getByText("Auth failed")).toBeTruthy();
     await user.click(
       within(dialog).getByRole("button", { name: /P4 \/ shelve unreachable/ }),
     );
@@ -596,11 +640,11 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
 
     await user.click(
-      screen.getByRole("button", { name: /AI contribution rate/ }),
+      screen.getByRole("button", { name: /AI repair contribution/ }),
     );
     const dialog = screen.getByRole("dialog");
     await user.click(
-      within(dialog).getByRole("button", { name: /AI delivered/ }),
+      within(dialog).getByRole("button", { name: /AI automatic repair/ }),
     );
     await user.click(
       within(dialog).getByRole("button", { name: /Login broke/ }),
@@ -644,8 +688,7 @@ describe("OperationsPage", () => {
     await openAssessments(user);
 
     expect(screen.getByText("AI fix assessment")).toBeTruthy();
-    expect(screen.getByText("Assessments")).toBeTruthy();
-    expect(screen.getByText("Insights")).toBeTruthy();
+    expect(screen.queryByText("Insights")).toBeNull();
     expect(screen.getByText("BUG-93218")).toBeTruthy();
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("In stats").length).toBeGreaterThanOrEqual(1);
@@ -814,48 +857,31 @@ describe("OperationsPage", () => {
     });
   });
 
-  it("switches to the lightweight analysis report tab", async () => {
+  it("integrates the quality distribution into the quality KPI drawer", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    await user.click(screen.getByText("Insights"));
-
-    expect(screen.getByText("Delivery attribution")).toBeTruthy();
-    expect(screen.getByText("AI quality distribution")).toBeTruthy();
-    // The blocked-evidence card moved into the coverage card's drawer — it
-    // explains the unjudged share, so it lives with the rate it explains.
-    expect(
-      screen.queryByText(/Evidence access blocked \(\d+ completed\)/),
-    ).toBeNull();
-    // Process-gaps card: t-7 carries missing_external_cl with no committed CL
-    // (its warning is a data gap, not an access block — the blocked card above
-    // must stay empty). Zero-count rows stay visible.
-    // The process-gaps card is gone: its unique datum (missing human CL)
-    // moved into the KPI band's health footnote, and its other rows were
-    // duplicates of the two distributions. Cards now show completed-
-    // assessment verdicts only, so the unassessed row is gone too.
-    expect(screen.queryByText("Process gaps")).toBeNull();
-    expect(screen.queryByText("Missing human CL on work item")).toBeNull();
-    expect(screen.queryByText("Not assessed")).toBeNull();
-    // Shared denominator caption on both cards.
-    expect(screen.getAllByText(/\d+ assessed · Click to filter details/).length).toBe(2);
-    // The per-workstream outcome card is gone (workstream is a page-level
-    // dimension now, not an analysis distribution); the free-text AI-reasons
-    // ranking is gone too — same-meaning sentences fragment into distinct
-    // rows, so the card carried no signal.
-    expect(screen.queryByText("Workstream outcome")).toBeNull();
-    expect(screen.queryByText("Top AI reasons")).toBeNull();
-    expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(1);
+    await user.click(screen.getByRole("button", { name: /AI repair quality/ }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Pass")).toBeTruthy();
+    expect(within(dialog).getByText("Needs work")).toBeTruthy();
+    expect(within(dialog).getByText("Fail")).toBeTruthy();
+    expect(within(dialog).getByText("Undetermined")).toBeTruthy();
+    expect(screen.queryByText("AI quality distribution")).toBeNull();
   });
 
-  it("drills down from an analysis distribution into the filtered detail table", async () => {
+  it("drills down from the quality drawer into the filtered detail table", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    await user.click(screen.getByText("Insights"));
-    // Clicking a distribution row applies the filter and jumps back to detail.
-    await user.click(screen.getAllByText("Human delivered")[0]!);
+    await user.click(screen.getByRole("button", { name: /AI repair quality/ }));
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /^Fail/ }));
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "View all in the detail table",
+      }),
+    );
 
     await waitFor(() => {
       expect(screen.getByText("Client crash")).toBeTruthy();
@@ -1044,7 +1070,7 @@ describe("OperationsPage", () => {
     // full page-level pool while the table is narrowed by the search.
     expect(
       screen.getByText(
-        "Last 30 days: 6 external done, AI involved in 2 deliveries — 1 AI delivered, 0 AI assisted, 1 unconverted; judged AI plan pass rate 50%.",
+        "Last 30 days: 7 external done, 6 picked up by AI, with 2 verifiable AI repair plans.",
       ),
     ).toBeTruthy();
   });
