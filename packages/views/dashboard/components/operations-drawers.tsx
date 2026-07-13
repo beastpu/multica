@@ -22,7 +22,6 @@ import {
 } from "./agent-fix-review";
 import {
   blockedWarningFamily,
-  deliveryRole,
   deriveAttribution,
   derivedEvidence,
   firstSwarmReviewUrl,
@@ -39,8 +38,8 @@ import {
 // demo's exploration flow:
 //   rate card → branch breakdown → ticket list → single-issue detail
 // One Sheet, three panels, driven by a single state union owned by the page.
-// Branch counts reuse the exact metrics predicates (deliveryRole /
-// isVerifiableOutput / qualityJudgement) so the drawer always reconciles with
+// Branch counts reuse the exact metrics predicates (isVerifiableOutput /
+// qualityJudgement) so the drawer always reconciles with
 // the KPI cards it was opened from.
 // ---------------------------------------------------------------------------
 
@@ -73,8 +72,7 @@ interface BranchDef {
     | "main"
     | "assessment"
     | "assessment_reason"
-    | "unhandled"
-    | "attribution";
+    | "unhandled";
   drill?: OperationsDrillFilter;
 }
 
@@ -240,22 +238,6 @@ function cardBranches(
         label: t(($) => $.operations.drawer.not_dispatched),
         rows: unhandled.filter((f) => f.agent_id.trim() !== ""),
         section: "unhandled",
-      },
-      {
-        key: "direct",
-        label: t(($) => $.operations.summary.composition_direct),
-        rows: rows.filter((f) => deliveryRole(f) === "direct"),
-        section: "attribution",
-        drill: { attribution: "ai_delivered" },
-      },
-      {
-        key: "assisted",
-        label: t(($) => $.operations.summary.assisted_with_unconverted),
-        rows: rows.filter((f) => {
-          const role = deliveryRole(f);
-          return role === "assisted" || role === "unconverted";
-        }),
-        section: "attribution",
       },
     ];
   }
@@ -452,7 +434,6 @@ function CardPanel({
           "assessment",
           "assessment_reason",
           "unhandled",
-          "attribution",
         ] as const).map(
           (section) => {
             const sectionBranches = branches.filter(
@@ -464,9 +445,7 @@ function CardPanel({
                 ? rows.filter((f) => f.task_id.trim() !== "").length
                 : section === "unhandled"
                   ? rows.filter((f) => f.task_id.trim() === "").length
-                  : section === "attribution"
-                    ? rows.length
-                    : total;
+                  : total;
             const max = Math.max(
               1,
               ...sectionBranches.map((branch) => branch.rows.length),
@@ -486,12 +465,7 @@ function CardPanel({
                       ? t(($) => $.operations.drawer.handled_breakdown)
                       : section === "assessment_reason"
                         ? t(($) => $.operations.drawer.blocked_reasons)
-                        : section === "unhandled"
-                          ? t(($) => $.operations.drawer.unhandled_reasons)
-                          : t(
-                              ($) =>
-                                $.operations.drawer.attribution_breakdown,
-                            )}
+                        : t(($) => $.operations.drawer.unhandled_reasons)}
                   </div>
                 ) : null}
                 {sectionBranches.map((branch) =>
