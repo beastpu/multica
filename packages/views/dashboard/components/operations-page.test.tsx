@@ -627,7 +627,6 @@ describe("OperationsPage", () => {
         "1 direct AI submission passed / 2 judged by AI",
       ),
     ).toBeTruthy();
-    expect(screen.getByText("Last 30 days")).toBeTruthy();
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
 
@@ -642,14 +641,14 @@ describe("OperationsPage", () => {
     ).toBeNull();
   });
 
-  it("renders the pickup overview and a complete delivery composition", () => {
+  it("renders a complete delivery composition without a duplicate overview", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Last 30 days: 6 assigned to an Agent, 2 picked up by AI, and 2 judged for quality.",
       ),
-    ).toBeTruthy();
+    ).toBeNull();
     const composition = screen.getByRole("region", {
       name: "AI delivery composition",
     });
@@ -1144,11 +1143,11 @@ describe("OperationsPage", () => {
       Array.from(marks).some((m) => m.textContent?.toLowerCase() === "review"),
     ).toBe(true);
 
-    // Detail filters never bend the stats: the overview still reports the
-    // full page-level pool while the table is narrowed by the search.
+    // Detail filters never bend the stats: the headline contribution still
+    // reports the full page-level pool while the table is narrowed by search.
     expect(
       screen.getByText(
-        "Last 30 days: 6 assigned to an Agent, 2 picked up by AI, and 2 judged for quality.",
+        "2 picked up by AI / 6 assigned to an Agent",
       ),
     ).toBeTruthy();
   });

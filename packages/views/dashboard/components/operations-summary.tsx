@@ -25,6 +25,7 @@ function RateCard({
   // When set, the whole card is a button opening the breakdown drawer.
   onClick,
   clickHint,
+  className = "",
   // Optional extra datum under the hint (e.g. the independent-submission
   // count on the assisted card).
   footer,
@@ -34,17 +35,20 @@ function RateCard({
   rate: OperationsRate;
   onClick?: () => void;
   clickHint?: string;
+  className?: string;
   footer?: string;
 }) {
   const inner = (
     <>
       <div className="text-xs font-medium text-muted-foreground">{label}</div>
       <div className="flex items-baseline gap-2">
-        <span className="text-3xl font-semibold leading-none tabular-nums">
+        <span className="text-2xl font-semibold leading-none tabular-nums">
           {formatPercent(rate)}
         </span>
       </div>
-      <div className="text-xs text-muted-foreground">{hint}</div>
+      <div className="text-[11px] leading-relaxed text-muted-foreground">
+        {hint}
+      </div>
       {footer ? (
         <div className="border-t pt-2 text-xs text-muted-foreground">
           {footer}
@@ -58,7 +62,7 @@ function RateCard({
         type="button"
         onClick={onClick}
         title={clickHint}
-        className="group relative flex flex-col gap-2 rounded-lg border bg-card p-4 text-left transition-[transform,border-color,box-shadow] hover:-translate-y-px hover:border-border hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+        className={`group relative flex min-w-0 flex-col gap-1.5 p-3.5 text-left transition-colors hover:bg-muted/25 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${className}`}
       >
         <ChevronRight className="absolute right-3 top-3 h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
         {inner}
@@ -66,7 +70,7 @@ function RateCard({
     );
   }
   return (
-    <div className="flex flex-col gap-2 rounded-lg border bg-card p-4">
+    <div className={`flex min-w-0 flex-col gap-1.5 p-3.5 ${className}`}>
       {inner}
     </div>
   );
@@ -116,7 +120,7 @@ function CompositionBar({
     <section
       role="region"
       aria-label={title}
-      className="rounded-lg border bg-card p-4"
+      className="rounded-lg border bg-card p-3.5"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-xs font-medium text-muted-foreground">{title}</h2>
@@ -134,7 +138,7 @@ function CompositionBar({
       ) : (
         <>
           <div
-            className="mt-3.5 flex h-5 overflow-hidden rounded-md bg-muted"
+            className="mt-2.5 flex h-2.5 overflow-hidden rounded-full bg-muted"
             aria-hidden="true"
           >
             {segments
@@ -147,7 +151,7 @@ function CompositionBar({
                 />
               ))}
           </div>
-          <div className="mt-2.5 grid gap-x-6 gap-y-2 sm:grid-cols-3">
+          <div className="mt-2 grid gap-x-6 gap-y-1.5 sm:grid-cols-3">
             {segments.map((segment) => (
               <div
                 key={segment.key}
@@ -177,30 +181,16 @@ function CompositionBar({
 
 export function OperationsSummary({
   kpis,
-  days,
   onCardClick,
 }: {
   kpis: OperationsKpis;
-  days: number;
   onCardClick?: (card: OperationsCardKey) => void;
 }) {
   const { t } = useT("usage");
   const { funnel, composition } = kpis;
   return (
-    <section className="grid gap-3">
-      <p className="text-sm text-muted-foreground">
-        {t(($) => $.operations.summary.overview, {
-          days,
-          done: funnel.externalDone,
-          handled: kpis.contributionRate.numerator,
-          judged: kpis.judgedCount,
-        })}
-      </p>
-      <CompositionBar
-        composition={composition}
-        externalDone={funnel.externalDone}
-      />
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <section className="grid gap-2.5">
+      <div className="grid overflow-hidden rounded-lg border bg-card sm:grid-cols-2 xl:grid-cols-4">
         <RateCard
           label={t(($) => $.operations.summary.contribution_rate)}
           hint={t(($) => $.operations.summary.contribution_rate_hint, {
@@ -210,6 +200,7 @@ export function OperationsSummary({
           rate={kpis.contributionRate}
           onClick={onCardClick ? () => onCardClick("contribution") : undefined}
           clickHint={t(($) => $.operations.drawer.card_hint)}
+          className="border-b sm:border-r xl:border-b-0"
         />
         <RateCard
           label={t(($) => $.operations.summary.quality_rate)}
@@ -220,6 +211,7 @@ export function OperationsSummary({
           rate={kpis.qualityRate}
           onClick={onCardClick ? () => onCardClick("quality") : undefined}
           clickHint={t(($) => $.operations.drawer.card_hint)}
+          className="border-b xl:border-b-0 xl:border-r"
         />
         <RateCard
           label={t(($) => $.operations.summary.automatic_rate)}
@@ -228,6 +220,7 @@ export function OperationsSummary({
             den: kpis.automaticRate.denominator,
           })}
           rate={kpis.automaticRate}
+          className="border-b sm:border-b-0 sm:border-r"
         />
         <RateCard
           label={t(($) => $.operations.summary.assisted_rate)}
@@ -238,8 +231,12 @@ export function OperationsSummary({
           rate={kpis.assistedRate}
         />
       </div>
+      <CompositionBar
+        composition={composition}
+        externalDone={funnel.externalDone}
+      />
       <div
-        className="w-fit text-xs text-muted-foreground tabular-nums"
+        className="justify-self-end text-[11px] text-muted-foreground tabular-nums"
         title={t(($) => $.operations.summary.health_footnote_hint)}
       >
         {t(($) => $.operations.summary.health_footnote, {

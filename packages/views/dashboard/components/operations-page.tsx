@@ -582,16 +582,13 @@ export function OperationsPage() {
       </PageHeader>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[1600px] space-y-4 p-6">
+        <div className="mx-auto max-w-[1600px] space-y-3 p-5">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <p className="text-xs font-medium text-foreground">
+                <p className="text-sm font-medium text-foreground">
                   {t(($) => $.operations.assessment_title)}
                 </p>
-                <Badge variant="outline" className="text-muted-foreground">
-                  {t(($) => $.operations.range_label, { days })}
-                </Badge>
                 {allFixes.length >= FETCH_LIMIT ? (
                   <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                     <TriangleAlert className="h-3 w-3 shrink-0" />
@@ -626,7 +623,6 @@ export function OperationsPage() {
           {!isLoading && !isError && statsRows.length > 0 ? (
             <OperationsSummary
               kpis={kpis}
-              days={days}
               onCardClick={(card) => setSheet({ kind: "card", card })}
             />
           ) : null}
@@ -648,7 +644,7 @@ export function OperationsPage() {
           ) : (
             <>
               {/* Detail-only filters narrow this table, never the stats above. */}
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg border bg-muted/10 p-2">
                 <SearchBox value={searchInput} onChange={setSearchInput} />
                 <AgentFilter
                   agents={agents}
@@ -694,9 +690,6 @@ export function OperationsPage() {
                     {t(($) => $.operations.filter.reset)}
                   </button>
                 ) : null}
-                <span className="ml-auto hidden text-xs text-muted-foreground/70 lg:inline">
-                  {t(($) => $.operations.filter.scope_note)}
-                </span>
               </div>
               {tableRows.length === 0 ? (
                 <OperationsEmpty search={search} />
@@ -759,7 +752,7 @@ export function OperationsPage() {
                       return (
                         <div
                           key={f.issue_id || f.task_id}
-                          className="grid cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/30"
+                          className="grid cursor-pointer items-start gap-3 px-4 py-2.5 transition-colors hover:bg-muted/30"
                           style={GRID_STYLE}
                           // Row click opens the issue drawer; clicks on the
                           // row's own links/buttons/popovers keep their
