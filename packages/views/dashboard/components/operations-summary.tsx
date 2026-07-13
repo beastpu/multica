@@ -189,7 +189,7 @@ export function OperationsSummary({
           days,
           done: funnel.externalDone,
           handled: kpis.contributionRate.numerator,
-          fixable: kpis.fixableCount,
+          judged: kpis.judgedCount,
         })}
       </p>
       <CompositionBar

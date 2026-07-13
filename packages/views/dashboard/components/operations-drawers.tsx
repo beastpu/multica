@@ -27,7 +27,7 @@ import {
   firstSwarmReviewUrl,
   fixDayIso,
   hasP4Signal,
-  isVerifiableOutput,
+  isAiParticipated,
   qualityJudgement,
   swarmReviewUrl,
   type BlockedFamily,
@@ -38,7 +38,7 @@ import {
 // demo's exploration flow:
 //   rate card → branch breakdown → ticket list → single-issue detail
 // One Sheet, three panels, driven by a single state union owned by the page.
-// Branch counts reuse the exact metrics predicates (isVerifiableOutput /
+// Branch counts reuse the exact metrics predicates (isAiParticipated /
 // qualityJudgement) so the drawer always reconciles with
 // the KPI cards it was opened from.
 // ---------------------------------------------------------------------------
@@ -62,6 +62,7 @@ export interface OperationsDrillFilter {
   attribution?: string;
   quality?: string;
   pendingOnly?: boolean;
+  aiParticipatedOnly?: boolean;
 }
 
 interface BranchDef {
@@ -183,8 +184,8 @@ function cardBranches(
   tx: UsageT,
 ): BranchDef[] {
   if (card === "contribution") {
-    const handled = rows.filter((f) => f.task_id.trim() !== "");
-    const unhandled = rows.filter((f) => f.task_id.trim() === "");
+    const handled = rows.filter(isAiParticipated);
+    const unhandled = rows.filter((f) => !isAiParticipated(f));
     const blocked = handled.filter(hasBlockedAssessment);
     const completed = handled.filter(
       (f) =>
@@ -241,33 +242,35 @@ function cardBranches(
       },
     ];
   }
-  const fixable = rows.filter(isVerifiableOutput);
+  const participated = rows.filter(isAiParticipated);
   return [
     {
       key: "likely_correct",
       label: agentFixEnumLabel(tx, "quality", "likely_correct"),
-      rows: fixable.filter((f) => qualityJudgement(f) === "likely_correct"),
-      drill: { quality: "likely_correct" },
+      rows: participated.filter(
+        (f) => qualityJudgement(f) === "likely_correct",
+      ),
+      drill: { quality: "likely_correct", aiParticipatedOnly: true },
     },
     {
       key: "likely_needs_changes",
       label: agentFixEnumLabel(tx, "quality", "likely_needs_changes"),
-      rows: fixable.filter(
+      rows: participated.filter(
         (f) => qualityJudgement(f) === "likely_needs_changes",
       ),
-      drill: { quality: "likely_needs_changes" },
+      drill: { quality: "likely_needs_changes", aiParticipatedOnly: true },
     },
     {
       key: "likely_wrong",
       label: agentFixEnumLabel(tx, "quality", "likely_wrong"),
-      rows: fixable.filter((f) => qualityJudgement(f) === "likely_wrong"),
-      drill: { quality: "likely_wrong" },
+      rows: participated.filter((f) => qualityJudgement(f) === "likely_wrong"),
+      drill: { quality: "likely_wrong", aiParticipatedOnly: true },
     },
     {
       key: "unknown",
       label: agentFixEnumLabel(tx, "quality", "unknown"),
-      rows: fixable.filter((f) => qualityJudgement(f) === ""),
-      drill: { pendingOnly: true },
+      rows: participated.filter((f) => qualityJudgement(f) === ""),
+      drill: { pendingOnly: true, aiParticipatedOnly: true },
     },
   ];
 }

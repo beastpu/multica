@@ -3875,7 +3875,7 @@ WITH latest AS (
   -- spine skips issues carrying the server-reserved metadata marker.
   JOIN issue ti ON ti.id = atq.issue_id
     AND NOT jsonb_exists(ti.metadata, 'agent_work')
-  WHERE ag.workspace_id = $2
+  WHERE ag.workspace_id = $3
     AND atq.issue_id IS NOT NULL
   -- "Latest run" = most recent activity overall: completion if finished, else
   -- start, else when it was queued. So a fresh queued/running attempt outranks
@@ -3902,7 +3902,7 @@ spine AS (
       latest.completed_at,
       latest.started_at,
       latest.created_at
-    ) > now() - make_interval(days => $3::int)
+    ) > now() - make_interval(days => $4::int)
 
   UNION ALL
 
@@ -3922,9 +3922,9 @@ spine AS (
   FROM feishu_project_issue_binding fib
   JOIN issue i ON i.id = fib.issue_id AND i.workspace_id = fib.workspace_id
   LEFT JOIN latest ON latest.issue_id = fib.issue_id
-  WHERE fib.workspace_id = $2
+  WHERE fib.workspace_id = $3
     AND latest.issue_id IS NULL
-    AND COALESCE(fib.last_external_updated_at, fib.last_synced_at) > now() - make_interval(days => $3::int)
+    AND COALESCE(fib.last_external_updated_at, fib.last_synced_at) > now() - make_interval(days => $4::int)
 )
 SELECT
   spine.task_id,
@@ -4018,19 +4018,25 @@ LEFT JOIN agent p4agent ON p4agent.id = p4task.agent_id
 LEFT JOIN agent_fix_review afr
   ON afr.workspace_id = i.workspace_id AND afr.feishu_binding_id = fib.id
 WHERE
+  ($1::text IS NULL OR (
+    i.status = 'done'
+    AND fib.external_status_label = $1::text
+  ))
+  AND
   -- Literal case-insensitive substring on the agent comment (no LIKE wildcard
   -- semantics, so a user-typed % or _ matches itself). NULL content (no agent
   -- comment) yields NULL > 0 → excluded, which is the desired "drop unmatched".
-  ($1::text IS NULL
-       OR position(lower($1::text) IN lower(lc.content)) > 0)
+  ($2::text IS NULL
+       OR position(lower($2::text) IN lower(lc.content)) > 0)
 ORDER BY COALESCE(fib.last_external_updated_at, spine.completed_at, spine.started_at, spine.created_at) DESC
-LIMIT 2000
+LIMIT 10000
 `
 
 type ListWorkspaceAgentFixesParams struct {
-	Search      pgtype.Text `json:"search"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Days        int32       `json:"days"`
+	ExternalStatus pgtype.Text `json:"external_status"`
+	Search         pgtype.Text `json:"search"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	Days           int32       `json:"days"`
 }
 
 type ListWorkspaceAgentFixesRow struct {
@@ -4099,21 +4105,27 @@ type ListWorkspaceAgentFixesRow struct {
 //     which a later "收到" from a human would otherwise mask.
 //
 // The optional `search` arg filters to issues whose agent comment contains the
-// term (case-insensitive substring). It runs BEFORE the 2000-row cap, so search
-// covers the whole time window, not just the most recent 2000 rows. A row with
+// term (case-insensitive substring). `external_status` selects the Feishu
+// business state used by Operations; when present, the SQL also requires the
+// synced Multica issue to be done. Both filters run BEFORE the 10000-row cap,
+// so metrics cover the whole reporting pool rather than an arbitrary prefix.
+// A row with
 // no matching agent comment is dropped when `search` is set.
 // JOINs agent because agent_task_queue has no workspace_id; INNER JOIN issue so
 // only issue-linked runs count. For Feishu/Meego-bound issues, the window
 // prefers Feishu's last_external_updated_at over Multica's last_synced_at so a
 // periodic sync does not make old business items look new.
-// Per-agent access filtering happens in the handler against accessibleAgentIDs.
-// Row cap: the dashboard fetches a 2x window (period-over-period deltas)
-// and computes KPIs client-side, so this must comfortably exceed the busiest
-// workspace's 2x-window row count (W3: ~1.3k over 60 days) or the funnel and
-// rates silently undercount. Raise again or move to a server-side stats
-// endpoint if volume approaches this.
+// Operations is workspace-wide; membership is enforced by the handler without
+// per-Agent visibility filtering.
+// The business-status filter above reduces W3's 30-day pool to roughly 4k.
+// Keep enough headroom for growth while retaining a hard response bound.
 func (q *Queries) ListWorkspaceAgentFixes(ctx context.Context, arg ListWorkspaceAgentFixesParams) ([]ListWorkspaceAgentFixesRow, error) {
-	rows, err := q.db.Query(ctx, listWorkspaceAgentFixes, arg.Search, arg.WorkspaceID, arg.Days)
+	rows, err := q.db.Query(ctx, listWorkspaceAgentFixes,
+		arg.ExternalStatus,
+		arg.Search,
+		arg.WorkspaceID,
+		arg.Days,
+	)
 	if err != nil {
 		return nil, err
 	}

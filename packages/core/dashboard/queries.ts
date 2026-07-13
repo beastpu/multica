@@ -27,8 +27,19 @@ export const dashboardKeys = {
     projectId: string | null,
     tz: string,
   ) => [...dashboardKeys.all(wsId), "runtime-daily", days, projectId, tz] as const,
-  operationsFixes: (wsId: string, days: number, search: string) =>
-    [...dashboardKeys.all(wsId), "operations-fixes", days, search] as const,
+  operationsFixes: (
+    wsId: string,
+    days: number,
+    externalStatus: string,
+    search: string,
+  ) =>
+    [
+      ...dashboardKeys.all(wsId),
+      "operations-fixes",
+      days,
+      externalStatus,
+      search,
+    ] as const,
 };
 
 // 5-min rollup cadence on the server, 60s background refetch on the client.
@@ -115,20 +126,30 @@ export function dashboardRunTimeDailyOptions(
 }
 
 // Per-agent "fix record" feed for the Usage page's Operations tab. No tz /
-// project axis — agent and issue-status narrowing stays client-side, but the
-// comment `search` is a server filter (it must run before the row cap to cover
-// the whole window), so both `days` and `search` key the cache. A trimmed empty
-// search is the unfiltered feed.
+// project axis — Agent narrowing stays client-side, but the
+// comment `search` and Feishu `externalStatus` are server filters (they must run
+// before the row cap to cover the whole window), so both key the cache with
+// `days`. A trimmed empty search is the unfiltered feed.
 export function operationsFixesOptions(
   wsId: string,
   days: number,
   search = "",
+  externalStatus?: string,
 ) {
   const term = search.trim();
+  const status = externalStatus?.trim() ?? "";
   return queryOptions({
-    queryKey: dashboardKeys.operationsFixes(wsId, days, term),
-    queryFn: () => api.getOperationsAgentFixes({ days, search: term }),
-    enabled: !!wsId,
+    queryKey: dashboardKeys.operationsFixes(wsId, days, status, term),
+    queryFn: () =>
+      api.getOperationsAgentFixes({
+        days,
+        search: term,
+        externalStatus: status || undefined,
+      }),
+    // Callers that omit externalStatus keep the legacy broad feed (used by
+    // issue-level assessment entry). Operations passes an explicit status and
+    // stays disabled until the Feishu option has resolved.
+    enabled: !!wsId && (externalStatus === undefined || !!status),
     staleTime: STALE_TIME,
     // Keep the prior rows on screen while a new term/window refetches, so
     // typing in the search box doesn't flash the skeleton on every keystroke.

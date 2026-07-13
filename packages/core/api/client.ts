@@ -1493,15 +1493,19 @@ export class ApiClient {
   // Per-agent "fix record" feed for the Usage page's Operations tab. `days`
   // bounds the trailing window (default applied server-side). `search` filters
   // server-side to issues whose agent comment contains the term (case-
-  // insensitive substring), applied before the row cap so it covers the whole
-  // window; the returned comment snippet is centered on the match. Workspace is
+  // insensitive substring). `externalStatus` selects the Feishu business state
+  // and requires Multica done. Both apply before the row cap so they cover the
+  // whole window; the returned comment snippet is centered on the match. Workspace is
   // routed via the X-Workspace-ID header like every other workspace-scoped GET.
   async getOperationsAgentFixes(
-    params: { days?: number; search?: string } = {},
+    params: { days?: number; search?: string; externalStatus?: string } = {},
   ): Promise<AgentFixRecord[]> {
     const search = new URLSearchParams();
     if (params.days) search.set("days", String(params.days));
     if (params.search) search.set("search", params.search);
+    if (params.externalStatus) {
+      search.set("external_status", params.externalStatus);
+    }
     const raw = await this.fetch<unknown>(`/api/operations/agent-fixes?${search}`);
     return parseWithFallback<AgentFixRecord[]>(
       raw,

@@ -622,7 +622,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText("1 marked pass / 2 judged")).toBeTruthy();
     expect(
       screen.getByText(
-        "1 direct AI submission passed / 2 assessed fixable",
+        "1 direct AI submission passed / 2 judged by AI",
       ),
     ).toBeTruthy();
     expect(screen.getByText("Last 30 days")).toBeTruthy();
@@ -645,7 +645,7 @@ describe("OperationsPage", () => {
 
     expect(
       screen.getByText(
-        "Last 30 days: 7 Feishu test-passed and synced done, 6 picked up by AI, with 2 verifiable AI repair plans.",
+        "Last 30 days: 7 Feishu test-passed and synced done, 2 picked up by AI, with 2 AI quality judgements.",
       ),
     ).toBeTruthy();
     const composition = screen.getByRole("region", {
@@ -689,7 +689,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText("No Agent assigned")).toBeTruthy();
     expect(
       screen.getByText(
-        "6 picked up by AI / 7 Feishu test-passed and synced done",
+        "2 picked up by AI / 7 Feishu test-passed and synced done",
       ),
     ).toBeTruthy();
 
@@ -714,7 +714,7 @@ describe("OperationsPage", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("Picked-up items")).toBeTruthy();
     expect(within(dialog).getByText("Assessment blocker reasons")).toBeTruthy();
-    expect(within(dialog).getByText("Auth failed")).toBeTruthy();
+    expect(within(dialog).queryByText("Auth failed")).toBeNull();
     await user.click(
       within(dialog).getByRole("button", { name: /P4 \/ shelve unreachable/ }),
     );
@@ -1158,7 +1158,7 @@ describe("OperationsPage", () => {
     // full page-level pool while the table is narrowed by the search.
     expect(
       screen.getByText(
-        "Last 30 days: 7 Feishu test-passed and synced done, 6 picked up by AI, with 2 verifiable AI repair plans.",
+        "Last 30 days: 7 Feishu test-passed and synced done, 2 picked up by AI, with 2 AI quality judgements.",
       ),
     ).toBeTruthy();
   });

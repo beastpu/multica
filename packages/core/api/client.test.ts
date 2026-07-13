@@ -6,6 +6,28 @@ afterEach(() => {
 });
 
 describe("ApiClient", () => {
+  it("passes the Feishu business status into the Operations feed", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.getOperationsAgentFixes({
+      days: 30,
+      search: "auth failure",
+      externalStatus: "Iw0fE6Yfa",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/operations/agent-fixes?days=30&search=auth+failure&external_status=Iw0fE6Yfa",
+      expect.any(Object),
+    );
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",
