@@ -2322,12 +2322,17 @@ func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request
 	// drops rows whose agent comment doesn't contain the term; the snippet is
 	// then centered on the match so the keyword is visible for highlighting.
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	externalStatus := strings.TrimSpace(r.URL.Query().Get("external_status"))
 
 	wsUUID := parseUUID(workspaceID)
 	rows, err := h.Queries.ListWorkspaceAgentFixes(r.Context(), db.ListWorkspaceAgentFixesParams{
 		WorkspaceID: wsUUID,
 		Days:        int32(days),
 		Search:      pgtype.Text{String: search, Valid: search != ""},
+		ExternalStatus: pgtype.Text{
+			String: externalStatus,
+			Valid:  externalStatus != "",
+		},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agent fixes")
@@ -2338,7 +2343,9 @@ func (h *Handler) ListWorkspaceAgentFixes(w http.ResponseWriter, r *http.Request
 	resp := make([]AgentFixResponse, 0, len(rows))
 	for _, row := range rows {
 		external := buildAgentFixExternal(row)
-		if !row.HasNormalTask && (external == nil || external.MappedStatus != "done") {
+		if externalStatus == "" &&
+			!row.HasNormalTask &&
+			(external == nil || external.MappedStatus != "done") {
 			continue
 		}
 		fix := AgentFixResponse{

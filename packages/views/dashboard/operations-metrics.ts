@@ -228,6 +228,13 @@ export function deliveryRole(fix: AgentFixRecord): DeliveryRole {
   return aiProducedPlan(fix) ? "unconverted" : "none";
 }
 
+// The canonical Operations participation predicate. Contribution, delivery
+// composition, rate denominators, and drawers all reuse this exact rule so
+// "AI 接手" and "AI 参与" always reconcile.
+export function isAiParticipated(fix: AgentFixRecord): boolean {
+  return deliveryRole(fix) !== "none";
+}
+
 export function isExternalDone(fix: AgentFixRecord): boolean {
   return (
     fix.external?.done === true || fix.external?.mapped_status === "done"
@@ -331,13 +338,11 @@ function rate(numerator: number, denominator: number): OperationsRate {
   };
 }
 
-// Delivery funnel counts. Stages are nested: passed ⊆ judged ⊆ verifiable ⊆
-// aiPlanned ⊆ aiEngaged; externalDone is the upstream gate. Each drop is one
-// process problem: engaged→planned = the agent proposed but never landed a
-// shelve/Swarm record; planned→verifiable = the assessment hasn't completed.
-// `verifiable` is the quality-pipeline pool (completed assessment with an AI
-// plan). Judgement is the AI quality analysis — there is no human review in
-// this flow.
+// Delivery funnel diagnostics. aiPlanned/verifiable describe artifact and
+// assessment progress; judged/passed describe explicit quality outcomes among
+// AI-participated rows. The two sequences intentionally overlap but are not
+// assumed to be nested because a structured attribution can exist without a
+// shelve/Swarm artifact in older records.
 export interface OperationsFunnel {
   total: number;
   externalDone: number;
@@ -351,7 +356,7 @@ export interface OperationsFunnel {
   passed: number;
 }
 
-// A MECE partition of external-done rows by AI's delivery role:
+// A MECE partition of the page's eligible reporting pool by AI delivery role:
 //   directDelivered + assisted + unconverted + notParticipated === externalDone
 // participation = directDelivered + assisted + unconverted (AI was involved).
 export interface DeliveryComposition {
@@ -363,16 +368,19 @@ export interface DeliveryComposition {
 
 export interface OperationsKpis {
   funnel: OperationsFunnel;
-  // MECE breakdown of external-done rows by AI role.
+  // MECE breakdown of eligible reporting rows by AI role.
   composition: DeliveryComposition;
-  // AI repair contribution: external-done rows with a normal Agent task / all
-  // external-done rows. Binding-only rows stay in the denominator so missing
-  // Agent assignment and missing dispatch remain visible operating problems.
+  // AI repair contribution: eligible rows with AI participation / all
+  // eligible rows. The page defines eligibility as Feishu 测试通过 plus a
+  // synced Multica issue at done. Binding-only rows stay in the denominator so
+  // missing Agent assignment and missing dispatch remain visible problems.
   contributionRate: OperationsRate;
-  // Shared denominator for the three outcome cards: completed assessment with
-  // a verifiable AI plan. This is the current evidence-backed definition of
-  // "AI assessed as fixable" until the workflow emits a dedicated verdict.
-  fixableCount: number;
+  // Shared denominator for quality, automatic, and assisted repair: AI
+  // participated and produced one explicit quality result (pass / needs
+  // changes / fail). Unknown and unrecognised values are excluded.
+  judgedCount: number;
+  // AI-marked pass / all AI-judged plans. Unknown or missing judgements stay
+  // outside the denominator instead of being treated as quality failures.
   qualityRate: OperationsRate;
   automaticRate: OperationsRate;
   // AI-assisted includes both attributed assisted delivery and an AI plan that
@@ -405,7 +413,6 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   for (const fix of rows) {
     const done = isExternalDone(fix);
     if (done) externalDone += 1;
-    if (done && fix.task_id.trim() !== "") handled += 1;
     if (fix.p4_assessment?.assessment_status !== "completed") unassessed += 1;
     if (hasMissingExternalClWarning(fix)) missingExternalCl += 1;
     const planned = aiProducedPlan(fix);
@@ -414,9 +421,10 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     // the agent showing up (the funnel's engaged→planned drop), but not as
     // artifact-driven participation.
     if (planned || hasAgentPlanComment(fix)) aiEngaged += 1;
-    // Delivery attribution is independent from pickup contribution: the latter
-    // is task-based, while this role captures how AI participated in delivery.
+    // Delivery role is also the canonical contribution/pickup predicate.
     const role = deliveryRole(fix);
+    const participated = role !== "none";
+    if (done && participated) handled += 1;
     if (done) {
       if (role === "direct") directDelivered += 1;
       else if (role === "assisted") assisted += 1;
@@ -424,14 +432,15 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
       else notParticipated += 1;
     }
     const quality = qualityJudgement(fix);
-    if (!isVerifiableOutput(fix)) continue;
-    verifiable += 1;
-    if (role === "direct") automatic += 1;
+    if (isVerifiableOutput(fix)) verifiable += 1;
+    if (!done || !participated || quality === "") continue;
+    judged += 1;
+    // Automatic repair requires both direct AI delivery and a passing quality
+    // judgement. A direct submission with unknown/failed quality is not an
+    // automatic repair success.
+    if (role === "direct" && quality === "likely_correct") automatic += 1;
     if (role === "assisted" || role === "unconverted") assistedFixes += 1;
-    if (quality !== "") {
-      judged += 1;
-      if (quality === "likely_correct") passed += 1;
-    }
+    if (quality === "likely_correct") passed += 1;
   }
   return {
     funnel: {
@@ -445,10 +454,10 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     },
     composition: { directDelivered, assisted, unconverted, notParticipated },
     contributionRate: rate(handled, externalDone),
-    fixableCount: verifiable,
-    qualityRate: rate(passed, verifiable),
-    automaticRate: rate(automatic, verifiable),
-    assistedRate: rate(assistedFixes, verifiable),
+    judgedCount: judged,
+    qualityRate: rate(passed, judged),
+    automaticRate: rate(automatic, judged),
+    assistedRate: rate(assistedFixes, judged),
     unassessed,
     missingExternalCl,
   };

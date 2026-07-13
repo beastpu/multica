@@ -12,6 +12,7 @@ import {
   deriveAttribution,
   fixDayIso,
   hasMissingExternalClWarning,
+  isAiParticipated,
   isVerifiableOutput,
   trimOperationsWindow,
   swarmChangeUrl,
@@ -248,22 +249,23 @@ describe("computeOperationsKpis", () => {
       numerator: 3,
       denominator: 4,
     });
-    // The three outcome cards share the same verifiable-plan denominator.
-    expect(kpis.fixableCount).toBe(3);
+    // Quality only uses rows where AI reached a judgement. The unjudged direct
+    // delivery stays outside both the quality denominator and automatic count.
+    expect(kpis.judgedCount).toBe(2);
     expect(kpis.qualityRate).toEqual({
-      value: 1 / 3,
+      value: 1 / 2,
       numerator: 1,
-      denominator: 3,
+      denominator: 2,
     });
     expect(kpis.automaticRate).toEqual({
-      value: 2 / 3,
-      numerator: 2,
-      denominator: 3,
+      value: 1 / 2,
+      numerator: 1,
+      denominator: 2,
     });
     expect(kpis.assistedRate).toEqual({
-      value: 1 / 3,
+      value: 1 / 2,
       numerator: 1,
-      denominator: 3,
+      denominator: 2,
     });
     // Demoted health counts. unassessed = notDone (no assessment at all);
     // no fixture carries the missing_external_cl warning.
@@ -337,7 +339,7 @@ describe("computeOperationsKpis", () => {
     expect(kpis.qualityRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
   });
 
-  it("counts an unused AI plan as assisted while pickup uses task presence", () => {
+  it("counts an unused AI plan as both assisted and AI participation", () => {
     // AI shelved a fix but a human shipped a different CL (human_delivered).
     const planNotUsed = fix({
       external: { done: true },
@@ -356,7 +358,8 @@ describe("computeOperationsKpis", () => {
       unconverted: 1,
       notParticipated: 0,
     });
-    // The normal Agent task makes this a picked-up item.
+    // Contribution and delivery composition share the same participation
+    // predicate, so the two headline counts cannot drift apart.
     expect(kpis.contributionRate).toEqual({
       value: 1,
       numerator: 1,
@@ -366,6 +369,75 @@ describe("computeOperationsKpis", () => {
     // AI-assisted repair per the operating definition.
     expect(kpis.qualityRate).toEqual({ value: 0, numerator: 0, denominator: 1 });
     expect(kpis.assistedRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
+  });
+
+  it("defines pickup by AI participation rather than normal task presence", () => {
+    const participatedWithoutTask = fix({
+      task_id: "",
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "ai_assisted",
+        quality_prediction: "likely_needs_changes",
+        ai_shelved_cls: [88],
+      },
+    });
+    const taskWithoutParticipation = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+        quality_prediction: "likely_correct",
+        ai_shelved_cls: [],
+      },
+    });
+
+    expect(isAiParticipated(participatedWithoutTask)).toBe(true);
+    expect(isAiParticipated(taskWithoutParticipation)).toBe(false);
+    const kpis = computeOperationsKpis([
+      participatedWithoutTask,
+      taskWithoutParticipation,
+    ]);
+    expect(kpis.contributionRate).toEqual({
+      value: 0.5,
+      numerator: 1,
+      denominator: 2,
+    });
+    expect(
+      kpis.composition.directDelivered +
+        kpis.composition.assisted +
+        kpis.composition.unconverted,
+    ).toBe(kpis.contributionRate.numerator);
+  });
+
+  it("uses judged AI participation as every repair-rate denominator", () => {
+    const judgedWithoutPlanArtifact = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "ai_delivered",
+        quality_prediction: "likely_correct",
+        ai_shelved_cls: [],
+      },
+    });
+    const participatedButUnknown = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "ai_assisted",
+        quality_prediction: "unknown",
+        ai_shelved_cls: [91],
+      },
+    });
+
+    const kpis = computeOperationsKpis([
+      judgedWithoutPlanArtifact,
+      participatedButUnknown,
+    ]);
+    expect(kpis.judgedCount).toBe(1);
+    expect(kpis.qualityRate.denominator).toBe(1);
+    expect(kpis.automaticRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
+    expect(kpis.assistedRate).toEqual({ value: 0, numerator: 0, denominator: 1 });
   });
 
   it("counts a comment-only plan as engaged but not planned or participated", () => {

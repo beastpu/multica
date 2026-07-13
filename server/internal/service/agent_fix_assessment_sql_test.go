@@ -173,6 +173,41 @@ func TestOperationsFeedUsesBindingSpineWithoutAssessmentTaskPollution(t *testing
 	}
 }
 
+func TestOperationsFeedFiltersBusinessStatusBeforeRowCap(t *testing.T) {
+	sql, err := os.ReadFile("../../pkg/db/queries/agent.sql")
+	if err != nil {
+		t.Fatalf("read agent.sql: %v", err)
+	}
+	chunk := sqlSection(t, string(sql), "ListWorkspaceAgentFixes")
+	for _, want := range []string{
+		"i.status = 'done'",
+		"sqlc.narg('external_status')::text IS NULL",
+		"fib.external_status_label = sqlc.narg('external_status')::text",
+		"LIMIT 10000",
+	} {
+		if !strings.Contains(chunk, want) {
+			t.Fatalf("ListWorkspaceAgentFixes must prefilter the reporting pool with %q\n---\n%s", want, chunk)
+		}
+	}
+	if strings.Index(chunk, "fib.external_status_label = sqlc.narg('external_status')::text") > strings.Index(chunk, "LIMIT 10000") {
+		t.Fatalf("external status filter must run before the row cap\n---\n%s", chunk)
+	}
+}
+
+func TestFeishuStatusOptionsAreWorkspaceMemberReadable(t *testing.T) {
+	src, err := os.ReadFile("../handler/feishu_project.go")
+	if err != nil {
+		t.Fatalf("read feishu_project.go: %v", err)
+	}
+	chunk := sourceFunction(t, string(src), "GetFeishuProjectIssueStatuses")
+	if !strings.Contains(chunk, "workspaceMember") {
+		t.Fatalf("status options must be readable by every workspace member\n---\n%s", chunk)
+	}
+	if strings.Contains(chunk, "requireWorkspaceRole") {
+		t.Fatalf("status options must not require owner/admin\n---\n%s", chunk)
+	}
+}
+
 func TestP4AssessmentBackfillScansBindingsWithStatusMapping(t *testing.T) {
 	sql, err := os.ReadFile("../../pkg/db/queries/agent.sql")
 	if err != nil {

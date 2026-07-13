@@ -85,8 +85,8 @@ import {
   firstSwarmReviewUrl,
   hasP4Signal,
   fixDayIso,
+  isAiParticipated,
   isPendingJudgement,
-  isExternalDone,
   qualityBucket,
   trimOperationsWindow,
   swarmChangeUrl,
@@ -124,7 +124,7 @@ type OpsRange = (typeof RANGES)[number]["days"];
 // Mirrors the SQL LIMIT in ListWorkspaceAgentFixes. A fetch that fills it may
 // have dropped the window's oldest rows, so the page flags possibly-partial
 // coverage instead of presenting the stats as complete.
-const FETCH_LIMIT = 2000;
+const FETCH_LIMIT = 10000;
 
 // The "状态" column mirrors the issues UI: the same StatusIcon + the label
 // from the `issues` i18n namespace. These are the known values; an unknown
@@ -205,11 +205,25 @@ function cardStyle(w: Record<OperationsColumnKey, number>): CSSProperties {
 // Debounce delay before a typed search term hits the server. Long enough to
 // coalesce a burst of keystrokes, short enough to feel responsive.
 const SEARCH_DEBOUNCE_MS = 300;
+const FEISHU_TEST_PASSED_STATUS_NAME = "测试通过";
 
-function isOperationsVisibleIssue(fix: AgentFixRecord): boolean {
+function isOperationsVisibleIssue(
+  fix: AgentFixRecord,
+  externalStatusNames: ReadonlyMap<string, string>,
+): boolean {
   const external = fix.external;
   const hasExternalBinding = (external?.binding_id ?? "").trim().length > 0;
-  return hasExternalBinding && isExternalDone(fix);
+  const rawStatus = (external?.status ?? "").trim();
+  const statusName = (
+    external?.status_name ||
+    externalStatusNames.get(rawStatus) ||
+    rawStatus
+  ).trim();
+  return (
+    hasExternalBinding &&
+    fix.issue_status === "done" &&
+    statusName === FEISHU_TEST_PASSED_STATUS_NAME
+  );
 }
 
 function confidenceLabel(confidence: number | null | undefined): string {
@@ -260,10 +274,11 @@ export function splitHighlight(text: string, keyword: string): HighlightPart[] {
 }
 
 /**
- * Operations page — AI repair effectiveness over the complete external-done
- * intake. Rows without an Agent task stay visible so pickup contribution and
- * unhandled reasons reconcile with Meegle. Delivery and quality distributions
- * live in the relevant KPI drawers above the detail table. Lives at
+ * Operations page — AI repair effectiveness over Feishu items at 测试通过 whose
+ * synced Multica issue is also done. Rows without AI participation stay visible
+ * so contribution and unhandled reasons reconcile with Meegle. Delivery
+ * and quality distributions live in the relevant KPI drawers above the detail
+ * table. Lives at
  * `/{slug}/operations`; backed by
  * GET /api/operations/agent-fixes.
  */
@@ -292,6 +307,7 @@ export function OperationsPage() {
     useState<string>(ALL_ATTRIBUTIONS);
   const [qualityFilter, setQualityFilter] = useState<string>(ALL_QUALITIES);
   const [pendingOnly, setPendingOnly] = useState(false);
+  const [aiParticipatedOnly, setAiParticipatedOnly] = useState(false);
   const [page, setPage] = useState(0);
   // Right-side drawer: rate-card breakdown / branch ticket list / one issue.
   const [sheet, setSheet] = useState<OperationsSheetState>(null);
@@ -313,16 +329,42 @@ export function OperationsPage() {
   }, [searchInput]);
 
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  // Resolve the business status before loading the feed. Sending its raw key
+  // lets SQL apply 测试通过 + Multica done before the response cap.
+  const feishuStatusQuery = useQuery(
+    feishuProjectIssueStatusesOptions(wsId, true),
+  );
+  const testPassedStatus =
+    feishuStatusQuery.data?.statuses.find(
+      (status) => status.name.trim() === FEISHU_TEST_PASSED_STATUS_NAME,
+    )?.key ?? "";
   // Two feeds over the same window: the stats feed (no search term) backs the
   // KPI band and drawers, while the table feed (server-side comment search)
   // backs the detail table. With no search term they are the same cached
   // query. This split is what keeps detail filters from bending the stats.
-  const statsQuery = useQuery(operationsFixesOptions(wsId, days, ""));
-  const tableQuery = useQuery(operationsFixesOptions(wsId, days, search));
+  const statsQuery = useQuery(
+    operationsFixesOptions(wsId, days, "", testPassedStatus),
+  );
+  const tableQuery = useQuery(
+    operationsFixesOptions(wsId, days, search, testPassedStatus),
+  );
   const allFixes = statsQuery.data ?? EMPTY;
+  // The feed carries Feishu status IDs. Resolve their display names before
+  // selecting the reporting pool so generic terminal states mapped to `done`
+  // cannot be mistaken for the business-specific 测试通过 state.
+  const feishuStatusNames = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const status of feishuStatusQuery.data?.statuses ?? []) {
+      if (status.key && status.name) out.set(status.key, status.name);
+    }
+    return out;
+  }, [feishuStatusQuery.data]);
   const visibleFixes = useMemo(
-    () => allFixes.filter(isOperationsVisibleIssue),
-    [allFixes],
+    () =>
+      allFixes.filter((fix) =>
+        isOperationsVisibleIssue(fix, feishuStatusNames),
+      ),
+    [allFixes, feishuStatusNames],
   );
   // Window-trimmed pools, before any filter.
   const windowFixes = useMemo(
@@ -332,31 +374,27 @@ export function OperationsPage() {
   const tableWindowFixes = useMemo(
     () =>
       trimOperationsWindow(
-        (tableQuery.data ?? EMPTY).filter(isOperationsVisibleIssue),
+        (tableQuery.data ?? EMPTY).filter((fix) =>
+          isOperationsVisibleIssue(fix, feishuStatusNames),
+        ),
         days,
         viewTZ,
       ),
-    [tableQuery.data, days, viewTZ],
+    [tableQuery.data, days, viewTZ, feishuStatusNames],
   );
-  const isLoading = statsQuery.isLoading || tableQuery.isLoading;
+  const isLoading =
+    statsQuery.isLoading || tableQuery.isLoading || feishuStatusQuery.isLoading;
   const isError =
     (statsQuery.isError && !statsQuery.data) ||
-    (tableQuery.isError && !tableQuery.data);
+    (tableQuery.isError && !tableQuery.data) ||
+    (feishuStatusQuery.isError && !feishuStatusQuery.data) ||
+    (!feishuStatusQuery.isLoading &&
+      !!feishuStatusQuery.data &&
+      !testPassedStatus);
   // The workspace's Helix Swarm URL — one connection per workspace — turns
   // review IDs and CL numbers into links. Absent connection → plain text.
   const { data: perforceData } = useQuery(perforceConnectionOptions(wsId));
   const swarmBase = perforceData?.connection?.swarm_url ?? "";
-  const hasExternalStatuses = visibleFixes.some((fix) => !!fix.external?.status);
-  const { data: feishuStatusData } = useQuery(
-    feishuProjectIssueStatusesOptions(wsId, hasExternalStatuses),
-  );
-  const feishuStatusNames = useMemo(() => {
-    const out = new Map<string, string>();
-    for (const status of feishuStatusData?.statuses ?? []) {
-      if (status.key && status.name) out.set(status.key, status.name);
-    }
-    return out;
-  }, [feishuStatusData]);
   const tx = t as unknown as UsageT;
 
   // Validate the picked agent against the current workspace's list so a stale
@@ -424,9 +462,18 @@ export function OperationsPage() {
       if (pendingOnly && !isPendingJudgement(f)) {
         return false;
       }
+      if (aiParticipatedOnly && !isAiParticipated(f)) {
+        return false;
+      }
       return true;
     };
-  }, [effectiveAgent, attributionFilter, qualityFilter, pendingOnly]);
+  }, [
+    effectiveAgent,
+    attributionFilter,
+    qualityFilter,
+    pendingOnly,
+    aiParticipatedOnly,
+  ]);
 
   const tableRows = useMemo(
     () =>
@@ -444,7 +491,8 @@ export function OperationsPage() {
     effectiveAgent !== ALL_AGENTS ||
     attributionFilter !== ALL_ATTRIBUTIONS ||
     qualityFilter !== ALL_QUALITIES ||
-    pendingOnly;
+    pendingOnly ||
+    aiParticipatedOnly;
 
   const resetDetailFilters = () => {
     setSearchInput("");
@@ -453,6 +501,7 @@ export function OperationsPage() {
     setAttributionFilter(ALL_ATTRIBUTIONS);
     setQualityFilter(ALL_QUALITIES);
     setPendingOnly(false);
+    setAiParticipatedOnly(false);
   };
 
   const kpis = useMemo(() => computeOperationsKpis(statsRows), [statsRows]);
@@ -467,6 +516,7 @@ export function OperationsPage() {
     attributionFilter,
     qualityFilter,
     pendingOnly,
+    aiParticipatedOnly,
     search,
   ]);
   const pageCount = Math.max(1, Math.ceil(tableRows.length / PAGE_SIZE));
@@ -494,6 +544,7 @@ export function OperationsPage() {
     if (filter.attribution) setAttributionFilter(filter.attribution);
     if (filter.quality) setQualityFilter(filter.quality);
     if (filter.pendingOnly) setPendingOnly(true);
+    if (filter.aiParticipatedOnly) setAiParticipatedOnly(true);
     setSheet(null);
   };
 
@@ -583,7 +634,11 @@ export function OperationsPage() {
           ) : isError ? (
             <OperationsError
               onRetry={() => {
-                void Promise.all([statsQuery.refetch(), tableQuery.refetch()]);
+                void Promise.all([
+                  statsQuery.refetch(),
+                  tableQuery.refetch(),
+                  feishuStatusQuery.refetch(),
+                ]);
               }}
             />
           ) : statsRows.length === 0 ? (
