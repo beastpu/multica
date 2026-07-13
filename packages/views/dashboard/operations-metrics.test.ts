@@ -12,7 +12,10 @@ import {
   deriveAttribution,
   fixDayIso,
   hasMissingExternalClWarning,
+  isAssignedToAgent,
   isAiParticipated,
+  noPlanReason,
+  unconvertedReason,
   isVerifiableOutput,
   trimOperationsWindow,
   swarmChangeUrl,
@@ -28,6 +31,8 @@ function fix(overrides: Partial<AgentFixRecord> = {}): AgentFixRecord {
     issue_identifier: "MUL-1",
     issue_title: "Fix it",
     issue_status: "done",
+    issue_assignee_type: "agent",
+    issue_assignee_id: "agent-1",
     started_at: null,
     completed_at: "2026-07-01T10:00:00Z",
     created_at: "2026-07-01T09:00:00Z",
@@ -227,7 +232,7 @@ describe("computeOperationsKpis", () => {
       notDone,
     ]);
     expect(kpis.funnel).toEqual({
-      total: 5,
+      total: 4,
       externalDone: 4,
       aiEngaged: 3,
       aiPlanned: 3,
@@ -249,9 +254,12 @@ describe("computeOperationsKpis", () => {
       numerator: 3,
       denominator: 4,
     });
-    // Quality only uses rows where AI reached a judgement. The unjudged direct
-    // delivery stays outside both the quality denominator and automatic count.
+    // Outcome cards only use explicit judgements. An "unknown" assessment is
+    // visible in the quality drawer but stays outside the denominator.
     expect(kpis.judgedCount).toBe(2);
+    expect(kpis.judgedCount).toBeLessThanOrEqual(
+      kpis.contributionRate.numerator,
+    );
     expect(kpis.qualityRate).toEqual({
       value: 1 / 2,
       numerator: 1,
@@ -267,9 +275,9 @@ describe("computeOperationsKpis", () => {
       numerator: 1,
       denominator: 2,
     });
-    // Demoted health counts. unassessed = notDone (no assessment at all);
-    // no fixture carries the missing_external_cl warning.
-    expect(kpis.unassessed).toBe(1);
+    // Health counts use the same assigned + external-done opportunity pool;
+    // notDone is outside it. No fixture carries missing_external_cl.
+    expect(kpis.unassessed).toBe(0);
     expect(kpis.missingExternalCl).toBe(0);
   });
 
@@ -435,9 +443,87 @@ describe("computeOperationsKpis", () => {
       participatedButUnknown,
     ]);
     expect(kpis.judgedCount).toBe(1);
-    expect(kpis.qualityRate.denominator).toBe(1);
-    expect(kpis.automaticRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
-    expect(kpis.assistedRate).toEqual({ value: 0, numerator: 0, denominator: 1 });
+    expect(kpis.qualityRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
+    expect(kpis.automaticRate).toEqual({
+      value: 1,
+      numerator: 1,
+      denominator: 1,
+    });
+    expect(kpis.assistedRate).toEqual({
+      value: 0,
+      numerator: 0,
+      denominator: 1,
+    });
+  });
+
+  it("uses current Agent assignment as the contribution opportunity pool", () => {
+    const historicalTaskOnly = fix({
+      issue_assignee_type: "",
+      issue_assignee_id: "",
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "ai_delivered",
+        quality_prediction: "likely_correct",
+      },
+    });
+    const assignedWithoutPlan = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+      },
+    });
+    expect(isAssignedToAgent(historicalTaskOnly)).toBe(false);
+    expect(isAssignedToAgent(assignedWithoutPlan)).toBe(true);
+    const kpis = computeOperationsKpis([historicalTaskOnly, assignedWithoutPlan]);
+    expect(kpis.contributionRate).toEqual({
+      value: 0,
+      numerator: 0,
+      denominator: 1,
+    });
+    expect(kpis.composition.notParticipated).toBe(1);
+  });
+
+  it("classifies contribution loss reasons into mutually exclusive buckets", () => {
+    const unconvertedHuman = fix({
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+        ai_shelved_cls: [1],
+      },
+    });
+    const unconvertedUnknown = fix({
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "unknown",
+        swarm_reviews: [{ sent_at: "2026-07-01T00:00:00Z" }],
+      },
+    });
+    const cancelled = fix({ task_status: "cancelled" });
+    const assessmentPending = fix({
+      task_status: "completed",
+      p4_assessment: { assessment_status: "pending" },
+    });
+    const commentOnly = fix({
+      task_status: "completed",
+      agent_comment_count: 1,
+    });
+    const noVisibleOutput = fix({
+      task_status: "completed",
+      agent_comment_count: 0,
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+      },
+    });
+
+    expect(unconvertedReason(unconvertedHuman)).toBe("human_delivered");
+    expect(unconvertedReason(unconvertedUnknown)).toBe("evidence_unconfirmed");
+    expect(noPlanReason(cancelled)).toBe("task_cancelled");
+    expect(noPlanReason(assessmentPending)).toBe("assessment_incomplete");
+    expect(noPlanReason(commentOnly)).toBe("comment_only");
+    expect(noPlanReason(noVisibleOutput)).toBe("no_visible_output");
   });
 
   it("counts a comment-only plan as engaged but not planned or participated", () => {
@@ -504,6 +590,7 @@ describe("computeOperationsKpis", () => {
 
 describe("distribution buckets reconcile with the KPI numerators", () => {
   const completedUnknown = fix({
+    external: { done: true },
     p4_assessment: {
       assessment_status: "completed",
       delivery_attribution_prediction: "unknown",
@@ -511,13 +598,16 @@ describe("distribution buckets reconcile with the KPI numerators", () => {
     },
   });
   const running = fix({
+    external: { done: true },
     p4_assessment: { assessment_status: "running" },
   });
   const failed = fix({
+    external: { done: true },
     p4_assessment: { assessment_status: "failed", quality_prediction: "unknown" },
   });
-  const neverAssessed = fix();
+  const neverAssessed = fix({ external: { done: true } });
   const passed = fix({
+    external: { done: true },
     p4_assessment: {
       assessment_status: "completed",
       delivery_attribution_prediction: "ai_delivered",

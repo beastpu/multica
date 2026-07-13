@@ -274,8 +274,8 @@ const FIXES = vi.hoisted(() => [
     },
   },
   // External done, synced from Meegle, but no Agent was assigned and no normal
-  // repair task exists. It must stay in the contribution denominator and
-  // explain the unhandled reason.
+  // repair task exists. The Operations opportunity pool is explicitly scoped
+  // to current Agent assignments, so this row must stay out of every metric.
   {
     task_id: "",
     agent_id: "",
@@ -581,8 +581,8 @@ describe("OperationsPage", () => {
     expect(screen.getAllByText("测试通过").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText("test-passed")).toBeNull();
 
-    // Agent name appears for each picked-up visible row. The unassigned row
-    // remains in the reporting pool but has no agent label.
+    // Agent name appears for each visible row. The unassigned row is outside
+    // the reporting pool and therefore absent from the detail table.
     expect(screen.getAllByText("Fixer").length).toBe(5);
     expect(screen.getByText("Reviewer")).toBeTruthy();
 
@@ -619,7 +619,9 @@ describe("OperationsPage", () => {
     expect(screen.getByText("AI repair quality")).toBeTruthy();
     expect(screen.getByText("AI automatic repairs")).toBeTruthy();
     expect(screen.getByText("AI-assisted repairs")).toBeTruthy();
-    expect(screen.getByText("1 marked pass / 2 judged")).toBeTruthy();
+    expect(
+      screen.getByText("1 marked pass / 2 judged by AI"),
+    ).toBeTruthy();
     expect(
       screen.getByText(
         "1 direct AI submission passed / 2 judged by AI",
@@ -645,21 +647,21 @@ describe("OperationsPage", () => {
 
     expect(
       screen.getByText(
-        "Last 30 days: 7 Feishu test-passed and synced done, 2 picked up by AI, with 2 AI quality judgements.",
+        "Last 30 days: 6 assigned to an Agent, 2 picked up by AI, and 2 judged for quality.",
       ),
     ).toBeTruthy();
     const composition = screen.getByRole("region", {
       name: "AI delivery composition",
     });
     expect(composition.textContent).toContain(
-      "AI involved 2 / 7 test-passed and synced done",
+      "AI picked up 2 / 6 assigned to an Agent",
     );
-    expect(composition.textContent).toContain("AI automatic repair1· 14%");
+    expect(composition.textContent).toContain("AI automatic repair1· 17%");
     expect(composition.textContent).toContain(
-      "AI-assisted (including unconverted)1· 14%",
+      "AI-assisted (including unconverted)1· 17%",
     );
     expect(composition.textContent).toContain(
-      "No AI delivery involvement5· 71%",
+      "No verifiable plan found4· 67%",
     );
   });
 
@@ -681,30 +683,18 @@ describe("OperationsPage", () => {
     ).toBeNull();
   });
 
-  it("keeps unassigned test-passed synced-done items in contribution and explains why", async () => {
-    const user = userEvent.setup();
+  it("excludes items that are not currently assigned to an Agent", () => {
     renderWithI18n(<OperationsPage />);
 
-    expect(screen.getByText("No agent pickup")).toBeTruthy();
-    expect(screen.getByText("No Agent assigned")).toBeTruthy();
+    expect(screen.queryByText("No agent pickup")).toBeNull();
     expect(
       screen.getByText(
-        "2 picked up by AI / 7 Feishu test-passed and synced done",
+        "2 picked up by AI / 6 assigned to an Agent",
       ),
     ).toBeTruthy();
-
-    await user.click(
-      screen.getByRole("button", { name: /AI repair contribution/ }),
-    );
-    const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Why AI did not pick it up")).toBeTruthy();
-    await user.click(
-      within(dialog).getByRole("button", { name: /No Agent assigned/ }),
-    );
-    expect(within(dialog).getByText("No agent pickup")).toBeTruthy();
   });
 
-  it("shows assessment blockers inside the contribution drawer", async () => {
+  it("shows non-conversion and no-plan reasons inside the contribution drawer", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
@@ -712,11 +702,11 @@ describe("OperationsPage", () => {
       screen.getByRole("button", { name: /AI repair contribution/ }),
     );
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Picked-up items")).toBeTruthy();
-    expect(within(dialog).getByText("Assessment blocker reasons")).toBeTruthy();
-    expect(within(dialog).queryByText("Auth failed")).toBeNull();
+    expect(within(dialog).getByText("Picked up by AI")).toBeTruthy();
+    expect(within(dialog).getByText("Why conversion is unconfirmed")).toBeTruthy();
+    expect(within(dialog).getByText("Why no verifiable plan was found")).toBeTruthy();
     await user.click(
-      within(dialog).getByRole("button", { name: /P4 \/ shelve unreachable/ }),
+      within(dialog).getByRole("button", { name: /Delivered independently by a human/ }),
     );
     expect(within(dialog).getByText("Client crash")).toBeTruthy();
   });
@@ -730,7 +720,7 @@ describe("OperationsPage", () => {
     );
     const dialog = screen.getByRole("dialog");
     await user.click(
-      within(dialog).getByRole("button", { name: /Assessment complete/ }),
+      within(dialog).getByRole("button", { name: /Picked up by AI/ }),
     );
     await user.click(
       within(dialog).getByRole("button", { name: /Login broke/ }),
@@ -1158,7 +1148,7 @@ describe("OperationsPage", () => {
     // full page-level pool while the table is narrowed by the search.
     expect(
       screen.getByText(
-        "Last 30 days: 7 Feishu test-passed and synced done, 2 picked up by AI, with 2 AI quality judgements.",
+        "Last 30 days: 6 assigned to an Agent, 2 picked up by AI, and 2 judged for quality.",
       ),
     ).toBeTruthy();
   });

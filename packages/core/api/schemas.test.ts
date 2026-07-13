@@ -560,6 +560,8 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
     expect(parsed[0]?.issue_identifier).toBe("");
     expect(parsed[0]?.last_comment).toBe("");
     expect(parsed[0]?.last_comment_author_type).toBe("");
+    expect(parsed[0]?.issue_assignee_type).toBeUndefined();
+    expect(parsed[0]?.issue_assignee_id).toBeUndefined();
     // Nullable timestamps default to null, never undefined, so downstream
     // `=== null` checks behave.
     expect(parsed[0]?.started_at).toBeNull();
@@ -571,6 +573,27 @@ describe("AgentFixRecordListSchema drift (Operations tab)", () => {
       { task_id: "t1", issue_status: "triaged" },
     ]);
     expect(parsed[0]?.issue_status).toBe("triaged");
+  });
+
+  it("keeps the current issue assignee separate from the latest task agent", () => {
+    const parsed = AgentFixRecordListSchema.parse([
+      {
+        task_id: "task-1",
+        agent_id: "historical-agent",
+        issue_assignee_type: "agent",
+        issue_assignee_id: "current-agent",
+      },
+      {
+        task_id: "task-2",
+        agent_id: "historical-agent",
+        issue_assignee_type: 42,
+        issue_assignee_id: null,
+      },
+    ]);
+    expect(parsed[0]?.issue_assignee_type).toBe("agent");
+    expect(parsed[0]?.issue_assignee_id).toBe("current-agent");
+    expect(parsed[1]?.issue_assignee_type).toBeUndefined();
+    expect(parsed[1]?.issue_assignee_id).toBeUndefined();
   });
 
   it("degrades to the fallback via parseWithFallback on a non-array body", () => {

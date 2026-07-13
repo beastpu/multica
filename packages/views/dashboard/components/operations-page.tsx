@@ -85,6 +85,7 @@ import {
   firstSwarmReviewUrl,
   hasP4Signal,
   fixDayIso,
+  isAssignedToAgent,
   isAiParticipated,
   isPendingJudgement,
   qualityBucket,
@@ -222,6 +223,7 @@ function isOperationsVisibleIssue(
   return (
     hasExternalBinding &&
     fix.issue_status === "done" &&
+    isAssignedToAgent(fix) &&
     statusName === FEISHU_TEST_PASSED_STATUS_NAME
   );
 }
@@ -791,7 +793,7 @@ export function OperationsPage() {
                             <span className="min-w-0 truncate text-sm">
                               {agent?.name ||
                                 f.agent_name ||
-                                t(($) => $.operations.drawer.no_agent)}
+                                "—"}
                             </span>
                           </div>
                           <P4EvidenceCell fix={f} swarmBase={swarmBase} />

@@ -21,16 +21,20 @@ import {
   type UsageT,
 } from "./agent-fix-review";
 import {
-  blockedWarningFamily,
   deriveAttribution,
   derivedEvidence,
+  deliveryRole,
   firstSwarmReviewUrl,
   fixDayIso,
   hasP4Signal,
+  isAssignedToAgent,
   isAiParticipated,
+  isAiParticipatedAndAssessed,
+  isExternalDone,
+  noPlanReason,
   qualityJudgement,
   swarmReviewUrl,
-  type BlockedFamily,
+  unconvertedReason,
 } from "../operations-metrics";
 
 // ---------------------------------------------------------------------------
@@ -71,9 +75,8 @@ interface BranchDef {
   rows: AgentFixRecord[];
   section?:
     | "main"
-    | "assessment"
-    | "assessment_reason"
-    | "unhandled";
+    | "unconverted_reason"
+    | "no_plan_reason";
   drill?: OperationsDrillFilter;
 }
 
@@ -90,93 +93,6 @@ function cardTitle(
     : t(($) => $.operations.summary.quality_rate);
 }
 
-function blockedFamilyLabel(
-  family: BlockedFamily,
-  t: ReturnType<typeof useT<"usage">>["t"],
-): string {
-  return family === "auth"
-    ? t(($) => $.operations.analysis.blocked_auth)
-    : family === "identification"
-      ? t(($) => $.operations.analysis.blocked_identification)
-      : family === "swarm"
-        ? t(($) => $.operations.analysis.blocked_swarm)
-        : family === "p4"
-          ? t(($) => $.operations.analysis.blocked_p4)
-          : family === "evidence_endpoint"
-            ? t(($) => $.operations.analysis.blocked_evidence)
-            : t(($) => $.operations.analysis.blocked_misc);
-}
-
-const BLOCKED_FAMILY_ORDER: BlockedFamily[] = [
-  "auth",
-  "identification",
-  "swarm",
-  "p4",
-  "evidence_endpoint",
-  "other",
-];
-
-function blockedBranches(
-  rows: AgentFixRecord[],
-  t: ReturnType<typeof useT<"usage">>["t"],
-): BranchDef[] {
-  const byFamily = new Map<BlockedFamily, AgentFixRecord[]>();
-  for (const fix of rows) {
-    const families = new Set<BlockedFamily>();
-    for (const warning of fix.p4_assessment?.warnings ?? []) {
-      const family = blockedWarningFamily(String(warning));
-      if (family) families.add(family);
-    }
-    for (const family of families) {
-      const list = byFamily.get(family) ?? [];
-      list.push(fix);
-      byFamily.set(family, list);
-    }
-  }
-  return BLOCKED_FAMILY_ORDER.filter((family) => byFamily.has(family)).map(
-    (family) => ({
-      key: `blocked_${family}`,
-      label: blockedFamilyLabel(family, t),
-      rows: byFamily.get(family)!,
-      section: "assessment_reason",
-    }),
-  );
-}
-
-function hasBlockedAssessment(fix: AgentFixRecord): boolean {
-  if (fix.p4_assessment?.assessment_status === "failed") return true;
-  return (fix.p4_assessment?.warnings ?? []).some(
-    (warning) => blockedWarningFamily(String(warning)) !== null,
-  );
-}
-
-function failedAssessmentBranches(
-  rows: AgentFixRecord[],
-  t: ReturnType<typeof useT<"usage">>["t"],
-): BranchDef[] {
-  const byReason = new Map<string, AgentFixRecord[]>();
-  for (const fix of rows) {
-    if (fix.p4_assessment?.assessment_status !== "failed") continue;
-    const hasFamilyReason = (fix.p4_assessment?.warnings ?? []).some(
-      (warning) => blockedWarningFamily(String(warning)) !== null,
-    );
-    if (hasFamilyReason) continue;
-    const reason =
-      fix.p4_assessment?.last_error?.trim() ||
-      fix.task_failure_reason?.trim() ||
-      t(($) => $.operations.drawer.assessment_failed);
-    const list = byReason.get(reason) ?? [];
-    list.push(fix);
-    byReason.set(reason, list);
-  }
-  return Array.from(byReason.entries()).map(([reason, reasonRows], index) => ({
-    key: `assessment_failed_${index}`,
-    label: reason,
-    rows: reasonRows,
-    section: "assessment_reason",
-  }));
-}
-
 function cardBranches(
   card: OperationsCardKey,
   rows: AgentFixRecord[],
@@ -184,16 +100,13 @@ function cardBranches(
   tx: UsageT,
 ): BranchDef[] {
   if (card === "contribution") {
-    const handled = rows.filter(isAiParticipated);
-    const unhandled = rows.filter((f) => !isAiParticipated(f));
-    const blocked = handled.filter(hasBlockedAssessment);
-    const completed = handled.filter(
-      (f) =>
-        f.p4_assessment?.assessment_status === "completed" &&
-        !hasBlockedAssessment(f),
+    const assigned = rows.filter(
+      (fix) => isExternalDone(fix) && isAssignedToAgent(fix),
     );
-    const pending = handled.filter(
-      (f) => !blocked.includes(f) && !completed.includes(f),
+    const handled = assigned.filter(isAiParticipated);
+    const unhandled = assigned.filter((fix) => !isAiParticipated(fix));
+    const unconverted = assigned.filter(
+      (fix) => deliveryRole(fix) === "unconverted",
     );
     return [
       {
@@ -209,45 +122,69 @@ function cardBranches(
         section: "main",
       },
       {
-        key: "assessment_completed",
-        label: t(($) => $.operations.drawer.assessment_completed),
-        rows: completed,
-        section: "assessment",
+        key: "unconverted_evidence_unconfirmed",
+        label: t(($) => $.operations.drawer.unconverted_evidence_unconfirmed),
+        rows: unconverted.filter(
+          (fix) => unconvertedReason(fix) === "evidence_unconfirmed",
+        ),
+        section: "unconverted_reason",
       },
       {
-        key: "assessment_blocked",
-        label: t(($) => $.operations.drawer.assessment_blocked),
-        rows: blocked,
-        section: "assessment",
+        key: "unconverted_human_delivered",
+        label: t(($) => $.operations.drawer.unconverted_human_delivered),
+        rows: unconverted.filter(
+          (fix) => unconvertedReason(fix) === "human_delivered",
+        ),
+        section: "unconverted_reason",
       },
       {
-        key: "assessment_pending",
-        label: t(($) => $.operations.drawer.assessment_pending),
-        rows: pending,
-        section: "assessment",
-      },
-      ...blockedBranches(blocked, t),
-      ...failedAssessmentBranches(blocked, t),
-      {
-        key: "no_agent",
-        label: t(($) => $.operations.drawer.no_agent),
-        rows: unhandled.filter((f) => f.agent_id.trim() === ""),
-        section: "unhandled",
+        key: "unconverted_attribution_conflict",
+        label: t(($) => $.operations.drawer.unconverted_attribution_conflict),
+        rows: unconverted.filter(
+          (fix) => unconvertedReason(fix) === "attribution_conflict",
+        ),
+        section: "unconverted_reason",
       },
       {
-        key: "not_dispatched",
-        label: t(($) => $.operations.drawer.not_dispatched),
-        rows: unhandled.filter((f) => f.agent_id.trim() !== ""),
-        section: "unhandled",
+        key: "no_plan_comment_only",
+        label: t(($) => $.operations.drawer.no_plan_comment_only),
+        rows: unhandled.filter(
+          (fix) => noPlanReason(fix) === "comment_only",
+        ),
+        section: "no_plan_reason",
+      },
+      {
+        key: "no_plan_no_visible_output",
+        label: t(($) => $.operations.drawer.no_plan_no_visible_output),
+        rows: unhandled.filter(
+          (fix) => noPlanReason(fix) === "no_visible_output",
+        ),
+        section: "no_plan_reason",
+      },
+      {
+        key: "no_plan_task_cancelled",
+        label: t(($) => $.operations.drawer.no_plan_task_cancelled),
+        rows: unhandled.filter(
+          (fix) => noPlanReason(fix) === "task_cancelled",
+        ),
+        section: "no_plan_reason",
+      },
+      {
+        key: "no_plan_assessment_incomplete",
+        label: t(($) => $.operations.drawer.no_plan_assessment_incomplete),
+        rows: unhandled.filter(
+          (fix) => noPlanReason(fix) === "assessment_incomplete",
+        ),
+        section: "no_plan_reason",
       },
     ];
   }
-  const participated = rows.filter(isAiParticipated);
+  const assessed = rows.filter(isAiParticipatedAndAssessed);
   return [
     {
       key: "likely_correct",
       label: agentFixEnumLabel(tx, "quality", "likely_correct"),
-      rows: participated.filter(
+      rows: assessed.filter(
         (f) => qualityJudgement(f) === "likely_correct",
       ),
       drill: { quality: "likely_correct", aiParticipatedOnly: true },
@@ -255,7 +192,7 @@ function cardBranches(
     {
       key: "likely_needs_changes",
       label: agentFixEnumLabel(tx, "quality", "likely_needs_changes"),
-      rows: participated.filter(
+      rows: assessed.filter(
         (f) => qualityJudgement(f) === "likely_needs_changes",
       ),
       drill: { quality: "likely_needs_changes", aiParticipatedOnly: true },
@@ -263,14 +200,14 @@ function cardBranches(
     {
       key: "likely_wrong",
       label: agentFixEnumLabel(tx, "quality", "likely_wrong"),
-      rows: participated.filter((f) => qualityJudgement(f) === "likely_wrong"),
+      rows: assessed.filter((f) => qualityJudgement(f) === "likely_wrong"),
       drill: { quality: "likely_wrong", aiParticipatedOnly: true },
     },
     {
       key: "unknown",
       label: agentFixEnumLabel(tx, "quality", "unknown"),
-      rows: participated.filter((f) => qualityJudgement(f) === ""),
-      drill: { pendingOnly: true, aiParticipatedOnly: true },
+      rows: assessed.filter((f) => qualityJudgement(f) === ""),
+      drill: { quality: "unknown", aiParticipatedOnly: true },
     },
   ];
 }
@@ -432,22 +369,27 @@ function CardPanel({
         </SheetDescription>
       </SheetHeader>
       <div className="grid gap-1 px-4 pb-6">
-        {([
-          "main",
-          "assessment",
-          "assessment_reason",
-          "unhandled",
-        ] as const).map(
+        {(["main", "unconverted_reason", "no_plan_reason"] as const).map(
           (section) => {
             const sectionBranches = branches.filter(
               (branch) => (branch.section ?? "main") === section,
             );
             if (sectionBranches.length === 0) return null;
             const denominator =
-              section === "assessment" || section === "assessment_reason"
-                ? rows.filter((f) => f.task_id.trim() !== "").length
-                : section === "unhandled"
-                  ? rows.filter((f) => f.task_id.trim() === "").length
+              section === "unconverted_reason"
+                ? rows.filter(
+                    (fix) =>
+                      isExternalDone(fix) &&
+                      isAssignedToAgent(fix) &&
+                      deliveryRole(fix) === "unconverted",
+                  ).length
+                : section === "no_plan_reason"
+                  ? rows.filter(
+                      (fix) =>
+                        isExternalDone(fix) &&
+                        isAssignedToAgent(fix) &&
+                        !isAiParticipated(fix),
+                    ).length
                   : total;
             const max = Math.max(
               1,
@@ -464,11 +406,9 @@ function CardPanel({
               >
                 {section !== "main" ? (
                   <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-                    {section === "assessment"
-                      ? t(($) => $.operations.drawer.handled_breakdown)
-                      : section === "assessment_reason"
-                        ? t(($) => $.operations.drawer.blocked_reasons)
-                        : t(($) => $.operations.drawer.unhandled_reasons)}
+                    {section === "unconverted_reason"
+                      ? t(($) => $.operations.drawer.unconverted_reasons)
+                      : t(($) => $.operations.drawer.no_plan_reasons)}
                   </div>
                 ) : null}
                 {sectionBranches.map((branch) =>

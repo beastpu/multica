@@ -846,6 +846,10 @@ const AgentFixRecordSchema = z.object({
   issue_identifier: z.string().default(""),
   issue_title: z.string().default(""),
   issue_status: z.string().default(""),
+  // Keep absence distinguishable for older servers so the dashboard can use
+  // its compatibility fallback. Drifted types degrade to absent per-row.
+  issue_assignee_type: z.string().optional().catch(undefined),
+  issue_assignee_id: z.string().optional().catch(undefined),
   last_comment: z.string().default(""),
   last_comment_author_type: z.string().default(""),
   // Absent (old server / zero + omitempty) must stay absent — the dashboard
