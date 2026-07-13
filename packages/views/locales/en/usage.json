@@ -100,8 +100,9 @@
       "composition_direct": "AI automatic repair",
       "composition_assisted": "AI-assisted repair",
       "assisted_with_unconverted": "AI-assisted (including unconverted)",
+      "composition_not_participated": "No AI delivery involvement",
       "composition_unconverted": "Involved, unconverted",
-      "composition_empty": "No AI-involved external-done tickets in this window.",
+      "composition_empty": "No external-done tickets in this window.",
       "health_footnote_hint": "Unassessed = assessment not completed yet (queue state); missing human CL = the external item is done but no submitted CL exists in any evidence source"
     },
     "fetch_cap_notice": "Hit the {{limit}}-row fetch cap — this window may be incomplete",

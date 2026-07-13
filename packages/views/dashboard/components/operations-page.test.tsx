@@ -563,7 +563,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
 
-  it("renders the plain-language pickup overview without duplicate charts", () => {
+  it("renders the pickup overview and a complete delivery composition", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(
@@ -571,7 +571,19 @@ describe("OperationsPage", () => {
         "Last 30 days: 7 external done, 6 picked up by AI, with 2 verifiable AI repair plans.",
       ),
     ).toBeTruthy();
-    expect(screen.queryByText("AI delivery composition")).toBeNull();
+    const composition = screen.getByRole("region", {
+      name: "AI delivery composition",
+    });
+    expect(composition.textContent).toContain(
+      "AI involved 2 / 7 external done",
+    );
+    expect(composition.textContent).toContain("AI automatic repair1· 14%");
+    expect(composition.textContent).toContain(
+      "AI-assisted (including unconverted)1· 14%",
+    );
+    expect(composition.textContent).toContain(
+      "No AI delivery involvement5· 71%",
+    );
   });
 
   it("opens the rate-card breakdown drawer and drills into the detail table", async () => {

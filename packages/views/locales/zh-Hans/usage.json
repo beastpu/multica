@@ -100,8 +100,9 @@
       "composition_direct": "AI 自动修复",
       "composition_assisted": "AI 辅助修复",
       "assisted_with_unconverted": "AI 辅助修复（含参与未转化）",
+      "composition_not_participated": "AI 未参与交付",
       "composition_unconverted": "参与未转化",
-      "composition_empty": "当前窗口没有 AI 参与的外部完成单。",
+      "composition_empty": "当前窗口没有外部完成单。",
       "health_footnote_hint": "未评估 = 评估尚未完成的单（队列状态）；未回填 CL = 外部单已完成但任何证据源都没有提交 CL 记录"
     },
     "fetch_cap_notice": "已达单次拉取上限 {{limit}} 条，当前窗口可能未完整覆盖",
