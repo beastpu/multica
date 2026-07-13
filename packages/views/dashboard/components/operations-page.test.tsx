@@ -656,12 +656,12 @@ describe("OperationsPage", () => {
     expect(composition.textContent).toContain(
       "AI picked up 2 / 6 assigned to an Agent",
     );
-    expect(composition.textContent).toContain("AI automatic repair1· 17%");
+    expect(composition.textContent).toContain("AI automatic repair1 · 17%");
     expect(composition.textContent).toContain(
-      "AI-assisted (including unconverted)1· 17%",
+      "AI-assisted (including unconverted)1 · 17%",
     );
     expect(composition.textContent).toContain(
-      "No verifiable plan found4· 67%",
+      "No verifiable plan found4 · 67%",
     );
   });
 
