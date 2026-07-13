@@ -399,18 +399,29 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 // canManageSkill checks whether the current user can update or delete a skill.
 // The skill creator or workspace owner/admin can manage any skill.
 func (h *Handler) canManageSkill(w http.ResponseWriter, r *http.Request, skill db.Skill) bool {
+	_, ok := h.canManageSkillRole(w, r, skill)
+	return ok
+}
+
+// canManageSkillRole is canManageSkill plus the caller's privilege level: isAdmin
+// reports whether the caller is authorized as a workspace owner/admin (as
+// opposed to being authorized solely because they created the skill). Callers
+// that need to widen a downstream permission for admins — e.g. UpgradeSkill,
+// which lets an admin overwrite a skill they did not create — read isAdmin here
+// instead of re-deriving the role.
+func (h *Handler) canManageSkillRole(w http.ResponseWriter, r *http.Request, skill db.Skill) (isAdmin bool, ok bool) {
 	wsID := uuidToString(skill.WorkspaceID)
-	member, ok := h.requireWorkspaceRole(w, r, wsID, "skill not found", "owner", "admin", "member")
-	if !ok {
-		return false
+	member, mok := h.requireWorkspaceRole(w, r, wsID, "skill not found", "owner", "admin", "member")
+	if !mok {
+		return false, false
 	}
-	isAdmin := roleAllowed(member.Role, "owner", "admin")
+	isAdmin = roleAllowed(member.Role, "owner", "admin")
 	isSkillCreator := skill.CreatedBy.Valid && uuidToString(skill.CreatedBy) == requestUserID(r)
 	if !isAdmin && !isSkillCreator {
 		writeError(w, http.StatusForbidden, "only the skill creator can manage this skill")
-		return false
+		return false, false
 	}
-	return true
+	return isAdmin, true
 }
 
 // canOverwriteSkillByLocalImport reports whether userID may overwrite skill via
@@ -831,6 +842,36 @@ func detectImportSource(raw string) (importSource, string, error) {
 		}
 		return 0, "", fmt.Errorf("unsupported source: %s (supported: clawhub.ai, skills.sh, github.com, Atlas Skill Hub)", host)
 	}
+}
+
+// fetchImportedSkillFromSource resolves an already-detected source + normalized
+// URL to its extracted bundle. Shared by ImportSkill (which reports a detection
+// failure as 400 separately) and fetchImportedSkill.
+func fetchImportedSkillFromSource(source importSource, normalized string) (*importedSkill, error) {
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	switch source {
+	case sourceClawHub:
+		return fetchFromClawHub(httpClient, normalized)
+	case sourceSkillsSh:
+		return fetchFromSkillsSh(httpClient, normalized)
+	case sourceGitHub:
+		return fetchFromGitHub(httpClient, normalized)
+	case sourceAtlasSkillHub:
+		return fetchFromAtlasSkillHub(httpClient, normalized)
+	default:
+		return nil, fmt.Errorf("unsupported import source")
+	}
+}
+
+// fetchImportedSkill resolves a hosted skill URL to its extracted bundle,
+// detecting the source and dispatching to the matching fetcher. UpgradeSkill
+// uses it to re-pull a skill from the source URL recorded in config.origin.
+func fetchImportedSkill(rawURL string) (*importedSkill, error) {
+	source, normalized, err := detectImportSource(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	return fetchImportedSkillFromSource(source, normalized)
 }
 
 // --- ClawHub import ---
@@ -2075,8 +2116,10 @@ func (h *Handler) resolveImportSkillConflict(w http.ResponseWriter, r *http.Requ
 		resp, err := h.overwriteSkillWithFiles(r.Context(), skillOverwriteInput{
 			WorkspaceID:   workspaceUUID,
 			TargetSkillID: existing.ID,
-			UserID:        creatorID,
-			ExpectedName:  name,
+			Permit: func(s db.Skill) bool {
+				return canOverwriteSkillByLocalImport(creatorID, s)
+			},
+			ExpectedName: name,
 			Description:   imported.description,
 			Content:       imported.content,
 			Config:        config,
@@ -2165,19 +2208,7 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-
-	var imported *importedSkill
-	switch source {
-	case sourceClawHub:
-		imported, err = fetchFromClawHub(httpClient, normalized)
-	case sourceSkillsSh:
-		imported, err = fetchFromSkillsSh(httpClient, normalized)
-	case sourceGitHub:
-		imported, err = fetchFromGitHub(httpClient, normalized)
-	case sourceAtlasSkillHub:
-		imported, err = fetchFromAtlasSkillHub(httpClient, normalized)
-	}
+	imported, err := fetchImportedSkillFromSource(source, normalized)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -2250,6 +2281,105 @@ func (h *Handler) finishSkillImport(w http.ResponseWriter, r *http.Request, work
 		return
 	}
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// skillOriginSourceURL extracts the re-fetchable import URL recorded in a
+// skill's config.origin.source_url. Every URL or archive import stores it (see
+// finishSkillImport / importSkillFromArchive); skills authored by hand or
+// materialized from an agent template have no origin and cannot be upgraded
+// from a source.
+func skillOriginSourceURL(config []byte) (string, bool) {
+	if len(config) == 0 {
+		return "", false
+	}
+	var parsed struct {
+		Origin struct {
+			SourceURL string `json:"source_url"`
+		} `json:"origin"`
+	}
+	if err := json.Unmarshal(config, &parsed); err != nil {
+		return "", false
+	}
+	sourceURL := strings.TrimSpace(parsed.Origin.SourceURL)
+	if sourceURL == "" {
+		return "", false
+	}
+	return sourceURL, true
+}
+
+// UpgradeSkill re-fetches a skill from its recorded import source
+// (config.origin.source_url) and overwrites it in place. The row is preserved —
+// id, created_by, created_at, name, and every agent_skill binding stay intact —
+// so this is the supported way to pull the latest version of an installed skill
+// (Atlas Skill Hub, GitHub, Skills.sh, ClawHub) without the delete + re-import
+// churn that would otherwise drop agent bindings via the agent_skill
+// ON DELETE CASCADE.
+//
+// Authorization mirrors UpdateSkill (canManageSkill): the skill creator or a
+// workspace owner/admin may upgrade. That is intentionally broader than the
+// creator-only overwrite-on-import rule — an admin must be able to upgrade a
+// skill a teammate first installed, especially after that teammate has left.
+func (h *Handler) UpgradeSkill(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	skill, ok := h.loadSkillForUser(w, r, id)
+	if !ok {
+		return
+	}
+	isAdmin, ok := h.canManageSkillRole(w, r, skill)
+	if !ok {
+		return
+	}
+
+	sourceURL, ok := skillOriginSourceURL(skill.Config)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "this skill has no recorded import source to upgrade from")
+		return
+	}
+
+	imported, err := fetchImportedSkill(sourceURL)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to fetch the latest skill from its source: "+err.Error())
+		return
+	}
+
+	files := make([]CreateSkillFileRequest, 0, len(imported.files))
+	for _, f := range imported.files {
+		if !validateFilePath(f.path) {
+			continue
+		}
+		files = append(files, CreateSkillFileRequest{Path: f.path, Content: f.content})
+	}
+
+	config := map[string]any{}
+	if imported.origin != nil {
+		config["origin"] = imported.origin
+	}
+
+	userID := requestUserID(r)
+	// ExpectedName is deliberately left empty: an upgrade targets this skill by
+	// id and keeps its existing name (UpdateSkill leaves the name unset), so a
+	// renamed upstream skill must not block pulling its latest content.
+	resp, err := h.overwriteSkillWithFiles(r.Context(), skillOverwriteInput{
+		WorkspaceID:   skill.WorkspaceID,
+		TargetSkillID: skill.ID,
+		Permit: func(s db.Skill) bool {
+			return isAdmin || (s.CreatedBy.Valid && uuidToString(s.CreatedBy) == userID)
+		},
+		Description: imported.description,
+		Content:     imported.content,
+		Config:      config,
+		Files:       files,
+	})
+	if err != nil {
+		status, reason := skillImportOverwriteFailure(err)
+		writeError(w, status, reason)
+		return
+	}
+
+	wsID := uuidToString(skill.WorkspaceID)
+	actorType, actorID := h.resolveActor(r, userID, wsID)
+	h.publish(protocol.EventSkillUpdated, wsID, actorType, actorID, map[string]any{"skill": resp})
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // --- Skill File endpoints ---

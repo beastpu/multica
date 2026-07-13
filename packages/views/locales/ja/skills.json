@@ -94,6 +94,8 @@
     "read_only": "読み取り専用",
     "delete_aria": "スキルを削除",
     "delete_tooltip": "スキルを削除",
+    "upgrade_aria": "スキルをアップグレード",
+    "upgrade_tooltip": "取得元から最新バージョンを再取得します（エージェントの割り当ては保持されます）",
     "supporting_data_warning": "一部のワークスペースデータを読み込めませんでした。次回の更新まで、作成者の表示、ランタイム名、編集権限が不完全に見える場合があります。",
     "files_label": "ファイル · {{count}}",
     "add_file_aria": "ファイルを追加",
@@ -155,6 +157,8 @@
     "toast_save_failed": "スキルを保存できませんでした",
     "toast_deleted": "スキルを削除しました",
     "toast_delete_failed": "スキルを削除できませんでした",
+    "toast_upgraded": "取得元からスキルをアップグレードしました",
+    "toast_upgrade_failed": "スキルをアップグレードできませんでした",
     "delete_dialog": {
       "title": "スキルを削除しますか？",
       "description_with_agents_other": "「{{name}}」を完全に削除し、現在使用中の {{count}} 個のエージェントから削除します。",

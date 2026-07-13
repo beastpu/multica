@@ -63,6 +63,13 @@ var skillImportCmd = &cobra.Command{
 	RunE:  runSkillImport,
 }
 
+var skillUpgradeCmd = &cobra.Command{
+	Use:   "upgrade <id>",
+	Short: "Re-fetch a skill from its original import source and overwrite it in place, preserving agent bindings",
+	Args:  exactArgs(1),
+	RunE:  runSkillUpgrade,
+}
+
 var skillSearchCmd = &cobra.Command{
 	Use:   "search <query>",
 	Short: "Search for installable skills",
@@ -105,6 +112,7 @@ func init() {
 	skillCmd.AddCommand(skillUpdateCmd)
 	skillCmd.AddCommand(skillDeleteCmd)
 	skillCmd.AddCommand(skillImportCmd)
+	skillCmd.AddCommand(skillUpgradeCmd)
 	skillCmd.AddCommand(skillSearchCmd)
 	skillCmd.AddCommand(skillFilesCmd)
 
@@ -144,6 +152,9 @@ func init() {
 	skillImportCmd.Flags().String("file", "", "Path to a local skill archive (.skill or .zip) to import. Mutually exclusive with --url.")
 	skillImportCmd.Flags().String("on-conflict", "fail", "Conflict strategy when a skill with the same name exists: fail, overwrite, rename, or skip")
 	skillImportCmd.Flags().String("output", "json", "Output format: table or json")
+
+	// skill upgrade
+	skillUpgradeCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// skill search
 	skillSearchCmd.Flags().String("output", "json", "Output format: table or json")
@@ -408,6 +419,29 @@ func runSkillDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Skill deleted: %s\n", args[0])
+	return nil
+}
+
+func runSkillUpgrade(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	var result map[string]any
+	if err := client.PostJSON(ctx, "/api/skills/"+args[0]+"/upgrade", nil, &result); err != nil {
+		return fmt.Errorf("upgrade skill: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+
+	fmt.Printf("Skill upgraded: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
 	return nil
 }
 

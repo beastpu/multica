@@ -838,11 +838,14 @@ func (h *Handler) ReportLocalSkillImportResult(w http.ResponseWriter, r *http.Re
 			writeError(w, http.StatusInternalServerError, failMsg)
 			return
 		}
+		creatorID := req.CreatorID
 		resp, oerr := h.overwriteSkillWithFiles(r.Context(), skillOverwriteInput{
 			WorkspaceID:   rt.WorkspaceID,
 			TargetSkillID: targetUUID,
-			UserID:        req.CreatorID,
-			ExpectedName:  sanitizeNullBytes(name),
+			Permit: func(s db.Skill) bool {
+				return canOverwriteSkillByLocalImport(creatorID, s)
+			},
+			ExpectedName: sanitizeNullBytes(name),
 			Description:   description,
 			Content:       body.Skill.Content,
 			Config:        config,

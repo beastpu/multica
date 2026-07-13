@@ -99,6 +99,8 @@
     "read_only": "Read-only",
     "delete_aria": "Delete skill",
     "delete_tooltip": "Delete skill",
+    "upgrade_aria": "Upgrade skill",
+    "upgrade_tooltip": "Re-fetch the latest version from its source (keeps agent assignments)",
     "supporting_data_warning": "Some workspace data failed to load. Creator attribution, runtime names, or edit permissions may appear incomplete until the next refresh.",
     "files_label": "Files · {{count}}",
     "add_file_aria": "Add file",
@@ -161,6 +163,8 @@
     "toast_save_failed": "Failed to save skill",
     "toast_deleted": "Skill deleted",
     "toast_delete_failed": "Failed to delete skill",
+    "toast_upgraded": "Skill upgraded from its source",
+    "toast_upgrade_failed": "Failed to upgrade skill",
     "delete_dialog": {
       "title": "Delete skill?",
       "description_with_agents_one": "This will permanently delete \"{{name}}\" and remove it from {{count}} agent currently using it.",
