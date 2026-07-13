@@ -86,7 +86,6 @@ import {
   hasP4Signal,
   fixDayIso,
   isPendingJudgement,
-  isExternalDone,
   qualityBucket,
   trimOperationsWindow,
   swarmChangeUrl,
@@ -205,11 +204,25 @@ function cardStyle(w: Record<OperationsColumnKey, number>): CSSProperties {
 // Debounce delay before a typed search term hits the server. Long enough to
 // coalesce a burst of keystrokes, short enough to feel responsive.
 const SEARCH_DEBOUNCE_MS = 300;
+const FEISHU_TEST_PASSED_STATUS_NAME = "测试通过";
 
-function isOperationsVisibleIssue(fix: AgentFixRecord): boolean {
+function isOperationsVisibleIssue(
+  fix: AgentFixRecord,
+  externalStatusNames: ReadonlyMap<string, string>,
+): boolean {
   const external = fix.external;
   const hasExternalBinding = (external?.binding_id ?? "").trim().length > 0;
-  return hasExternalBinding && isExternalDone(fix);
+  const rawStatus = (external?.status ?? "").trim();
+  const statusName = (
+    external?.status_name ||
+    externalStatusNames.get(rawStatus) ||
+    rawStatus
+  ).trim();
+  return (
+    hasExternalBinding &&
+    fix.issue_status === "done" &&
+    statusName === FEISHU_TEST_PASSED_STATUS_NAME
+  );
 }
 
 function confidenceLabel(confidence: number | null | undefined): string {
@@ -260,10 +273,11 @@ export function splitHighlight(text: string, keyword: string): HighlightPart[] {
 }
 
 /**
- * Operations page — AI repair effectiveness over the complete external-done
- * intake. Rows without an Agent task stay visible so pickup contribution and
- * unhandled reasons reconcile with Meegle. Delivery and quality distributions
- * live in the relevant KPI drawers above the detail table. Lives at
+ * Operations page — AI repair effectiveness over Feishu items at 测试通过 whose
+ * synced Multica issue is also done. Rows without an Agent task stay visible
+ * so pickup contribution and unhandled reasons reconcile with Meegle. Delivery
+ * and quality distributions live in the relevant KPI drawers above the detail
+ * table. Lives at
  * `/{slug}/operations`; backed by
  * GET /api/operations/agent-fixes.
  */
@@ -320,9 +334,26 @@ export function OperationsPage() {
   const statsQuery = useQuery(operationsFixesOptions(wsId, days, ""));
   const tableQuery = useQuery(operationsFixesOptions(wsId, days, search));
   const allFixes = statsQuery.data ?? EMPTY;
+  // The feed carries Feishu status IDs. Resolve their display names before
+  // selecting the reporting pool so generic terminal states mapped to `done`
+  // cannot be mistaken for the business-specific 测试通过 state.
+  const hasExternalStatuses = allFixes.some((fix) => !!fix.external?.status);
+  const feishuStatusQuery = useQuery(
+    feishuProjectIssueStatusesOptions(wsId, hasExternalStatuses),
+  );
+  const feishuStatusNames = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const status of feishuStatusQuery.data?.statuses ?? []) {
+      if (status.key && status.name) out.set(status.key, status.name);
+    }
+    return out;
+  }, [feishuStatusQuery.data]);
   const visibleFixes = useMemo(
-    () => allFixes.filter(isOperationsVisibleIssue),
-    [allFixes],
+    () =>
+      allFixes.filter((fix) =>
+        isOperationsVisibleIssue(fix, feishuStatusNames),
+      ),
+    [allFixes, feishuStatusNames],
   );
   // Window-trimmed pools, before any filter.
   const windowFixes = useMemo(
@@ -332,31 +363,24 @@ export function OperationsPage() {
   const tableWindowFixes = useMemo(
     () =>
       trimOperationsWindow(
-        (tableQuery.data ?? EMPTY).filter(isOperationsVisibleIssue),
+        (tableQuery.data ?? EMPTY).filter((fix) =>
+          isOperationsVisibleIssue(fix, feishuStatusNames),
+        ),
         days,
         viewTZ,
       ),
-    [tableQuery.data, days, viewTZ],
+    [tableQuery.data, days, viewTZ, feishuStatusNames],
   );
-  const isLoading = statsQuery.isLoading || tableQuery.isLoading;
+  const isLoading =
+    statsQuery.isLoading || tableQuery.isLoading || feishuStatusQuery.isLoading;
   const isError =
     (statsQuery.isError && !statsQuery.data) ||
-    (tableQuery.isError && !tableQuery.data);
+    (tableQuery.isError && !tableQuery.data) ||
+    (feishuStatusQuery.isError && !feishuStatusQuery.data);
   // The workspace's Helix Swarm URL — one connection per workspace — turns
   // review IDs and CL numbers into links. Absent connection → plain text.
   const { data: perforceData } = useQuery(perforceConnectionOptions(wsId));
   const swarmBase = perforceData?.connection?.swarm_url ?? "";
-  const hasExternalStatuses = visibleFixes.some((fix) => !!fix.external?.status);
-  const { data: feishuStatusData } = useQuery(
-    feishuProjectIssueStatusesOptions(wsId, hasExternalStatuses),
-  );
-  const feishuStatusNames = useMemo(() => {
-    const out = new Map<string, string>();
-    for (const status of feishuStatusData?.statuses ?? []) {
-      if (status.key && status.name) out.set(status.key, status.name);
-    }
-    return out;
-  }, [feishuStatusData]);
   const tx = t as unknown as UsageT;
 
   // Validate the picked agent against the current workspace's list so a stale
@@ -583,7 +607,11 @@ export function OperationsPage() {
           ) : isError ? (
             <OperationsError
               onRetry={() => {
-                void Promise.all([statsQuery.refetch(), tableQuery.refetch()]);
+                void Promise.all([
+                  statsQuery.refetch(),
+                  tableQuery.refetch(),
+                  feishuStatusQuery.refetch(),
+                ]);
               }}
             />
           ) : statsRows.length === 0 ? (

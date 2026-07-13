@@ -248,16 +248,17 @@ describe("computeOperationsKpis", () => {
       numerator: 3,
       denominator: 4,
     });
-    // The three outcome cards share the same verifiable-plan denominator.
+    // Quality only uses rows where AI reached a judgement. The unjudged direct
+    // delivery stays outside both the quality denominator and automatic count.
     expect(kpis.fixableCount).toBe(3);
     expect(kpis.qualityRate).toEqual({
-      value: 1 / 3,
+      value: 1 / 2,
       numerator: 1,
-      denominator: 3,
+      denominator: 2,
     });
     expect(kpis.automaticRate).toEqual({
-      value: 2 / 3,
-      numerator: 2,
+      value: 1 / 3,
+      numerator: 1,
       denominator: 3,
     });
     expect(kpis.assistedRate).toEqual({

@@ -60,7 +60,7 @@
   "operations": {
     "title": "Operations",
     "assessment_title": "AI fix assessment",
-    "subtitle": "External-done issues summarized by AI pickup, repair quality, and delivery attribution.",
+    "subtitle": "Feishu test-passed issues whose synced Multica issue is done, summarized by AI pickup, repair quality, and delivery attribution.",
     "range_label": "Last {{days}} days",
     "search_placeholder": "Search comments",
     "search_clear": "Clear search",
@@ -80,29 +80,29 @@
     "tabs": {
       "detail": "Assessments",
       "analysis": "Insights",
-      "detail_hint": "External completion, submitted CL records, AI predictions, and human review.",
+      "detail_hint": "Feishu test pass, synced completion, submitted CL records, AI predictions, and human review.",
       "analysis_hint": "Lightweight rollups from the current filtered rows."
     },
     "summary": {
       "contribution_rate": "AI repair contribution",
-      "contribution_rate_hint": "{{num}} picked up by AI / {{den}} total incoming",
+      "contribution_rate_hint": "{{num}} picked up by AI / {{den}} Feishu test-passed and synced done",
       "quality_rate": "AI repair quality",
-      "quality_rate_hint": "{{num}} marked pass / {{den}} assessed fixable",
+      "quality_rate_hint": "{{num}} marked pass / {{den}} judged",
       "automatic_rate": "AI automatic repairs",
-      "automatic_rate_hint": "{{num}} automatic / {{den}} assessed fixable",
+      "automatic_rate_hint": "{{num}} direct AI submission passed / {{den}} assessed fixable",
       "assisted_rate": "AI-assisted repairs",
       "assisted_rate_hint": "{{num}} AI + human / {{den}} assessed fixable",
       "health_footnote": "{{unassessed}} unassessed · {{missingCl}} missing human CL",
       "stage_judged": "Judged",
-      "overview": "Last {{days}} days: {{done}} external done, {{handled}} picked up by AI, with {{fixable}} verifiable AI repair plans.",
+      "overview": "Last {{days}} days: {{done}} Feishu test-passed and synced done, {{handled}} picked up by AI, with {{fixable}} verifiable AI repair plans.",
       "composition_title": "AI delivery composition",
-      "composition_total": "AI involved {{count}} / {{total}} external done",
+      "composition_total": "AI involved {{count}} / {{total}} test-passed and synced done",
       "composition_direct": "AI automatic repair",
       "composition_assisted": "AI-assisted repair",
       "assisted_with_unconverted": "AI-assisted (including unconverted)",
       "composition_not_participated": "No AI delivery involvement",
       "composition_unconverted": "Involved, unconverted",
-      "composition_empty": "No external-done tickets in this window.",
+      "composition_empty": "No Feishu test-passed, synced-done tickets in this window.",
       "health_footnote_hint": "Unassessed = assessment not completed yet (queue state); missing human CL = the external item is done but no submitted CL exists in any evidence source"
     },
     "fetch_cap_notice": "Hit the {{limit}}-row fetch cap — this window may be incomplete",
@@ -285,7 +285,7 @@
     "reset_columns": "Reset columns",
     "empty": {
       "title": "No fixes yet",
-      "body": "External-done Meegle issues appear here after sync, including items AI has not picked up.",
+      "body": "Feishu test-passed issues appear here after their synced Multica issue is done, including items AI has not picked up.",
       "search_title": "No matching comments",
       "search_body": "No agent comment in this period contains “{{term}}”. Try a different term or widen the time range."
     }

@@ -351,7 +351,7 @@ export interface OperationsFunnel {
   passed: number;
 }
 
-// A MECE partition of external-done rows by AI's delivery role:
+// A MECE partition of the page's eligible reporting pool by AI delivery role:
 //   directDelivered + assisted + unconverted + notParticipated === externalDone
 // participation = directDelivered + assisted + unconverted (AI was involved).
 export interface DeliveryComposition {
@@ -363,16 +363,19 @@ export interface DeliveryComposition {
 
 export interface OperationsKpis {
   funnel: OperationsFunnel;
-  // MECE breakdown of external-done rows by AI role.
+  // MECE breakdown of eligible reporting rows by AI role.
   composition: DeliveryComposition;
-  // AI repair contribution: external-done rows with a normal Agent task / all
-  // external-done rows. Binding-only rows stay in the denominator so missing
-  // Agent assignment and missing dispatch remain visible operating problems.
+  // AI repair contribution: eligible rows with a normal Agent task / all
+  // eligible rows. The page defines eligibility as Feishu 测试通过 plus a
+  // synced Multica issue at done. Binding-only rows stay in the denominator so
+  // missing Agent assignment and missing dispatch remain visible problems.
   contributionRate: OperationsRate;
-  // Shared denominator for the three outcome cards: completed assessment with
+  // Denominator for automatic and assisted repair: completed assessment with
   // a verifiable AI plan. This is the current evidence-backed definition of
   // "AI assessed as fixable" until the workflow emits a dedicated verdict.
   fixableCount: number;
+  // AI-marked pass / all AI-judged plans. Unknown or missing judgements stay
+  // outside the denominator instead of being treated as quality failures.
   qualityRate: OperationsRate;
   automaticRate: OperationsRate;
   // AI-assisted includes both attributed assisted delivery and an AI plan that
@@ -426,7 +429,10 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     const quality = qualityJudgement(fix);
     if (!isVerifiableOutput(fix)) continue;
     verifiable += 1;
-    if (role === "direct") automatic += 1;
+    // Automatic repair requires both direct AI delivery and a passing quality
+    // judgement. A direct submission with unknown/failed quality is not an
+    // automatic repair success.
+    if (role === "direct" && quality === "likely_correct") automatic += 1;
     if (role === "assisted" || role === "unconverted") assistedFixes += 1;
     if (quality !== "") {
       judged += 1;
@@ -446,7 +452,7 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     composition: { directDelivered, assisted, unconverted, notParticipated },
     contributionRate: rate(handled, externalDone),
     fixableCount: verifiable,
-    qualityRate: rate(passed, verifiable),
+    qualityRate: rate(passed, judged),
     automaticRate: rate(automatic, verifiable),
     assistedRate: rate(assistedFixes, verifiable),
     unassessed,

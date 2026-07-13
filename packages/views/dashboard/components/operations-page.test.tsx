@@ -37,7 +37,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-1",
       work_item_id: "BUG-93218",
-      status: "vcvaCnnGi",
+      status: "test-passed",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -90,7 +90,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-2",
       work_item_id: "BUG-93219",
-      status: "Done",
+      status: "test-passed",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -151,7 +151,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-4",
       work_item_id: "BUG-10000",
-      status: "Done",
+      status: "test-passed",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -202,7 +202,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-5",
       work_item_id: "BUG-10001",
-      status: "Done",
+      status: "test-passed",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -233,7 +233,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-6",
       work_item_id: "7035395614",
-      status: "Done",
+      status: "test-passed",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -257,7 +257,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-7",
       work_item_id: "BUG-10002",
-      status: "Done",
+      status: "test-passed",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -290,11 +290,69 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-9",
       work_item_id: "BUG-10003",
+      status: "test-passed",
+      mapped_status: "done",
+      done: true,
+      project: "Warpath3",
+    },
+  },
+  // A different Feishu terminal state may still map to done, but it is not
+  // part of the Operations denominator unless its raw status is 测试通过.
+  {
+    task_id: "t-10",
+    agent_id: "a-1",
+    agent_name: "Fixer",
+    issue_id: "i-10",
+    issue_identifier: "MUL-101",
+    issue_title: "Closed without test pass",
+    issue_status: "done",
+    started_at: null,
+    completed_at: dayIso(1),
+    created_at: dayIso(1),
+    external: {
+      binding_id: "binding-10",
+      work_item_id: "BUG-10101",
       status: "Done",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
     },
+  },
+  // Feishu has reached 测试通过, but the synced Multica issue has not reached
+  // done yet. Both sides of the intersection are required.
+  {
+    task_id: "t-11",
+    agent_id: "a-1",
+    agent_name: "Fixer",
+    issue_id: "i-11",
+    issue_identifier: "MUL-102",
+    issue_title: "Test passed but sync pending",
+    issue_status: "in_progress",
+    started_at: null,
+    completed_at: dayIso(1),
+    created_at: dayIso(1),
+    external: {
+      binding_id: "binding-11",
+      work_item_id: "BUG-10102",
+      status: "test-passed",
+      mapped_status: "done",
+      done: true,
+      project: "Warpath3",
+    },
+  },
+  // Derived assessment issues can themselves be done, but without a Feishu
+  // 测试通过 binding they must never inflate the denominator.
+  {
+    task_id: "t-12",
+    agent_id: "a-1",
+    agent_name: "Fixer",
+    issue_id: "i-12",
+    issue_identifier: "MUL-103",
+    issue_title: "AI assessment projection",
+    issue_status: "done",
+    started_at: null,
+    completed_at: dayIso(1),
+    created_at: dayIso(1),
   },
   // Older than the selected 30d window — must never appear in the table
   // or the KPIs.
@@ -383,12 +441,14 @@ vi.mock("@tanstack/react-query", async () => {
         return {
           data: {
             statuses: [
-              { key: "vcvaCnnGi", name: "设计如此" },
+              { key: "test-passed", name: "测试通过" },
               { key: "Done", name: "Done" },
               { key: "In Progress", name: "In Progress" },
             ],
           },
           isLoading: false,
+          isError: false,
+          refetch: vi.fn(),
         };
       }
       if (
@@ -518,11 +578,11 @@ describe("OperationsPage", () => {
     expect(screen.getByText("MUL-7")).toBeTruthy();
     expect(screen.getByText("MUL-8")).toBeTruthy();
     expect(screen.getByText("Parser cleanup")).toBeTruthy();
-    expect(screen.getByText("设计如此")).toBeTruthy();
-    expect(screen.queryByText("vcvaCnnGi")).toBeNull();
+    expect(screen.getAllByText("测试通过").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("test-passed")).toBeNull();
 
-    // Agent name appears for each visible row (the feed hides rows without a
-    // normal agent run, done issue status, and done external binding).
+    // Agent name appears for each picked-up visible row. The unassigned row
+    // remains in the reporting pool but has no agent label.
     expect(screen.getAllByText("Fixer").length).toBe(5);
     expect(screen.getByText("Reviewer")).toBeTruthy();
 
@@ -559,6 +619,12 @@ describe("OperationsPage", () => {
     expect(screen.getByText("AI repair quality")).toBeTruthy();
     expect(screen.getByText("AI automatic repairs")).toBeTruthy();
     expect(screen.getByText("AI-assisted repairs")).toBeTruthy();
+    expect(screen.getByText("1 marked pass / 2 judged")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "1 direct AI submission passed / 2 assessed fixable",
+      ),
+    ).toBeTruthy();
     expect(screen.getByText("Last 30 days")).toBeTruthy();
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
@@ -579,14 +645,14 @@ describe("OperationsPage", () => {
 
     expect(
       screen.getByText(
-        "Last 30 days: 7 external done, 6 picked up by AI, with 2 verifiable AI repair plans.",
+        "Last 30 days: 7 Feishu test-passed and synced done, 6 picked up by AI, with 2 verifiable AI repair plans.",
       ),
     ).toBeTruthy();
     const composition = screen.getByRole("region", {
       name: "AI delivery composition",
     });
     expect(composition.textContent).toContain(
-      "AI involved 2 / 7 external done",
+      "AI involved 2 / 7 test-passed and synced done",
     );
     expect(composition.textContent).toContain("AI automatic repair1· 14%");
     expect(composition.textContent).toContain(
@@ -615,13 +681,17 @@ describe("OperationsPage", () => {
     ).toBeNull();
   });
 
-  it("keeps unassigned external-done items in contribution and explains why", async () => {
+  it("keeps unassigned test-passed synced-done items in contribution and explains why", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
     expect(screen.getByText("No agent pickup")).toBeTruthy();
     expect(screen.getByText("No Agent assigned")).toBeTruthy();
-    expect(screen.getByText("6 picked up by AI / 7 total incoming")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "6 picked up by AI / 7 Feishu test-passed and synced done",
+      ),
+    ).toBeTruthy();
 
     await user.click(
       screen.getByRole("button", { name: /AI repair contribution/ }),
@@ -778,7 +848,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText("282941, 282944")).toBeTruthy();
   });
 
-  it("shows only done issues with an agent run and a done external binding", async () => {
+  it("counts only Feishu test-passed rows whose synced issue is done", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
@@ -791,11 +861,13 @@ describe("OperationsPage", () => {
       true,
     );
 
-    // t-3 has an agent run, but its issue status and external mapping are not
-    // done, so it must not leak into the Operations detail table.
+    // None of these satisfy both sides of the reporting intersection.
     expect(screen.queryByText("Future work")).toBeNull();
     expect(screen.queryByText("triaged")).toBeNull();
     expect(screen.queryByText("rel_future/server")).toBeNull();
+    expect(screen.queryByText("Closed without test pass")).toBeNull();
+    expect(screen.queryByText("Test passed but sync pending")).toBeNull();
+    expect(screen.queryByText("AI assessment projection")).toBeNull();
   });
 
   it("triggers a new assessment with binding_id and force=false", async () => {
@@ -1086,7 +1158,7 @@ describe("OperationsPage", () => {
     // full page-level pool while the table is narrowed by the search.
     expect(
       screen.getByText(
-        "Last 30 days: 7 external done, 6 picked up by AI, with 2 verifiable AI repair plans.",
+        "Last 30 days: 7 Feishu test-passed and synced done, 6 picked up by AI, with 2 verifiable AI repair plans.",
       ),
     ).toBeTruthy();
   });

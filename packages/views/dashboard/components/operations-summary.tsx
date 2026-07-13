@@ -9,9 +9,9 @@ import type {
 } from "../operations-metrics";
 import type { OperationsCardKey } from "./operations-drawers";
 
-// Four operator-facing KPIs. Contribution measures pickup coverage over every
-// external-done item; quality, automatic, and assisted share the same
-// evidence-backed fixable denominator so the outcome cards reconcile.
+// Four operator-facing KPIs. Contribution measures pickup coverage over the
+// eligible reporting pool; quality, automatic, and assisted use their defined
+// AI assessment denominators so the outcome cards reconcile.
 
 function formatPercent(rate: OperationsRate): string {
   if (rate.value == null) return "—";
@@ -72,10 +72,10 @@ function RateCard({
   );
 }
 
-// A MECE view over every external-done ticket. Unconverted AI plans are part
-// of assisted repair by the operating definition, while tickets with no AI
-// delivery role remain visible so the bar always reconciles to the full
-// external-done denominator.
+// A MECE view over every eligible ticket. Unconverted AI plans are part of
+// assisted repair by the operating definition, while tickets with no AI
+// delivery role remain visible so the bar reconciles to the full reporting
+// denominator.
 function CompositionBar({
   composition,
   externalDone,

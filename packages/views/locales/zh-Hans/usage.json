@@ -60,7 +60,7 @@
   "operations": {
     "title": "运营",
     "assessment_title": "AI 修单评估",
-    "subtitle": "汇总外部完成的 issue，分析 AI 接手、修复质量与交付归因。",
+    "subtitle": "汇总飞书项目测试通过且 Multica 同步 issue 已完成的单，分析 AI 接手、修复质量与交付构成。",
     "range_label": "最近 {{days}} 天",
     "search_placeholder": "搜索评论内容",
     "search_clear": "清除搜索",
@@ -80,29 +80,29 @@
     "tabs": {
       "detail": "评估明细",
       "analysis": "效果分析",
-      "detail_hint": "外部完成态、提交 CL 记录、AI 预判和人工验收。",
+      "detail_hint": "飞书测试通过、Multica 同步完成、提交 CL 记录、AI 预判和人工验收。",
       "analysis_hint": "基于当前筛选结果的轻量统计。"
     },
     "summary": {
       "contribution_rate": "AI 修复贡献",
-      "contribution_rate_hint": "AI 接手 {{num}} / 总进单 {{den}}",
+      "contribution_rate_hint": "AI 接手 {{num}} / 飞书测试通过且同步完成 {{den}}",
       "quality_rate": "AI 修复质量",
-      "quality_rate_hint": "AI 标记通过 {{num}} / AI 评估能修 {{den}}",
+      "quality_rate_hint": "AI 标记通过 {{num}} / AI 已判断 {{den}}",
       "automatic_rate": "AI 自动修复",
-      "automatic_rate_hint": "AI 自动修复 {{num}} / AI 评估能修 {{den}}",
+      "automatic_rate_hint": "AI 代码直接提交且通过 {{num}} / AI 评估能修 {{den}}",
       "assisted_rate": "AI 辅助修复",
       "assisted_rate_hint": "AI 与人共同参与 {{num}} / AI 评估能修 {{den}}",
       "health_footnote": "未评估 {{unassessed}} · 外部单未回填提交 CL {{missingCl}}",
       "stage_judged": "已判定",
-      "overview": "最近 {{days}} 天外部完成 {{done}} 单，AI 接手 {{handled}} 单，其中 {{fixable}} 单已有可验证的 AI 修复方案。",
+      "overview": "最近 {{days}} 天飞书测试通过且同步完成 {{done}} 单，AI 接手 {{handled}} 单，其中 {{fixable}} 单已有可验证的 AI 修复方案。",
       "composition_title": "AI 交付构成",
-      "composition_total": "AI 参与 {{count}} / 外部完成 {{total}}",
+      "composition_total": "AI 参与 {{count}} / 测试通过且同步完成 {{total}}",
       "composition_direct": "AI 自动修复",
       "composition_assisted": "AI 辅助修复",
       "assisted_with_unconverted": "AI 辅助修复（含参与未转化）",
       "composition_not_participated": "AI 未参与交付",
       "composition_unconverted": "参与未转化",
-      "composition_empty": "当前窗口没有外部完成单。",
+      "composition_empty": "当前窗口没有飞书测试通过且同步完成的单。",
       "health_footnote_hint": "未评估 = 评估尚未完成的单（队列状态）；未回填 CL = 外部单已完成但任何证据源都没有提交 CL 记录"
     },
     "fetch_cap_notice": "已达单次拉取上限 {{limit}} 条，当前窗口可能未完整覆盖",
@@ -285,7 +285,7 @@
     "reset_columns": "重置列宽",
     "empty": {
       "title": "暂无修复记录",
-      "body": "Meegle 中完成的 issue 同步后会显示在这里，包括尚未由 AI 接手的单。",
+      "body": "飞书项目测试通过且 Multica 同步 issue 已完成的单会显示在这里，包括尚未由 AI 接手的单。",
       "search_title": "没有匹配的评论",
       "search_body": "该时间段内没有智能体评论包含「{{term}}」。换个关键词或扩大时间范围试试。"
     }
