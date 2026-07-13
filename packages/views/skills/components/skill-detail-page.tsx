@@ -10,6 +10,7 @@ import {
   Lock,
   Pencil,
   Plus,
+  RefreshCw,
   Save,
   Sparkles,
   Trash2,
@@ -299,6 +300,7 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
   const [files, setFiles] = useState<DraftFile[]>([]);
   const [selectedPath, setSelectedPath] = useState(SKILL_MD);
   const [saving, setSaving] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showAddToAgents, setShowAddToAgents] = useState(false);
@@ -459,6 +461,30 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     setConflictPending(false);
   };
 
+  const handleUpgrade = async () => {
+    if (!skill || !canEdit) return;
+    setUpgrading(true);
+    try {
+      const updated = await api.upgradeSkill(skill.id);
+      qc.setQueryData(skillDetailOptions(wsId, skill.id).queryKey, updated);
+      seedFromSkill(updated);
+      seededKeyRef.current = `${wsId}:${updated.id}@${updated.updated_at}`;
+      setConflictPending(false);
+      qc.invalidateQueries({
+        queryKey: workspaceKeys.skills(wsId),
+        exact: true,
+      });
+      qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+      toast.success(t(($) => $.detail.toast_upgraded));
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : t(($) => $.detail.toast_upgrade_failed),
+      );
+    } finally {
+      setUpgrading(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!skill) return;
     setDeleting(true);
@@ -588,6 +614,29 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
                 <Lock className="h-3 w-3" />
                 {t(($) => $.detail.read_only)}
               </span>
+            )}
+            {canEdit && origin?.source_url && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={handleUpgrade}
+                      disabled={upgrading}
+                      className="text-muted-foreground"
+                      aria-label={t(($) => $.detail.upgrade_aria)}
+                    >
+                      {upgrading ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  }
+                />
+                <TooltipContent>{t(($) => $.detail.upgrade_tooltip)}</TooltipContent>
+              </Tooltip>
             )}
             {canEdit && (
               <Tooltip>

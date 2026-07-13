@@ -94,6 +94,8 @@
     "read_only": "읽기 전용",
     "delete_aria": "스킬 삭제",
     "delete_tooltip": "스킬 삭제",
+    "upgrade_aria": "스킬 업그레이드",
+    "upgrade_tooltip": "출처에서 최신 버전을 다시 가져옵니다 (에이전트 할당 유지)",
     "supporting_data_warning": "일부 워크스페이스 데이터를 불러오지 못했습니다. 다음 새로고침 전까지 생성자 표시, 런타임 이름, 수정 권한이 불완전하게 보일 수 있습니다.",
     "files_label": "파일 · {{count}}",
     "add_file_aria": "파일 추가",
@@ -155,6 +157,8 @@
     "toast_save_failed": "스킬을 저장하지 못했습니다",
     "toast_deleted": "스킬을 삭제했습니다",
     "toast_delete_failed": "스킬을 삭제하지 못했습니다",
+    "toast_upgraded": "출처에서 스킬을 업그레이드했습니다",
+    "toast_upgrade_failed": "스킬을 업그레이드하지 못했습니다",
     "delete_dialog": {
       "title": "스킬을 삭제할까요?",
       "description_with_agents_other": "\"{{name}}\"을(를) 영구 삭제하고 현재 사용 중인 에이전트 {{count}}개에서 제거합니다.",

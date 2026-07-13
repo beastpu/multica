@@ -1923,6 +1923,13 @@ export class ApiClient {
     });
   }
 
+  // Re-fetches a skill from its recorded import source and overwrites it in
+  // place, preserving the skill id and every agent binding. Use this instead of
+  // delete + re-import to avoid unbinding agents.
+  async upgradeSkill(id: string): Promise<Skill> {
+    return this.fetch(`/api/skills/${id}/upgrade`, { method: "POST" });
+  }
+
   async listAgentSkills(agentId: string): Promise<SkillSummary[]> {
     return this.fetch(`/api/agents/${agentId}/skills`);
   }

@@ -106,7 +106,13 @@ var (
 type skillOverwriteInput struct {
 	WorkspaceID   pgtype.UUID
 	TargetSkillID pgtype.UUID
-	UserID        string // re-checked against the skill creator inside the tx
+	// Permit is re-evaluated against the freshly-read target inside the tx to
+	// confirm the caller may still overwrite it, guarding against a creator
+	// change between the caller's authorization check and this write. Re-import
+	// passes the creator-only rule (canOverwriteSkillByLocalImport); in-place
+	// upgrade passes the broader creator-or-admin rule it already enforced at
+	// the handler. A nil Permit permits the overwrite.
+	Permit func(db.Skill) bool
 	// ExpectedName, when non-empty, must equal the target's current name. Guards
 	// against a client sending the wrong target_skill_id and overwriting a
 	// different skill than the one the conflict dialog showed the user. The
@@ -120,10 +126,10 @@ type skillOverwriteInput struct {
 
 // overwriteSkillWithFiles re-imports a bundle onto an existing skill in a single
 // transaction. It re-verifies, inside that tx, that the target still exists in
-// the workspace and that UserID may overwrite it (creator-only — see
-// canOverwriteSkillByLocalImport). A target deleted or a creator change between
-// the user's confirm and this write fails cleanly via errSkillOverwriteNotFound
-// / errSkillOverwriteForbidden rather than falling back to create.
+// the workspace and that input.Permit still allows overwriting it. A target
+// deleted or a permission change between the caller's confirm and this write
+// fails cleanly via errSkillOverwriteNotFound / errSkillOverwriteForbidden
+// rather than falling back to create.
 //
 // Preserved: id, created_by, created_at, name, and agent_skill bindings (the
 // row identity and the binding table are never touched). Replaced: description,
@@ -157,7 +163,7 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 		}
 		return SkillWithFilesResponse{}, err
 	}
-	if !canOverwriteSkillByLocalImport(input.UserID, existing) {
+	if input.Permit != nil && !input.Permit(existing) {
 		return SkillWithFilesResponse{}, errSkillOverwriteForbidden
 	}
 	// The overwrite is keyed on target_skill_id, but the conflict the user
