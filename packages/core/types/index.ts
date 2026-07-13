@@ -90,11 +90,14 @@ export type { Attachment } from "./attachment";
 export { attachmentDownloadPath, attachmentIdFromDownloadURL, contentReferencesAttachment } from "./attachment-url";
 export type {
   ChatSession,
+  ChatLastMessage,
+  ChatPinnedAgent,
   ChatMessage,
   ChatMessagesPage,
   ChatPendingTask,
   PendingChatTaskItem,
   PendingChatTasksResponse,
+  HasPendingChatTasksResponse,
   SendChatMessageResponse,
   CancelledChatMessage,
   CancelTaskResponse,

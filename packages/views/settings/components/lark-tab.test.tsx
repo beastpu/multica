@@ -207,7 +207,23 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     expect(screen.queryByRole("button", { name: /Bind to Lark/i })).toBeNull();
   });
 
-  it("shows the Feishu bind CTA for a non-admin agent owner", () => {
+  it("hides both bind CTAs for a plain member when no agentOwnerId is supplied (stays admin-only)", () => {
+    membersRef.current = [{ user_id: "user-1", role: "member" }];
+    const { container } = render(
+      <LarkAgentBindButton
+        agentId="agent-1"
+        agentName="Bot"
+        agentOwnerId="user-2"
+      />,
+      { wrapper: I18nWrapper },
+    );
+    expect(container.querySelector("button")).toBeNull();
+  });
+
+  it("shows the Feishu bind CTA for a non-admin agent owner (agentOwnerId matches the user, MUL-4213)", () => {
+    // The backend authorizes the agent's owner via canManageAgent even when
+    // they are only a plain workspace member, so the CTA must render for
+    // them once the caller threads the agent's owner_id.
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     render(
       <LarkAgentBindButton
@@ -218,10 +234,10 @@ describe("LarkAgentBindButton (CTA gate)", () => {
       { wrapper: I18nWrapper },
     );
     expect(screen.getByRole("button", { name: /Bind to Feishu/i })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Bind to Lark/i })).toBeNull();
   });
 
-  it("hides the bind CTA for a non-admin member who does not own the agent", () => {
+  it("still hides the CTAs for a non-admin member who is NOT the agent owner", () => {
+    // agentOwnerId belongs to someone else, so a plain member gets nothing.
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     const { container } = render(
       <LarkAgentBindButton
