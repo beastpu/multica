@@ -100,8 +100,9 @@
       "composition_direct": "AI 自動修正",
       "composition_assisted": "AI 支援修正",
       "assisted_with_unconverted": "AI 支援修正（未転換を含む）",
+      "composition_not_participated": "AI の納品関与なし",
       "composition_unconverted": "関与・未転換",
-      "composition_empty": "この期間に AI が関与した外部完了チケットはありません。",
+      "composition_empty": "この期間に外部完了チケットはありません。",
       "health_footnote_hint": "未評価 = 評価が未完了の件（キュー状態）；CL 未記入 = 外部チケットは完了しているが、どの証跡にも提出 CL の記録がない"
     },
     "fetch_cap_notice": "取得上限 {{limit}} 件に達したため、この期間は完全にカバーされていない可能性があります",

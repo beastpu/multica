@@ -2,7 +2,11 @@
 
 import { ChevronRight } from "lucide-react";
 import { useT } from "../../i18n";
-import type { OperationsKpis, OperationsRate } from "../operations-metrics";
+import type {
+  DeliveryComposition,
+  OperationsKpis,
+  OperationsRate,
+} from "../operations-metrics";
 import type { OperationsCardKey } from "./operations-drawers";
 
 // Four operator-facing KPIs. Contribution measures pickup coverage over every
@@ -68,6 +72,105 @@ function RateCard({
   );
 }
 
+// A MECE view over every external-done ticket. Unconverted AI plans are part
+// of assisted repair by the operating definition, while tickets with no AI
+// delivery role remain visible so the bar always reconciles to the full
+// external-done denominator.
+function CompositionBar({
+  composition,
+  externalDone,
+}: {
+  composition: DeliveryComposition;
+  externalDone: number;
+}) {
+  const { t } = useT("usage");
+  const title = t(($) => $.operations.summary.composition_title);
+  const assisted = composition.assisted + composition.unconverted;
+  const participated = composition.directDelivered + assisted;
+  const segments = [
+    {
+      key: "automatic",
+      label: t(($) => $.operations.summary.composition_direct),
+      count: composition.directDelivered,
+      className: "bg-chart-1",
+    },
+    {
+      key: "assisted",
+      label: t(($) => $.operations.summary.assisted_with_unconverted),
+      count: assisted,
+      className: "bg-chart-2",
+    },
+    {
+      key: "not-participated",
+      label: t(($) => $.operations.summary.composition_not_participated),
+      count: composition.notParticipated,
+      className: "bg-muted-foreground/25",
+    },
+  ];
+  const pct = (count: number) =>
+    externalDone > 0
+      ? `${Math.round((count / externalDone) * 100)}%`
+      : "0%";
+
+  return (
+    <section
+      role="region"
+      aria-label={title}
+      className="rounded-lg border bg-card p-4"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-xs font-medium text-muted-foreground">{title}</h2>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {t(($) => $.operations.summary.composition_total, {
+            count: participated,
+            total: externalDone,
+          })}
+        </span>
+      </div>
+      {externalDone === 0 ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          {t(($) => $.operations.summary.composition_empty)}
+        </p>
+      ) : (
+        <>
+          <div
+            className="mt-3.5 flex h-5 overflow-hidden rounded-md bg-muted"
+            aria-hidden="true"
+          >
+            {segments
+              .filter((segment) => segment.count > 0)
+              .map((segment) => (
+                <span
+                  key={segment.key}
+                  className={segment.className}
+                  style={{ width: `${(segment.count / externalDone) * 100}%` }}
+                />
+              ))}
+          </div>
+          <div className="mt-2.5 grid gap-2 sm:grid-cols-3">
+            {segments.map((segment) => (
+              <span
+                key={segment.key}
+                className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+              >
+                <span
+                  aria-hidden="true"
+                  className={`h-2 w-2 shrink-0 rounded-full ${segment.className}`}
+                />
+                <span className="leading-tight">{segment.label}</span>
+                <span className="ml-auto font-medium text-foreground tabular-nums">
+                  {segment.count}
+                </span>
+                <span className="tabular-nums">· {pct(segment.count)}</span>
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 export function OperationsSummary({
   kpis,
   days,
@@ -78,7 +181,7 @@ export function OperationsSummary({
   onCardClick?: (card: OperationsCardKey) => void;
 }) {
   const { t } = useT("usage");
-  const { funnel } = kpis;
+  const { funnel, composition } = kpis;
   return (
     <section className="grid gap-3">
       <p className="text-sm text-muted-foreground">
@@ -89,6 +192,10 @@ export function OperationsSummary({
           fixable: kpis.fixableCount,
         })}
       </p>
+      <CompositionBar
+        composition={composition}
+        externalDone={funnel.externalDone}
+      />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <RateCard
           label={t(($) => $.operations.summary.contribution_rate)}
@@ -117,8 +224,6 @@ export function OperationsSummary({
             den: kpis.automaticRate.denominator,
           })}
           rate={kpis.automaticRate}
-          onClick={onCardClick ? () => onCardClick("automatic") : undefined}
-          clickHint={t(($) => $.operations.drawer.card_hint)}
         />
         <RateCard
           label={t(($) => $.operations.summary.assisted_rate)}
@@ -127,8 +232,6 @@ export function OperationsSummary({
             den: kpis.assistedRate.denominator,
           })}
           rate={kpis.assistedRate}
-          onClick={onCardClick ? () => onCardClick("assisted") : undefined}
-          clickHint={t(($) => $.operations.drawer.card_hint)}
         />
       </div>
       <div

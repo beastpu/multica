@@ -563,7 +563,18 @@ describe("OperationsPage", () => {
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
 
-  it("renders the plain-language pickup overview without duplicate charts", () => {
+  it("keeps automatic and assisted repair cards informational", () => {
+    renderWithI18n(<OperationsPage />);
+
+    expect(
+      screen.getByText("AI automatic repairs").closest("button"),
+    ).toBeNull();
+    expect(
+      screen.getByText("AI-assisted repairs").closest("button"),
+    ).toBeNull();
+  });
+
+  it("renders the pickup overview and a complete delivery composition", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(
@@ -571,10 +582,22 @@ describe("OperationsPage", () => {
         "Last 30 days: 7 external done, 6 picked up by AI, with 2 verifiable AI repair plans.",
       ),
     ).toBeTruthy();
-    expect(screen.queryByText("AI delivery composition")).toBeNull();
+    const composition = screen.getByRole("region", {
+      name: "AI delivery composition",
+    });
+    expect(composition.textContent).toContain(
+      "AI involved 2 / 7 external done",
+    );
+    expect(composition.textContent).toContain("AI automatic repair1· 14%");
+    expect(composition.textContent).toContain(
+      "AI-assisted (including unconverted)1· 14%",
+    );
+    expect(composition.textContent).toContain(
+      "No AI delivery involvement5· 71%",
+    );
   });
 
-  it("opens the rate-card breakdown drawer and drills into the detail table", async () => {
+  it("keeps delivery attribution out of the contribution drawer", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
@@ -583,20 +606,13 @@ describe("OperationsPage", () => {
       screen.getByRole("button", { name: /AI repair contribution/ }),
     );
     const dialog = screen.getByRole("dialog");
-    // Composition branches with counts — t-1 is the only direct delivery.
-    await user.click(
-      within(dialog).getByRole("button", { name: /AI automatic repair/ }),
-    );
-    // Branch panel lists t-1's ticket card.
-    expect(within(dialog).getByText("Login broke")).toBeTruthy();
-    // Jump to the detail table with the attribution filter applied.
-    await user.click(
-      within(dialog).getByRole("button", {
-        name: "View all in the detail table",
-      }),
-    );
-    expect(screen.getAllByText("MUL-7").length).toBeGreaterThanOrEqual(1);
-    expect(screen.queryByText("Parser cleanup")).toBeNull();
+    expect(within(dialog).queryByText("Delivery attribution")).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", { name: /AI automatic repair/ }),
+    ).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", { name: /AI-assisted/ }),
+    ).toBeNull();
   });
 
   it("keeps unassigned external-done items in contribution and explains why", async () => {
@@ -644,7 +660,7 @@ describe("OperationsPage", () => {
     );
     const dialog = screen.getByRole("dialog");
     await user.click(
-      within(dialog).getByRole("button", { name: /AI automatic repair/ }),
+      within(dialog).getByRole("button", { name: /Assessment complete/ }),
     );
     await user.click(
       within(dialog).getByRole("button", { name: /Login broke/ }),

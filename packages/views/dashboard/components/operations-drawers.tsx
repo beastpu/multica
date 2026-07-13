@@ -22,7 +22,6 @@ import {
 } from "./agent-fix-review";
 import {
   blockedWarningFamily,
-  deliveryRole,
   deriveAttribution,
   derivedEvidence,
   firstSwarmReviewUrl,
@@ -39,16 +38,12 @@ import {
 // demo's exploration flow:
 //   rate card → branch breakdown → ticket list → single-issue detail
 // One Sheet, three panels, driven by a single state union owned by the page.
-// Branch counts reuse the exact metrics predicates (deliveryRole /
-// isVerifiableOutput / qualityJudgement) so the drawer always reconciles with
+// Branch counts reuse the exact metrics predicates (isVerifiableOutput /
+// qualityJudgement) so the drawer always reconciles with
 // the KPI cards it was opened from.
 // ---------------------------------------------------------------------------
 
-export type OperationsCardKey =
-  | "contribution"
-  | "quality"
-  | "automatic"
-  | "assisted";
+export type OperationsCardKey = "contribution" | "quality";
 
 export type OperationsSheetState =
   | { kind: "card"; card: OperationsCardKey }
@@ -77,8 +72,7 @@ interface BranchDef {
     | "main"
     | "assessment"
     | "assessment_reason"
-    | "unhandled"
-    | "attribution";
+    | "unhandled";
   drill?: OperationsDrillFilter;
 }
 
@@ -92,11 +86,7 @@ function cardTitle(
 ): string {
   return card === "contribution"
     ? t(($) => $.operations.summary.contribution_rate)
-    : card === "quality"
-      ? t(($) => $.operations.summary.quality_rate)
-      : card === "automatic"
-        ? t(($) => $.operations.summary.automatic_rate)
-        : t(($) => $.operations.summary.assisted_rate);
+    : t(($) => $.operations.summary.quality_rate);
 }
 
 function blockedFamilyLabel(
@@ -249,86 +239,35 @@ function cardBranches(
         rows: unhandled.filter((f) => f.agent_id.trim() !== ""),
         section: "unhandled",
       },
-      {
-        key: "direct",
-        label: t(($) => $.operations.summary.composition_direct),
-        rows: rows.filter((f) => deliveryRole(f) === "direct"),
-        section: "attribution",
-        drill: { attribution: "ai_delivered" },
-      },
-      {
-        key: "assisted",
-        label: t(($) => $.operations.summary.assisted_with_unconverted),
-        rows: rows.filter((f) => {
-          const role = deliveryRole(f);
-          return role === "assisted" || role === "unconverted";
-        }),
-        section: "attribution",
-      },
     ];
   }
   const fixable = rows.filter(isVerifiableOutput);
-  if (card === "quality") {
-    return [
-      {
-        key: "likely_correct",
-        label: agentFixEnumLabel(tx, "quality", "likely_correct"),
-        rows: fixable.filter((f) => qualityJudgement(f) === "likely_correct"),
-        drill: { quality: "likely_correct" },
-      },
-      {
-        key: "likely_needs_changes",
-        label: agentFixEnumLabel(tx, "quality", "likely_needs_changes"),
-        rows: fixable.filter(
-          (f) => qualityJudgement(f) === "likely_needs_changes",
-        ),
-        drill: { quality: "likely_needs_changes" },
-      },
-      {
-        key: "likely_wrong",
-        label: agentFixEnumLabel(tx, "quality", "likely_wrong"),
-        rows: fixable.filter((f) => qualityJudgement(f) === "likely_wrong"),
-        drill: { quality: "likely_wrong" },
-      },
-      {
-        key: "unknown",
-        label: agentFixEnumLabel(tx, "quality", "unknown"),
-        rows: fixable.filter((f) => qualityJudgement(f) === ""),
-        drill: { pendingOnly: true },
-      },
-    ];
-  }
-  if (card === "automatic") {
-    return [
-      {
-        key: "automatic",
-        label: t(($) => $.operations.summary.composition_direct),
-        rows: fixable.filter((f) => deliveryRole(f) === "direct"),
-        drill: { attribution: "ai_delivered" },
-      },
-      {
-        key: "not_automatic",
-        label: t(($) => $.operations.drawer.not_automatic),
-        rows: fixable.filter((f) => deliveryRole(f) !== "direct"),
-      },
-    ];
-  }
   return [
     {
-      key: "assisted",
-      label: t(($) => $.operations.summary.assisted_with_unconverted),
-      rows: fixable.filter((f) => {
-        const role = deliveryRole(f);
-        return role === "assisted" || role === "unconverted";
-      }),
+      key: "likely_correct",
+      label: agentFixEnumLabel(tx, "quality", "likely_correct"),
+      rows: fixable.filter((f) => qualityJudgement(f) === "likely_correct"),
+      drill: { quality: "likely_correct" },
     },
     {
-      key: "not_assisted",
-      label: t(($) => $.operations.drawer.not_assisted),
-      rows: fixable.filter((f) => {
-        const role = deliveryRole(f);
-        return role !== "assisted" && role !== "unconverted";
-      }),
+      key: "likely_needs_changes",
+      label: agentFixEnumLabel(tx, "quality", "likely_needs_changes"),
+      rows: fixable.filter(
+        (f) => qualityJudgement(f) === "likely_needs_changes",
+      ),
+      drill: { quality: "likely_needs_changes" },
+    },
+    {
+      key: "likely_wrong",
+      label: agentFixEnumLabel(tx, "quality", "likely_wrong"),
+      rows: fixable.filter((f) => qualityJudgement(f) === "likely_wrong"),
+      drill: { quality: "likely_wrong" },
+    },
+    {
+      key: "unknown",
+      label: agentFixEnumLabel(tx, "quality", "unknown"),
+      rows: fixable.filter((f) => qualityJudgement(f) === ""),
+      drill: { pendingOnly: true },
     },
   ];
 }
@@ -495,7 +434,6 @@ function CardPanel({
           "assessment",
           "assessment_reason",
           "unhandled",
-          "attribution",
         ] as const).map(
           (section) => {
             const sectionBranches = branches.filter(
@@ -507,9 +445,7 @@ function CardPanel({
                 ? rows.filter((f) => f.task_id.trim() !== "").length
                 : section === "unhandled"
                   ? rows.filter((f) => f.task_id.trim() === "").length
-                  : section === "attribution"
-                    ? rows.length
-                    : total;
+                  : total;
             const max = Math.max(
               1,
               ...sectionBranches.map((branch) => branch.rows.length),
@@ -529,12 +465,7 @@ function CardPanel({
                       ? t(($) => $.operations.drawer.handled_breakdown)
                       : section === "assessment_reason"
                         ? t(($) => $.operations.drawer.blocked_reasons)
-                        : section === "unhandled"
-                          ? t(($) => $.operations.drawer.unhandled_reasons)
-                          : t(
-                              ($) =>
-                                $.operations.drawer.attribution_breakdown,
-                            )}
+                        : t(($) => $.operations.drawer.unhandled_reasons)}
                   </div>
                 ) : null}
                 {sectionBranches.map((branch) =>
