@@ -796,7 +796,7 @@ export function OperationsPage() {
                             <ActorAvatar
                               actorType="agent"
                               actorId={f.agent_id}
-                              size={22}
+                              size="md"
                               enableHoverCard
                             />
                             <span className="min-w-0 truncate text-sm">

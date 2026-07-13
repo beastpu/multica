@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent } from "@multica/core/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +27,38 @@ vi.mock("@multica/core/hooks/use-file-upload", async () => {
   return {
     ...actual,
     useFileUpload: () => ({ upload: fileUploadMock.upload, uploading: false }),
+  };
+});
+
+vi.mock("../../common/avatar-crop-dialog", async () => {
+  const React = await vi.importActual<typeof import("react")>("react");
+  return {
+    AvatarCropDialog: ({
+      file,
+      open,
+      onCropped,
+    }: {
+      file: File | null;
+      open: boolean;
+      onCropped: (file: File) => void;
+    }) =>
+      open && file
+        ? React.createElement(
+            "div",
+            { role: "dialog" },
+            React.createElement(
+              "button",
+              {
+                type: "button",
+                onClick: () =>
+                  onCropped(
+                    new File(["cropped"], file.name, { type: "image/png" }),
+                  ),
+              },
+              "Save",
+            ),
+          )
+        : null,
   };
 });
 
@@ -138,6 +176,8 @@ describe("AgentDetailInspector avatar preview", () => {
         files: [new File(["avatar"], "avatar.png", { type: "image/png" })],
       },
     });
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       expect(onUpdate).toHaveBeenCalledWith("agent-1", {

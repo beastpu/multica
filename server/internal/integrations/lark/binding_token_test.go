@@ -16,7 +16,7 @@ import (
 // These tests cover the pure-Go halves of BindingTokenService — token
 // generation entropy/encoding, deterministic hashing — without
 // touching the database. DB-backed mint/redeem invariants (single use,
-// expiry) are covered by the DB CHECK on lark_binding_token plus the
+// expiry) are covered by the DB CHECK on channel_binding_token plus the
 // ConsumeLarkBindingToken query, which require an integration test
 // against a real Postgres and are added in a follow-up.
 

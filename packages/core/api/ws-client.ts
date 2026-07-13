@@ -18,6 +18,14 @@ const UNPARSEABLE_LOG_MAX_CHARS = 200;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_REPLY_TIMEOUT_MS = 10_000;
 
+// Reconnect backoff parameters. A flat delay causes a thundering herd when many
+// clients reconnect after a server restart; exponential backoff with jitter
+// spreads the reconnection attempts over time. The client retries indefinitely
+// (capped at RECONNECT_MAX_DELAY_MS) because the web/desktop UI does not yet
+// expose a visible disconnected state or manual retry action.
+const RECONNECT_BASE_DELAY_MS = 1_000;
+const RECONNECT_MAX_DELAY_MS = 30_000;
+
 function summarizeUnparseable(data: unknown): string {
   const text = typeof data === "string" ? data : String(data);
   if (text.length <= UNPARSEABLE_LOG_MAX_CHARS) return text;
@@ -45,6 +53,7 @@ export class WSClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatReplyTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempt = 0;
   private hasConnectedBefore = false;
   // One-shot per connection. A non-conforming frame can repeat hundreds of
   // times per session, so we log the first drop and suppress the rest. Reset
@@ -157,8 +166,7 @@ export class WSClient {
 
     this.ws.onclose = () => {
       this.stopHeartbeat();
-      this.logger.warn("disconnected, reconnecting in 3s");
-      this.reconnectTimer = setTimeout(() => this.connect(), 3000);
+      this.scheduleReconnect();
     };
 
     this.ws.onerror = () => {
@@ -167,9 +175,34 @@ export class WSClient {
     };
   }
 
+  /**
+   * Schedule a reconnection attempt with exponential backoff and jitter.
+   * Retries indefinitely with a capped delay because the web/desktop UI
+   * does not yet expose a visible disconnected state or manual retry action.
+   */
+  private scheduleReconnect() {
+    const base = Math.min(
+      RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempt,
+      RECONNECT_MAX_DELAY_MS,
+    );
+    // ±20 % jitter so clients that disconnected at the same time don't
+    // reconnect in lockstep.
+    const jitter = base * 0.2 * (Math.random() * 2 - 1);
+    const delay = Math.round(
+      Math.min(base + jitter, RECONNECT_MAX_DELAY_MS),
+    );
+
+    this.reconnectAttempt++;
+    this.logger.warn(
+      `ws: disconnected, reconnecting in ${delay}ms (attempt ${this.reconnectAttempt})`,
+    );
+    this.reconnectTimer = setTimeout(() => this.connect(), delay);
+  }
+
   private onAuthenticated() {
     this.logger.info("connected");
     this.startHeartbeat();
+    this.reconnectAttempt = 0;
     if (this.hasConnectedBefore) {
       for (const cb of this.onReconnectCallbacks) {
         try {
@@ -252,7 +285,8 @@ export class WSClient {
    */
   ensureAlive() {
     if (this.reconnectTimer) {
-      // A reconnect is already scheduled — fire it now instead of in 3s.
+      // A reconnect is already scheduled — fire it now instead of waiting for
+      // the backoff delay.
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
       this.connect();
@@ -287,6 +321,7 @@ export class WSClient {
       this.ws = null;
     }
     this.hasConnectedBefore = false;
+    this.reconnectAttempt = 0;
     this.handlers.clear();
     this.anyHandlers.clear();
     this.onReconnectCallbacks.clear();

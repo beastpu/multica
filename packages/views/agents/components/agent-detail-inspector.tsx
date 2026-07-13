@@ -2,12 +2,10 @@
 
 import {
   useEffect,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { Camera, Loader2, Pencil } from "lucide-react";
-import { toast } from "sonner";
+import { Loader2, Pencil } from "lucide-react";
 import type {
   Agent,
   AgentRuntime,
@@ -17,17 +15,13 @@ import {
   AGENT_DESCRIPTION_MAX_LENGTH,
   type AgentPresenceDetail,
 } from "@multica/core/agents";
-import { api } from "@multica/core/api";
-import {
-  persistentUploadUrl,
-  useFileUpload,
-} from "@multica/core/hooks/use-file-upload";
 import { isImeComposing } from "@multica/core/utils";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
-import { ActorAvatar as BaseActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { Button } from "@multica/ui/components/ui/button";
-import { Input } from "@multica/ui/components/ui/input";
+import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { AvatarUploadControl } from "../../common/avatar-upload-control";
+import { Input } from "@multica/ui/components/ui/input";
 import { useTimeAgo } from "../../i18n";
 import {
   Dialog,
@@ -150,6 +144,7 @@ export function AgentDetailInspector({
         <ThinkingPropRow
           runtimeId={agent.runtime_id}
           runtimeOnline={!!isOnline}
+          provider={runtime?.provider ?? ""}
           model={agent.model ?? ""}
           value={agent.thinking_level ?? ""}
           canEdit={canEdit}
@@ -191,7 +186,7 @@ export function AgentDetailInspector({
               <ActorAvatar
                 actorType="member"
                 actorId={owner.user_id}
-                size={14}
+                size="xs"
               />
               <span className="truncate">{owner.name}</span>
             </span>
@@ -301,85 +296,27 @@ function AvatarEditor({
   canEdit: boolean;
   onUpdate: (data: Record<string, unknown>) => Promise<void>;
 }) {
-  const { t } = useT("agents");
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const { upload, uploading } = useFileUpload(api);
-
   if (!canEdit) {
     return (
-      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg">
-        <AgentAvatarPreview agent={agent} />
-      </div>
+      <ActorAvatarBase
+        name={agent.name}
+        initials={agent.name.charAt(0).toUpperCase()}
+        avatarUrl={resolvePublicFileUrl(agent.avatar_url)}
+        isAgent
+        size="2xl"
+      />
     );
   }
 
-  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = "";
-    try {
-      const result = await upload(file);
-      if (!result) return;
-      await onUpdate({ avatar_url: persistentUploadUrl(result) });
-      toast.success(t(($) => $.inspector.avatar_updated_toast));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t(($) => $.inspector.avatar_upload_failed_toast));
-    }
-  };
-
   return (
-    <>
-      <button
-        type="button"
-        // rounded-lg matches the standard agent avatar treatment used in
-        // list rows. Avoid rounded-full — circles are reserved for humans.
-        className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={() => fileInputRef.current?.click()}
-        disabled={uploading}
-        aria-label={t(($) => $.inspector.change_avatar_aria)}
-      >
-        <AgentAvatarPreview agent={agent} />
-        <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
-          {uploading ? (
-            <Loader2 className="h-4 w-4 animate-spin text-white" />
-          ) : (
-            <Camera className="h-4 w-4 text-white" />
-          )}
-        </div>
-      </button>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleFile}
-      />
-    </>
-  );
-}
-
-function AgentAvatarPreview({ agent }: { agent: Agent }) {
-  return (
-    <BaseActorAvatar
+    <AvatarUploadControl
+      variant="agent"
+      value={agent.avatar_url ?? null}
       name={agent.name}
-      initials={agentInitials(agent.name)}
-      avatarUrl={resolvePublicFileUrl(agent.avatar_url)}
-      isAgent
       size={56}
-      className="rounded-none"
+      onUploaded={(url) => onUpdate({ avatar_url: url })}
     />
   );
-}
-
-function agentInitials(name: string) {
-  const initials = name
-    .trim()
-    .split(/\s+/)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-  return initials || "?";
 }
 
 function NameAndDescription({
