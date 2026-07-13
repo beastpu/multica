@@ -563,6 +563,17 @@ describe("OperationsPage", () => {
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
 
+  it("keeps automatic and assisted repair cards informational", () => {
+    renderWithI18n(<OperationsPage />);
+
+    expect(
+      screen.getByText("AI automatic repairs").closest("button"),
+    ).toBeNull();
+    expect(
+      screen.getByText("AI-assisted repairs").closest("button"),
+    ).toBeNull();
+  });
+
   it("renders the pickup overview and a complete delivery composition", () => {
     renderWithI18n(<OperationsPage />);
 

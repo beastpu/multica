@@ -44,11 +44,7 @@ import {
 // the KPI cards it was opened from.
 // ---------------------------------------------------------------------------
 
-export type OperationsCardKey =
-  | "contribution"
-  | "quality"
-  | "automatic"
-  | "assisted";
+export type OperationsCardKey = "contribution" | "quality";
 
 export type OperationsSheetState =
   | { kind: "card"; card: OperationsCardKey }
@@ -92,11 +88,7 @@ function cardTitle(
 ): string {
   return card === "contribution"
     ? t(($) => $.operations.summary.contribution_rate)
-    : card === "quality"
-      ? t(($) => $.operations.summary.quality_rate)
-      : card === "automatic"
-        ? t(($) => $.operations.summary.automatic_rate)
-        : t(($) => $.operations.summary.assisted_rate);
+    : t(($) => $.operations.summary.quality_rate);
 }
 
 function blockedFamilyLabel(
@@ -268,67 +260,32 @@ function cardBranches(
     ];
   }
   const fixable = rows.filter(isVerifiableOutput);
-  if (card === "quality") {
-    return [
-      {
-        key: "likely_correct",
-        label: agentFixEnumLabel(tx, "quality", "likely_correct"),
-        rows: fixable.filter((f) => qualityJudgement(f) === "likely_correct"),
-        drill: { quality: "likely_correct" },
-      },
-      {
-        key: "likely_needs_changes",
-        label: agentFixEnumLabel(tx, "quality", "likely_needs_changes"),
-        rows: fixable.filter(
-          (f) => qualityJudgement(f) === "likely_needs_changes",
-        ),
-        drill: { quality: "likely_needs_changes" },
-      },
-      {
-        key: "likely_wrong",
-        label: agentFixEnumLabel(tx, "quality", "likely_wrong"),
-        rows: fixable.filter((f) => qualityJudgement(f) === "likely_wrong"),
-        drill: { quality: "likely_wrong" },
-      },
-      {
-        key: "unknown",
-        label: agentFixEnumLabel(tx, "quality", "unknown"),
-        rows: fixable.filter((f) => qualityJudgement(f) === ""),
-        drill: { pendingOnly: true },
-      },
-    ];
-  }
-  if (card === "automatic") {
-    return [
-      {
-        key: "automatic",
-        label: t(($) => $.operations.summary.composition_direct),
-        rows: fixable.filter((f) => deliveryRole(f) === "direct"),
-        drill: { attribution: "ai_delivered" },
-      },
-      {
-        key: "not_automatic",
-        label: t(($) => $.operations.drawer.not_automatic),
-        rows: fixable.filter((f) => deliveryRole(f) !== "direct"),
-      },
-    ];
-  }
   return [
     {
-      key: "assisted",
-      label: t(($) => $.operations.summary.assisted_with_unconverted),
-      rows: fixable.filter((f) => {
-        const role = deliveryRole(f);
-        return role === "assisted" || role === "unconverted";
-      }),
+      key: "likely_correct",
+      label: agentFixEnumLabel(tx, "quality", "likely_correct"),
+      rows: fixable.filter((f) => qualityJudgement(f) === "likely_correct"),
+      drill: { quality: "likely_correct" },
     },
     {
-      key: "not_assisted",
-      label: t(($) => $.operations.drawer.not_assisted),
-      rows: fixable.filter((f) => {
-        const role = deliveryRole(f);
-        return role !== "assisted" && role !== "unconverted";
-      }),
+      key: "likely_needs_changes",
+      label: agentFixEnumLabel(tx, "quality", "likely_needs_changes"),
+      rows: fixable.filter(
+        (f) => qualityJudgement(f) === "likely_needs_changes",
+      ),
+      drill: { quality: "likely_needs_changes" },
+    },
+    {
+      key: "likely_wrong",
+      label: agentFixEnumLabel(tx, "quality", "likely_wrong"),
+      rows: fixable.filter((f) => qualityJudgement(f) === "likely_wrong"),
+      drill: { quality: "likely_wrong" },
+    },
+    {
+      key: "unknown",
+      label: agentFixEnumLabel(tx, "quality", "unknown"),
+      rows: fixable.filter((f) => qualityJudgement(f) === ""),
+      drill: { pendingOnly: true },
     },
   ];
 }

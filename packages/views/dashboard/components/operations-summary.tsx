@@ -224,8 +224,6 @@ export function OperationsSummary({
             den: kpis.automaticRate.denominator,
           })}
           rate={kpis.automaticRate}
-          onClick={onCardClick ? () => onCardClick("automatic") : undefined}
-          clickHint={t(($) => $.operations.drawer.card_hint)}
         />
         <RateCard
           label={t(($) => $.operations.summary.assisted_rate)}
@@ -234,8 +232,6 @@ export function OperationsSummary({
             den: kpis.assistedRate.denominator,
           })}
           rate={kpis.assistedRate}
-          onClick={onCardClick ? () => onCardClick("assisted") : undefined}
-          clickHint={t(($) => $.operations.drawer.card_hint)}
         />
       </div>
       <div
