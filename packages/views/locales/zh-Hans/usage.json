@@ -60,7 +60,7 @@
   "operations": {
     "title": "运营",
     "assessment_title": "AI 修单评估",
-    "subtitle": "展示智能体处理过的 issue 的 P4/Swarm 证据、交付归因与 AI 质量分析。",
+    "subtitle": "汇总外部完成的 issue，分析 AI 接手、修复质量与交付归因。",
     "range_label": "最近 {{days}} 天",
     "search_placeholder": "搜索评论内容",
     "search_clear": "清除搜索",
@@ -84,19 +84,22 @@
       "analysis_hint": "基于当前筛选结果的轻量统计。"
     },
     "summary": {
-      "contribution_rate": "AI 贡献率",
-      "contribution_rate_hint": "出方案 {{num}} / 外部完成 {{den}}",
-      "pass_rate": "AI 方案通过率",
-      "pass_rate_hint": "判对 {{num}} / 已评估 {{den}}",
-      "coverage_rate": "评估覆盖率",
-      "coverage_rate_hint": "已评估 {{num}} / AI 产出 {{den}}",
+      "contribution_rate": "AI 修复贡献",
+      "contribution_rate_hint": "AI 接手 {{num}} / 总进单 {{den}}",
+      "quality_rate": "AI 修复质量",
+      "quality_rate_hint": "AI 标记通过 {{num}} / AI 评估能修 {{den}}",
+      "automatic_rate": "AI 自动修复",
+      "automatic_rate_hint": "AI 自动修复 {{num}} / AI 评估能修 {{den}}",
+      "assisted_rate": "AI 辅助修复",
+      "assisted_rate_hint": "AI 与人共同参与 {{num}} / AI 评估能修 {{den}}",
       "health_footnote": "未评估 {{unassessed}} · 外部单未回填提交 CL {{missingCl}}",
       "stage_judged": "已判定",
-      "overview": "最近 {{days}} 天外部完成 {{done}} 单，AI 参与交付 {{participated}} 单：AI 提交 {{direct}}、AI 辅助 {{assisted}}、参与未转化 {{unconverted}}；已判定的 AI 方案通过率 {{passRate}}。",
+      "overview": "最近 {{days}} 天外部完成 {{done}} 单，AI 接手 {{handled}} 单，其中 {{fixable}} 单已有可验证的 AI 修复方案。",
       "composition_title": "AI 交付构成",
       "composition_total": "AI 参与 {{count}} / 外部完成 {{total}}",
-      "composition_direct": "AI 提交",
-      "composition_assisted": "AI 辅助",
+      "composition_direct": "AI 自动修复",
+      "composition_assisted": "AI 辅助修复",
+      "assisted_with_unconverted": "AI 辅助修复（含参与未转化）",
       "composition_unconverted": "参与未转化",
       "composition_empty": "当前窗口没有 AI 参与的外部完成单。",
       "health_footnote_hint": "未评估 = 评估尚未完成的单（队列状态）；未回填 CL = 外部单已完成但任何证据源都没有提交 CL 记录"
@@ -109,6 +112,20 @@
       "more": "还有 {{count}} 条未展示",
       "empty": "当前分组没有记录",
       "unjudged": "未判定",
+      "handled": "AI 已处理",
+      "unhandled": "AI 未处理",
+      "handled_breakdown": "已接手处理",
+      "assessment_completed": "评估完成",
+      "assessment_blocked": "评估受阻",
+      "assessment_pending": "待评估 / 评估中",
+      "blocked_reasons": "评估受阻原因",
+      "assessment_failed": "评估执行失败",
+      "unhandled_reasons": "未接手原因",
+      "no_agent": "没有分配智能体",
+      "not_dispatched": "已分配智能体但未触发处理",
+      "attribution_breakdown": "交付归因",
+      "not_automatic": "非 AI 自动修复",
+      "not_assisted": "未使用 AI 辅助修复",
       "open_issue": "打开 issue",
       "status": "状态",
       "summary": "评估摘要",
@@ -178,6 +195,11 @@
       "rerun_started": "已重新排队",
       "failed": "加入评估队列失败",
       "blocked_external": "外部工单完成（done）后才能运行 AI 预判"
+    },
+    "error": {
+      "title": "运营数据加载失败",
+      "body": "暂时无法获取 Meegle 与 AI 修复统计，请重试。",
+      "retry": "重新加载"
     },
     "enums": {
       "assessment": {
@@ -262,7 +284,7 @@
     "reset_columns": "重置列宽",
     "empty": {
       "title": "暂无修复记录",
-      "body": "当智能体开始处理 issue 后，它们会显示在这里，并附带工单状态与最新评论。",
+      "body": "Meegle 中完成的 issue 同步后会显示在这里，包括尚未由 AI 接手的单。",
       "search_title": "没有匹配的评论",
       "search_body": "该时间段内没有智能体评论包含「{{term}}」。换个关键词或扩大时间范围试试。"
     }

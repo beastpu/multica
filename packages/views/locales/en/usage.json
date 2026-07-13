@@ -60,7 +60,7 @@
   "operations": {
     "title": "Operations",
     "assessment_title": "AI fix assessment",
-    "subtitle": "P4/Swarm evidence, delivery attribution, and AI quality analysis for issues your agents worked on.",
+    "subtitle": "External-done issues summarized by AI pickup, repair quality, and delivery attribution.",
     "range_label": "Last {{days}} days",
     "search_placeholder": "Search comments",
     "search_clear": "Clear search",
@@ -84,19 +84,22 @@
       "analysis_hint": "Lightweight rollups from the current filtered rows."
     },
     "summary": {
-      "contribution_rate": "AI contribution rate",
-      "contribution_rate_hint": "{{num}} produced a plan / {{den}} external done",
-      "pass_rate": "AI plan pass rate",
-      "pass_rate_hint": "{{num}} correct / {{den}} assessed",
-      "coverage_rate": "Assessment coverage",
-      "coverage_rate_hint": "{{num}} assessed / {{den}} AI produced",
+      "contribution_rate": "AI repair contribution",
+      "contribution_rate_hint": "{{num}} picked up by AI / {{den}} total incoming",
+      "quality_rate": "AI repair quality",
+      "quality_rate_hint": "{{num}} marked pass / {{den}} assessed fixable",
+      "automatic_rate": "AI automatic repairs",
+      "automatic_rate_hint": "{{num}} automatic / {{den}} assessed fixable",
+      "assisted_rate": "AI-assisted repairs",
+      "assisted_rate_hint": "{{num}} AI + human / {{den}} assessed fixable",
       "health_footnote": "{{unassessed}} unassessed · {{missingCl}} missing human CL",
       "stage_judged": "Judged",
-      "overview": "Last {{days}} days: {{done}} external done, AI involved in {{participated}} deliveries — {{direct}} AI delivered, {{assisted}} AI assisted, {{unconverted}} unconverted; judged AI plan pass rate {{passRate}}.",
+      "overview": "Last {{days}} days: {{done}} external done, {{handled}} picked up by AI, with {{fixable}} verifiable AI repair plans.",
       "composition_title": "AI delivery composition",
       "composition_total": "AI involved {{count}} / {{total}} external done",
-      "composition_direct": "AI delivered",
-      "composition_assisted": "AI assisted",
+      "composition_direct": "AI automatic repair",
+      "composition_assisted": "AI-assisted repair",
+      "assisted_with_unconverted": "AI-assisted (including unconverted)",
       "composition_unconverted": "Involved, unconverted",
       "composition_empty": "No AI-involved external-done tickets in this window.",
       "health_footnote_hint": "Unassessed = assessment not completed yet (queue state); missing human CL = the external item is done but no submitted CL exists in any evidence source"
@@ -109,6 +112,20 @@
       "more": "{{count}} more not shown",
       "empty": "No records in this group",
       "unjudged": "Not judged",
+      "handled": "Handled by AI",
+      "unhandled": "Not handled by AI",
+      "handled_breakdown": "Picked-up items",
+      "assessment_completed": "Assessment completed",
+      "assessment_blocked": "Assessment blocked",
+      "assessment_pending": "Pending / assessing",
+      "blocked_reasons": "Assessment blocker reasons",
+      "assessment_failed": "Assessment execution failed",
+      "unhandled_reasons": "Why AI did not pick it up",
+      "no_agent": "No Agent assigned",
+      "not_dispatched": "Agent assigned but processing not triggered",
+      "attribution_breakdown": "Delivery attribution",
+      "not_automatic": "Not automatically repaired by AI",
+      "not_assisted": "No AI-assisted repair",
       "open_issue": "Open issue",
       "status": "Status",
       "summary": "Assessment summary",
@@ -178,6 +195,11 @@
       "rerun_started": "Requeued for assessment",
       "failed": "Failed to queue assessment",
       "blocked_external": "Available once the external work item is done"
+    },
+    "error": {
+      "title": "Could not load operations data",
+      "body": "Meegle and AI repair metrics are temporarily unavailable. Try again.",
+      "retry": "Reload"
     },
     "enums": {
       "assessment": {
@@ -262,7 +284,7 @@
     "reset_columns": "Reset columns",
     "empty": {
       "title": "No fixes yet",
-      "body": "Once your agents start working issues, each one shows up here with its status and latest comment.",
+      "body": "External-done Meegle issues appear here after sync, including items AI has not picked up.",
       "search_title": "No matching comments",
       "search_body": "No agent comment in this period contains “{{term}}”. Try a different term or widen the time range."
     }

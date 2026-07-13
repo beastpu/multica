@@ -766,10 +766,10 @@ export interface DashboardRunTimeDaily {
   failed_count: number;
 }
 
-// One row of the Usage page's Operations tab: one issue an agent has worked
-// on, carrying only the LATEST agent run for that issue. `issue_status` is the
-// issue's workflow status; `last_comment` is the agent's most recent issue
-// comment, truncated by the API. Backed by GET /api/operations/agent-fixes.
+// One row of the Operations feed: one recent external binding or normal Agent
+// run. External-done rows may have empty task/Agent fields when AI never picked
+// them up; those rows form the incoming denominator and unhandled breakdown.
+// Backed by GET /api/operations/agent-fixes.
 export interface AgentFixRecord {
   task_id: string;
   agent_id: string;

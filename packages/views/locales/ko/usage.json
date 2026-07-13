@@ -60,7 +60,7 @@
   "operations": {
     "title": "운영",
     "assessment_title": "AI 수정 평가",
-    "subtitle": "에이전트가 처리한 issue 의 P4/Swarm 증거, 납품 귀속, AI 품질 분석을 보여줍니다.",
+    "subtitle": "외부 완료 issue를 AI 처리, 수정 품질, 납품 귀속별로 집계합니다.",
     "range_label": "최근 {{days}}일",
     "search_placeholder": "댓글 검색",
     "search_clear": "검색 지우기",
@@ -84,19 +84,22 @@
       "analysis_hint": "현재 필터 결과의 간단한 집계입니다."
     },
     "summary": {
-      "contribution_rate": "AI 기여율",
-      "contribution_rate_hint": "방안 산출 {{num}} / 외부 완료 {{den}}",
-      "pass_rate": "AI 방안 통과율",
-      "pass_rate_hint": "정답 {{num}} / 평가 완료 {{den}}",
-      "coverage_rate": "평가 커버리지",
-      "coverage_rate_hint": "평가 완료 {{num}} / AI 산출 {{den}}",
+      "contribution_rate": "AI 수정 기여",
+      "contribution_rate_hint": "AI 처리 {{num}} / 전체 유입 {{den}}",
+      "quality_rate": "AI 수정 품질",
+      "quality_rate_hint": "AI 통과 판정 {{num}} / 수정 가능 평가 {{den}}",
+      "automatic_rate": "AI 자동 수정",
+      "automatic_rate_hint": "AI 자동 수정 {{num}} / 수정 가능 평가 {{den}}",
+      "assisted_rate": "AI 보조 수정",
+      "assisted_rate_hint": "AI와 사람이 공동 참여 {{num}} / 수정 가능 평가 {{den}}",
       "health_footnote": "미평가 {{unassessed}} · 제출 CL 미기입 {{missingCl}}",
       "stage_judged": "판정 완료",
-      "overview": "최근 {{days}}일 외부 완료 {{done}}건 중 AI 참여 {{participated}}건: AI 제출 {{direct}}, AI 지원 {{assisted}}, 참여·미전환 {{unconverted}}; 판정된 AI 방안 통과율 {{passRate}}.",
+      "overview": "최근 {{days}}일 외부 완료 {{done}}건 중 AI 처리 {{handled}}건, 검증 가능한 AI 수정 방안 {{fixable}}건입니다.",
       "composition_title": "AI 납품 구성",
       "composition_total": "AI 참여 {{count}} / 외부 완료 {{total}}",
-      "composition_direct": "AI 제출",
-      "composition_assisted": "AI 지원",
+      "composition_direct": "AI 자동 수정",
+      "composition_assisted": "AI 보조 수정",
+      "assisted_with_unconverted": "AI 보조 수정(미전환 포함)",
       "composition_unconverted": "참여·미전환",
       "composition_empty": "이 기간에 AI가 참여한 외부 완료 티켓이 없습니다.",
       "health_footnote_hint": "미평가 = 평가가 아직 완료되지 않은 건(대기 상태); CL 미기입 = 외부 티켓은 완료됐지만 어떤 증거에도 제출 CL 기록이 없음"
@@ -109,6 +112,20 @@
       "more": "{{count}}건 더 있음",
       "empty": "이 그룹에 기록이 없습니다",
       "unjudged": "미판정",
+      "handled": "AI 처리 완료",
+      "unhandled": "AI 미처리",
+      "handled_breakdown": "처리된 항목",
+      "assessment_completed": "평가 완료",
+      "assessment_blocked": "평가 차단",
+      "assessment_pending": "평가 대기 / 진행 중",
+      "blocked_reasons": "평가 차단 사유",
+      "assessment_failed": "평가 실행 실패",
+      "unhandled_reasons": "AI가 처리하지 않은 사유",
+      "no_agent": "에이전트 미할당",
+      "not_dispatched": "에이전트 할당 후 처리 미실행",
+      "attribution_breakdown": "납품 귀속",
+      "not_automatic": "AI 자동 수정 아님",
+      "not_assisted": "AI 보조 수정 없음",
       "open_issue": "issue 열기",
       "status": "상태",
       "summary": "평가 요약",
@@ -178,6 +195,11 @@
       "rerun_started": "재대기 완료",
       "failed": "대기열 추가 실패",
       "blocked_external": "외부 작업 항목이 done 이 되면 실행할 수 있습니다"
+    },
+    "error": {
+      "title": "운영 데이터를 불러오지 못했습니다",
+      "body": "Meegle 및 AI 수정 지표를 일시적으로 가져올 수 없습니다. 다시 시도하세요.",
+      "retry": "다시 불러오기"
     },
     "enums": {
       "assessment": {
@@ -262,7 +284,7 @@
     "reset_columns": "열 너비 초기화",
     "empty": {
       "title": "아직 수정 내역이 없습니다",
-      "body": "에이전트가 issue를 처리하기 시작하면 상태 및 최신 댓글과 함께 여기에 표시됩니다.",
+      "body": "Meegle의 완료 issue는 동기화 후 표시되며 AI가 아직 처리하지 않은 항목도 포함됩니다.",
       "search_title": "일치하는 댓글이 없습니다",
       "search_body": "이 기간에 \"{{term}}\"을(를) 포함하는 에이전트 댓글이 없습니다. 다른 키워드를 사용하거나 기간을 넓혀 보세요."
     }

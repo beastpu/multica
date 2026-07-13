@@ -206,6 +206,8 @@ describe("computeOperationsKpis", () => {
     },
   });
   const noOutput = fix({
+    task_id: "",
+    agent_id: "",
     external: { done: true },
     p4_assessment: {
       assessment_status: "completed",
@@ -240,23 +242,29 @@ describe("computeOperationsKpis", () => {
       unconverted: 0,
       notParticipated: 1,
     });
-    // Contribution: 3 of 4 done tickets have an AI plan. Its numerator is the
-    // SAME count as coverage's denominator — the headline nesting chain.
+    // Contribution: 3 of 4 external-done tickets have a normal Agent task.
     expect(kpis.contributionRate).toEqual({
       value: 0.75,
       numerator: 3,
       denominator: 4,
     });
-    // Coverage: 2 of the 3 AI plans reached a verdict (aiUnjudged did not).
-    expect(kpis.coverageRate).toEqual({
+    // The three outcome cards share the same verifiable-plan denominator.
+    expect(kpis.fixableCount).toBe(3);
+    expect(kpis.qualityRate).toEqual({
+      value: 1 / 3,
+      numerator: 1,
+      denominator: 3,
+    });
+    expect(kpis.automaticRate).toEqual({
       value: 2 / 3,
       numerator: 2,
       denominator: 3,
     });
-    expect(kpis.coverageRate.denominator).toBe(kpis.contributionRate.numerator);
-    // Quality (plan-quality, one rate): 1 of 2 judged is likely_correct.
-    expect(kpis.passRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
-    expect(kpis.passRate.denominator).toBe(kpis.coverageRate.numerator);
+    expect(kpis.assistedRate).toEqual({
+      value: 1 / 3,
+      numerator: 1,
+      denominator: 3,
+    });
     // Demoted health counts. unassessed = notDone (no assessment at all);
     // no fixture carries the missing_external_cl warning.
     expect(kpis.unassessed).toBe(1);
@@ -281,7 +289,7 @@ describe("computeOperationsKpis", () => {
     expect(kpis.funnel.verifiable).toBe(2);
     expect(kpis.funnel.judged).toBe(2);
     expect(kpis.funnel.passed).toBe(2);
-    expect(kpis.passRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
+    expect(kpis.qualityRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
   });
 
   it("judges an AI plan even without a committed CL (assessment ≠ delivery)", () => {
@@ -302,13 +310,13 @@ describe("computeOperationsKpis", () => {
     expect(kpis.funnel.verifiable).toBe(2);
     expect(kpis.funnel.judged).toBe(2);
     expect(kpis.funnel.passed).toBe(2);
-    // The unshipped plan is judged and passed — pass rate does not require a
+    // The unshipped plan is judged and passed — quality does not require a
     // committed CL.
-    expect(kpis.passRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
-    // Both plans count as contribution (artifact-driven) and both were
-    // assessed, so coverage is 2/2 — delivery attribution plays no role here.
+    expect(kpis.qualityRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
+    // Both external-done tickets had a normal Agent task.
     expect(kpis.contributionRate.numerator).toBe(2);
-    expect(kpis.coverageRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
+    // The unconverted plan is intentionally counted as AI-assisted.
+    expect(kpis.assistedRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
   });
 
   it("excludes a committed CL with no AI plan (human-delivered)", () => {
@@ -326,10 +334,10 @@ describe("computeOperationsKpis", () => {
     });
     const kpis = computeOperationsKpis([aiPassed, humanDelivered]);
     expect(kpis.funnel.verifiable).toBe(1);
-    expect(kpis.passRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
+    expect(kpis.qualityRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
   });
 
-  it("counts an unused AI plan as contribution (artifact-driven)", () => {
+  it("counts an unused AI plan as assisted while pickup uses task presence", () => {
     // AI shelved a fix but a human shipped a different CL (human_delivered).
     const planNotUsed = fix({
       external: { done: true },
@@ -348,16 +356,16 @@ describe("computeOperationsKpis", () => {
       unconverted: 1,
       notParticipated: 0,
     });
-    // Contribution is artifact-driven: the plan exists, so it counts even
-    // though a human shipped a different CL. Where it landed (unconverted)
-    // stays visible in the composition partition and the analysis tab.
+    // The normal Agent task makes this a picked-up item.
     expect(kpis.contributionRate).toEqual({
       value: 1,
       numerator: 1,
       denominator: 1,
     });
-    // The failed plan is judged (it reached a verdict) but not passed.
-    expect(kpis.passRate).toEqual({ value: 0, numerator: 0, denominator: 1 });
+    // The failed, unconverted plan is not a quality pass but does count toward
+    // AI-assisted repair per the operating definition.
+    expect(kpis.qualityRate).toEqual({ value: 0, numerator: 0, denominator: 1 });
+    expect(kpis.assistedRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
   });
 
   it("counts a comment-only plan as engaged but not planned or participated", () => {
@@ -384,10 +392,26 @@ describe("computeOperationsKpis", () => {
   it("returns null rates on empty input instead of fake zeros", () => {
     const kpis = computeOperationsKpis([]);
     expect(kpis.contributionRate.value).toBeNull();
-    expect(kpis.passRate.value).toBeNull();
-    expect(kpis.coverageRate.value).toBeNull();
+    expect(kpis.qualityRate.value).toBeNull();
+    expect(kpis.automaticRate.value).toBeNull();
+    expect(kpis.assistedRate.value).toBeNull();
     expect(kpis.unassessed).toBe(0);
     expect(kpis.missingExternalCl).toBe(0);
+  });
+
+  it("keeps mapped external done rows in the denominator on older responses", () => {
+    const kpis = computeOperationsKpis([
+      fix({
+        task_id: "",
+        agent_id: "",
+        external: { mapped_status: "done" },
+      }),
+    ]);
+    expect(kpis.contributionRate).toEqual({
+      value: 0,
+      numerator: 0,
+      denominator: 1,
+    });
   });
 
   it("does not count an unknown or drifting quality value as judged", () => {

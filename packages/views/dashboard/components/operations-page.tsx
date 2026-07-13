@@ -78,7 +78,6 @@ import {
 } from "./operations-drawers";
 import { Segmented } from "./segmented";
 import {
-  UNASSESSED,
   attributionBucket,
   computeOperationsKpis,
   deriveAttribution,
@@ -87,6 +86,7 @@ import {
   hasP4Signal,
   fixDayIso,
   isPendingJudgement,
+  isExternalDone,
   qualityBucket,
   trimOperationsWindow,
   swarmChangeUrl,
@@ -97,9 +97,6 @@ const ALL_AGENTS = "__all__";
 const ALL_WORKSTREAMS = "__all__";
 const ALL_ATTRIBUTIONS = "__all__";
 const ALL_QUALITIES = "__all__";
-const DETAIL_TAB = "detail";
-const ANALYSIS_TAB = "analysis";
-type OperationsTab = typeof DETAIL_TAB | typeof ANALYSIS_TAB;
 type SelectOption = { value: string; label: string };
 
 const FILTER_SELECT_TRIGGER_CLASS =
@@ -211,16 +208,8 @@ const SEARCH_DEBOUNCE_MS = 300;
 
 function isOperationsVisibleIssue(fix: AgentFixRecord): boolean {
   const external = fix.external;
-  const hasAgentRun = fix.task_id.trim().length > 0;
   const hasExternalBinding = (external?.binding_id ?? "").trim().length > 0;
-  const externalDone =
-    external?.done === true || external?.mapped_status === "done";
-  return (
-    hasAgentRun &&
-    fix.issue_status === "done" &&
-    hasExternalBinding &&
-    externalDone
-  );
+  return hasExternalBinding && isExternalDone(fix);
 }
 
 function confidenceLabel(confidence: number | null | undefined): string {
@@ -271,12 +260,11 @@ export function splitHighlight(text: string, keyword: string): HighlightPart[] {
 }
 
 /**
- * Operations page — AI fix assessment. One row per issue an agent has worked
- * on (the latest run only), joining the external work item state, P4/Swarm
- * evidence, and the AI's delivery/quality analysis. Quality is AI-judged —
- * there is no human review step. A KPI band (pass rate split by AI-delivered
- * vs AI-assisted / delivery share / no-output rate + delivery funnel) sits
- * above the detail table. Lives at `/{slug}/operations`; backed by
+ * Operations page — AI repair effectiveness over the complete external-done
+ * intake. Rows without an Agent task stay visible so pickup contribution and
+ * unhandled reasons reconcile with Meegle. Delivery and quality distributions
+ * live in the relevant KPI drawers above the detail table. Lives at
+ * `/{slug}/operations`; backed by
  * GET /api/operations/agent-fixes.
  */
 export function OperationsPage() {
@@ -304,11 +292,6 @@ export function OperationsPage() {
     useState<string>(ALL_ATTRIBUTIONS);
   const [qualityFilter, setQualityFilter] = useState<string>(ALL_QUALITIES);
   const [pendingOnly, setPendingOnly] = useState(false);
-  // Analysis is the default tab: operators land on the aggregate story
-  // (attribution / quality / blocker distributions); the per-ticket detail
-  // table is the drill-down surface reached from analysis charts (which set
-  // filters and switch here) or via the tab switch.
-  const [activeTab, setActiveTab] = useState<OperationsTab>(ANALYSIS_TAB);
   const [page, setPage] = useState(0);
   // Right-side drawer: rate-card breakdown / branch ticket list / one issue.
   const [sheet, setSheet] = useState<OperationsSheetState>(null);
@@ -331,7 +314,7 @@ export function OperationsPage() {
 
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   // Two feeds over the same window: the stats feed (no search term) backs the
-  // KPI band / analysis / drawers, the table feed (server-side comment search)
+  // KPI band and drawers, while the table feed (server-side comment search)
   // backs the detail table. With no search term they are the same cached
   // query. This split is what keeps detail filters from bending the stats.
   const statsQuery = useQuery(operationsFixesOptions(wsId, days, ""));
@@ -356,6 +339,9 @@ export function OperationsPage() {
     [tableQuery.data, days, viewTZ],
   );
   const isLoading = statsQuery.isLoading || tableQuery.isLoading;
+  const isError =
+    (statsQuery.isError && !statsQuery.data) ||
+    (tableQuery.isError && !tableQuery.data);
   // The workspace's Helix Swarm URL — one connection per workspace — turns
   // review IDs and CL numbers into links. Absent connection → plain text.
   const { data: perforceData } = useQuery(perforceConnectionOptions(wsId));
@@ -388,7 +374,7 @@ export function OperationsPage() {
   }, [windowFixes]);
 
   // The stats pool: page-level dimensions only (window + workstream). The KPI
-  // band, composition bar, analysis distributions, and drawers all read this.
+  // band and drawers read this exact pool.
   const statsRows = useMemo(
     () =>
       workstreamFilter === ALL_WORKSTREAMS
@@ -417,7 +403,7 @@ export function OperationsPage() {
 
   // Detail-only filters (agent / attribution / quality / pending). They — and
   // the comment search — narrow ONLY the detail table, never the stats above,
-  // so a narrowed table can't masquerade as a changed rate (demo decision ⑥).
+  // so a narrowed table cannot masquerade as a changed rate.
   const matchesDetailFilters = useMemo(() => {
     return (f: AgentFixRecord): boolean => {
       if (effectiveAgent !== ALL_AGENTS && f.agent_id !== effectiveAgent) {
@@ -470,26 +456,6 @@ export function OperationsPage() {
   };
 
   const kpis = useMemo(() => computeOperationsKpis(statsRows), [statsRows]);
-  // Which external statuses make up the external-done stage: several raw
-  // statuses can map to done (e.g. 测试通过 + 已关闭), and ops wants to see
-  // the split, not just the sum. Labels resolve the same way the external
-  // status column does.
-  const externalDoneBreakdown = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const f of statsRows) {
-      if (f.external?.done !== true) continue;
-      const raw = f.external?.status ?? "";
-      // Empty labels still count (bucketed as "—") so the breakdown always
-      // sums to the external-done stage count.
-      const label =
-        f.external?.status_name || feishuStatusNames.get(raw) || raw || "—";
-      counts.set(label, (counts.get(label) ?? 0) + 1);
-    }
-    return Array.from(counts.entries())
-      .map(([label, count]) => ({ label, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [statsRows, feishuStatusNames]);
-
   // UI pagination over the filtered rows. Any filter / window / search change
   // snaps back to the first page.
   useEffect(() => {
@@ -523,13 +489,11 @@ export function OperationsPage() {
     f.external?.status ||
     "";
 
-  // A drawer branch's "view all" jump: apply the matching detail filter,
-  // switch to the detail table, close the drawer.
+  // A drawer branch's "view all" jump applies the matching detail filter.
   const applyDrill = (filter: OperationsDrillFilter) => {
     if (filter.attribution) setAttributionFilter(filter.attribution);
     if (filter.quality) setQualityFilter(filter.quality);
     if (filter.pendingOnly) setPendingOnly(true);
-    setActiveTab(DETAIL_TAB);
     setSheet(null);
   };
 
@@ -540,8 +504,8 @@ export function OperationsPage() {
           <Radar className="h-4 w-4 shrink-0 text-muted-foreground" />
           <h1 className="truncate text-sm font-medium">{t(($) => $.operations.title)}</h1>
         </div>
-        {/* Page-level dimensions only (demo decision ⑥): the time window and
-            the workstream scope everything — stats, analysis, drawers, table.
+        {/* Page-level dimensions only: the time window and workstream scope
+            everything — stats, drawers, and table.
             All other filters live on the detail table and narrow only it. */}
         <nav
           role="toolbar"
@@ -606,59 +570,27 @@ export function OperationsPage() {
             </div>
           </div>
 
-          {!isLoading && statsRows.length > 0 ? (
+          {!isLoading && !isError && statsRows.length > 0 ? (
             <OperationsSummary
               kpis={kpis}
               days={days}
               onCardClick={(card) => setSheet({ kind: "card", card })}
-              externalDoneBreakdown={externalDoneBreakdown}
             />
-          ) : null}
-
-          {!isLoading && statsRows.length > 0 ? (
-            <div className="flex items-center justify-between gap-3">
-              <Segmented
-                value={activeTab}
-                onChange={setActiveTab}
-                options={[
-                  {
-                    label: t(($) => $.operations.tabs.analysis),
-                    value: ANALYSIS_TAB,
-                  },
-                  {
-                    label: t(($) => $.operations.tabs.detail),
-                    value: DETAIL_TAB,
-                  },
-                ]}
-              />
-              <span className="text-xs text-muted-foreground">
-                {activeTab === DETAIL_TAB
-                  ? t(($) => $.operations.tabs.detail_hint)
-                  : t(($) => $.operations.tabs.analysis_hint)}
-              </span>
-            </div>
           ) : null}
 
           {isLoading ? (
             <OperationsSkeleton />
-          ) : statsRows.length === 0 ? (
-            <OperationsEmpty search="" />
-          ) : activeTab === ANALYSIS_TAB ? (
-            <OperationsAnalysis
-              rows={statsRows}
-              onDrillAttribution={(key) => {
-                setAttributionFilter(key);
-                setActiveTab(DETAIL_TAB);
-              }}
-              onDrillQuality={(key) => {
-                setQualityFilter(key);
-                setActiveTab(DETAIL_TAB);
+          ) : isError ? (
+            <OperationsError
+              onRetry={() => {
+                void Promise.all([statsQuery.refetch(), tableQuery.refetch()]);
               }}
             />
+          ) : statsRows.length === 0 ? (
+            <OperationsEmpty search="" />
           ) : (
             <>
-              {/* Detail-only filters (demo decision ⑥): they narrow this table
-                  and the CSV export, never the stats above. */}
+              {/* Detail-only filters narrow this table, never the stats above. */}
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <SearchBox value={searchInput} onChange={setSearchInput} />
                 <AgentFilter
@@ -793,14 +725,18 @@ export function OperationsPage() {
                             statusNames={feishuStatusNames}
                           />
                           <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-                            <ActorAvatar
-                              actorType="agent"
-                              actorId={f.agent_id}
-                              size="md"
-                              enableHoverCard
-                            />
+                            {f.agent_id ? (
+                              <ActorAvatar
+                                actorType="agent"
+                                actorId={f.agent_id}
+                                size="md"
+                                enableHoverCard
+                              />
+                            ) : null}
                             <span className="min-w-0 truncate text-sm">
-                              {agent?.name ?? f.agent_name}
+                              {agent?.name ||
+                                f.agent_name ||
+                                t(($) => $.operations.drawer.no_agent)}
                             </span>
                           </div>
                           <P4EvidenceCell fix={f} swarmBase={swarmBase} />
@@ -938,155 +874,6 @@ function HeaderCell({
       />
     </span>
   );
-}
-
-function OperationsAnalysis({
-  rows,
-  onDrillAttribution,
-  onDrillQuality,
-}: {
-  rows: AgentFixRecord[];
-  onDrillAttribution: (key: string) => void;
-  onDrillQuality: (key: string) => void;
-}) {
-  const { t } = useT("usage");
-  const tx = t as unknown as UsageT;
-  // Both cards show COMPLETED-assessment verdicts only, over the same
-  // denominator (the caption's 完成评估 N) so their numbers reconcile
-  // against each other. The unassessed backlog is a queue state, not a
-  // verdict — it lives in the KPI band's health footnote, exactly once.
-  const attribution = countBy(rows, attributionBucket);
-  const quality = countBy(rows, qualityBucket);
-  attribution.delete(UNASSESSED);
-  quality.delete(UNASSESSED);
-  const completed = rows.filter(
-    (f) => f.p4_assessment?.assessment_status === "completed",
-  ).length;
-  const distRows = (
-    counts: Map<string, number>,
-    kind: "attribution" | "quality",
-  ) =>
-    Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([key, count]) => ({
-        key,
-        label: agentFixEnumLabel(tx, kind, key),
-        count,
-        tone: agentFixEnumTone(kind, key),
-      }));
-  return (
-    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
-      <AnalysisCard
-        title={t(($) => $.operations.analysis.attribution_title)}
-        completed={completed}
-        rows={distRows(attribution, "attribution")}
-        onSelect={onDrillAttribution}
-      />
-      <AnalysisCard
-        title={t(($) => $.operations.analysis.quality_title)}
-        completed={completed}
-        rows={distRows(quality, "quality")}
-        onSelect={onDrillQuality}
-      />
-    </div>
-  );
-}
-
-// One distribution card: single-line rows — tone badge, a shared-scale bar,
-// and count · share-of-completed — sorted largest first by the caller.
-function AnalysisCard({
-  title,
-  completed,
-  rows,
-  emptyLabel,
-  onSelect,
-}: {
-  title: string;
-  // The shared denominator (completed assessments) shown in the caption and
-  // backing every row's percentage.
-  completed: number;
-  rows: {
-    key?: string;
-    label: string;
-    count: number;
-    tone: Tone;
-  }[];
-  emptyLabel?: string;
-  // When set, each row is clickable and drills down to the detail table with
-  // the matching filter applied.
-  onSelect?: (key: string) => void;
-}) {
-  const { t } = useT("usage");
-  const max = Math.max(1, ...rows.map((r) => r.count));
-  const share = (count: number) =>
-    completed > 0 ? ` · ${Math.round((count / completed) * 100)}%` : "";
-  return (
-    <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
-      <div className="flex min-w-0 items-baseline justify-between gap-3 border-b px-4 py-3">
-        <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
-        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-          {t(($) => $.operations.analysis.completed_caption, {
-            count: completed,
-          })}
-          {onSelect ? ` · ${t(($) => $.operations.analysis.drill_hint)}` : ""}
-        </span>
-      </div>
-      <div className="grid min-w-0 gap-1 p-3">
-        {rows.length === 0 ? (
-          <div className="px-1 py-1 text-sm text-muted-foreground">
-            {emptyLabel ?? "—"}
-          </div>
-        ) : rows.map((r) => {
-          const inner = (
-            <>
-              <ToneBadge tone={r.tone} className="min-w-0 justify-self-start">
-                {r.label}
-              </ToneBadge>
-              <div className="h-1.5 min-w-0 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary"
-                  style={{ width: `${Math.max(4, (r.count / max) * 100)}%` }}
-                />
-              </div>
-              <span className="text-right text-xs text-muted-foreground tabular-nums">
-                {r.count}
-                {share(r.count)}
-              </span>
-            </>
-          );
-          const rowClass =
-            "grid min-w-0 grid-cols-[128px_minmax(0,1fr)_84px] items-center gap-3 rounded-md px-1.5 py-1";
-          if (onSelect && r.key) {
-            return (
-              <button
-                key={r.label}
-                type="button"
-                onClick={() => onSelect(r.key!)}
-                title={r.label}
-                className={`${rowClass} text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
-              >
-                {inner}
-              </button>
-            );
-          }
-          return (
-            <div key={r.label} title={r.label} className={rowClass}>
-              {inner}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function countBy<T>(items: T[], keyFn: (item: T) => string): Map<string, number> {
-  const out = new Map<string, number>();
-  for (const item of items) {
-    const key = keyFn(item);
-    out.set(key, (out.get(key) ?? 0) + 1);
-  }
-  return out;
 }
 
 // Drag handle for one resizable column. To keep the visible rows from
@@ -1865,6 +1652,25 @@ function OperationsSkeleton() {
       <Skeleton className="h-24 rounded-lg" />
       <Skeleton className="h-9 rounded-lg" />
       <Skeleton className="h-48 rounded-lg" />
+    </div>
+  );
+}
+
+function OperationsError({ onRetry }: { onRetry: () => void }) {
+  const { t } = useT("usage");
+  return (
+    <div className="flex flex-col items-center rounded-lg border border-dashed py-12 text-center">
+      <TriangleAlert className="h-6 w-6 text-destructive" />
+      <p className="mt-3 text-sm font-medium">
+        {t(($) => $.operations.error.title)}
+      </p>
+      <p className="mt-1 max-w-md text-xs text-muted-foreground">
+        {t(($) => $.operations.error.body)}
+      </p>
+      <Button type="button" variant="outline" className="mt-4" onClick={onRetry}>
+        <RefreshCw className="h-4 w-4" />
+        {t(($) => $.operations.error.retry)}
+      </Button>
     </div>
   );
 }
