@@ -198,6 +198,23 @@ describe("repairMethod", () => {
     expect(repairMethod(withAttribution("conflict"))).toBe("unknown");
     expect(repairMethod(fix())).toBe("unknown");
   });
+
+  it("does not infer AI assistance from a needs-changes quality judgement", () => {
+    const needsChanges = (attribution: string) =>
+      fix({
+        p4_assessment: {
+          assessment_status: "completed",
+          delivery_attribution_prediction: attribution,
+          quality_prediction: "likely_needs_changes",
+          ai_shelved_cls: ["123"],
+        },
+      });
+
+    expect(repairMethod(needsChanges("ai_assisted"))).toBe("ai_assisted");
+    expect(repairMethod(needsChanges("unknown"))).toBe("unknown");
+    expect(repairMethod(needsChanges("human_delivered"))).toBe("unknown");
+    expect(repairMethod(needsChanges("conflict"))).toBe("unknown");
+  });
 });
 
 describe("computeOperationsKpis", () => {

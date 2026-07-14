@@ -872,6 +872,7 @@ describe("OperationsPage", () => {
   it("renders quality analysis copy in Chinese locale", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />, { locale: "zh-Hans" });
+    expect(screen.getByText("AI 已处理 / 分配给智能体")).toBeTruthy();
     expect(screen.getByText("AI 已处理 2 / 分配给智能体 6")).toBeTruthy();
     await openAssessments(user, "评估明细");
 

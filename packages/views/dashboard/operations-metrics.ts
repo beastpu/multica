@@ -244,7 +244,7 @@ export function deliveryRole(fix: AgentFixRecord): DeliveryRole {
 
 // The canonical Operations participation predicate. Contribution, delivery
 // composition, rate denominators, and drawers all reuse this exact rule so
-// "AI 接手" and "AI 参与" always reconcile.
+// "AI 已处理" and "AI 参与" always reconcile.
 export function isAiParticipated(fix: AgentFixRecord): boolean {
   return deliveryRole(fix) !== "none";
 }

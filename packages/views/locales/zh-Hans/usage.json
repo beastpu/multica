@@ -60,7 +60,7 @@
   "operations": {
     "title": "运营",
     "assessment_title": "AI 修单评估",
-    "subtitle": "汇总飞书项目测试通过且 Multica 同步 issue 已完成的单，分析 AI 接手、修复质量与交付构成。",
+    "subtitle": "汇总飞书项目测试通过且 Multica 同步 issue 已完成的单，分析 AI 处理、修复质量与交付构成。",
     "range_label": "最近 {{days}} 天",
     "search_placeholder": "搜索评论内容",
     "search_clear": "清除搜索",
@@ -85,7 +85,7 @@
     },
     "summary": {
       "contribution_rate": "AI 覆盖率",
-      "contribution_rate_hint": "AI 接手 / 分配给智能体",
+      "contribution_rate_hint": "AI 已处理 / 分配给智能体",
       "quality_rate": "AI 修复质量",
       "quality_rate_hint": "AI 标记通过 / AI 已评估可修复",
       "automatic_rate": "AI 自动修复率",
@@ -94,7 +94,7 @@
       "assisted_rate_hint": "AI 辅助方案通过 / AI 已评估可修复",
       "health_footnote": "未评估 {{unassessed}} · 外部单未回填提交 CL {{missingCl}}",
       "stage_judged": "已判定",
-      "overview": "最近 {{days}} 天分配给智能体 {{done}} 单，AI 接手 {{handled}} 单，其中 {{judged}} 单已有 AI 质量判断。",
+      "overview": "最近 {{days}} 天分配给智能体 {{done}} 单，AI 已处理 {{handled}} 单，其中 {{judged}} 单已有 AI 质量判断。",
       "composition_title": "AI 交付构成",
       "composition_total": "AI 已处理 {{count}} / 分配给智能体 {{total}}",
       "composition_direct": "AI 自动修复",
@@ -287,7 +287,7 @@
     "reset_columns": "重置列宽",
     "empty": {
       "title": "暂无修复记录",
-      "body": "飞书项目测试通过且 Multica 同步 issue 已完成的单会显示在这里，包括尚未由 AI 接手的单。",
+      "body": "飞书项目测试通过且 Multica 同步 issue 已完成的单会显示在这里，包括尚未由 AI 处理的单。",
       "search_title": "没有匹配的评论",
       "search_body": "该时间段内没有智能体评论包含「{{term}}」。换个关键词或扩大时间范围试试。"
     }
