@@ -213,6 +213,13 @@ for the behavior contracts the skill teaches.
   not whether it shipped. Delivery attribution (`ai_delivered` /
   `ai_assisted` from `delivery_attribution_prediction`) drives the delivery
   composition, which is why attribution must not be guessed.
+- Human submission is not itself an assisted-delivery signal. The assessment
+  skill emits `ai_assisted` only when the human final CL materially follows an
+  equivalent AI implementation that existed before the human submission. A
+  non-equivalent human fix or AI output produced after final delivery emits
+  `human_delivered` when ownership is proven; insufficient evidence emits
+  `unknown`. The dashboard intentionally folds both non-AI outcomes into its
+  operator-facing unable-to-determine repair-method bucket.
 - Delivery-side metrics and the missing-CL process gap read the structured
   `*_committed_cls` arrays, not `summary` / `prediction_reasons`. This is why
   the SKILL requires a verified submitted CL — including one confirmed only via

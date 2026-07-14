@@ -286,10 +286,16 @@ Use the comparison to classify delivery and quality:
   issue comment records the final submitted CL, use that evidence when choosing
   `delivery_attribution_prediction`.
 - If a human manually submitted a CL that is method-equivalent to the AI/Swarm
-  work, prefer `ai_assisted`. If automation submitted the equivalent final CL,
-  prefer `ai_delivered`.
-- If a human submitted a non-equivalent final CL, prefer `human_delivered` or
-  `unattributed` depending on whether the human ownership is proven.
+  work, use `ai_assisted` only when both conditions hold:
+  1. AI work existed before the human submission.
+  2. Evidence supports that the human used or materially followed it.
+  Method similarity alone is not proof of assistance.
+- If automation submitted the equivalent final CL, prefer `ai_delivered`.
+- If a human submitted a non-equivalent final CL, AI work was produced after the final delivery, or evidence proves that the human did not rely on the AI
+  implementation, prefer `human_delivered` when human ownership is proven.
+- If evidence is insufficient to prove that the human used the AI work, to
+  establish the ordering between AI output and final delivery, or to establish
+  delivery ownership, use `unknown`; do not guess `ai_assisted`.
 
 ## Prediction policy
 
