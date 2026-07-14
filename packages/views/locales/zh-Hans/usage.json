@@ -153,6 +153,7 @@
       "external_status": "外部状态",
       "p4_evidence": "提交 CL 记录",
       "ai_attribution": "修复方式",
+      "assessment_status": "评估状态",
       "ai_quality": "AI 预判"
     },
     "pagination": {
@@ -205,6 +206,7 @@
     "enums": {
       "assessment": {
         "missing": "待 AI 预判",
+        "pending": "待评估",
         "running": "AI 预判中",
         "failed": "AI 失败",
         "completed": "AI 已判断",

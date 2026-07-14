@@ -58,7 +58,6 @@ import type {
 } from "@multica/core/types";
 import { PageHeader } from "../../layout/page-header";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { StatusIcon } from "../../issues/components/status-icon";
 import { AppLink } from "../../navigation";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { useT } from "../../i18n";
@@ -125,10 +124,9 @@ type OpsRange = (typeof RANGES)[number]["days"];
 // coverage instead of presenting the stats as complete.
 const FETCH_LIMIT = 10000;
 
-// The "状态" column mirrors the issues UI: the same StatusIcon + the label
-// from the `issues` i18n namespace. These are the known values; an unknown
-// server-side value still renders its raw text (no icon), so enum drift
-// downgrades instead of crashing.
+// Issue workflow status is shown in the issue drawer. These are the known
+// values; an unknown server-side value still renders its raw text so enum
+// drift downgrades instead of crashing.
 const ISSUE_STATUSES = [
   "backlog",
   "todo",
@@ -147,11 +145,10 @@ function isKnownIssueStatus(s: string): s is IssueStatus {
 const EMPTY: AgentFixRecord[] = [];
 
 // --- Resizable-column layout -------------------------------------------------
-// Column order: Issue, external state, agent, repair method, date. Submitted CL
-// evidence and the AI assessment live in the repair-method popover so the table
-// stays scannable. The removed columns remain in persisted view state for
-// backwards-compatible hydration, but they no longer affect this layout.
-const EXTERNAL_PX = 138;
+// Column order: Issue, agent, repair method, assessment status, date. Issue and
+// external workflow details live in the issue drawer; submitted CL evidence and
+// the AI judgement live in the repair-method popover. Hidden legacy width slots
+// remain in persisted view state for backwards-compatible hydration.
 const COLUMN_GAP_PX = 12; // matches gap-3
 const CARD_PADDING_X_PX = 32; // px-4 on the header + each row (16 × 2)
 
@@ -168,10 +165,11 @@ const ACTIVE_COLUMN_KEYS: OperationsColumnKey[] = [
   "issue",
   "agent",
   "attribution",
+  "quality",
   "time",
 ];
 
-const GRID_TEMPLATE = `var(${COLUMN_VAR.issue}) ${EXTERNAL_PX}px var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.attribution}) var(${COLUMN_VAR.time})`;
+const GRID_TEMPLATE = `var(${COLUMN_VAR.issue}) var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.attribution}) var(${COLUMN_VAR.quality}) var(${COLUMN_VAR.time})`;
 
 const GRID_STYLE: CSSProperties = { gridTemplateColumns: GRID_TEMPLATE };
 
@@ -185,8 +183,8 @@ function operationsMinWidth(w: Record<OperationsColumnKey, number>): number {
     w.agent +
     w.issue +
     w.attribution +
+    w.quality +
     w.time +
-    EXTERNAL_PX +
     COLUMN_GAP_PX * 4 +
     CARD_PADDING_X_PX
   );
@@ -701,7 +699,7 @@ export function OperationsPage() {
                   className="rounded-lg border bg-card"
                   style={cardStyle(columnWidths)}
                 >
-                  {/* Header: issue, external status, agent, repair method, date. */}
+                  {/* Header: issue, agent, repair method, assessment status, date. */}
                   <div
                     className="grid items-center gap-3 border-b px-4 py-2 text-xs font-medium text-muted-foreground"
                     style={GRID_STYLE}
@@ -711,9 +709,6 @@ export function OperationsPage() {
                       cardRef={cardRef}
                       label={t(($) => $.operations.table.issue)}
                     />
-                    <span className="truncate">
-                      {t(($) => $.operations.table.external_status)}
-                    </span>
                     <HeaderCell
                       columnKey="agent"
                       cardRef={cardRef}
@@ -723,6 +718,11 @@ export function OperationsPage() {
                       columnKey="attribution"
                       cardRef={cardRef}
                       label={t(($) => $.operations.table.ai_attribution)}
+                    />
+                    <HeaderCell
+                      columnKey="quality"
+                      cardRef={cardRef}
+                      label={t(($) => $.operations.table.assessment_status)}
                     />
                     <HeaderCell
                       columnKey="time"
@@ -754,13 +754,8 @@ export function OperationsPage() {
                           <IssueCell
                             fix={f}
                             slug={slug}
-                            issueStatusLabel={issueStatusLabel(f.issue_status)}
                             comment={comment}
                             search={search}
-                          />
-                          <ExternalStatusCell
-                            fix={f}
-                            statusNames={feishuStatusNames}
                           />
                           <div className="flex min-w-0 items-center gap-2 overflow-hidden">
                             {f.agent_id ? (
@@ -822,6 +817,11 @@ export function OperationsPage() {
                               );
                             }}
                           />
+                          <div className="flex min-w-0 items-center">
+                            <AssessmentStatusBadge
+                              value={f.p4_assessment?.assessment_status}
+                            />
+                          </div>
                           <span className="min-w-0 overflow-hidden truncate whitespace-nowrap text-xs text-muted-foreground tabular-nums">
                             {day}
                           </span>
@@ -993,13 +993,11 @@ function ColumnResizeHandle({
 function IssueCell({
   fix,
   slug,
-  issueStatusLabel,
   comment,
   search,
 }: {
   fix: AgentFixRecord;
   slug: string | null;
-  issueStatusLabel: string;
   comment: string;
   search: string;
 }) {
@@ -1012,30 +1010,6 @@ function IssueCell({
         <span className="truncate text-sm font-medium group-hover:underline">
           {fix.issue_title || "—"}
         </span>
-      </div>
-      <div className="flex min-w-0 items-center gap-1.5">
-        {isKnownIssueStatus(fix.issue_status) && (
-          <StatusIcon status={fix.issue_status} className="h-3.5 w-3.5" />
-        )}
-        <span className="truncate text-xs text-muted-foreground">
-          {issueStatusLabel || "—"}
-        </span>
-        {fix.external?.project ? (
-          <>
-            <span className="text-muted-foreground/50">·</span>
-            <span className="truncate text-xs text-muted-foreground">
-              {fix.external.project}
-            </span>
-          </>
-        ) : null}
-        {fix.external?.version ? (
-          <>
-            <span className="text-muted-foreground/50">·</span>
-            <span className="truncate text-xs text-muted-foreground">
-              {fix.external.version}
-            </span>
-          </>
-        ) : null}
       </div>
       {comment ? (
         <p
@@ -1060,58 +1034,6 @@ function IssueCell({
     );
   }
   return <div className="min-w-0 overflow-hidden">{inner}</div>;
-}
-
-function ExternalStatusCell({
-  fix,
-  statusNames,
-}: {
-  fix: AgentFixRecord;
-  statusNames: Map<string, string>;
-}) {
-  const { t } = useT("usage");
-  const done = fix.external?.done;
-  const rawStatus = fix.external?.status ?? "";
-  const status =
-    fix.external?.status_name ||
-    statusNames.get(rawStatus) ||
-    rawStatus ||
-    t(($) => $.operations.no_reason);
-  const workItemId = fix.external?.work_item_id ?? "";
-  const workItemUrl = fix.external?.url ?? "";
-  return (
-    <div className="grid min-w-0 gap-1">
-      <ToneBadge
-        tone={done === true ? "success" : done === false ? "warning" : "muted"}
-      >
-        {status}
-      </ToneBadge>
-      {workItemId ? (
-        workItemUrl ? (
-          <a
-            href={workItemUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex min-w-0 items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline"
-          >
-            <span className="truncate">{workItemId}</span>
-            <ExternalLink className="h-3 w-3 shrink-0" />
-          </a>
-        ) : (
-          <span className="truncate font-mono text-xs text-muted-foreground">
-            {workItemId}
-          </span>
-        )
-      ) : null}
-      {typeof done === "boolean" ? (
-        <span className="truncate text-xs text-muted-foreground">
-          {done
-            ? t(($) => $.operations.external.in_stats)
-            : t(($) => $.operations.external.out_of_stats)}
-        </span>
-      ) : null}
-    </div>
-  );
 }
 
 function RepairMethodCell({

@@ -153,6 +153,7 @@
       "external_status": "外部ステータス",
       "p4_evidence": "CL 提出記録",
       "ai_attribution": "修正方法",
+      "assessment_status": "評価ステータス",
       "ai_quality": "AI 評価"
     },
     "pagination": {
@@ -205,6 +206,7 @@
     "enums": {
       "assessment": {
         "missing": "AI 評価待ち",
+        "pending": "評価待ち",
         "running": "AI 評価中",
         "failed": "AI 失敗",
         "completed": "AI 評価済み",

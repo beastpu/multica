@@ -83,6 +83,7 @@ export function agentFixEnumLabel(
     group === "assessment"
       ? {
           missing: t(($) => $.operations.enums.assessment.missing),
+          pending: t(($) => $.operations.enums.assessment.pending),
           running: t(($) => $.operations.enums.assessment.running),
           failed: t(($) => $.operations.enums.assessment.failed),
           completed: t(($) => $.operations.enums.assessment.completed),

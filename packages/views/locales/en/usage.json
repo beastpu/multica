@@ -153,6 +153,7 @@
       "external_status": "External status",
       "p4_evidence": "Submitted CL record",
       "ai_attribution": "Repair method",
+      "assessment_status": "Assessment status",
       "ai_quality": "AI assessment"
     },
     "pagination": {
@@ -205,6 +206,7 @@
     "enums": {
       "assessment": {
         "missing": "Needs AI assessment",
+        "pending": "Awaiting assessment",
         "running": "AI assessing",
         "failed": "AI failed",
         "completed": "AI assessed",

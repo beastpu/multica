@@ -153,6 +153,7 @@
       "external_status": "외부 상태",
       "p4_evidence": "CL 제출 기록",
       "ai_attribution": "수정 방식",
+      "assessment_status": "평가 상태",
       "ai_quality": "AI 평가"
     },
     "pagination": {
@@ -205,6 +206,7 @@
     "enums": {
       "assessment": {
         "missing": "AI 평가 대기",
+        "pending": "평가 대기",
         "running": "AI 평가 중",
         "failed": "AI 실패",
         "completed": "AI 평가 완료",
