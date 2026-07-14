@@ -620,10 +620,12 @@ describe("OperationsPage", () => {
     expect(screen.getByText("AI automatic repair rate")).toBeTruthy();
     expect(screen.getByText("AI-assisted repair rate")).toBeTruthy();
     expect(
-      screen.getByText("AI-marked passes / tickets judged by AI"),
+      screen.getByText("AI-marked passes / AI-assessed repairable tickets"),
     ).toBeTruthy();
     expect(
-      screen.getByText("Direct AI submissions passed / tickets judged by AI"),
+      screen.getByText(
+        "Direct AI submissions passed / AI-assessed repairable tickets",
+      ),
     ).toBeTruthy();
     expect(screen.getByText("2 / 6")).toBeTruthy();
     expect(screen.getAllByText("1 / 2")).toHaveLength(2);
@@ -631,9 +633,12 @@ describe("OperationsPage", () => {
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
 
-  it("keeps automatic and assisted repair cards informational", () => {
+  it("keeps quality, automatic, and assisted rate cards informational", () => {
     renderWithI18n(<OperationsPage />);
 
+    expect(
+      screen.getByText("AI solution pass rate").closest("button"),
+    ).toBeNull();
     expect(
       screen.getByText("AI automatic repair rate").closest("button"),
     ).toBeNull();
@@ -690,7 +695,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText("2 / 6")).toBeTruthy();
   });
 
-  it("shows non-conversion and no-plan reasons inside the contribution drawer", async () => {
+  it("shows assessment progress and no-plan reasons inside the coverage drawer", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
@@ -698,13 +703,16 @@ describe("OperationsPage", () => {
       screen.getByRole("button", { name: /AI coverage/ }),
     );
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Picked up by AI")).toBeTruthy();
-    expect(within(dialog).getByText("Why conversion is unconfirmed")).toBeTruthy();
+    expect(within(dialog).getByText("Processed by AI")).toBeTruthy();
+    expect(within(dialog).getByText("AI assessment completed")).toBeTruthy();
+    expect(within(dialog).getByText("AI assessment blocked")).toBeTruthy();
+    expect(within(dialog).getByText("Not processed by AI")).toBeTruthy();
     expect(within(dialog).getByText("Why no verifiable plan was found")).toBeTruthy();
+    expect(within(dialog).queryByText("Why conversion is unconfirmed")).toBeNull();
     await user.click(
-      within(dialog).getByRole("button", { name: /Delivered independently by a human/ }),
+      within(dialog).getByRole("button", { name: /Plan assessment incomplete/ }),
     );
-    expect(within(dialog).getByText("Client crash")).toBeTruthy();
+    expect(within(dialog).getByText("Parser cleanup")).toBeTruthy();
   });
 
   it("opens the issue drawer from a breakdown ticket card", async () => {
@@ -716,7 +724,7 @@ describe("OperationsPage", () => {
     );
     const dialog = screen.getByRole("dialog");
     await user.click(
-      within(dialog).getByRole("button", { name: /Picked up by AI/ }),
+      within(dialog).getByRole("button", { name: /Processed by AI/ }),
     );
     await user.click(
       within(dialog).getByRole("button", { name: /Login broke/ }),
@@ -928,38 +936,6 @@ describe("OperationsPage", () => {
         binding_id: "binding-5",
         force: true,
       });
-    });
-  });
-
-  it("integrates the quality distribution into the quality KPI drawer", async () => {
-    const user = userEvent.setup();
-    renderWithI18n(<OperationsPage />);
-
-    await user.click(screen.getByRole("button", { name: /AI solution pass rate/ }));
-    const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Pass")).toBeTruthy();
-    expect(within(dialog).getByText("Needs work")).toBeTruthy();
-    expect(within(dialog).getByText("Fail")).toBeTruthy();
-    expect(within(dialog).getByText("Undetermined")).toBeTruthy();
-    expect(screen.queryByText("AI quality distribution")).toBeNull();
-  });
-
-  it("drills down from the quality drawer into the filtered detail table", async () => {
-    const user = userEvent.setup();
-    renderWithI18n(<OperationsPage />);
-
-    await user.click(screen.getByRole("button", { name: /AI solution pass rate/ }));
-    const dialog = screen.getByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: /^Fail/ }));
-    await user.click(
-      within(dialog).getByRole("button", {
-        name: "View all in the detail table",
-      }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Client crash")).toBeTruthy();
-      expect(screen.queryByText("Login broke")).toBeNull();
     });
   });
 
