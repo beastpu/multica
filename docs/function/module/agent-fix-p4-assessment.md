@@ -331,8 +331,8 @@ enum values, and confidence range before persistence.
 | Value | Meaning |
 |---|---|
 | `ai_delivered` | Automation/AI delivered the final fix directly. |
-| `ai_assisted` | Human final submission used or materially followed the AI/Swarm fix. |
-| `human_delivered` | Human delivered the final fix without relying on AI implementation. |
+| `ai_assisted` | Human final submission used or materially followed an equivalent AI/Swarm fix that existed before the human submission. |
+| `human_delivered` | Human delivered the final fix without relying on AI implementation, or the AI output was produced only after delivery. |
 | `conflict` | Evidence conflicts and attribution cannot be cleanly resolved. |
 | `unattributed` | Final delivery exists but owner/source is not attributable. |
 | `unknown` | Insufficient evidence. |
