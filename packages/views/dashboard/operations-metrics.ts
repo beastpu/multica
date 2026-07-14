@@ -456,8 +456,9 @@ export interface OperationsKpis {
   // AI-marked pass / all explicitly judged AI-handled plans.
   qualityRate: OperationsRate;
   automaticRate: OperationsRate;
-  // AI-assisted includes both attributed assisted delivery and an AI plan that
-  // participated but did not become the final delivery, per the ops definition.
+  // Passing AI-assisted plans / all explicitly judged AI-handled plans.
+  // Together with automaticRate, this partitions qualityRate's numerator:
+  // assisted = passed - automatic.
   assistedRate: OperationsRate;
   // Demoted data-health counts (rendered as a muted footnote, not a headline
   // card): rows whose assessment hasn't completed (the queue backlog) and
@@ -482,7 +483,7 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   let missingExternalCl = 0;
   let handled = 0;
   let automatic = 0;
-  let assistedFixes = 0;
+  let assistedPassed = 0;
   for (const fix of rows) {
     const done = isExternalDone(fix);
     if (!done || !isAssignedToAgent(fix)) continue;
@@ -511,7 +512,12 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     // judgement. A direct submission with unknown/failed quality is not an
     // automatic repair success.
     if (role === "direct" && quality === "likely_correct") automatic += 1;
-    if (role === "assisted" || role === "unconverted") assistedFixes += 1;
+    if (
+      quality === "likely_correct" &&
+      (role === "assisted" || role === "unconverted")
+    ) {
+      assistedPassed += 1;
+    }
     if (quality === "likely_correct") passed += 1;
   }
   return {
@@ -529,7 +535,7 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     judgedCount: judged,
     qualityRate: rate(passed, judged),
     automaticRate: rate(automatic, judged),
-    assistedRate: rate(assistedFixes, judged),
+    assistedRate: rate(assistedPassed, judged),
     unassessed,
     missingExternalCl,
   };
