@@ -96,7 +96,7 @@
       "stage_judged": "已判定",
       "overview": "最近 {{days}} 天分配给智能体 {{done}} 单，AI 接手 {{handled}} 单，其中 {{judged}} 单已有 AI 质量判断。",
       "composition_title": "AI 交付构成",
-      "composition_total": "AI 接手 {{count}} / 分配给智能体 {{total}}",
+      "composition_total": "AI 已处理 {{count}} / 分配给智能体 {{total}}",
       "composition_direct": "AI 自动修复",
       "composition_assisted": "AI 与人共同修复",
       "assisted_with_unconverted": "AI 与人共同修复",
