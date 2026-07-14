@@ -40,14 +40,17 @@ function RateCard({
 }) {
   const inner = (
     <>
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="flex items-baseline gap-2">
-        <span className="text-2xl font-semibold leading-none tabular-nums">
+      <div className="text-sm font-semibold text-foreground">{label}</div>
+      <div className="text-xs leading-relaxed text-muted-foreground">
+        {hint}
+      </div>
+      <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="text-3xl font-semibold leading-none tabular-nums">
           {formatPercent(rate)}
         </span>
-      </div>
-      <div className="text-[11px] leading-relaxed text-muted-foreground">
-        {hint}
+        <span className="text-sm text-muted-foreground tabular-nums">
+          {rate.numerator} / {rate.denominator}
+        </span>
       </div>
       {footer ? (
         <div className="border-t pt-2 text-xs text-muted-foreground">
@@ -193,10 +196,7 @@ export function OperationsSummary({
       <div className="grid overflow-hidden rounded-lg border bg-card sm:grid-cols-2 xl:grid-cols-4">
         <RateCard
           label={t(($) => $.operations.summary.contribution_rate)}
-          hint={t(($) => $.operations.summary.contribution_rate_hint, {
-            num: kpis.contributionRate.numerator,
-            den: kpis.contributionRate.denominator,
-          })}
+          hint={t(($) => $.operations.summary.contribution_rate_hint)}
           rate={kpis.contributionRate}
           onClick={onCardClick ? () => onCardClick("contribution") : undefined}
           clickHint={t(($) => $.operations.drawer.card_hint)}
@@ -204,10 +204,7 @@ export function OperationsSummary({
         />
         <RateCard
           label={t(($) => $.operations.summary.quality_rate)}
-          hint={t(($) => $.operations.summary.quality_rate_hint, {
-            num: kpis.qualityRate.numerator,
-            den: kpis.qualityRate.denominator,
-          })}
+          hint={t(($) => $.operations.summary.quality_rate_hint)}
           rate={kpis.qualityRate}
           onClick={onCardClick ? () => onCardClick("quality") : undefined}
           clickHint={t(($) => $.operations.drawer.card_hint)}
@@ -215,19 +212,13 @@ export function OperationsSummary({
         />
         <RateCard
           label={t(($) => $.operations.summary.automatic_rate)}
-          hint={t(($) => $.operations.summary.automatic_rate_hint, {
-            num: kpis.automaticRate.numerator,
-            den: kpis.automaticRate.denominator,
-          })}
+          hint={t(($) => $.operations.summary.automatic_rate_hint)}
           rate={kpis.automaticRate}
           className="border-b sm:border-b-0 sm:border-r"
         />
         <RateCard
           label={t(($) => $.operations.summary.assisted_rate)}
-          hint={t(($) => $.operations.summary.assisted_rate_hint, {
-            num: kpis.assistedRate.numerator,
-            den: kpis.assistedRate.denominator,
-          })}
+          hint={t(($) => $.operations.summary.assisted_rate_hint)}
           rate={kpis.assistedRate}
         />
       </div>
