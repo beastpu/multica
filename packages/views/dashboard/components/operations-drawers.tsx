@@ -21,7 +21,6 @@ import {
   type UsageT,
 } from "./agent-fix-review";
 import {
-  deriveAttribution,
   derivedEvidence,
   firstSwarmReviewUrl,
   fixDayIso,
@@ -32,6 +31,7 @@ import {
   isExternalDone,
   noPlanReason,
   qualityJudgement,
+  repairMethod,
   swarmReviewUrl,
 } from "../operations-metrics";
 
@@ -472,7 +472,7 @@ function TicketCard({
   tx: UsageT;
   onClick: () => void;
 }) {
-  const attribution = deriveAttribution(fix);
+  const attribution = repairMethod(fix);
   const snippet = (fix.p4_assessment?.summary || fix.last_comment || "").trim();
   return (
     <button
@@ -635,9 +635,9 @@ function IssuePanel({
         <KvRow label={t(($) => $.operations.table.ai_attribution)}>
           <div className="flex flex-wrap items-center gap-2">
             <ToneBadge
-              tone={agentFixEnumTone("attribution", deriveAttribution(fix))}
+              tone={agentFixEnumTone("attribution", repairMethod(fix))}
             >
-              {agentFixEnumLabel(tx, "attribution", deriveAttribution(fix))}
+              {agentFixEnumLabel(tx, "attribution", repairMethod(fix))}
             </ToneBadge>
             {typeof p4?.confidence === "number" && !Number.isNaN(p4.confidence) ? (
               <span className="text-xs text-muted-foreground">

@@ -60,6 +60,20 @@ export function deriveAttribution(fix: AgentFixRecord): string {
   return prediction;
 }
 
+export type RepairMethod = "ai_delivered" | "ai_assisted" | "unknown";
+
+// The detail table deliberately exposes a compact, operator-facing repair
+// method instead of every internal attribution state. Only confirmed AI
+// delivery modes are actionable categories; human delivery, conflicts,
+// missing evidence, and unfinished assessments all degrade to "unknown".
+export function repairMethod(fix: AgentFixRecord): RepairMethod {
+  const attribution = deriveAttribution(fix);
+  if (attribution === "ai_delivered" || attribution === "ai_assisted") {
+    return attribution;
+  }
+  return "unknown";
+}
+
 export function isAiDelivered(fix: AgentFixRecord): boolean {
   const attribution = deriveAttribution(fix);
   return attribution === "ai_delivered" || attribution === "ai_assisted";

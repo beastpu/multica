@@ -69,8 +69,8 @@
       "status_all": "全部状态",
       "workstream": "Workstream",
       "workstream_all": "全部 workstream",
-      "attribution": "交付归因",
-      "attribution_all": "全部归因",
+      "attribution": "修复方式",
+      "attribution_all": "全部修复方式",
       "quality": "AI 质量预判",
       "quality_all": "全部质量",
       "pending_only": "仅看待判定",
@@ -122,7 +122,7 @@
       "no_plan_no_visible_output": "没有评论或方案制品",
       "no_plan_task_cancelled": "智能体任务被取消",
       "no_plan_assessment_incomplete": "方案评估未完成",
-      "attribution_breakdown": "交付归因",
+      "attribution_breakdown": "修复方式",
       "not_automatic": "非 AI 自动修复",
       "not_assisted": "未使用 AI 辅助修复",
       "open_issue": "打开 issue",
@@ -132,7 +132,7 @@
       "reasons": "判断依据"
     },
     "analysis": {
-      "attribution_title": "交付归因分布",
+      "attribution_title": "修复方式分布",
       "quality_title": "AI 质量判定分布",
       "blocked_title": "评估受阻分布（完成 {{completed}}）",
       "blocked_auth": "鉴权失败",
@@ -152,7 +152,7 @@
       "reason": "原因 / 描述",
       "external_status": "外部状态",
       "p4_evidence": "提交 CL 记录",
-      "ai_attribution": "交付归因",
+      "ai_attribution": "修复方式",
       "ai_quality": "AI 预判"
     },
     "pagination": {
@@ -180,7 +180,9 @@
       "warnings": "warnings",
       "warning_count": "{{count}} 条 warning",
       "confidence": "置信度 {{value}}",
-      "no_evidence": "暂无提交 CL 记录"
+      "no_evidence": "暂无提交 CL 记录",
+      "repair_details_title": "修复方式详情",
+      "repair_details": "查看 {{issue}} 的修复方式详情：{{method}}"
     },
     "assessment_obs": {
       "attempts": "已尝试 {{count}} 次"
@@ -217,7 +219,7 @@
         "unattributed": "无法归因",
         "ai_no_output": "AI 无产出",
         "ai_plan_no_record": "有方案未落记录",
-        "unknown": "证据不足"
+        "unknown": "无法判断"
       },
       "quality": {
         "unassessed": "未评估",

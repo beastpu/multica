@@ -50,7 +50,6 @@ import {
   useOperationsViewStore,
   clampOperationsColumnWidth,
   OPERATIONS_DEFAULT_WIDTHS,
-  OPERATIONS_COLUMN_KEYS,
   type OperationsColumnKey,
 } from "@multica/core/dashboard";
 import type {
@@ -78,9 +77,7 @@ import {
 } from "./operations-drawers";
 import { Segmented } from "./segmented";
 import {
-  attributionBucket,
   computeOperationsKpis,
-  deriveAttribution,
   derivedEvidence,
   firstSwarmReviewUrl,
   hasP4Signal,
@@ -89,6 +86,7 @@ import {
   isAiParticipated,
   isPendingJudgement,
   qualityBucket,
+  repairMethod,
   trimOperationsWindow,
   swarmChangeUrl,
   swarmReviewUrl,
@@ -149,10 +147,10 @@ function isKnownIssueStatus(s: string): s is IssueStatus {
 const EMPTY: AgentFixRecord[] = [];
 
 // --- Resizable-column layout -------------------------------------------------
-// Column order: Issue, external state, agent, submitted CL record, delivery
-// attribution, AI quality analysis, date. The external status column stays
-// fixed; the rest are user-resizable. The legacy `status` width slot backs the
-// submitted-CL column so stored preferences remain scoped to this page.
+// Column order: Issue, external state, agent, repair method, date. Submitted CL
+// evidence and the AI assessment live in the repair-method popover so the table
+// stays scannable. The removed columns remain in persisted view state for
+// backwards-compatible hydration, but they no longer affect this layout.
 const EXTERNAL_PX = 138;
 const COLUMN_GAP_PX = 12; // matches gap-3
 const CARD_PADDING_X_PX = 32; // px-4 on the header + each row (16 × 2)
@@ -166,7 +164,14 @@ const COLUMN_VAR: Record<OperationsColumnKey, string> = {
   time: "--ops-col-time",
 };
 
-const GRID_TEMPLATE = `var(${COLUMN_VAR.issue}) ${EXTERNAL_PX}px var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.status}) var(${COLUMN_VAR.attribution}) var(${COLUMN_VAR.quality}) var(${COLUMN_VAR.time})`;
+const ACTIVE_COLUMN_KEYS: OperationsColumnKey[] = [
+  "issue",
+  "agent",
+  "attribution",
+  "time",
+];
+
+const GRID_TEMPLATE = `var(${COLUMN_VAR.issue}) ${EXTERNAL_PX}px var(${COLUMN_VAR.agent}) var(${COLUMN_VAR.attribution}) var(${COLUMN_VAR.time})`;
 
 const GRID_STYLE: CSSProperties = { gridTemplateColumns: GRID_TEMPLATE };
 
@@ -179,12 +184,10 @@ function operationsMinWidth(w: Record<OperationsColumnKey, number>): number {
   return (
     w.agent +
     w.issue +
-    w.status +
     w.attribution +
-    w.quality +
     w.time +
     EXTERNAL_PX +
-    COLUMN_GAP_PX * 6 +
+    COLUMN_GAP_PX * 4 +
     CARD_PADDING_X_PX
   );
 }
@@ -226,11 +229,6 @@ function isOperationsVisibleIssue(
     isAssignedToAgent(fix) &&
     statusName === FEISHU_TEST_PASSED_STATUS_NAME
   );
-}
-
-function confidenceLabel(confidence: number | null | undefined): string {
-  if (typeof confidence !== "number" || Number.isNaN(confidence)) return "";
-  return `${Math.round(confidence * 100)}%`;
 }
 
 function sortedUniqueOptions(
@@ -299,7 +297,7 @@ export function OperationsPage() {
   const columnWidths = useOperationsViewStore((s) => s.columnWidths);
   const resetColumnWidths = useOperationsViewStore((s) => s.resetColumnWidths);
   const cardRef = useRef<HTMLDivElement>(null);
-  const widthsModified = OPERATIONS_COLUMN_KEYS.some(
+  const widthsModified = ACTIVE_COLUMN_KEYS.some(
     (k) => columnWidths[k] !== OPERATIONS_DEFAULT_WIDTHS[k],
   );
   const [days, setDays] = useState<OpsRange>(30);
@@ -426,7 +424,7 @@ export function OperationsPage() {
   );
 
   const attributionOptions = useMemo<SelectOption[]>(() => {
-    return sortedUniqueOptions(statsRows, attributionBucket).map((value) => ({
+    return sortedUniqueOptions(statsRows, repairMethod).map((value) => ({
       value,
       label: agentFixEnumLabel(tx, "attribution", value),
     }));
@@ -451,7 +449,7 @@ export function OperationsPage() {
       }
       if (
         attributionFilter !== ALL_ATTRIBUTIONS &&
-        attributionBucket(f) !== attributionFilter
+        repairMethod(f) !== attributionFilter
       ) {
         return false;
       }
@@ -703,7 +701,7 @@ export function OperationsPage() {
                   className="rounded-lg border bg-card"
                   style={cardStyle(columnWidths)}
                 >
-                  {/* Header: issue, external status, agent, evidence, predictions, review, date. */}
+                  {/* Header: issue, external status, agent, repair method, date. */}
                   <div
                     className="grid items-center gap-3 border-b px-4 py-2 text-xs font-medium text-muted-foreground"
                     style={GRID_STYLE}
@@ -722,19 +720,9 @@ export function OperationsPage() {
                       label={t(($) => $.operations.table.agent)}
                     />
                     <HeaderCell
-                      columnKey="status"
-                      cardRef={cardRef}
-                      label={t(($) => $.operations.table.p4_evidence)}
-                    />
-                    <HeaderCell
                       columnKey="attribution"
                       cardRef={cardRef}
                       label={t(($) => $.operations.table.ai_attribution)}
-                    />
-                    <HeaderCell
-                      columnKey="quality"
-                      cardRef={cardRef}
-                      label={t(($) => $.operations.table.ai_quality)}
                     />
                     <HeaderCell
                       columnKey="time"
@@ -789,14 +777,9 @@ export function OperationsPage() {
                                 "—"}
                             </span>
                           </div>
-                          <P4EvidenceCell fix={f} swarmBase={swarmBase} />
-                          <PredictionCell
-                            value={deriveAttribution(f)}
-                            kind="attribution"
-                            detail={confidenceLabel(f.p4_assessment?.confidence)}
-                          />
-                          <AssessmentQualityCell
+                          <RepairMethodCell
                             fix={f}
+                            swarmBase={swarmBase}
                             pending={
                               triggerAssessment.isPending &&
                               triggeringBindingId === f.external?.binding_id
@@ -1128,6 +1111,86 @@ function ExternalStatusCell({
         </span>
       ) : null}
     </div>
+  );
+}
+
+function RepairMethodCell({
+  fix,
+  swarmBase,
+  pending,
+  onTrigger,
+}: {
+  fix: AgentFixRecord;
+  swarmBase: string;
+  pending: boolean;
+  onTrigger: (bindingId: string, force: boolean) => void;
+}) {
+  const { t } = useT("usage");
+  const tx = t as unknown as UsageT;
+  const method = repairMethod(fix);
+  const methodLabel = agentFixEnumLabel(tx, "attribution", method);
+  const issue = fix.issue_identifier || fix.issue_title || "—";
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 max-w-full justify-start px-1.5 hover:bg-muted"
+            aria-label={t(($) => $.operations.p4.repair_details, {
+              issue,
+              method: methodLabel,
+            })}
+          >
+            <ToneBadge tone={agentFixEnumTone("attribution", method)}>
+              {methodLabel}
+            </ToneBadge>
+          </Button>
+        }
+      />
+      <PopoverContent align="end" className="w-[min(380px,calc(100vw-2rem))] gap-4">
+        <div className="text-sm font-medium">
+          {t(($) => $.operations.p4.repair_details_title)}
+        </div>
+        <div className="grid gap-2">
+          <div className="text-xs font-medium text-muted-foreground">
+            {t(($) => $.operations.table.ai_attribution)}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <ToneBadge tone={agentFixEnumTone("attribution", method)}>
+              {methodLabel}
+            </ToneBadge>
+            {typeof fix.p4_assessment?.confidence === "number" &&
+            !Number.isNaN(fix.p4_assessment.confidence) ? (
+              <span className="text-xs text-muted-foreground">
+                {t(($) => $.operations.p4.confidence, {
+                  value: `${Math.round(fix.p4_assessment.confidence * 100)}%`,
+                })}
+              </span>
+            ) : null}
+          </div>
+        </div>
+        <div className="grid gap-2 border-t pt-3">
+          <div className="text-xs font-medium text-muted-foreground">
+            {t(($) => $.operations.table.p4_evidence)}
+          </div>
+          <P4EvidenceCell fix={fix} swarmBase={swarmBase} />
+        </div>
+        <div className="grid gap-2 border-t pt-3">
+          <div className="text-xs font-medium text-muted-foreground">
+            {t(($) => $.operations.table.ai_quality)}
+          </div>
+          <AssessmentQualityCell
+            fix={fix}
+            pending={pending}
+            onTrigger={onTrigger}
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
