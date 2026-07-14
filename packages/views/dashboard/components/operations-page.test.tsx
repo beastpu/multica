@@ -616,7 +616,7 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(screen.getByText("AI coverage")).toBeTruthy();
-    expect(screen.getByText("AI solution pass rate")).toBeTruthy();
+    expect(screen.getByText("AI repair quality")).toBeTruthy();
     expect(screen.getByText("AI automatic repair rate")).toBeTruthy();
     expect(screen.getByText("AI-assisted repair rate")).toBeTruthy();
     expect(
@@ -637,7 +637,7 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(
-      screen.getByText("AI solution pass rate").closest("button"),
+      screen.getByText("AI repair quality").closest("button"),
     ).toBeNull();
     expect(
       screen.getByText("AI automatic repair rate").closest("button"),

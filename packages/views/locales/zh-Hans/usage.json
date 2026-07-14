@@ -86,7 +86,7 @@
     "summary": {
       "contribution_rate": "AI 覆盖率",
       "contribution_rate_hint": "AI 接手 / 分配给智能体",
-      "quality_rate": "AI 方案通过率",
+      "quality_rate": "AI 修复质量",
       "quality_rate_hint": "AI 标记通过 / AI 已评估可修复",
       "automatic_rate": "AI 自动修复率",
       "automatic_rate_hint": "AI 代码直接提交且通过 / AI 已评估可修复",

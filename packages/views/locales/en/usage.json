@@ -86,7 +86,7 @@
     "summary": {
       "contribution_rate": "AI coverage",
       "contribution_rate_hint": "Picked up by AI / assigned to an Agent",
-      "quality_rate": "AI solution pass rate",
+      "quality_rate": "AI repair quality",
       "quality_rate_hint": "AI-marked passes / AI-assessed repairable tickets",
       "automatic_rate": "AI automatic repair rate",
       "automatic_rate_hint": "Direct AI submissions passed / AI-assessed repairable tickets",

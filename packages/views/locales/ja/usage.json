@@ -86,7 +86,7 @@
     "summary": {
       "contribution_rate": "AI カバー率",
       "contribution_rate_hint": "AI 着手 / Agent 割り当て",
-      "quality_rate": "AI プラン合格率",
+      "quality_rate": "AI 修復品質",
       "quality_rate_hint": "AI 合格判定 / AI 修正可能と評価済み",
       "automatic_rate": "AI 自動修正率",
       "automatic_rate_hint": "AI コード直接提出・合格 / AI 修正可能と評価済み",
