@@ -21,9 +21,7 @@ import {
   type UsageT,
 } from "./agent-fix-review";
 import {
-  deriveAttribution,
   derivedEvidence,
-  deliveryRole,
   firstSwarmReviewUrl,
   fixDayIso,
   hasP4Signal,
@@ -33,8 +31,8 @@ import {
   isExternalDone,
   noPlanReason,
   qualityJudgement,
+  repairMethod,
   swarmReviewUrl,
-  unconvertedReason,
 } from "../operations-metrics";
 
 // ---------------------------------------------------------------------------
@@ -75,7 +73,7 @@ interface BranchDef {
   rows: AgentFixRecord[];
   section?:
     | "main"
-    | "unconverted_reason"
+    | "handled_detail"
     | "no_plan_reason";
   drill?: OperationsDrillFilter;
 }
@@ -105,9 +103,6 @@ function cardBranches(
     );
     const handled = assigned.filter(isAiParticipated);
     const unhandled = assigned.filter((fix) => !isAiParticipated(fix));
-    const unconverted = assigned.filter(
-      (fix) => deliveryRole(fix) === "unconverted",
-    );
     return [
       {
         key: "handled",
@@ -122,28 +117,20 @@ function cardBranches(
         section: "main",
       },
       {
-        key: "unconverted_evidence_unconfirmed",
-        label: t(($) => $.operations.drawer.unconverted_evidence_unconfirmed),
-        rows: unconverted.filter(
-          (fix) => unconvertedReason(fix) === "evidence_unconfirmed",
+        key: "assessment_completed",
+        label: t(($) => $.operations.drawer.assessment_completed),
+        rows: handled.filter(
+          (fix) => fix.p4_assessment?.assessment_status === "completed",
         ),
-        section: "unconverted_reason",
+        section: "handled_detail",
       },
       {
-        key: "unconverted_human_delivered",
-        label: t(($) => $.operations.drawer.unconverted_human_delivered),
-        rows: unconverted.filter(
-          (fix) => unconvertedReason(fix) === "human_delivered",
+        key: "assessment_blocked",
+        label: t(($) => $.operations.drawer.assessment_blocked),
+        rows: handled.filter(
+          (fix) => fix.p4_assessment?.assessment_status !== "completed",
         ),
-        section: "unconverted_reason",
-      },
-      {
-        key: "unconverted_attribution_conflict",
-        label: t(($) => $.operations.drawer.unconverted_attribution_conflict),
-        rows: unconverted.filter(
-          (fix) => unconvertedReason(fix) === "attribution_conflict",
-        ),
-        section: "unconverted_reason",
+        section: "handled_detail",
       },
       {
         key: "no_plan_comment_only",
@@ -360,6 +347,15 @@ function CardPanel({
       </div>
     </button>
   );
+  const mainMax = Math.max(1, ...mainBranches.map((branch) => branch.rows.length));
+  const handledDetails = branches.filter(
+    (branch) => branch.section === "handled_detail",
+  );
+  const noPlanReasons = branches.filter(
+    (branch) => branch.section === "no_plan_reason",
+  );
+  const handled = branches.find((branch) => branch.key === "handled");
+  const unhandled = branches.find((branch) => branch.key === "unhandled");
   return (
     <>
       <SheetHeader>
@@ -369,54 +365,26 @@ function CardPanel({
         </SheetDescription>
       </SheetHeader>
       <div className="grid gap-1 px-4 pb-6">
-        {(["main", "unconverted_reason", "no_plan_reason"] as const).map(
-          (section) => {
-            const sectionBranches = branches.filter(
-              (branch) => (branch.section ?? "main") === section,
-            );
-            if (sectionBranches.length === 0) return null;
-            const denominator =
-              section === "unconverted_reason"
-                ? rows.filter(
-                    (fix) =>
-                      isExternalDone(fix) &&
-                      isAssignedToAgent(fix) &&
-                      deliveryRole(fix) === "unconverted",
-                  ).length
-                : section === "no_plan_reason"
-                  ? rows.filter(
-                      (fix) =>
-                        isExternalDone(fix) &&
-                        isAssignedToAgent(fix) &&
-                        !isAiParticipated(fix),
-                    ).length
-                  : total;
-            const max = Math.max(
-              1,
-              ...sectionBranches.map((branch) => branch.rows.length),
-            );
-            return (
-              <div
-                key={section}
-                className={
-                  section === "main"
-                    ? "grid gap-1"
-                    : "mt-3 grid gap-1 border-t pt-3"
-                }
-              >
-                {section !== "main" ? (
-                  <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-                    {section === "unconverted_reason"
-                      ? t(($) => $.operations.drawer.unconverted_reasons)
-                      : t(($) => $.operations.drawer.no_plan_reasons)}
-                  </div>
-                ) : null}
-                {sectionBranches.map((branch) =>
-                  branchButton(branch, denominator, max),
-                )}
+        {card === "contribution" && handled && unhandled ? (
+          <>
+            {branchButton(handled, total, mainMax)}
+            <div className="ml-4 grid gap-1 border-l pl-3">
+              {handledDetails.map((branch) =>
+                branchButton(branch, handled.rows.length, handled.rows.length),
+              )}
+            </div>
+            <div className="mt-2">{branchButton(unhandled, total, mainMax)}</div>
+            <div className="ml-4 grid gap-1 border-l pl-3">
+              <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
+                {t(($) => $.operations.drawer.no_plan_reasons)}
               </div>
-            );
-          },
+              {noPlanReasons.map((branch) =>
+                branchButton(branch, unhandled.rows.length, unhandled.rows.length),
+              )}
+            </div>
+          </>
+        ) : (
+          mainBranches.map((branch) => branchButton(branch, total, mainMax))
         )}
       </div>
     </>
@@ -504,7 +472,7 @@ function TicketCard({
   tx: UsageT;
   onClick: () => void;
 }) {
-  const attribution = deriveAttribution(fix);
+  const attribution = repairMethod(fix);
   const snippet = (fix.p4_assessment?.summary || fix.last_comment || "").trim();
   return (
     <button
@@ -667,9 +635,9 @@ function IssuePanel({
         <KvRow label={t(($) => $.operations.table.ai_attribution)}>
           <div className="flex flex-wrap items-center gap-2">
             <ToneBadge
-              tone={agentFixEnumTone("attribution", deriveAttribution(fix))}
+              tone={agentFixEnumTone("attribution", repairMethod(fix))}
             >
-              {agentFixEnumLabel(tx, "attribution", deriveAttribution(fix))}
+              {agentFixEnumLabel(tx, "attribution", repairMethod(fix))}
             </ToneBadge>
             {typeof p4?.confidence === "number" && !Number.isNaN(p4.confidence) ? (
               <span className="text-xs text-muted-foreground">

@@ -552,6 +552,15 @@ async function openAssessments(
   void label;
 }
 
+async function openRepairDetails(
+  user: ReturnType<typeof userEvent.setup>,
+  issueIdentifier: string,
+) {
+  await user.click(
+    screen.getByRole("button", { name: new RegExp(issueIdentifier) }),
+  );
+}
+
 describe("OperationsPage", () => {
   beforeEach(() => {
     cleanup();
@@ -589,6 +598,12 @@ describe("OperationsPage", () => {
     // "状态" column = ISSUE workflow status (labels from the issues namespace).
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
 
+    // CL evidence and AI assessment are consolidated under Repair method.
+    expect(screen.getByText("Repair method")).toBeTruthy();
+    expect(screen.queryByText("Submitted CL record")).toBeNull();
+    expect(screen.queryByText("AI assessment")).toBeNull();
+    expect(screen.queryByText("Human delivered")).toBeNull();
+
     // Issue cell includes a compact preview of the most recent comment.
     expect(screen.getByText("looks good, ready for review")).toBeTruthy();
 
@@ -616,14 +631,16 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(screen.getByText("AI coverage")).toBeTruthy();
-    expect(screen.getByText("AI solution pass rate")).toBeTruthy();
+    expect(screen.getByText("AI repair quality")).toBeTruthy();
     expect(screen.getByText("AI automatic repair rate")).toBeTruthy();
     expect(screen.getByText("AI-assisted repair rate")).toBeTruthy();
     expect(
-      screen.getByText("AI-marked passes / tickets judged by AI"),
+      screen.getByText("AI-marked passes / AI-assessed repairable tickets"),
     ).toBeTruthy();
     expect(
-      screen.getByText("Direct AI submissions passed / tickets judged by AI"),
+      screen.getByText(
+        "Direct AI submissions passed / AI-assessed repairable tickets",
+      ),
     ).toBeTruthy();
     expect(screen.getByText("2 / 6")).toBeTruthy();
     expect(screen.getAllByText("1 / 2")).toHaveLength(2);
@@ -631,9 +648,12 @@ describe("OperationsPage", () => {
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
 
-  it("keeps automatic and assisted repair cards informational", () => {
+  it("keeps quality, automatic, and assisted rate cards informational", () => {
     renderWithI18n(<OperationsPage />);
 
+    expect(
+      screen.getByText("AI repair quality").closest("button"),
+    ).toBeNull();
     expect(
       screen.getByText("AI automatic repair rate").closest("button"),
     ).toBeNull();
@@ -690,7 +710,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText("2 / 6")).toBeTruthy();
   });
 
-  it("shows non-conversion and no-plan reasons inside the contribution drawer", async () => {
+  it("shows assessment progress and no-plan reasons inside the coverage drawer", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
@@ -698,13 +718,16 @@ describe("OperationsPage", () => {
       screen.getByRole("button", { name: /AI coverage/ }),
     );
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Picked up by AI")).toBeTruthy();
-    expect(within(dialog).getByText("Why conversion is unconfirmed")).toBeTruthy();
+    expect(within(dialog).getByText("Processed by AI")).toBeTruthy();
+    expect(within(dialog).getByText("AI assessment completed")).toBeTruthy();
+    expect(within(dialog).getByText("AI assessment blocked")).toBeTruthy();
+    expect(within(dialog).getByText("Not processed by AI")).toBeTruthy();
     expect(within(dialog).getByText("Why no verifiable plan was found")).toBeTruthy();
+    expect(within(dialog).queryByText("Why conversion is unconfirmed")).toBeNull();
     await user.click(
-      within(dialog).getByRole("button", { name: /Delivered independently by a human/ }),
+      within(dialog).getByRole("button", { name: /Plan assessment incomplete/ }),
     );
-    expect(within(dialog).getByText("Client crash")).toBeTruthy();
+    expect(within(dialog).getByText("Parser cleanup")).toBeTruthy();
   });
 
   it("opens the issue drawer from a breakdown ticket card", async () => {
@@ -716,7 +739,7 @@ describe("OperationsPage", () => {
     );
     const dialog = screen.getByRole("dialog");
     await user.click(
-      within(dialog).getByRole("button", { name: /Picked up by AI/ }),
+      within(dialog).getByRole("button", { name: /Processed by AI/ }),
     );
     await user.click(
       within(dialog).getByRole("button", { name: /Login broke/ }),
@@ -748,10 +771,14 @@ describe("OperationsPage", () => {
     expect(within(dialog).getByText("Open issue")).toBeTruthy();
   });
 
-  it("derives AI no output for completed assessments without an AI shelve", () => {
+  it("collapses internal non-AI attribution states to unable to determine", () => {
     renderWithI18n(<OperationsPage />);
-    // t-7: unattributed prediction + empty ai_shelved_cls → derived label.
-    expect(screen.getAllByText("AI no output").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("AI no output")).toBeNull();
+    expect(
+      screen.getByRole("button", {
+        name: "View repair details for MUL-12: Unable to determine",
+      }),
+    ).toBeTruthy();
   });
 
   it("renders demo-like P4 assessment evidence and quality analysis", async () => {
@@ -764,35 +791,37 @@ describe("OperationsPage", () => {
     expect(screen.getByText("BUG-93218")).toBeTruthy();
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("In stats").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("AI assessed").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("stream rel_1.7.2/server")).toBeTruthy();
     expect(screen.queryByText("Swarm SW-11872")).toBeNull();
-    // The detail table shows the submitted CL first; shelved CLs stay hidden
-    // when a final committed CL exists.
+    expect(screen.queryByText("final CL 283006")).toBeNull();
+
+    await openRepairDetails(user, "MUL-7");
+    expect(screen.getByText("Repair details")).toBeTruthy();
+    expect(screen.getByText("Submitted CL record")).toBeTruthy();
+    expect(screen.getByText("AI assessment")).toBeTruthy();
+    expect(screen.getByText("AI assessed")).toBeTruthy();
+    expect(screen.getByText("stream rel_1.7.2/server")).toBeTruthy();
+    // The popover shows the submitted CL first; shelved CLs stay hidden when a
+    // final committed CL exists.
     const badgeTexts = Array.from(document.querySelectorAll("span")).map((s) =>
       (s.textContent ?? "").replace(/\s+/g, " ").trim(),
     );
     expect(badgeTexts).toContain("final CL 283006");
-    expect(badgeTexts).toContain("final CL 284805");
-    expect(badgeTexts).toContain("shelve 287451");
     expect(badgeTexts).not.toContain("shelve 282941");
-    expect(badgeTexts).not.toContain("final CL 287451");
     expect(screen.queryByText("changes 282941, 282944")).toBeNull();
 
     await user.click(screen.getAllByRole("button", { name: "Details" })[0]!);
     expect(screen.getByText("SW-11872")).toBeTruthy();
     expect(screen.getByText("282941, 282944")).toBeTruthy();
-    // "283006" also renders as the linked final-CL badge text in the row.
+    // "283006" also renders as the linked final-CL badge text in the popover.
     expect(screen.getAllByText("283006").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("main")).toBeTruthy();
     expect(screen.getByText("review.committed")).toBeTruthy();
     expect(screen.getByText("2026-06-01T00:30:00Z")).toBeTruthy();
     await user.keyboard("{Escape}");
 
-    expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("AI submitted").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("confidence 86%")).toBeTruthy();
-    expect(screen.getAllByText("Fail").length).toBeGreaterThanOrEqual(1);
   });
 
   it("links external work items, swarm reviews, and CLs", async () => {
@@ -805,6 +834,7 @@ describe("OperationsPage", () => {
     expect(workItem?.getAttribute("href")).toBe(
       "https://meego.example.com/items/BUG-93218",
     );
+    await openRepairDetails(user, "MUL-7");
     // Swarm review lives in the submitted-CL details popover.
     await user.click(screen.getAllByRole("button", { name: "Details" })[0]!);
     const swarm = screen.getByText("SW-11872").closest("a");
@@ -825,8 +855,9 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />, { locale: "zh-Hans" });
     await openAssessments(user, "评估明细");
 
-    // Quality prediction badges (不通过 / 通过) in the localized table.
-    expect(screen.getByText("\u4e0d\u901a\u8fc7")).toBeTruthy();
+    await openRepairDetails(user, "MUL-7");
+    expect(screen.getByText("\u4fee\u590d\u65b9\u5f0f\u8be6\u60c5")).toBeTruthy();
+    // Quality prediction moved into the localized repair-details popover.
     expect(screen.getAllByText("\u901a\u8fc7").length).toBeGreaterThanOrEqual(1);
 
     // The submitted-CL record popover still opens with the localized trigger.
@@ -840,6 +871,7 @@ describe("OperationsPage", () => {
     await openAssessments(user);
 
     // t-2 (done, no assessment yet) → enabled Run assessment.
+    await openRepairDetails(user, "MUL-8");
     const runButtons = screen.getAllByRole("button", {
       name: "Queue assessment",
     });
@@ -861,6 +893,7 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
 
+    await openRepairDetails(user, "MUL-8");
     const enabled = screen
       .getAllByRole("button", { name: "Queue assessment" })
       .find((b) => !(b as HTMLButtonElement).disabled)!;
@@ -879,6 +912,7 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
 
+    await openRepairDetails(user, "MUL-7");
     const enabled = screen
       .getAllByRole("button", { name: "Requeue assessment" })
       .find((b) => !(b as HTMLButtonElement).disabled)!;
@@ -899,6 +933,7 @@ describe("OperationsPage", () => {
 
     // t-5 failed after 3 leases with a recorded reason — the detail line under
     // the status badge answers "why is this stuck" without psql.
+    await openRepairDetails(user, "MUL-11");
     expect(
       screen.getByText(/3 attempts · task output parse failed/),
     ).toBeTruthy();
@@ -909,18 +944,9 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
 
-    let failedRow = screen.getByText("Assessment parser failed").parentElement;
-    while (
-      failedRow &&
-      !failedRow.getAttribute("style")?.includes("grid-template-columns")
-    ) {
-      failedRow = failedRow.parentElement;
-    }
-    expect(failedRow).not.toBeNull();
+    await openRepairDetails(user, "MUL-11");
     await user.click(
-      within(failedRow as HTMLElement).getByRole("button", {
-        name: "Requeue assessment",
-      }),
+      screen.getByRole("button", { name: "Requeue assessment" }),
     );
 
     await waitFor(() => {
@@ -928,38 +954,6 @@ describe("OperationsPage", () => {
         binding_id: "binding-5",
         force: true,
       });
-    });
-  });
-
-  it("integrates the quality distribution into the quality KPI drawer", async () => {
-    const user = userEvent.setup();
-    renderWithI18n(<OperationsPage />);
-
-    await user.click(screen.getByRole("button", { name: /AI solution pass rate/ }));
-    const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Pass")).toBeTruthy();
-    expect(within(dialog).getByText("Needs work")).toBeTruthy();
-    expect(within(dialog).getByText("Fail")).toBeTruthy();
-    expect(within(dialog).getByText("Undetermined")).toBeTruthy();
-    expect(screen.queryByText("AI quality distribution")).toBeNull();
-  });
-
-  it("drills down from the quality drawer into the filtered detail table", async () => {
-    const user = userEvent.setup();
-    renderWithI18n(<OperationsPage />);
-
-    await user.click(screen.getByRole("button", { name: /AI solution pass rate/ }));
-    const dialog = screen.getByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: /^Fail/ }));
-    await user.click(
-      within(dialog).getByRole("button", {
-        name: "View all in the detail table",
-      }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Client crash")).toBeTruthy();
-      expect(screen.queryByText("Login broke")).toBeNull();
     });
   });
 
@@ -976,9 +970,9 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Client crash")).toBeTruthy();
     expect(screen.queryByText("Login broke")).toBeNull();
 
-    await user.click(screen.getByLabelText("Delivery attribution"));
+    await user.click(screen.getByLabelText("Repair method"));
     await user.click(
-      within(await screen.findByRole("listbox")).getByText("Human delivered"),
+      within(await screen.findByRole("listbox")).getByText("Unable to determine"),
     );
 
     expect(screen.getByText("Client crash")).toBeTruthy();
@@ -1068,15 +1062,13 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
     const handles = screen.getAllByRole("separator");
-    expect(handles.length).toBe(6);
+    expect(handles.length).toBe(4);
     expect(
       handles.map((h) => h.getAttribute("aria-label")),
     ).toEqual([
       "Resize Issue column",
       "Resize Agent column",
-      "Resize Submitted CL record column",
-      "Resize Delivery attribution column",
-      "Resize AI assessment column",
+      "Resize Repair method column",
       "Resize Date column",
     ]);
     expect(

@@ -69,8 +69,8 @@
       "status_all": "全部状态",
       "workstream": "Workstream",
       "workstream_all": "全部 workstream",
-      "attribution": "交付归因",
-      "attribution_all": "全部归因",
+      "attribution": "修复方式",
+      "attribution_all": "全部修复方式",
       "quality": "AI 质量预判",
       "quality_all": "全部质量",
       "pending_only": "仅看待判定",
@@ -85,13 +85,13 @@
     },
     "summary": {
       "contribution_rate": "AI 覆盖率",
-      "contribution_rate_hint": "AI 接手的单量 / 分配给智能体的单量",
-      "quality_rate": "AI 方案通过率",
-      "quality_rate_hint": "AI 标记通过的单量 / AI 已判断的单量",
+      "contribution_rate_hint": "AI 接手 / 分配给智能体",
+      "quality_rate": "AI 修复质量",
+      "quality_rate_hint": "AI 标记通过 / AI 已评估可修复",
       "automatic_rate": "AI 自动修复率",
-      "automatic_rate_hint": "AI 代码直接提交且通过的单量 / AI 已判断的单量",
+      "automatic_rate_hint": "AI 代码直接提交且通过 / AI 已评估可修复",
       "assisted_rate": "AI 辅助修复率",
-      "assisted_rate_hint": "AI 辅助方案通过的单量 / AI 已判断的单量",
+      "assisted_rate_hint": "AI 辅助方案通过 / AI 已评估可修复",
       "health_footnote": "未评估 {{unassessed}} · 外部单未回填提交 CL {{missingCl}}",
       "stage_judged": "已判定",
       "overview": "最近 {{days}} 天分配给智能体 {{done}} 单，AI 接手 {{handled}} 单，其中 {{judged}} 单已有 AI 质量判断。",
@@ -113,18 +113,16 @@
       "more": "还有 {{count}} 条未展示",
       "empty": "当前分组没有记录",
       "unjudged": "未判定",
-      "handled": "AI 接手",
-      "unhandled": "未识别到可验证方案",
-      "unconverted_reasons": "AI 参与，未确认转化原因",
-      "unconverted_evidence_unconfirmed": "交付证据不足，暂时无法确认",
-      "unconverted_human_delivered": "最终由人独立交付",
-      "unconverted_attribution_conflict": "交付归因冲突",
+      "handled": "AI 已处理",
+      "unhandled": "AI 未处理",
+      "assessment_completed": "AI 已评估完成",
+      "assessment_blocked": "AI 评估受阻",
       "no_plan_reasons": "未识别到方案原因",
       "no_plan_comment_only": "仅有评论，缺少方案制品",
       "no_plan_no_visible_output": "没有评论或方案制品",
       "no_plan_task_cancelled": "智能体任务被取消",
       "no_plan_assessment_incomplete": "方案评估未完成",
-      "attribution_breakdown": "交付归因",
+      "attribution_breakdown": "修复方式",
       "not_automatic": "非 AI 自动修复",
       "not_assisted": "未使用 AI 辅助修复",
       "open_issue": "打开 issue",
@@ -134,7 +132,7 @@
       "reasons": "判断依据"
     },
     "analysis": {
-      "attribution_title": "交付归因分布",
+      "attribution_title": "修复方式分布",
       "quality_title": "AI 质量判定分布",
       "blocked_title": "评估受阻分布（完成 {{completed}}）",
       "blocked_auth": "鉴权失败",
@@ -154,7 +152,7 @@
       "reason": "原因 / 描述",
       "external_status": "外部状态",
       "p4_evidence": "提交 CL 记录",
-      "ai_attribution": "交付归因",
+      "ai_attribution": "修复方式",
       "ai_quality": "AI 预判"
     },
     "pagination": {
@@ -182,7 +180,9 @@
       "warnings": "warnings",
       "warning_count": "{{count}} 条 warning",
       "confidence": "置信度 {{value}}",
-      "no_evidence": "暂无提交 CL 记录"
+      "no_evidence": "暂无提交 CL 记录",
+      "repair_details_title": "修复方式详情",
+      "repair_details": "查看 {{issue}} 的修复方式详情：{{method}}"
     },
     "assessment_obs": {
       "attempts": "已尝试 {{count}} 次"
@@ -219,7 +219,7 @@
         "unattributed": "无法归因",
         "ai_no_output": "AI 无产出",
         "ai_plan_no_record": "有方案未落记录",
-        "unknown": "证据不足"
+        "unknown": "无法判断"
       },
       "quality": {
         "unassessed": "未评估",

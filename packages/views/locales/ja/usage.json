@@ -69,8 +69,8 @@
       "status_all": "すべてのステータス",
       "workstream": "Workstream",
       "workstream_all": "すべての workstream",
-      "attribution": "納品帰属",
-      "attribution_all": "すべての帰属",
+      "attribution": "修正方法",
+      "attribution_all": "すべての修正方法",
       "quality": "AI 品質予測",
       "quality_all": "すべての品質",
       "pending_only": "未判定のみ",
@@ -85,13 +85,13 @@
     },
     "summary": {
       "contribution_rate": "AI カバー率",
-      "contribution_rate_hint": "AI 着手件数 / Agent 割り当て件数",
-      "quality_rate": "AI プラン合格率",
-      "quality_rate_hint": "AI 合格判定件数 / AI 判定済み件数",
+      "contribution_rate_hint": "AI 着手 / Agent 割り当て",
+      "quality_rate": "AI 修復品質",
+      "quality_rate_hint": "AI 合格判定 / AI 修正可能と評価済み",
       "automatic_rate": "AI 自動修正率",
-      "automatic_rate_hint": "AI コード直接提出・合格件数 / AI 判定済み件数",
+      "automatic_rate_hint": "AI コード直接提出・合格 / AI 修正可能と評価済み",
       "assisted_rate": "AI 支援修正率",
-      "assisted_rate_hint": "AI 支援案合格件数 / AI 判定済み件数",
+      "assisted_rate_hint": "AI 支援案合格 / AI 修正可能と評価済み",
       "health_footnote": "未評価 {{unassessed}} · 提出 CL 未記入 {{missingCl}}",
       "stage_judged": "判定済み",
       "overview": "直近 {{days}} 日の Agent 割り当て {{done}} 件のうち AI 着手は {{handled}} 件、品質判定済みは {{judged}} 件です。",
@@ -113,18 +113,16 @@
       "more": "他 {{count}} 件は未表示",
       "empty": "このグループに記録はありません",
       "unjudged": "未判定",
-      "handled": "AI 着手",
-      "unhandled": "検証可能なプランなし",
-      "unconverted_reasons": "転換を確認できない理由",
-      "unconverted_evidence_unconfirmed": "納品証跡不足",
-      "unconverted_human_delivered": "最終的に人が独立して納品",
-      "unconverted_attribution_conflict": "帰属証跡の競合",
+      "handled": "AI 対応済み",
+      "unhandled": "AI 未対応",
+      "assessment_completed": "AI 評価完了",
+      "assessment_blocked": "AI 評価ブロック",
       "no_plan_reasons": "検証可能なプランがない理由",
       "no_plan_comment_only": "コメントのみ・プラン成果物なし",
       "no_plan_no_visible_output": "コメントもプラン成果物もなし",
       "no_plan_task_cancelled": "Agent タスクがキャンセル済み",
       "no_plan_assessment_incomplete": "プラン評価未完了",
-      "attribution_breakdown": "納品帰属",
+      "attribution_breakdown": "修正方法",
       "not_automatic": "AI 自動修正以外",
       "not_assisted": "AI 支援修正なし",
       "open_issue": "issue を開く",
@@ -134,7 +132,7 @@
       "reasons": "判定根拠"
     },
     "analysis": {
-      "attribution_title": "納品帰属の分布",
+      "attribution_title": "修正方法の分布",
       "quality_title": "AI 品質判定の分布",
       "blocked_title": "評価ブロック分布（完了 {{completed}}）",
       "blocked_auth": "認証失敗",
@@ -154,7 +152,7 @@
       "reason": "理由 / 説明",
       "external_status": "外部ステータス",
       "p4_evidence": "CL 提出記録",
-      "ai_attribution": "納品帰属",
+      "ai_attribution": "修正方法",
       "ai_quality": "AI 評価"
     },
     "pagination": {
@@ -182,7 +180,9 @@
       "warnings": "warnings",
       "warning_count": "{{count}} 件の warning",
       "confidence": "信頼度 {{value}}",
-      "no_evidence": "CL 提出記録なし"
+      "no_evidence": "CL 提出記録なし",
+      "repair_details_title": "修正方法の詳細",
+      "repair_details": "{{issue}} の修正方法を表示：{{method}}"
     },
     "assessment_obs": {
       "attempts": "{{count}} 回試行"
@@ -212,14 +212,14 @@
       },
       "attribution": {
         "unassessed": "未評価",
-        "ai_delivered": "AI が交付",
-        "ai_assisted": "AI が支援",
+        "ai_delivered": "AI 提出",
+        "ai_assisted": "AI 支援",
         "human_delivered": "人間が交付",
         "conflict": "帰属の衝突",
         "unattributed": "帰属不明",
         "ai_no_output": "AI 産出なし",
         "ai_plan_no_record": "計画あり記録なし",
-        "unknown": "証跡不足"
+        "unknown": "判定不可"
       },
       "quality": {
         "unassessed": "未評価",

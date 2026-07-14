@@ -69,8 +69,8 @@
       "status_all": "All statuses",
       "workstream": "Workstream",
       "workstream_all": "All workstreams",
-      "attribution": "Delivery attribution",
-      "attribution_all": "All attribution",
+      "attribution": "Repair method",
+      "attribution_all": "All repair methods",
       "quality": "AI quality prediction",
       "quality_all": "All quality",
       "pending_only": "Pending judgement only",
@@ -85,13 +85,13 @@
     },
     "summary": {
       "contribution_rate": "AI coverage",
-      "contribution_rate_hint": "Tickets picked up by AI / tickets assigned to an Agent",
-      "quality_rate": "AI solution pass rate",
-      "quality_rate_hint": "AI-marked passes / tickets judged by AI",
+      "contribution_rate_hint": "Picked up by AI / assigned to an Agent",
+      "quality_rate": "AI repair quality",
+      "quality_rate_hint": "AI-marked passes / AI-assessed repairable tickets",
       "automatic_rate": "AI automatic repair rate",
-      "automatic_rate_hint": "Direct AI submissions passed / tickets judged by AI",
+      "automatic_rate_hint": "Direct AI submissions passed / AI-assessed repairable tickets",
       "assisted_rate": "AI-assisted repair rate",
-      "assisted_rate_hint": "AI-assisted solutions passed / tickets judged by AI",
+      "assisted_rate_hint": "AI-assisted solutions passed / AI-assessed repairable tickets",
       "health_footnote": "{{unassessed}} unassessed · {{missingCl}} missing human CL",
       "stage_judged": "Judged",
       "overview": "Last {{days}} days: {{done}} assigned to an Agent, {{handled}} picked up by AI, and {{judged}} judged for quality.",
@@ -113,18 +113,16 @@
       "more": "{{count}} more not shown",
       "empty": "No records in this group",
       "unjudged": "Not judged",
-      "handled": "Picked up by AI",
-      "unhandled": "No verifiable plan found",
-      "unconverted_reasons": "Why conversion is unconfirmed",
-      "unconverted_evidence_unconfirmed": "Insufficient delivery evidence",
-      "unconverted_human_delivered": "Delivered independently by a human",
-      "unconverted_attribution_conflict": "Conflicting attribution evidence",
+      "handled": "Processed by AI",
+      "unhandled": "Not processed by AI",
+      "assessment_completed": "AI assessment completed",
+      "assessment_blocked": "AI assessment blocked",
       "no_plan_reasons": "Why no verifiable plan was found",
       "no_plan_comment_only": "Comment only; no plan artifact",
       "no_plan_no_visible_output": "No comment or plan artifact",
       "no_plan_task_cancelled": "Agent task cancelled",
       "no_plan_assessment_incomplete": "Plan assessment incomplete",
-      "attribution_breakdown": "Delivery attribution",
+      "attribution_breakdown": "Repair method",
       "not_automatic": "Not automatically repaired by AI",
       "not_assisted": "No AI-assisted repair",
       "open_issue": "Open issue",
@@ -134,7 +132,7 @@
       "reasons": "Judgement basis"
     },
     "analysis": {
-      "attribution_title": "Delivery attribution",
+      "attribution_title": "Repair method distribution",
       "quality_title": "AI quality distribution",
       "blocked_title": "Evidence access blocked ({{completed}} completed)",
       "blocked_auth": "Auth failed",
@@ -154,7 +152,7 @@
       "reason": "Reason / description",
       "external_status": "External status",
       "p4_evidence": "Submitted CL record",
-      "ai_attribution": "Delivery attribution",
+      "ai_attribution": "Repair method",
       "ai_quality": "AI assessment"
     },
     "pagination": {
@@ -182,7 +180,9 @@
       "warnings": "warnings",
       "warning_count": "{{count}} warning",
       "confidence": "confidence {{value}}",
-      "no_evidence": "No submitted CL record"
+      "no_evidence": "No submitted CL record",
+      "repair_details_title": "Repair details",
+      "repair_details": "View repair details for {{issue}}: {{method}}"
     },
     "assessment_obs": {
       "attempts": "{{count}} attempts"
@@ -212,14 +212,14 @@
       },
       "attribution": {
         "unassessed": "Not assessed",
-        "ai_delivered": "AI delivered",
+        "ai_delivered": "AI submitted",
         "ai_assisted": "AI assisted",
         "human_delivered": "Human delivered",
         "conflict": "Attribution conflict",
         "unattributed": "Unattributed",
         "ai_no_output": "AI no output",
         "ai_plan_no_record": "Plan, no record",
-        "unknown": "Insufficient evidence"
+        "unknown": "Unable to determine"
       },
       "quality": {
         "unassessed": "Not assessed",

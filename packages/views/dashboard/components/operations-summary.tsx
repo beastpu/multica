@@ -206,8 +206,6 @@ export function OperationsSummary({
           label={t(($) => $.operations.summary.quality_rate)}
           hint={t(($) => $.operations.summary.quality_rate_hint)}
           rate={kpis.qualityRate}
-          onClick={onCardClick ? () => onCardClick("quality") : undefined}
-          clickHint={t(($) => $.operations.drawer.card_hint)}
           className="border-b xl:border-b-0 xl:border-r"
         />
         <RateCard

@@ -15,6 +15,7 @@ import {
   isAssignedToAgent,
   isAiParticipated,
   noPlanReason,
+  repairMethod,
   unconvertedReason,
   isVerifiableOutput,
   trimOperationsWindow,
@@ -177,6 +178,25 @@ describe("deriveAttribution", () => {
         }),
       ),
     ).toBe("ai_delivered");
+  });
+});
+
+describe("repairMethod", () => {
+  it("exposes only AI submitted, AI assisted, or unknown", () => {
+    const withAttribution = (value: string) =>
+      fix({
+        p4_assessment: {
+          assessment_status: "completed",
+          delivery_attribution_prediction: value,
+          ai_shelved_cls: ["123"],
+        },
+      });
+
+    expect(repairMethod(withAttribution("ai_delivered"))).toBe("ai_delivered");
+    expect(repairMethod(withAttribution("ai_assisted"))).toBe("ai_assisted");
+    expect(repairMethod(withAttribution("human_delivered"))).toBe("unknown");
+    expect(repairMethod(withAttribution("conflict"))).toBe("unknown");
+    expect(repairMethod(fix())).toBe("unknown");
   });
 });
 

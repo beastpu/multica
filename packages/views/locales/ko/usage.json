@@ -69,8 +69,8 @@
       "status_all": "모든 상태",
       "workstream": "Workstream",
       "workstream_all": "모든 workstream",
-      "attribution": "납품 귀속",
-      "attribution_all": "모든 귀속",
+      "attribution": "수정 방식",
+      "attribution_all": "모든 수정 방식",
       "quality": "AI 품질 예측",
       "quality_all": "모든 품질",
       "pending_only": "판정 대기만",
@@ -85,13 +85,13 @@
     },
     "summary": {
       "contribution_rate": "AI 커버리지",
-      "contribution_rate_hint": "AI 처리 건수 / Agent 할당 건수",
-      "quality_rate": "AI 방안 통과율",
-      "quality_rate_hint": "AI 통과 판정 건수 / AI 판정 완료 건수",
+      "contribution_rate_hint": "AI 처리 / Agent 할당",
+      "quality_rate": "AI 수정 품질",
+      "quality_rate_hint": "AI 통과 판정 / AI 수정 가능 평가 완료",
       "automatic_rate": "AI 자동 수정률",
-      "automatic_rate_hint": "AI 코드 직접 제출 및 통과 건수 / AI 판정 완료 건수",
+      "automatic_rate_hint": "AI 코드 직접 제출 및 통과 / AI 수정 가능 평가 완료",
       "assisted_rate": "AI 보조 수정률",
-      "assisted_rate_hint": "AI 보조 방안 통과 건수 / AI 판정 완료 건수",
+      "assisted_rate_hint": "AI 보조 방안 통과 / AI 수정 가능 평가 완료",
       "health_footnote": "미평가 {{unassessed}} · 제출 CL 미기입 {{missingCl}}",
       "stage_judged": "판정 완료",
       "overview": "최근 {{days}}일 Agent 할당 {{done}}건 중 AI 처리 {{handled}}건이며, 품질 판정 완료는 {{judged}}건입니다.",
@@ -113,18 +113,16 @@
       "more": "{{count}}건 더 있음",
       "empty": "이 그룹에 기록이 없습니다",
       "unjudged": "미판정",
-      "handled": "AI 처리",
-      "unhandled": "검증 가능한 방안 없음",
-      "unconverted_reasons": "전환을 확인할 수 없는 이유",
-      "unconverted_evidence_unconfirmed": "납품 증거 부족",
-      "unconverted_human_delivered": "최종적으로 사람이 독립 납품",
-      "unconverted_attribution_conflict": "귀속 증거 충돌",
+      "handled": "AI 처리 완료",
+      "unhandled": "AI 미처리",
+      "assessment_completed": "AI 평가 완료",
+      "assessment_blocked": "AI 평가 차단",
       "no_plan_reasons": "검증 가능한 방안이 없는 이유",
       "no_plan_comment_only": "댓글만 있고 방안 산출물 없음",
       "no_plan_no_visible_output": "댓글 또는 방안 산출물 없음",
       "no_plan_task_cancelled": "Agent 작업 취소됨",
       "no_plan_assessment_incomplete": "방안 평가 미완료",
-      "attribution_breakdown": "납품 귀속",
+      "attribution_breakdown": "수정 방식",
       "not_automatic": "AI 자동 수정 아님",
       "not_assisted": "AI 보조 수정 없음",
       "open_issue": "issue 열기",
@@ -134,7 +132,7 @@
       "reasons": "판단 근거"
     },
     "analysis": {
-      "attribution_title": "납품 귀속 분포",
+      "attribution_title": "수정 방식 분포",
       "quality_title": "AI 품질 판정 분포",
       "blocked_title": "평가 차단 분포 (완료 {{completed}})",
       "blocked_auth": "인증 실패",
@@ -154,7 +152,7 @@
       "reason": "사유 / 설명",
       "external_status": "외부 상태",
       "p4_evidence": "CL 제출 기록",
-      "ai_attribution": "납품 귀속",
+      "ai_attribution": "수정 방식",
       "ai_quality": "AI 평가"
     },
     "pagination": {
@@ -182,7 +180,9 @@
       "warnings": "warnings",
       "warning_count": "{{count}}개 warning",
       "confidence": "신뢰도 {{value}}",
-      "no_evidence": "CL 제출 기록 없음"
+      "no_evidence": "CL 제출 기록 없음",
+      "repair_details_title": "수정 방식 상세",
+      "repair_details": "{{issue}}의 수정 방식 보기: {{method}}"
     },
     "assessment_obs": {
       "attempts": "{{count}}회 시도"
@@ -219,7 +219,7 @@
         "unattributed": "귀속 불명",
         "ai_no_output": "AI 산출 없음",
         "ai_plan_no_record": "계획만, 기록 없음",
-        "unknown": "증거 부족"
+        "unknown": "판단 불가"
       },
       "quality": {
         "unassessed": "미평가",
