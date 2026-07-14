@@ -615,18 +615,19 @@ describe("OperationsPage", () => {
   it("renders the four operator KPI cards", () => {
     renderWithI18n(<OperationsPage />);
 
-    expect(screen.getByText("AI repair contribution")).toBeTruthy();
-    expect(screen.getByText("AI repair quality")).toBeTruthy();
-    expect(screen.getByText("AI automatic repairs")).toBeTruthy();
-    expect(screen.getByText("AI-assisted repairs")).toBeTruthy();
+    expect(screen.getByText("AI coverage")).toBeTruthy();
+    expect(screen.getByText("AI solution pass rate")).toBeTruthy();
+    expect(screen.getByText("AI automatic repair rate")).toBeTruthy();
+    expect(screen.getByText("AI-assisted repair rate")).toBeTruthy();
     expect(
-      screen.getByText("1 marked pass / 2 judged by AI"),
+      screen.getByText("AI-marked passes / tickets judged by AI"),
     ).toBeTruthy();
     expect(
-      screen.getByText(
-        "1 direct AI submission passed / 2 judged by AI",
-      ),
+      screen.getByText("Direct AI submissions passed / tickets judged by AI"),
     ).toBeTruthy();
+    expect(screen.getByText("2 / 6")).toBeTruthy();
+    expect(screen.getAllByText("1 / 2")).toHaveLength(2);
+    expect(screen.getByText("0 / 2")).toBeTruthy();
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
 
@@ -634,10 +635,10 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(
-      screen.getByText("AI automatic repairs").closest("button"),
+      screen.getByText("AI automatic repair rate").closest("button"),
     ).toBeNull();
     expect(
-      screen.getByText("AI-assisted repairs").closest("button"),
+      screen.getByText("AI-assisted repair rate").closest("button"),
     ).toBeNull();
   });
 
@@ -670,7 +671,7 @@ describe("OperationsPage", () => {
 
     // The whole contribution card is a button opening the breakdown drawer.
     await user.click(
-      screen.getByRole("button", { name: /AI repair contribution/ }),
+      screen.getByRole("button", { name: /AI coverage/ }),
     );
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).queryByText("Delivery attribution")).toBeNull();
@@ -686,11 +687,7 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(screen.queryByText("No agent pickup")).toBeNull();
-    expect(
-      screen.getByText(
-        "2 picked up by AI / 6 assigned to an Agent",
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText("2 / 6")).toBeTruthy();
   });
 
   it("shows non-conversion and no-plan reasons inside the contribution drawer", async () => {
@@ -698,7 +695,7 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
 
     await user.click(
-      screen.getByRole("button", { name: /AI repair contribution/ }),
+      screen.getByRole("button", { name: /AI coverage/ }),
     );
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("Picked up by AI")).toBeTruthy();
@@ -715,7 +712,7 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
 
     await user.click(
-      screen.getByRole("button", { name: /AI repair contribution/ }),
+      screen.getByRole("button", { name: /AI coverage/ }),
     );
     const dialog = screen.getByRole("dialog");
     await user.click(
@@ -938,7 +935,7 @@ describe("OperationsPage", () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    await user.click(screen.getByRole("button", { name: /AI repair quality/ }));
+    await user.click(screen.getByRole("button", { name: /AI solution pass rate/ }));
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("Pass")).toBeTruthy();
     expect(within(dialog).getByText("Needs work")).toBeTruthy();
@@ -951,7 +948,7 @@ describe("OperationsPage", () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    await user.click(screen.getByRole("button", { name: /AI repair quality/ }));
+    await user.click(screen.getByRole("button", { name: /AI solution pass rate/ }));
     const dialog = screen.getByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: /^Fail/ }));
     await user.click(
@@ -1143,13 +1140,9 @@ describe("OperationsPage", () => {
       Array.from(marks).some((m) => m.textContent?.toLowerCase() === "review"),
     ).toBe(true);
 
-    // Detail filters never bend the stats: the headline contribution still
-    // reports the full page-level pool while the table is narrowed by search.
-    expect(
-      screen.getByText(
-        "2 picked up by AI / 6 assigned to an Agent",
-      ),
-    ).toBeTruthy();
+    // Detail filters never bend the stats: the headline ratio still reports
+    // the full page-level pool while the table is narrowed by search.
+    expect(screen.getByText("2 / 6")).toBeTruthy();
   });
 
   it("shows a search-specific empty state when nothing matches", async () => {
