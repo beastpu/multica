@@ -63,20 +63,19 @@ export function deriveAttribution(fix: AgentFixRecord): string {
 export type RepairMethod = "ai_delivered" | "ai_assisted" | "unknown";
 
 // The detail table deliberately exposes a compact, operator-facing repair
-// method instead of every internal attribution state. Only confirmed AI
-// delivery modes are actionable categories; human delivery, conflicts,
-// missing evidence, and unfinished assessments all degrade to "unknown".
+// method instead of every internal attribution state. A passed implementation
+// comparison is assisted even when legacy attribution recorded human delivery;
+// missing comparison evidence still degrades to "unknown".
 export function repairMethod(fix: AgentFixRecord): RepairMethod {
-  const attribution = deriveAttribution(fix);
-  if (attribution === "ai_delivered" || attribution === "ai_assisted") {
-    return attribution;
-  }
+  const role = deliveryRole(fix);
+  if (role === "direct") return "ai_delivered";
+  if (role === "assisted") return "ai_assisted";
   return "unknown";
 }
 
 export function isAiDelivered(fix: AgentFixRecord): boolean {
-  const attribution = deriveAttribution(fix);
-  return attribution === "ai_delivered" || attribution === "ai_assisted";
+  const role = deliveryRole(fix);
+  return role === "direct" || role === "assisted";
 }
 
 // AI quality predictions that count as "已判定" (the assessment reached a
@@ -239,6 +238,13 @@ export function deliveryRole(fix: AgentFixRecord): DeliveryRole {
   const attribution = deriveAttribution(fix);
   if (attribution === "ai_delivered") return "direct";
   if (attribution === "ai_assisted") return "assisted";
+  // quality_prediction is the implementation-comparison verdict. A passing AI
+  // plan is therefore an equivalent human delivery even if an older assessment
+  // used a chronology-based attribution or omitted the inspected final CL from
+  // its structured arrays.
+  if (aiProducedPlan(fix) && qualityJudgement(fix) === "likely_correct") {
+    return "assisted";
+  }
   return aiProducedPlan(fix) ? "unconverted" : "none";
 }
 
@@ -452,7 +458,7 @@ export interface OperationsFunnel {
 export interface DeliveryComposition {
   directDelivered: number; // AI's CL is the final CL (ai_delivered)
   assisted: number; // human shipped an AI-equivalent CL (ai_assisted)
-  unconverted: number; // AI produced a plan but it did not reach delivery
+  unconverted: number; // AI plan has no verified equivalent final delivery
   notParticipated: number; // shipped with no AI involvement at all
 }
 
@@ -471,8 +477,8 @@ export interface OperationsKpis {
   qualityRate: OperationsRate;
   automaticRate: OperationsRate;
   // Passing AI-assisted plans / all explicitly judged AI-handled plans.
-  // Together with automaticRate, this partitions qualityRate's numerator:
-  // assisted = passed - automatic.
+  // A passing comparison establishes implementation equivalence, so every
+  // non-direct pass is assisted even if a legacy attribution field disagrees.
   assistedRate: OperationsRate;
   // Demoted data-health counts (rendered as a muted footnote, not a headline
   // card): rows whose assessment hasn't completed (the queue backlog) and
@@ -526,10 +532,7 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     // judgement. A direct submission with unknown/failed quality is not an
     // automatic repair success.
     if (role === "direct" && quality === "likely_correct") automatic += 1;
-    if (
-      quality === "likely_correct" &&
-      (role === "assisted" || role === "unconverted")
-    ) {
+    if (quality === "likely_correct" && role === "assisted") {
       assistedPassed += 1;
     }
     if (quality === "likely_correct") passed += 1;

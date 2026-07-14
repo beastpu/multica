@@ -704,8 +704,9 @@ describe("OperationsPage", () => {
     );
     expect(composition.textContent).toContain("AI automatic repair1 · 17%");
     expect(composition.textContent).toContain(
-      "AI-human collaborative repair1 · 17%",
+      "AI-human collaborative repair0 · 0%",
     );
+    expect(composition.textContent).toContain("Unable to determine1 · 17%");
     expect(composition.textContent).toContain("AI not handled4 · 67%");
   });
 

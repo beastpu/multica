@@ -101,7 +101,7 @@
       "composition_assisted": "AI と人の共同修正",
       "assisted_with_unconverted": "AI と人の共同修正",
       "composition_not_participated": "AI 未対応",
-      "composition_unconverted": "AI と人の共同修正",
+      "composition_unconverted": "判定不能",
       "composition_empty": "この期間に Agent 割り当て済みのチケットはありません。",
       "health_footnote_hint": "未評価 = 評価が未完了の件（キュー状態）；CL 未記入 = 外部チケットは完了しているが、どの証跡にも提出 CL の記録がない"
     },

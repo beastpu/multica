@@ -101,7 +101,7 @@
       "composition_assisted": "AI 与人共同修复",
       "assisted_with_unconverted": "AI 与人共同修复",
       "composition_not_participated": "AI 未处理",
-      "composition_unconverted": "AI 与人共同修复",
+      "composition_unconverted": "无法判断",
       "composition_empty": "当前窗口没有分配给智能体的单。",
       "health_footnote_hint": "未评估 = 评估尚未完成的单（队列状态）；未回填 CL = 外部单已完成但任何证据源都没有提交 CL 记录"
     },

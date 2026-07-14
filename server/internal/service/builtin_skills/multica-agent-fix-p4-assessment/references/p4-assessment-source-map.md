@@ -207,19 +207,23 @@ for the behavior contracts the skill teaches.
   explicit judgement (`likely_correct`, `likely_needs_changes`, or
   `likely_wrong`); `unknown` remains diagnostic and is excluded. Automatic and
   assisted are mutually exclusive passing subsets: automatic is a passing
-  `ai_delivered` plan, while assisted is every other passing participated plan,
-  so assisted pass = total pass - automatic pass. A committed CL is NOT
+  `ai_delivered` plan, while assisted is every other passing implementation
+  comparison, so assisted pass = total pass - automatic pass. The pass itself
+  establishes method equivalence even if an older attribution field disagrees.
+  A committed CL is NOT
   required for the quality denominator because quality judges the plan's code,
   not whether it shipped. Delivery attribution (`ai_delivered` /
-  `ai_assisted` from `delivery_attribution_prediction`) drives the delivery
-  composition, which is why attribution must not be guessed.
+  `ai_assisted` from `delivery_attribution_prediction`) normally drives the
+  delivery composition. For historical rows, a passing implementation
+  comparison normalizes a non-direct legacy attribution to assisted because
+  the pass already establishes method equivalence.
 - Human submission is not itself an assisted-delivery signal. The assessment
-  skill emits `ai_assisted` only when the human final CL materially follows an
-  equivalent AI implementation that existed before the human submission. A
-  non-equivalent human fix or AI output produced after final delivery emits
-  `human_delivered` when ownership is proven; insufficient evidence emits
-  `unknown`. The dashboard intentionally folds both non-AI outcomes into its
-  operator-facing unable-to-determine repair-method bucket.
+  skill emits `ai_assisted` when the human final CL materially follows a
+  verified, method-equivalent AI implementation. Chronology is supporting
+  context rather than an exclusion rule because this metric measures solution
+  equivalence, not strict causality. A non-equivalent human fix emits
+  `human_delivered` when ownership is proven; insufficient comparison or
+  ownership evidence emits `unknown`.
 - Delivery-side metrics and the missing-CL process gap read the structured
   `*_committed_cls` arrays, not `summary` / `prediction_reasons`. This is why
   the SKILL requires a verified submitted CL — including one confirmed only via

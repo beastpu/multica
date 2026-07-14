@@ -101,7 +101,7 @@
       "composition_assisted": "AI와 사람의 공동 수정",
       "assisted_with_unconverted": "AI와 사람의 공동 수정",
       "composition_not_participated": "AI 미처리",
-      "composition_unconverted": "AI와 사람의 공동 수정",
+      "composition_unconverted": "판단 불가",
       "composition_empty": "이 기간에 Agent가 할당된 티켓이 없습니다.",
       "health_footnote_hint": "미평가 = 평가가 아직 완료되지 않은 건(대기 상태); CL 미기입 = 외부 티켓은 완료됐지만 어떤 증거에도 제출 CL 기록이 없음"
     },

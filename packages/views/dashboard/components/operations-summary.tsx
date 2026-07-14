@@ -79,10 +79,10 @@ function RateCard({
   );
 }
 
-// A MECE view over every eligible ticket. Unconverted AI plans are part of
-// assisted repair by the operating definition, while tickets with no AI
-// delivery role remain visible so the bar reconciles to the full reporting
-// denominator.
+// A MECE view over every eligible ticket. Confirmed assisted repair stays
+// separate from plans whose delivery relationship cannot be determined, while
+// tickets with no AI delivery role remain visible so the bar reconciles to the
+// full reporting denominator.
 function CompositionBar({
   composition,
   externalDone,
@@ -92,8 +92,10 @@ function CompositionBar({
 }) {
   const { t } = useT("usage");
   const title = t(($) => $.operations.summary.composition_title);
-  const assisted = composition.assisted + composition.unconverted;
-  const participated = composition.directDelivered + assisted;
+  const participated =
+    composition.directDelivered +
+    composition.assisted +
+    composition.unconverted;
   const segments = [
     {
       key: "automatic",
@@ -103,9 +105,15 @@ function CompositionBar({
     },
     {
       key: "assisted",
-      label: t(($) => $.operations.summary.assisted_with_unconverted),
-      count: assisted,
+      label: t(($) => $.operations.summary.composition_assisted),
+      count: composition.assisted,
       className: "bg-chart-2",
+    },
+    {
+      key: "unconverted",
+      label: t(($) => $.operations.summary.composition_unconverted),
+      count: composition.unconverted,
+      className: "bg-muted-foreground/45",
     },
     {
       key: "not-participated",
@@ -154,7 +162,7 @@ function CompositionBar({
                 />
               ))}
           </div>
-          <div className="mt-2 grid gap-x-6 gap-y-1.5 sm:grid-cols-3">
+          <div className="mt-2 grid gap-x-6 gap-y-1.5 sm:grid-cols-2 xl:grid-cols-4">
             {segments.map((segment) => (
               <div
                 key={segment.key}

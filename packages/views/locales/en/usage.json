@@ -101,7 +101,7 @@
       "composition_assisted": "AI-human collaborative repair",
       "assisted_with_unconverted": "AI-human collaborative repair",
       "composition_not_participated": "AI not handled",
-      "composition_unconverted": "AI-human collaborative repair",
+      "composition_unconverted": "Unable to determine",
       "composition_empty": "No tickets assigned to an Agent in this window.",
       "health_footnote_hint": "Unassessed = assessment not completed yet (queue state); missing human CL = the external item is done but no submitted CL exists in any evidence source"
     },
