@@ -678,11 +678,9 @@ describe("OperationsPage", () => {
     );
     expect(composition.textContent).toContain("AI automatic repair1 · 17%");
     expect(composition.textContent).toContain(
-      "Non-automatic AI involvement (including unconverted)1 · 17%",
+      "AI-human collaborative repair1 · 17%",
     );
-    expect(composition.textContent).toContain(
-      "No verifiable plan found4 · 67%",
-    );
+    expect(composition.textContent).toContain("AI not handled4 · 67%");
   });
 
   it("keeps delivery attribution out of the contribution drawer", async () => {
