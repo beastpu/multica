@@ -271,10 +271,13 @@ describe("computeOperationsKpis", () => {
       denominator: 2,
     });
     expect(kpis.assistedRate).toEqual({
-      value: 1 / 2,
-      numerator: 1,
+      value: 0,
+      numerator: 0,
       denominator: 2,
     });
+    expect(kpis.assistedRate.numerator).toBe(
+      kpis.qualityRate.numerator - kpis.automaticRate.numerator,
+    );
     // Health counts use the same assigned + external-done opportunity pool;
     // notDone is outside it. No fixture carries missing_external_cl.
     expect(kpis.unassessed).toBe(0);
@@ -325,7 +328,7 @@ describe("computeOperationsKpis", () => {
     expect(kpis.qualityRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
     // Both external-done tickets had a normal Agent task.
     expect(kpis.contributionRate.numerator).toBe(2);
-    // The unconverted plan is intentionally counted as AI-assisted.
+    // The passing unconverted plan is counted as an assisted success.
     expect(kpis.assistedRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
   });
 
@@ -347,7 +350,7 @@ describe("computeOperationsKpis", () => {
     expect(kpis.qualityRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
   });
 
-  it("counts an unused AI plan as both assisted and AI participation", () => {
+  it("keeps a failed unused AI plan in participation but not assisted success", () => {
     // AI shelved a fix but a human shipped a different CL (human_delivered).
     const planNotUsed = fix({
       external: { done: true },
@@ -373,10 +376,10 @@ describe("computeOperationsKpis", () => {
       numerator: 1,
       denominator: 1,
     });
-    // The failed, unconverted plan is not a quality pass but does count toward
-    // AI-assisted repair per the operating definition.
+    // The failed, unconverted plan remains AI participation, but it is not a
+    // successful assisted repair.
     expect(kpis.qualityRate).toEqual({ value: 0, numerator: 0, denominator: 1 });
-    expect(kpis.assistedRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
+    expect(kpis.assistedRate).toEqual({ value: 0, numerator: 0, denominator: 1 });
   });
 
   it("defines pickup by AI participation rather than normal task presence", () => {

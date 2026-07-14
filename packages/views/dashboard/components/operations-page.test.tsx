@@ -657,7 +657,7 @@ describe("OperationsPage", () => {
     );
     expect(composition.textContent).toContain("AI automatic repair1 · 17%");
     expect(composition.textContent).toContain(
-      "AI-assisted (including unconverted)1 · 17%",
+      "Non-automatic AI involvement (including unconverted)1 · 17%",
     );
     expect(composition.textContent).toContain(
       "No verifiable plan found4 · 67%",

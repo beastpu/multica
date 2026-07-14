@@ -205,9 +205,12 @@ for the behavior contracts the skill teaches.
   Multica-done issues currently assigned to an Agent. Quality, automatic, and
   assisted rates share the narrower denominator of participated rows with an
   explicit judgement (`likely_correct`, `likely_needs_changes`, or
-  `likely_wrong`); `unknown` remains diagnostic and is excluded. A committed CL
-  is NOT required for the quality denominator because quality judges the plan's
-  code, not whether it shipped. Delivery attribution (`ai_delivered` /
+  `likely_wrong`); `unknown` remains diagnostic and is excluded. Automatic and
+  assisted are mutually exclusive passing subsets: automatic is a passing
+  `ai_delivered` plan, while assisted is every other passing participated plan,
+  so assisted pass = total pass - automatic pass. A committed CL is NOT
+  required for the quality denominator because quality judges the plan's code,
+  not whether it shipped. Delivery attribution (`ai_delivered` /
   `ai_assisted` from `delivery_attribution_prediction`) drives the delivery
   composition, which is why attribution must not be guessed.
 - Delivery-side metrics and the missing-CL process gap read the structured

@@ -311,7 +311,10 @@ and assisted-repair rates only from currently Agent-assigned tickets where AI
 produced a recognizable plan and the assessment returned an explicit quality
 judgement (`likely_correct`, `likely_needs_changes`, or `likely_wrong`). An
 `unknown` judgement remains visible for diagnosis but is excluded from those
-rate denominators, so a wrongly-graded human fix corrupts the metric.
+rate denominators. Among passed plans, direct AI delivery is automatic repair;
+the remaining passed plans are assisted repair. Therefore assisted-pass count
+equals total pass count minus automatic-pass count. A wrongly-graded human fix
+corrupts these metrics.
 
 Prefer `unknown` with warnings over guessing. Useful warnings include:
 
