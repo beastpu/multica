@@ -285,16 +285,17 @@ Use the comparison to classify delivery and quality:
 - If the final submitted CL was submitted by Multica/automation or a Multica
   issue comment records the final submitted CL, use that evidence when choosing
   `delivery_attribution_prediction`.
-- If a human manually submitted a CL that is method-equivalent to the AI/Swarm
-  work, use `ai_assisted` only when both conditions hold:
-  1. AI work existed before the human submission.
-  2. Evidence supports that the human used or materially followed it.
-  Method similarity alone is not proof of assistance.
+- If a human manually submitted a CL that uses or materially follows a verified,
+  method-equivalent AI/Swarm implementation, use `ai_assisted` regardless of
+  whether the AI output predates or follows the human submission. This metric
+  measures solution equivalence, not strict causal ordering.
+- Chronology is supporting context, not an exclusion rule. Establish equivalence
+  from the implementation diffs; matching titles, issue descriptions, or
+  root-cause prose alone are not implementation evidence.
 - If automation submitted the equivalent final CL, prefer `ai_delivered`.
-- If a human submitted a non-equivalent final CL, AI work was produced after the final delivery, or evidence proves that the human did not rely on the AI
-  implementation, prefer `human_delivered` when human ownership is proven.
-- If evidence is insufficient to prove that the human used the AI work, to
-  establish the ordering between AI output and final delivery, or to establish
+- If a human submitted a non-equivalent final CL, prefer `human_delivered` when
+  human ownership is proven.
+- If evidence is insufficient to compare the implementations or to establish
   delivery ownership, use `unknown`; do not guess `ai_assisted`.
 
 ## Prediction policy
@@ -318,9 +319,10 @@ produced a recognizable plan and the assessment returned an explicit quality
 judgement (`likely_correct`, `likely_needs_changes`, or `likely_wrong`). An
 `unknown` judgement remains visible for diagnosis but is excluded from those
 rate denominators. Among passed plans, direct AI delivery is automatic repair;
-the remaining passed plans are assisted repair. Therefore assisted-pass count
-equals total pass count minus automatic-pass count. A wrongly-graded human fix
-corrupts these metrics.
+every other passed implementation comparison is assisted repair because the
+pass establishes method equivalence. Therefore assisted-pass count equals total
+pass count minus automatic-pass count. A wrongly-graded human fix corrupts these
+metrics.
 
 Prefer `unknown` with warnings over guessing. Useful warnings include:
 

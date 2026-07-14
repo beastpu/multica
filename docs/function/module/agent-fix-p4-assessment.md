@@ -331,8 +331,8 @@ enum values, and confidence range before persistence.
 | Value | Meaning |
 |---|---|
 | `ai_delivered` | Automation/AI delivered the final fix directly. |
-| `ai_assisted` | Human final submission used or materially followed an equivalent AI/Swarm fix that existed before the human submission. |
-| `human_delivered` | Human delivered the final fix without relying on AI implementation, or the AI output was produced only after delivery. |
+| `ai_assisted` | Human final submission uses or materially follows a verified, method-equivalent AI/Swarm implementation. Chronology does not exclude the match. |
+| `human_delivered` | Human delivered a materially different implementation and human ownership is proven. |
 | `conflict` | Evidence conflicts and attribution cannot be cleanly resolved. |
 | `unattributed` | Final delivery exists but owner/source is not attributable. |
 | `unknown` | Insufficient evidence. |
@@ -471,8 +471,9 @@ Filters:
 Filter reset buttons are visible after selecting a non-all filter value.
 
 `AI 交付` summary currently counts both `ai_delivered` and `ai_assisted`. It
-means AI participated in delivery, not necessarily that the final CL was
-submitted by automation.
+means the final implementation was delivered directly by AI or is
+method-equivalent to the AI implementation, not necessarily that automation
+submitted the final CL.
 
 `仅看偏差` shows rows whose `ai_judgement_eval` is one of:
 

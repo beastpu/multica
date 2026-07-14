@@ -45,10 +45,10 @@ func TestP4AssessmentHandoffNoteDefinesHumanSubmissionAttribution(t *testing.T) 
 	note := p4AssessmentHandoffNote(pgtype.UUID{})
 	for _, want := range []string{
 		"human-submitted final CL",
-		"materially followed the AI implementation",
-		"AI work existed before the human submission",
+		"materially followed a verified, method-equivalent AI implementation",
+		"regardless of whether the AI output was produced before or after the human submission",
 		"use \"ai_assisted\"",
-		"AI work was produced after delivery",
+		"materially different implementation",
 		"use \"human_delivered\"",
 		"use \"unknown\"",
 	} {

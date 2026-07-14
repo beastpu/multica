@@ -60,7 +60,7 @@
   "operations": {
     "title": "运营",
     "assessment_title": "AI 修单评估",
-    "subtitle": "汇总飞书项目测试通过且 Multica 同步 issue 已完成的单，分析 AI 接手、修复质量与交付构成。",
+    "subtitle": "汇总飞书项目测试通过且 Multica 同步 issue 已完成的单，分析 AI 处理、修复质量与交付构成。",
     "range_label": "最近 {{days}} 天",
     "search_placeholder": "搜索评论内容",
     "search_clear": "清除搜索",
@@ -85,7 +85,7 @@
     },
     "summary": {
       "contribution_rate": "AI 覆盖率",
-      "contribution_rate_hint": "AI 接手 / 分配给智能体",
+      "contribution_rate_hint": "AI 已处理 / 分配给智能体",
       "quality_rate": "AI 修复质量",
       "quality_rate_hint": "AI 标记通过 / AI 已评估可修复",
       "automatic_rate": "AI 自动修复率",
@@ -94,14 +94,14 @@
       "assisted_rate_hint": "AI 辅助方案通过 / AI 已评估可修复",
       "health_footnote": "未评估 {{unassessed}} · 外部单未回填提交 CL {{missingCl}}",
       "stage_judged": "已判定",
-      "overview": "最近 {{days}} 天分配给智能体 {{done}} 单，AI 接手 {{handled}} 单，其中 {{judged}} 单已有 AI 质量判断。",
+      "overview": "最近 {{days}} 天分配给智能体 {{done}} 单，AI 已处理 {{handled}} 单，其中 {{judged}} 单已有 AI 质量判断。",
       "composition_title": "AI 交付构成",
-      "composition_total": "AI 接手 {{count}} / 分配给智能体 {{total}}",
+      "composition_total": "AI 已处理 {{count}} / 分配给智能体 {{total}}",
       "composition_direct": "AI 自动修复",
-      "composition_assisted": "AI 非自动参与",
-      "assisted_with_unconverted": "AI 非自动参与（含未转化）",
-      "composition_not_participated": "未识别到可验证方案",
-      "composition_unconverted": "AI 参与，未确认转化",
+      "composition_assisted": "AI 与人共同修复",
+      "assisted_with_unconverted": "AI 与人共同修复",
+      "composition_not_participated": "AI 未处理",
+      "composition_unconverted": "无法判断",
       "composition_empty": "当前窗口没有分配给智能体的单。",
       "health_footnote_hint": "未评估 = 评估尚未完成的单（队列状态）；未回填 CL = 外部单已完成但任何证据源都没有提交 CL 记录"
     },
@@ -153,6 +153,7 @@
       "external_status": "外部状态",
       "p4_evidence": "提交 CL 记录",
       "ai_attribution": "修复方式",
+      "assessment_status": "评估状态",
       "ai_quality": "AI 预判"
     },
     "pagination": {
@@ -205,6 +206,7 @@
     "enums": {
       "assessment": {
         "missing": "待 AI 预判",
+        "pending": "待评估",
         "running": "AI 预判中",
         "failed": "AI 失败",
         "completed": "AI 已判断",
@@ -285,7 +287,7 @@
     "reset_columns": "重置列宽",
     "empty": {
       "title": "暂无修复记录",
-      "body": "飞书项目测试通过且 Multica 同步 issue 已完成的单会显示在这里，包括尚未由 AI 接手的单。",
+      "body": "飞书项目测试通过且 Multica 同步 issue 已完成的单会显示在这里，包括尚未由 AI 处理的单。",
       "search_title": "没有匹配的评论",
       "search_body": "该时间段内没有智能体评论包含「{{term}}」。换个关键词或扩大时间范围试试。"
     }

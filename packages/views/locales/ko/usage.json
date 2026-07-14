@@ -98,10 +98,10 @@
       "composition_title": "AI 납품 구성",
       "composition_total": "AI 처리 {{count}} / Agent 할당 {{total}}",
       "composition_direct": "AI 자동 수정",
-      "composition_assisted": "AI 비자동 참여",
-      "assisted_with_unconverted": "AI 비자동 참여(미전환 포함)",
-      "composition_not_participated": "검증 가능한 방안 없음",
-      "composition_unconverted": "AI 참여·전환 미확인",
+      "composition_assisted": "AI와 사람의 공동 수정",
+      "assisted_with_unconverted": "AI와 사람의 공동 수정",
+      "composition_not_participated": "AI 미처리",
+      "composition_unconverted": "판단 불가",
       "composition_empty": "이 기간에 Agent가 할당된 티켓이 없습니다.",
       "health_footnote_hint": "미평가 = 평가가 아직 완료되지 않은 건(대기 상태); CL 미기입 = 외부 티켓은 완료됐지만 어떤 증거에도 제출 CL 기록이 없음"
     },
@@ -153,6 +153,7 @@
       "external_status": "외부 상태",
       "p4_evidence": "CL 제출 기록",
       "ai_attribution": "수정 방식",
+      "assessment_status": "평가 상태",
       "ai_quality": "AI 평가"
     },
     "pagination": {
@@ -205,6 +206,7 @@
     "enums": {
       "assessment": {
         "missing": "AI 평가 대기",
+        "pending": "평가 대기",
         "running": "AI 평가 중",
         "failed": "AI 실패",
         "completed": "AI 평가 완료",

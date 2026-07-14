@@ -624,6 +624,13 @@ function IssuePanel({
                 </span>
               )
             ) : null}
+            {typeof externalDone === "boolean" ? (
+              <span className="text-xs text-muted-foreground">
+                {externalDone
+                  ? t(($) => $.operations.external.in_stats)
+                  : t(($) => $.operations.external.out_of_stats)}
+              </span>
+            ) : null}
           </div>
         </KvRow>
         <KvRow label={t(($) => $.operations.table.agent)}>

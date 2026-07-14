@@ -198,6 +198,48 @@ describe("repairMethod", () => {
     expect(repairMethod(withAttribution("conflict"))).toBe("unknown");
     expect(repairMethod(fix())).toBe("unknown");
   });
+
+  it("does not infer AI assistance from a needs-changes quality judgement", () => {
+    const needsChanges = (attribution: string) =>
+      fix({
+        p4_assessment: {
+          assessment_status: "completed",
+          delivery_attribution_prediction: attribution,
+          quality_prediction: "likely_needs_changes",
+          ai_shelved_cls: ["123"],
+        },
+      });
+
+    expect(repairMethod(needsChanges("ai_assisted"))).toBe("ai_assisted");
+    expect(repairMethod(needsChanges("unknown"))).toBe("unknown");
+    expect(repairMethod(needsChanges("human_delivered"))).toBe("unknown");
+    expect(repairMethod(needsChanges("conflict"))).toBe("unknown");
+  });
+
+  it("treats a passed implementation comparison as assisted", () => {
+    const equivalentHumanDelivery = fix({
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+        quality_prediction: "likely_correct",
+        ai_shelved_cls: [123],
+        external_committed_cls: [456],
+      },
+    });
+    const missingFinalCl = fix({
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "unknown",
+        quality_prediction: "likely_correct",
+        ai_shelved_cls: [123],
+      },
+    });
+
+    expect(repairMethod(equivalentHumanDelivery)).toBe("ai_assisted");
+    // The completed comparison verdict is authoritative even when an older
+    // record did not persist the inspected final CL into its structured array.
+    expect(repairMethod(missingFinalCl)).toBe("ai_assisted");
+  });
 });
 
 describe("computeOperationsKpis", () => {
@@ -325,12 +367,11 @@ describe("computeOperationsKpis", () => {
     expect(kpis.qualityRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
   });
 
-  it("judges an AI plan even without a committed CL (assessment ≠ delivery)", () => {
-    // AI shelved a fix and the assessment judged the plan likely_correct. Even
-    // though nothing shipped (no committed CL), the quality verdict is valid —
-    // quality is about the plan, not delivery. Whether it shipped is
-    // contribution's job, not the quality pipeline's.
-    const shelvedButUnshipped = fix({
+  it("trusts a completed comparison when structured CL evidence is missing", () => {
+    // AI shelved a fix and the completed assessment judged it likely_correct.
+    // Some older rows did not persist the inspected final CL into the structured
+    // arrays, but the comparison verdict still records implementation parity.
+    const legacyComparison = fix({
       external: { done: true },
       p4_assessment: {
         assessment_status: "completed",
@@ -339,16 +380,17 @@ describe("computeOperationsKpis", () => {
         ai_shelved_cls: [9],
       },
     });
-    const kpis = computeOperationsKpis([aiPassed, shelvedButUnshipped]);
+    const kpis = computeOperationsKpis([aiPassed, legacyComparison]);
     expect(kpis.funnel.verifiable).toBe(2);
     expect(kpis.funnel.judged).toBe(2);
     expect(kpis.funnel.passed).toBe(2);
-    // The unshipped plan is judged and passed — quality does not require a
-    // committed CL.
+    // The plan is judged and passed even though structured CL evidence was not
+    // backfilled into this historical row.
     expect(kpis.qualityRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
     // Both external-done tickets had a normal Agent task.
     expect(kpis.contributionRate.numerator).toBe(2);
-    // The passing unconverted plan is counted as an assisted success.
+    // A passing comparison means the AI plan is equivalent to the delivered
+    // implementation, so it is an assisted success even if attribution is old.
     expect(kpis.assistedRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
   });
 

@@ -98,10 +98,10 @@
       "composition_title": "AI delivery composition",
       "composition_total": "AI picked up {{count}} / {{total}} assigned to an Agent",
       "composition_direct": "AI automatic repair",
-      "composition_assisted": "Non-automatic AI involvement",
-      "assisted_with_unconverted": "Non-automatic AI involvement (including unconverted)",
-      "composition_not_participated": "No verifiable plan found",
-      "composition_unconverted": "AI involved, conversion unconfirmed",
+      "composition_assisted": "AI-human collaborative repair",
+      "assisted_with_unconverted": "AI-human collaborative repair",
+      "composition_not_participated": "AI not handled",
+      "composition_unconverted": "Unable to determine",
       "composition_empty": "No tickets assigned to an Agent in this window.",
       "health_footnote_hint": "Unassessed = assessment not completed yet (queue state); missing human CL = the external item is done but no submitted CL exists in any evidence source"
     },
@@ -153,6 +153,7 @@
       "external_status": "External status",
       "p4_evidence": "Submitted CL record",
       "ai_attribution": "Repair method",
+      "assessment_status": "Assessment status",
       "ai_quality": "AI assessment"
     },
     "pagination": {
@@ -205,6 +206,7 @@
     "enums": {
       "assessment": {
         "missing": "Needs AI assessment",
+        "pending": "Awaiting assessment",
         "running": "AI assessing",
         "failed": "AI failed",
         "completed": "AI assessed",

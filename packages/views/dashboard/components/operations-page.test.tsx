@@ -575,7 +575,7 @@ describe("OperationsPage", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders one row per issue with agent, issue, status, and last comment", async () => {
+  it("renders one row per issue with agent, assessment status, and last comment", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
@@ -587,7 +587,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText("MUL-7")).toBeTruthy();
     expect(screen.getByText("MUL-8")).toBeTruthy();
     expect(screen.getByText("Parser cleanup")).toBeTruthy();
-    expect(screen.getAllByText("测试通过").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("测试通过")).toBeNull();
     expect(screen.queryByText("test-passed")).toBeNull();
 
     // Agent name appears for each visible row. The unassigned row is outside
@@ -595,8 +595,12 @@ describe("OperationsPage", () => {
     expect(screen.getAllByText("Fixer").length).toBe(5);
     expect(screen.getByText("Reviewer")).toBeTruthy();
 
-    // "状态" column = ISSUE workflow status (labels from the issues namespace).
-    expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
+    // Workflow details moved to the issue drawer; the table exposes assessment
+    // progress as the comparable operational state.
+    expect(screen.queryByText("Done")).toBeNull();
+    expect(screen.queryByText("External status")).toBeNull();
+    expect(screen.getByText("Assessment status")).toBeTruthy();
+    expect(screen.getAllByText("AI assessed").length).toBeGreaterThanOrEqual(1);
 
     // CL evidence and AI assessment are consolidated under Repair method.
     expect(screen.getByText("Repair method")).toBeTruthy();
@@ -610,6 +614,28 @@ describe("OperationsPage", () => {
     // By-day time column (UTC) renders the latest-run day per row.
     expect(screen.getAllByText(dayLabel(6)).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(dayLabel(5)).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("moves issue and external workflow details into the issue drawer", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    expect(screen.queryByText("Done")).toBeNull();
+    expect(screen.queryByText("测试通过")).toBeNull();
+    expect(screen.queryByText("BUG-93218")).toBeNull();
+    expect(screen.queryByText("Warpath3")).toBeNull();
+
+    await user.click(screen.getAllByText("Fixer")[0]!);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Done")).toBeTruthy();
+    expect(within(dialog).getByText("External status")).toBeTruthy();
+    expect(within(dialog).getByText("测试通过")).toBeTruthy();
+    expect(within(dialog).getByText("In stats")).toBeTruthy();
+    const workItem = within(dialog).getByText("BUG-93218").closest("a");
+    expect(workItem?.getAttribute("href")).toBe(
+      "https://meego.example.com/items/BUG-93218",
+    );
+    expect(within(dialog).queryByText("i-1")).toBeNull();
   });
 
   it("excludes rows older than the selected window from the table", () => {
@@ -678,11 +704,10 @@ describe("OperationsPage", () => {
     );
     expect(composition.textContent).toContain("AI automatic repair1 · 17%");
     expect(composition.textContent).toContain(
-      "Non-automatic AI involvement (including unconverted)1 · 17%",
+      "AI-human collaborative repair0 · 0%",
     );
-    expect(composition.textContent).toContain(
-      "No verifiable plan found4 · 67%",
-    );
+    expect(composition.textContent).toContain("Unable to determine1 · 17%");
+    expect(composition.textContent).toContain("AI not handled4 · 67%");
   });
 
   it("keeps delivery attribution out of the contribution drawer", async () => {
@@ -788,9 +813,9 @@ describe("OperationsPage", () => {
 
     expect(screen.getByText("AI fix assessment")).toBeTruthy();
     expect(screen.queryByText("Insights")).toBeNull();
-    expect(screen.getByText("BUG-93218")).toBeTruthy();
-    expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("In stats").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("BUG-93218")).toBeNull();
+    expect(screen.queryByText("Done")).toBeNull();
+    expect(screen.queryByText("In stats")).toBeNull();
     expect(screen.queryByText("Swarm SW-11872")).toBeNull();
     expect(screen.queryByText("final CL 283006")).toBeNull();
 
@@ -798,7 +823,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Repair details")).toBeTruthy();
     expect(screen.getByText("Submitted CL record")).toBeTruthy();
     expect(screen.getByText("AI assessment")).toBeTruthy();
-    expect(screen.getByText("AI assessed")).toBeTruthy();
+    expect(screen.getAllByText("AI assessed").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("stream rel_1.7.2/server")).toBeTruthy();
     // The popover shows the submitted CL first; shelved CLs stay hidden when a
     // final committed CL exists.
@@ -824,16 +849,11 @@ describe("OperationsPage", () => {
     expect(screen.getByText("confidence 86%")).toBeTruthy();
   });
 
-  it("links external work items, swarm reviews, and CLs", async () => {
+  it("links swarm reviews and CLs from repair details", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
 
-    // Feishu/Meego work item → external.url.
-    const workItem = screen.getByText("BUG-93218").closest("a");
-    expect(workItem?.getAttribute("href")).toBe(
-      "https://meego.example.com/items/BUG-93218",
-    );
     await openRepairDetails(user, "MUL-7");
     // Swarm review lives in the submitted-CL details popover.
     await user.click(screen.getAllByRole("button", { name: "Details" })[0]!);
@@ -853,6 +873,8 @@ describe("OperationsPage", () => {
   it("renders quality analysis copy in Chinese locale", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />, { locale: "zh-Hans" });
+    expect(screen.getByText("AI 已处理 / 分配给智能体")).toBeTruthy();
+    expect(screen.getByText("AI 已处理 2 / 分配给智能体 6")).toBeTruthy();
     await openAssessments(user, "评估明细");
 
     await openRepairDetails(user, "MUL-7");
@@ -1062,13 +1084,14 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
     const handles = screen.getAllByRole("separator");
-    expect(handles.length).toBe(4);
+    expect(handles.length).toBe(5);
     expect(
       handles.map((h) => h.getAttribute("aria-label")),
     ).toEqual([
       "Resize Issue column",
       "Resize Agent column",
       "Resize Repair method column",
+      "Resize Assessment status column",
       "Resize Date column",
     ]);
     expect(

@@ -98,10 +98,10 @@
       "composition_title": "AI 納品構成",
       "composition_total": "AI 着手 {{count}} / Agent 割り当て {{total}}",
       "composition_direct": "AI 自動修正",
-      "composition_assisted": "AI 非自動関与",
-      "assisted_with_unconverted": "AI 非自動関与（未転換を含む）",
-      "composition_not_participated": "検証可能なプランなし",
-      "composition_unconverted": "AI 関与・転換未確認",
+      "composition_assisted": "AI と人の共同修正",
+      "assisted_with_unconverted": "AI と人の共同修正",
+      "composition_not_participated": "AI 未対応",
+      "composition_unconverted": "判定不能",
       "composition_empty": "この期間に Agent 割り当て済みのチケットはありません。",
       "health_footnote_hint": "未評価 = 評価が未完了の件（キュー状態）；CL 未記入 = 外部チケットは完了しているが、どの証跡にも提出 CL の記録がない"
     },
@@ -153,6 +153,7 @@
       "external_status": "外部ステータス",
       "p4_evidence": "CL 提出記録",
       "ai_attribution": "修正方法",
+      "assessment_status": "評価ステータス",
       "ai_quality": "AI 評価"
     },
     "pagination": {
@@ -205,6 +206,7 @@
     "enums": {
       "assessment": {
         "missing": "AI 評価待ち",
+        "pending": "評価待ち",
         "running": "AI 評価中",
         "failed": "AI 失敗",
         "completed": "AI 評価済み",
