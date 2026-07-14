@@ -582,7 +582,7 @@ export function OperationsPage() {
       </PageHeader>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[1600px] space-y-3 p-5">
+        <div className="mx-auto w-full max-w-7xl space-y-3 p-5">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
