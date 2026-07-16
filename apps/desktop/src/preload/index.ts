@@ -209,6 +209,15 @@ const desktopAPI = {
   },
   /** Ask the main process to close the window (used after closing the last tab). */
   closeWindow: () => ipcRenderer.send("window:close"),
+  /** Read whether the app is registered to launch at OS login (开机自启), plus
+   *  whether the current platform supports toggling it (macOS/Windows only). */
+  getLoginItemSettings: (): Promise<{ supported: boolean; openAtLogin: boolean }> =>
+    ipcRenderer.invoke("app:get-login-item"),
+  /** Enable/disable launch at OS login. Returns the resulting OS state. */
+  setLoginItemEnabled: (
+    enabled: boolean,
+  ): Promise<{ supported: boolean; openAtLogin: boolean }> =>
+    ipcRenderer.invoke("app:set-login-item", enabled),
 };
 
 interface DaemonStatus {
