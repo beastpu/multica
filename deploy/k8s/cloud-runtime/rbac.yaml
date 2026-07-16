@@ -1,48 +1,23 @@
 # RBAC for the in-process k8s cloud runtime fleet (kubefleet).
 #
-# Apply this to the cluster where the runtime NODES run — which may be the
-# cluster hosting multica-server itself (in-cluster mode) or a separate one
-# (e.g. the ops runtime cluster) reached via MULTICA_CLOUD_RUNTIME_KUBE_API_URL.
-# Deliberately NOT part of the base kustomization: the grants below are only
-# needed when MULTICA_CLOUD_RUNTIME_PROVIDER=k8s is enabled.
+# multica-server creates the runtime nodes in the SAME cluster it runs in,
+# using its in-cluster ServiceAccount token (the standard projected token at
+# /var/run/secrets/kubernetes.io/serviceaccount). This grants that SA exactly
+# the verbs kubefleet calls. Cross-cluster operation is not supported.
 #
-#   kubectl apply -f deploy/k8s/cloud-runtime/rbac.yaml
+# Not part of the base kustomization: only needed when
+# MULTICA_CLOUD_RUNTIME_PROVIDER=k8s is enabled.
 #
-# In-cluster mode: bind the ClusterRole to multica-server's ServiceAccount
-# instead of the standalone one below, or point the server Deployment at
-# serviceAccountName: multica-cloud-runtime.
+#   kubectl apply -n <server-namespace> -f deploy/k8s/cloud-runtime/rbac.yaml
 #
-# Remote-cluster mode: apply this file to the remote cluster, then feed the
-# generated long-lived token + CA to the server:
-#
-#   kubectl -n multica-system get secret multica-cloud-runtime-token \
-#     -o jsonpath='{.data.token}' | base64 -d > /etc/multica/cloud-runtime/token
-#   kubectl -n multica-system get secret multica-cloud-runtime-token \
-#     -o jsonpath='{.data.ca\.crt}' | base64 -d > /etc/multica/cloud-runtime/ca.crt
-#
-#   MULTICA_CLOUD_RUNTIME_KUBE_API_URL=https://<remote-apiserver>
-#   MULTICA_CLOUD_RUNTIME_KUBE_TOKEN_FILE=/etc/multica/cloud-runtime/token
-#   MULTICA_CLOUD_RUNTIME_KUBE_CA_FILE=/etc/multica/cloud-runtime/ca.crt
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: multica-system
----
+# The binding targets the ServiceAccount named "multica-server" — point the
+# server Deployment at it (spec.template.spec.serviceAccountName:
+# multica-server), or edit the subject below to match the SA the server pod
+# already runs as.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: multica-cloud-runtime
-  namespace: multica-system
----
-# Long-lived token for remote-cluster mode. Harmless in in-cluster mode.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: multica-cloud-runtime-token
-  namespace: multica-system
-  annotations:
-    kubernetes.io/service-account.name: multica-cloud-runtime
-type: kubernetes.io/service-account-token
+  name: multica-server
 ---
 # Cluster-scoped because kubefleet creates one namespace per workspace
 # (mrt-<workspace-uuid>) dynamically — RBAC cannot pre-scope to namespaces
@@ -75,5 +50,6 @@ roleRef:
   name: multica-cloud-runtime
 subjects:
   - kind: ServiceAccount
-    name: multica-cloud-runtime
-    namespace: multica-system
+    name: multica-server
+    # Replace with the namespace multica-server is deployed in.
+    namespace: multica

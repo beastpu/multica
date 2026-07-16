@@ -115,8 +115,9 @@ type Config struct {
 	// ServerURL is the multica server base URL as reachable FROM the pods
 	// (e.g. the in-cluster service URL). Required.
 	ServerURL string
-	// KubeAPIURL, TokenFile and CAFile locate the Kubernetes API. Defaults
-	// are the standard in-cluster paths; tests point them elsewhere.
+	// KubeAPIURL, TokenFile and CAFile locate the Kubernetes API. They
+	// default to the standard in-cluster values (the server runs in the same
+	// cluster the nodes are created in) and are only overridden by tests.
 	KubeAPIURL string
 	TokenFile  string
 	CAFile     string

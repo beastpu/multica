@@ -683,14 +683,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			maxNodes = n
 		}
 		fleet, err := kubefleet.New(kubefleet.Config{
-			Image:     os.Getenv("MULTICA_CLOUD_RUNTIME_IMAGE"),
-			ServerURL: serverURL,
-			// KubeAPIURL/TokenFile/CAFile default to the in-cluster paths;
-			// set all three to drive a remote cluster (see
-			// deploy/k8s/cloud-runtime/rbac.yaml for the token setup).
-			KubeAPIURL:                 os.Getenv("MULTICA_CLOUD_RUNTIME_KUBE_API_URL"),
-			TokenFile:                  os.Getenv("MULTICA_CLOUD_RUNTIME_KUBE_TOKEN_FILE"),
-			CAFile:                     os.Getenv("MULTICA_CLOUD_RUNTIME_KUBE_CA_FILE"),
+			Image:                      os.Getenv("MULTICA_CLOUD_RUNTIME_IMAGE"),
+			ServerURL:                  serverURL,
 			NamespacePrefix:            os.Getenv("MULTICA_CLOUD_RUNTIME_NAMESPACE_PREFIX"),
 			NodeTokenTTL:               envDuration("MULTICA_CLOUD_RUNTIME_NODE_TOKEN_TTL", 0),
 			StorageClass:               os.Getenv("MULTICA_CLOUD_RUNTIME_STORAGE_CLASS"),
