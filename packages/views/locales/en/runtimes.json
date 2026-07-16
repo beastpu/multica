@@ -240,6 +240,28 @@
     "validation": {
       "instance_type_required": "Instance type is required",
       "disk_size_invalid": "Disk size must be a positive integer"
+    },
+    "env": {
+      "title": "LLM proxy keys",
+      "hint": "Keys injected into every cloud node in this workspace (e.g. the LLM proxy token). Values are encrypted and never shown again after saving.",
+      "add": "Add variable",
+      "name": "Name",
+      "value": "Value",
+      "name_placeholder": "ANTHROPIC_AUTH_TOKEN",
+      "value_placeholder": "value (hidden after save)",
+      "configured": "Configured",
+      "not_configured": "No keys configured",
+      "masked_hint": "ending in {{last4}}",
+      "save": "Save keys",
+      "saving": "Saving...",
+      "clear": "Clear all",
+      "clear_confirm": "Remove all LLM proxy keys for this workspace?",
+      "applies_hint": "New nodes pick these up immediately; restart existing nodes to apply.",
+      "toast_saved": "Keys saved",
+      "toast_save_failed": "Failed to save keys",
+      "toast_cleared": "Keys cleared",
+      "invalid_name": "Names must be UPPER_SNAKE_CASE",
+      "empty": "Add at least one variable with a name and value"
     }
   },
   "update": {

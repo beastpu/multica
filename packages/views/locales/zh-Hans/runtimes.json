@@ -228,6 +228,28 @@
     "validation": {
       "instance_type_required": "实例规格不能为空",
       "disk_size_invalid": "磁盘大小必须是正整数"
+    },
+    "env": {
+      "title": "LLM 代理密钥",
+      "hint": "注入到本工作区每个云端节点的密钥（如 LLM 代理令牌）。数值会被加密，保存后不再显示。",
+      "add": "添加变量",
+      "name": "名称",
+      "value": "值",
+      "name_placeholder": "ANTHROPIC_AUTH_TOKEN",
+      "value_placeholder": "值（保存后隐藏）",
+      "configured": "已配置",
+      "not_configured": "尚未配置密钥",
+      "masked_hint": "以 {{last4}} 结尾",
+      "save": "保存密钥",
+      "saving": "保存中...",
+      "clear": "全部清除",
+      "clear_confirm": "确定清除本工作区的所有 LLM 代理密钥吗？",
+      "applies_hint": "新节点会立即生效；已有节点需重启后生效。",
+      "toast_saved": "密钥已保存",
+      "toast_save_failed": "保存密钥失败",
+      "toast_cleared": "密钥已清除",
+      "invalid_name": "名称必须为大写下划线格式（UPPER_SNAKE_CASE）",
+      "empty": "请至少添加一个带名称和值的变量"
     }
   },
   "update": {

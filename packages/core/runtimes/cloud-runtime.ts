@@ -22,6 +22,19 @@ export interface ListCloudRuntimeNodesParams {
   offset?: number;
 }
 
+/** A configured workspace env variable — value never leaves the server. */
+export interface CloudRuntimeEnvVar {
+  name: string;
+  /** Last 4 characters of the value, for recognition without exposure. */
+  last4: string;
+}
+
+export interface CloudRuntimeEnv {
+  configured: boolean;
+  env: CloudRuntimeEnvVar[];
+  updated_at?: string;
+}
+
 export interface CreateCloudRuntimeNodeRequest {
   instance_type: string;
   name?: string;
@@ -86,6 +99,38 @@ export function useDeleteCloudRuntimeNode(wsId: string) {
     mutationFn: (instanceId: string) => api.deleteCloudRuntimeNode(instanceId),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: cloudRuntimeKeys.all(wsId) });
+    },
+  });
+}
+
+export const cloudRuntimeEnvKeys = {
+  all: (wsId: string) => ["cloud-runtime-env", wsId] as const,
+};
+
+export function cloudRuntimeEnvOptions(wsId: string) {
+  return queryOptions({
+    queryKey: cloudRuntimeEnvKeys.all(wsId),
+    queryFn: () => api.getCloudRuntimeEnv(wsId),
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useSaveCloudRuntimeEnv(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (env: Record<string, string>) => api.putCloudRuntimeEnv(wsId, env),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: cloudRuntimeEnvKeys.all(wsId) });
+    },
+  });
+}
+
+export function useDeleteCloudRuntimeEnv(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.deleteCloudRuntimeEnv(wsId),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: cloudRuntimeEnvKeys.all(wsId) });
     },
   });
 }

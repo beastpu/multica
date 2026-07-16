@@ -228,6 +228,28 @@
     "validation": {
       "instance_type_required": "インスタンスタイプは必須です",
       "disk_size_invalid": "ディスクサイズは正の整数である必要があります"
+    },
+    "env": {
+      "title": "LLM プロキシキー",
+      "hint": "このワークスペースの各クラウドノードに注入されるキー（LLM プロキシトークンなど）。値は暗号化され、保存後は再表示されません。",
+      "add": "変数を追加",
+      "name": "名前",
+      "value": "値",
+      "name_placeholder": "ANTHROPIC_AUTH_TOKEN",
+      "value_placeholder": "値（保存後は非表示）",
+      "configured": "設定済み",
+      "not_configured": "キーが未設定です",
+      "masked_hint": "末尾 {{last4}}",
+      "save": "キーを保存",
+      "saving": "保存中...",
+      "clear": "すべて削除",
+      "clear_confirm": "このワークスペースのすべての LLM プロキシキーを削除しますか？",
+      "applies_hint": "新しいノードには即時反映されます。既存ノードは再起動後に反映されます。",
+      "toast_saved": "キーを保存しました",
+      "toast_save_failed": "キーの保存に失敗しました",
+      "toast_cleared": "キーを削除しました",
+      "invalid_name": "名前は UPPER_SNAKE_CASE で入力してください",
+      "empty": "名前と値を持つ変数を 1 つ以上追加してください"
     }
   },
   "update": {
