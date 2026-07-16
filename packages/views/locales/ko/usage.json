@@ -86,8 +86,8 @@
     "summary": {
       "contribution_rate": "AI 커버리지",
       "contribution_rate_hint": "AI 처리 / Agent 할당",
-      "pending_quality": "AI 판정 대기",
-      "pending_quality_hint": "AI가 처리했지만 명확한 품질 판정이 없는 티켓",
+      "assessment_rate": "AI 평가 완료율",
+      "assessment_rate_hint": "명확한 품질 판정 / AI 처리 완료",
       "quality_rate": "AI 수정 품질",
       "quality_rate_hint": "AI 통과 판정 / AI 수정 가능 평가 완료",
       "automatic_rate": "AI 자동 수정률",

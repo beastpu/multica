@@ -86,8 +86,8 @@
     "summary": {
       "contribution_rate": "AI 覆盖率",
       "contribution_rate_hint": "AI 已处理 / 分配给智能体",
-      "pending_quality": "AI 待判定",
-      "pending_quality_hint": "AI 已处理但尚无明确质量结论",
+      "assessment_rate": "AI 评估完成率",
+      "assessment_rate_hint": "AI 已完成有效评估 / AI 已处理",
       "quality_rate": "AI 修复质量",
       "quality_rate_hint": "AI 标记通过 / AI 已评估可修复",
       "automatic_rate": "AI 自动修复率",

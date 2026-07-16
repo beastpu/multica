@@ -10,8 +10,8 @@ import type {
 import type { OperationsCardKey } from "./operations-drawers";
 
 // Four operator-facing KPIs. Coverage measures pickup over the eligible pool;
-// pending judgement exposes the gap between handled and explicitly judged
-// work; quality and automatic repair share the judged denominator.
+// assessment completion advances handled work into an explicit judgement;
+// quality and automatic repair then share that judged denominator.
 
 function formatPercent(rate: OperationsRate): string {
   if (rate.value == null) return "—";
@@ -75,39 +75,6 @@ function RateCard({
   return (
     <div className={`flex min-w-0 flex-col gap-1.5 p-3.5 ${className}`}>
       {inner}
-    </div>
-  );
-}
-
-function CountCard({
-  label,
-  hint,
-  count,
-  handledCount,
-  judgedCount,
-  className = "",
-}: {
-  label: string;
-  hint: string;
-  count: number;
-  handledCount: number;
-  judgedCount: number;
-  className?: string;
-}) {
-  return (
-    <div className={`flex min-w-0 flex-col gap-1.5 p-3.5 ${className}`}>
-      <div className="text-sm font-semibold text-foreground">{label}</div>
-      <div className="text-xs leading-relaxed text-muted-foreground">
-        {hint}
-      </div>
-      <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-3xl font-semibold leading-none tabular-nums">
-          {count}
-        </span>
-        <span className="text-sm text-muted-foreground tabular-nums">
-          {handledCount} - {judgedCount}
-        </span>
-      </div>
     </div>
   );
 }
@@ -243,12 +210,10 @@ export function OperationsSummary({
           clickHint={t(($) => $.operations.drawer.card_hint)}
           className="border-b sm:border-r xl:border-b-0"
         />
-        <CountCard
-          label={t(($) => $.operations.summary.pending_quality)}
-          hint={t(($) => $.operations.summary.pending_quality_hint)}
-          count={kpis.pendingQualityCount}
-          handledCount={kpis.contributionRate.numerator}
-          judgedCount={kpis.judgedCount}
+        <RateCard
+          label={t(($) => $.operations.summary.assessment_rate)}
+          hint={t(($) => $.operations.summary.assessment_rate_hint)}
+          rate={kpis.assessmentRate}
           className="border-b xl:border-b-0 xl:border-r"
         />
         <RateCard

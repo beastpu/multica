@@ -653,17 +653,17 @@ describe("OperationsPage", () => {
     expect(REFRESH_FIXES).toHaveBeenCalledTimes(2);
   });
 
-  it("renders coverage, pending judgement, quality, and automatic repair cards", () => {
+  it("renders progressive coverage, assessment, quality, and automatic repair cards", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(screen.getByText("AI coverage")).toBeTruthy();
-    expect(screen.getByText("AI pending judgement")).toBeTruthy();
+    expect(screen.getByText("AI assessment completion rate")).toBeTruthy();
     expect(screen.getByText("AI repair quality")).toBeTruthy();
     expect(screen.getByText("AI automatic repair rate")).toBeTruthy();
     expect(screen.queryByText("AI-assisted repair rate")).toBeNull();
     expect(
       screen.getByText(
-        "AI-handled tickets without an explicit quality verdict",
+        "Explicit quality verdicts / AI-handled tickets",
       ),
     ).toBeTruthy();
     expect(
@@ -676,15 +676,15 @@ describe("OperationsPage", () => {
     ).toBeTruthy();
     expect(screen.getByText("2 / 6")).toBeTruthy();
     expect(screen.getAllByText("1 / 2")).toHaveLength(2);
-    expect(screen.getByText("2 - 2")).toBeTruthy();
+    expect(screen.getByText("2 / 2")).toBeTruthy();
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
 
-  it("keeps pending judgement, quality, and automatic cards informational", () => {
+  it("keeps assessment, quality, and automatic cards informational", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(
-      screen.getByText("AI pending judgement").closest("button"),
+      screen.getByText("AI assessment completion rate").closest("button"),
     ).toBeNull();
     expect(
       screen.getByText("AI repair quality").closest("button"),

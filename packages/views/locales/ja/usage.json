@@ -86,8 +86,8 @@
     "summary": {
       "contribution_rate": "AI カバー率",
       "contribution_rate_hint": "AI 着手 / Agent 割り当て",
-      "pending_quality": "AI 判定待ち",
-      "pending_quality_hint": "AI 対応済みだが明確な品質判定がないチケット",
+      "assessment_rate": "AI 評価完了率",
+      "assessment_rate_hint": "明確な品質判定 / AI 対応済み",
       "quality_rate": "AI 修復品質",
       "quality_rate_hint": "AI 合格判定 / AI 修正可能と評価済み",
       "automatic_rate": "AI 自動修正率",
