@@ -40,6 +40,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 
 	"github.com/jackc/pgx/v5"
@@ -145,6 +146,18 @@ type Config struct {
 	// MaxNodesPerWorkspace caps nodes per workspace (default 3). Enforced
 	// both app-side (friendly 409) and by a namespace ResourceQuota.
 	MaxNodesPerWorkspace int
+	// CodexBaseURL, when set, makes the node write a ~/.codex/config.toml on
+	// startup pointing codex at an LLM proxy. codex reads the base URL only
+	// from config.toml (no env override exists), and the daemon copies that
+	// file verbatim per task. The proxy token still comes from OPENAI_API_KEY
+	// (workspace env card / ExtraEnv). Empty disables codex proxy config.
+	CodexBaseURL string
+	// CodexModel is the default model written into the codex config (e.g.
+	// "gpt-5.5"). Empty omits the model line.
+	CodexModel string
+	// CodexWireAPI is the codex provider wire protocol ("responses" or
+	// "chat"). Default "responses". Only used when CodexBaseURL is set.
+	CodexWireAPI string
 	// HTTPClient overrides the Kubernetes API client (tests). When nil a
 	// client is built from CAFile.
 	HTTPClient *http.Client
@@ -730,6 +743,10 @@ func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, disp
 		{"name": "MULTICA_DAEMON_DEVICE_NAME", "value": displayName},
 		{"name": "MULTICA_DAEMON_ID", "value": nodeName},
 		{"name": "MULTICA_DAEMON_AUTO_UPDATE", "value": "false"},
+		// Node pods run as root; Claude Code refuses
+		// --dangerously-skip-permissions under root unless IS_SANDBOX marks
+		// the environment as sandboxed. A k8s pod is that sandbox.
+		{"name": "IS_SANDBOX", "value": "1"},
 		// Same node PAT under both names: MULTICA_API_TOKEN feeds the ops
 		// image entrypoint's `multica login --token`; MULTICA_AUTH_TOKEN
 		// feeds the daemon directly on entrypoint-less images.
@@ -756,7 +773,7 @@ func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, disp
 			// daemon authenticates non-interactively from MULTICA_AUTH_TOKEN
 			// (the node mcn_ PAT) and reads the server URL from
 			// MULTICA_SERVER_URL, so no setup/login step is needed.
-			"command": []string{"multica", "daemon", "start", "--foreground"},
+			"command": f.nodeCommand(),
 			"env":     env,
 			// Workspace-scoped env (per-workspace LLM proxy keys) rides in
 			// a shared namespace secret synced from the admin settings API.
@@ -831,6 +848,49 @@ func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, disp
 		return fmt.Errorf("kubefleet: create statefulset %s: unexpected status %d", nodeName, status)
 	}
 	return nil
+}
+
+// nodeCommand returns the container command. The default runs the daemon
+// directly (bypassing the ops entrypoint's interactive setup). When a codex
+// LLM proxy is configured, it first writes ~/.codex/config.toml — codex reads
+// its base URL only from that file (no env override), and the daemon copies
+// it verbatim per task. The config is base64-embedded so proxy URLs/models
+// can't break the shell command.
+func (f *Fleet) nodeCommand() []string {
+	cfg := f.codexConfigTOML()
+	if cfg == "" {
+		return []string{"multica", "daemon", "start", "--foreground"}
+	}
+	b64 := base64.StdEncoding.EncodeToString([]byte(cfg))
+	script := `set -e
+mkdir -p "$HOME/.codex"
+printf %s '` + b64 + `' | base64 -d > "$HOME/.codex/config.toml"
+exec multica daemon start --foreground`
+	return []string{"bash", "-lc", script}
+}
+
+// codexConfigTOML renders the codex proxy provider config, or "" when no
+// proxy base URL is configured.
+func (f *Fleet) codexConfigTOML() string {
+	base := strings.TrimSpace(f.cfg.CodexBaseURL)
+	if base == "" {
+		return ""
+	}
+	wireAPI := strings.TrimSpace(f.cfg.CodexWireAPI)
+	if wireAPI == "" {
+		wireAPI = "responses"
+	}
+	var b strings.Builder
+	if model := strings.TrimSpace(f.cfg.CodexModel); model != "" {
+		fmt.Fprintf(&b, "model = %q\n", model)
+	}
+	b.WriteString("model_provider = \"proxy\"\n\n")
+	b.WriteString("[model_providers.proxy]\n")
+	b.WriteString("name = \"LLM proxy\"\n")
+	fmt.Fprintf(&b, "base_url = %q\n", base)
+	b.WriteString("env_key = \"OPENAI_API_KEY\"\n")
+	fmt.Fprintf(&b, "wire_api = %q\n", wireAPI)
+	return b.String()
 }
 
 func (f *Fleet) kubeGetStatefulSets(ctx context.Context, namespace string) (statefulSetList, int, error) {
