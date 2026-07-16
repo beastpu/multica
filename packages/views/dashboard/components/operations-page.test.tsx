@@ -659,7 +659,7 @@ describe("OperationsPage", () => {
     expect(screen.getByText("AI coverage")).toBeTruthy();
     expect(screen.getByText("AI assessment completion rate")).toBeTruthy();
     expect(screen.getByText("AI repair quality")).toBeTruthy();
-    expect(screen.getByText("AI automatic repair rate")).toBeTruthy();
+    expect(screen.getByText("AI automatic repair share")).toBeTruthy();
     expect(screen.queryByText("AI-assisted repair rate")).toBeNull();
     expect(
       screen.getByText(
@@ -671,11 +671,12 @@ describe("OperationsPage", () => {
     ).toBeTruthy();
     expect(
       screen.getByText(
-        "Direct AI submissions passed / AI-assessed repairable tickets",
+        "Direct AI submissions passed / AI-marked passes",
       ),
     ).toBeTruthy();
     expect(screen.getByText("2 / 6")).toBeTruthy();
-    expect(screen.getAllByText("1 / 2")).toHaveLength(2);
+    expect(screen.getByText("1 / 2")).toBeTruthy();
+    expect(screen.getByText("1 / 1")).toBeTruthy();
     expect(screen.getByText("2 / 2")).toBeTruthy();
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
@@ -690,7 +691,7 @@ describe("OperationsPage", () => {
       screen.getByText("AI repair quality").closest("button"),
     ).toBeNull();
     expect(
-      screen.getByText("AI automatic repair rate").closest("button"),
+      screen.getByText("AI automatic repair share").closest("button"),
     ).toBeNull();
   });
 

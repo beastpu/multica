@@ -11,7 +11,8 @@ import type { OperationsCardKey } from "./operations-drawers";
 
 // Four operator-facing KPIs. Coverage measures pickup over the eligible pool;
 // assessment completion advances handled work into an explicit judgement;
-// quality and automatic repair then share that judged denominator.
+// quality advances judged work into passes, then automatic repair measures the
+// direct-delivery share of those passing fixes.
 
 function formatPercent(rate: OperationsRate): string {
   if (rate.value == null) return "—";
@@ -225,7 +226,7 @@ export function OperationsSummary({
         <RateCard
           label={t(($) => $.operations.summary.automatic_rate)}
           hint={t(($) => $.operations.summary.automatic_rate_hint)}
-          rate={kpis.automaticRate}
+          rate={kpis.automaticShare}
         />
       </div>
       <CompositionBar

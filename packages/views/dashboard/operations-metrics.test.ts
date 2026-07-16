@@ -335,10 +335,10 @@ describe("computeOperationsKpis", () => {
       numerator: 1,
       denominator: 2,
     });
-    expect(kpis.automaticRate).toEqual({
-      value: 1 / 2,
+    expect(kpis.automaticShare).toEqual({
+      value: 1,
       numerator: 1,
-      denominator: 2,
+      denominator: 1,
     });
     expect(kpis.assistedRate).toEqual({
       value: 0,
@@ -346,7 +346,7 @@ describe("computeOperationsKpis", () => {
       denominator: 2,
     });
     expect(kpis.assistedRate.numerator).toBe(
-      kpis.qualityRate.numerator - kpis.automaticRate.numerator,
+      kpis.qualityRate.numerator - kpis.automaticShare.numerator,
     );
     // Health counts use the same assigned + external-done opportunity pool;
     // notDone is outside it. No fixture carries missing_external_cl.
@@ -522,7 +522,7 @@ describe("computeOperationsKpis", () => {
       denominator: 2,
     });
     expect(kpis.qualityRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
-    expect(kpis.automaticRate).toEqual({
+    expect(kpis.automaticShare).toEqual({
       value: 1,
       numerator: 1,
       denominator: 1,
@@ -629,7 +629,7 @@ describe("computeOperationsKpis", () => {
     const kpis = computeOperationsKpis([]);
     expect(kpis.contributionRate.value).toBeNull();
     expect(kpis.qualityRate.value).toBeNull();
-    expect(kpis.automaticRate.value).toBeNull();
+    expect(kpis.automaticShare.value).toBeNull();
     expect(kpis.assistedRate.value).toBeNull();
     expect(kpis.assessmentRate.value).toBeNull();
     expect(kpis.unassessed).toBe(0);
