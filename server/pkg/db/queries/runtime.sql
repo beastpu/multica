@@ -336,3 +336,16 @@ WHERE status = 'offline'
   AND last_seen_at < now() - make_interval(secs => @stale_seconds::double precision)
   AND id NOT IN (SELECT DISTINCT runtime_id FROM agent)
 RETURNING id, workspace_id;
+
+-- name: DeleteCloudRuntimesByNode :many
+-- Cascade cleanup when a kubefleet node is deleted: remove the cloud runtime
+-- rows the node's daemon registered (daemon_id = node name) so no offline
+-- orphans linger in the UI. Skips any runtime that still has an agent bound
+-- (agent.runtime_id is ON DELETE RESTRICT) — those stay until the agent is
+-- moved, so deleting a node never silently archives someone's agent.
+DELETE FROM agent_runtime
+WHERE agent_runtime.workspace_id = @workspace_id
+  AND agent_runtime.daemon_id = @daemon_id
+  AND agent_runtime.runtime_mode = 'cloud'
+  AND agent_runtime.id NOT IN (SELECT DISTINCT agent.runtime_id FROM agent)
+RETURNING agent_runtime.id;

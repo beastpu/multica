@@ -464,6 +464,17 @@ func (f *Fleet) deleteNode(ctx context.Context, req cloudruntime.Request) (*clou
 		}); derr != nil {
 			return nil, fmt.Errorf("revoke cloud node tokens: %w", derr)
 		}
+		// Cascade: drop the offline cloud runtime rows this node's daemon
+		// registered (daemon_id = node name) so they don't linger in the UI
+		// as unreachable orphans. Runtimes with an agent still bound are left
+		// alone (the query skips them) — deleting a node must never silently
+		// archive someone's agent.
+		if _, derr := f.queries.DeleteCloudRuntimesByNode(ctx, db.DeleteCloudRuntimesByNodeParams{
+			WorkspaceID: wsUUID,
+			DaemonID:    pgtype.Text{String: nodeName, Valid: true},
+		}); derr != nil {
+			return nil, fmt.Errorf("delete cloud runtimes for node: %w", derr)
+		}
 	}
 	return jsonResponse(http.StatusOK, map[string]string{"status": "deleted", "id": nodeName})
 }

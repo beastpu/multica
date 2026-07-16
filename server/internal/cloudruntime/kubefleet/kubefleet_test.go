@@ -323,6 +323,19 @@ func TestKubefleet_CreateListDelete(t *testing.T) {
 		t.Fatalf("list: subnet_id = %v, want namespace %s", nodes[0]["subnet_id"], wantNS)
 	}
 
+	// Seed an offline cloud runtime row as if this node's daemon had
+	// registered it (daemon_id = node name), to prove delete cascades it away.
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, 'Claude (kubefleet)', 'cloud', 'claude', 'offline', '', '{}'::jsonb, $3, 'public', now())
+	`, testWorkspaceID, nodeName, testUserID)
+	if err != nil {
+		t.Fatalf("seed cloud runtime row: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND daemon_id = $2`, testWorkspaceID, nodeName)
+	})
+
 	// Delete
 	delResp, _ := doJSON(t, fleet, ctx, http.MethodDelete, "/api/v1/nodes", map[string]any{"instance_id": nodeName})
 	if delResp.StatusCode != http.StatusOK {
@@ -330,6 +343,14 @@ func TestKubefleet_CreateListDelete(t *testing.T) {
 	}
 	if got := countNodeTokens(t, nodeName); got != 0 {
 		t.Fatalf("delete must revoke node tokens, still %d rows", got)
+	}
+	// Cascade: the offline runtime row must be gone.
+	var runtimeRows int
+	testPool.QueryRow(context.Background(),
+		`SELECT count(*) FROM agent_runtime WHERE workspace_id = $1 AND daemon_id = $2`,
+		testWorkspaceID, nodeName).Scan(&runtimeRows)
+	if runtimeRows != 0 {
+		t.Fatalf("delete must cascade offline cloud runtime rows, still %d", runtimeRows)
 	}
 	_ = node2
 }
