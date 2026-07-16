@@ -279,20 +279,17 @@ func TestKubefleet_CreateListDelete(t *testing.T) {
 	if strings.Contains(string(stsJSON), secretToken) {
 		t.Fatalf("statefulset spec inlines the node token")
 	}
-	// Ops image contract: env-only (no container args/command), token under
-	// MULTICA_API_TOKEN, workspace pinning, and a PVC sized from the request.
+	// Container contract: run the daemon directly (bypassing the ops image's
+	// interactive setup entrypoint), authenticated from the node PAT env,
+	// workspace-pinned, HOME + PVC on the mounted volume.
 	for _, want := range []string{
+		`"command":["multica","daemon","start","--foreground"]`,
 		`"MULTICA_API_TOKEN"`, `"MULTICA_AUTH_TOKEN"`, `"MULTICA_WORKSPACE"`,
 		`"MULTICA_RUNTIME_MODE"`, `"MULTICA_WATCH_WORKSPACE_IDS"`,
-		`"volumeClaimTemplates"`, `"storage":"32Gi"`, `"whenDeleted":"Delete"`,
+		`"name":"HOME"`, `"volumeClaimTemplates"`, `"storage":"32Gi"`, `"whenDeleted":"Delete"`,
 	} {
 		if !strings.Contains(string(stsJSON), want) {
 			t.Fatalf("statefulset spec missing %s: %s", want, stsJSON)
-		}
-	}
-	for _, forbidden := range []string{`"args"`, `"command"`} {
-		if strings.Contains(string(stsJSON), forbidden) {
-			t.Fatalf("statefulset spec must not set container %s (image entrypoint owns startup): %s", forbidden, stsJSON)
 		}
 	}
 

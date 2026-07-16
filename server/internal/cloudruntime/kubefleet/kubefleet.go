@@ -717,8 +717,13 @@ func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, disp
 	env := []map[string]any{
 		{"name": "MULTICA_SERVER_URL", "value": f.cfg.ServerURL},
 		{"name": "MULTICA_APP_URL", "value": f.cfg.ServerURL},
+		// HOME sits on the mounted /workspace PVC so agent CLI state, repo
+		// clones and the daemon's workspaces root all persist across pod
+		// restarts. We run the daemon directly (see container command), so
+		// the ops entrypoint that used to set this no longer runs.
+		{"name": "HOME", "value": "/workspace/" + wsID},
 		// MULTICA_WORKSPACE names the persistent HOME dir
-		// (/workspace/<id>) inside the ops image entrypoint.
+		// (/workspace/<id>) — kept for parity with the ops image env.
 		{"name": "MULTICA_WORKSPACE", "value": wsID},
 		{"name": "MULTICA_RUNTIME_MODE", "value": "cloud"},
 		{"name": "MULTICA_WATCH_WORKSPACE_IDS", "value": wsID},
@@ -744,7 +749,15 @@ func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, disp
 		"containers": []map[string]any{{
 			"name":  "runtime",
 			"image": f.cfg.Image,
-			"env":   env,
+			// Run the daemon directly, bypassing the ops image's
+			// multica-entrypoint. That entrypoint runs `multica setup
+			// self-host`, which in current CLI versions performs an
+			// interactive browser login and hangs in a headless pod. The
+			// daemon authenticates non-interactively from MULTICA_AUTH_TOKEN
+			// (the node mcn_ PAT) and reads the server URL from
+			// MULTICA_SERVER_URL, so no setup/login step is needed.
+			"command": []string{"multica", "daemon", "start", "--foreground"},
+			"env":     env,
 			// Workspace-scoped env (per-workspace LLM proxy keys) rides in
 			// a shared namespace secret synced from the admin settings API.
 			// optional: nodes still start when nothing is configured.
