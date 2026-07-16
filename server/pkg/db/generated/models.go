@@ -1233,6 +1233,13 @@ type WorkspaceAgentCapability struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
 
+type WorkspaceCloudRuntimeEnv struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	EnvSealed   []byte             `json:"env_sealed"`
+	UpdatedBy   pgtype.UUID        `json:"updated_by"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type WorkspaceInvitation struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`

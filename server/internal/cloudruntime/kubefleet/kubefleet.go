@@ -30,6 +30,7 @@ package kubefleet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -41,12 +42,14 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -72,6 +75,20 @@ const (
 	// deploy script, which also materializes the registry credential into
 	// every workspace namespace.
 	pullSecretName = "multica-registry"
+
+	// workspaceEnvSecretName is the per-namespace secret carrying the
+	// workspace-scoped env (LLM proxy keys) that admins configure via
+	// /api/workspaces/{id}/cloud-runtime-env. Synced from the DB on every
+	// node create; referenced via envFrom(optional) so nodes still start
+	// when the workspace has no env configured.
+	workspaceEnvSecretName = "multica-workspace-env"
+
+	// quotaName is the per-namespace ResourceQuota capping node count. The
+	// app-level check in createNode gives the friendly 409; the quota is the
+	// race-proof backstop enforced by the API server.
+	quotaName = "multica-nodes"
+
+	defaultMaxNodesPerWorkspace = 3
 )
 
 // instanceResources maps the instance_type strings the dialog offers onto pod
@@ -116,9 +133,17 @@ type Config struct {
 	// required when Image lives in a private registry.
 	PullSecretDockerConfigJSON string
 	// ExtraEnv is injected into every node container via its Secret —
-	// deployment-wide settings like LLM proxy endpoints and API keys
-	// (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, ...).
+	// deployment-wide settings shared by all workspaces, like the LLM proxy
+	// base URLs. Workspace-scoped values (per-workspace proxy keys) come
+	// from the DB via EnvBox instead.
 	ExtraEnv map[string]string
+	// EnvBox opens the sealed per-workspace cloud runtime env
+	// (workspace_cloud_runtime_env, written by the admin settings API).
+	// Nil disables workspace env sync — nodes get ExtraEnv only.
+	EnvBox *secretbox.Box
+	// MaxNodesPerWorkspace caps nodes per workspace (default 3). Enforced
+	// both app-side (friendly 409) and by a namespace ResourceQuota.
+	MaxNodesPerWorkspace int
 	// HTTPClient overrides the Kubernetes API client (tests). When nil a
 	// client is built from CAFile.
 	HTTPClient *http.Client
@@ -156,6 +181,9 @@ func New(cfg Config, queries *db.Queries) (*Fleet, error) {
 	}
 	if cfg.NodeTokenTTL <= 0 {
 		cfg.NodeTokenTTL = defaultNodeTokenTTL
+	}
+	if cfg.MaxNodesPerWorkspace <= 0 {
+		cfg.MaxNodesPerWorkspace = defaultMaxNodesPerWorkspace
 	}
 	client := cfg.HTTPClient
 	if client == nil {
@@ -281,6 +309,16 @@ func (f *Fleet) createNode(ctx context.Context, req cloudruntime.Request) (*clou
 		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "invalid workspace id"})
 	}
 
+	// Friendly quota check; the namespace ResourceQuota below is the
+	// race-proof backstop for concurrent creates.
+	if list, status, lerr := f.kubeGetStatefulSets(ctx, namespace); lerr != nil {
+		return nil, lerr
+	} else if status == http.StatusOK && len(list.Items) >= f.cfg.MaxNodesPerWorkspace {
+		return jsonResponse(http.StatusConflict, map[string]string{
+			"error": fmt.Sprintf("workspace node limit reached (%d)", f.cfg.MaxNodesPerWorkspace),
+		})
+	}
+
 	// Mint the node PAT before touching Kubernetes so a half-created node
 	// never runs without a revocable credential; roll the row back if any
 	// k8s call fails.
@@ -310,7 +348,15 @@ func (f *Fleet) createNode(ctx context.Context, req cloudruntime.Request) (*clou
 		cleanup()
 		return nil, err
 	}
+	if err := f.ensureNodeQuota(ctx, namespace, wsID); err != nil {
+		cleanup()
+		return nil, err
+	}
 	if err := f.ensurePullSecret(ctx, namespace, wsID); err != nil {
+		cleanup()
+		return nil, err
+	}
+	if err := f.syncWorkspaceEnvSecret(ctx, namespace, wsID, wsUUID); err != nil {
 		cleanup()
 		return nil, err
 	}
@@ -491,6 +537,92 @@ func (f *Fleet) ensureNamespace(ctx context.Context, namespace, wsID string) err
 	return nil
 }
 
+// ensureNodeQuota installs the per-namespace ResourceQuota capping node
+// count. 409 (already exists) is tolerated; a later change to
+// MaxNodesPerWorkspace therefore only tightens the app-level check on
+// existing namespaces, not the quota object — acceptable, since the quota
+// is a backstop against races, not the configuration surface.
+func (f *Fleet) ensureNodeQuota(ctx context.Context, namespace, wsID string) error {
+	body := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ResourceQuota",
+		"metadata": map[string]any{
+			"name":      quotaName,
+			"namespace": namespace,
+			"labels": map[string]string{
+				managedByLabel: managedByValue,
+				workspaceLabel: wsID,
+			},
+		},
+		"spec": map[string]any{
+			"hard": map[string]string{
+				"count/statefulsets.apps": fmt.Sprintf("%d", f.cfg.MaxNodesPerWorkspace),
+			},
+		},
+	}
+	status, err := f.kubePost(ctx, "/api/v1/namespaces/"+namespace+"/resourcequotas", body)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusCreated && status != http.StatusConflict {
+		return fmt.Errorf("kubefleet: create resource quota in %s: unexpected status %d", namespace, status)
+	}
+	return nil
+}
+
+// syncWorkspaceEnvSecret materializes the admin-configured workspace env
+// (LLM proxy keys) into the namespace on every node create, so a key
+// rotated in settings reaches the next node without ops involvement.
+// Existing nodes keep the env they booted with until their pod restarts.
+// No DB row (or no EnvBox) leaves any manually-managed secret untouched.
+func (f *Fleet) syncWorkspaceEnvSecret(ctx context.Context, namespace, wsID string, wsUUID pgtype.UUID) error {
+	if f.cfg.EnvBox == nil {
+		return nil
+	}
+	row, err := f.queries.GetWorkspaceCloudRuntimeEnv(ctx, wsUUID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("kubefleet: load workspace env: %w", err)
+	}
+	plaintext, err := f.cfg.EnvBox.Open(row.EnvSealed)
+	if err != nil {
+		return fmt.Errorf("kubefleet: open workspace env: %w", err)
+	}
+	var env map[string]string
+	if err := json.Unmarshal(plaintext, &env); err != nil {
+		return fmt.Errorf("kubefleet: decode workspace env: %w", err)
+	}
+	body := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":      workspaceEnvSecretName,
+			"namespace": namespace,
+			"labels": map[string]string{
+				managedByLabel: managedByValue,
+				workspaceLabel: wsID,
+			},
+		},
+		"stringData": env,
+	}
+	status, err := f.kubePost(ctx, "/api/v1/namespaces/"+namespace+"/secrets", body)
+	if err != nil {
+		return err
+	}
+	if status == http.StatusConflict {
+		status, err = f.kubePut(ctx, "/api/v1/namespaces/"+namespace+"/secrets/"+workspaceEnvSecretName, body)
+		if err != nil {
+			return err
+		}
+	}
+	if status != http.StatusCreated && status != http.StatusOK {
+		return fmt.Errorf("kubefleet: sync workspace env secret in %s: unexpected status %d", namespace, status)
+	}
+	return nil
+}
+
 // ensurePullSecret materializes the registry credential into the node
 // namespace, mirroring the ops deploy script. No-op when the deployment
 // doesn't configure one (public registry).
@@ -569,10 +701,14 @@ func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, disp
 	if !ok {
 		res = defaultResources
 	}
+	// Owner as a label (not just annotation) so ops can filter:
+	// kubectl get sts -l multica.io/owner-id=<uuid>. The selector below
+	// matches on nodeLabel only, so extra labels stay mutable.
 	labels := map[string]string{
-		managedByLabel: managedByValue,
-		workspaceLabel: wsID,
-		nodeLabel:      nodeName,
+		managedByLabel:    managedByValue,
+		workspaceLabel:    wsID,
+		nodeLabel:         nodeName,
+		annotationOwnerID: ownerID,
 	}
 	tokenRef := map[string]any{
 		"secretKeyRef": map[string]any{"name": secretName(nodeName), "key": "token"},
@@ -608,6 +744,12 @@ func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, disp
 			"name":  "runtime",
 			"image": f.cfg.Image,
 			"env":   env,
+			// Workspace-scoped env (per-workspace LLM proxy keys) rides in
+			// a shared namespace secret synced from the admin settings API.
+			// optional: nodes still start when nothing is configured.
+			"envFrom": []map[string]any{{
+				"secretRef": map[string]any{"name": workspaceEnvSecretName, "optional": true},
+			}},
 			"resources": map[string]any{
 				"requests": map[string]string{"cpu": res.CPU, "memory": res.Memory},
 				"limits":   map[string]string{"cpu": res.CPU, "memory": res.Memory},
@@ -714,6 +856,25 @@ func (f *Fleet) kubePost(ctx context.Context, path string, body any) (int, error
 	resp, err := f.http.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("kubefleet: %s %s: %w", http.MethodPost, path, err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, nil
+}
+
+// kubePut replaces an existing object (create-or-replace second leg).
+func (f *Fleet) kubePut(ctx context.Context, path string, body any) (int, error) {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return 0, err
+	}
+	req, err := f.kubeRequest(ctx, http.MethodPut, path, raw)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := f.http.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("kubefleet: %s %s: %w", http.MethodPut, path, err)
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode, nil

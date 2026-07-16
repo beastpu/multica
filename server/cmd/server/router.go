@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -643,6 +644,21 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		cloudPATVerifier = remote
 	}
 
+	// Workspace cloud runtime env master key. Independent of the provider
+	// switch below so admins can stage keys before the fleet is enabled.
+	// Unset = feature off (endpoints report not-configured); set-but-invalid
+	// is a deployment bug and fails startup rather than silently disabling.
+	if strings.TrimSpace(os.Getenv("MULTICA_CLOUD_RUNTIME_SECRET_KEY")) != "" {
+		envKey, err := secretbox.LoadKey("MULTICA_CLOUD_RUNTIME_SECRET_KEY")
+		if err == nil {
+			h.CloudRuntimeEnvBox, err = secretbox.New(envKey)
+		}
+		if err != nil {
+			slog.Error("cloud runtime env: invalid MULTICA_CLOUD_RUNTIME_SECRET_KEY", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	// In-process k8s fleet: MULTICA_CLOUD_RUNTIME_PROVIDER=k8s swaps the
 	// remote Fleet proxy for kubefleet (one namespace per workspace, one
 	// StatefulSet per node) and verifies mcn_ node PATs against the local
@@ -657,6 +673,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			slog.Error("cloud runtime provider k8s configured but unusable", "error", err)
 			os.Exit(1)
 		}
+		maxNodes := 0
+		if raw := strings.TrimSpace(os.Getenv("MULTICA_CLOUD_RUNTIME_MAX_NODES_PER_WORKSPACE")); raw != "" {
+			n, perr := strconv.Atoi(raw)
+			if perr != nil || n <= 0 {
+				slog.Error("cloud runtime provider k8s configured but unusable", "error", "MULTICA_CLOUD_RUNTIME_MAX_NODES_PER_WORKSPACE must be a positive integer")
+				os.Exit(1)
+			}
+			maxNodes = n
+		}
 		fleet, err := kubefleet.New(kubefleet.Config{
 			Image:                      os.Getenv("MULTICA_CLOUD_RUNTIME_IMAGE"),
 			ServerURL:                  serverURL,
@@ -666,6 +691,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			StorageClass:               os.Getenv("MULTICA_CLOUD_RUNTIME_STORAGE_CLASS"),
 			PullSecretDockerConfigJSON: os.Getenv("MULTICA_CLOUD_RUNTIME_PULL_SECRET_DOCKERCONFIGJSON"),
 			ExtraEnv:                   extraEnv,
+			EnvBox:                     h.CloudRuntimeEnvBox,
+			MaxNodesPerWorkspace:       maxNodes,
 		}, queries)
 		if err != nil {
 			slog.Error("cloud runtime provider k8s configured but unusable", "error", err)
@@ -928,6 +955,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						r.Delete("/", h.DeleteMember)
 					})
 					r.Delete("/invitations/{invitationId}", h.RevokeInvitation)
+					// Cloud runtime env (LLM proxy keys for kubefleet node
+					// pods). Values are write-only: GET returns names +
+					// last4 fingerprints, never plaintext.
+					r.Get("/cloud-runtime-env", h.GetWorkspaceCloudRuntimeEnv)
+					r.Put("/cloud-runtime-env", h.PutWorkspaceCloudRuntimeEnv)
+					r.Delete("/cloud-runtime-env", h.DeleteWorkspaceCloudRuntimeEnv)
 					// Custom runtime profile mutations (admin-only).
 					r.Post("/runtime-profiles", h.CreateRuntimeProfile)
 					r.Patch("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)

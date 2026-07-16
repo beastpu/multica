@@ -2,6 +2,7 @@ package kubefleet
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -100,6 +102,7 @@ type fakeKube struct {
 	server       *httptest.Server
 	namespaces   []string
 	secrets      []map[string]any
+	quotas       []map[string]any
 	statefulSets []map[string]any
 	// failStatefulSetCreate makes POST .../statefulsets return 500 to test rollback.
 	failStatefulSetCreate bool
@@ -125,7 +128,34 @@ func newFakeKube(t *testing.T) *fakeKube {
 			f.namespaces = append(f.namespaces, name)
 			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/secrets"):
+			name := body["metadata"].(map[string]any)["name"].(string)
+			for _, existing := range f.secrets {
+				if existing["metadata"].(map[string]any)["name"] == name {
+					w.WriteHeader(http.StatusConflict)
+					return
+				}
+			}
 			f.secrets = append(f.secrets, body)
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/secrets/"):
+			name := body["metadata"].(map[string]any)["name"].(string)
+			for i, existing := range f.secrets {
+				if existing["metadata"].(map[string]any)["name"] == name {
+					f.secrets[i] = body
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+			}
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/resourcequotas"):
+			name := body["metadata"].(map[string]any)["name"].(string)
+			for _, existing := range f.quotas {
+				if existing["metadata"].(map[string]any)["name"] == name {
+					w.WriteHeader(http.StatusConflict)
+					return
+				}
+			}
+			f.quotas = append(f.quotas, body)
 			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/statefulsets"):
 			if f.failStatefulSetCreate {
@@ -351,6 +381,126 @@ func TestKubefleet_PullSecretAndExtraEnv(t *testing.T) {
 	}
 	if strings.Contains(string(stsJSON), "llm-proxy.example.com") {
 		t.Fatalf("extra env value must be referenced via secretKeyRef, not inlined")
+	}
+}
+
+func TestKubefleet_WorkspaceEnvSecretSync(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+	key := make([]byte, secretbox.KeySize)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+	box, err := secretbox.New(key)
+	if err != nil {
+		t.Fatalf("secretbox.New: %v", err)
+	}
+	sealed, err := box.Seal([]byte(`{"ANTHROPIC_AUTH_TOKEN":"ws-scoped-key-1234"}`))
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO workspace_cloud_runtime_env (workspace_id, env_sealed) VALUES ($1, $2)
+		ON CONFLICT (workspace_id) DO UPDATE SET env_sealed = EXCLUDED.env_sealed
+	`, testWorkspaceID, sealed); err != nil {
+		t.Fatalf("insert sealed env: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM workspace_cloud_runtime_env WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(context.Background(), `DELETE FROM cloud_node_token WHERE workspace_id = $1`, testWorkspaceID)
+	})
+
+	kube := newFakeKube(t)
+	fleet, err := New(Config{
+		Image:      "registry.example.com/multica-runtime:test",
+		ServerURL:  "http://multica-server.multica.svc:8080",
+		KubeAPIURL: kube.server.URL,
+		TokenFile:  "/nonexistent/token",
+		HTTPClient: kube.server.Client(),
+		EnvBox:     box,
+	}, testQueries)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	resp, _ := doJSON(t, fleet, memberContext("admin"), http.MethodPost, "/api/v1/nodes", map[string]any{"instance_type": "t4g.medium"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: status = %d body = %s", resp.StatusCode, resp.Body)
+	}
+
+	// Secrets: workspace env secret (synced from DB) + node token secret.
+	var wsEnvSecret map[string]any
+	for _, s := range kube.secrets {
+		if s["metadata"].(map[string]any)["name"] == "multica-workspace-env" {
+			wsEnvSecret = s
+		}
+	}
+	if wsEnvSecret == nil {
+		t.Fatalf("workspace env secret not synced; secrets = %d", len(kube.secrets))
+	}
+	if got := wsEnvSecret["stringData"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"]; got != "ws-scoped-key-1234" {
+		t.Fatalf("workspace env secret value = %v", got)
+	}
+	// StatefulSet references the shared secret via envFrom and never inlines it.
+	stsJSON, _ := json.Marshal(kube.statefulSets[0])
+	if !strings.Contains(string(stsJSON), `"envFrom"`) || !strings.Contains(string(stsJSON), `"multica-workspace-env"`) {
+		t.Fatalf("statefulset missing envFrom secret ref: %s", stsJSON)
+	}
+	if strings.Contains(string(stsJSON), "ws-scoped-key-1234") {
+		t.Fatal("statefulset inlines workspace env value")
+	}
+	// Owner rides as a filterable label on the statefulset.
+	if !strings.Contains(string(stsJSON), `"multica.io/owner-id":"`+testUserID+`"`) {
+		t.Fatalf("statefulset missing owner label: %s", stsJSON)
+	}
+	// Quota object installed with the default cap.
+	if len(kube.quotas) != 1 {
+		t.Fatalf("expected 1 resource quota, got %d", len(kube.quotas))
+	}
+
+	// Second create re-syncs the secret via PUT (fake 409s the POST).
+	resp, _ = doJSON(t, fleet, memberContext("admin"), http.MethodPost, "/api/v1/nodes", map[string]any{"instance_type": "t4g.medium"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("second create: status = %d body = %s", resp.StatusCode, resp.Body)
+	}
+}
+
+func TestKubefleet_NodeLimit(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+	kube := newFakeKube(t)
+	fleet, err := New(Config{
+		Image:                "registry.example.com/multica-runtime:test",
+		ServerURL:            "http://multica-server.multica.svc:8080",
+		KubeAPIURL:           kube.server.URL,
+		TokenFile:            "/nonexistent/token",
+		HTTPClient:           kube.server.Client(),
+		MaxNodesPerWorkspace: 1,
+	}, testQueries)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM cloud_node_token WHERE workspace_id = $1`, testWorkspaceID)
+	})
+
+	resp, _ := doJSON(t, fleet, memberContext("admin"), http.MethodPost, "/api/v1/nodes", map[string]any{"instance_type": "t4g.medium"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first create: status = %d", resp.StatusCode)
+	}
+	resp, body := doJSON(t, fleet, memberContext("admin"), http.MethodPost, "/api/v1/nodes", map[string]any{"instance_type": "t4g.medium"})
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("over-limit create: status = %d, want 409", resp.StatusCode)
+	}
+	if !strings.Contains(body["error"].(string), "limit") {
+		t.Fatalf("over-limit error = %v", body["error"])
+	}
+	// Quota object carries the same cap.
+	quotaJSON, _ := json.Marshal(kube.quotas[0])
+	if !strings.Contains(string(quotaJSON), `"count/statefulsets.apps":"1"`) {
+		t.Fatalf("quota = %s", quotaJSON)
 	}
 }
 
