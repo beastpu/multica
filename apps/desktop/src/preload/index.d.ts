@@ -89,6 +89,16 @@ interface DesktopAPI {
   onCloseActiveTab: (callback: () => void) => () => void;
   /** Ask the main process to close the window. */
   closeWindow: () => void;
+  /** Read whether the app launches at OS login (开机自启), and whether the
+   *  current platform supports toggling it (macOS/Windows only). */
+  getLoginItemSettings: () => Promise<{
+    supported: boolean;
+    openAtLogin: boolean;
+  }>;
+  /** Enable/disable launch at OS login. Returns the resulting OS state. */
+  setLoginItemEnabled: (
+    enabled: boolean,
+  ) => Promise<{ supported: boolean; openAtLogin: boolean }>;
 }
 
 interface DaemonStatus {

@@ -64,12 +64,21 @@ export function DaemonSettingsTab() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<DaemonStatus>({ state: "stopped" });
   const [reauthLoading, setReauthLoading] = useState(false);
+  const [loginItem, setLoginItem] = useState<{
+    supported: boolean;
+    openAtLogin: boolean;
+  }>({ supported: false, openAtLogin: false });
 
   useEffect(() => {
     window.daemonAPI.getPrefs().then(setPrefs);
     window.daemonAPI.isCliInstalled().then(setCliInstalled);
     window.daemonAPI.getStatus().then(setStatus);
+    window.desktopAPI.getLoginItemSettings().then(setLoginItem);
     return window.daemonAPI.onStatusChange(setStatus);
+  }, []);
+
+  const handleLoginItemChange = useCallback(async (checked: boolean) => {
+    setLoginItem(await window.desktopAPI.setLoginItemEnabled(checked));
   }, []);
 
   const handleReauth = useCallback(async () => {
@@ -139,6 +148,18 @@ export function DaemonSettingsTab() {
       )}
 
       <div className="mt-6 divide-y">
+        {loginItem.supported && (
+          <SettingRow
+            label="Launch at login"
+            description="Open Multica automatically when you sign in to this computer, so the daemon can pick up tasks after a restart."
+          >
+            <Switch
+              checked={loginItem.openAtLogin}
+              onCheckedChange={handleLoginItemChange}
+            />
+          </SettingRow>
+        )}
+
         <SettingRow
           label="Auto-start on launch"
           description="Automatically start the daemon when the app opens and you are logged in."
