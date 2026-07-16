@@ -3,6 +3,7 @@ package kubefleet
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -286,6 +287,7 @@ func TestKubefleet_CreateListDelete(t *testing.T) {
 		`"command":["multica","daemon","start","--foreground"]`,
 		`"MULTICA_API_TOKEN"`, `"MULTICA_AUTH_TOKEN"`, `"MULTICA_WORKSPACE"`,
 		`"MULTICA_RUNTIME_MODE"`, `"MULTICA_WATCH_WORKSPACE_IDS"`,
+		`"name":"IS_SANDBOX"`,
 		`"name":"HOME"`, `"volumeClaimTemplates"`, `"storage":"32Gi"`, `"whenDeleted":"Delete"`,
 	} {
 		if !strings.Contains(string(stsJSON), want) {
@@ -498,6 +500,42 @@ func TestKubefleet_NodeLimit(t *testing.T) {
 	quotaJSON, _ := json.Marshal(kube.quotas[0])
 	if !strings.Contains(string(quotaJSON), `"count/statefulsets.apps":"1"`) {
 		t.Fatalf("quota = %s", quotaJSON)
+	}
+}
+
+func TestCodexConfigTOML(t *testing.T) {
+	// No base URL → no config, plain daemon command.
+	f := &Fleet{}
+	if f.codexConfigTOML() != "" {
+		t.Fatal("expected empty codex config without base URL")
+	}
+	if got := f.nodeCommand(); len(got) != 4 || got[0] != "multica" {
+		t.Fatalf("nodeCommand without codex = %v, want plain daemon start", got)
+	}
+
+	// With base URL → config toml + bash wrapper that base64-decodes it.
+	f = &Fleet{cfg: Config{CodexBaseURL: "https://llm-proxy.example.com/v1", CodexModel: "gpt-5.5"}}
+	toml := f.codexConfigTOML()
+	for _, want := range []string{
+		`model = "gpt-5.5"`, `model_provider = "proxy"`,
+		`[model_providers.proxy]`, `base_url = "https://llm-proxy.example.com/v1"`,
+		`env_key = "OPENAI_API_KEY"`, `wire_api = "responses"`,
+	} {
+		if !strings.Contains(toml, want) {
+			t.Fatalf("codex config missing %q:\n%s", want, toml)
+		}
+	}
+	cmd := f.nodeCommand()
+	if len(cmd) != 3 || cmd[0] != "bash" {
+		t.Fatalf("nodeCommand with codex = %v, want bash wrapper", cmd)
+	}
+	// The embedded base64 must decode back to the toml.
+	b64 := strings.TrimSuffix(strings.TrimPrefix(
+		cmd[2][strings.Index(cmd[2], "printf %s '")+len("printf %s '"):], ""), "")
+	b64 = b64[:strings.Index(b64, "'")]
+	decoded, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil || string(decoded) != toml {
+		t.Fatalf("embedded base64 does not decode to config: err=%v", err)
 	}
 }
 

@@ -691,6 +691,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			ExtraEnv:                   extraEnv,
 			EnvBox:                     h.CloudRuntimeEnvBox,
 			MaxNodesPerWorkspace:       maxNodes,
+			CodexBaseURL:               os.Getenv("MULTICA_CLOUD_RUNTIME_CODEX_BASE_URL"),
+			CodexModel:                 os.Getenv("MULTICA_CLOUD_RUNTIME_CODEX_MODEL"),
+			CodexWireAPI:               os.Getenv("MULTICA_CLOUD_RUNTIME_CODEX_WIRE_API"),
 		}, queries)
 		if err != nil {
 			slog.Error("cloud runtime provider k8s configured but unusable", "error", err)

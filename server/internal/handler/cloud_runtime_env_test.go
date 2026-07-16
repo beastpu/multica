@@ -112,6 +112,55 @@ func TestWorkspaceCloudRuntimeEnv_PutGetDelete(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCloudRuntimeEnv_MergesAcrossSaves(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	installCloudRuntimeEnvBox(t)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM workspace_cloud_runtime_env WHERE workspace_id = $1`, testWorkspaceID)
+	})
+
+	put := func(env map[string]string) {
+		w := httptest.NewRecorder()
+		req := withWorkspaceIDParam(newRequest(http.MethodPut,
+			"/api/workspaces/"+testWorkspaceID+"/cloud-runtime-env", map[string]any{"env": env}), testWorkspaceID)
+		testHandler.PutWorkspaceCloudRuntimeEnv(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("PUT %v: status %d body %s", env, w.Code, w.Body.String())
+		}
+	}
+	// Save vars one at a time — the second save must NOT drop the first.
+	put(map[string]string{"ANTHROPIC_BASE_URL": "https://proxy.example.com"})
+	put(map[string]string{"ANTHROPIC_AUTH_TOKEN": "sk-aaaa"})
+	put(map[string]string{"OPENAI_API_KEY": "sk-bbbb"})
+
+	w := httptest.NewRecorder()
+	req := withWorkspaceIDParam(newRequest(http.MethodGet,
+		"/api/workspaces/"+testWorkspaceID+"/cloud-runtime-env", nil), testWorkspaceID)
+	testHandler.GetWorkspaceCloudRuntimeEnv(w, req)
+	var got struct {
+		Env []struct {
+			Name string `json:"name"`
+		} `json:"env"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	names := map[string]bool{}
+	for _, e := range got.Env {
+		names[e.Name] = true
+	}
+	for _, want := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY"} {
+		if !names[want] {
+			t.Fatalf("merge lost %s; got %v", want, names)
+		}
+	}
+	// Re-saving an existing name updates its value, not duplicates it.
+	put(map[string]string{"OPENAI_API_KEY": "sk-cccc"})
+	if len(got.Env) != 3 {
+		t.Fatalf("expected 3 vars after merges, got %d", len(got.Env))
+	}
+}
+
 func TestWorkspaceCloudRuntimeEnv_Validation(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
