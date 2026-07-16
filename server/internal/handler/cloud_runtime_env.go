@@ -40,9 +40,11 @@ type cloudRuntimeEnvVarInfo struct {
 	Last4 string `json:"last4"`
 }
 
-// PutWorkspaceCloudRuntimeEnv replaces the workspace's cloud runtime env.
-// Full replace (not merge) keeps the mental model simple: what you submit is
-// exactly what nodes get.
+// PutWorkspaceCloudRuntimeEnv merges the submitted variables into the
+// workspace's cloud runtime env (upsert by name). Values are write-only, so
+// the editor can never round-trip the existing set — a full replace would
+// silently drop every variable not re-entered. Merge lets the admin add or
+// update one variable at a time; DELETE clears everything.
 func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Request) {
 	if h.CloudRuntimeEnvBox == nil {
 		writeError(w, http.StatusServiceUnavailable, "cloud runtime env is not configured on this server (MULTICA_CLOUD_RUNTIME_SECRET_KEY)")
@@ -76,7 +78,26 @@ func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	plaintext, err := json.Marshal(req.Env)
+	// Merge into the existing set: load + decrypt what's there, then upsert
+	// the submitted vars over it. A first-time config has no prior row.
+	merged := map[string]string{}
+	if row, err := h.Queries.GetWorkspaceCloudRuntimeEnv(r.Context(), wsUUID); err == nil {
+		if existing, oerr := openCloudRuntimeEnv(h, row.EnvSealed); oerr == nil {
+			merged = existing
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to load existing env")
+		return
+	}
+	for name, value := range req.Env {
+		merged[name] = value
+	}
+	if len(merged) > maxCloudRuntimeEnvVars {
+		writeError(w, http.StatusBadRequest, "too many env variables")
+		return
+	}
+
+	plaintext, err := json.Marshal(merged)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to encode env")
 		return
