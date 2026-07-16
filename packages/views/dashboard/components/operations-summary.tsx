@@ -9,9 +9,10 @@ import type {
 } from "../operations-metrics";
 import type { OperationsCardKey } from "./operations-drawers";
 
-// Four operator-facing KPIs. Contribution measures pickup coverage over the
-// eligible reporting pool; quality, automatic, and assisted use their defined
-// AI assessment denominators so the outcome cards reconcile.
+// Four operator-facing KPIs. Coverage measures pickup over the eligible pool;
+// assessment completion advances handled work into an explicit judgement;
+// quality advances judged work into passes, then automatic repair measures the
+// direct-delivery share of those passing fixes.
 
 function formatPercent(rate: OperationsRate): string {
   if (rate.value == null) return "—";
@@ -211,21 +212,21 @@ export function OperationsSummary({
           className="border-b sm:border-r xl:border-b-0"
         />
         <RateCard
+          label={t(($) => $.operations.summary.assessment_rate)}
+          hint={t(($) => $.operations.summary.assessment_rate_hint)}
+          rate={kpis.assessmentRate}
+          className="border-b xl:border-b-0 xl:border-r"
+        />
+        <RateCard
           label={t(($) => $.operations.summary.quality_rate)}
           hint={t(($) => $.operations.summary.quality_rate_hint)}
           rate={kpis.qualityRate}
-          className="border-b xl:border-b-0 xl:border-r"
+          className="border-b sm:border-b-0 sm:border-r"
         />
         <RateCard
           label={t(($) => $.operations.summary.automatic_rate)}
           hint={t(($) => $.operations.summary.automatic_rate_hint)}
-          rate={kpis.automaticRate}
-          className="border-b sm:border-b-0 sm:border-r"
-        />
-        <RateCard
-          label={t(($) => $.operations.summary.assisted_rate)}
-          hint={t(($) => $.operations.summary.assisted_rate_hint)}
-          rate={kpis.assistedRate}
+          rate={kpis.automaticShare}
         />
       </div>
       <CompositionBar

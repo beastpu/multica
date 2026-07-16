@@ -653,38 +653,45 @@ describe("OperationsPage", () => {
     expect(REFRESH_FIXES).toHaveBeenCalledTimes(2);
   });
 
-  it("renders the four operator KPI cards", () => {
+  it("renders progressive coverage, assessment, quality, and automatic repair cards", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(screen.getByText("AI coverage")).toBeTruthy();
+    expect(screen.getByText("AI assessment completion rate")).toBeTruthy();
     expect(screen.getByText("AI repair quality")).toBeTruthy();
-    expect(screen.getByText("AI automatic repair rate")).toBeTruthy();
-    expect(screen.getByText("AI-assisted repair rate")).toBeTruthy();
+    expect(screen.getByText("AI automatic repair share")).toBeTruthy();
+    expect(screen.queryByText("AI-assisted repair rate")).toBeNull();
+    expect(
+      screen.getByText(
+        "Explicit quality verdicts / AI-handled tickets",
+      ),
+    ).toBeTruthy();
     expect(
       screen.getByText("AI-marked passes / AI-assessed repairable tickets"),
     ).toBeTruthy();
     expect(
       screen.getByText(
-        "Direct AI submissions passed / AI-assessed repairable tickets",
+        "Direct AI submissions passed / AI-marked passes",
       ),
     ).toBeTruthy();
     expect(screen.getByText("2 / 6")).toBeTruthy();
-    expect(screen.getAllByText("1 / 2")).toHaveLength(2);
-    expect(screen.getByText("0 / 2")).toBeTruthy();
+    expect(screen.getByText("1 / 2")).toBeTruthy();
+    expect(screen.getByText("1 / 1")).toBeTruthy();
+    expect(screen.getByText("2 / 2")).toBeTruthy();
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
 
-  it("keeps quality, automatic, and assisted rate cards informational", () => {
+  it("keeps assessment, quality, and automatic cards informational", () => {
     renderWithI18n(<OperationsPage />);
 
+    expect(
+      screen.getByText("AI assessment completion rate").closest("button"),
+    ).toBeNull();
     expect(
       screen.getByText("AI repair quality").closest("button"),
     ).toBeNull();
     expect(
-      screen.getByText("AI automatic repair rate").closest("button"),
-    ).toBeNull();
-    expect(
-      screen.getByText("AI-assisted repair rate").closest("button"),
+      screen.getByText("AI automatic repair share").closest("button"),
     ).toBeNull();
   });
 

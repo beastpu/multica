@@ -8,6 +8,10 @@ This document is the maintenance-oriented source for the current P4 assessment
 workflow. Older files under `docs/agent-fix-p4-*` record design history and
 should be read as background, not as the current implementation contract.
 
+The Operations KPI formulas, current production discrepancies, terminology,
+and open product decisions are documented separately in
+[`operations-ai-repair-metrics.md`](./operations-ai-repair-metrics.md).
+
 ## Purpose
 
 The workflow answers one product question for Feishu/Meego-synced bug fixes:

@@ -469,13 +469,17 @@ export interface OperationsKpis {
   // AI repair contribution: assigned-to-Agent rows with a recognizable AI
   // plan / all rows currently assigned to an Agent.
   contributionRate: OperationsRate;
-  // Shared denominator for quality, automatic, and assisted repair: assigned
-  // rows where AI participated and produced an explicit quality judgement.
+  // Shared assessment outcome count: assigned rows where AI participated and
+  // produced an explicit quality judgement.
   // Unknown/unrecognised results stay visible in the drawer but are excluded.
   judgedCount: number;
+  // Explicitly judged AI-handled plans / all AI-handled rows. This makes the
+  // coverage numerator the next stage's denominator.
+  assessmentRate: OperationsRate;
   // AI-marked pass / all explicitly judged AI-handled plans.
   qualityRate: OperationsRate;
-  automaticRate: OperationsRate;
+  // Passing direct AI deliveries / all passing AI-handled plans.
+  automaticShare: OperationsRate;
   // Passing AI-assisted plans / all explicitly judged AI-handled plans.
   // A passing comparison establishes implementation equivalence, so every
   // non-direct pass is assisted even if a legacy attribution field disagrees.
@@ -550,8 +554,9 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     composition: { directDelivered, assisted, unconverted, notParticipated },
     contributionRate: rate(handled, externalDone),
     judgedCount: judged,
+    assessmentRate: rate(judged, handled),
     qualityRate: rate(passed, judged),
-    automaticRate: rate(automatic, judged),
+    automaticShare: rate(automatic, passed),
     assistedRate: rate(assistedPassed, judged),
     unassessed,
     missingExternalCl,
