@@ -215,6 +215,28 @@
     "validation": {
       "instance_type_required": "인스턴스 유형은 필수입니다",
       "disk_size_invalid": "디스크 크기는 양의 정수여야 합니다"
+    },
+    "env": {
+      "title": "LLM 프록시 키",
+      "hint": "이 워크스페이스의 모든 클라우드 노드에 주입되는 키(예: LLM 프록시 토큰)입니다. 값은 암호화되며 저장 후에는 다시 표시되지 않습니다.",
+      "add": "변수 추가",
+      "name": "이름",
+      "value": "값",
+      "name_placeholder": "ANTHROPIC_AUTH_TOKEN",
+      "value_placeholder": "값 (저장 후 숨김)",
+      "configured": "구성됨",
+      "not_configured": "구성된 키 없음",
+      "masked_hint": "{{last4}}(으)로 끝남",
+      "save": "키 저장",
+      "saving": "저장 중...",
+      "clear": "모두 지우기",
+      "clear_confirm": "이 워크스페이스의 모든 LLM 프록시 키를 삭제하시겠습니까?",
+      "applies_hint": "새 노드에는 즉시 적용됩니다. 기존 노드는 재시작 후 적용됩니다.",
+      "toast_saved": "키가 저장되었습니다",
+      "toast_save_failed": "키 저장 실패",
+      "toast_cleared": "키가 삭제되었습니다",
+      "invalid_name": "이름은 UPPER_SNAKE_CASE 형식이어야 합니다",
+      "empty": "이름과 값을 가진 변수를 하나 이상 추가하세요"
     }
   },
   "update": {

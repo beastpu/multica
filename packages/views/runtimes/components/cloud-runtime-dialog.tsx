@@ -12,6 +12,7 @@ import {
   useDeleteCloudRuntimeNode,
 } from "@multica/core/runtimes";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useCurrentMember } from "@multica/core/permissions";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -33,6 +34,7 @@ import {
 } from "@multica/ui/components/ui/select";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
+import { CloudRuntimeEnvCard } from "./cloud-runtime-env-card";
 
 const CLOUD_RUNTIME_INSTANCE_TYPES = ["t4g.medium", "t4g.large"] as const;
 const DEFAULT_INSTANCE_TYPE = CLOUD_RUNTIME_INSTANCE_TYPES[0];
@@ -48,6 +50,9 @@ export function CloudRuntimeDialog({ onClose }: { onClose: () => void }) {
     DEFAULT_INSTANCE_TYPE,
   );
   const [diskSizeGB, setDiskSizeGB] = useState(String(DEFAULT_DISK_SIZE_GB));
+
+  const { role } = useCurrentMember(wsId);
+  const isAdmin = role === "owner" || role === "admin";
 
   const nodesQuery = useQuery(
     cloudRuntimeNodeListOptions(wsId, { limit: 20, offset: 0 }),
@@ -200,6 +205,12 @@ export function CloudRuntimeDialog({ onClose }: { onClose: () => void }) {
               )}
             </section>
           </div>
+
+          {isAdmin && (
+            <div className="mt-5">
+              <CloudRuntimeEnvCard wsId={wsId} />
+            </div>
+          )}
         </div>
 
         <DialogFooter className="m-0 border-t bg-muted/30 px-6 py-3">

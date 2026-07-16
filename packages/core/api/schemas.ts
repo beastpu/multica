@@ -36,7 +36,7 @@ import type {
   WorkspaceCapability,
   PerforceReview,
 } from "../types";
-import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
+import type { CloudRuntimeEnv, CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
 
 export interface AppConfigResponse {
@@ -668,6 +668,24 @@ export const CloudRuntimeNodeSchema = z.object({
 }).loose();
 
 export const CloudRuntimeNodeListSchema = z.array(CloudRuntimeNodeSchema);
+
+// Per-workspace cloud runtime env (LLM proxy keys) — write-only. The GET
+// response never carries plaintext, only variable names + last-4 fingerprints.
+export const CloudRuntimeEnvVarSchema = z.object({
+  name: z.string(),
+  last4: z.string().default(""),
+}).loose();
+
+export const CloudRuntimeEnvSchema = z.object({
+  configured: z.boolean().default(false),
+  env: z.array(CloudRuntimeEnvVarSchema).default([]),
+  updated_at: z.string().optional(),
+}).loose();
+
+export const EMPTY_CLOUD_RUNTIME_ENV: CloudRuntimeEnv = {
+  configured: false,
+  env: [],
+};
 
 export const EMPTY_CLOUD_RUNTIME_NODE_LIST: CloudRuntimeNode[] = [];
 

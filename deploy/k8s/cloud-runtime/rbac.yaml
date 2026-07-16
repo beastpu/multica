@@ -1,0 +1,79 @@
+# RBAC for the in-process k8s cloud runtime fleet (kubefleet).
+#
+# Apply this to the cluster where the runtime NODES run — which may be the
+# cluster hosting multica-server itself (in-cluster mode) or a separate one
+# (e.g. the ops runtime cluster) reached via MULTICA_CLOUD_RUNTIME_KUBE_API_URL.
+# Deliberately NOT part of the base kustomization: the grants below are only
+# needed when MULTICA_CLOUD_RUNTIME_PROVIDER=k8s is enabled.
+#
+#   kubectl apply -f deploy/k8s/cloud-runtime/rbac.yaml
+#
+# In-cluster mode: bind the ClusterRole to multica-server's ServiceAccount
+# instead of the standalone one below, or point the server Deployment at
+# serviceAccountName: multica-cloud-runtime.
+#
+# Remote-cluster mode: apply this file to the remote cluster, then feed the
+# generated long-lived token + CA to the server:
+#
+#   kubectl -n multica-system get secret multica-cloud-runtime-token \
+#     -o jsonpath='{.data.token}' | base64 -d > /etc/multica/cloud-runtime/token
+#   kubectl -n multica-system get secret multica-cloud-runtime-token \
+#     -o jsonpath='{.data.ca\.crt}' | base64 -d > /etc/multica/cloud-runtime/ca.crt
+#
+#   MULTICA_CLOUD_RUNTIME_KUBE_API_URL=https://<remote-apiserver>
+#   MULTICA_CLOUD_RUNTIME_KUBE_TOKEN_FILE=/etc/multica/cloud-runtime/token
+#   MULTICA_CLOUD_RUNTIME_KUBE_CA_FILE=/etc/multica/cloud-runtime/ca.crt
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: multica-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: multica-cloud-runtime
+  namespace: multica-system
+---
+# Long-lived token for remote-cluster mode. Harmless in in-cluster mode.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: multica-cloud-runtime-token
+  namespace: multica-system
+  annotations:
+    kubernetes.io/service-account.name: multica-cloud-runtime
+type: kubernetes.io/service-account-token
+---
+# Cluster-scoped because kubefleet creates one namespace per workspace
+# (mrt-<workspace-uuid>) dynamically — RBAC cannot pre-scope to namespaces
+# that do not exist yet. The verb list is exactly what kubefleet calls.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: multica-cloud-runtime
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["create"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["create", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: multica-cloud-runtime
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: multica-cloud-runtime
+subjects:
+  - kind: ServiceAccount
+    name: multica-cloud-runtime
+    namespace: multica-system

@@ -917,3 +917,59 @@ describe("WorkspaceCapabilitySchema", () => {
     ).toBe(EMPTY_WORKSPACE_CAPABILITY);
   });
 });
+
+describe("CloudRuntimeEnvSchema", () => {
+  const ENDPOINT = { endpoint: "GET /api/workspaces/:id/cloud-runtime-env" };
+
+  it("parses a configured response, keeping names + last4 only", async () => {
+    const { CloudRuntimeEnvSchema, EMPTY_CLOUD_RUNTIME_ENV } = await import("./schemas");
+    const parsed = parseWithFallback(
+      {
+        configured: true,
+        env: [{ name: "ANTHROPIC_AUTH_TOKEN", last4: "abcd" }],
+        updated_at: "2026-07-16T00:00:00Z",
+      },
+      CloudRuntimeEnvSchema,
+      EMPTY_CLOUD_RUNTIME_ENV,
+      ENDPOINT,
+    );
+    expect(parsed.configured).toBe(true);
+    expect(parsed.env).toHaveLength(1);
+    expect(parsed.env[0]).toEqual({ name: "ANTHROPIC_AUTH_TOKEN", last4: "abcd" });
+  });
+
+  it("degrades missing/null fields instead of throwing", async () => {
+    const { CloudRuntimeEnvSchema, EMPTY_CLOUD_RUNTIME_ENV } = await import("./schemas");
+    // env array missing entirely -> defaults to []
+    const noEnv = parseWithFallback(
+      { configured: true },
+      CloudRuntimeEnvSchema,
+      EMPTY_CLOUD_RUNTIME_ENV,
+      ENDPOINT,
+    );
+    expect(noEnv.env).toEqual([]);
+    // entry missing last4 -> defaults to ""
+    const noLast4 = parseWithFallback(
+      { configured: true, env: [{ name: "OPENAI_API_KEY" }] },
+      CloudRuntimeEnvSchema,
+      EMPTY_CLOUD_RUNTIME_ENV,
+      ENDPOINT,
+    );
+    expect(noLast4.env[0]).toEqual({ name: "OPENAI_API_KEY", last4: "" });
+  });
+
+  it("returns the empty fallback for a wrong-typed or null body", async () => {
+    const { CloudRuntimeEnvSchema, EMPTY_CLOUD_RUNTIME_ENV } = await import("./schemas");
+    expect(
+      parseWithFallback(
+        { configured: "yes", env: "nope" },
+        CloudRuntimeEnvSchema,
+        EMPTY_CLOUD_RUNTIME_ENV,
+        ENDPOINT,
+      ),
+    ).toBe(EMPTY_CLOUD_RUNTIME_ENV);
+    expect(
+      parseWithFallback(null, CloudRuntimeEnvSchema, EMPTY_CLOUD_RUNTIME_ENV, ENDPOINT),
+    ).toBe(EMPTY_CLOUD_RUNTIME_ENV);
+  });
+});

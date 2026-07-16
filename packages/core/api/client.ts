@@ -155,6 +155,7 @@ import type {
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
 import type {
+  CloudRuntimeEnv,
   CloudRuntimeNode,
   CreateCloudRuntimeNodeRequest,
   ListCloudRuntimeNodesParams,
@@ -172,6 +173,8 @@ import {
   CommentsListSchema,
   CommentTriggerPreviewSchema,
   IssueTriggerPreviewSchema,
+  CloudRuntimeEnvSchema,
+  EMPTY_CLOUD_RUNTIME_ENV,
   CloudRuntimeNodeListSchema,
   CloudRuntimeNodeSchema,
   CreateAgentFromTemplateResponseSchema,
@@ -1110,6 +1113,37 @@ export class ApiClient {
       method: "DELETE",
       body: JSON.stringify({ instance_id: instanceId }),
       extraHeaders: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Per-workspace cloud runtime env (LLM proxy keys). Admin-gated; values
+  // are write-only — GET returns names + last-4 fingerprints only.
+
+  async getCloudRuntimeEnv(workspaceId: string): Promise<CloudRuntimeEnv> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/cloud-runtime-env`,
+    );
+    return parseWithFallback(raw, CloudRuntimeEnvSchema, EMPTY_CLOUD_RUNTIME_ENV, {
+      endpoint: "GET /api/workspaces/:id/cloud-runtime-env",
+    });
+  }
+
+  async putCloudRuntimeEnv(
+    workspaceId: string,
+    env: Record<string, string>,
+  ): Promise<CloudRuntimeEnv> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/cloud-runtime-env`,
+      { method: "PUT", body: JSON.stringify({ env }) },
+    );
+    return parseWithFallback(raw, CloudRuntimeEnvSchema, EMPTY_CLOUD_RUNTIME_ENV, {
+      endpoint: "PUT /api/workspaces/:id/cloud-runtime-env",
+    });
+  }
+
+  async deleteCloudRuntimeEnv(workspaceId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/cloud-runtime-env`, {
+      method: "DELETE",
     });
   }
 
