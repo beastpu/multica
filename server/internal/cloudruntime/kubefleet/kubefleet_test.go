@@ -97,12 +97,12 @@ func cleanupFixture(ctx context.Context) error {
 // fakeKube is a minimal Kubernetes API double: it records created objects and
 // serves the deployment list back with readyReplicas injected.
 type fakeKube struct {
-	server      *httptest.Server
-	namespaces  []string
-	secrets     []map[string]any
-	deployments []map[string]any
-	// failDeploymentCreate makes POST .../deployments return 500 to test rollback.
-	failDeploymentCreate bool
+	server       *httptest.Server
+	namespaces   []string
+	secrets      []map[string]any
+	statefulSets []map[string]any
+	// failStatefulSetCreate makes POST .../statefulsets return 500 to test rollback.
+	failStatefulSetCreate bool
 }
 
 func newFakeKube(t *testing.T) *fakeKube {
@@ -127,16 +127,16 @@ func newFakeKube(t *testing.T) *fakeKube {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/secrets"):
 			f.secrets = append(f.secrets, body)
 			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/deployments"):
-			if f.failDeploymentCreate {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/statefulsets"):
+			if f.failStatefulSetCreate {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			body["status"] = map[string]any{"readyReplicas": 1}
-			f.deployments = append(f.deployments, body)
+			f.statefulSets = append(f.statefulSets, body)
 			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/deployments"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": f.deployments})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/statefulsets"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": f.statefulSets})
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -214,6 +214,7 @@ func TestKubefleet_CreateListDelete(t *testing.T) {
 	resp, node := doJSON(t, fleet, ctx, http.MethodPost, "/api/v1/nodes", map[string]any{
 		"name":          "My Cloud Box",
 		"instance_type": "t4g.large",
+		"disk_size_gb":  32,
 	})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create: status = %d body = %s", resp.StatusCode, resp.Body)
@@ -235,17 +236,34 @@ func TestKubefleet_CreateListDelete(t *testing.T) {
 	if len(kube.namespaces) != 1 || kube.namespaces[0] != wantNS {
 		t.Fatalf("namespaces = %v, want [%s]", kube.namespaces, wantNS)
 	}
-	if len(kube.secrets) != 1 || len(kube.deployments) != 1 {
-		t.Fatalf("expected 1 secret + 1 deployment, got %d/%d", len(kube.secrets), len(kube.deployments))
+	if len(kube.secrets) != 1 || len(kube.statefulSets) != 1 {
+		t.Fatalf("expected 1 secret + 1 statefulset, got %d/%d", len(kube.secrets), len(kube.statefulSets))
 	}
-	// The secret must carry an mcn_ token; the deployment must reference it
+	// The secret must carry an mcn_ token; the statefulset must reference it
 	// via secretKeyRef rather than inlining the value.
 	secretToken := kube.secrets[0]["stringData"].(map[string]any)["token"].(string)
 	if !strings.HasPrefix(secretToken, "mcn_") {
 		t.Fatalf("secret token = %q, want mcn_ prefix", secretToken)
 	}
-	if depJSON, _ := json.Marshal(kube.deployments[0]); strings.Contains(string(depJSON), secretToken) {
-		t.Fatalf("deployment spec inlines the node token")
+	stsJSON, _ := json.Marshal(kube.statefulSets[0])
+	if strings.Contains(string(stsJSON), secretToken) {
+		t.Fatalf("statefulset spec inlines the node token")
+	}
+	// Ops image contract: env-only (no container args/command), token under
+	// MULTICA_API_TOKEN, workspace pinning, and a PVC sized from the request.
+	for _, want := range []string{
+		`"MULTICA_API_TOKEN"`, `"MULTICA_AUTH_TOKEN"`, `"MULTICA_WORKSPACE"`,
+		`"MULTICA_RUNTIME_MODE"`, `"MULTICA_WATCH_WORKSPACE_IDS"`,
+		`"volumeClaimTemplates"`, `"storage":"32Gi"`, `"whenDeleted":"Delete"`,
+	} {
+		if !strings.Contains(string(stsJSON), want) {
+			t.Fatalf("statefulset spec missing %s: %s", want, stsJSON)
+		}
+	}
+	for _, forbidden := range []string{`"args"`, `"command"`} {
+		if strings.Contains(string(stsJSON), forbidden) {
+			t.Fatalf("statefulset spec must not set container %s (image entrypoint owns startup): %s", forbidden, stsJSON)
+		}
 	}
 
 	// Second create reuses the namespace (fake returns 409 conflict).
@@ -287,6 +305,71 @@ func TestKubefleet_CreateListDelete(t *testing.T) {
 	_ = node2
 }
 
+func TestKubefleet_PullSecretAndExtraEnv(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+	kube := newFakeKube(t)
+	fleet, err := New(Config{
+		Image:                      "registry.example.com/multica-runtime:test",
+		ServerURL:                  "http://multica-server.multica.svc:8080",
+		KubeAPIURL:                 kube.server.URL,
+		TokenFile:                  "/nonexistent/token",
+		HTTPClient:                 kube.server.Client(),
+		PullSecretDockerConfigJSON: `{"auths":{"registry.example.com":{"auth":"Zm9v"}}}`,
+		ExtraEnv:                   map[string]string{"ANTHROPIC_BASE_URL": "https://llm-proxy.example.com"},
+	}, testQueries)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM cloud_node_token WHERE workspace_id = $1`, testWorkspaceID)
+	})
+
+	resp, _ := doJSON(t, fleet, memberContext("admin"), http.MethodPost, "/api/v1/nodes", map[string]any{"instance_type": "t4g.medium"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: status = %d body = %s", resp.StatusCode, resp.Body)
+	}
+	// Two secrets: the registry pull secret plus the node token secret,
+	// which must also carry the extra env value.
+	if len(kube.secrets) != 2 {
+		t.Fatalf("expected pull secret + node secret, got %d", len(kube.secrets))
+	}
+	pull := kube.secrets[0]
+	if pull["type"] != "kubernetes.io/dockerconfigjson" {
+		t.Fatalf("first secret type = %v, want dockerconfigjson", pull["type"])
+	}
+	nodeSecret := kube.secrets[1]["stringData"].(map[string]any)
+	if nodeSecret["ANTHROPIC_BASE_URL"] != "https://llm-proxy.example.com" {
+		t.Fatalf("node secret missing extra env: %v", nodeSecret)
+	}
+	stsJSON, _ := json.Marshal(kube.statefulSets[0])
+	for _, want := range []string{`"imagePullSecrets"`, `"multica-registry"`, `"ANTHROPIC_BASE_URL"`} {
+		if !strings.Contains(string(stsJSON), want) {
+			t.Fatalf("statefulset spec missing %s", want)
+		}
+	}
+	if strings.Contains(string(stsJSON), "llm-proxy.example.com") {
+		t.Fatalf("extra env value must be referenced via secretKeyRef, not inlined")
+	}
+}
+
+func TestParseExtraEnv(t *testing.T) {
+	env, err := ParseExtraEnv(" A=1, B=x=y ,")
+	if err != nil {
+		t.Fatalf("ParseExtraEnv: %v", err)
+	}
+	if env["A"] != "1" || env["B"] != "x=y" || len(env) != 2 {
+		t.Fatalf("env = %v", env)
+	}
+	if got, err := ParseExtraEnv(""); err != nil || got != nil {
+		t.Fatalf("empty input: %v %v", got, err)
+	}
+	if _, err := ParseExtraEnv("NOEQUALS"); err == nil {
+		t.Fatal("expected error for entry without =")
+	}
+}
+
 func TestKubefleet_WriteOpsRequireAdmin(t *testing.T) {
 	if testPool == nil {
 		t.Skip("database not available")
@@ -324,12 +407,12 @@ func TestKubefleet_MissingWorkspaceContext(t *testing.T) {
 	}
 }
 
-func TestKubefleet_CreateRollsBackTokenOnDeploymentFailure(t *testing.T) {
+func TestKubefleet_CreateRollsBackTokenOnStatefulSetFailure(t *testing.T) {
 	if testPool == nil {
 		t.Skip("database not available")
 	}
 	kube := newFakeKube(t)
-	kube.failDeploymentCreate = true
+	kube.failStatefulSetCreate = true
 	fleet := newTestFleet(t, kube)
 
 	_, err := fleet.Do(memberContext("owner"), cloudruntime.Request{
@@ -338,7 +421,7 @@ func TestKubefleet_CreateRollsBackTokenOnDeploymentFailure(t *testing.T) {
 		Body:   []byte(`{"instance_type":"t4g.medium"}`),
 	})
 	if err == nil {
-		t.Fatal("expected create to fail when deployment create fails")
+		t.Fatal("expected create to fail when statefulset create fails")
 	}
 	var n int
 	if qerr := testPool.QueryRow(context.Background(),

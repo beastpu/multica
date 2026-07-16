@@ -645,19 +645,27 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// In-process k8s fleet: MULTICA_CLOUD_RUNTIME_PROVIDER=k8s swaps the
 	// remote Fleet proxy for kubefleet (one namespace per workspace, one
-	// Deployment per node) and verifies mcn_ node PATs against the local
+	// StatefulSet per node) and verifies mcn_ node PATs against the local
 	// cloud_node_token table instead of a remote Fleet.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("MULTICA_CLOUD_RUNTIME_PROVIDER")), "k8s") {
 		serverURL := strings.TrimSpace(os.Getenv("MULTICA_CLOUD_RUNTIME_SERVER_URL"))
 		if serverURL == "" {
 			serverURL = signupConfig.PublicURL
 		}
+		extraEnv, err := kubefleet.ParseExtraEnv(os.Getenv("MULTICA_CLOUD_RUNTIME_EXTRA_ENV"))
+		if err != nil {
+			slog.Error("cloud runtime provider k8s configured but unusable", "error", err)
+			os.Exit(1)
+		}
 		fleet, err := kubefleet.New(kubefleet.Config{
-			Image:           os.Getenv("MULTICA_CLOUD_RUNTIME_IMAGE"),
-			ServerURL:       serverURL,
-			KubeAPIURL:      os.Getenv("MULTICA_CLOUD_RUNTIME_KUBE_API_URL"),
-			NamespacePrefix: os.Getenv("MULTICA_CLOUD_RUNTIME_NAMESPACE_PREFIX"),
-			NodeTokenTTL:    envDuration("MULTICA_CLOUD_RUNTIME_NODE_TOKEN_TTL", 0),
+			Image:                      os.Getenv("MULTICA_CLOUD_RUNTIME_IMAGE"),
+			ServerURL:                  serverURL,
+			KubeAPIURL:                 os.Getenv("MULTICA_CLOUD_RUNTIME_KUBE_API_URL"),
+			NamespacePrefix:            os.Getenv("MULTICA_CLOUD_RUNTIME_NAMESPACE_PREFIX"),
+			NodeTokenTTL:               envDuration("MULTICA_CLOUD_RUNTIME_NODE_TOKEN_TTL", 0),
+			StorageClass:               os.Getenv("MULTICA_CLOUD_RUNTIME_STORAGE_CLASS"),
+			PullSecretDockerConfigJSON: os.Getenv("MULTICA_CLOUD_RUNTIME_PULL_SECRET_DOCKERCONFIGJSON"),
+			ExtraEnv:                   extraEnv,
 		}, queries)
 		if err != nil {
 			slog.Error("cloud runtime provider k8s configured but unusable", "error", err)

@@ -5,10 +5,23 @@
 // the frontend stay untouched — only the node authority changes.
 //
 // Model: one Kubernetes namespace per workspace, one single-replica
-// Deployment per node running the multica daemon. Each node gets a locally
-// minted mcn_ PAT (cloud_node_token table) injected via a Secret; the daemon
-// inside the pod authenticates with it, registers with runtime_mode=cloud,
-// and is pinned to its workspace via MULTICA_WATCH_WORKSPACE_IDS.
+// StatefulSet per node running the multica daemon with a persistent
+// /workspace volume — cloned repos, npm caches and agent CLI state survive
+// pod restarts; deleting the node deletes the volume (EC2-terminate
+// semantics via the StatefulSet PVC retention policy). Each node gets a
+// locally minted mcn_ PAT (cloud_node_token table) delivered via a Secret;
+// the daemon inside the pod authenticates with it, registers with
+// runtime_mode=cloud, and is pinned to its workspace via
+// MULTICA_WATCH_WORKSPACE_IDS.
+//
+// The container contract follows the ops runtime image (gitlab
+// devops/cloud-runtime, Dockerfile.multica): ENTRYPOINT multica-entrypoint
+// reads MULTICA_API_TOKEN + MULTICA_WORKSPACE (HOME becomes
+// /workspace/$MULTICA_WORKSPACE), runs `multica setup self-host` +
+// `multica login --token`, then execs `multica daemon start --foreground`.
+// kubefleet therefore sets env only and never passes container args.
+// MULTICA_AUTH_TOKEN carries the same token for images that run the daemon
+// directly without that entrypoint.
 //
 // v1 implements exactly what the CloudRuntimeDialog uses: list, create,
 // delete. start/stop/reboot/exec return 501.
@@ -52,17 +65,26 @@ const (
 	defaultCAFile          = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 	defaultNamespacePrefix = "mrt-"
 	defaultNodeTokenTTL    = 180 * 24 * time.Hour
+	defaultDiskSizeGB      = 20
+
+	// pullSecretName is the per-namespace dockerconfigjson secret kubefleet
+	// creates when Config.PullSecretDockerConfigJSON is set. Mirrors the ops
+	// deploy script, which also materializes the registry credential into
+	// every workspace namespace.
+	pullSecretName = "multica-registry"
 )
 
 // instanceResources maps the instance_type strings the dialog offers onto pod
-// resource requests/limits. Unknown types fall back to the smallest preset —
-// degrade, don't reject, so a newer frontend can't brick node creation.
+// resource requests/limits, matching the real EC2 t4g shapes so the same UI
+// labels mean the same capacity on both fleets. Unknown types fall back to
+// the smallest preset — degrade, don't reject, so a newer frontend can't
+// brick node creation.
 var instanceResources = map[string]podResources{
-	"t4g.medium": {CPU: "1", Memory: "2Gi"},
-	"t4g.large":  {CPU: "2", Memory: "4Gi"},
+	"t4g.medium": {CPU: "2", Memory: "4Gi"},
+	"t4g.large":  {CPU: "2", Memory: "8Gi"},
 }
 
-var defaultResources = podResources{CPU: "1", Memory: "2Gi"}
+var defaultResources = podResources{CPU: "2", Memory: "4Gi"}
 
 type podResources struct {
 	CPU    string
@@ -70,8 +92,8 @@ type podResources struct {
 }
 
 type Config struct {
-	// Image is the container image every node pod runs. Must contain the
-	// multica CLI plus at least one agent CLI. Required.
+	// Image is the container image every node pod runs — the ops runtime
+	// image (multica CLI + agent CLIs + multica-entrypoint). Required.
 	Image string
 	// ServerURL is the multica server base URL as reachable FROM the pods
 	// (e.g. the in-cluster service URL). Required.
@@ -86,6 +108,17 @@ type Config struct {
 	NamespacePrefix string
 	// NodeTokenTTL bounds the minted mcn_ PAT lifetime (default 180 days).
 	NodeTokenTTL time.Duration
+	// StorageClass names the StorageClass for node volumes. Empty uses the
+	// cluster default.
+	StorageClass string
+	// PullSecretDockerConfigJSON, when non-empty, is a .dockerconfigjson
+	// payload materialized as an imagePullSecret in every node namespace —
+	// required when Image lives in a private registry.
+	PullSecretDockerConfigJSON string
+	// ExtraEnv is injected into every node container via its Secret —
+	// deployment-wide settings like LLM proxy endpoints and API keys
+	// (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, ...).
+	ExtraEnv map[string]string
 	// HTTPClient overrides the Kubernetes API client (tests). When nil a
 	// client is built from CAFile.
 	HTTPClient *http.Client
@@ -133,6 +166,29 @@ func New(cfg Config, queries *db.Queries) (*Fleet, error) {
 		}
 	}
 	return &Fleet{cfg: cfg, queries: queries, http: client}, nil
+}
+
+// ParseExtraEnv parses the MULTICA_CLOUD_RUNTIME_EXTRA_ENV format:
+// comma-separated KEY=VALUE pairs. Empty input yields nil.
+func ParseExtraEnv(raw string) (map[string]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	env := map[string]string{}
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(pair, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("kubefleet: invalid extra env entry %q (want KEY=VALUE)", pair)
+		}
+		env[key] = value
+	}
+	return env, nil
 }
 
 func (f *Fleet) Enabled() bool { return f != nil }
@@ -186,6 +242,7 @@ func isWorkspaceAdmin(m db.Member) bool {
 type createNodeRequest struct {
 	Name         string `json:"name"`
 	InstanceType string `json:"instance_type"`
+	DiskSizeGB   int    `json:"disk_size_gb"`
 }
 
 func (f *Fleet) createNode(ctx context.Context, req cloudruntime.Request) (*cloudruntime.Response, error) {
@@ -214,6 +271,10 @@ func (f *Fleet) createNode(ctx context.Context, req cloudruntime.Request) (*clou
 		displayName = nodeName
 	}
 	instanceType := strings.TrimSpace(body.InstanceType)
+	diskSizeGB := body.DiskSizeGB
+	if diskSizeGB <= 0 {
+		diskSizeGB = defaultDiskSizeGB
+	}
 
 	wsUUID, err := util.ParseUUID(wsID)
 	if err != nil {
@@ -249,18 +310,22 @@ func (f *Fleet) createNode(ctx context.Context, req cloudruntime.Request) (*clou
 		cleanup()
 		return nil, err
 	}
+	if err := f.ensurePullSecret(ctx, namespace, wsID); err != nil {
+		cleanup()
+		return nil, err
+	}
 	if err := f.createSecret(ctx, namespace, nodeName, token, wsID); err != nil {
 		cleanup()
 		return nil, err
 	}
 	ownerID := util.UUIDToString(member.UserID)
-	if err := f.createDeployment(ctx, namespace, nodeName, displayName, instanceType, ownerID, wsID); err != nil {
+	if err := f.createStatefulSet(ctx, namespace, nodeName, displayName, instanceType, ownerID, wsID, diskSizeGB); err != nil {
 		cleanup()
 		_ = f.kubeDelete(ctx, secretPath(namespace, nodeName))
 		return nil, err
 	}
 
-	node := nodeJSON(deployment{}, namespace, nodeName)
+	node := nodeJSON(statefulSet{}, namespace, nodeName)
 	node["name"] = displayName
 	node["owner_id"] = ownerID
 	node["instance_type"] = instanceType
@@ -277,7 +342,7 @@ func (f *Fleet) listNodes(ctx context.Context) (*cloudruntime.Response, error) {
 	if errResp != nil {
 		return errResp, nil
 	}
-	list, status, err := f.kubeGetDeployments(ctx, namespace)
+	list, status, err := f.kubeGetStatefulSets(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -286,8 +351,8 @@ func (f *Fleet) listNodes(ctx context.Context) (*cloudruntime.Response, error) {
 		return jsonResponse(http.StatusOK, []any{})
 	}
 	nodes := make([]map[string]any, 0, len(list.Items))
-	for _, d := range list.Items {
-		nodes = append(nodes, nodeJSON(d, namespace, d.Metadata.Name))
+	for _, s := range list.Items {
+		nodes = append(nodes, nodeJSON(s, namespace, s.Metadata.Name))
 	}
 	return jsonResponse(http.StatusOK, nodes)
 }
@@ -323,7 +388,9 @@ func (f *Fleet) deleteNode(ctx context.Context, req cloudruntime.Request) (*clou
 		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "instance_id is required"})
 	}
 
-	if err := f.kubeDelete(ctx, deploymentPath(namespace, nodeName)); err != nil {
+	// The StatefulSet's PVC retention policy (whenDeleted: Delete) removes
+	// the node volume with it.
+	if err := f.kubeDelete(ctx, statefulSetPath(namespace, nodeName)); err != nil {
 		return nil, err
 	}
 	if err := f.kubeDelete(ctx, secretPath(namespace, nodeName)); err != nil {
@@ -343,14 +410,14 @@ func (f *Fleet) deleteNode(ctx context.Context, req cloudruntime.Request) (*clou
 
 // --- kubernetes REST plumbing ---
 //
-// Deliberately not client-go: the five calls below are the entire API
+// Deliberately not client-go: the handful of calls below is the entire API
 // surface, and plain net/http keeps the dependency tree unchanged.
 
-type deploymentList struct {
-	Items []deployment `json:"items"`
+type statefulSetList struct {
+	Items []statefulSet `json:"items"`
 }
 
-type deployment struct {
+type statefulSet struct {
 	Metadata struct {
 		Name              string            `json:"name"`
 		Annotations       map[string]string `json:"annotations"`
@@ -370,21 +437,21 @@ type deployment struct {
 	} `json:"status"`
 }
 
-func nodeJSON(d deployment, namespace, name string) map[string]any {
+func nodeJSON(s statefulSet, namespace, name string) map[string]any {
 	status := "launching"
-	if d.Status.ReadyReplicas >= 1 {
+	if s.Status.ReadyReplicas >= 1 {
 		status = "online"
 	}
 	image := ""
-	if cs := d.Spec.Template.Spec.Containers; len(cs) > 0 {
+	if cs := s.Spec.Template.Spec.Containers; len(cs) > 0 {
 		image = cs[0].Image
 	}
-	ann := d.Metadata.Annotations
+	ann := s.Metadata.Annotations
 	displayName := ann[annotationDisplayName]
 	if displayName == "" {
 		displayName = name
 	}
-	created := d.Metadata.CreationTimestamp
+	created := s.Metadata.CreationTimestamp
 	return map[string]any{
 		"id":            name,
 		"owner_id":      ann[annotationOwnerID],
@@ -424,17 +491,55 @@ func (f *Fleet) ensureNamespace(ctx context.Context, namespace, wsID string) err
 	return nil
 }
 
+// ensurePullSecret materializes the registry credential into the node
+// namespace, mirroring the ops deploy script. No-op when the deployment
+// doesn't configure one (public registry).
+func (f *Fleet) ensurePullSecret(ctx context.Context, namespace, wsID string) error {
+	if f.cfg.PullSecretDockerConfigJSON == "" {
+		return nil
+	}
+	body := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"type":       "kubernetes.io/dockerconfigjson",
+		"metadata": map[string]any{
+			"name":      pullSecretName,
+			"namespace": namespace,
+			"labels": map[string]string{
+				managedByLabel: managedByValue,
+				workspaceLabel: wsID,
+			},
+		},
+		"stringData": map[string]string{".dockerconfigjson": f.cfg.PullSecretDockerConfigJSON},
+	}
+	status, err := f.kubePost(ctx, "/api/v1/namespaces/"+namespace+"/secrets", body)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusCreated && status != http.StatusConflict {
+		return fmt.Errorf("kubefleet: create pull secret in %s: unexpected status %d", namespace, status)
+	}
+	return nil
+}
+
 func secretName(nodeName string) string { return nodeName + "-token" }
 
 func secretPath(namespace, nodeName string) string {
 	return "/api/v1/namespaces/" + namespace + "/secrets/" + secretName(nodeName)
 }
 
-func deploymentPath(namespace, nodeName string) string {
-	return "/apis/apps/v1/namespaces/" + namespace + "/deployments/" + nodeName
+func statefulSetPath(namespace, nodeName string) string {
+	return "/apis/apps/v1/namespaces/" + namespace + "/statefulsets/" + nodeName
 }
 
+// createSecret stores the node PAT plus the deployment-wide extra env
+// (LLM proxy endpoints/keys) so none of them appear inline in the
+// StatefulSet spec.
 func (f *Fleet) createSecret(ctx context.Context, namespace, nodeName, token, wsID string) error {
+	data := map[string]string{"token": token}
+	for k, v := range f.cfg.ExtraEnv {
+		data[k] = v
+	}
 	body := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
@@ -447,7 +552,7 @@ func (f *Fleet) createSecret(ctx context.Context, namespace, nodeName, token, ws
 				nodeLabel:      nodeName,
 			},
 		},
-		"stringData": map[string]string{"token": token},
+		"stringData": data,
 	}
 	status, err := f.kubePost(ctx, "/api/v1/namespaces/"+namespace+"/secrets", body)
 	if err != nil {
@@ -459,7 +564,7 @@ func (f *Fleet) createSecret(ctx context.Context, namespace, nodeName, token, ws
 	return nil
 }
 
-func (f *Fleet) createDeployment(ctx context.Context, namespace, nodeName, displayName, instanceType, ownerID, wsID string) error {
+func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, displayName, instanceType, ownerID, wsID string, diskSizeGB int) error {
 	res, ok := instanceResources[instanceType]
 	if !ok {
 		res = defaultResources
@@ -469,9 +574,68 @@ func (f *Fleet) createDeployment(ctx context.Context, namespace, nodeName, displ
 		workspaceLabel: wsID,
 		nodeLabel:      nodeName,
 	}
+	tokenRef := map[string]any{
+		"secretKeyRef": map[string]any{"name": secretName(nodeName), "key": "token"},
+	}
+	env := []map[string]any{
+		{"name": "MULTICA_SERVER_URL", "value": f.cfg.ServerURL},
+		{"name": "MULTICA_APP_URL", "value": f.cfg.ServerURL},
+		// MULTICA_WORKSPACE names the persistent HOME dir
+		// (/workspace/<id>) inside the ops image entrypoint.
+		{"name": "MULTICA_WORKSPACE", "value": wsID},
+		{"name": "MULTICA_RUNTIME_MODE", "value": "cloud"},
+		{"name": "MULTICA_WATCH_WORKSPACE_IDS", "value": wsID},
+		{"name": "MULTICA_DAEMON_DEVICE_NAME", "value": displayName},
+		{"name": "MULTICA_DAEMON_ID", "value": nodeName},
+		{"name": "MULTICA_DAEMON_AUTO_UPDATE", "value": "false"},
+		// Same node PAT under both names: MULTICA_API_TOKEN feeds the ops
+		// image entrypoint's `multica login --token`; MULTICA_AUTH_TOKEN
+		// feeds the daemon directly on entrypoint-less images.
+		{"name": "MULTICA_API_TOKEN", "valueFrom": tokenRef},
+		{"name": "MULTICA_AUTH_TOKEN", "valueFrom": tokenRef},
+	}
+	for key := range f.cfg.ExtraEnv {
+		env = append(env, map[string]any{
+			"name": key,
+			"valueFrom": map[string]any{
+				"secretKeyRef": map[string]any{"name": secretName(nodeName), "key": key},
+			},
+		})
+	}
+
+	podSpec := map[string]any{
+		"containers": []map[string]any{{
+			"name":  "runtime",
+			"image": f.cfg.Image,
+			"env":   env,
+			"resources": map[string]any{
+				"requests": map[string]string{"cpu": res.CPU, "memory": res.Memory},
+				"limits":   map[string]string{"cpu": res.CPU, "memory": res.Memory},
+			},
+			"volumeMounts": []map[string]any{{
+				"name":      "workspace",
+				"mountPath": "/workspace",
+			}},
+			"workingDir": "/workspace",
+		}},
+	}
+	if f.cfg.PullSecretDockerConfigJSON != "" {
+		podSpec["imagePullSecrets"] = []map[string]any{{"name": pullSecretName}}
+	}
+
+	pvcSpec := map[string]any{
+		"accessModes": []string{"ReadWriteOnce"},
+		"resources": map[string]any{
+			"requests": map[string]string{"storage": fmt.Sprintf("%dGi", diskSizeGB)},
+		},
+	}
+	if f.cfg.StorageClass != "" {
+		pvcSpec["storageClassName"] = f.cfg.StorageClass
+	}
+
 	body := map[string]any{
 		"apiVersion": "apps/v1",
-		"kind":       "Deployment",
+		"kind":       "StatefulSet",
 		"metadata": map[string]any{
 			"name":      nodeName,
 			"namespace": namespace,
@@ -483,68 +647,56 @@ func (f *Fleet) createDeployment(ctx context.Context, namespace, nodeName, displ
 			},
 		},
 		"spec": map[string]any{
-			"replicas": 1,
-			"selector": map[string]any{"matchLabels": map[string]string{nodeLabel: nodeName}},
+			"replicas":    1,
+			"serviceName": nodeName,
+			"selector":    map[string]any{"matchLabels": map[string]string{nodeLabel: nodeName}},
+			// Deleting the node deletes its volume — EC2-terminate
+			// semantics. Scale-down keeps it (we never scale, but Retain
+			// is the safer default if someone does by hand).
+			"persistentVolumeClaimRetentionPolicy": map[string]any{
+				"whenDeleted": "Delete",
+				"whenScaled":  "Retain",
+			},
 			"template": map[string]any{
 				"metadata": map[string]any{"labels": labels},
-				"spec": map[string]any{
-					"containers": []map[string]any{{
-						"name":  "runtime",
-						"image": f.cfg.Image,
-						"args":  []string{"daemon", "run"},
-						"env": []map[string]any{
-							{"name": "MULTICA_SERVER_URL", "value": f.cfg.ServerURL},
-							{"name": "MULTICA_RUNTIME_MODE", "value": "cloud"},
-							{"name": "MULTICA_WATCH_WORKSPACE_IDS", "value": wsID},
-							{"name": "MULTICA_DAEMON_DEVICE_NAME", "value": displayName},
-							{"name": "MULTICA_DAEMON_ID", "value": nodeName},
-							{"name": "MULTICA_DAEMON_AUTO_UPDATE", "value": "false"},
-							{"name": "MULTICA_AUTH_TOKEN", "valueFrom": map[string]any{
-								"secretKeyRef": map[string]any{
-									"name": secretName(nodeName),
-									"key":  "token",
-								},
-							}},
-						},
-						"resources": map[string]any{
-							"requests": map[string]string{"cpu": res.CPU, "memory": res.Memory},
-							"limits":   map[string]string{"cpu": res.CPU, "memory": res.Memory},
-						},
-					}},
-				},
+				"spec":     podSpec,
 			},
+			"volumeClaimTemplates": []map[string]any{{
+				"metadata": map[string]any{"name": "workspace", "labels": labels},
+				"spec":     pvcSpec,
+			}},
 		},
 	}
-	status, err := f.kubePost(ctx, "/apis/apps/v1/namespaces/"+namespace+"/deployments", body)
+	status, err := f.kubePost(ctx, "/apis/apps/v1/namespaces/"+namespace+"/statefulsets", body)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusCreated {
-		return fmt.Errorf("kubefleet: create deployment %s: unexpected status %d", nodeName, status)
+		return fmt.Errorf("kubefleet: create statefulset %s: unexpected status %d", nodeName, status)
 	}
 	return nil
 }
 
-func (f *Fleet) kubeGetDeployments(ctx context.Context, namespace string) (deploymentList, int, error) {
-	path := "/apis/apps/v1/namespaces/" + namespace + "/deployments?labelSelector=" + managedByLabel + "%3D" + managedByValue
+func (f *Fleet) kubeGetStatefulSets(ctx context.Context, namespace string) (statefulSetList, int, error) {
+	path := "/apis/apps/v1/namespaces/" + namespace + "/statefulsets?labelSelector=" + managedByLabel + "%3D" + managedByValue
 	req, err := f.kubeRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return deploymentList{}, 0, err
+		return statefulSetList{}, 0, err
 	}
 	resp, err := f.http.Do(req)
 	if err != nil {
-		return deploymentList{}, 0, fmt.Errorf("kubefleet: list deployments: %w", err)
+		return statefulSetList{}, 0, fmt.Errorf("kubefleet: list statefulsets: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return deploymentList{}, http.StatusNotFound, nil
+		return statefulSetList{}, http.StatusNotFound, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return deploymentList{}, 0, fmt.Errorf("kubefleet: list deployments: unexpected status %d", resp.StatusCode)
+		return statefulSetList{}, 0, fmt.Errorf("kubefleet: list statefulsets: unexpected status %d", resp.StatusCode)
 	}
-	var list deploymentList
+	var list statefulSetList
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
-		return deploymentList{}, 0, fmt.Errorf("kubefleet: decode deployment list: %w", err)
+		return statefulSetList{}, 0, fmt.Errorf("kubefleet: decode statefulset list: %w", err)
 	}
 	return list, http.StatusOK, nil
 }
@@ -585,13 +737,7 @@ func (f *Fleet) kubeDelete(ctx context.Context, path string) error {
 }
 
 func (f *Fleet) kubeRequest(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
-	var reader *strings.Reader
-	if body != nil {
-		reader = strings.NewReader(string(body))
-	} else {
-		reader = strings.NewReader("")
-	}
-	req, err := http.NewRequestWithContext(ctx, method, f.cfg.KubeAPIURL+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, f.cfg.KubeAPIURL+path, strings.NewReader(string(body)))
 	if err != nil {
 		return nil, err
 	}
