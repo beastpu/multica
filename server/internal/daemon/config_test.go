@@ -974,3 +974,36 @@ func agentKeys(m map[string]AgentEntry) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// Cloud runtime pods set MULTICA_RUNTIME_MODE=cloud so their registrations
+// land as runtime_mode=cloud / visibility=public rows. Anything but
+// local/cloud is a deployment bug — fail startup instead of degrading.
+func TestLoadConfig_RuntimeMode(t *testing.T) {
+	stageFakeAgent(t)
+
+	cfg, err := LoadConfig(Overrides{ServerURL: "http://localhost:8080", WorkspacesRoot: t.TempDir()})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.RuntimeMode != "local" {
+		t.Fatalf("RuntimeMode default = %q, want local", cfg.RuntimeMode)
+	}
+
+	t.Setenv("MULTICA_RUNTIME_MODE", "cloud")
+	t.Setenv("MULTICA_WATCH_WORKSPACE_IDS", "ws-a, ws-b,")
+	cfg, err = LoadConfig(Overrides{ServerURL: "http://localhost:8080", WorkspacesRoot: t.TempDir()})
+	if err != nil {
+		t.Fatalf("LoadConfig cloud: %v", err)
+	}
+	if cfg.RuntimeMode != "cloud" {
+		t.Fatalf("RuntimeMode = %q, want cloud", cfg.RuntimeMode)
+	}
+	if len(cfg.WatchWorkspaceIDs) != 2 || cfg.WatchWorkspaceIDs[0] != "ws-a" || cfg.WatchWorkspaceIDs[1] != "ws-b" {
+		t.Fatalf("WatchWorkspaceIDs = %v, want [ws-a ws-b]", cfg.WatchWorkspaceIDs)
+	}
+
+	t.Setenv("MULTICA_RUNTIME_MODE", "hybrid")
+	if _, err := LoadConfig(Overrides{ServerURL: "http://localhost:8080", WorkspacesRoot: t.TempDir()}); err == nil {
+		t.Fatal("LoadConfig accepted MULTICA_RUNTIME_MODE=hybrid, want error")
+	}
+}

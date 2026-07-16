@@ -31,6 +31,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -158,6 +159,11 @@ type Handler struct {
 	WebhookRateLimiter   WebhookRateLimiter
 	WebhookIPRateLimiter WebhookRateLimiter
 	CloudRuntime         cloudRuntimeProxy
+	// CloudRuntimeEnvBox seals/opens the per-workspace cloud runtime env
+	// (LLM proxy keys injected into kubefleet node pods). Nil when
+	// MULTICA_CLOUD_RUNTIME_SECRET_KEY is unset — PUT then returns 503 and
+	// GET reports not-configured. Wired in cmd/server/router.go.
+	CloudRuntimeEnvBox *secretbox.Box
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
 	// handlers return 503 in that case so a misconfigured self-host

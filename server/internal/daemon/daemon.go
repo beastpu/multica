@@ -843,7 +843,14 @@ func (d *Daemon) deregisterRuntimes() {
 }
 
 // resolveAuth loads the auth token from the CLI config for the active profile.
+// MULTICA_AUTH_TOKEN overrides the config file — fleet-provisioned pods have
+// no interactive `multica login` step and inject their node PAT via env.
 func (d *Daemon) resolveAuth() error {
+	if token := strings.TrimSpace(os.Getenv("MULTICA_AUTH_TOKEN")); token != "" {
+		d.client.SetToken(token)
+		d.logger.Info("authenticated via MULTICA_AUTH_TOKEN")
+		return nil
+	}
 	cfg, err := cli.LoadCLIConfigForProfile(d.cfg.Profile)
 	if err != nil {
 		return fmt.Errorf("load CLI config: %w", err)
@@ -981,6 +988,7 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 		"device_name":       d.cfg.DeviceName,
 		"cli_version":       d.cfg.CLIVersion,
 		"launched_by":       d.cfg.LaunchedBy,
+		"runtime_mode":      d.cfg.RuntimeMode,
 		"runtimes":          runtimes,
 		"failed_profiles":   failedProfiles,
 	}
@@ -1753,6 +1761,20 @@ func (d *Daemon) syncWorkspacesFromAPI(ctx context.Context) error {
 	apiIDs := make(map[string]string, len(workspaces)) // id -> name
 	for _, ws := range workspaces {
 		apiIDs[ws.ID] = ws.Name
+	}
+	// Fleet-provisioned nodes are pinned to their workspace: drop everything
+	// outside the allowlist so a node never registers runtimes in the owner's
+	// other workspaces.
+	if len(d.cfg.WatchWorkspaceIDs) > 0 {
+		allowed := make(map[string]bool, len(d.cfg.WatchWorkspaceIDs))
+		for _, id := range d.cfg.WatchWorkspaceIDs {
+			allowed[id] = true
+		}
+		for id := range apiIDs {
+			if !allowed[id] {
+				delete(apiIDs, id)
+			}
+		}
 	}
 
 	d.mu.Lock()

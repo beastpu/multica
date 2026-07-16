@@ -103,6 +103,16 @@ type Config struct {
 	CodexArgs                      []string
 	CodebuddyArgs                  []string
 
+	// RuntimeMode is reported verbatim in every register call: "local"
+	// (default) or "cloud" for fleet-provisioned nodes (MULTICA_RUNTIME_MODE).
+	// The server inserts cloud runtimes with visibility "public".
+	RuntimeMode string
+	// WatchWorkspaceIDs, when non-empty, restricts the workspace sync loop to
+	// these workspace IDs (MULTICA_WATCH_WORKSPACE_IDS, comma-separated).
+	// A kubefleet pod sets this to its own workspace so a node provisioned
+	// for one workspace never registers runtimes in the owner's others.
+	WatchWorkspaceIDs []string
+
 	// ProfileCommandOverrides maps a custom runtime profile_id -> the absolute
 	// executable path to use for that profile on THIS machine (MUL-3284).
 	// Sourced from the local CLI config (cli.CLIConfig.ProfileCommandOverrides),
@@ -505,6 +515,20 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		autoUpdateInterval = overrides.AutoUpdateCheckInterval
 	}
 
+	runtimeMode := strings.TrimSpace(os.Getenv("MULTICA_RUNTIME_MODE"))
+	if runtimeMode == "" {
+		runtimeMode = "local"
+	}
+	if runtimeMode != "local" && runtimeMode != "cloud" {
+		return Config{}, fmt.Errorf("MULTICA_RUNTIME_MODE must be \"local\" or \"cloud\", got %q", runtimeMode)
+	}
+	var watchWorkspaceIDs []string
+	for _, id := range strings.Split(os.Getenv("MULTICA_WATCH_WORKSPACE_IDS"), ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			watchWorkspaceIDs = append(watchWorkspaceIDs, id)
+		}
+	}
+
 	return Config{
 		ServerBaseURL:                  serverBaseURL,
 		DaemonID:                       daemonID,
@@ -534,6 +558,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		ClaudeArgs:                     claudeArgs,
 		CodexArgs:                      codexArgs,
 		CodebuddyArgs:                  codebuddyArgs,
+		RuntimeMode:                    runtimeMode,
+		WatchWorkspaceIDs:              watchWorkspaceIDs,
 		ProfileCommandOverrides:        profileCommandOverrides,
 	}, nil
 }
