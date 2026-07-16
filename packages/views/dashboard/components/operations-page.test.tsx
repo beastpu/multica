@@ -653,13 +653,19 @@ describe("OperationsPage", () => {
     expect(REFRESH_FIXES).toHaveBeenCalledTimes(2);
   });
 
-  it("renders the four operator KPI cards", () => {
+  it("renders coverage, pending judgement, quality, and automatic repair cards", () => {
     renderWithI18n(<OperationsPage />);
 
     expect(screen.getByText("AI coverage")).toBeTruthy();
+    expect(screen.getByText("AI pending judgement")).toBeTruthy();
     expect(screen.getByText("AI repair quality")).toBeTruthy();
     expect(screen.getByText("AI automatic repair rate")).toBeTruthy();
-    expect(screen.getByText("AI-assisted repair rate")).toBeTruthy();
+    expect(screen.queryByText("AI-assisted repair rate")).toBeNull();
+    expect(
+      screen.getByText(
+        "AI-handled tickets without an explicit quality verdict",
+      ),
+    ).toBeTruthy();
     expect(
       screen.getByText("AI-marked passes / AI-assessed repairable tickets"),
     ).toBeTruthy();
@@ -670,21 +676,21 @@ describe("OperationsPage", () => {
     ).toBeTruthy();
     expect(screen.getByText("2 / 6")).toBeTruthy();
     expect(screen.getAllByText("1 / 2")).toHaveLength(2);
-    expect(screen.getByText("0 / 2")).toBeTruthy();
+    expect(screen.getByText("2 - 2")).toBeTruthy();
     expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
   });
 
-  it("keeps quality, automatic, and assisted rate cards informational", () => {
+  it("keeps pending judgement, quality, and automatic cards informational", () => {
     renderWithI18n(<OperationsPage />);
 
+    expect(
+      screen.getByText("AI pending judgement").closest("button"),
+    ).toBeNull();
     expect(
       screen.getByText("AI repair quality").closest("button"),
     ).toBeNull();
     expect(
       screen.getByText("AI automatic repair rate").closest("button"),
-    ).toBeNull();
-    expect(
-      screen.getByText("AI-assisted repair rate").closest("button"),
     ).toBeNull();
   });
 

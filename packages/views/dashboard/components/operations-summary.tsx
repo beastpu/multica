@@ -9,9 +9,9 @@ import type {
 } from "../operations-metrics";
 import type { OperationsCardKey } from "./operations-drawers";
 
-// Four operator-facing KPIs. Contribution measures pickup coverage over the
-// eligible reporting pool; quality, automatic, and assisted use their defined
-// AI assessment denominators so the outcome cards reconcile.
+// Four operator-facing KPIs. Coverage measures pickup over the eligible pool;
+// pending judgement exposes the gap between handled and explicitly judged
+// work; quality and automatic repair share the judged denominator.
 
 function formatPercent(rate: OperationsRate): string {
   if (rate.value == null) return "—";
@@ -75,6 +75,39 @@ function RateCard({
   return (
     <div className={`flex min-w-0 flex-col gap-1.5 p-3.5 ${className}`}>
       {inner}
+    </div>
+  );
+}
+
+function CountCard({
+  label,
+  hint,
+  count,
+  handledCount,
+  judgedCount,
+  className = "",
+}: {
+  label: string;
+  hint: string;
+  count: number;
+  handledCount: number;
+  judgedCount: number;
+  className?: string;
+}) {
+  return (
+    <div className={`flex min-w-0 flex-col gap-1.5 p-3.5 ${className}`}>
+      <div className="text-sm font-semibold text-foreground">{label}</div>
+      <div className="text-xs leading-relaxed text-muted-foreground">
+        {hint}
+      </div>
+      <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="text-3xl font-semibold leading-none tabular-nums">
+          {count}
+        </span>
+        <span className="text-sm text-muted-foreground tabular-nums">
+          {handledCount} - {judgedCount}
+        </span>
+      </div>
     </div>
   );
 }
@@ -210,22 +243,24 @@ export function OperationsSummary({
           clickHint={t(($) => $.operations.drawer.card_hint)}
           className="border-b sm:border-r xl:border-b-0"
         />
+        <CountCard
+          label={t(($) => $.operations.summary.pending_quality)}
+          hint={t(($) => $.operations.summary.pending_quality_hint)}
+          count={kpis.pendingQualityCount}
+          handledCount={kpis.contributionRate.numerator}
+          judgedCount={kpis.judgedCount}
+          className="border-b xl:border-b-0 xl:border-r"
+        />
         <RateCard
           label={t(($) => $.operations.summary.quality_rate)}
           hint={t(($) => $.operations.summary.quality_rate_hint)}
           rate={kpis.qualityRate}
-          className="border-b xl:border-b-0 xl:border-r"
+          className="border-b sm:border-b-0 sm:border-r"
         />
         <RateCard
           label={t(($) => $.operations.summary.automatic_rate)}
           hint={t(($) => $.operations.summary.automatic_rate_hint)}
           rate={kpis.automaticRate}
-          className="border-b sm:border-b-0 sm:border-r"
-        />
-        <RateCard
-          label={t(($) => $.operations.summary.assisted_rate)}
-          hint={t(($) => $.operations.summary.assisted_rate_hint)}
-          rate={kpis.assistedRate}
         />
       </div>
       <CompositionBar

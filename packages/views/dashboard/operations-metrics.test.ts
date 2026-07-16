@@ -319,6 +319,10 @@ describe("computeOperationsKpis", () => {
     // Outcome cards only use explicit judgements. An "unknown" assessment is
     // visible in the quality drawer but stays outside the denominator.
     expect(kpis.judgedCount).toBe(2);
+    expect(kpis.pendingQualityCount).toBe(1);
+    expect(kpis.pendingQualityCount).toBe(
+      kpis.contributionRate.numerator - kpis.judgedCount,
+    );
     expect(kpis.judgedCount).toBeLessThanOrEqual(
       kpis.contributionRate.numerator,
     );
@@ -508,6 +512,7 @@ describe("computeOperationsKpis", () => {
       participatedButUnknown,
     ]);
     expect(kpis.judgedCount).toBe(1);
+    expect(kpis.pendingQualityCount).toBe(1);
     expect(kpis.qualityRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
     expect(kpis.automaticRate).toEqual({
       value: 1,
@@ -618,6 +623,7 @@ describe("computeOperationsKpis", () => {
     expect(kpis.qualityRate.value).toBeNull();
     expect(kpis.automaticRate.value).toBeNull();
     expect(kpis.assistedRate.value).toBeNull();
+    expect(kpis.pendingQualityCount).toBe(0);
     expect(kpis.unassessed).toBe(0);
     expect(kpis.missingExternalCl).toBe(0);
   });

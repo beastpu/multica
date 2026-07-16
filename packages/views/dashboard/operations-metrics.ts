@@ -473,6 +473,8 @@ export interface OperationsKpis {
   // rows where AI participated and produced an explicit quality judgement.
   // Unknown/unrecognised results stay visible in the drawer but are excluded.
   judgedCount: number;
+  // AI-handled rows that do not yet have an explicit quality judgement.
+  pendingQualityCount: number;
   // AI-marked pass / all explicitly judged AI-handled plans.
   qualityRate: OperationsRate;
   automaticRate: OperationsRate;
@@ -550,6 +552,7 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
     composition: { directDelivered, assisted, unconverted, notParticipated },
     contributionRate: rate(handled, externalDone),
     judgedCount: judged,
+    pendingQualityCount: handled - judged,
     qualityRate: rate(passed, judged),
     automaticRate: rate(automatic, judged),
     assistedRate: rate(assistedPassed, judged),
