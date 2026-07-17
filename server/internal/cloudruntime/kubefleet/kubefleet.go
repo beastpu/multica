@@ -14,14 +14,14 @@
 // runtime_mode=cloud, and is pinned to its workspace via
 // MULTICA_WATCH_WORKSPACE_IDS.
 //
-// The container contract follows the ops runtime image (gitlab
-// devops/cloud-runtime, Dockerfile.multica): ENTRYPOINT multica-entrypoint
-// reads MULTICA_API_TOKEN + MULTICA_WORKSPACE (HOME becomes
-// /workspace/$MULTICA_WORKSPACE), runs `multica setup self-host` +
-// `multica login --token`, then execs `multica daemon start --foreground`.
-// kubefleet therefore sets env only and never passes container args.
-// MULTICA_AUTH_TOKEN carries the same token for images that run the daemon
-// directly without that entrypoint.
+// kubefleet is decoupled from the image internals: it injects only
+// infrastructure env (server URL, token, workspace pinning) and lets the
+// runtime image's non-interactive entrypoint (gitlab devops/cloud-runtime,
+// multica-entrypoint) do the rest — derive HOME, write the codex proxy
+// config from env, and start the daemon, which authenticates from
+// MULTICA_AUTH_TOKEN without any interactive setup/login. All LLM config
+// (base URLs, models, proxy keys) is workspace-level and reaches the pod via
+// the per-namespace env secret, never from kubefleet.
 //
 // v1 implements exactly what the CloudRuntimeDialog uses: list, create,
 // delete. start/stop/reboot/exec return 501.
@@ -40,7 +40,6 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/hex"
 
 	"github.com/jackc/pgx/v5"
@@ -122,6 +121,11 @@ type Config struct {
 	KubeAPIURL string
 	TokenFile  string
 	CAFile     string
+	// Kubeconfig, when set, points the whole deployment at ONE cluster via a
+	// kubeconfig (file path or inline YAML) instead of the in-cluster
+	// service account. Its current-context supplies the API URL, CA trust and
+	// auth (bearer token or client cert). Unset = in-cluster.
+	Kubeconfig string
 	// NamespacePrefix prefixes the per-workspace namespace name
 	// (default "mrt-"; namespace = prefix + workspace UUID without dashes).
 	NamespacePrefix string
@@ -146,18 +150,6 @@ type Config struct {
 	// MaxNodesPerWorkspace caps nodes per workspace (default 3). Enforced
 	// both app-side (friendly 409) and by a namespace ResourceQuota.
 	MaxNodesPerWorkspace int
-	// CodexBaseURL, when set, makes the node write a ~/.codex/config.toml on
-	// startup pointing codex at an LLM proxy. codex reads the base URL only
-	// from config.toml (no env override exists), and the daemon copies that
-	// file verbatim per task. The proxy token still comes from OPENAI_API_KEY
-	// (workspace env card / ExtraEnv). Empty disables codex proxy config.
-	CodexBaseURL string
-	// CodexModel is the default model written into the codex config (e.g.
-	// "gpt-5.5"). Empty omits the model line.
-	CodexModel string
-	// CodexWireAPI is the codex provider wire protocol ("responses" or
-	// "chat"). Default "responses". Only used when CodexBaseURL is set.
-	CodexWireAPI string
 	// HTTPClient overrides the Kubernetes API client (tests). When nil a
 	// client is built from CAFile.
 	HTTPClient *http.Client
@@ -167,6 +159,10 @@ type Fleet struct {
 	cfg     Config
 	queries *db.Queries
 	http    *http.Client
+	// bearerToken, when set (from a kubeconfig), is used for every request
+	// instead of reading cfg.TokenFile. Empty means in-cluster (read the
+	// rotating service-account token file) or client-cert auth.
+	bearerToken string
 }
 
 // New validates cfg, applies defaults and returns a ready Fleet.
@@ -200,14 +196,26 @@ func New(cfg Config, queries *db.Queries) (*Fleet, error) {
 		cfg.MaxNodesPerWorkspace = defaultMaxNodesPerWorkspace
 	}
 	client := cfg.HTTPClient
-	if client == nil {
+	bearerToken := ""
+	switch {
+	case client != nil:
+		// Test override.
+	case strings.TrimSpace(cfg.Kubeconfig) != "":
+		kube, err := loadKubeconfig(cfg.Kubeconfig)
+		if err != nil {
+			return nil, err
+		}
+		cfg.KubeAPIURL = kube.apiURL
+		client = kube.http
+		bearerToken = kube.bearerToken
+	default:
 		var err error
 		client, err = inClusterHTTPClient(cfg.CAFile)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return &Fleet{cfg: cfg, queries: queries, http: client}, nil
+	return &Fleet{cfg: cfg, queries: queries, http: client, bearerToken: bearerToken}, nil
 }
 
 // ParseExtraEnv parses the MULTICA_CLOUD_RUNTIME_EXTRA_ENV format:
@@ -272,7 +280,56 @@ func (f *Fleet) workspaceScope(ctx context.Context) (wsID, namespace string, mem
 		r, _ := jsonResponse(http.StatusBadRequest, map[string]string{"error": "workspace context is required"})
 		return "", "", db.Member{}, r
 	}
-	return wsID, f.cfg.NamespacePrefix + strings.ReplaceAll(wsID, "-", ""), m, nil
+	// Namespace embeds the workspace slug for readability
+	// (mrt-<slug>-<uuid8>). The uuid suffix keeps it collision-free even if
+	// two slugs sanitize to the same string; a workspace rename orphans the
+	// old namespace (rare) — the multica.io/workspace-id label on it makes
+	// manual cleanup easy. Slug fetch failure degrades to the uuid-only name.
+	slug := ""
+	if wsUUID, err := util.ParseUUID(wsID); err == nil {
+		if ws, werr := f.queries.GetWorkspace(ctx, wsUUID); werr == nil {
+			slug = ws.Slug
+		}
+	}
+	return wsID, f.namespaceName(slug, wsID), m, nil
+}
+
+// namespaceName builds a DNS-safe, readable namespace: prefix + sanitized slug
+// + first 8 hex of the workspace UUID. Total stays well under the 63-char
+// label limit.
+func (f *Fleet) namespaceName(slug, wsID string) string {
+	uuid8 := strings.ReplaceAll(wsID, "-", "")
+	if len(uuid8) > 8 {
+		uuid8 = uuid8[:8]
+	}
+	clean := sanitizeDNSLabel(slug)
+	if clean == "" {
+		return f.cfg.NamespacePrefix + uuid8
+	}
+	if len(clean) > 40 {
+		clean = strings.Trim(clean[:40], "-")
+	}
+	return f.cfg.NamespacePrefix + clean + "-" + uuid8
+}
+
+// sanitizeDNSLabel lowercases and reduces s to [a-z0-9-], collapsing runs of
+// other characters to a single hyphen and trimming leading/trailing hyphens.
+func sanitizeDNSLabel(s string) string {
+	var b strings.Builder
+	prevHyphen := false
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			prevHyphen = false
+		default:
+			if !prevHyphen && b.Len() > 0 {
+				b.WriteByte('-')
+				prevHyphen = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func isWorkspaceAdmin(m db.Member) bool {
@@ -463,6 +520,17 @@ func (f *Fleet) deleteNode(ctx context.Context, req cloudruntime.Request) (*clou
 			NodeName:    nodeName,
 		}); derr != nil {
 			return nil, fmt.Errorf("revoke cloud node tokens: %w", derr)
+		}
+		// Cascade: drop the offline cloud runtime rows this node's daemon
+		// registered (daemon_id = node name) so they don't linger in the UI
+		// as unreachable orphans. Runtimes with an agent still bound are left
+		// alone (the query skips them) — deleting a node must never silently
+		// archive someone's agent.
+		if _, derr := f.queries.DeleteCloudRuntimesByNode(ctx, db.DeleteCloudRuntimesByNodeParams{
+			WorkspaceID: wsUUID,
+			DaemonID:    pgtype.Text{String: nodeName, Valid: true},
+		}); derr != nil {
+			return nil, fmt.Errorf("delete cloud runtimes for node: %w", derr)
 		}
 	}
 	return jsonResponse(http.StatusOK, map[string]string{"status": "deleted", "id": nodeName})
@@ -727,29 +795,25 @@ func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, disp
 	tokenRef := map[string]any{
 		"secretKeyRef": map[string]any{"name": secretName(nodeName), "key": "token"},
 	}
+	// Infrastructure env only. Everything the runtime image needs to set up
+	// itself — HOME, agent PATH, codex proxy config, IS_SANDBOX — is the
+	// image entrypoint's job (kubefleet is decoupled from image internals).
+	// All LLM config (base URLs, models, proxy keys) is workspace-level and
+	// arrives via the envFrom workspace secret below, not from here.
 	env := []map[string]any{
 		{"name": "MULTICA_SERVER_URL", "value": f.cfg.ServerURL},
 		{"name": "MULTICA_APP_URL", "value": f.cfg.ServerURL},
-		// HOME sits on the mounted /workspace PVC so agent CLI state, repo
-		// clones and the daemon's workspaces root all persist across pod
-		// restarts. We run the daemon directly (see container command), so
-		// the ops entrypoint that used to set this no longer runs.
-		{"name": "HOME", "value": "/workspace/" + wsID},
-		// MULTICA_WORKSPACE names the persistent HOME dir
-		// (/workspace/<id>) — kept for parity with the ops image env.
+		// Names the persistent HOME dir (/workspace/<wsid>); the entrypoint
+		// derives HOME from it.
 		{"name": "MULTICA_WORKSPACE", "value": wsID},
 		{"name": "MULTICA_RUNTIME_MODE", "value": "cloud"},
 		{"name": "MULTICA_WATCH_WORKSPACE_IDS", "value": wsID},
 		{"name": "MULTICA_DAEMON_DEVICE_NAME", "value": displayName},
 		{"name": "MULTICA_DAEMON_ID", "value": nodeName},
 		{"name": "MULTICA_DAEMON_AUTO_UPDATE", "value": "false"},
-		// Node pods run as root; Claude Code refuses
-		// --dangerously-skip-permissions under root unless IS_SANDBOX marks
-		// the environment as sandboxed. A k8s pod is that sandbox.
-		{"name": "IS_SANDBOX", "value": "1"},
-		// Same node PAT under both names: MULTICA_API_TOKEN feeds the ops
-		// image entrypoint's `multica login --token`; MULTICA_AUTH_TOKEN
-		// feeds the daemon directly on entrypoint-less images.
+		// The node's mcn_ PAT. MULTICA_AUTH_TOKEN is what the daemon reads
+		// for non-interactive auth; MULTICA_API_TOKEN is the entrypoint's
+		// fallback name.
 		{"name": "MULTICA_API_TOKEN", "valueFrom": tokenRef},
 		{"name": "MULTICA_AUTH_TOKEN", "valueFrom": tokenRef},
 	}
@@ -766,15 +830,11 @@ func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, disp
 		"containers": []map[string]any{{
 			"name":  "runtime",
 			"image": f.cfg.Image,
-			// Run the daemon directly, bypassing the ops image's
-			// multica-entrypoint. That entrypoint runs `multica setup
-			// self-host`, which in current CLI versions performs an
-			// interactive browser login and hangs in a headless pod. The
-			// daemon authenticates non-interactively from MULTICA_AUTH_TOKEN
-			// (the node mcn_ PAT) and reads the server URL from
-			// MULTICA_SERVER_URL, so no setup/login step is needed.
-			"command": f.nodeCommand(),
-			"env":     env,
+			// No command override: the runtime image's entrypoint is
+			// non-interactive and self-contained (writes codex config,
+			// sets HOME, starts the daemon which authenticates from
+			// MULTICA_AUTH_TOKEN). kubefleet only supplies env.
+			"env": env,
 			// Workspace-scoped env (per-workspace LLM proxy keys) rides in
 			// a shared namespace secret synced from the admin settings API.
 			// optional: nodes still start when nothing is configured.
@@ -848,49 +908,6 @@ func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, disp
 		return fmt.Errorf("kubefleet: create statefulset %s: unexpected status %d", nodeName, status)
 	}
 	return nil
-}
-
-// nodeCommand returns the container command. The default runs the daemon
-// directly (bypassing the ops entrypoint's interactive setup). When a codex
-// LLM proxy is configured, it first writes ~/.codex/config.toml — codex reads
-// its base URL only from that file (no env override), and the daemon copies
-// it verbatim per task. The config is base64-embedded so proxy URLs/models
-// can't break the shell command.
-func (f *Fleet) nodeCommand() []string {
-	cfg := f.codexConfigTOML()
-	if cfg == "" {
-		return []string{"multica", "daemon", "start", "--foreground"}
-	}
-	b64 := base64.StdEncoding.EncodeToString([]byte(cfg))
-	script := `set -e
-mkdir -p "$HOME/.codex"
-printf %s '` + b64 + `' | base64 -d > "$HOME/.codex/config.toml"
-exec multica daemon start --foreground`
-	return []string{"bash", "-lc", script}
-}
-
-// codexConfigTOML renders the codex proxy provider config, or "" when no
-// proxy base URL is configured.
-func (f *Fleet) codexConfigTOML() string {
-	base := strings.TrimSpace(f.cfg.CodexBaseURL)
-	if base == "" {
-		return ""
-	}
-	wireAPI := strings.TrimSpace(f.cfg.CodexWireAPI)
-	if wireAPI == "" {
-		wireAPI = "responses"
-	}
-	var b strings.Builder
-	if model := strings.TrimSpace(f.cfg.CodexModel); model != "" {
-		fmt.Fprintf(&b, "model = %q\n", model)
-	}
-	b.WriteString("model_provider = \"proxy\"\n\n")
-	b.WriteString("[model_providers.proxy]\n")
-	b.WriteString("name = \"LLM proxy\"\n")
-	fmt.Fprintf(&b, "base_url = %q\n", base)
-	b.WriteString("env_key = \"OPENAI_API_KEY\"\n")
-	fmt.Fprintf(&b, "wire_api = %q\n", wireAPI)
-	return b.String()
 }
 
 func (f *Fleet) kubeGetStatefulSets(ctx context.Context, namespace string) (statefulSetList, int, error) {
@@ -977,11 +994,18 @@ func (f *Fleet) kubeRequest(ctx context.Context, method, path string, body []byt
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	// The service-account token rotates on disk (BoundServiceAccountToken);
-	// reading per request keeps us current without a refresh loop. Missing
-	// file is tolerated for plain-HTTP test servers.
-	if raw, err := os.ReadFile(f.cfg.TokenFile); err == nil {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(raw)))
+	switch {
+	case f.bearerToken != "":
+		// Static token from a kubeconfig.
+		req.Header.Set("Authorization", "Bearer "+f.bearerToken)
+	default:
+		// In-cluster: the service-account token rotates on disk
+		// (BoundServiceAccountToken); reading per request keeps us current
+		// without a refresh loop. Missing file is tolerated for plain-HTTP
+		// test servers and client-cert kubeconfigs.
+		if raw, err := os.ReadFile(f.cfg.TokenFile); err == nil {
+			req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(raw)))
+		}
 	}
 	return req, nil
 }

@@ -684,6 +684,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		fleet, err := kubefleet.New(kubefleet.Config{
 			Image:                      os.Getenv("MULTICA_CLOUD_RUNTIME_IMAGE"),
 			ServerURL:                  serverURL,
+			KubeAPIURL:                 os.Getenv("MULTICA_CLOUD_RUNTIME_KUBE_API_URL"),
+			Kubeconfig:                 os.Getenv("MULTICA_CLOUD_RUNTIME_KUBECONFIG"),
 			NamespacePrefix:            os.Getenv("MULTICA_CLOUD_RUNTIME_NAMESPACE_PREFIX"),
 			NodeTokenTTL:               envDuration("MULTICA_CLOUD_RUNTIME_NODE_TOKEN_TTL", 0),
 			StorageClass:               os.Getenv("MULTICA_CLOUD_RUNTIME_STORAGE_CLASS"),
@@ -691,9 +693,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			ExtraEnv:                   extraEnv,
 			EnvBox:                     h.CloudRuntimeEnvBox,
 			MaxNodesPerWorkspace:       maxNodes,
-			CodexBaseURL:               os.Getenv("MULTICA_CLOUD_RUNTIME_CODEX_BASE_URL"),
-			CodexModel:                 os.Getenv("MULTICA_CLOUD_RUNTIME_CODEX_MODEL"),
-			CodexWireAPI:               os.Getenv("MULTICA_CLOUD_RUNTIME_CODEX_WIRE_API"),
 		}, queries)
 		if err != nil {
 			slog.Error("cloud runtime provider k8s configured but unusable", "error", err)

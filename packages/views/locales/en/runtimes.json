@@ -262,7 +262,8 @@
       "toast_cleared": "Keys cleared",
       "invalid_name": "Names must be UPPER_SNAKE_CASE",
       "empty": "Add at least one variable with a name and value"
-    }
+    },
+    "delete_confirm_action": "Confirm delete"
   },
   "update": {
     "cli_version_label": "CLI Version:",

@@ -142,6 +142,45 @@ func (q *Queries) DeleteArchivedAgentsByRuntime(ctx context.Context, runtimeID p
 	return err
 }
 
+const deleteCloudRuntimesByNode = `-- name: DeleteCloudRuntimesByNode :many
+DELETE FROM agent_runtime
+WHERE agent_runtime.workspace_id = $1
+  AND agent_runtime.daemon_id = $2
+  AND agent_runtime.runtime_mode = 'cloud'
+  AND agent_runtime.id NOT IN (SELECT DISTINCT agent.runtime_id FROM agent)
+RETURNING agent_runtime.id
+`
+
+type DeleteCloudRuntimesByNodeParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	DaemonID    pgtype.Text `json:"daemon_id"`
+}
+
+// Cascade cleanup when a kubefleet node is deleted: remove the cloud runtime
+// rows the node's daemon registered (daemon_id = node name) so no offline
+// orphans linger in the UI. Skips any runtime that still has an agent bound
+// (agent.runtime_id is ON DELETE RESTRICT) — those stay until the agent is
+// moved, so deleting a node never silently archives someone's agent.
+func (q *Queries) DeleteCloudRuntimesByNode(ctx context.Context, arg DeleteCloudRuntimesByNodeParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, deleteCloudRuntimesByNode, arg.WorkspaceID, arg.DaemonID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteSquadsByArchivedAgentsOnRuntime = `-- name: DeleteSquadsByArchivedAgentsOnRuntime :exec
 DELETE FROM squad
 WHERE leader_id IN (
