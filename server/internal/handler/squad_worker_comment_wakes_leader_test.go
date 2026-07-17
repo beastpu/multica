@@ -52,8 +52,8 @@ func TestCreateComment_WorkerAgentCommentWakesSquadLeader_MUL4015(t *testing.T) 
 	}
 	var workerTaskID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, is_leader_task, originator_user_id)
-		VALUES ($1, $2, $3, 'running', FALSE, $4)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, is_leader_task, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'running', FALSE, $4, $4)
 		RETURNING id
 	`, fx.OtherID, workerRuntimeID, issueID, testUserID).Scan(&workerTaskID); err != nil {
 		t.Fatalf("seed worker task: %v", err)
@@ -67,8 +67,8 @@ func TestCreateComment_WorkerAgentCommentWakesSquadLeader_MUL4015(t *testing.T) 
 		t.Fatalf("load leader runtime: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, is_leader_task, originator_user_id)
-		VALUES ($1, $2, $3, 'completed', TRUE, $4)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, is_leader_task, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'completed', TRUE, $4, $4)
 	`, fx.LeaderID, leaderRuntimeID, issueID, testUserID); err != nil {
 		t.Fatalf("seed leader task: %v", err)
 	}
@@ -127,8 +127,8 @@ func TestCreateComment_WorkerAgentCommentDoesNotWakeLeader_WhenLeaderTaskPending
 	}
 	var workerTaskID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, is_leader_task, originator_user_id)
-		VALUES ($1, $2, $3, 'running', FALSE, $4)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, is_leader_task, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'running', FALSE, $4, $4)
 		RETURNING id
 	`, fx.OtherID, workerRuntimeID, issueID, testUserID).Scan(&workerTaskID); err != nil {
 		t.Fatalf("seed worker task: %v", err)
@@ -142,8 +142,8 @@ func TestCreateComment_WorkerAgentCommentDoesNotWakeLeader_WhenLeaderTaskPending
 		t.Fatalf("load leader runtime: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, is_leader_task, originator_user_id)
-		VALUES ($1, $2, $3, 'queued', TRUE, $4)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, is_leader_task, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'queued', TRUE, $4, $4)
 	`, fx.LeaderID, leaderRuntimeID, issueID, testUserID); err != nil {
 		t.Fatalf("seed queued leader task: %v", err)
 	}
@@ -272,8 +272,8 @@ func TestCreateComment_WorkerAgentCommentWakesPrivateSquadLeader_MUL4015(t *test
 	}
 	var leaderTaskID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, is_leader_task, originator_user_id, squad_id)
-		VALUES ($1, $2, $3, 'running', TRUE, $4, $5)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, is_leader_task, originator_user_id, accountable_user_id, squad_id)
+		VALUES ($1, $2, $3, 'running', TRUE, $4, $4, $5)
 		RETURNING id
 	`, leaderID, leaderRuntimeID, issueID, testUserID, squadID).Scan(&leaderTaskID); err != nil {
 		t.Fatalf("seed leader task: %v", err)
@@ -438,18 +438,22 @@ func TestAutopilotSquadLeaderTaskCarriesOriginatorForPrivateWorkerMention(t *tes
 
 	var leaderTaskID string
 	var leaderOriginator pgtype.UUID
+	var leaderAccountable pgtype.UUID
 	if err := testPool.QueryRow(ctx, `
-		SELECT id, originator_user_id
+		SELECT id, originator_user_id, accountable_user_id
 		FROM agent_task_queue
 		WHERE issue_id = $1 AND agent_id = $2 AND is_leader_task = TRUE
 		ORDER BY created_at DESC
 		LIMIT 1
-	`, issueID, leaderID).Scan(&leaderTaskID, &leaderOriginator); err != nil {
+	`, issueID, leaderID).Scan(&leaderTaskID, &leaderOriginator, &leaderAccountable); err != nil {
 		t.Fatalf("load leader task: %v", err)
 	}
-	if !leaderOriginator.Valid || uuidToString(leaderOriginator) != testUserID {
-		t.Fatalf("leader task originator = %v (valid=%v), want autopilot creator %s",
-			uuidToString(leaderOriginator), leaderOriginator.Valid, testUserID)
+	if leaderOriginator.Valid {
+		t.Fatalf("leader task originator = %s, want NULL for an autopilot-rooted run", uuidToString(leaderOriginator))
+	}
+	if !leaderAccountable.Valid || uuidToString(leaderAccountable) != testUserID {
+		t.Fatalf("leader task accountable = %v (valid=%v), want autopilot creator %s",
+			uuidToString(leaderAccountable), leaderAccountable.Valid, testUserID)
 	}
 	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET status = 'running', started_at = now() WHERE id = $1`, leaderTaskID); err != nil {
 		t.Fatalf("mark leader task running: %v", err)

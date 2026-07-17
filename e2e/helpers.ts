@@ -22,6 +22,25 @@ export async function waitForPageText(page: Page, text: string, timeout = 30000)
   );
 }
 
+export async function enableFeatureFlag(page: Page, flag: string) {
+  await page.route("**/api/config", async (route) => {
+    const response = await route.fetch();
+    const config = (await response.json()) as Record<string, unknown>;
+    const featureFlags =
+      config.feature_flags && typeof config.feature_flags === "object"
+        ? (config.feature_flags as Record<string, boolean>)
+        : {};
+
+    await route.fulfill({
+      response,
+      json: {
+        ...config,
+        feature_flags: { ...featureFlags, [flag]: true },
+      },
+    });
+  });
+}
+
 export async function reloadAppPage(page: Page) {
   await page.reload({ waitUntil: "domcontentloaded" });
   await waitForPageText(page, "Issues");

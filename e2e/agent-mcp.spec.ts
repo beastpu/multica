@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
-import { waitForPageText } from "./helpers";
+import { enableFeatureFlag, waitForPageText } from "./helpers";
 
 // Stage 3.2 (MUL-3870): the creator-only MCP tab on the agent detail page.
 //
@@ -21,6 +21,7 @@ const NAME = "E2E MCP User";
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_USER_ID = "99999999-9999-4999-8999-999999999999";
+const COMPOSIO_MCP_APPS_FLAG = "composio_mcp_apps";
 
 interface SetupResult {
   slug: string;
@@ -153,6 +154,7 @@ test.describe("Agent MCP tab (creator-only)", () => {
   test("creator sees the MCP Apps tab and toggling a toolkit writes the allowlist", async ({
     page,
   }) => {
+    await enableFeatureFlag(page, COMPOSIO_MCP_APPS_FLAG);
     const { slug, userId } = await loginCapturingUser(page);
     const getAllowlist = await mockApis(page, userId);
 
@@ -162,7 +164,8 @@ test.describe("Agent MCP tab (creator-only)", () => {
     await waitForPageText(page, "MCP Test Agent");
 
     // The creator-only tab entry is present and opens the connection list.
-    const tab = page.getByRole("button", { name: "MCP Apps" });
+    await page.getByRole("tab", { name: "Capabilities", exact: true }).click();
+    const tab = page.getByRole("tab", { name: "MCP Apps", exact: true });
     await expect(tab).toBeVisible({ timeout: 15000 });
     await tab.click();
 
@@ -175,6 +178,7 @@ test.describe("Agent MCP tab (creator-only)", () => {
   });
 
   test("a non-creator viewer does not see the MCP Apps tab", async ({ page }) => {
+    await enableFeatureFlag(page, COMPOSIO_MCP_APPS_FLAG);
     const { slug } = await loginCapturingUser(page);
     // Agent owned by someone else → the creator gate hides the tab entry.
     await mockApis(page, OTHER_USER_ID);
@@ -185,9 +189,11 @@ test.describe("Agent MCP tab (creator-only)", () => {
     await waitForPageText(page, "MCP Test Agent");
 
     // Other tabs render, but the creator-only MCP Apps entry must not.
-    await expect(page.getByRole("button", { name: "Activity" })).toBeVisible({
+    await expect(page.getByRole("tab", { name: "Overview", exact: true })).toBeVisible({
       timeout: 15000,
     });
-    await expect(page.getByRole("button", { name: "MCP Apps" })).toHaveCount(0);
+    await page.getByRole("tab", { name: "Capabilities", exact: true }).click();
+    await expect(page.getByRole("tab", { name: "Instructions", exact: true })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "MCP Apps", exact: true })).toHaveCount(0);
   });
 });

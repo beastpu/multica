@@ -19,7 +19,7 @@ INSERT INTO issue (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10::jsonb,
     $11, $12
-) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage
+) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties
 `
 
 type CreateAgentWorkIssueParams struct {
@@ -85,6 +85,7 @@ func (q *Queries) CreateAgentWorkIssue(ctx context.Context, arg CreateAgentWorkI
 		&i.StartDate,
 		&i.Metadata,
 		&i.Stage,
+		&i.Properties,
 	)
 	return i, err
 }

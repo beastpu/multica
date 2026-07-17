@@ -66,6 +66,8 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	"132": {"132_agent_task_queue_runtime_connected_apps", "132_p4_assessment_lease"},
 	"133": {"133_github_installation_multi_workspace", "133_p4_assessment_observability"},
 	"134": {"134_agent_work_project", "134_runtime_profile_add_qoder"},
+	"138": {"138_cloud_node_token", "138_comment_workspace_index"},
+	"139": {"139_runtime_profile_add_traecli", "139_workspace_cloud_runtime_env"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)

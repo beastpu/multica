@@ -69,6 +69,7 @@ const issue: Issue = {
   start_date: null,
   due_date: null,
   metadata: { p4_assessment: true },
+  properties: {},
   created_at: "2026-06-28T00:00:00Z",
   updated_at: "2026-06-28T00:00:00Z",
 };

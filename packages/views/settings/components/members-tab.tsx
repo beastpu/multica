@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Crown, Shield, User, Plus, MoreHorizontal, UserMinus, Users, Clock, X, Mail, Link2, Copy, Check } from "lucide-react";
+import { Crown, Shield, User, Plus, MoreHorizontal, UserMinus, Clock, X, Mail, Link2, Copy, Check } from "lucide-react";
 import { ActorAvatar } from "../../common/actor-avatar";
 import type { MemberWithUser, MemberRole, Invitation } from "@multica/core/types";
 import { Input } from "@multica/ui/components/ui/input";
@@ -43,6 +43,7 @@ import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions, invitationListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
 import { useT } from "../../i18n";
+import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
 
 const ROLE_ICONS: Record<MemberRole, typeof Crown> = {
   owner: Crown,
@@ -391,12 +392,8 @@ export function MembersTab() {
   if (!workspace) return null;
 
   return (
-    <div className="space-y-8">
-      <section className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Users className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">{t(($) => $.members.section_title, { count: members.length })}</h2>
-        </div>
+    <SettingsTab title={t(($) => $.page.tabs.members)}>
+      <SettingsSection title={t(($) => $.members.section_title, { count: members.length })}>
 
         {canManageWorkspace && (
           <Card>
@@ -405,7 +402,6 @@ export function MembersTab() {
                 <Plus className="h-4 w-4 text-muted-foreground" />
                 <h3 className="text-sm font-medium">{t(($) => $.members.invite_title)}</h3>
               </div>
-
               <div className="inline-flex rounded-md ring-1 ring-border p-0.5">
                 <button
                   type="button"
@@ -444,7 +440,11 @@ export function MembersTab() {
                       if (e.key === "Enter" && inviteEmail.trim()) handleInviteMember();
                     }}
                   />
-                  <Select value={inviteRole} onValueChange={(value) => setInviteRole(value as MemberRole)}>
+                  <Select
+                    items={(["member", "admin"] as const).map((value) => ({ value, label: roleConfig[value].label }))}
+                    value={inviteRole}
+                    onValueChange={(value) => setInviteRole(value as MemberRole)}
+                  >
                     <SelectTrigger size="sm">
                       <SelectValue>{() => roleConfig[inviteRole].label}</SelectValue>
                     </SelectTrigger>
@@ -465,7 +465,11 @@ export function MembersTab() {
                   <div className="flex items-center text-xs text-muted-foreground">
                     {t(($) => $.members.invite_link_description)}
                   </div>
-                  <Select value={inviteRole} onValueChange={(value) => setInviteRole(value as MemberRole)}>
+                  <Select
+                    items={(["member", "admin"] as const).map((value) => ({ value, label: roleConfig[value].label }))}
+                    value={inviteRole}
+                    onValueChange={(value) => setInviteRole(value as MemberRole)}
+                  >
                     <SelectTrigger size="sm">
                       <SelectValue>{() => roleConfig[inviteRole].label}</SelectValue>
                     </SelectTrigger>
@@ -514,9 +518,9 @@ export function MembersTab() {
         )}
 
         {members.length > 0 ? (
-          <div className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
-            {members.map((m, i) => (
-              <div key={m.id} className={i > 0 ? "border-t border-border/50" : ""}>
+          <SettingsCard>
+            {members.map((m) => (
+              <div key={m.id}>
                 <MemberRow
                   member={m}
                   canManage={canManageWorkspace}
@@ -529,21 +533,17 @@ export function MembersTab() {
                 />
               </div>
             ))}
-          </div>
+          </SettingsCard>
         ) : (
           <p className="text-sm text-muted-foreground">{t(($) => $.members.no_members)}</p>
         )}
-      </section>
+      </SettingsSection>
 
       {invitations.length > 0 && (
-        <section className="space-y-4">
-          <div className="flex items-center gap-2">
-            <Clock className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">{t(($) => $.members.pending_title, { count: invitations.length })}</h2>
-          </div>
-          <div className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
-            {invitations.map((inv, i) => (
-              <div key={inv.id} className={i > 0 ? "border-t border-border/50" : ""}>
+        <SettingsSection title={t(($) => $.members.pending_title, { count: invitations.length })}>
+          <SettingsCard>
+            {invitations.map((inv) => (
+              <div key={inv.id}>
                 <InvitationRow
                   invitation={inv}
                   canManage={canManageWorkspace}
@@ -553,8 +553,8 @@ export function MembersTab() {
                 />
               </div>
             ))}
-          </div>
-        </section>
+          </SettingsCard>
+        </SettingsSection>
       )}
 
       <AlertDialog open={!!confirmAction} onOpenChange={(v) => { if (!v) setConfirmAction(null); }}>
@@ -577,6 +577,6 @@ export function MembersTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </SettingsTab>
   );
 }

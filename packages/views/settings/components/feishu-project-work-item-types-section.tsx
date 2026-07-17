@@ -109,7 +109,14 @@ export function FeishuProjectWorkItemTypesSection({
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         {header}
-        <Select value={ADD_TYPE} onValueChange={(v) => v && v !== ADD_TYPE && addType(v)}>
+        <Select
+          items={[
+            { value: ADD_TYPE, label: t(($) => $.integrations.feishu_project_types_add) },
+            ...addable.map((item) => ({ value: item.type_key, label: `${item.name} (${item.api_name})` })),
+          ]}
+          value={ADD_TYPE}
+          onValueChange={(v) => v && v !== ADD_TYPE && addType(v)}
+        >
           <SelectTrigger size="sm" className="w-44 shrink-0">
             <span className="flex items-center gap-1.5">
               <Plus className="h-3.5 w-3.5" />
@@ -278,6 +285,10 @@ function WorkItemTypeCard({
             <label className="space-y-1.5 text-xs font-medium">
               {t(($) => $.integrations.feishu_project_type_target)}
               <Select
+                items={[
+                  { value: TARGET_ROUTING, label: t(($) => $.integrations.feishu_project_type_target_routing) },
+                  ...projects.map((project) => ({ value: project.id, label: project.title })),
+                ]}
                 value={target}
                 onValueChange={(v) =>
                   onPatch((prev) => ({ ...prev, project_id: !v || v === TARGET_ROUTING ? "" : v }))
@@ -369,6 +380,10 @@ function FeishuProjectStatusMappingTables({
                 <p className="truncate font-mono text-[11px] text-muted-foreground">{status.key}</p>
               </div>
               <Select
+                items={[
+                  { value: NO_MAPPING, label: t(($) => $.integrations.feishu_project_no_mapping) },
+                  ...MULTICA_STATUS_OPTIONS.map((option) => ({ value: option, label: option })),
+                ]}
                 value={statusMapping[status.key] || NO_MAPPING}
                 onValueChange={(value) => onStatusMappingChange(status.key, value || NO_MAPPING)}
               >
@@ -404,6 +419,10 @@ function FeishuProjectStatusMappingTables({
               <div key={status} className="grid grid-cols-[1fr_180px] items-center gap-3 border-b border-border/70 px-3 py-2 last:border-b-0">
                 <p className="font-mono text-xs font-medium">{status}</p>
                 <Select
+                  items={[
+                    { value: NO_MAPPING, label: t(($) => $.integrations.feishu_project_no_mapping) },
+                    ...statuses.map((option) => ({ value: option.key, label: `${option.name} (${option.key})` })),
+                  ]}
                   value={selected}
                   onValueChange={(value) => onReverseStatusMappingChange(status, value || NO_MAPPING)}
                 >

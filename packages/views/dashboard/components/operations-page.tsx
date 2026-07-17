@@ -1589,7 +1589,14 @@ function AgentFilter({
   const ariaLabel = t(($) => $.operations.table.agent);
   const selected = agents.find((a) => a.id === value);
   return (
-    <Select value={value} onValueChange={(v) => onChange(v ?? ALL_AGENTS)}>
+    <Select
+      items={[
+        { value: ALL_AGENTS, label: allLabel },
+        ...agents.map((agent) => ({ value: agent.id, label: agent.name })),
+      ]}
+      value={value}
+      onValueChange={(v) => onChange(v ?? ALL_AGENTS)}
+    >
       <SelectTrigger
         size="sm"
         aria-label={ariaLabel}
@@ -1635,7 +1642,11 @@ function ValueFilter({
   const selected = options.find((option) => option.value === value);
   return (
     <div className="flex items-center gap-0.5">
-      <Select value={value} onValueChange={(v) => onChange(v ?? allValue)}>
+      <Select
+        items={[{ value: allValue, label: allLabel }, ...options]}
+        value={value}
+        onValueChange={(v) => onChange(v ?? allValue)}
+      >
         <SelectTrigger
           size="sm"
           aria-label={ariaLabel}

@@ -71,6 +71,10 @@ vi.mock("../../common/actor-avatar", () => ({
   ),
 }));
 
+vi.mock("../../labels/resource-label-picker", () => ({
+  ResourceLabelPicker: () => <span>resource-label-picker</span>,
+}));
+
 vi.mock("./inspector/concurrency-picker", () => ({
   ConcurrencyPicker: () => <span>concurrency-picker</span>,
 }));
@@ -85,6 +89,7 @@ vi.mock("./inspector/skill-attach", () => ({
 }));
 vi.mock("./inspector/thinking-prop-row", () => ({
   ThinkingPropRow: () => <span>thinking-prop-row</span>,
+  ThinkingSettingField: () => <span>thinking-setting-field</span>,
 }));
 vi.mock("./inspector/visibility-picker", () => ({
   VisibilityPicker: () => <span>visibility-picker</span>,
@@ -129,14 +134,11 @@ function renderInspector(canEdit: boolean, onUpdate = vi.fn().mockResolvedValue(
       <AgentDetailInspector
         agent={baseAgent}
         runtime={null}
-        owner={null}
-        presence={null}
         runtimes={[]}
         members={[]}
         currentUserId={null}
         canEdit={canEdit}
         onUpdate={onUpdate}
-        onShowIntegrations={vi.fn()}
       />
     </I18nProvider>,
   );
