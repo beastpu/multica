@@ -146,6 +146,13 @@ type Config struct {
 	// MaxNodesPerWorkspace caps nodes per workspace (default 3). Enforced
 	// both app-side (friendly 409) and by a namespace ResourceQuota.
 	MaxNodesPerWorkspace int
+	// ClaudeModel, when set, pins the Claude Code model via MULTICA_CLAUDE_MODEL
+	// (e.g. a proxy-allowed alias). Claude Code otherwise defaults to
+	// claude-opus-4-8, which a limited LLM proxy key often rejects with a 403
+	// — so a deployment behind such a proxy must set this to a supported model.
+	// Injected only when non-empty, so a workspace can still override it via
+	// the env card when this is unset.
+	ClaudeModel string
 	// CodexBaseURL, when set, makes the node write a ~/.codex/config.toml on
 	// startup pointing codex at an LLM proxy. codex reads the base URL only
 	// from config.toml (no env override exists), and the daemon copies that
@@ -763,6 +770,12 @@ func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, disp
 		// feeds the daemon directly on entrypoint-less images.
 		{"name": "MULTICA_API_TOKEN", "valueFrom": tokenRef},
 		{"name": "MULTICA_AUTH_TOKEN", "valueFrom": tokenRef},
+	}
+	// Deployment-wide Claude model default (proxy-allowed alias). Injected
+	// only when set so an unset config leaves any workspace-card override in
+	// place instead of clobbering it with an empty value.
+	if model := strings.TrimSpace(f.cfg.ClaudeModel); model != "" {
+		env = append(env, map[string]any{"name": "MULTICA_CLAUDE_MODEL", "value": model})
 	}
 	for key := range f.cfg.ExtraEnv {
 		env = append(env, map[string]any{

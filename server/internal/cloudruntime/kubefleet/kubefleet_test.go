@@ -181,11 +181,12 @@ func newFakeKube(t *testing.T) *fakeKube {
 func newTestFleet(t *testing.T, kube *fakeKube) *Fleet {
 	t.Helper()
 	fleet, err := New(Config{
-		Image:      "registry.example.com/multica-runtime:test",
-		ServerURL:  "http://multica-server.multica.svc:8080",
-		KubeAPIURL: kube.server.URL,
-		TokenFile:  "/nonexistent/token",
-		HTTPClient: kube.server.Client(),
+		Image:       "registry.example.com/multica-runtime:test",
+		ServerURL:   "http://multica-server.multica.svc:8080",
+		KubeAPIURL:  kube.server.URL,
+		TokenFile:   "/nonexistent/token",
+		HTTPClient:  kube.server.Client(),
+		ClaudeModel: "claude-limited",
 	}, testQueries)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -288,6 +289,7 @@ func TestKubefleet_CreateListDelete(t *testing.T) {
 		`"MULTICA_API_TOKEN"`, `"MULTICA_AUTH_TOKEN"`, `"MULTICA_WORKSPACE"`,
 		`"MULTICA_RUNTIME_MODE"`, `"MULTICA_WATCH_WORKSPACE_IDS"`,
 		`"name":"IS_SANDBOX"`,
+		`"name":"MULTICA_CLAUDE_MODEL"`,
 		`"name":"HOME"`, `"volumeClaimTemplates"`, `"storage":"32Gi"`, `"whenDeleted":"Delete"`,
 	} {
 		if !strings.Contains(string(stsJSON), want) {

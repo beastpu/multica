@@ -692,6 +692,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			ExtraEnv:                   extraEnv,
 			EnvBox:                     h.CloudRuntimeEnvBox,
 			MaxNodesPerWorkspace:       maxNodes,
+			ClaudeModel:                os.Getenv("MULTICA_CLOUD_RUNTIME_CLAUDE_MODEL"),
 			CodexBaseURL:               os.Getenv("MULTICA_CLOUD_RUNTIME_CODEX_BASE_URL"),
 			CodexModel:                 os.Getenv("MULTICA_CLOUD_RUNTIME_CODEX_MODEL"),
 			CodexWireAPI:               os.Getenv("MULTICA_CLOUD_RUNTIME_CODEX_WIRE_API"),
