@@ -3,7 +3,6 @@ package kubefleet
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -181,12 +180,11 @@ func newFakeKube(t *testing.T) *fakeKube {
 func newTestFleet(t *testing.T, kube *fakeKube) *Fleet {
 	t.Helper()
 	fleet, err := New(Config{
-		Image:       "registry.example.com/multica-runtime:test",
-		ServerURL:   "http://multica-server.multica.svc:8080",
-		KubeAPIURL:  kube.server.URL,
-		TokenFile:   "/nonexistent/token",
-		HTTPClient:  kube.server.Client(),
-		ClaudeModel: "claude-limited",
+		Image:      "registry.example.com/multica-runtime:test",
+		ServerURL:  "http://multica-server.multica.svc:8080",
+		KubeAPIURL: kube.server.URL,
+		TokenFile:  "/nonexistent/token",
+		HTTPClient: kube.server.Client(),
 	}, testQueries)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -264,7 +262,8 @@ func TestKubefleet_CreateListDelete(t *testing.T) {
 	if got := countNodeTokens(t, nodeName); got != 1 {
 		t.Fatalf("expected 1 minted node token, got %d", got)
 	}
-	wantNS := "mrt-" + strings.ReplaceAll(testWorkspaceID, "-", "")
+	// Namespace embeds the workspace slug + uuid8 for readability.
+	wantNS := "mrt-" + kubefleetTestSlug + "-" + strings.ReplaceAll(testWorkspaceID, "-", "")[:8]
 	if len(kube.namespaces) != 1 || kube.namespaces[0] != wantNS {
 		t.Fatalf("namespaces = %v, want [%s]", kube.namespaces, wantNS)
 	}
@@ -281,19 +280,22 @@ func TestKubefleet_CreateListDelete(t *testing.T) {
 	if strings.Contains(string(stsJSON), secretToken) {
 		t.Fatalf("statefulset spec inlines the node token")
 	}
-	// Container contract: run the daemon directly (bypassing the ops image's
-	// interactive setup entrypoint), authenticated from the node PAT env,
-	// workspace-pinned, HOME + PVC on the mounted volume.
+	// Container contract: infra env only + no command override (the image
+	// entrypoint owns startup, codex config, HOME). All LLM config is
+	// workspace-level via the envFrom secret, not injected here.
 	for _, want := range []string{
-		`"command":["multica","daemon","start","--foreground"]`,
 		`"MULTICA_API_TOKEN"`, `"MULTICA_AUTH_TOKEN"`, `"MULTICA_WORKSPACE"`,
 		`"MULTICA_RUNTIME_MODE"`, `"MULTICA_WATCH_WORKSPACE_IDS"`,
-		`"name":"IS_SANDBOX"`,
-		`"name":"MULTICA_CLAUDE_MODEL"`,
-		`"name":"HOME"`, `"volumeClaimTemplates"`, `"storage":"32Gi"`, `"whenDeleted":"Delete"`,
+		`"volumeClaimTemplates"`, `"storage":"32Gi"`, `"whenDeleted":"Delete"`,
 	} {
 		if !strings.Contains(string(stsJSON), want) {
 			t.Fatalf("statefulset spec missing %s: %s", want, stsJSON)
+		}
+	}
+	// No container command/args and no inlined LLM config — the image owns it.
+	for _, forbidden := range []string{`"command"`, `"MULTICA_CLAUDE_MODEL"`, `"name":"HOME"`, `"IS_SANDBOX"`} {
+		if strings.Contains(string(stsJSON), forbidden) {
+			t.Fatalf("statefulset spec must not set %s (image entrypoint owns it): %s", forbidden, stsJSON)
 		}
 	}
 
@@ -526,42 +528,6 @@ func TestKubefleet_NodeLimit(t *testing.T) {
 	}
 }
 
-func TestCodexConfigTOML(t *testing.T) {
-	// No base URL → no config, plain daemon command.
-	f := &Fleet{}
-	if f.codexConfigTOML() != "" {
-		t.Fatal("expected empty codex config without base URL")
-	}
-	if got := f.nodeCommand(); len(got) != 4 || got[0] != "multica" {
-		t.Fatalf("nodeCommand without codex = %v, want plain daemon start", got)
-	}
-
-	// With base URL → config toml + bash wrapper that base64-decodes it.
-	f = &Fleet{cfg: Config{CodexBaseURL: "https://llm-proxy.example.com/v1", CodexModel: "gpt-5.5"}}
-	toml := f.codexConfigTOML()
-	for _, want := range []string{
-		`model = "gpt-5.5"`, `model_provider = "proxy"`,
-		`[model_providers.proxy]`, `base_url = "https://llm-proxy.example.com/v1"`,
-		`env_key = "OPENAI_API_KEY"`, `wire_api = "responses"`,
-	} {
-		if !strings.Contains(toml, want) {
-			t.Fatalf("codex config missing %q:\n%s", want, toml)
-		}
-	}
-	cmd := f.nodeCommand()
-	if len(cmd) != 3 || cmd[0] != "bash" {
-		t.Fatalf("nodeCommand with codex = %v, want bash wrapper", cmd)
-	}
-	// The embedded base64 must decode back to the toml.
-	b64 := strings.TrimSuffix(strings.TrimPrefix(
-		cmd[2][strings.Index(cmd[2], "printf %s '")+len("printf %s '"):], ""), "")
-	b64 = b64[:strings.Index(b64, "'")]
-	decoded, err := base64.StdEncoding.DecodeString(b64)
-	if err != nil || string(decoded) != toml {
-		t.Fatalf("embedded base64 does not decode to config: err=%v", err)
-	}
-}
-
 func TestParseExtraEnv(t *testing.T) {
 	env, err := ParseExtraEnv(" A=1, B=x=y ,")
 	if err != nil {
@@ -650,6 +616,23 @@ func TestKubefleet_UnsupportedOpsReturn501(t *testing.T) {
 		resp, _ := doJSON(t, fleet, memberContext("owner"), http.MethodPost, path, map[string]any{})
 		if resp.StatusCode != http.StatusNotImplemented {
 			t.Fatalf("%s: status = %d, want 501", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestNamespaceName(t *testing.T) {
+	f := &Fleet{cfg: Config{NamespacePrefix: "mrt-"}}
+	wsID := "bed314a3-0eaf-498f-959b-7c6c8fb6c3d8"
+	cases := map[string]string{
+		"my-workspace":   "mrt-my-workspace-bed314a3",
+		"My Workspace!!": "mrt-my-workspace-bed314a3", // sanitized + collapsed
+		"  Über Space  ": "mrt-ber-space-bed314a3",    // non-ascii dropped
+		"":               "mrt-bed314a3",              // empty slug → uuid only
+		"---weird---":    "mrt-weird-bed314a3",        // trimmed hyphens
+	}
+	for slug, want := range cases {
+		if got := f.namespaceName(slug, wsID); got != want {
+			t.Fatalf("namespaceName(%q) = %q, want %q", slug, got, want)
 		}
 	}
 }
