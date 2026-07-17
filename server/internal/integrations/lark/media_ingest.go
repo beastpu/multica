@@ -3,6 +3,8 @@ package lark
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -10,7 +12,6 @@ import (
 	"path"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -88,12 +89,7 @@ func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.Reso
 			contentType = "application/octet-stream"
 		}
 		filename := mediaFilename(lm, res, got, contentType)
-		id, err := uuid.NewV7()
-		if err != nil {
-			r.logMediaWarn("lark media attachment id failed", lm, err)
-			continue
-		}
-		key := path.Join("workspaces", uuidString(inst.WorkspaceID), "lark", id.String()+path.Ext(filename))
+		key := mediaObjectKey(inst, res)
 		link, uploadedBytes, err := r.uploadResource(ctx, key, got.Body, contentType, filename)
 		if err != nil {
 			r.logMediaWarn("lark media upload failed", lm, err)
@@ -113,6 +109,17 @@ func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.Reso
 		})
 	}
 	return msg
+}
+
+func mediaObjectKey(inst engine.ResolvedInstallation, res larkMediaResource) string {
+	sum := sha256.Sum256([]byte(res.messageID + "\x00" + res.fetchType + "\x00" + res.key))
+	return path.Join(
+		"workspaces",
+		uuidString(inst.WorkspaceID),
+		"lark",
+		uuidString(inst.ID),
+		hex.EncodeToString(sum[:]),
+	)
 }
 
 func (r *feishuMediaResolver) downloadResource(ctx context.Context, creds InstallationCredentials, p DownloadResourceParams) (DownloadedResourceStream, error) {

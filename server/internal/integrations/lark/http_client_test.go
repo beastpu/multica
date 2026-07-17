@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -301,6 +302,71 @@ func TestHTTPClient_DownloadMessageResourceUsesResourceTimeout(t *testing.T) {
 	if string(got.Data) != "slow-video" || got.ContentType != "video/mp4" || got.Filename != "clip.mp4" {
 		t.Fatalf("downloaded slow video wrong: %+v", got)
 	}
+}
+
+func TestHTTPClient_DownloadMessageResourceExceedingTimeoutIsCancelled(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok_resource", 7200)
+	fake.mux.HandleFunc("/open-apis/im/v1/messages/om_timeout/resources/file_timeout", func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+			_, _ = w.Write([]byte("too late"))
+		}
+	})
+	c := NewHTTPAPIClient(HTTPClientConfig{
+		BaseURL:                 fake.URL(),
+		ResourceDownloadTimeout: 20 * time.Millisecond,
+		Now:                     time.Now,
+	}).(*httpAPIClient)
+
+	_, err := c.DownloadMessageResource(context.Background(), testCreds(), DownloadResourceParams{
+		MessageID: "om_timeout",
+		FileKey:   "file_timeout",
+		Type:      "file",
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v, want context deadline exceeded", err)
+	}
+}
+
+func TestHTTPClient_DownloadMessageResourceRejectsDeclaredOversize(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok_resource", 7200)
+	fake.mux.HandleFunc("/open-apis/im/v1/messages/om_large/resources/file_large", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Length", strconv.FormatInt(maxMessageResourceBytes+1, 10))
+		w.WriteHeader(http.StatusOK)
+	})
+	c := newTestClient(fake, time.Now)
+
+	_, err := c.DownloadMessageResourceStream(context.Background(), testCreds(), DownloadResourceParams{
+		MessageID: "om_large",
+		FileKey:   "file_large",
+		Type:      "file",
+	})
+	if err == nil || !strings.Contains(err.Error(), "resource exceeds") {
+		t.Fatalf("declared oversize error = %v", err)
+	}
+}
+
+func TestMaxBytesReadCloserEnforcesUnknownLengthBoundary(t *testing.T) {
+	t.Run("exact limit", func(t *testing.T) {
+		body := &maxBytesReadCloser{r: io.NopCloser(strings.NewReader("abc")), remaining: 3}
+		got, err := io.ReadAll(body)
+		if err != nil || string(got) != "abc" {
+			t.Fatalf("exact limit: body=%q err=%v", got, err)
+		}
+	})
+
+	t.Run("one byte over", func(t *testing.T) {
+		body := &maxBytesReadCloser{r: io.NopCloser(strings.NewReader("abcd")), remaining: 3}
+		got, err := io.ReadAll(body)
+		if err == nil || !strings.Contains(err.Error(), "resource exceeds") || string(got) != "abc" {
+			t.Fatalf("overflow: body=%q err=%v", got, err)
+		}
+	})
 }
 
 func TestHTTPClient_DownloadMessageResourceBusinessError(t *testing.T) {
@@ -1190,8 +1256,8 @@ func TestHTTPClient_GetBotInfo_HappyPath(t *testing.T) {
 			"code": 0,
 			"msg":  "ok",
 			"bot": map[string]any{
-				"open_id":   "ou_bot_42",
-				"app_name":  "PersonalAgent",
+				"open_id":    "ou_bot_42",
+				"app_name":   "PersonalAgent",
 				"avatar_url": "https://example/avatar.png",
 			},
 		})

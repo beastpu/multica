@@ -140,6 +140,32 @@ func (f *fakeTyping) OnSettled(_ context.Context, _ pgtype.UUID) {
 func (f *fakeTyping) calls() int        { f.mu.Lock(); defer f.mu.Unlock(); return f.count }
 func (f *fakeTyping) settledCalls() int { f.mu.Lock(); defer f.mu.Unlock(); return f.settled }
 
+type fakeMedia struct {
+	mu    sync.Mutex
+	count int
+}
+
+func (f *fakeMedia) ResolveMedia(_ context.Context, _ ResolvedInstallation, _ ResolvedIdentity, _ pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage {
+	f.mu.Lock()
+	f.count++
+	f.mu.Unlock()
+	msg.MediaRefs = append(msg.MediaRefs, channel.MediaRef{
+		Type:       channel.MsgTypeImage,
+		StorageKey: "workspaces/ws/lark/image",
+		StorageURL: "https://cdn.example.test/image",
+		Filename:   "image.png",
+		MimeType:   "image/png",
+		SizeBytes:  3,
+	})
+	return msg
+}
+
+func (f *fakeMedia) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.count
+}
+
 type fakeIssues struct {
 	called bool
 	params service.IssueCreateParams
@@ -221,6 +247,7 @@ type harness struct {
 	audit   *fakeAuditor
 	replier *fakeReplier
 	typing  *fakeTyping
+	media   *fakeMedia
 	issues  *fakeIssues
 	tasks   *fakeTasks
 	reader  *fakeReader
@@ -236,6 +263,7 @@ func newHarness(t *testing.T) *harness {
 		audit:   &fakeAuditor{},
 		replier: &fakeReplier{},
 		typing:  &fakeTyping{},
+		media:   &fakeMedia{},
 		issues:  &fakeIssues{},
 		tasks:   &fakeTasks{},
 		reader:  &fakeReader{ws: db.Workspace{IssuePrefix: "MUL"}},
@@ -249,6 +277,7 @@ func newHarness(t *testing.T) *harness {
 		Audit:        h.audit,
 		Replier:      h.replier,
 		Typing:       h.typing,
+		Media:        h.media,
 		OriginType:   "lark_chat",
 	})
 	return h
@@ -286,6 +315,9 @@ func TestRouter_RevokedInstallation_Drops(t *testing.T) {
 	if r, _ := h.audit.last(); r != DropReasonRevokedInstallation {
 		t.Fatalf("expected revoked_installation, got %q", r)
 	}
+	if h.media.calls() != 0 {
+		t.Fatal("revoked installation must not resolve media")
+	}
 }
 
 func TestRouter_Duplicate_Drops(t *testing.T) {
@@ -296,6 +328,9 @@ func TestRouter_Duplicate_Drops(t *testing.T) {
 	}
 	if r, _ := h.audit.last(); r != DropReasonDuplicate {
 		t.Fatalf("expected duplicate, got %q", r)
+	}
+	if h.media.calls() != 0 {
+		t.Fatal("duplicate message must not resolve media")
 	}
 }
 
@@ -313,6 +348,9 @@ func TestRouter_GroupNotAddressed_Drops(t *testing.T) {
 	if h.dedup.marks() != 1 {
 		t.Fatalf("group-filter drop must finalize Mark (1), got %d", h.dedup.marks())
 	}
+	if h.media.calls() != 0 {
+		t.Fatal("unaddressed group message must not resolve media")
+	}
 }
 
 func TestRouter_UnboundSender_NeedsBinding(t *testing.T) {
@@ -326,6 +364,9 @@ func TestRouter_UnboundSender_NeedsBinding(t *testing.T) {
 	}
 	if h.dedup.marks() != 1 {
 		t.Fatalf("unbound drop must finalize Mark, got %d", h.dedup.marks())
+	}
+	if h.media.calls() != 0 {
+		t.Fatal("unbound sender must not resolve media")
 	}
 	if !waitFor(time.Second, func() bool {
 		for _, r := range h.replier.calls() {
@@ -348,6 +389,9 @@ func TestRouter_NonMember_Drops(t *testing.T) {
 	if r, _ := h.audit.last(); r != DropReasonNonWorkspaceMember {
 		t.Fatalf("expected non_workspace_member, got %q", r)
 	}
+	if h.media.calls() != 0 {
+		t.Fatal("non-member sender must not resolve media")
+	}
 }
 
 func TestRouter_EnsureSessionError_Releases(t *testing.T) {
@@ -359,6 +403,25 @@ func TestRouter_EnsureSessionError_Releases(t *testing.T) {
 	}
 	if h.dedup.releases() != 1 {
 		t.Fatalf("ensure-session error must Release the claim (1), got %d", h.dedup.releases())
+	}
+}
+
+func TestRouter_AppendErrorReleasesClaimAndAllowsMediaRetry(t *testing.T) {
+	h := newHarness(t)
+	h.binder.appendErr = errors.New("db down")
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err == nil {
+		t.Fatal("append error must surface to the caller")
+	}
+	if h.dedup.releases() != 1 || h.media.calls() != 1 {
+		t.Fatalf("failed attempt: releases=%d media_calls=%d, want 1 each", h.dedup.releases(), h.media.calls())
+	}
+
+	h.binder.appendErr = nil
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if h.media.calls() != 2 {
+		t.Fatalf("retry media calls = %d, want 2 total", h.media.calls())
 	}
 }
 
@@ -380,6 +443,12 @@ func TestRouter_Ingested_InTxMark_FinalizeNone(t *testing.T) {
 	}
 	if !waitFor(time.Second, func() bool { return h.typing.calls() == 1 }) {
 		t.Fatalf("ingest must show the typing indicator")
+	}
+	if h.media.calls() != 1 {
+		t.Fatalf("ingested message resolved media %d times, want 1", h.media.calls())
+	}
+	if len(h.binder.lastAppend.Message.MediaRefs) != 1 {
+		t.Fatalf("resolved media not passed to append: %+v", h.binder.lastAppend.Message.MediaRefs)
 	}
 }
 
