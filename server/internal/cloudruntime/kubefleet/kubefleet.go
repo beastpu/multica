@@ -1,8 +1,9 @@
-// Package kubefleet is an in-process implementation of the cloud runtime
-// fleet for self-hosted Kubernetes deployments. It satisfies the same
-// interface the remote Multica Cloud Fleet proxy client does
-// (handler.cloudRuntimeProxy), so the /api/cloud-runtime/* HTTP surface and
-// the frontend stay untouched — only the node authority changes.
+// Package kubefleet is the Kubernetes implementation of
+// cloudruntime.Provider: it provisions one node as a namespace + StatefulSet
+// + PVC + secrets. The provider-agnostic parts (HTTP dispatch, workspace
+// auth, node quota, mcn_ PAT minting/revoking, runtime-row cascade) live in
+// the cloudruntime.Fleet adapter — see internal/cloudruntime/fleet.go. This
+// package never touches the database.
 //
 // Model: one Kubernetes namespace per workspace, one single-replica
 // StatefulSet per node running the multica daemon with a persistent
@@ -30,7 +31,6 @@ package kubefleet
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -42,15 +42,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-
-	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
-	"github.com/multica-ai/multica/server/internal/middleware"
-	"github.com/multica-ai/multica/server/internal/util"
-	"github.com/multica-ai/multica/server/internal/util/secretbox"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const (
@@ -67,7 +59,6 @@ const (
 	defaultTokenFile       = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 	defaultCAFile          = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 	defaultNamespacePrefix = "mrt-"
-	defaultNodeTokenTTL    = 180 * 24 * time.Hour
 	defaultDiskSizeGB      = 20
 
 	// pullSecretName is the per-namespace dockerconfigjson secret kubefleet
@@ -129,8 +120,6 @@ type Config struct {
 	// NamespacePrefix prefixes the per-workspace namespace name
 	// (default "mrt-"; namespace = prefix + workspace UUID without dashes).
 	NamespacePrefix string
-	// NodeTokenTTL bounds the minted mcn_ PAT lifetime (default 180 days).
-	NodeTokenTTL time.Duration
 	// StorageClass names the StorageClass for node volumes. Empty uses the
 	// cluster default.
 	StorageClass string
@@ -139,14 +128,9 @@ type Config struct {
 	// required when Image lives in a private registry.
 	PullSecretDockerConfigJSON string
 	// ExtraEnv is injected into every node container via its Secret —
-	// deployment-wide settings shared by all workspaces, like the LLM proxy
-	// base URLs. Workspace-scoped values (per-workspace proxy keys) come
-	// from the DB via EnvBox instead.
+	// deployment-wide settings shared by all workspaces. Per-workspace
+	// values (proxy keys) are delivered separately via NodeSpec.Env.
 	ExtraEnv map[string]string
-	// EnvBox opens the sealed per-workspace cloud runtime env
-	// (workspace_cloud_runtime_env, written by the admin settings API).
-	// Nil disables workspace env sync — nodes get ExtraEnv only.
-	EnvBox *secretbox.Box
 	// MaxNodesPerWorkspace caps nodes per workspace (default 3). Enforced
 	// both app-side (friendly 409) and by a namespace ResourceQuota.
 	MaxNodesPerWorkspace int
@@ -155,26 +139,24 @@ type Config struct {
 	HTTPClient *http.Client
 }
 
-type Fleet struct {
-	cfg     Config
-	queries *db.Queries
-	http    *http.Client
+type K8sProvider struct {
+	cfg  Config
+	http *http.Client
 	// bearerToken, when set (from a kubeconfig), is used for every request
 	// instead of reading cfg.TokenFile. Empty means in-cluster (read the
 	// rotating service-account token file) or client-cert auth.
 	bearerToken string
 }
 
-// New validates cfg, applies defaults and returns a ready Fleet.
-func New(cfg Config, queries *db.Queries) (*Fleet, error) {
+// New validates cfg, applies defaults and returns a ready K8sProvider — the
+// Kubernetes implementation of cloudruntime.Provider. Wrap it with
+// cloudruntime.NewFleet to get the handler-facing adapter.
+func New(cfg Config) (*K8sProvider, error) {
 	if strings.TrimSpace(cfg.Image) == "" {
 		return nil, fmt.Errorf("kubefleet: image is required (MULTICA_CLOUD_RUNTIME_IMAGE)")
 	}
 	if strings.TrimSpace(cfg.ServerURL) == "" {
 		return nil, fmt.Errorf("kubefleet: server URL is required (MULTICA_CLOUD_RUNTIME_SERVER_URL)")
-	}
-	if queries == nil {
-		return nil, fmt.Errorf("kubefleet: queries is required")
 	}
 	if cfg.KubeAPIURL == "" {
 		cfg.KubeAPIURL = defaultKubeAPIURL
@@ -188,9 +170,6 @@ func New(cfg Config, queries *db.Queries) (*Fleet, error) {
 	}
 	if cfg.NamespacePrefix == "" {
 		cfg.NamespacePrefix = defaultNamespacePrefix
-	}
-	if cfg.NodeTokenTTL <= 0 {
-		cfg.NodeTokenTTL = defaultNodeTokenTTL
 	}
 	if cfg.MaxNodesPerWorkspace <= 0 {
 		cfg.MaxNodesPerWorkspace = defaultMaxNodesPerWorkspace
@@ -215,7 +194,7 @@ func New(cfg Config, queries *db.Queries) (*Fleet, error) {
 			return nil, err
 		}
 	}
-	return &Fleet{cfg: cfg, queries: queries, http: client, bearerToken: bearerToken}, nil
+	return &K8sProvider{cfg: cfg, http: client, bearerToken: bearerToken}, nil
 }
 
 // ParseExtraEnv parses the MULTICA_CLOUD_RUNTIME_EXTRA_ENV format:
@@ -241,63 +220,12 @@ func ParseExtraEnv(raw string) (map[string]string, error) {
 	return env, nil
 }
 
-func (f *Fleet) Enabled() bool { return f != nil }
-
-// Do dispatches the fleet API surface. It mirrors the remote Fleet's REST
-// contract so the proxy handlers in handler/cloud_runtime.go need no changes.
-func (f *Fleet) Do(ctx context.Context, req cloudruntime.Request) (*cloudruntime.Response, error) {
-	if f == nil {
-		return nil, cloudruntime.ErrDisabled
-	}
-	switch {
-	case req.Path == "/healthz" || req.Path == "/readyz":
-		return jsonResponse(http.StatusOK, map[string]string{"status": "ok"})
-	case req.Path == "/api/v1/" && req.Method == http.MethodGet:
-		return jsonResponse(http.StatusOK, map[string]string{"service": "kubefleet", "status": "ok"})
-	case req.Path == "/api/v1/nodes":
-		switch req.Method {
-		case http.MethodGet:
-			return f.listNodes(ctx)
-		case http.MethodPost:
-			return f.createNode(ctx, req)
-		case http.MethodDelete:
-			return f.deleteNode(ctx, req)
-		}
-	}
-	return jsonResponse(http.StatusNotImplemented, map[string]string{
-		"error": "operation not supported by kubefleet",
-	})
-}
-
-// workspaceScope resolves the request's workspace and namespace from the
-// middleware-injected context. The /api/cloud-runtime routes sit inside the
-// RequireWorkspaceMember group, so both values are always present for
-// well-formed requests.
-func (f *Fleet) workspaceScope(ctx context.Context) (wsID, namespace string, member db.Member, resp *cloudruntime.Response) {
-	wsID = middleware.WorkspaceIDFromContext(ctx)
-	m, ok := middleware.MemberFromContext(ctx)
-	if wsID == "" || !ok {
-		r, _ := jsonResponse(http.StatusBadRequest, map[string]string{"error": "workspace context is required"})
-		return "", "", db.Member{}, r
-	}
-	// Namespace embeds the workspace slug for readability
-	// (mrt-<slug>-<uuid8>). The uuid suffix keeps it collision-free even if
-	// two slugs sanitize to the same string; a workspace rename orphans the
-	// old namespace (rare) — the multica.io/workspace-id label on it makes
-	// manual cleanup easy. Slug fetch failure degrades to the uuid-only name.
-	slug := ""
-	if wsUUID, err := util.ParseUUID(wsID); err == nil {
-		if ws, werr := f.queries.GetWorkspace(ctx, wsUUID); werr == nil {
-			slug = ws.Slug
-		}
-	}
-	return wsID, f.namespaceName(slug, wsID), m, nil
-}
+func (f *K8sProvider) Name() string { return "k8s" }
 
 // namespaceName builds a DNS-safe, readable namespace: prefix + sanitized slug
 // + first 8 hex of the workspace UUID. Total stays well under the 63-char
 // label limit.
-func (f *Fleet) namespaceName(slug, wsID string) string {
+func (f *K8sProvider) namespaceName(slug, wsID string) string {
 	uuid8 := strings.ReplaceAll(wsID, "-", "")
 	if len(uuid8) > 8 {
 		uuid8 = uuid8[:8]
@@ -332,208 +260,85 @@ func sanitizeDNSLabel(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-func isWorkspaceAdmin(m db.Member) bool {
-	return m.Role == "owner" || m.Role == "admin"
-}
+// --- cloudruntime.Provider implementation ---
 
-// --- node CRUD ---
-
-type createNodeRequest struct {
-	Name         string `json:"name"`
-	InstanceType string `json:"instance_type"`
-	DiskSizeGB   int    `json:"disk_size_gb"`
-}
-
-func (f *Fleet) createNode(ctx context.Context, req cloudruntime.Request) (*cloudruntime.Response, error) {
-	wsID, namespace, member, errResp := f.workspaceScope(ctx)
-	if errResp != nil {
-		return errResp, nil
+// CreateNode provisions namespace + quota + pull secret + workspace-env secret
+// + node token secret + StatefulSet for one node. The adapter has already
+// minted spec.Token and decrypted spec.Env. On a partial failure it best-effort
+// deletes the node token secret; the shared namespace is left in place.
+func (f *K8sProvider) CreateNode(ctx context.Context, spec cloudruntime.NodeSpec) (cloudruntime.Node, error) {
+	ns := f.namespaceName(spec.WorkspaceSlug, spec.WorkspaceID)
+	if err := f.ensureNamespace(ctx, ns, spec.WorkspaceID); err != nil {
+		return cloudruntime.Node{}, err
 	}
-	if !isWorkspaceAdmin(member) {
-		return jsonResponse(http.StatusForbidden, map[string]string{
-			"error": "only workspace owners and admins can create cloud runtime nodes",
-		})
+	if err := f.ensureNodeQuota(ctx, ns, spec.WorkspaceID); err != nil {
+		return cloudruntime.Node{}, err
 	}
-
-	var body createNodeRequest
-	if len(req.Body) > 0 {
-		if err := json.Unmarshal(req.Body, &body); err != nil {
-			return jsonResponse(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		}
+	if err := f.ensurePullSecret(ctx, ns, spec.WorkspaceID); err != nil {
+		return cloudruntime.Node{}, err
 	}
-	nodeName, err := randomNodeName()
-	if err != nil {
-		return nil, err
+	if err := f.writeWorkspaceEnvSecret(ctx, ns, spec.WorkspaceID, spec.Env); err != nil {
+		return cloudruntime.Node{}, err
 	}
-	displayName := strings.TrimSpace(body.Name)
-	if displayName == "" {
-		displayName = nodeName
+	if err := f.createSecret(ctx, ns, spec.Name, spec.Token, spec.WorkspaceID); err != nil {
+		return cloudruntime.Node{}, err
 	}
-	instanceType := strings.TrimSpace(body.InstanceType)
-	diskSizeGB := body.DiskSizeGB
-	if diskSizeGB <= 0 {
-		diskSizeGB = defaultDiskSizeGB
+	if err := f.createStatefulSet(ctx, ns, spec.Name, spec.DisplayName, spec.InstanceType, spec.OwnerID, spec.WorkspaceID, spec.DiskSizeGB); err != nil {
+		_ = f.kubeDelete(ctx, secretPath(ns, spec.Name))
+		return cloudruntime.Node{}, err
 	}
-
-	wsUUID, err := util.ParseUUID(wsID)
-	if err != nil {
-		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "invalid workspace id"})
-	}
-
-	// Friendly quota check; the namespace ResourceQuota below is the
-	// race-proof backstop for concurrent creates.
-	if list, status, lerr := f.kubeGetStatefulSets(ctx, namespace); lerr != nil {
-		return nil, lerr
-	} else if status == http.StatusOK && len(list.Items) >= f.cfg.MaxNodesPerWorkspace {
-		return jsonResponse(http.StatusConflict, map[string]string{
-			"error": fmt.Sprintf("workspace node limit reached (%d)", f.cfg.MaxNodesPerWorkspace),
-		})
-	}
-
-	// Mint the node PAT before touching Kubernetes so a half-created node
-	// never runs without a revocable credential; roll the row back if any
-	// k8s call fails.
-	token, err := auth.GenerateCloudNodeToken()
-	if err != nil {
-		return nil, err
-	}
-	expiresAt := time.Now().Add(f.cfg.NodeTokenTTL)
-	if _, err := f.queries.CreateCloudNodeToken(ctx, db.CreateCloudNodeTokenParams{
-		TokenHash:   auth.HashToken(token),
-		WorkspaceID: wsUUID,
-		OwnerID:     member.UserID,
-		NodeName:    nodeName,
-		ExpiresAt:   pgtype.Timestamptz{Time: expiresAt, Valid: true},
-	}); err != nil {
-		return nil, fmt.Errorf("create cloud node token: %w", err)
-	}
-
-	cleanup := func() {
-		_ = f.queries.DeleteCloudNodeTokensByNode(context.WithoutCancel(ctx), db.DeleteCloudNodeTokensByNodeParams{
-			WorkspaceID: wsUUID,
-			NodeName:    nodeName,
-		})
-	}
-
-	if err := f.ensureNamespace(ctx, namespace, wsID); err != nil {
-		cleanup()
-		return nil, err
-	}
-	if err := f.ensureNodeQuota(ctx, namespace, wsID); err != nil {
-		cleanup()
-		return nil, err
-	}
-	if err := f.ensurePullSecret(ctx, namespace, wsID); err != nil {
-		cleanup()
-		return nil, err
-	}
-	if err := f.syncWorkspaceEnvSecret(ctx, namespace, wsID, wsUUID); err != nil {
-		cleanup()
-		return nil, err
-	}
-	if err := f.createSecret(ctx, namespace, nodeName, token, wsID); err != nil {
-		cleanup()
-		return nil, err
-	}
-	ownerID := util.UUIDToString(member.UserID)
-	if err := f.createStatefulSet(ctx, namespace, nodeName, displayName, instanceType, ownerID, wsID, diskSizeGB); err != nil {
-		cleanup()
-		_ = f.kubeDelete(ctx, secretPath(namespace, nodeName))
-		return nil, err
-	}
-
-	node := nodeJSON(statefulSet{}, namespace, nodeName)
-	node["name"] = displayName
-	node["owner_id"] = ownerID
-	node["instance_type"] = instanceType
-	node["image_id"] = f.cfg.Image
-	node["status"] = "launching"
 	now := time.Now().UTC().Format(time.RFC3339)
-	node["created_at"] = now
-	node["updated_at"] = now
-	return jsonResponse(http.StatusCreated, node)
+	return cloudruntime.Node{
+		ID:           spec.Name,
+		DisplayName:  spec.DisplayName,
+		Status:       "launching",
+		InstanceType: spec.InstanceType,
+		ImageID:      f.cfg.Image,
+		Region:       "k8s",
+		SubnetID:     ns,
+		OwnerID:      spec.OwnerID,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}, nil
 }
 
-func (f *Fleet) listNodes(ctx context.Context) (*cloudruntime.Response, error) {
-	_, namespace, _, errResp := f.workspaceScope(ctx)
-	if errResp != nil {
-		return errResp, nil
-	}
-	list, status, err := f.kubeGetStatefulSets(ctx, namespace)
+func (f *K8sProvider) ListNodes(ctx context.Context, workspaceID, workspaceSlug string) ([]cloudruntime.Node, error) {
+	ns := f.namespaceName(workspaceSlug, workspaceID)
+	list, status, err := f.kubeGetStatefulSets(ctx, ns)
 	if err != nil {
 		return nil, err
 	}
 	if status == http.StatusNotFound {
-		// Namespace not created yet — the workspace simply has no nodes.
-		return jsonResponse(http.StatusOK, []any{})
+		return nil, nil
 	}
-	nodes := make([]map[string]any, 0, len(list.Items))
+	nodes := make([]cloudruntime.Node, 0, len(list.Items))
 	for _, s := range list.Items {
-		nodes = append(nodes, nodeJSON(s, namespace, s.Metadata.Name))
+		nodes = append(nodes, f.toNode(s, ns))
 	}
-	return jsonResponse(http.StatusOK, nodes)
+	return nodes, nil
 }
 
-type deleteNodeRequest struct {
-	ID         string `json:"id"`
-	InstanceID string `json:"instance_id"`
+func (f *K8sProvider) DeleteNode(ctx context.Context, workspaceID, workspaceSlug, nodeName string) error {
+	ns := f.namespaceName(workspaceSlug, workspaceID)
+	// The StatefulSet's PVC retention policy (whenDeleted: Delete) removes the
+	// node volume with it. Token revocation + runtime-row cascade are the
+	// adapter's job.
+	if err := f.kubeDelete(ctx, statefulSetPath(ns, nodeName)); err != nil {
+		return err
+	}
+	return f.kubeDelete(ctx, secretPath(ns, nodeName))
 }
 
-func (f *Fleet) deleteNode(ctx context.Context, req cloudruntime.Request) (*cloudruntime.Response, error) {
-	wsID, namespace, member, errResp := f.workspaceScope(ctx)
-	if errResp != nil {
-		return errResp, nil
+func (f *K8sProvider) CountNodes(ctx context.Context, workspaceID, workspaceSlug string) (int, error) {
+	ns := f.namespaceName(workspaceSlug, workspaceID)
+	list, status, err := f.kubeGetStatefulSets(ctx, ns)
+	if err != nil {
+		return 0, err
 	}
-	if !isWorkspaceAdmin(member) {
-		return jsonResponse(http.StatusForbidden, map[string]string{
-			"error": "only workspace owners and admins can delete cloud runtime nodes",
-		})
+	if status == http.StatusNotFound {
+		return 0, nil
 	}
-	var body deleteNodeRequest
-	if len(req.Body) > 0 {
-		if err := json.Unmarshal(req.Body, &body); err != nil {
-			return jsonResponse(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		}
-	}
-	nodeName := strings.TrimSpace(body.InstanceID)
-	if nodeName == "" {
-		nodeName = strings.TrimSpace(body.ID)
-	}
-	// Node names are generated as "node-<hex>"; rejecting anything else
-	// keeps arbitrary object names in the namespace out of reach.
-	if !strings.HasPrefix(nodeName, "node-") {
-		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "instance_id is required"})
-	}
-
-	// The StatefulSet's PVC retention policy (whenDeleted: Delete) removes
-	// the node volume with it.
-	if err := f.kubeDelete(ctx, statefulSetPath(namespace, nodeName)); err != nil {
-		return nil, err
-	}
-	if err := f.kubeDelete(ctx, secretPath(namespace, nodeName)); err != nil {
-		return nil, err
-	}
-	wsUUID, err := util.ParseUUID(wsID)
-	if err == nil {
-		if derr := f.queries.DeleteCloudNodeTokensByNode(ctx, db.DeleteCloudNodeTokensByNodeParams{
-			WorkspaceID: wsUUID,
-			NodeName:    nodeName,
-		}); derr != nil {
-			return nil, fmt.Errorf("revoke cloud node tokens: %w", derr)
-		}
-		// Cascade: drop the offline cloud runtime rows this node's daemon
-		// registered (daemon_id = node name) so they don't linger in the UI
-		// as unreachable orphans. Runtimes with an agent still bound are left
-		// alone (the query skips them) — deleting a node must never silently
-		// archive someone's agent.
-		if _, derr := f.queries.DeleteCloudRuntimesByNode(ctx, db.DeleteCloudRuntimesByNodeParams{
-			WorkspaceID: wsUUID,
-			DaemonID:    pgtype.Text{String: nodeName, Valid: true},
-		}); derr != nil {
-			return nil, fmt.Errorf("delete cloud runtimes for node: %w", derr)
-		}
-	}
-	return jsonResponse(http.StatusOK, map[string]string{"status": "deleted", "id": nodeName})
+	return len(list.Items), nil
 }
 
 // --- kubernetes REST plumbing ---
@@ -565,7 +370,8 @@ type statefulSet struct {
 	} `json:"status"`
 }
 
-func nodeJSON(s statefulSet, namespace, name string) map[string]any {
+// toNode maps a StatefulSet into the backend-agnostic cloudruntime.Node.
+func (f *K8sProvider) toNode(s statefulSet, namespace string) cloudruntime.Node {
 	status := "launching"
 	if s.Status.ReadyReplicas >= 1 {
 		status = "online"
@@ -575,29 +381,22 @@ func nodeJSON(s statefulSet, namespace, name string) map[string]any {
 		image = cs[0].Image
 	}
 	ann := s.Metadata.Annotations
-	displayName := ann[annotationDisplayName]
-	if displayName == "" {
-		displayName = name
-	}
 	created := s.Metadata.CreationTimestamp
-	return map[string]any{
-		"id":            name,
-		"owner_id":      ann[annotationOwnerID],
-		"instance_id":   name,
-		"region":        "k8s",
-		"instance_type": ann[annotationInstanceType],
-		"image_id":      image,
-		"subnet_id":     namespace,
-		"name":          displayName,
-		"status":        status,
-		"tags":          map[string]string{},
-		"metadata":      map[string]any{},
-		"created_at":    created,
-		"updated_at":    created,
+	return cloudruntime.Node{
+		ID:           s.Metadata.Name,
+		DisplayName:  ann[annotationDisplayName],
+		Status:       status,
+		InstanceType: ann[annotationInstanceType],
+		ImageID:      image,
+		Region:       "k8s",
+		SubnetID:     namespace,
+		OwnerID:      ann[annotationOwnerID],
+		CreatedAt:    created,
+		UpdatedAt:    created,
 	}
 }
 
-func (f *Fleet) ensureNamespace(ctx context.Context, namespace, wsID string) error {
+func (f *K8sProvider) ensureNamespace(ctx context.Context, namespace, wsID string) error {
 	body := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Namespace",
@@ -624,7 +423,7 @@ func (f *Fleet) ensureNamespace(ctx context.Context, namespace, wsID string) err
 // MaxNodesPerWorkspace therefore only tightens the app-level check on
 // existing namespaces, not the quota object — acceptable, since the quota
 // is a backstop against races, not the configuration surface.
-func (f *Fleet) ensureNodeQuota(ctx context.Context, namespace, wsID string) error {
+func (f *K8sProvider) ensureNodeQuota(ctx context.Context, namespace, wsID string) error {
 	body := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "ResourceQuota",
@@ -652,29 +451,14 @@ func (f *Fleet) ensureNodeQuota(ctx context.Context, namespace, wsID string) err
 	return nil
 }
 
-// syncWorkspaceEnvSecret materializes the admin-configured workspace env
-// (LLM proxy keys) into the namespace on every node create, so a key
-// rotated in settings reaches the next node without ops involvement.
-// Existing nodes keep the env they booted with until their pod restarts.
-// No DB row (or no EnvBox) leaves any manually-managed secret untouched.
-func (f *Fleet) syncWorkspaceEnvSecret(ctx context.Context, namespace, wsID string, wsUUID pgtype.UUID) error {
-	if f.cfg.EnvBox == nil {
+// writeWorkspaceEnvSecret materializes the workspace env (LLM proxy keys,
+// already decrypted by the adapter) into the namespace on every node create,
+// so a key rotated in settings reaches the next node without ops involvement.
+// Existing nodes keep the env they booted with until their pod restarts. An
+// empty env leaves any manually-managed secret untouched.
+func (f *K8sProvider) writeWorkspaceEnvSecret(ctx context.Context, namespace, wsID string, env map[string]string) error {
+	if len(env) == 0 {
 		return nil
-	}
-	row, err := f.queries.GetWorkspaceCloudRuntimeEnv(ctx, wsUUID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		return fmt.Errorf("kubefleet: load workspace env: %w", err)
-	}
-	plaintext, err := f.cfg.EnvBox.Open(row.EnvSealed)
-	if err != nil {
-		return fmt.Errorf("kubefleet: open workspace env: %w", err)
-	}
-	var env map[string]string
-	if err := json.Unmarshal(plaintext, &env); err != nil {
-		return fmt.Errorf("kubefleet: decode workspace env: %w", err)
 	}
 	body := map[string]any{
 		"apiVersion": "v1",
@@ -708,7 +492,7 @@ func (f *Fleet) syncWorkspaceEnvSecret(ctx context.Context, namespace, wsID stri
 // ensurePullSecret materializes the registry credential into the node
 // namespace, mirroring the ops deploy script. No-op when the deployment
 // doesn't configure one (public registry).
-func (f *Fleet) ensurePullSecret(ctx context.Context, namespace, wsID string) error {
+func (f *K8sProvider) ensurePullSecret(ctx context.Context, namespace, wsID string) error {
 	if f.cfg.PullSecretDockerConfigJSON == "" {
 		return nil
 	}
@@ -749,7 +533,7 @@ func statefulSetPath(namespace, nodeName string) string {
 // createSecret stores the node PAT plus the deployment-wide extra env
 // (LLM proxy endpoints/keys) so none of them appear inline in the
 // StatefulSet spec.
-func (f *Fleet) createSecret(ctx context.Context, namespace, nodeName, token, wsID string) error {
+func (f *K8sProvider) createSecret(ctx context.Context, namespace, nodeName, token, wsID string) error {
 	data := map[string]string{"token": token}
 	for k, v := range f.cfg.ExtraEnv {
 		data[k] = v
@@ -778,7 +562,7 @@ func (f *Fleet) createSecret(ctx context.Context, namespace, nodeName, token, ws
 	return nil
 }
 
-func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, displayName, instanceType, ownerID, wsID string, diskSizeGB int) error {
+func (f *K8sProvider) createStatefulSet(ctx context.Context, namespace, nodeName, displayName, instanceType, ownerID, wsID string, diskSizeGB int) error {
 	res, ok := instanceResources[instanceType]
 	if !ok {
 		res = defaultResources
@@ -910,7 +694,7 @@ func (f *Fleet) createStatefulSet(ctx context.Context, namespace, nodeName, disp
 	return nil
 }
 
-func (f *Fleet) kubeGetStatefulSets(ctx context.Context, namespace string) (statefulSetList, int, error) {
+func (f *K8sProvider) kubeGetStatefulSets(ctx context.Context, namespace string) (statefulSetList, int, error) {
 	path := "/apis/apps/v1/namespaces/" + namespace + "/statefulsets?labelSelector=" + managedByLabel + "%3D" + managedByValue
 	req, err := f.kubeRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -934,7 +718,7 @@ func (f *Fleet) kubeGetStatefulSets(ctx context.Context, namespace string) (stat
 	return list, http.StatusOK, nil
 }
 
-func (f *Fleet) kubePost(ctx context.Context, path string, body any) (int, error) {
+func (f *K8sProvider) kubePost(ctx context.Context, path string, body any) (int, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return 0, err
@@ -953,7 +737,7 @@ func (f *Fleet) kubePost(ctx context.Context, path string, body any) (int, error
 }
 
 // kubePut replaces an existing object (create-or-replace second leg).
-func (f *Fleet) kubePut(ctx context.Context, path string, body any) (int, error) {
+func (f *K8sProvider) kubePut(ctx context.Context, path string, body any) (int, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return 0, err
@@ -972,7 +756,7 @@ func (f *Fleet) kubePut(ctx context.Context, path string, body any) (int, error)
 }
 
 // kubeDelete tolerates 404 so delete stays idempotent under retries.
-func (f *Fleet) kubeDelete(ctx context.Context, path string) error {
+func (f *K8sProvider) kubeDelete(ctx context.Context, path string) error {
 	req, err := f.kubeRequest(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return err
@@ -988,7 +772,7 @@ func (f *Fleet) kubeDelete(ctx context.Context, path string) error {
 	return nil
 }
 
-func (f *Fleet) kubeRequest(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
+func (f *K8sProvider) kubeRequest(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, f.cfg.KubeAPIURL+path, strings.NewReader(string(body)))
 	if err != nil {
 		return nil, err

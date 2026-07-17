@@ -682,24 +682,28 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			}
 			maxNodes = n
 		}
-		fleet, err := kubefleet.New(kubefleet.Config{
+		provider, err := kubefleet.New(kubefleet.Config{
 			Image:                      os.Getenv("MULTICA_CLOUD_RUNTIME_IMAGE"),
 			ServerURL:                  serverURL,
 			KubeAPIURL:                 os.Getenv("MULTICA_CLOUD_RUNTIME_KUBE_API_URL"),
 			Kubeconfig:                 os.Getenv("MULTICA_CLOUD_RUNTIME_KUBECONFIG"),
 			NamespacePrefix:            os.Getenv("MULTICA_CLOUD_RUNTIME_NAMESPACE_PREFIX"),
-			NodeTokenTTL:               envDuration("MULTICA_CLOUD_RUNTIME_NODE_TOKEN_TTL", 0),
 			StorageClass:               os.Getenv("MULTICA_CLOUD_RUNTIME_STORAGE_CLASS"),
 			PullSecretDockerConfigJSON: os.Getenv("MULTICA_CLOUD_RUNTIME_PULL_SECRET_DOCKERCONFIGJSON"),
 			ExtraEnv:                   extraEnv,
-			EnvBox:                     h.CloudRuntimeEnvBox,
 			MaxNodesPerWorkspace:       maxNodes,
-		}, queries)
+		})
 		if err != nil {
 			slog.Error("cloud runtime provider k8s configured but unusable", "error", err)
 			os.Exit(1)
 		}
-		h.CloudRuntime = fleet
+		h.CloudRuntime = cloudruntime.NewFleet(cloudruntime.FleetConfig{
+			Provider:             provider,
+			Queries:              queries,
+			EnvBox:               h.CloudRuntimeEnvBox,
+			NodeTokenTTL:         envDuration("MULTICA_CLOUD_RUNTIME_NODE_TOKEN_TTL", 0),
+			MaxNodesPerWorkspace: maxNodes,
+		})
 		cloudPATVerifier = &auth.LocalCloudPATVerifier{Lookup: cloudNodeTokenLookup(queries)}
 	}
 
