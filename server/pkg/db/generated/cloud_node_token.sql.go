@@ -63,6 +63,32 @@ func (q *Queries) DeleteCloudNodeTokensByNode(ctx context.Context, arg DeleteClo
 	return err
 }
 
+const extendCloudNodeTokenExpiry = `-- name: ExtendCloudNodeTokenExpiry :one
+UPDATE cloud_node_token
+SET expires_at = $1
+WHERE token_hash = $2
+  AND expires_at > now()
+  AND expires_at <= $3
+RETURNING expires_at
+`
+
+type ExtendCloudNodeTokenExpiryParams struct {
+	NewExpiresAt     pgtype.Timestamptz `json:"new_expires_at"`
+	TokenHash        string             `json:"token_hash"`
+	RenewThresholdAt pgtype.Timestamptz `json:"renew_threshold_at"`
+}
+
+// In-place renew of a cloud node PAT: bumps expires_at only while the row is
+// still valid AND still inside the renewal threshold. Same CAS phrasing as
+// ExtendPersonalAccessTokenExpiry so concurrent renews are idempotent (the
+// second writer matches zero rows → pgx.ErrNoRows → "already renewed").
+func (q *Queries) ExtendCloudNodeTokenExpiry(ctx context.Context, arg ExtendCloudNodeTokenExpiryParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, extendCloudNodeTokenExpiry, arg.NewExpiresAt, arg.TokenHash, arg.RenewThresholdAt)
+	var expires_at pgtype.Timestamptz
+	err := row.Scan(&expires_at)
+	return expires_at, err
+}
+
 const getCloudNodeTokenByHash = `-- name: GetCloudNodeTokenByHash :one
 SELECT id, token_hash, workspace_id, owner_id, node_name, expires_at, created_at FROM cloud_node_token
 WHERE token_hash = $1 AND expires_at > now()
