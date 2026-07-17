@@ -350,7 +350,7 @@ func (h *Handler) handleLarkIssueConfirmationAction(ctx context.Context, msg lar
 	}
 	if h.TaskService != nil {
 		h.TaskService.AutoUnresolveThreadOnReply(ctx, rootComment, uuidToString(issue.WorkspaceID), "member", actorID)
-		h.triggerTasksForComment(ctx, issue, comment, &parentComment, "member", actorID, actorID, nil)
+		h.triggerTasksForComment(ctx, issue, comment, &parentComment, "member", actorID, actorID, "", nil)
 	}
 	slog.Info("lark card action: issue confirmation created comment",
 		"workspace_id", uuidToString(issue.WorkspaceID),

@@ -246,13 +246,22 @@ func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingI
 		if err != nil {
 			return err
 		}
+		var originatorUserID pgtype.UUID
+		originatorSource := "rule_owner"
+		if actor.Trigger != P4AssessmentTriggerScan {
+			originatorUserID = actor.CreatorID
+			originatorSource = "direct_human"
+		}
 		task, err := q.CreateP4AssessmentTask(ctx, db.CreateP4AssessmentTaskParams{
-			AgentID:     capability.AgentID,
-			RuntimeID:   capability.AgentRuntimeID,
-			IssueID:     projIssueID,
-			Priority:    int32(1),
-			Context:     taskContext,
-			HandoffNote: pgtype.Text{String: p4AssessmentHandoffNote(bindingID), Valid: true},
+			AgentID:           capability.AgentID,
+			RuntimeID:         capability.AgentRuntimeID,
+			IssueID:           projIssueID,
+			Priority:          int32(1),
+			Context:           taskContext,
+			HandoffNote:       pgtype.Text{String: p4AssessmentHandoffNote(bindingID), Valid: true},
+			OriginatorUserID:  originatorUserID,
+			AccountableUserID: actor.CreatorID,
+			OriginatorSource:  pgtype.Text{String: originatorSource, Valid: true},
 		})
 		if err != nil {
 			return err

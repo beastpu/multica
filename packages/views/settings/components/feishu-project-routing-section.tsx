@@ -394,6 +394,10 @@ export function FeishuProjectRoutingSection({
                         )}
                       </div>
                       <Select
+                        items={[
+                          { value: NO_PROJECT, label: t(($) => $.integrations.feishu_project_routes_pick_project) },
+                          ...projectChoices.map((project) => ({ value: project.id, label: project.title })),
+                        ]}
                         value={row.projectId || NO_PROJECT}
                         onValueChange={(v) => setRowProject(rowKey, v)}
                       >
@@ -418,6 +422,10 @@ export function FeishuProjectRoutingSection({
                         </SelectContent>
                       </Select>
                       <Select
+                        items={[
+                          { value: NO_AGENT, label: t(($) => $.integrations.feishu_project_routes_fallback_agent_none) },
+                          ...agentChoices.map((agent) => ({ value: agent.id, label: agent.name })),
+                        ]}
                         value={row.fallbackAgentId || NO_AGENT}
                         onValueChange={(v) => setRowFallbackAgent(rowKey, v)}
                       >

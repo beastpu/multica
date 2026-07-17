@@ -67,7 +67,7 @@ type Config struct {
 	// the UI can hide every "Create workspace" affordance — see #3433.
 	DisableWorkspaceCreation bool
 	// PublicURL is the absolute base URL the API is reachable at from the
-	// public internet, with no trailing slash (e.g. "https://app.multica.ai").
+	// public internet, with no trailing slash (e.g. "https://multica.ai").
 	// Used only to build webhook_url responses for autopilot webhook triggers
 	// — never for auth, routing, or workspace resolution. Empty when unset,
 	// in which case clients fall back to webhook_path + their own origin.
@@ -108,6 +108,11 @@ type Config struct {
 	LLMAPIKey       string
 	LLMBaseURL      string
 	LLMDefaultModel string
+	// ServerVersion is the build version of the running API binary (the same
+	// value main.go stamps via -X main.version and reports on /metrics).
+	// Surfaced through /api/config so self-hosted operators can confirm which
+	// server build is deployed. Empty in dev builds.
+	ServerVersion string
 }
 
 type cloudRuntimeProxy interface {
@@ -119,29 +124,34 @@ type RuntimeProfileRefreshNotifier interface {
 	NotifyRuntimeProfilesChanged(workspaceID, profileID string)
 }
 
+type WorkspaceSetRefreshNotifier interface {
+	NotifyWorkspacesChanged(userID string)
+}
+
 type Handler struct {
-	Queries               *db.Queries
-	DB                    dbExecutor
-	TxStarter             txStarter
-	Hub                   *realtime.Hub
-	DaemonHub             *daemonws.Hub
-	DaemonProfileRefresh  RuntimeProfileRefreshNotifier
-	Bus                   *events.Bus
-	TaskService           *service.TaskService
-	P4AssessmentService   *service.P4AssessmentService
-	IssueService          *service.IssueService
-	AutopilotService      *service.AutopilotService
-	EmailService          *service.EmailService
-	UpdateStore           UpdateStore
-	ModelListStore        ModelListStore
-	LocalSkillListStore   LocalSkillListStore
-	LocalSkillImportStore LocalSkillImportStore
-	FeatureFlags          *featureflag.Service
-	LivenessStore         LivenessStore
-	HeartbeatScheduler    HeartbeatScheduler
-	Storage               storage.Storage
-	CFSigner              *auth.CloudFrontSigner
-	Analytics             analytics.Client
+	Queries                *db.Queries
+	DB                     dbExecutor
+	TxStarter              txStarter
+	Hub                    *realtime.Hub
+	DaemonHub              *daemonws.Hub
+	DaemonProfileRefresh   RuntimeProfileRefreshNotifier
+	DaemonWorkspaceRefresh WorkspaceSetRefreshNotifier
+	Bus                    *events.Bus
+	TaskService            *service.TaskService
+	P4AssessmentService    *service.P4AssessmentService
+	IssueService           *service.IssueService
+	AutopilotService       *service.AutopilotService
+	EmailService           *service.EmailService
+	UpdateStore            UpdateStore
+	ModelListStore         ModelListStore
+	LocalSkillListStore    LocalSkillListStore
+	LocalSkillImportStore  LocalSkillImportStore
+	FeatureFlags           *featureflag.Service
+	LivenessStore          LivenessStore
+	HeartbeatScheduler     HeartbeatScheduler
+	Storage                storage.Storage
+	CFSigner               *auth.CloudFrontSigner
+	Analytics              analytics.Client
 	// Metrics is the shared business-metrics collector built by main.go.
 	// May be nil in tests / self-hosted with the metrics listener disabled;
 	// every Record* method is nil-safe and obsmetrics.RecordEvent treats a
@@ -154,11 +164,13 @@ type Handler struct {
 	// binaries those files reference) from OSS to the client. Server
 	// entrypoint wires this from env (DOWNLOADS_OSS_BUCKET + friends —
 	// see cmd/server/router.go). Nil → /api/downloads/<file> replies 503.
-	Downloads            *DownloadsProxy
-	MembershipCache      *auth.MembershipCache
-	WebhookRateLimiter   WebhookRateLimiter
-	WebhookIPRateLimiter WebhookRateLimiter
-	CloudRuntime         cloudRuntimeProxy
+	Downloads                    *DownloadsProxy
+	MembershipCache              *auth.MembershipCache
+	WebhookRateLimiter           WebhookRateLimiter
+	WebhookIPRateLimiter         WebhookRateLimiter
+	WebhookAbsoluteIPRateLimiter WebhookRateLimiter
+	WebhookDeliveryWorker        *WebhookDeliveryWorker
+	CloudRuntime                 cloudRuntimeProxy
 	// CloudRuntimeEnvBox seals/opens the per-workspace cloud runtime env
 	// (LLM proxy keys injected into kubefleet node pods). Nil when
 	// MULTICA_CLOUD_RUNTIME_SECRET_KEY is unset — PUT then returns 503 and
@@ -256,38 +268,42 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		daemonHub = daemonHubs[0]
 	}
 	var daemonProfileRefresh RuntimeProfileRefreshNotifier
+	var daemonWorkspaceRefresh WorkspaceSetRefreshNotifier
 	if daemonHub != nil {
 		daemonProfileRefresh = daemonHub
+		daemonWorkspaceRefresh = daemonHub
 	}
 
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
 	p4AssessmentSvc := service.NewP4AssessmentService(queries, txStarter, taskSvc)
 	taskSvc.P4Assessment = p4AssessmentSvc
-	return &Handler{
-		Queries:               queries,
-		DB:                    executor,
-		TxStarter:             txStarter,
-		Hub:                   hub,
-		DaemonHub:             daemonHub,
-		DaemonProfileRefresh:  daemonProfileRefresh,
-		Bus:                   bus,
-		TaskService:           taskSvc,
-		P4AssessmentService:   p4AssessmentSvc,
-		IssueService:          service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
-		AutopilotService:      service.NewAutopilotService(queries, txStarter, bus, taskSvc),
-		EmailService:          emailService,
-		UpdateStore:           NewInMemoryUpdateStore(),
-		ModelListStore:        NewInMemoryModelListStore(),
-		LocalSkillListStore:   NewInMemoryLocalSkillListStore(),
-		LocalSkillImportStore: NewInMemoryLocalSkillImportStore(),
-		LivenessStore:         NewNoopLivenessStore(),
-		HeartbeatScheduler:    NewPassthroughHeartbeatScheduler(queries),
-		Storage:               store,
-		CFSigner:              cfSigner,
-		Analytics:             analyticsClient,
-		WebhookRateLimiter:    NewMemoryWebhookRateLimiter(DefaultWebhookRateLimit()),
-		WebhookIPRateLimiter:  NewMemoryWebhookIPRateLimiter(DefaultWebhookIPRateLimit()),
+	h := &Handler{
+		Queries:                      queries,
+		DB:                           executor,
+		TxStarter:                    txStarter,
+		Hub:                          hub,
+		DaemonHub:                    daemonHub,
+		DaemonProfileRefresh:         daemonProfileRefresh,
+		DaemonWorkspaceRefresh:       daemonWorkspaceRefresh,
+		Bus:                          bus,
+		TaskService:                  taskSvc,
+		P4AssessmentService:          p4AssessmentSvc,
+		IssueService:                 service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
+		AutopilotService:             service.NewAutopilotService(queries, txStarter, bus, taskSvc),
+		EmailService:                 emailService,
+		UpdateStore:                  NewInMemoryUpdateStore(),
+		ModelListStore:               NewInMemoryModelListStore(),
+		LocalSkillListStore:          NewInMemoryLocalSkillListStore(),
+		LocalSkillImportStore:        NewInMemoryLocalSkillImportStore(),
+		LivenessStore:                NewNoopLivenessStore(),
+		HeartbeatScheduler:           NewPassthroughHeartbeatScheduler(queries),
+		Storage:                      store,
+		CFSigner:                     cfSigner,
+		Analytics:                    analyticsClient,
+		WebhookRateLimiter:           NewMemoryWebhookRateLimiter(DefaultWebhookRateLimit()),
+		WebhookIPRateLimiter:         NewMemoryWebhookIPRateLimiter(DefaultWebhookIPRateLimit()),
+		WebhookAbsoluteIPRateLimiter: NewMemoryWebhookAbsoluteIPRateLimiter(DefaultWebhookAbsoluteIPRateLimit()),
 		CloudRuntime: cloudruntime.NewClient(cloudruntime.Config{
 			BaseURL: cfg.CloudRuntimeFleetURL,
 			Timeout: cfg.CloudRuntimeFleetTimeout,
@@ -299,6 +315,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		}),
 		cfg: cfg,
 	}
+	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+	return h
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -439,6 +457,23 @@ func (h *Handler) publish(eventType, workspaceID, actorType, actorID string, pay
 		ActorID:     actorID,
 		Payload:     payload,
 	})
+}
+
+func (h *Handler) notifyDaemonWorkspacesChanged(userIDs ...string) {
+	if h.DaemonWorkspaceRefresh == nil {
+		return
+	}
+	seen := make(map[string]struct{}, len(userIDs))
+	for _, userID := range userIDs {
+		if userID == "" {
+			continue
+		}
+		if _, ok := seen[userID]; ok {
+			continue
+		}
+		seen[userID] = struct{}{}
+		h.DaemonWorkspaceRefresh.NotifyWorkspacesChanged(userID)
+	}
 }
 
 // publishTask is publish() plus a TaskID hint so the realtime layer can route
@@ -822,6 +857,10 @@ func (h *Handler) loadAgentForUser(w http.ResponseWriter, r *http.Request, agent
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return db.Agent{}, false
+	}
+	if agent.Kind != "user" {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return db.Agent{}, false
 	}

@@ -68,7 +68,6 @@ server/server
 data/
 .kilo
 .idea
-
 # Code-signing artifacts — NEVER commit these.
 # .p12/.pfx/.p8/.keychain bundle private keys; leaking one lets anyone
 # sign a malicious binary as Lilith. .cer and .certSigningRequest are
@@ -81,3 +80,4 @@ data/
 *.mobileprovision
 *.keychain
 *.keychain-db
+.gstack/

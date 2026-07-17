@@ -163,6 +163,7 @@ export function AssessmentCapabilitySection() {
           <label className="min-w-56 flex-1 space-y-1.5 text-xs font-medium">
             {t(($) => $.assessment.agent_label)}
             <Select
+              items={activeAgents.map((agent) => ({ value: agent.id, label: agent.name }))}
               value={selectedAgentId || undefined}
               onValueChange={(value) => setDraftAgentId(value ?? "")}
             >

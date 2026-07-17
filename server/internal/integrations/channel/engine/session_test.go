@@ -42,6 +42,7 @@ type fakeSessionQueries struct {
 	messageID       pgtype.UUID
 	touched         int
 	replyTargets    int
+	lockedWorkspace int    // count of LockWorkspaceForChatSessionCreate calls
 	lastConfig      []byte // config of the most recent CreateChannelChatSessionBinding
 	attachments     []db.CreateAttachmentParams
 	linked          db.LinkAttachmentsToChatMessageParams
@@ -65,6 +66,11 @@ func (f *fakeSessionQueries) GetChannelChatSessionBinding(_ context.Context, arg
 		return db.ChannelChatSessionBinding{ChatSessionID: id}, nil
 	}
 	return db.ChannelChatSessionBinding{}, pgx.ErrNoRows
+}
+
+func (f *fakeSessionQueries) LockWorkspaceForChatSessionCreate(_ context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	f.lockedWorkspace++
+	return id, nil
 }
 
 func (f *fakeSessionQueries) CreateChatSession(_ context.Context, _ db.CreateChatSessionParams) (db.ChatSession, error) {
