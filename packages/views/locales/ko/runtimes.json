@@ -237,7 +237,8 @@
       "toast_cleared": "키가 삭제되었습니다",
       "invalid_name": "이름은 UPPER_SNAKE_CASE 형식이어야 합니다",
       "empty": "이름과 값을 가진 변수를 하나 이상 추가하세요"
-    }
+    },
+    "delete_confirm_action": "삭제 확인"
   },
   "update": {
     "cli_version_label": "CLI 버전:",

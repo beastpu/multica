@@ -305,13 +305,27 @@ function LabeledInput({
 function CloudRuntimeNodeRow({ node, wsId }: { node: CloudRuntimeNode; wsId: string }) {
   const { t } = useT("runtimes");
   const deleteNode = useDeleteCloudRuntimeNode(wsId);
+  const [confirming, setConfirming] = useState(false);
   const title =
     node.name.trim() ||
     node.instance_id.trim() ||
     t(($) => $.cloud_runtime.node_fallback_name);
   const created = formatDateTime(node.created_at);
+
+  const runDelete = () => {
+    deleteNode.mutate(node.instance_id, {
+      onSuccess: () => toast.success(t(($) => $.cloud_runtime.toast_deleted)),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : t(($) => $.cloud_runtime.toast_delete_failed),
+        ),
+    });
+  };
+
   return (
-    <div className="rounded-md border bg-background px-3 py-2.5">
+    <div className="group rounded-md border bg-background px-3 py-2.5">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
@@ -330,32 +344,49 @@ function CloudRuntimeNodeRow({ node, wsId }: { node: CloudRuntimeNode; wsId: str
             )}
           </div>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive"
-          disabled={deleteNode.isPending}
-          onClick={() => {
-            if (!confirm(t(($) => $.cloud_runtime.delete_confirm))) return;
-            deleteNode.mutate(node.instance_id, {
-              onSuccess: () => toast.success(t(($) => $.cloud_runtime.toast_deleted)),
-              onError: (err) =>
-                toast.error(
-                  err instanceof Error
-                    ? err.message
-                    : t(($) => $.cloud_runtime.toast_delete_failed),
-                ),
-            });
-          }}
-          aria-label={t(($) => $.cloud_runtime.delete)}
-        >
-          {deleteNode.isPending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
+        {/* Delete is a two-step, hover-revealed action so a stray click never
+            tears down a node. Idle: a trash icon that only appears on row
+            hover/focus. Armed: an explicit "confirm / cancel" pair. */}
+        {confirming ? (
+          <div className="flex shrink-0 items-center gap-1">
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              disabled={deleteNode.isPending}
+              onClick={runDelete}
+            >
+              {deleteNode.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
+              {t(($) => $.cloud_runtime.delete_confirm_action)}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground"
+              disabled={deleteNode.isPending}
+              onClick={() => setConfirming(false)}
+            >
+              {t(($) => $.cloud_runtime.cancel)}
+            </Button>
+          </div>
+        ) : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 shrink-0 p-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+            onClick={() => setConfirming(true)}
+            aria-label={t(($) => $.cloud_runtime.delete)}
+          >
             <Trash2 className="h-3.5 w-3.5" />
-          )}
-        </Button>
+          </Button>
+        )}
       </div>
       {node.instance_id && (
         <div className="mt-2 truncate font-mono text-[11px] text-muted-foreground/80">

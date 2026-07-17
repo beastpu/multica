@@ -237,7 +237,8 @@
       "toast_cleared": "密钥已清除",
       "invalid_name": "名称必须为大写下划线格式（UPPER_SNAKE_CASE）",
       "empty": "请至少添加一个带名称和值的变量"
-    }
+    },
+    "delete_confirm_action": "确认删除"
   },
   "update": {
     "cli_version_label": "CLI 版本：",

@@ -237,7 +237,8 @@
       "toast_cleared": "キーを削除しました",
       "invalid_name": "名前は UPPER_SNAKE_CASE で入力してください",
       "empty": "名前と値を持つ変数を 1 つ以上追加してください"
-    }
+    },
+    "delete_confirm_action": "削除を確認"
   },
   "update": {
     "cli_version_label": "CLI バージョン:",
