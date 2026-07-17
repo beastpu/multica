@@ -365,3 +365,64 @@ func TestRenewPAT_RejectsTokenBelongingToDifferentUser(t *testing.T) {
 		t.Fatalf("expected 401 on user mismatch, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func insertTestCloudNodeToken(t *testing.T, expiresAt time.Time) string {
+	t.Helper()
+	raw, err := auth.GenerateCloudNodeToken()
+	if err != nil {
+		t.Fatalf("generate cloud node token: %v", err)
+	}
+	if _, err := testHandler.Queries.CreateCloudNodeToken(context.Background(), db.CreateCloudNodeTokenParams{
+		TokenHash:   auth.HashToken(raw),
+		WorkspaceID: parseUUID(testWorkspaceID),
+		OwnerID:     parseUUID(testUserID),
+		NodeName:    "node-renewtest",
+		ExpiresAt:   pgtype.Timestamptz{Time: expiresAt, Valid: true},
+	}); err != nil {
+		t.Fatalf("create cloud node token: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM cloud_node_token WHERE token_hash = $1`, auth.HashToken(raw))
+	})
+	return raw
+}
+
+func TestRenewCloudNodeToken_ExtendsInsideWindow(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	oldExpiry := time.Now().Add(3 * 24 * time.Hour) // inside 7-day threshold
+	raw := insertTestCloudNodeToken(t, oldExpiry)
+
+	w := httptest.NewRecorder()
+	testHandler.RenewCurrentPersonalAccessToken(w, newRenewRequest(raw))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	resp := decodeRenewResponse(t, w)
+	if !resp.Renewed {
+		t.Fatalf("expected renewed=true")
+	}
+	var actual time.Time
+	testPool.QueryRow(context.Background(),
+		`SELECT expires_at FROM cloud_node_token WHERE token_hash = $1`, auth.HashToken(raw)).Scan(&actual)
+	want := time.Now().Add(CloudNodeTokenRenewExtension)
+	if actual.Before(want.Add(-time.Hour)) || actual.After(want.Add(time.Hour)) {
+		t.Fatalf("expected new expiry near %v, got %v", want, actual)
+	}
+}
+
+func TestRenewCloudNodeToken_NoOpOutsideWindow(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	raw := insertTestCloudNodeToken(t, time.Now().Add(90*24*time.Hour)) // far from expiry
+	w := httptest.NewRecorder()
+	testHandler.RenewCurrentPersonalAccessToken(w, newRenewRequest(raw))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if decodeRenewResponse(t, w).Renewed {
+		t.Fatal("expected renewed=false outside window")
+	}
+}

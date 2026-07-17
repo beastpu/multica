@@ -12,3 +12,15 @@ WHERE token_hash = $1 AND expires_at > now();
 -- is deleted so a leaked token dies with the pod.
 DELETE FROM cloud_node_token
 WHERE workspace_id = $1 AND node_name = $2;
+
+-- name: ExtendCloudNodeTokenExpiry :one
+-- In-place renew of a cloud node PAT: bumps expires_at only while the row is
+-- still valid AND still inside the renewal threshold. Same CAS phrasing as
+-- ExtendPersonalAccessTokenExpiry so concurrent renews are idempotent (the
+-- second writer matches zero rows → pgx.ErrNoRows → "already renewed").
+UPDATE cloud_node_token
+SET expires_at = sqlc.arg(new_expires_at)
+WHERE token_hash = sqlc.arg(token_hash)
+  AND expires_at > now()
+  AND expires_at <= sqlc.arg(renew_threshold_at)
+RETURNING expires_at;
