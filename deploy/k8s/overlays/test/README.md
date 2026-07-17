@@ -72,6 +72,46 @@ automated by the kustomization.
    `REDIS_URL` is what makes multi-pod WS fanout safe if you later raise the
    server replica count above 1.
 
+5. **Cloud runtime (kubefleet) prerequisites.** The `cloud-runtime-patch.yaml`
+   + `../../cloud-runtime` RBAC in this overlay turn on the in-process k8s
+   fleet (one namespace per workspace, one StatefulSet per node). Two things
+   are NOT in the kustomization:
+
+   a. **Two secret keys** — add them to the `multica-secrets` created above
+      (they flow into the server via the base `envFrom`):
+
+      ```bash
+      kubectl -n multica-test patch secret multica-secrets --type=merge -p "{
+        \"stringData\": {
+          \"MULTICA_CLOUD_RUNTIME_SECRET_KEY\": \"$(openssl rand -hex 32)\",
+          \"MULTICA_CLOUD_RUNTIME_PULL_SECRET_DOCKERCONFIGJSON\": \"$(kubectl -n multica-test get secret regcred -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d)\"
+        }
+      }"
+      ```
+
+      `SECRET_KEY` is the secretbox master key encrypting per-workspace LLM
+      keys at rest — **do not rotate it** once workspaces have saved keys, or
+      those keys become undecryptable. `PULL_SECRET_DOCKERCONFIGJSON` here
+      reuses the same registry creds as `regcred` so node namespaces can pull
+      the private runtime image.
+
+   b. **The web image must be built with the cloud-runtime flag on.** The
+      `/runtimes` cloud tab is gated by `NEXT_PUBLIC_ENABLE_CLOUD_RUNTIME`,
+      which `Dockerfile.web` bakes at build time (not read at runtime):
+
+      ```bash
+      docker build -f Dockerfile.web \
+        --build-arg NEXT_PUBLIC_ENABLE_CLOUD_RUNTIME=true \
+        -t lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web:<tag> .
+      ```
+
+      Point `images:` in `kustomization.yaml` at that tag. A web image built
+      without the flag deploys fine but hides the cloud runtime UI entirely.
+
+   The runtime **node** image (`MULTICA_CLOUD_RUNTIME_IMAGE` in
+   `cloud-runtime-patch.yaml`) is ops-built and versioned independently of the
+   server/web images — bump it there when a new runtime image ships.
+
 ## First deploy
 
 ```bash
