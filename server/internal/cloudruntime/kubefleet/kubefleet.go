@@ -121,6 +121,11 @@ type Config struct {
 	KubeAPIURL string
 	TokenFile  string
 	CAFile     string
+	// Kubeconfig, when set, points the whole deployment at ONE cluster via a
+	// kubeconfig (file path or inline YAML) instead of the in-cluster
+	// service account. Its current-context supplies the API URL, CA trust and
+	// auth (bearer token or client cert). Unset = in-cluster.
+	Kubeconfig string
 	// NamespacePrefix prefixes the per-workspace namespace name
 	// (default "mrt-"; namespace = prefix + workspace UUID without dashes).
 	NamespacePrefix string
@@ -154,6 +159,10 @@ type Fleet struct {
 	cfg     Config
 	queries *db.Queries
 	http    *http.Client
+	// bearerToken, when set (from a kubeconfig), is used for every request
+	// instead of reading cfg.TokenFile. Empty means in-cluster (read the
+	// rotating service-account token file) or client-cert auth.
+	bearerToken string
 }
 
 // New validates cfg, applies defaults and returns a ready Fleet.
@@ -187,14 +196,26 @@ func New(cfg Config, queries *db.Queries) (*Fleet, error) {
 		cfg.MaxNodesPerWorkspace = defaultMaxNodesPerWorkspace
 	}
 	client := cfg.HTTPClient
-	if client == nil {
+	bearerToken := ""
+	switch {
+	case client != nil:
+		// Test override.
+	case strings.TrimSpace(cfg.Kubeconfig) != "":
+		kube, err := loadKubeconfig(cfg.Kubeconfig)
+		if err != nil {
+			return nil, err
+		}
+		cfg.KubeAPIURL = kube.apiURL
+		client = kube.http
+		bearerToken = kube.bearerToken
+	default:
 		var err error
 		client, err = inClusterHTTPClient(cfg.CAFile)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return &Fleet{cfg: cfg, queries: queries, http: client}, nil
+	return &Fleet{cfg: cfg, queries: queries, http: client, bearerToken: bearerToken}, nil
 }
 
 // ParseExtraEnv parses the MULTICA_CLOUD_RUNTIME_EXTRA_ENV format:
@@ -973,11 +994,18 @@ func (f *Fleet) kubeRequest(ctx context.Context, method, path string, body []byt
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	// The service-account token rotates on disk (BoundServiceAccountToken);
-	// reading per request keeps us current without a refresh loop. Missing
-	// file is tolerated for plain-HTTP test servers.
-	if raw, err := os.ReadFile(f.cfg.TokenFile); err == nil {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(raw)))
+	switch {
+	case f.bearerToken != "":
+		// Static token from a kubeconfig.
+		req.Header.Set("Authorization", "Bearer "+f.bearerToken)
+	default:
+		// In-cluster: the service-account token rotates on disk
+		// (BoundServiceAccountToken); reading per request keeps us current
+		// without a refresh loop. Missing file is tolerated for plain-HTTP
+		// test servers and client-cert kubeconfigs.
+		if raw, err := os.ReadFile(f.cfg.TokenFile); err == nil {
+			req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(raw)))
+		}
 	}
 	return req, nil
 }
