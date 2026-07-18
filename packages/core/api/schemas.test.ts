@@ -1167,12 +1167,15 @@ describe("WorkspaceCapabilitySchema", () => {
 describe("CloudRuntimeEnvSchema", () => {
   const ENDPOINT = { endpoint: "GET /api/workspaces/:id/cloud-runtime-env" };
 
-  it("parses a configured response, keeping names + last4 only", async () => {
+  it("parses a configured response, keeping non-sensitive values only", async () => {
     const { CloudRuntimeEnvSchema, EMPTY_CLOUD_RUNTIME_ENV } = await import("./schemas");
     const parsed = parseWithFallback(
       {
         configured: true,
-        env: [{ name: "ANTHROPIC_AUTH_TOKEN", last4: "abcd" }],
+        env: [
+          { name: "OPENAI_API_KEY", last4: "abcd" },
+          { name: "CODEX_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
+        ],
         updated_at: "2026-07-16T00:00:00Z",
       },
       CloudRuntimeEnvSchema,
@@ -1180,8 +1183,13 @@ describe("CloudRuntimeEnvSchema", () => {
       ENDPOINT,
     );
     expect(parsed.configured).toBe(true);
-    expect(parsed.env).toHaveLength(1);
-    expect(parsed.env[0]).toEqual({ name: "ANTHROPIC_AUTH_TOKEN", last4: "abcd" });
+    expect(parsed.env).toHaveLength(2);
+    expect(parsed.env[0]).toEqual({ name: "OPENAI_API_KEY", last4: "abcd" });
+    expect(parsed.env[1]).toEqual({
+      name: "CODEX_BASE_URL",
+      last4: "/v1",
+      value: "https://proxy.example/v1",
+    });
   });
 
   it("degrades missing/null fields instead of throwing", async () => {

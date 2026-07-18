@@ -1,55 +1,29 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { KeyRound, Loader2, Plus, Trash2 } from "lucide-react";
+import { CheckCircle2, KeyRound, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   cloudRuntimeEnvOptions,
+  type CloudRuntimeEnvUpdate,
   useDeleteCloudRuntimeEnv,
   useSaveCloudRuntimeEnv,
 } from "@multica/core/runtimes";
-import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@multica/ui/components/ui/select";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 
-const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
-
-const AI_PROVIDER_OPTIONS = [
-  "multica_proxy",
-  "anthropic_compatible",
-  "openai_compatible",
-  "custom",
-] as const;
-
-type AiProvider = (typeof AI_PROVIDER_OPTIONS)[number];
-
-interface Row {
-  name: string;
-  value: string;
-}
-
-interface StructuredConnection {
-  provider: AiProvider;
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-}
+const BASE_URL_ENVS = ["CODEX_BASE_URL", "ANTHROPIC_BASE_URL"] as const;
+const MODEL_ENVS = ["CODEX_MODEL", "MULTICA_CLAUDE_MODEL", "ANTHROPIC_MODEL"] as const;
+const API_KEY_ENVS = ["OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"] as const;
 
 /**
- * Admin-only card for the per-workspace cloud runtime AI connection.
- * Values are write-only: the server returns names + last-4 fingerprints, so
- * the editor starts empty and submitting merges into the encrypted env set.
+ * Admin-only card for the per-workspace cloud runtime model proxy connection.
+ * A single LLM gateway connection is fanned out into the env names currently
+ * required by the supported cloud agents: Codex and Claude Code.
  */
 export function CloudRuntimeEnvCard({
   wsId,
@@ -64,55 +38,76 @@ export function CloudRuntimeEnvCard({
   const envQuery = useQuery(cloudRuntimeEnvOptions(wsId));
   const saveEnv = useSaveCloudRuntimeEnv(wsId);
   const deleteEnv = useDeleteCloudRuntimeEnv(wsId);
-  const [connection, setConnection] = useState<StructuredConnection>({
-    provider: "multica_proxy",
-    baseUrl: "",
-    apiKey: "",
-    model: "",
-  });
-  const [rows, setRows] = useState<Row[]>([{ name: "", value: "" }]);
+  const [baseUrl, setBaseUrl] = useState("");
+  const [model, setModel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [editingApiKey, setEditingApiKey] = useState(false);
 
   const configuredVars = useMemo(() => envQuery.data?.env ?? [], [envQuery.data]);
-  const configured = (envQuery.data?.configured === true) || configuredVars.length > 0;
+  const baseUrlVar = findConfiguredVar(configuredVars, BASE_URL_ENVS);
+  const modelVar = findConfiguredVar(configuredVars, MODEL_ENVS);
+  const apiKeyVar = findConfiguredVar(configuredVars, API_KEY_ENVS);
+  const hasApiKey = Boolean(apiKeyVar);
+  const configured = Boolean(baseUrlVar?.value || modelVar?.value || hasApiKey);
 
-  const setRow = (index: number, patch: Partial<Row>) => {
-    setRows((prev) =>
-      prev.map((row, i) => (i === index ? { ...row, ...patch } : row)),
-    );
-  };
-  const addRow = () => setRows((prev) => [...prev, { name: "", value: "" }]);
-  const removeRow = (index: number) =>
-    setRows((prev) =>
-      prev.length === 1
-        ? [{ name: "", value: "" }]
-        : prev.filter((_, i) => i !== index),
-    );
+  useEffect(() => {
+    if (!envQuery.data) return;
+    setBaseUrl(baseUrlVar?.value ?? "");
+    setModel(modelVar?.value ?? "");
+    setApiKey("");
+    setEditingApiKey(!apiKeyVar);
+  }, [envQuery.data, baseUrlVar?.value, modelVar?.value, apiKeyVar]);
 
   const handleSave = async () => {
-    const env = structuredConnectionEnv(connection);
-    for (const row of rows.filter((r) => r.name.trim() || r.value.trim())) {
-      const name = row.name.trim();
-      if (!ENV_NAME_RE.test(name)) {
-        toast.error(t(($) => $.cloud_runtime.env.invalid_name));
-        return;
-      }
-      if (!row.value.trim()) {
-        toast.error(t(($) => $.cloud_runtime.env.empty));
-        return;
-      }
-      env[name] = row.value;
+    const env: Record<string, string> = {};
+    const removeEnv: string[] = [];
+    const nextBaseUrl = baseUrl.trim();
+    const nextModel = model.trim();
+    const nextApiKey = apiKey.trim();
+
+    if (nextBaseUrl) {
+      for (const name of BASE_URL_ENVS) env[name] = nextBaseUrl;
+    } else if (baseUrlVar) {
+      removeEnv.push(...configuredNames(configuredVars, BASE_URL_ENVS));
+    }
+    if (nextModel) {
+      for (const name of MODEL_ENVS) env[name] = nextModel;
+    } else if (modelVar) {
+      removeEnv.push(...configuredNames(configuredVars, MODEL_ENVS));
+    }
+    if (nextApiKey) {
+      for (const name of API_KEY_ENVS) env[name] = nextApiKey;
     }
 
-    if (Object.keys(env).length === 0) {
+    const update: CloudRuntimeEnvUpdate = {};
+    if (Object.keys(env).length > 0) update.env = env;
+    if (removeEnv.length > 0) update.remove_env = removeEnv;
+
+    if (!update.env && !update.remove_env) {
       toast.error(t(($) => $.cloud_runtime.env.empty_connection));
       return;
     }
 
     try {
-      await saveEnv.mutateAsync(env);
+      await saveEnv.mutateAsync(update);
       toast.success(t(($) => $.cloud_runtime.env.toast_saved));
-      setConnection((prev) => ({ ...prev, baseUrl: "", apiKey: "", model: "" }));
-      setRows([{ name: "", value: "" }]);
+      setApiKey("");
+      setEditingApiKey(false);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t(($) => $.cloud_runtime.env.toast_save_failed),
+      );
+    }
+  };
+
+  const handleRemoveApiKey = async () => {
+    try {
+      await saveEnv.mutateAsync({ remove_env: [...API_KEY_ENVS] });
+      toast.success(t(($) => $.cloud_runtime.env.toast_saved));
+      setApiKey("");
+      setEditingApiKey(true);
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -127,6 +122,10 @@ export function CloudRuntimeEnvCard({
     try {
       await deleteEnv.mutateAsync();
       toast.success(t(($) => $.cloud_runtime.env.toast_cleared));
+      setBaseUrl("");
+      setModel("");
+      setApiKey("");
+      setEditingApiKey(true);
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -143,7 +142,7 @@ export function CloudRuntimeEnvCard({
           <KeyRound className="h-3.5 w-3.5 text-muted-foreground" />
           {t(($) => $.cloud_runtime.env.title)}
         </h3>
-        {configuredVars.length > 0 && !readOnly && (
+        {configured && !readOnly && (
           <Button
             type="button"
             variant="ghost"
@@ -166,34 +165,15 @@ export function CloudRuntimeEnvCard({
           <div className="flex h-10 items-center justify-center">
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           </div>
-        ) : configured ? (
-          <div className="space-y-2">
-            <div className="text-xs font-medium text-foreground">
-              {t(($) => $.cloud_runtime.env.configured)}
+        ) : (
+          <div className="rounded-md border bg-background px-3 py-2">
+            <div className="text-xs text-muted-foreground">
+              {t(($) => $.cloud_runtime.env.provider)}
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {configuredVars.map((v) => (
-                <Badge
-                  key={v.name}
-                  variant="secondary"
-                  className="font-mono text-[11px]"
-                >
-                  {v.name}
-                  {v.last4 && (
-                    <span className="ml-1 text-muted-foreground">
-                      {t(($) => $.cloud_runtime.env.masked_hint, {
-                        last4: v.last4,
-                      })}
-                    </span>
-                  )}
-                </Badge>
-              ))}
+            <div className="mt-1 text-sm font-medium">
+              {t(($) => $.cloud_runtime.env.llm_gateway)}
             </div>
           </div>
-        ) : (
-          <p className="text-xs text-muted-foreground/70">
-            {t(($) => $.cloud_runtime.env.not_configured)}
-          </p>
         )}
 
         {readOnly ? (
@@ -203,129 +183,120 @@ export function CloudRuntimeEnvCard({
         ) : (
           <>
             <div className="grid gap-3 md:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label
-                  htmlFor="cloud-runtime-ai-provider"
-                  className="text-xs text-muted-foreground"
-                >
-                  {t(($) => $.cloud_runtime.env.provider)}
-                </Label>
-                <Select
-                  items={AI_PROVIDER_OPTIONS.map((provider) => ({
-                    value: provider,
-                    label: t(($) => $.cloud_runtime.env.providers[provider]),
-                  }))}
-                  value={connection.provider}
-                  onValueChange={(next) =>
-                    setConnection((prev) => ({
-                      ...prev,
-                      provider: (next ?? prev.provider) as AiProvider,
-                    }))
-                  }
-                >
-                  <SelectTrigger
-                    id="cloud-runtime-ai-provider"
-                    className="h-9 w-full rounded-md text-sm"
-                  >
-                    <SelectValue>
-                      {() => (
-                        <span className="truncate">
-                          {t(($) => $.cloud_runtime.env.providers[connection.provider])}
-                        </span>
-                      )}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent align="start">
-                    {AI_PROVIDER_OPTIONS.map((provider) => (
-                      <SelectItem key={provider} value={provider}>
-                        {t(($) => $.cloud_runtime.env.providers[provider])}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
               <TextField
                 id="cloud-runtime-ai-base-url"
                 label={t(($) => $.cloud_runtime.env.base_url)}
-                value={connection.baseUrl}
-                onChange={(baseUrl) =>
-                  setConnection((prev) => ({ ...prev, baseUrl }))
-                }
-                placeholder="https://api.example.com/v1"
-              />
-              <TextField
-                id="cloud-runtime-ai-api-key"
-                label={t(($) => $.cloud_runtime.env.api_key)}
-                value={connection.apiKey}
-                onChange={(apiKey) =>
-                  setConnection((prev) => ({ ...prev, apiKey }))
-                }
-                placeholder={t(($) => $.cloud_runtime.env.value_placeholder)}
-                type="password"
+                value={baseUrl}
+                onChange={setBaseUrl}
+                placeholder="https://llm-gateway.example.com/v1"
               />
               <TextField
                 id="cloud-runtime-ai-model"
                 label={t(($) => $.cloud_runtime.env.default_model)}
-                value={connection.model}
-                onChange={(model) =>
-                  setConnection((prev) => ({ ...prev, model }))
-                }
-                placeholder="claude-sonnet-4-5"
+                value={model}
+                onChange={setModel}
+                placeholder="gpt-5-codex / claude-sonnet-4-5"
               />
             </div>
 
-            <div className="space-y-2 rounded-md border bg-background/70 p-3">
-              <div>
-                <div className="text-xs font-medium text-foreground">
-                  {t(($) => $.cloud_runtime.env.advanced_title)}
-                </div>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  {t(($) => $.cloud_runtime.env.advanced_hint)}
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                {rows.map((row, index) => (
-                  <div key={index} className="flex items-center gap-2">
-                    <Input
-                      value={row.name}
-                      onChange={(e) => setRow(index, { name: e.target.value })}
-                      placeholder={t(($) => $.cloud_runtime.env.name_placeholder)}
-                      className="h-8 flex-1 font-mono text-xs"
-                      aria-label={t(($) => $.cloud_runtime.env.name)}
-                    />
-                    <Input
-                      value={row.value}
-                      onChange={(e) => setRow(index, { value: e.target.value })}
-                      placeholder={t(($) => $.cloud_runtime.env.value_placeholder)}
-                      type="password"
-                      className="h-8 flex-1 text-xs"
-                      aria-label={t(($) => $.cloud_runtime.env.value)}
-                    />
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="cloud-runtime-ai-api-key"
+                className="text-xs text-muted-foreground"
+              >
+                {t(($) => $.cloud_runtime.env.api_key_optional)}
+              </Label>
+              {hasApiKey && !editingApiKey ? (
+                <div className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
+                    <span className="text-sm font-medium">
+                      {t(($) => $.cloud_runtime.env.api_key_configured)}
+                    </span>
+                    {apiKeyVar?.last4 && (
+                      <span className="truncate text-xs text-muted-foreground">
+                        {t(($) => $.cloud_runtime.env.masked_hint, {
+                          last4: apiKeyVar.last4,
+                        })}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
                     <Button
                       type="button"
                       variant="ghost"
-                      size="icon"
-                      onClick={() => removeRow(index)}
-                      className="h-8 w-8 shrink-0 text-muted-foreground"
+                      size="sm"
+                      className="h-7 px-2"
+                      onClick={() => setEditingApiKey(true)}
+                    >
+                      {t(($) => $.cloud_runtime.env.replace)}
+                    </Button>
+                    <span className="h-4 w-px bg-border" />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-destructive hover:text-destructive"
+                      disabled={saveEnv.isPending}
+                      onClick={() => void handleRemoveApiKey()}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
+                      {t(($) => $.cloud_runtime.env.remove)}
                     </Button>
                   </div>
-                ))}
-              </div>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addRow}
-                className="h-7 px-2 text-xs"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                {t(($) => $.cloud_runtime.env.add)}
-              </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="cloud-runtime-ai-api-key"
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder={t(($) => $.cloud_runtime.env.value_placeholder)}
+                    type="password"
+                    className="h-9 text-sm"
+                  />
+                  {hasApiKey && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 px-2 text-xs text-muted-foreground"
+                      onClick={() => {
+                        setApiKey("");
+                        setEditingApiKey(false);
+                      }}
+                    >
+                      {t(($) => $.cloud_runtime.env.cancel_replace)}
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
+
+            <details className="group rounded-md border bg-background px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium text-muted-foreground marker:text-muted-foreground">
+                {t(($) => $.cloud_runtime.env.mapping_title)}
+              </summary>
+              <div className="mt-2 space-y-2">
+                <p className="text-[11px] text-muted-foreground">
+                  {t(($) => $.cloud_runtime.env.mapping_hint)}
+                </p>
+                <div className="overflow-hidden rounded-md border">
+                  <table className="w-full text-left text-[11px]">
+                    <tbody className="divide-y">
+                      <MappingRow
+                        agent="Codex"
+                        mapping="CODEX_BASE_URL / OPENAI_API_KEY / CODEX_MODEL"
+                      />
+                      <MappingRow
+                        agent="Claude Code"
+                        mapping="ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_MODEL / MULTICA_CLAUDE_MODEL"
+                      />
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </details>
 
             <div className="flex items-center justify-between gap-3">
               <p className="text-[11px] text-muted-foreground/70">
@@ -353,20 +324,45 @@ export function CloudRuntimeEnvCard({
   );
 }
 
+function findConfiguredVar<T extends readonly string[]>(
+  vars: Array<{ name: string; value?: string; last4?: string }>,
+  names: T,
+) {
+  return names
+    .map((name) => vars.find((v) => v.name === name))
+    .find((v) => v != null);
+}
+
+function configuredNames<T extends readonly string[]>(
+  vars: Array<{ name: string }>,
+  names: T,
+) {
+  return names.filter((name) => vars.some((v) => v.name === name));
+}
+
+function MappingRow({ agent, mapping }: { agent: string; mapping: string }) {
+  return (
+    <tr>
+      <th className="w-28 bg-muted/40 px-2 py-1.5 font-medium text-foreground">
+        {agent}
+      </th>
+      <td className="px-2 py-1.5 font-mono text-muted-foreground">{mapping}</td>
+    </tr>
+  );
+}
+
 function TextField({
   id,
   label,
   value,
   onChange,
   placeholder,
-  type = "text",
 }: {
   id: string;
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
-  type?: string;
 }) {
   return (
     <div className="space-y-1.5">
@@ -378,43 +374,8 @@ function TextField({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        type={type}
         className="h-9 text-sm"
       />
     </div>
   );
-}
-
-function structuredConnectionEnv(connection: StructuredConnection): Record<string, string> {
-  const env: Record<string, string> = {};
-  const baseUrl = connection.baseUrl.trim();
-  const apiKey = connection.apiKey.trim();
-  const model = connection.model.trim();
-  if (baseUrl || apiKey || model) {
-    env.MULTICA_CLOUD_RUNTIME_AI_PROVIDER = connection.provider;
-  }
-
-  if (baseUrl) {
-    if (connection.provider === "openai_compatible") {
-      env.CODEX_BASE_URL = baseUrl;
-    } else {
-      env.ANTHROPIC_BASE_URL = baseUrl;
-    }
-  }
-  if (apiKey) {
-    env[
-      connection.provider === "openai_compatible"
-        ? "OPENAI_API_KEY"
-        : "ANTHROPIC_AUTH_TOKEN"
-    ] = apiKey;
-  }
-  if (model) {
-    env[
-      connection.provider === "openai_compatible"
-        ? "CODEX_MODEL"
-        : "MULTICA_CLAUDE_MODEL"
-    ] = model;
-  }
-
-  return env;
 }

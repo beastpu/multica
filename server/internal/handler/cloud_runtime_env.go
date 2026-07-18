@@ -21,8 +21,9 @@ import (
 // workspace_cloud_runtime_env — never in workspace.settings, which is shipped
 // verbatim to daemons.
 //
-// The API is write-only for values: GET returns variable names plus the last
-// four characters, never the plaintext. Routes are admin-gated in the router.
+// The API is write-only for sensitive values: GET returns plaintext only for
+// explicitly allowlisted non-sensitive config such as base URLs and model ids.
+// Routes are admin-gated in the router.
 
 var envNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
@@ -32,19 +33,21 @@ const (
 )
 
 type putCloudRuntimeEnvRequest struct {
-	Env map[string]string `json:"env"`
+	Env       map[string]string `json:"env"`
+	RemoveEnv []string          `json:"remove_env"`
 }
 
 type cloudRuntimeEnvVarInfo struct {
-	Name  string `json:"name"`
-	Last4 string `json:"last4"`
+	Name  string  `json:"name"`
+	Last4 string  `json:"last4"`
+	Value *string `json:"value,omitempty"`
 }
 
 // PutWorkspaceCloudRuntimeEnv merges the submitted variables into the
-// workspace's cloud runtime env (upsert by name). Values are write-only, so
-// the editor can never round-trip the existing set — a full replace would
-// silently drop every variable not re-entered. Merge lets the admin add or
-// update one variable at a time; DELETE clears everything.
+// workspace's cloud runtime env (upsert by name) and can remove selected
+// names. Sensitive values are write-only, so the editor can never round-trip
+// the existing set — a full replace would silently drop every secret not
+// re-entered. Merge lets the admin update visible config without losing keys.
 func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Request) {
 	wsUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
 	if !ok {
@@ -62,8 +65,8 @@ func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if len(req.Env) == 0 {
-		writeError(w, http.StatusBadRequest, "env must contain at least one variable (use DELETE to clear)")
+	if len(req.Env) == 0 && len(req.RemoveEnv) == 0 {
+		writeError(w, http.StatusBadRequest, "env or remove_env must contain at least one variable (use DELETE to clear)")
 		return
 	}
 	if len(req.Env) > maxCloudRuntimeEnvVars {
@@ -77,6 +80,12 @@ func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 		}
 		if strings.TrimSpace(value) == "" || len(value) > maxCloudRuntimeEnvValueSize {
 			writeError(w, http.StatusBadRequest, "invalid value for env variable: "+name)
+			return
+		}
+	}
+	for _, name := range req.RemoveEnv {
+		if !envNamePattern.MatchString(name) {
+			writeError(w, http.StatusBadRequest, "invalid env variable name: "+name)
 			return
 		}
 	}
@@ -95,8 +104,19 @@ func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 	for name, value := range req.Env {
 		merged[name] = value
 	}
+	for _, name := range req.RemoveEnv {
+		delete(merged, name)
+	}
 	if len(merged) > maxCloudRuntimeEnvVars {
 		writeError(w, http.StatusBadRequest, "too many env variables")
+		return
+	}
+	if len(merged) == 0 {
+		if err := h.Queries.DeleteWorkspaceCloudRuntimeEnv(r.Context(), wsUUID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete env")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"configured": false, "env": []any{}})
 		return
 	}
 
@@ -127,15 +147,16 @@ func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"env": cloudRuntimeEnvInfos(req.Env),
+		"configured": true,
+		"env":        cloudRuntimeEnvInfos(merged),
 		// Existing nodes keep the env they booted with; the secret is synced
 		// on the next node create. Surfaced so the UI can hint at a restart.
 		"applies_to": "new_nodes",
 	})
 }
 
-// GetWorkspaceCloudRuntimeEnv returns variable names and last-4 fingerprints
-// only — the plaintext never leaves the server after PUT.
+// GetWorkspaceCloudRuntimeEnv returns variable names and last-4 fingerprints.
+// Plaintext is included only for non-sensitive allowlisted config values.
 func (h *Handler) GetWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Request) {
 	wsUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
 	if !ok {
@@ -203,8 +224,22 @@ func cloudRuntimeEnvInfos(env map[string]string) []cloudRuntimeEnvVarInfo {
 		if len(last4) > 4 {
 			last4 = last4[len(last4)-4:]
 		}
-		infos = append(infos, cloudRuntimeEnvVarInfo{Name: name, Last4: last4})
+		info := cloudRuntimeEnvVarInfo{Name: name, Last4: last4}
+		if isCloudRuntimeEnvPlaintextAllowed(name) {
+			v := value
+			info.Value = &v
+		}
+		infos = append(infos, info)
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
 	return infos
+}
+
+func isCloudRuntimeEnvPlaintextAllowed(name string) bool {
+	switch name {
+	case "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CODEX_BASE_URL", "CODEX_MODEL", "MULTICA_CLAUDE_MODEL":
+		return true
+	default:
+		return false
+	}
 }
