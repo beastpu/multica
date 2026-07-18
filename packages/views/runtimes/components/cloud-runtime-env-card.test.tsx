@@ -51,6 +51,7 @@ describe("CloudRuntimeEnvCard", () => {
       configured: true,
       env: [
         { name: "CODEX_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
+        { name: "ANTHROPIC_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
         { name: "CODEX_MODEL", last4: "odex", value: "gpt-5-codex" },
         { name: "OPENAI_API_KEY", last4: "wxyz" },
       ],
@@ -64,22 +65,22 @@ describe("CloudRuntimeEnvCard", () => {
     expect(screen.queryByDisplayValue(/sk-/)).toBeNull();
   });
 
-  it("saves the OpenAI-compatible connection through putCloudRuntimeEnv", async () => {
+  it("saves the LiteLLM proxy connection for Codex and Claude Code", async () => {
     getEnv.mockResolvedValue({ configured: false, env: [] });
     putEnv.mockResolvedValue({
       configured: true,
       env: [{ name: "OPENAI_API_KEY", last4: "wxyz" }],
     });
     renderCard();
-    await screen.findByText("OpenAI compatible");
+    await screen.findByText("LiteLLM Proxy");
 
-    fireEvent.change(screen.getByLabelText("Base URL"), {
+    fireEvent.change(screen.getByLabelText("LiteLLM Base URL"), {
       target: { value: "https://proxy.example/v1" },
     });
     fireEvent.change(screen.getByLabelText("Default model"), {
       target: { value: "gpt-5-codex" },
     });
-    fireEvent.change(screen.getByLabelText("API Key (optional)"), {
+    fireEvent.change(screen.getByLabelText("LiteLLM API Key (optional)"), {
       target: { value: "sk-secret-wxyz" },
     });
     fireEvent.click(screen.getByText("Save connection"));
@@ -88,8 +89,12 @@ describe("CloudRuntimeEnvCard", () => {
       expect(putEnv).toHaveBeenCalledWith("ws-1", {
         env: {
           CODEX_BASE_URL: "https://proxy.example/v1",
+          ANTHROPIC_BASE_URL: "https://proxy.example/v1",
           CODEX_MODEL: "gpt-5-codex",
+          MULTICA_CLAUDE_MODEL: "gpt-5-codex",
+          ANTHROPIC_MODEL: "gpt-5-codex",
           OPENAI_API_KEY: "sk-secret-wxyz",
+          ANTHROPIC_AUTH_TOKEN: "sk-secret-wxyz",
         },
       }),
     );
@@ -100,7 +105,9 @@ describe("CloudRuntimeEnvCard", () => {
       configured: true,
       env: [
         { name: "CODEX_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
+        { name: "ANTHROPIC_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
         { name: "OPENAI_API_KEY", last4: "wxyz" },
+        { name: "ANTHROPIC_AUTH_TOKEN", last4: "wxyz" },
       ],
     });
     putEnv.mockResolvedValue({
@@ -114,7 +121,7 @@ describe("CloudRuntimeEnvCard", () => {
 
     await waitFor(() =>
       expect(putEnv).toHaveBeenCalledWith("ws-1", {
-        remove_env: ["OPENAI_API_KEY"],
+        remove_env: ["OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
       }),
     );
   });
@@ -122,7 +129,7 @@ describe("CloudRuntimeEnvCard", () => {
   it("rejects an empty save before calling the API", async () => {
     getEnv.mockResolvedValue({ configured: false, env: [] });
     renderCard();
-    await screen.findByText("OpenAI compatible");
+    await screen.findByText("LiteLLM Proxy");
 
     fireEvent.click(screen.getByText("Save connection"));
 

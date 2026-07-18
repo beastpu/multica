@@ -16,14 +16,14 @@ import { Label } from "@multica/ui/components/ui/label";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 
-const BASE_URL_ENV = "CODEX_BASE_URL";
-const MODEL_ENV = "CODEX_MODEL";
-const API_KEY_ENV = "OPENAI_API_KEY";
+const BASE_URL_ENVS = ["CODEX_BASE_URL", "ANTHROPIC_BASE_URL"] as const;
+const MODEL_ENVS = ["CODEX_MODEL", "MULTICA_CLAUDE_MODEL", "ANTHROPIC_MODEL"] as const;
+const API_KEY_ENVS = ["OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"] as const;
 
 /**
- * Admin-only card for the per-workspace cloud runtime AI connection.
- * OpenAI-compatible runtimes use non-sensitive CODEX_* values plus a
- * write-only API key delivered as Kubernetes env through the node secret.
+ * Admin-only card for the per-workspace cloud runtime model proxy connection.
+ * A single LiteLLM proxy connection is fanned out into the env names currently
+ * required by the supported cloud agents: Codex and Claude Code.
  */
 export function CloudRuntimeEnvCard({
   wsId,
@@ -44,9 +44,9 @@ export function CloudRuntimeEnvCard({
   const [editingApiKey, setEditingApiKey] = useState(false);
 
   const configuredVars = useMemo(() => envQuery.data?.env ?? [], [envQuery.data]);
-  const baseUrlVar = configuredVars.find((v) => v.name === BASE_URL_ENV);
-  const modelVar = configuredVars.find((v) => v.name === MODEL_ENV);
-  const apiKeyVar = configuredVars.find((v) => v.name === API_KEY_ENV);
+  const baseUrlVar = findConfiguredVar(configuredVars, BASE_URL_ENVS);
+  const modelVar = findConfiguredVar(configuredVars, MODEL_ENVS);
+  const apiKeyVar = findConfiguredVar(configuredVars, API_KEY_ENVS);
   const hasApiKey = Boolean(apiKeyVar);
   const configured = Boolean(baseUrlVar?.value || modelVar?.value || hasApiKey);
 
@@ -66,17 +66,17 @@ export function CloudRuntimeEnvCard({
     const nextApiKey = apiKey.trim();
 
     if (nextBaseUrl) {
-      env[BASE_URL_ENV] = nextBaseUrl;
+      for (const name of BASE_URL_ENVS) env[name] = nextBaseUrl;
     } else if (baseUrlVar) {
-      removeEnv.push(BASE_URL_ENV);
+      removeEnv.push(...configuredNames(configuredVars, BASE_URL_ENVS));
     }
     if (nextModel) {
-      env[MODEL_ENV] = nextModel;
+      for (const name of MODEL_ENVS) env[name] = nextModel;
     } else if (modelVar) {
-      removeEnv.push(MODEL_ENV);
+      removeEnv.push(...configuredNames(configuredVars, MODEL_ENVS));
     }
     if (nextApiKey) {
-      env[API_KEY_ENV] = nextApiKey;
+      for (const name of API_KEY_ENVS) env[name] = nextApiKey;
     }
 
     const update: CloudRuntimeEnvUpdate = {};
@@ -104,7 +104,7 @@ export function CloudRuntimeEnvCard({
 
   const handleRemoveApiKey = async () => {
     try {
-      await saveEnv.mutateAsync({ remove_env: [API_KEY_ENV] });
+      await saveEnv.mutateAsync({ remove_env: [...API_KEY_ENVS] });
       toast.success(t(($) => $.cloud_runtime.env.toast_saved));
       setApiKey("");
       setEditingApiKey(true);
@@ -171,7 +171,7 @@ export function CloudRuntimeEnvCard({
               {t(($) => $.cloud_runtime.env.provider)}
             </div>
             <div className="mt-1 text-sm font-medium">
-              {t(($) => $.cloud_runtime.env.openai_compatible)}
+              {t(($) => $.cloud_runtime.env.litellm_proxy)}
             </div>
           </div>
         )}
@@ -188,14 +188,14 @@ export function CloudRuntimeEnvCard({
                 label={t(($) => $.cloud_runtime.env.base_url)}
                 value={baseUrl}
                 onChange={setBaseUrl}
-                placeholder="https://api.example.com/v1"
+                placeholder="https://litellm.example.com/v1"
               />
               <TextField
                 id="cloud-runtime-ai-model"
                 label={t(($) => $.cloud_runtime.env.default_model)}
                 value={model}
                 onChange={setModel}
-                placeholder="gpt-5-codex"
+                placeholder="gpt-5-codex / claude-sonnet-4-5"
               />
             </div>
 
@@ -273,6 +273,31 @@ export function CloudRuntimeEnvCard({
               )}
             </div>
 
+            <details className="group rounded-md border bg-background px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium text-muted-foreground marker:text-muted-foreground">
+                {t(($) => $.cloud_runtime.env.mapping_title)}
+              </summary>
+              <div className="mt-2 space-y-2">
+                <p className="text-[11px] text-muted-foreground">
+                  {t(($) => $.cloud_runtime.env.mapping_hint)}
+                </p>
+                <div className="overflow-hidden rounded-md border">
+                  <table className="w-full text-left text-[11px]">
+                    <tbody className="divide-y">
+                      <MappingRow
+                        agent="Codex"
+                        mapping="CODEX_BASE_URL / OPENAI_API_KEY / CODEX_MODEL"
+                      />
+                      <MappingRow
+                        agent="Claude Code"
+                        mapping="ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_MODEL / MULTICA_CLAUDE_MODEL"
+                      />
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </details>
+
             <div className="flex items-center justify-between gap-3">
               <p className="text-[11px] text-muted-foreground/70">
                 {t(($) => $.cloud_runtime.env.applies_hint)}
@@ -296,6 +321,33 @@ export function CloudRuntimeEnvCard({
         )}
       </div>
     </section>
+  );
+}
+
+function findConfiguredVar<T extends readonly string[]>(
+  vars: Array<{ name: string; value?: string; last4?: string }>,
+  names: T,
+) {
+  return names
+    .map((name) => vars.find((v) => v.name === name))
+    .find((v) => v != null);
+}
+
+function configuredNames<T extends readonly string[]>(
+  vars: Array<{ name: string }>,
+  names: T,
+) {
+  return names.filter((name) => vars.some((v) => v.name === name));
+}
+
+function MappingRow({ agent, mapping }: { agent: string; mapping: string }) {
+  return (
+    <tr>
+      <th className="w-28 bg-muted/40 px-2 py-1.5 font-medium text-foreground">
+        {agent}
+      </th>
+      <td className="px-2 py-1.5 font-mono text-muted-foreground">{mapping}</td>
+    </tr>
   );
 }
 

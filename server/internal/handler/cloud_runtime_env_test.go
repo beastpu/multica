@@ -78,20 +78,24 @@ func TestWorkspaceCloudRuntimeEnv_PutGetDelete(t *testing.T) {
 		testPool.Exec(context.Background(), `DELETE FROM workspace_cloud_runtime_env WHERE workspace_id = $1`, testWorkspaceID)
 	})
 
-	// PUT stores sealed env and echoes masked infos only.
+	// PUT stores sealed env, returns plaintext only for non-sensitive config,
+	// and keeps proxy tokens masked.
 	w := httptest.NewRecorder()
 	req := withWorkspaceIDParam(newRequest(http.MethodPut, "/api/workspaces/"+testWorkspaceID+"/cloud-runtime-env", map[string]any{
 		"env": map[string]string{
-			"CODEX_BASE_URL": "https://proxy.example.com/v1",
-			"CODEX_MODEL":    "gpt-5-codex",
-			"OPENAI_API_KEY": "sk-openai-wxyz",
+			"ANTHROPIC_AUTH_TOKEN": "sk-litellm-wxyz",
+			"ANTHROPIC_BASE_URL":   "https://proxy.example.com/v1",
+			"ANTHROPIC_MODEL":      "gpt-5-codex",
+			"CODEX_BASE_URL":       "https://proxy.example.com/v1",
+			"CODEX_MODEL":          "gpt-5-codex",
+			"OPENAI_API_KEY":       "sk-litellm-wxyz",
 		},
 	}), testWorkspaceID)
 	testHandler.PutWorkspaceCloudRuntimeEnv(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("PUT: status = %d body = %s", w.Code, w.Body.String())
 	}
-	if strings.Contains(w.Body.String(), "sk-openai-wxyz") {
+	if strings.Contains(w.Body.String(), "sk-litellm-wxyz") {
 		t.Fatalf("PUT response leaks plaintext: %s", w.Body.String())
 	}
 
@@ -101,7 +105,7 @@ func TestWorkspaceCloudRuntimeEnv_PutGetDelete(t *testing.T) {
 		`SELECT env_sealed FROM workspace_cloud_runtime_env WHERE workspace_id = $1`, testWorkspaceID).Scan(&sealed); err != nil {
 		t.Fatalf("read sealed row: %v", err)
 	}
-	if strings.Contains(string(sealed), "sk-openai-wxyz") || strings.Contains(string(sealed), "https://proxy.example.com") {
+	if strings.Contains(string(sealed), "sk-litellm-wxyz") || strings.Contains(string(sealed), "https://proxy.example.com") {
 		t.Fatal("env stored unencrypted")
 	}
 
@@ -119,15 +123,21 @@ func TestWorkspaceCloudRuntimeEnv_PutGetDelete(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("GET decode: %v", err)
 	}
-	if !got.Configured || len(got.Env) != 3 {
+	if !got.Configured || len(got.Env) != 6 {
 		t.Fatalf("GET = %+v", got)
 	}
 	byName := map[string]cloudRuntimeEnvInfoForTest{}
 	for _, env := range got.Env {
 		byName[env.Name] = env
 	}
+	if byName["ANTHROPIC_BASE_URL"].Value != "https://proxy.example.com/v1" {
+		t.Fatalf("GET ANTHROPIC_BASE_URL = %+v", byName["ANTHROPIC_BASE_URL"])
+	}
 	if byName["CODEX_BASE_URL"].Value != "https://proxy.example.com/v1" {
 		t.Fatalf("GET CODEX_BASE_URL = %+v", byName["CODEX_BASE_URL"])
+	}
+	if byName["ANTHROPIC_MODEL"].Value != "gpt-5-codex" {
+		t.Fatalf("GET ANTHROPIC_MODEL = %+v", byName["ANTHROPIC_MODEL"])
 	}
 	if byName["CODEX_MODEL"].Value != "gpt-5-codex" {
 		t.Fatalf("GET CODEX_MODEL = %+v", byName["CODEX_MODEL"])
@@ -135,7 +145,10 @@ func TestWorkspaceCloudRuntimeEnv_PutGetDelete(t *testing.T) {
 	if byName["OPENAI_API_KEY"].Last4 != "wxyz" || byName["OPENAI_API_KEY"].Value != "" {
 		t.Fatalf("GET OPENAI_API_KEY = %+v", byName["OPENAI_API_KEY"])
 	}
-	if strings.Contains(w.Body.String(), "sk-openai") {
+	if byName["ANTHROPIC_AUTH_TOKEN"].Last4 != "wxyz" || byName["ANTHROPIC_AUTH_TOKEN"].Value != "" {
+		t.Fatalf("GET ANTHROPIC_AUTH_TOKEN = %+v", byName["ANTHROPIC_AUTH_TOKEN"])
+	}
+	if strings.Contains(w.Body.String(), "sk-litellm") {
 		t.Fatalf("GET leaks plaintext: %s", w.Body.String())
 	}
 
@@ -173,9 +186,12 @@ func TestWorkspaceCloudRuntimeEnv_MergesAcrossSaves(t *testing.T) {
 		}
 	}
 	// Save vars one at a time — the second save must NOT drop the first.
+	put(map[string]string{"ANTHROPIC_BASE_URL": "https://proxy.example.com"})
 	put(map[string]string{"CODEX_BASE_URL": "https://proxy.example.com"})
 	put(map[string]string{"CODEX_MODEL": "gpt-5-codex"})
+	put(map[string]string{"ANTHROPIC_MODEL": "gpt-5-codex"})
 	put(map[string]string{"OPENAI_API_KEY": "sk-bbbb"})
+	put(map[string]string{"ANTHROPIC_AUTH_TOKEN": "sk-bbbb"})
 
 	w := httptest.NewRecorder()
 	req := withWorkspaceIDParam(newRequest(http.MethodGet,
@@ -191,7 +207,7 @@ func TestWorkspaceCloudRuntimeEnv_MergesAcrossSaves(t *testing.T) {
 	for _, e := range got.Env {
 		names[e.Name] = true
 	}
-	for _, want := range []string{"CODEX_BASE_URL", "CODEX_MODEL", "OPENAI_API_KEY"} {
+	for _, want := range []string{"ANTHROPIC_BASE_URL", "CODEX_BASE_URL", "ANTHROPIC_MODEL", "CODEX_MODEL", "OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"} {
 		if !names[want] {
 			t.Fatalf("merge lost %s; got %v", want, names)
 		}
@@ -205,8 +221,8 @@ func TestWorkspaceCloudRuntimeEnv_MergesAcrossSaves(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("GET after update decode: %v", err)
 	}
-	if len(got.Env) != 3 {
-		t.Fatalf("expected 3 vars after merges, got %d", len(got.Env))
+	if len(got.Env) != 6 {
+		t.Fatalf("expected 6 vars after merges, got %d", len(got.Env))
 	}
 }
 
@@ -223,8 +239,10 @@ func TestWorkspaceCloudRuntimeEnv_RemovesSelectedVariables(t *testing.T) {
 	req := withWorkspaceIDParam(newRequest(http.MethodPut,
 		"/api/workspaces/"+testWorkspaceID+"/cloud-runtime-env", map[string]any{
 			"env": map[string]string{
-				"CODEX_BASE_URL": "https://proxy.example.com",
-				"OPENAI_API_KEY": "sk-secret",
+				"ANTHROPIC_AUTH_TOKEN": "sk-secret",
+				"ANTHROPIC_BASE_URL":   "https://proxy.example.com",
+				"CODEX_BASE_URL":       "https://proxy.example.com",
+				"OPENAI_API_KEY":       "sk-secret",
 			},
 		}), testWorkspaceID)
 	testHandler.PutWorkspaceCloudRuntimeEnv(w, req)
@@ -235,13 +253,13 @@ func TestWorkspaceCloudRuntimeEnv_RemovesSelectedVariables(t *testing.T) {
 	w = httptest.NewRecorder()
 	req = withWorkspaceIDParam(newRequest(http.MethodPut,
 		"/api/workspaces/"+testWorkspaceID+"/cloud-runtime-env", map[string]any{
-			"remove_env": []string{"OPENAI_API_KEY"},
+			"remove_env": []string{"OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
 		}), testWorkspaceID)
 	testHandler.PutWorkspaceCloudRuntimeEnv(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("remove PUT: status %d body %s", w.Code, w.Body.String())
 	}
-	if strings.Contains(w.Body.String(), "OPENAI_API_KEY") {
+	if strings.Contains(w.Body.String(), "OPENAI_API_KEY") || strings.Contains(w.Body.String(), "ANTHROPIC_AUTH_TOKEN") {
 		t.Fatalf("removed key still returned: %s", w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "CODEX_BASE_URL") {
