@@ -112,6 +112,8 @@ func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 	for _, name := range req.RemoveEnv {
 		delete(merged, name)
 	}
+	pruneDeprecatedCloudRuntimeEnv(merged)
+	normalizeCloudRuntimeEnv(merged)
 	if len(merged) > maxCloudRuntimeEnvVars {
 		writeError(w, http.StatusBadRequest, "too many env variables")
 		return
@@ -279,9 +281,25 @@ func cloudRuntimeEnvInfos(env map[string]string) []cloudRuntimeEnvVarInfo {
 
 func isCloudRuntimeEnvPlaintextAllowed(name string) bool {
 	switch name {
-	case "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CODEX_BASE_URL", "CODEX_MODEL", "MULTICA_CODEX_MODEL", "MULTICA_CLAUDE_MODEL":
+	case "ANTHROPIC_BASE_URL", "CODEX_BASE_URL", "MULTICA_CODEX_MODEL", "MULTICA_CLAUDE_MODEL":
 		return true
 	default:
 		return false
+	}
+}
+
+func pruneDeprecatedCloudRuntimeEnv(env map[string]string) {
+	delete(env, "CODEX_MODEL")
+	delete(env, "ANTHROPIC_MODEL")
+	delete(env, "ANTHROPIC_AUTH_TOKEN")
+}
+
+func normalizeCloudRuntimeEnv(env map[string]string) {
+	if value, ok := env["ANTHROPIC_BASE_URL"]; ok {
+		trimmed := strings.TrimRight(value, "/")
+		if strings.HasSuffix(strings.ToLower(trimmed), "/v1") {
+			trimmed = trimmed[:len(trimmed)-len("/v1")]
+		}
+		env["ANTHROPIC_BASE_URL"] = trimmed
 	}
 }

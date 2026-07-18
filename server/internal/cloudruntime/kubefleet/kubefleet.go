@@ -336,7 +336,10 @@ func (f *K8sProvider) RestartNode(ctx context.Context, workspaceID, workspaceSlu
 
 func (f *K8sProvider) SyncWorkspaceEnv(ctx context.Context, workspaceID, workspaceSlug string, env map[string]string) error {
 	ns := f.namespaceName(workspaceSlug, workspaceID)
-	return f.writeWorkspaceEnvSecret(ctx, ns, workspaceID, env)
+	if err := f.writeWorkspaceEnvSecret(ctx, ns, workspaceID, env); err != nil {
+		return err
+	}
+	return f.ensureStatefulSetsWorkspaceEnv(ctx, ns)
 }
 
 func (f *K8sProvider) CountNodes(ctx context.Context, workspaceID, workspaceSlug string) (int, error) {
@@ -549,6 +552,41 @@ func statefulSetPath(namespace, nodeName string) string {
 
 func podPath(namespace, podName string) string {
 	return "/api/v1/namespaces/" + namespace + "/pods/" + podName
+}
+
+func (f *K8sProvider) ensureStatefulSetsWorkspaceEnv(ctx context.Context, namespace string) error {
+	list, status, err := f.kubeGetStatefulSets(ctx, namespace)
+	if err != nil {
+		return err
+	}
+	if status == http.StatusNotFound {
+		return nil
+	}
+	patch := map[string]any{
+		"spec": map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []map[string]any{{
+						"name":  "runtime",
+						"image": f.cfg.Image,
+						"envFrom": []map[string]any{{
+							"secretRef": map[string]any{"name": workspaceEnvSecretName, "optional": true},
+						}},
+					}},
+				},
+			},
+		},
+	}
+	for _, s := range list.Items {
+		status, err := f.kubePatchStrategicMerge(ctx, statefulSetPath(namespace, s.Metadata.Name), patch)
+		if err != nil {
+			return err
+		}
+		if status != http.StatusOK {
+			return fmt.Errorf("kubefleet: patch statefulset %s workspace env: unexpected status %d", s.Metadata.Name, status)
+		}
+	}
+	return nil
 }
 
 // createSecret stores the node PAT plus the deployment-wide extra env
@@ -771,6 +809,24 @@ func (f *K8sProvider) kubePut(ctx context.Context, path string, body any) (int, 
 	resp, err := f.http.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("kubefleet: %s %s: %w", http.MethodPut, path, err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, nil
+}
+
+func (f *K8sProvider) kubePatchStrategicMerge(ctx context.Context, path string, body any) (int, error) {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return 0, err
+	}
+	req, err := f.kubeRequest(ctx, http.MethodPatch, path, raw)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/strategic-merge-patch+json")
+	resp, err := f.http.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("kubefleet: %s %s: %w", http.MethodPatch, path, err)
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode, nil

@@ -20,6 +20,7 @@ type fakeKube struct {
 	quotas       []map[string]any
 	statefulSets []map[string]any
 	deletedPods  []string
+	patches      []map[string]any
 	// failStatefulSetCreate makes POST .../statefulsets return 500 to test rollback.
 	failStatefulSetCreate bool
 }
@@ -81,6 +82,19 @@ func newFakeKube(t *testing.T) *fakeKube {
 			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/statefulsets"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": f.statefulSets})
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/statefulsets/"):
+			f.patches = append(f.patches, body)
+			name := lastPathSegment(r.URL.Path)
+			for i, item := range f.statefulSets {
+				if item["metadata"].(map[string]any)["name"] != name {
+					continue
+				}
+				mergeRuntimeContainerPatch(item, body)
+				f.statefulSets[i] = item
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
 		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/pods/"):
 			f.deletedPods = append(f.deletedPods, lastPathSegment(r.URL.Path))
 			w.WriteHeader(http.StatusOK)
@@ -108,6 +122,24 @@ func deleteNamedObject(items []map[string]any, name string) []map[string]any {
 		out = append(out, item)
 	}
 	return out
+}
+
+func mergeRuntimeContainerPatch(item, patch map[string]any) {
+	patchSpec := patch["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	patchContainer := patchSpec["containers"].([]any)[0].(map[string]any)
+	itemSpec := item["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	containers := itemSpec["containers"].([]any)
+	for _, c := range containers {
+		container := c.(map[string]any)
+		if container["name"] != patchContainer["name"] {
+			continue
+		}
+		for k, v := range patchContainer {
+			container[k] = v
+		}
+		return
+	}
+	itemSpec["containers"] = append(containers, patchContainer)
 }
 
 func lastPathSegment(path string) string {
@@ -147,7 +179,7 @@ func sampleSpec() cloudruntime.NodeSpec {
 		InstanceType:  "t4g.large",
 		DiskSizeGB:    32,
 		Token:         "mcn_testtoken",
-		Env:           map[string]string{"ANTHROPIC_AUTH_TOKEN": "sk-ws-key"},
+		Env:           map[string]string{"ANTHROPIC_API_KEY": "sk-ws-key"},
 	}
 }
 
@@ -185,7 +217,7 @@ func TestK8sProvider_CreateAndList(t *testing.T) {
 	if wsEnv == nil || nodeTok == nil {
 		t.Fatalf("missing secrets; got %d", len(kube.secrets))
 	}
-	if wsEnv["stringData"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"] != "sk-ws-key" {
+	if wsEnv["stringData"].(map[string]any)["ANTHROPIC_API_KEY"] != "sk-ws-key" {
 		t.Fatalf("workspace env secret wrong: %v", wsEnv["stringData"])
 	}
 	if nodeTok["stringData"].(map[string]any)["token"] != "mcn_testtoken" {
@@ -223,6 +255,38 @@ func TestK8sProvider_CreateAndList(t *testing.T) {
 	// Delete is idempotent and tolerant.
 	if err := p.DeleteNode(context.Background(), testWS, testSlug, "node-abc12345"); err != nil {
 		t.Fatalf("DeleteNode: %v", err)
+	}
+}
+
+func TestK8sProvider_SyncWorkspaceEnvPatchesExistingStatefulSets(t *testing.T) {
+	kube := newFakeKube(t)
+	p := newProvider(t, kube, Config{})
+
+	if _, err := p.CreateNode(context.Background(), sampleSpec()); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	stsSpec := kube.statefulSets[0]["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	container := stsSpec["containers"].([]any)[0].(map[string]any)
+	delete(container, "envFrom")
+	container["image"] = "registry.example.com/multica-runtime:old"
+
+	if err := p.SyncWorkspaceEnv(context.Background(), testWS, testSlug, map[string]string{
+		"CODEX_BASE_URL":      "https://llm-gateway.example/v1",
+		"MULTICA_CODEX_MODEL": "gpt-5.5",
+	}); err != nil {
+		t.Fatalf("SyncWorkspaceEnv: %v", err)
+	}
+	if len(kube.patches) != 1 {
+		t.Fatalf("patches = %d, want 1", len(kube.patches))
+	}
+	gotJSON, _ := json.Marshal(kube.statefulSets[0])
+	for _, want := range []string{
+		`"image":"registry.example.com/multica-runtime:test"`,
+		`"envFrom":[{"secretRef":{"name":"multica-workspace-env","optional":true}}]`,
+	} {
+		if !strings.Contains(string(gotJSON), want) {
+			t.Fatalf("statefulset missing patched %s: %s", want, gotJSON)
+		}
 	}
 }
 

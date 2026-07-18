@@ -51,8 +51,8 @@ describe("CloudRuntimeEnvCard", () => {
       configured: true,
       env: [
         { name: "CODEX_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
-        { name: "ANTHROPIC_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
-        { name: "CODEX_MODEL", last4: "odex", value: "gpt-5-codex" },
+        { name: "ANTHROPIC_BASE_URL", last4: "mple", value: "https://proxy.example" },
+        { name: "MULTICA_CODEX_MODEL", last4: "odex", value: "gpt-5-codex" },
         { name: "OPENAI_API_KEY", last4: "wxyz" },
       ],
     });
@@ -89,13 +89,11 @@ describe("CloudRuntimeEnvCard", () => {
       expect(putEnv).toHaveBeenCalledWith("ws-1", {
         env: {
           CODEX_BASE_URL: "https://proxy.example/v1",
-          ANTHROPIC_BASE_URL: "https://proxy.example/v1",
-          CODEX_MODEL: "gpt-5-codex",
+          ANTHROPIC_BASE_URL: "https://proxy.example",
           MULTICA_CODEX_MODEL: "gpt-5-codex",
           MULTICA_CLAUDE_MODEL: "gpt-5-codex",
-          ANTHROPIC_MODEL: "gpt-5-codex",
           OPENAI_API_KEY: "sk-secret-wxyz",
-          ANTHROPIC_AUTH_TOKEN: "sk-secret-wxyz",
+          ANTHROPIC_API_KEY: "sk-secret-wxyz",
         },
       }),
     );
@@ -106,8 +104,9 @@ describe("CloudRuntimeEnvCard", () => {
       configured: true,
       env: [
         { name: "CODEX_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
-        { name: "ANTHROPIC_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
+        { name: "ANTHROPIC_BASE_URL", last4: "mple", value: "https://proxy.example" },
         { name: "OPENAI_API_KEY", last4: "wxyz" },
+        { name: "ANTHROPIC_API_KEY", last4: "wxyz" },
         { name: "ANTHROPIC_AUTH_TOKEN", last4: "wxyz" },
       ],
     });
@@ -122,7 +121,7 @@ describe("CloudRuntimeEnvCard", () => {
 
     await waitFor(() =>
       expect(putEnv).toHaveBeenCalledWith("ws-1", {
-        remove_env: ["OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
+        remove_env: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
       }),
     );
   });
