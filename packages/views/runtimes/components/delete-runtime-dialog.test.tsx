@@ -321,17 +321,19 @@ describe("DeleteRuntimeDialog", () => {
     ).toBeInTheDocument();
   });
 
-  // MUL-3352: the dialog used to refuse self-healing runtimes outright.
-  // The current contract is owner-led and quiet: the row can be removed, and
-  // if the daemon is still alive it may register again without a warning banner.
-  it("does not render a self-heal banner in light mode for an online local runtime", () => {
+  // MUL-3352: the dialog used to refuse self-healing runtimes outright,
+  // both at the affordance and at confirm. The new contract is owner-led:
+  // the affordance is always live, the dialog raises a warning banner so
+  // the user understands the daemon will re-register a new row unless
+  // they stop the daemon, and confirm proceeds normally.
+  it("renders the self-heal banner in light mode for an online local runtime", () => {
     renderDialog({
       runtime: makeRuntime({ runtime_mode: "local", status: "online" }),
       cachedAgents: [],
     });
     expect(
-      screen.queryByText(/managed by a running local daemon/i),
-    ).not.toBeInTheDocument();
+      screen.getByText(/managed by a running local daemon/i),
+    ).toBeInTheDocument();
   });
 
   it("explains that deleting a profile-backed runtime only removes the current instance", () => {
@@ -369,14 +371,17 @@ describe("DeleteRuntimeDialog", () => {
     ).toBeInTheDocument();
   });
 
-  it("does not render the self-heal banner in cascade mode for an online local runtime with bound agents", () => {
+  it("renders the self-heal banner in cascade mode for an online local runtime with bound agents", () => {
     renderDialog({
       runtime: makeRuntime({ runtime_mode: "local", status: "online" }),
       cachedAgents: [makeAgent("a-1", { name: "Alpha" })],
     });
+    // Both the destructive cascade banner AND the self-heal banner render —
+    // self-heal sits above the destructive one so the user sees the
+    // daemon-will-respawn warning before scanning the agent table.
     expect(
-      screen.queryByText(/managed by a running local daemon/i),
-    ).not.toBeInTheDocument();
+      screen.getByText(/managed by a running local daemon/i),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Archive 1 agent and delete this Runtime/),
     ).toBeInTheDocument();

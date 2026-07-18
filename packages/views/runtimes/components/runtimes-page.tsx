@@ -1,14 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import {
   ChevronRight,
   Cloud,
+  Loader2,
   Monitor,
   Plus,
   Server,
+  Trash2,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -16,11 +19,16 @@ import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import {
   cloudRuntimeAccessOptions,
   runtimeProfileListOptions,
+  useDeleteCloudRuntimeNode,
   type CloudRuntimeAccess,
 } from "@multica/core/runtimes";
 import { runtimeListOptions, runtimeKeys } from "@multica/core/runtimes/queries";
+import { useDeleteRuntime } from "@multica/core/runtimes/mutations";
 import { useWSEvent } from "@multica/core/realtime";
-import { agentListOptions } from "@multica/core/workspace/queries";
+import {
+  agentListOptions,
+  memberListOptions,
+} from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import {
@@ -90,6 +98,7 @@ export function RuntimesPage({
     runtimeProfileListOptions(wsId),
   );
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
   const { data: cloudRuntimeAccess } = useQuery({
     ...cloudRuntimeAccessOptions(wsId),
@@ -98,6 +107,10 @@ export function RuntimesPage({
   const showCloudRuntimeEntry = canShowCloudRuntimeEntry(
     cloudRuntimeEnabled,
     cloudRuntimeAccess,
+  );
+  const currentRole = useMemo(
+    () => members.find((member) => member.user_id === currentUserId)?.role ?? null,
+    [members, currentUserId],
   );
 
   const handleDaemonEvent = useCallback(() => {
@@ -172,6 +185,8 @@ export function RuntimesPage({
               <MachineList
                 machines={machines}
                 bootstrapping={bootstrapping}
+                currentUserId={currentUserId ?? null}
+                currentRole={currentRole}
               />
             )}
             {orphanProfileRuntimes.length > 0 && (
@@ -267,9 +282,13 @@ function PageHeaderBar({
 function MachineList({
   machines,
   bootstrapping,
+  currentUserId,
+  currentRole,
 }: {
   machines: RuntimeMachine[];
   bootstrapping?: boolean;
+  currentUserId: string | null;
+  currentRole: string | null;
 }) {
   const { t } = useT("runtimes");
   if (machines.length === 0) {
@@ -294,21 +313,75 @@ function MachineList({
     <div className="overflow-hidden rounded-lg border bg-card">
       <div className="divide-y">
         {machines.map((machine) => (
-          <MachineRow key={machine.id} machine={machine} />
+          <MachineRow
+            key={machine.id}
+            machine={machine}
+            currentUserId={currentUserId}
+            currentRole={currentRole}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function MachineRow({ machine }: { machine: RuntimeMachine }) {
+function MachineRow({
+  machine,
+  currentUserId,
+  currentRole,
+}: {
+  machine: RuntimeMachine;
+  currentUserId: string | null;
+  currentRole: string | null;
+}) {
   const { t } = useT("runtimes");
   const healthLabel = useHealthLabel();
   const timeAgo = useTimeAgo();
   const paths = useWorkspacePaths();
+  const wsId = useWorkspaceId();
+  const deleteRuntime = useDeleteRuntime(wsId);
+  const deleteCloudNode = useDeleteCloudRuntimeNode(wsId);
   const Icon = machine.section === "cloud" ? Cloud : Monitor;
   const locator = machine.id;
   const busyCount = machine.runningCount + machine.queuedCount;
+  const canDelete = canDeleteMachine(machine, currentUserId, currentRole);
+  const deleting = deleteRuntime.isPending || deleteCloudNode.isPending;
+  const handleDelete = async (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!canDelete || deleting) return;
+
+    if (machine.section === "cloud") {
+      if (!machine.daemonId) {
+        toast.error(t(($) => $.cloud_runtime.toast_delete_failed));
+        return;
+      }
+      if (!window.confirm(t(($) => $.cloud_runtime.delete_confirm))) return;
+      deleteCloudNode.mutate(machine.daemonId, {
+        onSuccess: () => toast.success(t(($) => $.cloud_runtime.toast_deleted)),
+        onError: (err) =>
+          toast.error(
+            err instanceof Error
+              ? err.message
+              : t(($) => $.cloud_runtime.toast_delete_failed),
+          ),
+      });
+      return;
+    }
+
+    if (machine.runtimes.length === 0) return;
+    if (!window.confirm(t(($) => $.machine.delete_confirm))) return;
+    try {
+      for (const runtime of machine.runtimes) {
+        await deleteRuntime.mutateAsync(runtime.id);
+      }
+      toast.success(t(($) => $.machine.toast_deleted));
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : t(($) => $.machine.toast_delete_failed),
+      );
+    }
+  };
   const body = (
     <>
       <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border bg-background">
@@ -370,13 +443,54 @@ function MachineRow({ machine }: { machine: RuntimeMachine }) {
   );
 
   return (
-    <AppLink
-      href={paths.runtimeDetail(locator)}
-      className="group flex min-w-0 items-center gap-3 px-4 py-3.5 transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-    >
-      {body}
-    </AppLink>
+    <div className="group flex min-w-0 items-center gap-2 px-4 py-3.5 transition-colors hover:bg-accent/40">
+      <AppLink
+        href={paths.runtimeDetail(locator)}
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-sm focus-visible:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {body}
+      </AppLink>
+      {canDelete && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+          aria-label={
+            machine.section === "cloud"
+              ? t(($) => $.cloud_runtime.delete)
+              : t(($) => $.machine.delete)
+          }
+          title={
+            machine.section === "cloud"
+              ? t(($) => $.cloud_runtime.delete)
+              : t(($) => $.machine.delete)
+          }
+          disabled={deleting}
+          onClick={handleDelete}
+        >
+          {deleting ? (
+            <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+          )}
+        </Button>
+      )}
+    </div>
   );
+}
+
+export function canDeleteMachine(
+  machine: RuntimeMachine,
+  currentUserId: string | null,
+  currentRole: string | null,
+): boolean {
+  if (!currentUserId) return false;
+  const isAdmin = currentRole === "owner" || currentRole === "admin";
+  if (machine.section === "cloud") return isAdmin && !!machine.daemonId;
+  if (machine.runtimes.length === 0) return false;
+  if (isAdmin) return true;
+  return machine.runtimes.every((runtime) => runtime.owner_id === currentUserId);
 }
 
 function ProviderIconStack({ providers }: { providers: string[] }) {
