@@ -51,6 +51,37 @@ export interface CreateCloudRuntimeNodeRequest {
   tags?: Record<string, string>;
 }
 
+export const CLOUD_RUNTIME_INSTANCE_PROFILES = [
+  {
+    type: "t4g.medium",
+    cpu: "2 CPU",
+    memory: "4 GiB RAM",
+    description: "Balanced default for lightweight agent work.",
+  },
+  {
+    type: "t4g.large",
+    cpu: "2 CPU",
+    memory: "8 GiB RAM",
+    description: "More memory for larger repositories or long-running tasks.",
+  },
+] as const;
+
+export const CLOUD_RUNTIME_DEFAULT_INSTANCE_TYPE =
+  CLOUD_RUNTIME_INSTANCE_PROFILES[0].type;
+
+export const CLOUD_RUNTIME_DISK_SIZE = {
+  defaultGB: 20,
+  minGB: 20,
+  maxGB: 100,
+  stepGB: 10,
+} as const;
+
+export const CLOUD_RUNTIME_MAX_NODES_PER_WORKSPACE = 3;
+
+export function cloudRuntimeInstanceProfile(type: string) {
+  return CLOUD_RUNTIME_INSTANCE_PROFILES.find((profile) => profile.type === type);
+}
+
 export const cloudRuntimeKeys = {
   all: (wsId: string) => ["cloud-runtime", wsId] as const,
   access: (wsId: string) => [...cloudRuntimeKeys.all(wsId), "access"] as const,

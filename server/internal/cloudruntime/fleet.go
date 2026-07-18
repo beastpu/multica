@@ -25,6 +25,9 @@ const (
 	defaultNodeTokenTTL         = 180 * 24 * time.Hour
 	defaultMaxNodesPerWorkspace = 3
 	defaultDiskSizeGB           = 20
+	minDiskSizeGB               = 20
+	maxDiskSizeGB               = 100
+	diskSizeStepGB              = 10
 )
 
 // Fleet is the provider-agnostic cloud-runtime adapter. It implements the
@@ -149,6 +152,21 @@ func (f *Fleet) createNode(ctx context.Context, req Request) (*Response, error) 
 		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "invalid workspace id"})
 	}
 
+	diskSizeGB := body.DiskSizeGB
+	if diskSizeGB <= 0 {
+		diskSizeGB = defaultDiskSizeGB
+	}
+	if diskSizeGB < minDiskSizeGB || diskSizeGB > maxDiskSizeGB {
+		return jsonResponse(http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("disk_size_gb must be between %d and %d", minDiskSizeGB, maxDiskSizeGB),
+		})
+	}
+	if diskSizeGB%diskSizeStepGB != 0 {
+		return jsonResponse(http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("disk_size_gb must use %d GiB increments", diskSizeStepGB),
+		})
+	}
+
 	// Friendly quota check; the provider is expected to enforce a race-proof
 	// backstop of its own (e.g. a namespace ResourceQuota).
 	if n, cerr := f.provider.CountNodes(ctx, wsID, slug); cerr != nil {
@@ -164,10 +182,6 @@ func (f *Fleet) createNode(ctx context.Context, req Request) (*Response, error) 
 		return nil, err
 	}
 	displayName := trimOr(body.Name, nodeName)
-	diskSizeGB := body.DiskSizeGB
-	if diskSizeGB <= 0 {
-		diskSizeGB = defaultDiskSizeGB
-	}
 
 	// Mint the node PAT before provisioning so a half-created node never runs
 	// without a revocable credential; roll the row back if provisioning fails.
