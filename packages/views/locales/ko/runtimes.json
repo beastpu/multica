@@ -65,10 +65,14 @@
       "local_daemon": "로컬 데몬"
     },
     "rename": "기기 이름 변경",
-    "delete": "런타임 삭제",
-    "delete_confirm": "이 런타임을 목록에서 삭제할까요?",
-    "toast_deleted": "런타임을 삭제했습니다",
-    "toast_delete_failed": "런타임 삭제에 실패했습니다",
+    "kind": {
+      "cloud": "클라우드 노드",
+      "computer": "컴퓨터"
+    },
+    "remove": "제거",
+    "remove_confirm": "이 런타임을 목록에서 제거할까요?",
+    "toast_removed": "런타임을 제거했습니다",
+    "toast_remove_failed": "런타임 제거에 실패했습니다",
     "rename_dialog": {
       "title": "기기 이름 변경",
       "description": "이 기기에 알아보기 쉬운 이름을 지정합니다. 이 기기의 모든 런타임에 적용되며 에이전트의 런타임을 선택할 때 표시됩니다.",

@@ -65,10 +65,14 @@
       "local_daemon": "本地守护进程"
     },
     "rename": "重命名机器",
-    "delete": "删除运行时",
-    "delete_confirm": "确定要从列表中删除这个运行时吗？",
-    "toast_deleted": "已删除运行时",
-    "toast_delete_failed": "删除运行时失败",
+    "kind": {
+      "cloud": "云端节点",
+      "computer": "电脑"
+    },
+    "remove": "移除",
+    "remove_confirm": "确定要从列表中移除这个运行时吗？",
+    "toast_removed": "已移除运行时",
+    "toast_remove_failed": "移除运行时失败",
     "rename_dialog": {
       "title": "重命名机器",
       "description": "给这台机器起一个你能认出来的名字。会应用到这台机器上的所有运行时，并在给 agent 选择运行时时显示。",

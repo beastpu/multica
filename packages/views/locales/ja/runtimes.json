@@ -65,10 +65,14 @@
       "local_daemon": "ローカルデーモン"
     },
     "rename": "マシンの名前を変更",
-    "delete": "ランタイムを削除",
-    "delete_confirm": "このランタイムを一覧から削除しますか？",
-    "toast_deleted": "ランタイムを削除しました",
-    "toast_delete_failed": "ランタイムの削除に失敗しました",
+    "kind": {
+      "cloud": "クラウドノード",
+      "computer": "コンピューター"
+    },
+    "remove": "取り除く",
+    "remove_confirm": "このランタイムを一覧から取り除きますか？",
+    "toast_removed": "ランタイムを取り除きました",
+    "toast_remove_failed": "ランタイムの取り除きに失敗しました",
     "rename_dialog": {
       "title": "マシンの名前を変更",
       "description": "このマシンに分かりやすい名前を付けます。このマシン上のすべてのランタイムに適用され、エージェントのランタイム選択時にも表示されます。",
