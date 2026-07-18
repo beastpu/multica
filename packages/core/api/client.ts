@@ -1,5 +1,6 @@
 import type {
   Issue,
+  IssuePriority,
   CreateIssueRequest,
   UpdateIssueRequest,
   GroupedIssuesResponse,
@@ -116,6 +117,7 @@ import type {
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
   ListAutopilotsResponse,
+  CronPreviewResponse,
   GetAutopilotResponse,
   AutopilotCollaboratorsResponse,
   ListAutopilotRunsResponse,
@@ -246,6 +248,8 @@ import {
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   AutopilotRunSchema,
   FALLBACK_AUTOPILOT_RUN,
+  CronPreviewResponseSchema,
+  UNREADABLE_CRON_PREVIEW_RESPONSE,
   ListIssuesResponseSchema,
   CreateIssueResponseSchema,
   ListWebhookDeliveriesResponseSchema,
@@ -807,6 +811,8 @@ export class ApiClient {
     agent_id?: string;
     squad_id?: string;
     prompt: string;
+    priority?: IssuePriority;
+    due_date?: string;
     project_id?: string | null;
     parent_issue_id?: string | null;
     attachment_ids?: string[];
@@ -2828,6 +2834,19 @@ export class ApiClient {
 
   async deleteAutopilotTrigger(autopilotId: string, triggerId: string): Promise<void> {
     await this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, { method: "DELETE" });
+  }
+
+  async cronPreview(params: { expr: string; tz: string }): Promise<CronPreviewResponse> {
+    const search = new URLSearchParams();
+    search.set("expr", params.expr);
+    search.set("tz", params.tz);
+    const raw = await this.fetch<unknown>(`/api/autopilots/cron-preview?${search}`);
+    return parseWithFallback(
+      raw,
+      CronPreviewResponseSchema,
+      UNREADABLE_CRON_PREVIEW_RESPONSE,
+      { endpoint: "GET /api/autopilots/cron-preview" },
+    );
   }
 
   async rotateAutopilotTriggerWebhookToken(
