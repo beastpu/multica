@@ -95,18 +95,31 @@ automated by the kustomization.
       reuses the same registry creds as `regcred` so node namespaces can pull
       the private runtime image.
 
-   b. **The web image must be built with the cloud-runtime flag on.** The
-      `/runtimes` cloud tab is gated by `NEXT_PUBLIC_ENABLE_CLOUD_RUNTIME`,
-      which `Dockerfile.web` bakes at build time (not read at runtime):
+   b. **Grant access per workspace.** Cloud Runtime is denied by default in
+      both the UI and API. Add approved workspace UUIDs to
+      `feature-flags.yaml`:
 
-      ```bash
-      docker build -f Dockerfile.web \
-        --build-arg NEXT_PUBLIC_ENABLE_CLOUD_RUNTIME=true \
-        -t lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web:<tag> .
+      ```yaml
+      cloud_runtime:
+        default: false
+        allow_by: workspace_id
+        allow:
+          - "<approved-workspace-uuid>"
       ```
 
-      Point `images:` in `kustomization.yaml` at that tag. A web image built
-      without the flag deploys fine but hides the cloud runtime UI entirely.
+      Apply the overlay and restart only the server so it reloads the flag
+      file. The web image does not need to be rebuilt:
+
+      ```bash
+      kubectl apply -k deploy/k8s/overlays/test
+      kubectl -n multica-test rollout restart deployment/multica-server
+      kubectl -n multica-test rollout status deployment/multica-server
+      ```
+
+      Removing a UUID and restarting revokes the entry and makes every Cloud
+      Runtime fleet endpoint return 403 for that workspace. Existing nodes are
+      not deleted automatically; remove them before revoking if they should no
+      longer consume resources.
 
    The runtime **node** image (`MULTICA_CLOUD_RUNTIME_IMAGE` in
    `cloud-runtime-patch.yaml`) is ops-built and versioned independently of the

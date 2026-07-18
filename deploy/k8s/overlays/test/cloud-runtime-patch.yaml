@@ -24,6 +24,8 @@ spec:
       containers:
         - name: server
           env:
+            - name: MULTICA_FEATURE_FLAGS_FILE
+              value: /etc/multica/feature-flags/feature-flags.yaml
             - name: MULTICA_CLOUD_RUNTIME_PROVIDER
               value: k8s
             # Runtime node image (ops-built, decoupled entrypoint). Bump when a
@@ -38,3 +40,11 @@ spec:
             # (default 3) are left at their code defaults. Storage class is
             # left empty ⇒ the cluster's default StorageClass provisions node
             # volumes. Set MULTICA_CLOUD_RUNTIME_STORAGE_CLASS to override.
+          volumeMounts:
+            - name: feature-flags
+              mountPath: /etc/multica/feature-flags
+              readOnly: true
+      volumes:
+        - name: feature-flags
+          configMap:
+            name: multica-feature-flags

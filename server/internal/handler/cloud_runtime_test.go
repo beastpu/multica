@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
+	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
 type fakeCloudRuntimeProxy struct {
@@ -37,7 +39,71 @@ func useCloudRuntimeProxy(t *testing.T, proxy cloudRuntimeProxy) {
 
 	prevProxy := testHandler.CloudRuntime
 	testHandler.CloudRuntime = proxy
+	allowCloudRuntimeForTest(t)
 	t.Cleanup(func() { testHandler.CloudRuntime = prevProxy })
+}
+
+func allowCloudRuntimeForTest(t *testing.T) {
+	t.Helper()
+	prevFlags := testHandler.FeatureFlags
+	provider := featureflag.NewStaticProvider()
+	provider.Set(featureflags.CloudRuntime, featureflag.Rule{
+		Default: false,
+		Allow:   []string{testWorkspaceID},
+		AllowBy: "workspace_id",
+	})
+	testHandler.FeatureFlags = featureflag.NewService(provider)
+	t.Cleanup(func() { testHandler.FeatureFlags = prevFlags })
+}
+
+func denyCloudRuntimeForTest(t *testing.T) {
+	t.Helper()
+	prevFlags := testHandler.FeatureFlags
+	provider := featureflag.NewStaticProvider()
+	provider.Set(featureflags.CloudRuntime, featureflag.Rule{Default: false})
+	testHandler.FeatureFlags = featureflag.NewService(provider)
+	t.Cleanup(func() { testHandler.FeatureFlags = prevFlags })
+}
+
+func TestGetCloudRuntimeAccessIsWorkspaceScoped(t *testing.T) {
+	proxy := &fakeCloudRuntimeProxy{enabled: true}
+	useCloudRuntimeProxy(t, proxy)
+
+	allowed := httptest.NewRecorder()
+	testHandler.GetCloudRuntimeAccess(
+		allowed,
+		newRequest(http.MethodGet, "/api/cloud-runtime/access", nil),
+	)
+	if allowed.Code != http.StatusOK || !strings.Contains(allowed.Body.String(), `"enabled":true`) {
+		t.Fatalf("allowed access = %d %s", allowed.Code, allowed.Body.String())
+	}
+
+	deniedReq := newRequest(http.MethodGet, "/api/cloud-runtime/access", nil)
+	deniedReq.Header.Set("X-Workspace-ID", "11111111-1111-1111-1111-111111111111")
+	denied := httptest.NewRecorder()
+	testHandler.GetCloudRuntimeAccess(denied, deniedReq)
+	if denied.Code != http.StatusOK || !strings.Contains(denied.Body.String(), `"enabled":false`) {
+		t.Fatalf("denied access = %d %s", denied.Code, denied.Body.String())
+	}
+}
+
+func TestCloudRuntimeDeniedWorkspaceDoesNotReachFleet(t *testing.T) {
+	proxy := &fakeCloudRuntimeProxy{enabled: true}
+	useCloudRuntimeProxy(t, proxy)
+	denyCloudRuntimeForTest(t)
+
+	w := httptest.NewRecorder()
+	testHandler.ListCloudRuntimeNodes(
+		w,
+		newRequest(http.MethodGet, "/api/cloud-runtime/nodes", nil),
+	)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if proxy.called {
+		t.Fatal("cloud runtime proxy must not be called for a denied workspace")
+	}
 }
 
 // TestCreateCloudRuntimeNodeForwardsBody is the post-MUL-2671 happy
@@ -190,6 +256,7 @@ func TestCreateCloudRuntimeNodeRejectsLargeBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/cloud-runtime/nodes", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", testUserID)
+	req.Header.Set("X-Workspace-ID", testWorkspaceID)
 	w := httptest.NewRecorder()
 
 	testHandler.CreateCloudRuntimeNode(w, req)

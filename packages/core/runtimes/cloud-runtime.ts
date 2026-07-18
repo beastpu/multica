@@ -1,6 +1,10 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 
+export interface CloudRuntimeAccess {
+  enabled: boolean;
+}
+
 export interface CloudRuntimeNode {
   id: string;
   owner_id: string;
@@ -49,8 +53,17 @@ export interface CreateCloudRuntimeNodeRequest {
 
 export const cloudRuntimeKeys = {
   all: (wsId: string) => ["cloud-runtime", wsId] as const,
+  access: (wsId: string) => [...cloudRuntimeKeys.all(wsId), "access"] as const,
   nodes: (wsId: string) => [...cloudRuntimeKeys.all(wsId), "nodes"] as const,
 };
+
+export function cloudRuntimeAccessOptions(wsId: string) {
+  return queryOptions({
+    queryKey: cloudRuntimeKeys.access(wsId),
+    queryFn: () => api.getCloudRuntimeAccess(),
+    staleTime: 30 * 1000,
+  });
+}
 
 const PENDING_NODE_STATUSES = new Set([
   "launching",

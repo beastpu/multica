@@ -1445,6 +1445,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Cloud Runtime fleet proxy. The remote service URL is configured
 			// on SaaS API nodes only; self-hosted deployments return 503.
 			r.Route("/api/cloud-runtime", func(r chi.Router) {
+				r.Get("/access", h.GetCloudRuntimeAccess)
 				r.Get("/", h.GetCloudRuntimeService)
 				r.Get("/healthz", h.GetCloudRuntimeHealth)
 				r.Get("/readyz", h.GetCloudRuntimeReady)

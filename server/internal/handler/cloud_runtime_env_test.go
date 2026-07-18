@@ -22,6 +22,7 @@ func withWorkspaceIDParam(req *http.Request, workspaceID string) *http.Request {
 
 func installCloudRuntimeEnvBox(t *testing.T) {
 	t.Helper()
+	allowCloudRuntimeForTest(t)
 	key := make([]byte, secretbox.KeySize)
 	if _, err := rand.Read(key); err != nil {
 		t.Fatalf("rand: %v", err)
@@ -33,6 +34,33 @@ func installCloudRuntimeEnvBox(t *testing.T) {
 	prev := testHandler.CloudRuntimeEnvBox
 	testHandler.CloudRuntimeEnvBox = box
 	t.Cleanup(func() { testHandler.CloudRuntimeEnvBox = prev })
+}
+
+func TestWorkspaceCloudRuntimeEnv_DeniedWorkspaceCannotWrite(t *testing.T) {
+	installCloudRuntimeEnvBox(t)
+	denyCloudRuntimeForTest(t)
+	if _, err := testPool.Exec(context.Background(),
+		`DELETE FROM workspace_cloud_runtime_env WHERE workspace_id = $1`, testWorkspaceID); err != nil {
+		t.Fatalf("clean env row: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := withWorkspaceIDParam(newRequest(http.MethodPut,
+		"/api/workspaces/"+testWorkspaceID+"/cloud-runtime-env",
+		map[string]any{"env": map[string]string{"OPENAI_API_KEY": "sk-denied"}}), testWorkspaceID)
+	testHandler.PutWorkspaceCloudRuntimeEnv(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+	var count int
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT count(*) FROM workspace_cloud_runtime_env WHERE workspace_id = $1`, testWorkspaceID).Scan(&count); err != nil {
+		t.Fatalf("count env rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("denied PUT persisted %d env rows", count)
+	}
 }
 
 func TestWorkspaceCloudRuntimeEnv_PutGetDelete(t *testing.T) {
@@ -187,6 +215,7 @@ func TestWorkspaceCloudRuntimeEnv_NotConfigured(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
+	allowCloudRuntimeForTest(t)
 	prev := testHandler.CloudRuntimeEnvBox
 	testHandler.CloudRuntimeEnvBox = nil
 	t.Cleanup(func() { testHandler.CloudRuntimeEnvBox = prev })

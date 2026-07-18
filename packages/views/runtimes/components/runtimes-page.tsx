@@ -13,7 +13,11 @@ import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
-import { runtimeProfileListOptions } from "@multica/core/runtimes";
+import {
+  cloudRuntimeAccessOptions,
+  runtimeProfileListOptions,
+  type CloudRuntimeAccess,
+} from "@multica/core/runtimes";
 import { runtimeListOptions, runtimeKeys } from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";
 import { agentListOptions } from "@multica/core/workspace/queries";
@@ -49,6 +53,13 @@ export interface RuntimesPageProps {
   cloudRuntimeEnabled?: boolean;
 }
 
+export function canShowCloudRuntimeEntry(
+  surfaceEnabled: boolean,
+  access: CloudRuntimeAccess | undefined,
+): boolean {
+  return surfaceEnabled && access?.enabled === true;
+}
+
 function useNowTick(intervalMs = 30_000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -80,6 +91,14 @@ export function RuntimesPage({
   );
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
+  const { data: cloudRuntimeAccess } = useQuery({
+    ...cloudRuntimeAccessOptions(wsId),
+    enabled: cloudRuntimeEnabled,
+  });
+  const showCloudRuntimeEntry = canShowCloudRuntimeEntry(
+    cloudRuntimeEnabled,
+    cloudRuntimeAccess,
+  );
 
   const handleDaemonEvent = useCallback(() => {
     qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
@@ -138,7 +157,7 @@ export function RuntimesPage({
       <PageHeaderBar
         totalCount={machines.length}
         onConnectRemote={() => setShowConnectDialog(true)}
-        cloudRuntimeEnabled={cloudRuntimeEnabled}
+        cloudRuntimeEnabled={showCloudRuntimeEntry}
         onOpenCloudRuntime={() => setShowCloudRuntimeDialog(true)}
       />
 
@@ -169,7 +188,7 @@ export function RuntimesPage({
       {showConnectDialog && (
         <ConnectRemoteDialog onClose={() => setShowConnectDialog(false)} />
       )}
-      {cloudRuntimeEnabled && showCloudRuntimeDialog && (
+      {showCloudRuntimeEntry && showCloudRuntimeDialog && (
         <CloudRuntimeDialog onClose={() => setShowCloudRuntimeDialog(false)} />
       )}
     </div>
