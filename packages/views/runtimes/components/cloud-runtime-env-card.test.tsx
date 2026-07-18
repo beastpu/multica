@@ -52,7 +52,7 @@ describe("CloudRuntimeEnvCard", () => {
       env: [
         { name: "CODEX_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
         { name: "ANTHROPIC_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
-        { name: "CODEX_MODEL", last4: "odex", value: "gpt-5-codex" },
+        { name: "MULTICA_CODEX_MODEL", last4: "odex", value: "gpt-5-codex" },
         { name: "OPENAI_API_KEY", last4: "wxyz" },
       ],
     });
@@ -90,10 +90,8 @@ describe("CloudRuntimeEnvCard", () => {
         env: {
           CODEX_BASE_URL: "https://proxy.example/v1",
           ANTHROPIC_BASE_URL: "https://proxy.example/v1",
-          CODEX_MODEL: "gpt-5-codex",
           MULTICA_CODEX_MODEL: "gpt-5-codex",
           MULTICA_CLAUDE_MODEL: "gpt-5-codex",
-          ANTHROPIC_MODEL: "gpt-5-codex",
           OPENAI_API_KEY: "sk-secret-wxyz",
           ANTHROPIC_AUTH_TOKEN: "sk-secret-wxyz",
         },

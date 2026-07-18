@@ -279,7 +279,7 @@ func cloudRuntimeEnvInfos(env map[string]string) []cloudRuntimeEnvVarInfo {
 
 func isCloudRuntimeEnvPlaintextAllowed(name string) bool {
 	switch name {
-	case "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CODEX_BASE_URL", "CODEX_MODEL", "MULTICA_CODEX_MODEL", "MULTICA_CLAUDE_MODEL":
+	case "ANTHROPIC_BASE_URL", "CODEX_BASE_URL", "MULTICA_CODEX_MODEL", "MULTICA_CLAUDE_MODEL":
 		return true
 	default:
 		return false

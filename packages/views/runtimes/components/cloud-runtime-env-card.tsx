@@ -18,10 +18,8 @@ import { useT } from "../../i18n";
 
 const BASE_URL_ENVS = ["CODEX_BASE_URL", "ANTHROPIC_BASE_URL"] as const;
 const MODEL_ENVS = [
-  "CODEX_MODEL",
   "MULTICA_CODEX_MODEL",
   "MULTICA_CLAUDE_MODEL",
-  "ANTHROPIC_MODEL",
 ] as const;
 const API_KEY_ENVS = ["OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"] as const;
 
@@ -291,11 +289,11 @@ export function CloudRuntimeEnvCard({
                     <tbody className="divide-y">
                       <MappingRow
                         agent="Codex"
-                        mapping="CODEX_BASE_URL / OPENAI_API_KEY / CODEX_MODEL / MULTICA_CODEX_MODEL"
+                        mapping="CODEX_BASE_URL / OPENAI_API_KEY / MULTICA_CODEX_MODEL"
                       />
                       <MappingRow
                         agent="Claude Code"
-                        mapping="ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_MODEL / MULTICA_CLAUDE_MODEL"
+                        mapping="ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / MULTICA_CLAUDE_MODEL"
                       />
                     </tbody>
                   </table>

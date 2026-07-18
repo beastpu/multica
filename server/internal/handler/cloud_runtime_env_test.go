@@ -86,9 +86,9 @@ func TestWorkspaceCloudRuntimeEnv_PutGetDelete(t *testing.T) {
 		"env": map[string]string{
 			"ANTHROPIC_AUTH_TOKEN": "sk-litellm-wxyz",
 			"ANTHROPIC_BASE_URL":   "https://proxy.example.com/v1",
-			"ANTHROPIC_MODEL":      "gpt-5-codex",
 			"CODEX_BASE_URL":       "https://proxy.example.com/v1",
-			"CODEX_MODEL":          "gpt-5-codex",
+			"MULTICA_CLAUDE_MODEL": "gpt-5-codex",
+			"MULTICA_CODEX_MODEL":  "gpt-5-codex",
 			"OPENAI_API_KEY":       "sk-litellm-wxyz",
 		},
 	}), testWorkspaceID)
@@ -137,11 +137,11 @@ func TestWorkspaceCloudRuntimeEnv_PutGetDelete(t *testing.T) {
 	if byName["CODEX_BASE_URL"].Value != "https://proxy.example.com/v1" {
 		t.Fatalf("GET CODEX_BASE_URL = %+v", byName["CODEX_BASE_URL"])
 	}
-	if byName["ANTHROPIC_MODEL"].Value != "gpt-5-codex" {
-		t.Fatalf("GET ANTHROPIC_MODEL = %+v", byName["ANTHROPIC_MODEL"])
+	if byName["MULTICA_CLAUDE_MODEL"].Value != "gpt-5-codex" {
+		t.Fatalf("GET MULTICA_CLAUDE_MODEL = %+v", byName["MULTICA_CLAUDE_MODEL"])
 	}
-	if byName["CODEX_MODEL"].Value != "gpt-5-codex" {
-		t.Fatalf("GET CODEX_MODEL = %+v", byName["CODEX_MODEL"])
+	if byName["MULTICA_CODEX_MODEL"].Value != "gpt-5-codex" {
+		t.Fatalf("GET MULTICA_CODEX_MODEL = %+v", byName["MULTICA_CODEX_MODEL"])
 	}
 	if byName["OPENAI_API_KEY"].Last4 != "wxyz" || byName["OPENAI_API_KEY"].Value != "" {
 		t.Fatalf("GET OPENAI_API_KEY = %+v", byName["OPENAI_API_KEY"])
@@ -242,8 +242,8 @@ func TestWorkspaceCloudRuntimeEnv_MergesAcrossSaves(t *testing.T) {
 	// Save vars one at a time — the second save must NOT drop the first.
 	put(map[string]string{"ANTHROPIC_BASE_URL": "https://proxy.example.com"})
 	put(map[string]string{"CODEX_BASE_URL": "https://proxy.example.com"})
-	put(map[string]string{"CODEX_MODEL": "gpt-5-codex"})
-	put(map[string]string{"ANTHROPIC_MODEL": "gpt-5-codex"})
+	put(map[string]string{"MULTICA_CODEX_MODEL": "gpt-5-codex"})
+	put(map[string]string{"MULTICA_CLAUDE_MODEL": "gpt-5-codex"})
 	put(map[string]string{"OPENAI_API_KEY": "sk-bbbb"})
 	put(map[string]string{"ANTHROPIC_AUTH_TOKEN": "sk-bbbb"})
 
@@ -261,7 +261,7 @@ func TestWorkspaceCloudRuntimeEnv_MergesAcrossSaves(t *testing.T) {
 	for _, e := range got.Env {
 		names[e.Name] = true
 	}
-	for _, want := range []string{"ANTHROPIC_BASE_URL", "CODEX_BASE_URL", "ANTHROPIC_MODEL", "CODEX_MODEL", "OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"} {
+	for _, want := range []string{"ANTHROPIC_BASE_URL", "CODEX_BASE_URL", "MULTICA_CLAUDE_MODEL", "MULTICA_CODEX_MODEL", "OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"} {
 		if !names[want] {
 			t.Fatalf("merge lost %s; got %v", want, names)
 		}
