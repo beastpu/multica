@@ -1,5 +1,6 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { runtimeKeys } from "./queries";
 
 export interface CloudRuntimeAccess {
   enabled: boolean;
@@ -150,6 +151,7 @@ export function useDeleteCloudRuntimeNode(wsId: string) {
     mutationFn: (instanceId: string) => api.deleteCloudRuntimeNode(instanceId),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: cloudRuntimeKeys.all(wsId) });
+      qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     },
   });
 }

@@ -28,7 +28,6 @@ import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { useT } from "../../i18n";
-import { isSelfHealingRuntime } from "../utils";
 
 // DeleteRuntimeDialog is the single confirmation surface for runtime
 // deletion across the list-page kebab and the detail-page Diagnostics
@@ -48,11 +47,9 @@ import { isSelfHealingRuntime } from "../utils";
 //      server snapshot and force the user to re-confirm the checkbox.
 //
 // Self-healing local runtimes (online local daemons that re-register
-// themselves seconds after deletion — see isSelfHealingRuntime) are NOT
-// blocked at this layer (MUL-3352). The trigger affordances let the
-// owner click through, and this dialog raises a self_heal warning banner
-// so the user knows the daemon will re-register a fresh runtime row
-// unless they stop the daemon process first. Confirm proceeds.
+// themselves seconds after deletion) are NOT blocked at this layer
+// (MUL-3352). The owner can remove the current row; if the daemon is still
+// alive it may register again later, without adding extra warning copy here.
 export interface DeleteRuntimeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -246,16 +243,7 @@ function DeletePersistenceNotice({ runtime }: { runtime: AgentRuntime }) {
       </div>
     );
   }
-  if (!isSelfHealingRuntime(runtime)) return null;
-  return (
-    <div
-      role="status"
-      className="mt-3 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs"
-    >
-      <Info className="mt-0.5 size-3.5 shrink-0 text-warning" />
-      <span>{t(($) => $.detail.delete_dialog.self_heal_notice)}</span>
-    </div>
-  );
+  return null;
 }
 
 // ---------------------------------------------------------------------------

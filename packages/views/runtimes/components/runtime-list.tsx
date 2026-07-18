@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { CurrencyNumberFlow } from "@multica/ui/components/ui/number-flow";
+import { Button } from "@multica/ui/components/ui/button";
 import type {
   Agent,
   AgentRuntime,
@@ -30,6 +31,7 @@ import {
   deriveRuntimeHealth,
   runtimeProfileListOptions,
   runtimeUsageOptions,
+  useDeleteCloudRuntimeNode,
 } from "@multica/core/runtimes";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
@@ -103,6 +105,8 @@ const FIXED_TRACKS_WIDTH = 164 + 8 * 12;
 // no row carries a delete-permission, EVERY row's only action is hidden,
 // and an unconditionally reserved 28px action track would hang a
 // permanent dead zone off the last column.
+const ACTIONS_TRACK_WIDTH = 56;
+
 function columnTrackVars(
   showOwner: boolean,
   showActions: boolean,
@@ -114,14 +118,14 @@ function columnTrackVars(
     COLUMN_WIDTHS.agents +
     COLUMN_WIDTHS.cost +
     COLUMN_WIDTHS.cli +
-    (showActions ? 28 : 0);
+    (showActions ? ACTIONS_TRACK_WIDTH : 0);
   return {
     "--rtc-health": `${COLUMN_WIDTHS.health}px`,
     "--rtc-owner": showOwner ? `${COLUMN_WIDTHS.owner}px` : "0px",
     "--rtc-agents": `${COLUMN_WIDTHS.agents}px`,
     "--rtc-cost": `${COLUMN_WIDTHS.cost}px`,
     "--rtc-cli": `${COLUMN_WIDTHS.cli}px`,
-    "--rtc-kebab": showActions ? "1.75rem" : "0px",
+    "--rtc-kebab": showActions ? `${ACTIONS_TRACK_WIDTH}px` : "0px",
     "--rtc-minw": `${minWidth}px`,
   } as React.CSSProperties;
 }
@@ -530,51 +534,84 @@ export function RuntimeRowMenu({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const isCustomRuntime = !!runtime.profile_id;
-  // Delete is currently the only row action; if the row can't run it, drop
-  // the kebab entirely so the column doesn't render an empty popover. We
-  // used to also hide it for self-healing runtimes (live local daemon
-  // re-registers within seconds), but MUL-3352 surfaced that owners read
-  // a missing kebab as "I lost my permission" rather than "the daemon
-  // would undo this". The dialog now carries the self-heal warning and
-  // the user gets to decide.
+  const isCloudRuntime = runtime.runtime_mode === "cloud";
+  const deleteCloudNode = useDeleteCloudRuntimeNode(wsId);
+  const cloudNodeId = runtime.daemon_id?.trim() ?? "";
+  const deleteLabel = isCloudRuntime
+    ? t(($) => $.cloud_runtime.delete)
+    : isCustomRuntime
+    ? t(($) => $.list.delete_profile_action)
+    : t(($) => $.list.delete_action);
+  // Deletion is intentionally visible as a first-class row action. Stale
+  // daemon rows are often cleanup chores; hiding the entry behind hover-only
+  // kebabs makes the runtime list feel like it has no cleanup affordance.
 
   if (!canDelete) {
     return <span aria-hidden />;
   }
 
+  const handleDelete = () => {
+    if (!isCloudRuntime) {
+      setDeleteOpen(true);
+      return;
+    }
+    if (!cloudNodeId) {
+      toast.error(t(($) => $.cloud_runtime.toast_delete_failed));
+      return;
+    }
+    if (!window.confirm(t(($) => $.cloud_runtime.delete_confirm))) return;
+    deleteCloudNode.mutate(cloudNodeId, {
+      onSuccess: () => toast.success(t(($) => $.cloud_runtime.toast_deleted)),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : t(($) => $.cloud_runtime.toast_delete_failed),
+        ),
+    });
+  };
+
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label={t(($) => $.list.row_actions_aria)}
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
-          }
-        />
-        <DropdownMenuContent align="end" className="w-40">
-          {isCustomRuntime && profile && (
-            <DropdownMenuItem onClick={() => setEditOpen(true)}>
-              <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
-              {t(($) => $.list.edit_action)}
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={() => setDeleteOpen(true)}
-            title={t(($) => $.list.delete_permission_hint)}
-          >
+      <div className="flex items-center justify-end gap-1">
+        {isCustomRuntime && profile && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={t(($) => $.list.row_actions_aria)}
+                  className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-accent data-popup-open:text-accent-foreground"
+                >
+                  <MoreHorizontal className="size-4" />
+                </button>
+              }
+            />
+            <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuItem onClick={() => setEditOpen(true)}>
+                <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
+                {t(($) => $.list.edit_action)}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-7 text-muted-foreground hover:text-destructive"
+          aria-label={deleteLabel}
+          title={deleteLabel}
+          disabled={isCloudRuntime && deleteCloudNode.isPending}
+          onClick={handleDelete}
+        >
+          {isCloudRuntime && deleteCloudNode.isPending ? (
+            <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
+          ) : (
             <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
-            {isCustomRuntime
-              ? t(($) => $.list.delete_profile_action)
-              : t(($) => $.list.delete_action)}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+          )}
+        </Button>
+      </div>
       {isCustomRuntime && profile && editOpen && (
         <RuntimeProfilesDialog
           wsId={wsId}
