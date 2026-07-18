@@ -22,7 +22,7 @@ const API_KEY_ENVS = ["OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"] as const;
 
 /**
  * Admin-only card for the per-workspace cloud runtime model proxy connection.
- * A single LiteLLM proxy connection is fanned out into the env names currently
+ * A single LLM gateway connection is fanned out into the env names currently
  * required by the supported cloud agents: Codex and Claude Code.
  */
 export function CloudRuntimeEnvCard({
@@ -171,7 +171,7 @@ export function CloudRuntimeEnvCard({
               {t(($) => $.cloud_runtime.env.provider)}
             </div>
             <div className="mt-1 text-sm font-medium">
-              {t(($) => $.cloud_runtime.env.litellm_proxy)}
+              {t(($) => $.cloud_runtime.env.llm_gateway)}
             </div>
           </div>
         )}
@@ -188,7 +188,7 @@ export function CloudRuntimeEnvCard({
                 label={t(($) => $.cloud_runtime.env.base_url)}
                 value={baseUrl}
                 onChange={setBaseUrl}
-                placeholder="https://litellm.example.com/v1"
+                placeholder="https://llm-gateway.example.com/v1"
               />
               <TextField
                 id="cloud-runtime-ai-model"

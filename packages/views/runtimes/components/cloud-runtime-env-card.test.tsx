@@ -65,22 +65,22 @@ describe("CloudRuntimeEnvCard", () => {
     expect(screen.queryByDisplayValue(/sk-/)).toBeNull();
   });
 
-  it("saves the LiteLLM proxy connection for Codex and Claude Code", async () => {
+  it("saves the LLM gateway connection for Codex and Claude Code", async () => {
     getEnv.mockResolvedValue({ configured: false, env: [] });
     putEnv.mockResolvedValue({
       configured: true,
       env: [{ name: "OPENAI_API_KEY", last4: "wxyz" }],
     });
     renderCard();
-    await screen.findByText("LiteLLM Proxy");
+    await screen.findByText("LLM Gateway");
 
-    fireEvent.change(screen.getByLabelText("LiteLLM Base URL"), {
+    fireEvent.change(screen.getByLabelText("LLM Gateway Base URL"), {
       target: { value: "https://proxy.example/v1" },
     });
     fireEvent.change(screen.getByLabelText("Default model"), {
       target: { value: "gpt-5-codex" },
     });
-    fireEvent.change(screen.getByLabelText("LiteLLM API Key (optional)"), {
+    fireEvent.change(screen.getByLabelText("LLM Gateway API Key (optional)"), {
       target: { value: "sk-secret-wxyz" },
     });
     fireEvent.click(screen.getByText("Save connection"));
@@ -129,7 +129,7 @@ describe("CloudRuntimeEnvCard", () => {
   it("rejects an empty save before calling the API", async () => {
     getEnv.mockResolvedValue({ configured: false, env: [] });
     renderCard();
-    await screen.findByText("LiteLLM Proxy");
+    await screen.findByText("LLM Gateway");
 
     fireEvent.click(screen.getByText("Save connection"));
 
