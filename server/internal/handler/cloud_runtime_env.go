@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -89,6 +90,10 @@ func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 
 	// Merge into the existing set: load + decrypt what's there, then upsert
 	// the submitted vars over it. A first-time config has no prior row.
@@ -116,6 +121,9 @@ func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusInternalServerError, "failed to delete env")
 			return
 		}
+		if !h.syncWorkspaceCloudRuntimeEnv(w, r, userID, merged) {
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"configured": false, "env": []any{}})
 		return
 	}
@@ -131,10 +139,6 @@ func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
 	// updated_by is best-effort attribution; a non-UUID actor id (never the
 	// case for admin-gated routes) simply stores NULL.
 	updatedBy, _ := util.ParseUUID(userID)
@@ -146,12 +150,15 @@ func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to save env")
 		return
 	}
+	if !h.syncWorkspaceCloudRuntimeEnv(w, r, userID, merged) {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"configured": true,
 		"env":        cloudRuntimeEnvInfos(merged),
-		// Existing nodes keep the env they booted with; the secret is synced
-		// on the next node create. Surfaced so the UI can hint at a restart.
-		"applies_to": "new_nodes",
+		// New nodes read this directly on create; existing nodes need a pod
+		// restart because Kubernetes envFrom is resolved at container start.
+		"applies_to": "new_nodes_and_restarted_nodes",
 	})
 }
 
@@ -198,11 +205,46 @@ func (h *Handler) DeleteWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.
 	if !h.requireCloudRuntimeWorkspaceEnabled(w, r, uuidToString(wsUUID)) {
 		return
 	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	if err := h.Queries.DeleteWorkspaceCloudRuntimeEnv(r.Context(), wsUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete env")
 		return
 	}
+	if !h.syncWorkspaceCloudRuntimeEnv(w, r, userID, nil) {
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) syncWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Request, userID string, env map[string]string) bool {
+	if h.CloudRuntime == nil || !h.CloudRuntime.Enabled() {
+		return true
+	}
+	body, err := json.Marshal(map[string]any{"env": env})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode env sync request")
+		return false
+	}
+	resp, err := h.CloudRuntime.Do(r.Context(), cloudruntime.Request{
+		Method:    http.MethodPut,
+		Path:      "/api/v1/workspace-env",
+		Body:      body,
+		UserID:    userID,
+		RequestID: cloudRuntimeRequestID(r),
+		Op:        "config",
+	})
+	if err != nil {
+		writeCloudRuntimeError(w, r, err)
+		return false
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		writeCloudRuntimeResponse(w, resp)
+		return false
+	}
+	return true
 }
 
 func openCloudRuntimeEnv(h *Handler, sealed []byte) (map[string]string, error) {
@@ -237,7 +279,7 @@ func cloudRuntimeEnvInfos(env map[string]string) []cloudRuntimeEnvVarInfo {
 
 func isCloudRuntimeEnvPlaintextAllowed(name string) bool {
 	switch name {
-	case "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CODEX_BASE_URL", "CODEX_MODEL", "MULTICA_CLAUDE_MODEL":
+	case "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CODEX_BASE_URL", "CODEX_MODEL", "MULTICA_CODEX_MODEL", "MULTICA_CLAUDE_MODEL":
 		return true
 	default:
 		return false

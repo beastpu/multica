@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 )
 
@@ -164,6 +165,59 @@ func TestWorkspaceCloudRuntimeEnv_PutGetDelete(t *testing.T) {
 	testHandler.GetWorkspaceCloudRuntimeEnv(w, req)
 	if !strings.Contains(w.Body.String(), `"configured":false`) {
 		t.Fatalf("GET after DELETE = %s", w.Body.String())
+	}
+}
+
+func TestWorkspaceCloudRuntimeEnv_SyncsFleetSecretAfterSaveAndClear(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	installCloudRuntimeEnvBox(t)
+	proxy := &fakeCloudRuntimeProxy{
+		enabled: true,
+		resp: &cloudruntime.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{},
+			Body:       []byte(`{"status":"synced"}`),
+		},
+	}
+	useCloudRuntimeProxy(t, proxy)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM workspace_cloud_runtime_env WHERE workspace_id = $1`, testWorkspaceID)
+	})
+
+	w := httptest.NewRecorder()
+	req := withWorkspaceIDParam(newRequest(http.MethodPut,
+		"/api/workspaces/"+testWorkspaceID+"/cloud-runtime-env", map[string]any{
+			"env": map[string]string{
+				"CODEX_BASE_URL": "https://proxy.example/v1",
+				"OPENAI_API_KEY": "sk-secret",
+			},
+		}), testWorkspaceID)
+	testHandler.PutWorkspaceCloudRuntimeEnv(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT: status %d body %s", w.Code, w.Body.String())
+	}
+	if len(proxy.calls) != 1 || proxy.calls[0].Method != http.MethodPut || proxy.calls[0].Path != "/api/v1/workspace-env" {
+		t.Fatalf("sync calls after PUT = %+v", proxy.calls)
+	}
+	if proxy.calls[0].UserID != testUserID {
+		t.Fatalf("sync user id after PUT = %q", proxy.calls[0].UserID)
+	}
+	if !strings.Contains(string(proxy.calls[0].Body), `"CODEX_BASE_URL":"https://proxy.example/v1"`) ||
+		!strings.Contains(string(proxy.calls[0].Body), `"OPENAI_API_KEY":"sk-secret"`) {
+		t.Fatalf("sync body after PUT = %s", proxy.calls[0].Body)
+	}
+
+	w = httptest.NewRecorder()
+	req = withWorkspaceIDParam(newRequest(http.MethodDelete,
+		"/api/workspaces/"+testWorkspaceID+"/cloud-runtime-env", nil), testWorkspaceID)
+	testHandler.DeleteWorkspaceCloudRuntimeEnv(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("DELETE: status %d body %s", w.Code, w.Body.String())
+	}
+	if len(proxy.calls) != 2 || !strings.Contains(string(proxy.calls[1].Body), `"env":null`) {
+		t.Fatalf("sync calls after DELETE = %+v body=%s", proxy.calls, proxy.calls[len(proxy.calls)-1].Body)
 	}
 }
 

@@ -22,6 +22,10 @@ type Provider interface {
 	ListNodes(ctx context.Context, workspaceID, workspaceSlug string) ([]Node, error)
 	// DeleteNode tears a node down (idempotent — a missing node is not an error).
 	DeleteNode(ctx context.Context, workspaceID, workspaceSlug, nodeName string) error
+	// RestartNode restarts a node without deleting its persistent disk.
+	RestartNode(ctx context.Context, workspaceID, workspaceSlug, nodeName string) error
+	// SyncWorkspaceEnv materializes the current workspace env for existing nodes.
+	SyncWorkspaceEnv(ctx context.Context, workspaceID, workspaceSlug string, env map[string]string) error
 	// CountNodes returns the workspace's current node count for the quota check.
 	CountNodes(ctx context.Context, workspaceID, workspaceSlug string) (int, error)
 }

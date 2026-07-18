@@ -230,8 +230,11 @@
     "cancel": "Cancel",
     "toast_created": "Cloud Runtime node created",
     "toast_create_failed": "Failed to create Cloud Runtime node",
+    "restart": "Restart",
+    "toast_restarted": "Cloud node is restarting",
+    "toast_restart_failed": "Failed to restart cloud node",
     "delete": "Delete node",
-    "delete_confirm": "Are you sure you want to delete this cloud node? This action cannot be undone.",
+    "delete_confirm": "Delete this cloud node? This also deletes its disk and cannot be undone.",
     "toast_deleted": "Cloud node deleted",
     "toast_delete_failed": "Failed to delete cloud node",
     "fields": {

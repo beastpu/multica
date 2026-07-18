@@ -218,8 +218,11 @@
     "cancel": "キャンセル",
     "toast_created": "クラウドランタイムノードを作成しました",
     "toast_create_failed": "クラウドランタイムノードを作成できませんでした",
+    "restart": "再起動",
+    "toast_restarted": "クラウドノードを再起動しています",
+    "toast_restart_failed": "クラウドノードを再起動できませんでした",
     "delete": "ノードを削除",
-    "delete_confirm": "このクラウドノードを削除してもよろしいですか? この操作は元に戻せません。",
+    "delete_confirm": "このクラウドノードを削除しますか? ディスクも削除され、元に戻せません。",
     "toast_deleted": "クラウドノードを削除しました",
     "toast_delete_failed": "クラウドノードを削除できませんでした",
     "fields": {

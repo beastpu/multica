@@ -101,6 +101,10 @@ func (f *Fleet) Do(ctx context.Context, req Request) (*Response, error) {
 		case http.MethodDelete:
 			return f.deleteNode(ctx, req)
 		}
+	case req.Path == "/api/v1/nodes/reboot" && req.Method == http.MethodPost:
+		return f.restartNode(ctx, req)
+	case req.Path == "/api/v1/workspace-env" && req.Method == http.MethodPut:
+		return f.syncWorkspaceEnv(ctx, req)
 	}
 	return jsonResponse(http.StatusNotImplemented, map[string]string{"error": "operation not supported"})
 }
@@ -283,6 +287,58 @@ func (f *Fleet) deleteNode(ctx context.Context, req Request) (*Response, error) 
 		}
 	}
 	return jsonResponse(http.StatusOK, map[string]string{"status": "deleted", "id": nodeName})
+}
+
+func (f *Fleet) restartNode(ctx context.Context, req Request) (*Response, error) {
+	wsID, slug, member, errResp := f.scope(ctx)
+	if errResp != nil {
+		return errResp, nil
+	}
+	if !isWorkspaceAdmin(member) {
+		return jsonResponse(http.StatusForbidden, map[string]string{
+			"error": "only workspace owners and admins can restart cloud runtime nodes",
+		})
+	}
+	var body deleteNodeRequest
+	if len(req.Body) > 0 {
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return jsonResponse(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		}
+	}
+	nodeName := trimOr(body.InstanceID, body.ID)
+	if len(nodeName) < 5 || nodeName[:5] != "node-" {
+		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "instance_id is required"})
+	}
+	if err := f.provider.RestartNode(ctx, wsID, slug, nodeName); err != nil {
+		return nil, err
+	}
+	return jsonResponse(http.StatusOK, map[string]string{"status": "rebooting", "id": nodeName})
+}
+
+type syncWorkspaceEnvRequest struct {
+	Env map[string]string `json:"env"`
+}
+
+func (f *Fleet) syncWorkspaceEnv(ctx context.Context, req Request) (*Response, error) {
+	wsID, slug, member, errResp := f.scope(ctx)
+	if errResp != nil {
+		return errResp, nil
+	}
+	if !isWorkspaceAdmin(member) {
+		return jsonResponse(http.StatusForbidden, map[string]string{
+			"error": "only workspace owners and admins can sync cloud runtime env",
+		})
+	}
+	var body syncWorkspaceEnvRequest
+	if len(req.Body) > 0 {
+		if err := json.Unmarshal(req.Body, &body); err != nil {
+			return jsonResponse(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		}
+	}
+	if err := f.provider.SyncWorkspaceEnv(ctx, wsID, slug, body.Env); err != nil {
+		return nil, err
+	}
+	return jsonResponse(http.StatusOK, map[string]string{"status": "synced"})
 }
 
 // workspaceEnv decrypts the workspace's cloud runtime env, or returns nil when

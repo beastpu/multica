@@ -329,6 +329,16 @@ func (f *K8sProvider) DeleteNode(ctx context.Context, workspaceID, workspaceSlug
 	return f.kubeDelete(ctx, secretPath(ns, nodeName))
 }
 
+func (f *K8sProvider) RestartNode(ctx context.Context, workspaceID, workspaceSlug, nodeName string) error {
+	ns := f.namespaceName(workspaceSlug, workspaceID)
+	return f.kubeDelete(ctx, podPath(ns, nodeName+"-0"))
+}
+
+func (f *K8sProvider) SyncWorkspaceEnv(ctx context.Context, workspaceID, workspaceSlug string, env map[string]string) error {
+	ns := f.namespaceName(workspaceSlug, workspaceID)
+	return f.writeWorkspaceEnvSecret(ctx, ns, workspaceID, env)
+}
+
 func (f *K8sProvider) CountNodes(ctx context.Context, workspaceID, workspaceSlug string) (int, error) {
 	ns := f.namespaceName(workspaceSlug, workspaceID)
 	list, status, err := f.kubeGetStatefulSets(ctx, ns)
@@ -478,6 +488,12 @@ func (f *K8sProvider) writeWorkspaceEnvSecret(ctx context.Context, namespace, ws
 	if err != nil {
 		return err
 	}
+	if status == http.StatusNotFound {
+		// No namespace means the workspace has no live cloud nodes yet. The next
+		// CreateNode call will create the namespace and sync the same DB-backed
+		// env before the pod starts.
+		return nil
+	}
 	if status == http.StatusConflict {
 		status, err = f.kubePut(ctx, "/api/v1/namespaces/"+namespace+"/secrets/"+workspaceEnvSecretName, body)
 		if err != nil {
@@ -529,6 +545,10 @@ func secretPath(namespace, nodeName string) string {
 
 func statefulSetPath(namespace, nodeName string) string {
 	return "/apis/apps/v1/namespaces/" + namespace + "/statefulsets/" + nodeName
+}
+
+func podPath(namespace, podName string) string {
+	return "/api/v1/namespaces/" + namespace + "/pods/" + podName
 }
 
 // createSecret stores the node PAT plus the deployment-wide extra env

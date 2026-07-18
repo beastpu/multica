@@ -16,6 +16,7 @@ import (
 type fakeCloudRuntimeProxy struct {
 	enabled bool
 	req     cloudruntime.Request
+	calls   []cloudruntime.Request
 	resp    *cloudruntime.Response
 	err     error
 	called  bool
@@ -28,6 +29,7 @@ func (f *fakeCloudRuntimeProxy) Enabled() bool {
 func (f *fakeCloudRuntimeProxy) Do(ctx context.Context, req cloudruntime.Request) (*cloudruntime.Response, error) {
 	f.called = true
 	f.req = req
+	f.calls = append(f.calls, req)
 	if f.err != nil {
 		return nil, f.err
 	}
