@@ -455,10 +455,11 @@ func (f *K8sProvider) ensureNodeQuota(ctx context.Context, namespace, wsID strin
 // already decrypted by the adapter) into the namespace on every node create,
 // so a key rotated in settings reaches the next node without ops involvement.
 // Existing nodes keep the env they booted with until their pod restarts. An
-// empty env leaves any manually-managed secret untouched.
+// empty env deletes the managed workspace secret so cleared/removed keys don't
+// leak into future nodes through a stale Secret.
 func (f *K8sProvider) writeWorkspaceEnvSecret(ctx context.Context, namespace, wsID string, env map[string]string) error {
 	if len(env) == 0 {
-		return nil
+		return f.kubeDelete(ctx, "/api/v1/namespaces/"+namespace+"/secrets/"+workspaceEnvSecretName)
 	}
 	body := map[string]any{
 		"apiVersion": "v1",

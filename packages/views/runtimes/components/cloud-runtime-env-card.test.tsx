@@ -46,57 +46,87 @@ beforeEach(() => {
 });
 
 describe("CloudRuntimeEnvCard", () => {
-  it("renders configured variables as name + last4 fingerprints, never plaintext", async () => {
+  it("renders non-sensitive values and masks the configured API key", async () => {
     getEnv.mockResolvedValue({
       configured: true,
-      env: [{ name: "ANTHROPIC_AUTH_TOKEN", last4: "abcd" }],
+      env: [
+        { name: "CODEX_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
+        { name: "CODEX_MODEL", last4: "odex", value: "gpt-5-codex" },
+        { name: "OPENAI_API_KEY", last4: "wxyz" },
+      ],
     });
     renderCard();
-    expect(await screen.findByText("ANTHROPIC_AUTH_TOKEN")).toBeTruthy();
-    expect(screen.getByText(/abcd/)).toBeTruthy();
+
+    expect(await screen.findByDisplayValue("https://proxy.example/v1")).toBeTruthy();
+    expect(screen.getByDisplayValue("gpt-5-codex")).toBeTruthy();
+    expect(screen.getByText("Configured")).toBeTruthy();
+    expect(screen.getByText(/wxyz/)).toBeTruthy();
+    expect(screen.queryByDisplayValue(/sk-/)).toBeNull();
   });
 
-  it("saves the structured AI connection through putCloudRuntimeEnv", async () => {
+  it("saves the OpenAI-compatible connection through putCloudRuntimeEnv", async () => {
     getEnv.mockResolvedValue({ configured: false, env: [] });
-    putEnv.mockResolvedValue({ configured: true, env: [{ name: "OPENAI_API_KEY", last4: "wxyz" }] });
+    putEnv.mockResolvedValue({
+      configured: true,
+      env: [{ name: "OPENAI_API_KEY", last4: "wxyz" }],
+    });
     renderCard();
-    await screen.findByText(/No AI connection configured/i);
+    await screen.findByText("OpenAI compatible");
 
     fireEvent.change(screen.getByLabelText("Base URL"), {
       target: { value: "https://proxy.example/v1" },
     });
-    fireEvent.change(screen.getByLabelText("API Key"), {
+    fireEvent.change(screen.getByLabelText("Default model"), {
+      target: { value: "gpt-5-codex" },
+    });
+    fireEvent.change(screen.getByLabelText("API Key (optional)"), {
       target: { value: "sk-secret-wxyz" },
     });
     fireEvent.click(screen.getByText("Save connection"));
 
     await waitFor(() =>
       expect(putEnv).toHaveBeenCalledWith("ws-1", {
-        MULTICA_CLOUD_RUNTIME_AI_PROVIDER: "multica_proxy",
-        ANTHROPIC_BASE_URL: "https://proxy.example/v1",
-        ANTHROPIC_AUTH_TOKEN: "sk-secret-wxyz",
+        env: {
+          CODEX_BASE_URL: "https://proxy.example/v1",
+          CODEX_MODEL: "gpt-5-codex",
+          OPENAI_API_KEY: "sk-secret-wxyz",
+        },
       }),
     );
   });
 
-  it("rejects lowercase names before calling the API", async () => {
+  it("removes only the API key when requested", async () => {
+    getEnv.mockResolvedValue({
+      configured: true,
+      env: [
+        { name: "CODEX_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" },
+        { name: "OPENAI_API_KEY", last4: "wxyz" },
+      ],
+    });
+    putEnv.mockResolvedValue({
+      configured: true,
+      env: [{ name: "CODEX_BASE_URL", last4: "/v1", value: "https://proxy.example/v1" }],
+    });
+    renderCard();
+
+    await screen.findByText("Configured");
+    fireEvent.click(screen.getByText("Remove"));
+
+    await waitFor(() =>
+      expect(putEnv).toHaveBeenCalledWith("ws-1", {
+        remove_env: ["OPENAI_API_KEY"],
+      }),
+    );
+  });
+
+  it("rejects an empty save before calling the API", async () => {
     getEnv.mockResolvedValue({ configured: false, env: [] });
     renderCard();
-    await screen.findByText(/No AI connection configured/i);
+    await screen.findByText("OpenAI compatible");
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "bad-name" } });
-    fireEvent.change(screen.getByLabelText("Value"), { target: { value: "v" } });
     fireEvent.click(screen.getByText("Save connection"));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(putEnv).not.toHaveBeenCalled();
-  });
-
-  it("masks the value input so keys are not shoulder-surfable", async () => {
-    getEnv.mockResolvedValue({ configured: false, env: [] });
-    renderCard();
-    await screen.findByText(/No AI connection configured/i);
-    expect((screen.getByLabelText("Value") as HTMLInputElement).type).toBe("password");
-    expect((screen.getByLabelText("API Key") as HTMLInputElement).type).toBe("password");
   });
 });

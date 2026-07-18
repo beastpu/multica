@@ -81,6 +81,9 @@ func newFakeKube(t *testing.T) *fakeKube {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/statefulsets"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": f.statefulSets})
 		case r.Method == http.MethodDelete:
+			name := lastPathSegment(r.URL.Path)
+			f.secrets = deleteNamedObject(f.secrets, name)
+			f.statefulSets = deleteNamedObject(f.statefulSets, name)
 			w.WriteHeader(http.StatusOK)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -88,6 +91,26 @@ func newFakeKube(t *testing.T) *fakeKube {
 	}))
 	t.Cleanup(f.server.Close)
 	return f
+}
+
+func deleteNamedObject(items []map[string]any, name string) []map[string]any {
+	out := items[:0]
+	for _, item := range items {
+		if meta, ok := item["metadata"].(map[string]any); ok {
+			if n, ok := meta["name"].(string); ok && n == name {
+				continue
+			}
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func lastPathSegment(path string) string {
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		return path[i+1:]
+	}
+	return path
 }
 
 func newProvider(t *testing.T, kube *fakeKube, cfg Config) *K8sProvider {
@@ -220,6 +243,36 @@ func TestK8sProvider_PullSecretAndExtraEnv(t *testing.T) {
 	stsJSON, _ := json.Marshal(kube.statefulSets[0])
 	if !strings.Contains(string(stsJSON), `"imagePullSecrets"`) || !strings.Contains(string(stsJSON), `"ANTHROPIC_BASE_URL"`) {
 		t.Fatalf("statefulset missing pull secret / extra env: %s", stsJSON)
+	}
+}
+
+func TestK8sProvider_EmptyWorkspaceEnvDeletesStaleSecret(t *testing.T) {
+	kube := newFakeKube(t)
+	p := newProvider(t, kube, Config{})
+	if _, err := p.CreateNode(context.Background(), sampleSpec()); err != nil {
+		t.Fatalf("CreateNode with env: %v", err)
+	}
+	var found bool
+	for _, s := range kube.secrets {
+		if s["metadata"].(map[string]any)["name"] == workspaceEnvSecretName {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected workspace env secret after env create")
+	}
+
+	spec := sampleSpec()
+	spec.Name = "node-emptyenv"
+	spec.Token = "mcn_emptyenv"
+	spec.Env = nil
+	if _, err := p.CreateNode(context.Background(), spec); err != nil {
+		t.Fatalf("CreateNode without env: %v", err)
+	}
+	for _, s := range kube.secrets {
+		if s["metadata"].(map[string]any)["name"] == workspaceEnvSecretName {
+			t.Fatalf("stale workspace env secret was not deleted: %v", s)
+		}
 	}
 }
 

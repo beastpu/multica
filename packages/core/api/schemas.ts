@@ -884,6 +884,7 @@ export const EMPTY_CLOUD_RUNTIME_ACCESS: CloudRuntimeAccess = { enabled: false }
 export const CloudRuntimeEnvVarSchema = z.object({
   name: z.string(),
   last4: z.string().default(""),
+  value: z.string().optional(),
 }).loose();
 
 export const CloudRuntimeEnvSchema = z.object({

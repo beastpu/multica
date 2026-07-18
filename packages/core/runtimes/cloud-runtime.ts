@@ -26,17 +26,24 @@ export interface ListCloudRuntimeNodesParams {
   offset?: number;
 }
 
-/** A configured workspace env variable — value never leaves the server. */
+/** A configured workspace env variable. Sensitive values never leave the server. */
 export interface CloudRuntimeEnvVar {
   name: string;
   /** Last 4 characters of the value, for recognition without exposure. */
   last4: string;
+  /** Plaintext for non-sensitive config values such as base URLs and model ids. */
+  value?: string;
 }
 
 export interface CloudRuntimeEnv {
   configured: boolean;
   env: CloudRuntimeEnvVar[];
   updated_at?: string;
+}
+
+export interface CloudRuntimeEnvUpdate {
+  env?: Record<string, string>;
+  remove_env?: string[];
 }
 
 export interface CreateCloudRuntimeNodeRequest {
@@ -162,7 +169,8 @@ export function cloudRuntimeEnvOptions(wsId: string) {
 export function useSaveCloudRuntimeEnv(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (env: Record<string, string>) => api.putCloudRuntimeEnv(wsId, env),
+    mutationFn: (update: CloudRuntimeEnvUpdate) =>
+      api.putCloudRuntimeEnv(wsId, update),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: cloudRuntimeEnvKeys.all(wsId) });
     },

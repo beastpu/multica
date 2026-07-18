@@ -169,6 +169,7 @@ import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
 import type {
   CloudRuntimeAccess,
   CloudRuntimeEnv,
+  CloudRuntimeEnvUpdate,
   CloudRuntimeNode,
   CreateCloudRuntimeNodeRequest,
   ListCloudRuntimeNodesParams,
@@ -1224,8 +1225,8 @@ export class ApiClient {
     });
   }
 
-  // Per-workspace cloud runtime env (LLM proxy keys). Admin-gated; values
-  // are write-only — GET returns names + last-4 fingerprints only.
+  // Per-workspace cloud runtime env. Admin-gated; sensitive values are
+  // write-only, while allowlisted non-sensitive config can be returned.
 
   async getCloudRuntimeEnv(workspaceId: string): Promise<CloudRuntimeEnv> {
     const raw = await this.fetch<unknown>(
@@ -1238,11 +1239,11 @@ export class ApiClient {
 
   async putCloudRuntimeEnv(
     workspaceId: string,
-    env: Record<string, string>,
+    update: CloudRuntimeEnvUpdate,
   ): Promise<CloudRuntimeEnv> {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/cloud-runtime-env`,
-      { method: "PUT", body: JSON.stringify({ env }) },
+      { method: "PUT", body: JSON.stringify(update) },
     );
     return parseWithFallback(raw, CloudRuntimeEnvSchema, EMPTY_CLOUD_RUNTIME_ENV, {
       endpoint: "PUT /api/workspaces/:id/cloud-runtime-env",
