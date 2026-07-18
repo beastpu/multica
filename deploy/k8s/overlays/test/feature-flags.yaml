@@ -7,4 +7,5 @@ data:
     cloud_runtime:
       default: false
       allow_by: workspace_id
-      allow: []
+      allow:
+        - "bed314a3-0eaf-498f-959b-7c6c8fb6c3d8" # w3-test
