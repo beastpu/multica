@@ -112,6 +112,7 @@ func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 	for _, name := range req.RemoveEnv {
 		delete(merged, name)
 	}
+	pruneDeprecatedCloudRuntimeEnv(merged)
 	if len(merged) > maxCloudRuntimeEnvVars {
 		writeError(w, http.StatusBadRequest, "too many env variables")
 		return
@@ -284,4 +285,9 @@ func isCloudRuntimeEnvPlaintextAllowed(name string) bool {
 	default:
 		return false
 	}
+}
+
+func pruneDeprecatedCloudRuntimeEnv(env map[string]string) {
+	delete(env, "CODEX_MODEL")
+	delete(env, "ANTHROPIC_MODEL")
 }

@@ -280,6 +280,54 @@ func TestWorkspaceCloudRuntimeEnv_MergesAcrossSaves(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCloudRuntimeEnv_PrunesDeprecatedModelEnvNames(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	installCloudRuntimeEnvBox(t)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM workspace_cloud_runtime_env WHERE workspace_id = $1`, testWorkspaceID)
+	})
+
+	put := func(env map[string]string) {
+		w := httptest.NewRecorder()
+		req := withWorkspaceIDParam(newRequest(http.MethodPut,
+			"/api/workspaces/"+testWorkspaceID+"/cloud-runtime-env", map[string]any{"env": env}), testWorkspaceID)
+		testHandler.PutWorkspaceCloudRuntimeEnv(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("PUT %v: status %d body %s", env, w.Code, w.Body.String())
+		}
+	}
+
+	put(map[string]string{
+		"CODEX_MODEL":     "old-codex-model",
+		"ANTHROPIC_MODEL": "old-claude-model",
+	})
+	put(map[string]string{
+		"MULTICA_CODEX_MODEL":  "gpt-5.5",
+		"MULTICA_CLAUDE_MODEL": "gpt-5.5",
+	})
+
+	row, err := testHandler.Queries.GetWorkspaceCloudRuntimeEnv(context.Background(), parseUUID(testWorkspaceID))
+	if err != nil {
+		t.Fatalf("load env row: %v", err)
+	}
+	env, err := openCloudRuntimeEnv(testHandler, row.EnvSealed)
+	if err != nil {
+		t.Fatalf("open env: %v", err)
+	}
+	for _, deprecated := range []string{"CODEX_MODEL", "ANTHROPIC_MODEL"} {
+		if _, ok := env[deprecated]; ok {
+			t.Fatalf("deprecated %s should be pruned, got %v", deprecated, env)
+		}
+	}
+	for _, canonical := range []string{"MULTICA_CODEX_MODEL", "MULTICA_CLAUDE_MODEL"} {
+		if env[canonical] != "gpt-5.5" {
+			t.Fatalf("canonical %s = %q, want gpt-5.5", canonical, env[canonical])
+		}
+	}
+}
+
 func TestWorkspaceCloudRuntimeEnv_RemovesSelectedVariables(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
