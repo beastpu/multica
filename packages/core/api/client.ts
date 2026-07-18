@@ -1225,6 +1225,14 @@ export class ApiClient {
     });
   }
 
+  async rebootCloudRuntimeNode(instanceId: string): Promise<void> {
+    await this.fetchRaw("/api/cloud-runtime/nodes/reboot", {
+      method: "POST",
+      body: JSON.stringify({ instance_id: instanceId }),
+      extraHeaders: { "Content-Type": "application/json" },
+    });
+  }
+
   // Per-workspace cloud runtime env. Admin-gated; sensitive values are
   // write-only, while allowlisted non-sensitive config can be returned.
 

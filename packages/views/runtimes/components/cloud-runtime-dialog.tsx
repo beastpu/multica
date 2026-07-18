@@ -27,6 +27,7 @@ import {
   cloudRuntimeNodeListOptions,
   useCreateCloudRuntimeNode,
   useDeleteCloudRuntimeNode,
+  useRebootCloudRuntimeNode,
 } from "@multica/core/runtimes";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentMember } from "@multica/core/permissions";
@@ -238,6 +239,7 @@ export function CloudRuntimeDialog({ onClose }: { onClose: () => void }) {
                 <CloudRuntimeNodeList
                   nodes={sortedNodes}
                   wsId={wsId}
+                  isAdmin={isAdmin}
                   query={nodesQuery}
                 />
               </div>
@@ -328,10 +330,12 @@ function AiConnectionSummary({
 function CloudRuntimeNodeList({
   nodes,
   wsId,
+  isAdmin,
   query,
 }: {
   nodes: CloudRuntimeNode[];
   wsId: string;
+  isAdmin: boolean;
   query: ReturnType<typeof useQuery<CloudRuntimeNode[]>>;
 }) {
   const { t } = useT("runtimes");
@@ -382,7 +386,12 @@ function CloudRuntimeNodeList({
         <div className="max-h-[410px] overflow-y-auto p-2">
           <div className="space-y-2">
             {nodes.map((node) => (
-              <CloudRuntimeNodeRow key={node.id} node={node} wsId={wsId} />
+              <CloudRuntimeNodeRow
+                key={node.id || node.instance_id || node.name}
+                node={node}
+                wsId={wsId}
+                isAdmin={isAdmin}
+              />
             ))}
           </div>
         </div>
@@ -628,9 +637,18 @@ function PolicyStat({
   );
 }
 
-function CloudRuntimeNodeRow({ node, wsId }: { node: CloudRuntimeNode; wsId: string }) {
+function CloudRuntimeNodeRow({
+  node,
+  wsId,
+  isAdmin,
+}: {
+  node: CloudRuntimeNode;
+  wsId: string;
+  isAdmin: boolean;
+}) {
   const { t } = useT("runtimes");
   const deleteNode = useDeleteCloudRuntimeNode(wsId);
+  const rebootNode = useRebootCloudRuntimeNode(wsId);
   const [confirming, setConfirming] = useState(false);
   const title =
     node.name.trim() ||
@@ -647,6 +665,17 @@ function CloudRuntimeNodeRow({ node, wsId }: { node: CloudRuntimeNode; wsId: str
           err instanceof Error
             ? err.message
             : t(($) => $.cloud_runtime.toast_delete_failed),
+        ),
+    });
+  };
+  const runReboot = () => {
+    rebootNode.mutate(node.instance_id, {
+      onSuccess: () => toast.success(t(($) => $.cloud_runtime.toast_restarted)),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : t(($) => $.cloud_runtime.toast_restart_failed),
         ),
     });
   };
@@ -679,7 +708,7 @@ function CloudRuntimeNodeRow({ node, wsId }: { node: CloudRuntimeNode; wsId: str
             )}
           </div>
         </div>
-        {confirming ? (
+        {isAdmin && confirming ? (
           <div className="flex shrink-0 items-center gap-1">
             <Button
               type="button"
@@ -707,18 +736,35 @@ function CloudRuntimeNodeRow({ node, wsId }: { node: CloudRuntimeNode; wsId: str
               {t(($) => $.cloud_runtime.cancel)}
             </Button>
           </div>
-        ) : (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 shrink-0 p-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-            onClick={() => setConfirming(true)}
-            aria-label={t(($) => $.cloud_runtime.delete)}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        )}
+        ) : isAdmin ? (
+          <div className="flex shrink-0 items-center gap-1 opacity-80 transition-opacity group-hover:opacity-100">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground"
+              disabled={rebootNode.isPending || !node.instance_id}
+              onClick={runReboot}
+            >
+              {rebootNode.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              {t(($) => $.cloud_runtime.restart)}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+              onClick={() => setConfirming(true)}
+              aria-label={t(($) => $.cloud_runtime.delete)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ) : null}
       </div>
       {node.instance_id && (
         <div className="mt-2 truncate font-mono text-[11px] text-muted-foreground/80">

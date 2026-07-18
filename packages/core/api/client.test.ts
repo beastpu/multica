@@ -725,6 +725,27 @@ describe("ApiClient", () => {
     );
   });
 
+  it("rebootCloudRuntimeNode sends POST with JSON body containing instance id", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(null, { status: 204 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.rebootCloudRuntimeNode("node-abc12345");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, opts] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://api.example.test/api/cloud-runtime/nodes/reboot");
+    expect(opts).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ instance_id: "node-abc12345" }),
+    });
+    expect((opts.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/json",
+    );
+  });
+
   describe("getAttachment", () => {
     it("returns the parsed attachment for a well-formed response", async () => {
       vi.stubGlobal(

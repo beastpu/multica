@@ -54,6 +54,8 @@ func TestMain(m *testing.M) {
 type fakeProvider struct {
 	created   []NodeSpec
 	deleted   []string
+	restarted []string
+	syncedEnv []map[string]string
 	count     int
 	createErr error
 }
@@ -71,6 +73,14 @@ func (p *fakeProvider) DeleteNode(_ context.Context, _, _, name string) error {
 	p.deleted = append(p.deleted, name)
 	return nil
 }
+func (p *fakeProvider) RestartNode(_ context.Context, _, _, name string) error {
+	p.restarted = append(p.restarted, name)
+	return nil
+}
+func (p *fakeProvider) SyncWorkspaceEnv(_ context.Context, _, _ string, env map[string]string) error {
+	p.syncedEnv = append(p.syncedEnv, env)
+	return nil
+}
 func (p *fakeProvider) CountNodes(context.Context, string, string) (int, error) { return p.count, nil }
 
 func ctxFor(role string) context.Context {
@@ -82,12 +92,16 @@ func ctxFor(role string) context.Context {
 }
 
 func do(t *testing.T, f *Fleet, ctx context.Context, method string, body any) (*Response, map[string]any) {
+	return doPath(t, f, ctx, method, "/api/v1/nodes", body)
+}
+
+func doPath(t *testing.T, f *Fleet, ctx context.Context, method, path string, body any) (*Response, map[string]any) {
 	t.Helper()
 	raw, _ := json.Marshal(body)
 	if body == nil {
 		raw = nil
 	}
-	resp, err := f.Do(ctx, Request{Method: method, Path: "/api/v1/nodes", Body: raw})
+	resp, err := f.Do(ctx, Request{Method: method, Path: path, Body: raw})
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
@@ -132,6 +146,33 @@ func TestFleet_CreateMintsTokenAndDeleteRevokes(t *testing.T) {
 	testPool.QueryRow(context.Background(), `SELECT count(*) FROM cloud_node_token WHERE workspace_id = $1 AND node_name = $2`, testWS, nodeName).Scan(&n)
 	if n != 0 {
 		t.Fatalf("token not revoked, %d rows", n)
+	}
+}
+
+func TestFleet_RestartAndSyncWorkspaceEnv(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database")
+	}
+	fp := &fakeProvider{}
+	f := NewFleet(FleetConfig{Provider: fp, Queries: testQ, MaxNodesPerWorkspace: 3})
+	ctx := ctxFor("owner")
+
+	resp, body := doPath(t, f, ctx, http.MethodPost, "/api/v1/nodes/reboot", map[string]any{"instance_id": "node-restart1"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("restart: %d %s", resp.StatusCode, resp.Body)
+	}
+	if body["status"] != "rebooting" || len(fp.restarted) != 1 || fp.restarted[0] != "node-restart1" {
+		t.Fatalf("restart body=%v calls=%v", body, fp.restarted)
+	}
+
+	resp, _ = doPath(t, f, ctx, http.MethodPut, "/api/v1/workspace-env", map[string]any{
+		"env": map[string]string{"CODEX_BASE_URL": "https://proxy.example/v1"},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("sync env: %d %s", resp.StatusCode, resp.Body)
+	}
+	if len(fp.syncedEnv) != 1 || fp.syncedEnv[0]["CODEX_BASE_URL"] != "https://proxy.example/v1" {
+		t.Fatalf("synced env = %+v", fp.syncedEnv)
 	}
 }
 

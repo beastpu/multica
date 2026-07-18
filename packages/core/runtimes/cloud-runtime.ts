@@ -154,6 +154,16 @@ export function useDeleteCloudRuntimeNode(wsId: string) {
   });
 }
 
+export function useRebootCloudRuntimeNode(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (instanceId: string) => api.rebootCloudRuntimeNode(instanceId),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: cloudRuntimeKeys.all(wsId) });
+    },
+  });
+}
+
 export const cloudRuntimeEnvKeys = {
   all: (wsId: string) => ["cloud-runtime-env", wsId] as const,
 };

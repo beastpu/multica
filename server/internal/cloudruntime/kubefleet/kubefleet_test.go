@@ -19,6 +19,7 @@ type fakeKube struct {
 	secrets      []map[string]any
 	quotas       []map[string]any
 	statefulSets []map[string]any
+	deletedPods  []string
 	// failStatefulSetCreate makes POST .../statefulsets return 500 to test rollback.
 	failStatefulSetCreate bool
 }
@@ -80,6 +81,9 @@ func newFakeKube(t *testing.T) *fakeKube {
 			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/statefulsets"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": f.statefulSets})
+		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/pods/"):
+			f.deletedPods = append(f.deletedPods, lastPathSegment(r.URL.Path))
+			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodDelete:
 			name := lastPathSegment(r.URL.Path)
 			f.secrets = deleteNamedObject(f.secrets, name)
@@ -273,6 +277,65 @@ func TestK8sProvider_EmptyWorkspaceEnvDeletesStaleSecret(t *testing.T) {
 		if s["metadata"].(map[string]any)["name"] == workspaceEnvSecretName {
 			t.Fatalf("stale workspace env secret was not deleted: %v", s)
 		}
+	}
+}
+
+func TestK8sProvider_SyncWorkspaceEnvUpdatesSecret(t *testing.T) {
+	kube := newFakeKube(t)
+	p := newProvider(t, kube, Config{})
+	if _, err := p.CreateNode(context.Background(), sampleSpec()); err != nil {
+		t.Fatalf("CreateNode with env: %v", err)
+	}
+
+	if err := p.SyncWorkspaceEnv(context.Background(), testWS, testSlug, map[string]string{
+		"CODEX_BASE_URL": "https://proxy.example/v1",
+	}); err != nil {
+		t.Fatalf("SyncWorkspaceEnv update: %v", err)
+	}
+	var wsEnv map[string]any
+	for _, s := range kube.secrets {
+		if s["metadata"].(map[string]any)["name"] == workspaceEnvSecretName {
+			wsEnv = s
+		}
+	}
+	if wsEnv == nil || wsEnv["stringData"].(map[string]any)["CODEX_BASE_URL"] != "https://proxy.example/v1" {
+		t.Fatalf("workspace env secret not updated: %v", wsEnv)
+	}
+
+	if err := p.SyncWorkspaceEnv(context.Background(), testWS, testSlug, nil); err != nil {
+		t.Fatalf("SyncWorkspaceEnv clear: %v", err)
+	}
+	for _, s := range kube.secrets {
+		if s["metadata"].(map[string]any)["name"] == workspaceEnvSecretName {
+			t.Fatalf("workspace env secret not deleted after clear: %v", s)
+		}
+	}
+}
+
+func TestK8sProvider_RestartNodeDeletesPodOnly(t *testing.T) {
+	kube := newFakeKube(t)
+	p := newProvider(t, kube, Config{})
+	if _, err := p.CreateNode(context.Background(), sampleSpec()); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+
+	if err := p.RestartNode(context.Background(), testWS, testSlug, "node-abc12345"); err != nil {
+		t.Fatalf("RestartNode: %v", err)
+	}
+	if len(kube.deletedPods) != 1 || kube.deletedPods[0] != "node-abc12345-0" {
+		t.Fatalf("deleted pods = %v", kube.deletedPods)
+	}
+	if len(kube.statefulSets) != 1 {
+		t.Fatalf("restart must keep statefulset/PVC, got statefulsets=%d", len(kube.statefulSets))
+	}
+	var tokenFound bool
+	for _, s := range kube.secrets {
+		if s["metadata"].(map[string]any)["name"] == "node-abc12345-token" {
+			tokenFound = true
+		}
+	}
+	if !tokenFound {
+		t.Fatalf("restart must keep node token secret")
 	}
 }
 

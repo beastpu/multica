@@ -91,6 +91,7 @@ describe("CloudRuntimeEnvCard", () => {
           CODEX_BASE_URL: "https://proxy.example/v1",
           ANTHROPIC_BASE_URL: "https://proxy.example/v1",
           CODEX_MODEL: "gpt-5-codex",
+          MULTICA_CODEX_MODEL: "gpt-5-codex",
           MULTICA_CLAUDE_MODEL: "gpt-5-codex",
           ANTHROPIC_MODEL: "gpt-5-codex",
           OPENAI_API_KEY: "sk-secret-wxyz",
