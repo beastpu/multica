@@ -84,7 +84,7 @@ func TestWorkspaceCloudRuntimeEnv_PutGetDelete(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := withWorkspaceIDParam(newRequest(http.MethodPut, "/api/workspaces/"+testWorkspaceID+"/cloud-runtime-env", map[string]any{
 		"env": map[string]string{
-			"ANTHROPIC_AUTH_TOKEN": "sk-litellm-wxyz",
+			"ANTHROPIC_API_KEY":    "sk-litellm-wxyz",
 			"ANTHROPIC_BASE_URL":   "https://proxy.example.com/v1",
 			"CODEX_BASE_URL":       "https://proxy.example.com/v1",
 			"MULTICA_CLAUDE_MODEL": "gpt-5-codex",
@@ -131,7 +131,7 @@ func TestWorkspaceCloudRuntimeEnv_PutGetDelete(t *testing.T) {
 	for _, env := range got.Env {
 		byName[env.Name] = env
 	}
-	if byName["ANTHROPIC_BASE_URL"].Value != "https://proxy.example.com/v1" {
+	if byName["ANTHROPIC_BASE_URL"].Value != "https://proxy.example.com" {
 		t.Fatalf("GET ANTHROPIC_BASE_URL = %+v", byName["ANTHROPIC_BASE_URL"])
 	}
 	if byName["CODEX_BASE_URL"].Value != "https://proxy.example.com/v1" {
@@ -146,8 +146,8 @@ func TestWorkspaceCloudRuntimeEnv_PutGetDelete(t *testing.T) {
 	if byName["OPENAI_API_KEY"].Last4 != "wxyz" || byName["OPENAI_API_KEY"].Value != "" {
 		t.Fatalf("GET OPENAI_API_KEY = %+v", byName["OPENAI_API_KEY"])
 	}
-	if byName["ANTHROPIC_AUTH_TOKEN"].Last4 != "wxyz" || byName["ANTHROPIC_AUTH_TOKEN"].Value != "" {
-		t.Fatalf("GET ANTHROPIC_AUTH_TOKEN = %+v", byName["ANTHROPIC_AUTH_TOKEN"])
+	if byName["ANTHROPIC_API_KEY"].Last4 != "wxyz" || byName["ANTHROPIC_API_KEY"].Value != "" {
+		t.Fatalf("GET ANTHROPIC_API_KEY = %+v", byName["ANTHROPIC_API_KEY"])
 	}
 	if strings.Contains(w.Body.String(), "sk-litellm") {
 		t.Fatalf("GET leaks plaintext: %s", w.Body.String())
@@ -245,7 +245,7 @@ func TestWorkspaceCloudRuntimeEnv_MergesAcrossSaves(t *testing.T) {
 	put(map[string]string{"MULTICA_CODEX_MODEL": "gpt-5-codex"})
 	put(map[string]string{"MULTICA_CLAUDE_MODEL": "gpt-5-codex"})
 	put(map[string]string{"OPENAI_API_KEY": "sk-bbbb"})
-	put(map[string]string{"ANTHROPIC_AUTH_TOKEN": "sk-bbbb"})
+	put(map[string]string{"ANTHROPIC_API_KEY": "sk-bbbb"})
 
 	w := httptest.NewRecorder()
 	req := withWorkspaceIDParam(newRequest(http.MethodGet,
@@ -261,7 +261,7 @@ func TestWorkspaceCloudRuntimeEnv_MergesAcrossSaves(t *testing.T) {
 	for _, e := range got.Env {
 		names[e.Name] = true
 	}
-	for _, want := range []string{"ANTHROPIC_BASE_URL", "CODEX_BASE_URL", "MULTICA_CLAUDE_MODEL", "MULTICA_CODEX_MODEL", "OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"} {
+	for _, want := range []string{"ANTHROPIC_BASE_URL", "CODEX_BASE_URL", "MULTICA_CLAUDE_MODEL", "MULTICA_CODEX_MODEL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"} {
 		if !names[want] {
 			t.Fatalf("merge lost %s; got %v", want, names)
 		}
@@ -300,8 +300,9 @@ func TestWorkspaceCloudRuntimeEnv_PrunesDeprecatedModelEnvNames(t *testing.T) {
 	}
 
 	put(map[string]string{
-		"CODEX_MODEL":     "old-codex-model",
-		"ANTHROPIC_MODEL": "old-claude-model",
+		"CODEX_MODEL":          "old-codex-model",
+		"ANTHROPIC_MODEL":      "old-claude-model",
+		"ANTHROPIC_AUTH_TOKEN": "old-claude-token",
 	})
 	put(map[string]string{
 		"MULTICA_CODEX_MODEL":  "gpt-5.5",
@@ -316,7 +317,7 @@ func TestWorkspaceCloudRuntimeEnv_PrunesDeprecatedModelEnvNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open env: %v", err)
 	}
-	for _, deprecated := range []string{"CODEX_MODEL", "ANTHROPIC_MODEL"} {
+	for _, deprecated := range []string{"CODEX_MODEL", "ANTHROPIC_MODEL", "ANTHROPIC_AUTH_TOKEN"} {
 		if _, ok := env[deprecated]; ok {
 			t.Fatalf("deprecated %s should be pruned, got %v", deprecated, env)
 		}
@@ -341,10 +342,10 @@ func TestWorkspaceCloudRuntimeEnv_RemovesSelectedVariables(t *testing.T) {
 	req := withWorkspaceIDParam(newRequest(http.MethodPut,
 		"/api/workspaces/"+testWorkspaceID+"/cloud-runtime-env", map[string]any{
 			"env": map[string]string{
-				"ANTHROPIC_AUTH_TOKEN": "sk-secret",
-				"ANTHROPIC_BASE_URL":   "https://proxy.example.com",
-				"CODEX_BASE_URL":       "https://proxy.example.com",
-				"OPENAI_API_KEY":       "sk-secret",
+				"ANTHROPIC_API_KEY":  "sk-secret",
+				"ANTHROPIC_BASE_URL": "https://proxy.example.com",
+				"CODEX_BASE_URL":     "https://proxy.example.com",
+				"OPENAI_API_KEY":     "sk-secret",
 			},
 		}), testWorkspaceID)
 	testHandler.PutWorkspaceCloudRuntimeEnv(w, req)
@@ -355,13 +356,13 @@ func TestWorkspaceCloudRuntimeEnv_RemovesSelectedVariables(t *testing.T) {
 	w = httptest.NewRecorder()
 	req = withWorkspaceIDParam(newRequest(http.MethodPut,
 		"/api/workspaces/"+testWorkspaceID+"/cloud-runtime-env", map[string]any{
-			"remove_env": []string{"OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
+			"remove_env": []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
 		}), testWorkspaceID)
 	testHandler.PutWorkspaceCloudRuntimeEnv(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("remove PUT: status %d body %s", w.Code, w.Body.String())
 	}
-	if strings.Contains(w.Body.String(), "OPENAI_API_KEY") || strings.Contains(w.Body.String(), "ANTHROPIC_AUTH_TOKEN") {
+	if strings.Contains(w.Body.String(), "OPENAI_API_KEY") || strings.Contains(w.Body.String(), "ANTHROPIC_API_KEY") || strings.Contains(w.Body.String(), "ANTHROPIC_AUTH_TOKEN") {
 		t.Fatalf("removed key still returned: %s", w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "CODEX_BASE_URL") {

@@ -21,7 +21,8 @@ const MODEL_ENVS = [
   "MULTICA_CODEX_MODEL",
   "MULTICA_CLAUDE_MODEL",
 ] as const;
-const API_KEY_ENVS = ["OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"] as const;
+const API_KEY_ENVS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
+const DEPRECATED_API_KEY_ENVS = ["ANTHROPIC_AUTH_TOKEN"] as const;
 
 /**
  * Admin-only card for the per-workspace cloud runtime model proxy connection.
@@ -49,7 +50,10 @@ export function CloudRuntimeEnvCard({
   const configuredVars = useMemo(() => envQuery.data?.env ?? [], [envQuery.data]);
   const baseUrlVar = findConfiguredVar(configuredVars, BASE_URL_ENVS);
   const modelVar = findConfiguredVar(configuredVars, MODEL_ENVS);
-  const apiKeyVar = findConfiguredVar(configuredVars, API_KEY_ENVS);
+  const apiKeyVar = findConfiguredVar(configuredVars, [
+    ...API_KEY_ENVS,
+    ...DEPRECATED_API_KEY_ENVS,
+  ] as const);
   const hasApiKey = Boolean(apiKeyVar);
   const configured = Boolean(baseUrlVar?.value || modelVar?.value || hasApiKey);
 
@@ -69,7 +73,8 @@ export function CloudRuntimeEnvCard({
     const nextApiKey = apiKey.trim();
 
     if (nextBaseUrl) {
-      for (const name of BASE_URL_ENVS) env[name] = nextBaseUrl;
+      env.CODEX_BASE_URL = nextBaseUrl;
+      env.ANTHROPIC_BASE_URL = claudeBaseUrlFromGatewayUrl(nextBaseUrl);
     } else if (baseUrlVar) {
       removeEnv.push(...configuredNames(configuredVars, BASE_URL_ENVS));
     }
@@ -80,6 +85,7 @@ export function CloudRuntimeEnvCard({
     }
     if (nextApiKey) {
       for (const name of API_KEY_ENVS) env[name] = nextApiKey;
+      removeEnv.push(...configuredNames(configuredVars, DEPRECATED_API_KEY_ENVS));
     }
 
     const update: CloudRuntimeEnvUpdate = {};
@@ -107,7 +113,9 @@ export function CloudRuntimeEnvCard({
 
   const handleRemoveApiKey = async () => {
     try {
-      await saveEnv.mutateAsync({ remove_env: [...API_KEY_ENVS] });
+      await saveEnv.mutateAsync({
+        remove_env: [...API_KEY_ENVS, ...DEPRECATED_API_KEY_ENVS],
+      });
       toast.success(t(($) => $.cloud_runtime.env.toast_saved));
       setApiKey("");
       setEditingApiKey(true);
@@ -293,7 +301,7 @@ export function CloudRuntimeEnvCard({
                       />
                       <MappingRow
                         agent="Claude Code"
-                        mapping="ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / MULTICA_CLAUDE_MODEL"
+                        mapping="ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY / MULTICA_CLAUDE_MODEL"
                       />
                     </tbody>
                   </table>
@@ -341,6 +349,10 @@ function configuredNames<T extends readonly string[]>(
   names: T,
 ) {
   return names.filter((name) => vars.some((v) => v.name === name));
+}
+
+function claudeBaseUrlFromGatewayUrl(url: string): string {
+  return url.replace(/\/+$/, "").replace(/\/v1$/i, "");
 }
 
 function MappingRow({ agent, mapping }: { agent: string; mapping: string }) {

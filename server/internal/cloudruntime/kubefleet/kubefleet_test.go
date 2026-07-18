@@ -179,7 +179,7 @@ func sampleSpec() cloudruntime.NodeSpec {
 		InstanceType:  "t4g.large",
 		DiskSizeGB:    32,
 		Token:         "mcn_testtoken",
-		Env:           map[string]string{"ANTHROPIC_AUTH_TOKEN": "sk-ws-key"},
+		Env:           map[string]string{"ANTHROPIC_API_KEY": "sk-ws-key"},
 	}
 }
 
@@ -217,7 +217,7 @@ func TestK8sProvider_CreateAndList(t *testing.T) {
 	if wsEnv == nil || nodeTok == nil {
 		t.Fatalf("missing secrets; got %d", len(kube.secrets))
 	}
-	if wsEnv["stringData"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"] != "sk-ws-key" {
+	if wsEnv["stringData"].(map[string]any)["ANTHROPIC_API_KEY"] != "sk-ws-key" {
 		t.Fatalf("workspace env secret wrong: %v", wsEnv["stringData"])
 	}
 	if nodeTok["stringData"].(map[string]any)["token"] != "mcn_testtoken" {
