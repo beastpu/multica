@@ -168,31 +168,31 @@ function renderActionsCell(row: RuntimeRow) {
 describe("runtime list row menu", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("renders the kebab menu for an online local runtime (self-healing is no longer hidden)", () => {
+  it("renders a visible delete action for an online local runtime", () => {
     // MUL-3352: hiding the kebab on a self-healing row left owners reading
-    // it as a missing permission. The action stays available; the dialog
-    // surfaces the self-heal warning instead.
+    // it as a missing permission. Runtime cleanup is now a first-class
+    // visible row action.
     renderActionsCell(
       makeRow(makeRuntime({ runtime_mode: "local", status: "online" })),
     );
-    expect(screen.getByLabelText("Row actions")).toBeInTheDocument();
+    expect(screen.getByLabelText("Delete")).toBeInTheDocument();
   });
 
-  it("renders the kebab menu for an offline local runtime", () => {
+  it("renders a visible delete action for an offline local runtime", () => {
     renderActionsCell(
       makeRow(makeRuntime({ runtime_mode: "local", status: "offline" })),
     );
-    expect(screen.getByLabelText("Row actions")).toBeInTheDocument();
+    expect(screen.getByLabelText("Delete")).toBeInTheDocument();
   });
 
-  it("renders the kebab menu for a cloud runtime regardless of status", () => {
+  it("renders a visible delete action for a cloud runtime regardless of status", () => {
     renderActionsCell(
       makeRow(makeRuntime({ runtime_mode: "cloud", status: "online" })),
     );
-    expect(screen.getByLabelText("Row actions")).toBeInTheDocument();
+    expect(screen.getByLabelText("Delete")).toBeInTheDocument();
   });
 
-  it("renders the kebab menu for a custom runtime when the profile is available", () => {
+  it("renders edit actions and visible delete for a custom runtime when the profile is available", () => {
     const profile = makeProfile();
     renderActionsCell(
       makeRow(
@@ -202,6 +202,7 @@ describe("runtime list row menu", () => {
       ),
     );
     expect(screen.getByLabelText("Row actions")).toBeInTheDocument();
+    expect(screen.getByLabelText("Delete from workspace")).toBeInTheDocument();
   });
 
   it("opens custom runtime editing from the unified row menu", () => {
@@ -234,7 +235,9 @@ describe("runtime list row menu", () => {
       ),
     );
     expect(screen.queryByLabelText("Row actions")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Delete")).not.toBeInTheDocument();
   });
+
 });
 
 // The CLI cell is a plain exported component — render it in isolation,
