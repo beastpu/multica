@@ -69,10 +69,14 @@
       "local_daemon": "Local daemon"
     },
     "rename": "Rename machine",
-    "delete": "Delete runtime",
-    "delete_confirm": "Delete this runtime from the list?",
-    "toast_deleted": "Runtime deleted",
-    "toast_delete_failed": "Failed to delete runtime",
+    "kind": {
+      "cloud": "Cloud node",
+      "computer": "Computer"
+    },
+    "remove": "Remove",
+    "remove_confirm": "Remove this runtime from the list?",
+    "toast_removed": "Runtime removed",
+    "toast_remove_failed": "Failed to remove runtime",
     "rename_dialog": {
       "title": "Rename machine",
       "description": "Give this machine a name you'll recognize. It applies to every runtime on this machine and shows up when you pick a runtime for an agent.",

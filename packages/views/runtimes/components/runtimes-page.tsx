@@ -370,15 +370,15 @@ function MachineRow({
     }
 
     if (machine.runtimes.length === 0) return;
-    if (!window.confirm(t(($) => $.machine.delete_confirm))) return;
+    if (!window.confirm(t(($) => $.machine.remove_confirm))) return;
     try {
       for (const runtime of machine.runtimes) {
         await deleteRuntime.mutateAsync(runtime.id);
       }
-      toast.success(t(($) => $.machine.toast_deleted));
+      toast.success(t(($) => $.machine.toast_removed));
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : t(($) => $.machine.toast_delete_failed),
+        err instanceof Error ? err.message : t(($) => $.machine.toast_remove_failed),
       );
     }
   };
@@ -394,6 +394,11 @@ function MachineRow({
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">
           {machine.title}
+        </span>
+        <span className="mt-1 inline-flex w-fit items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+          {machine.section === "cloud"
+            ? t(($) => $.machine.kind.cloud)
+            : t(($) => $.machine.kind.computer)}
         </span>
         <span className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
           <span className="truncate">
@@ -459,12 +464,12 @@ function MachineRow({
           aria-label={
             machine.section === "cloud"
               ? t(($) => $.cloud_runtime.delete)
-              : t(($) => $.machine.delete)
+              : t(($) => $.machine.remove)
           }
           title={
             machine.section === "cloud"
               ? t(($) => $.cloud_runtime.delete)
-              : t(($) => $.machine.delete)
+              : t(($) => $.machine.remove)
           }
           disabled={deleting}
           onClick={handleDelete}
