@@ -12,7 +12,9 @@ import (
 
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
+	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/logger"
+	appmiddleware "github.com/multica-ai/multica/server/internal/middleware"
 )
 
 const maxCloudRuntimeRequestBodySize = 1 << 20
@@ -21,6 +23,27 @@ type cloudRuntimeProxyOptions struct {
 	withUserID bool
 	withQuery  bool
 	withBody   bool
+}
+
+func (h *Handler) GetCloudRuntimeAccess(w http.ResponseWriter, r *http.Request) {
+	workspaceID := appmiddleware.ResolveWorkspaceIDFromRequest(r, h.Queries)
+	enabled := workspaceID != "" &&
+		h.cloudRuntimeWorkspaceEnabled(r, workspaceID) &&
+		h.CloudRuntime != nil && h.CloudRuntime.Enabled()
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": enabled})
+}
+
+func (h *Handler) cloudRuntimeWorkspaceEnabled(r *http.Request, workspaceID string) bool {
+	return workspaceID != "" &&
+		featureflags.CloudRuntimeEnabledForWorkspace(r.Context(), h.FeatureFlags, workspaceID)
+}
+
+func (h *Handler) requireCloudRuntimeWorkspaceEnabled(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
+	if h.cloudRuntimeWorkspaceEnabled(r, workspaceID) {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "cloud runtime is not enabled for this workspace")
+	return false
 }
 
 func (h *Handler) GetCloudRuntimeService(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +124,10 @@ func (h *Handler) ExecCloudRuntimeNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) proxyCloudRuntime(w http.ResponseWriter, r *http.Request, method, path string, opts cloudRuntimeProxyOptions) {
+	workspaceID := appmiddleware.ResolveWorkspaceIDFromRequest(r, h.Queries)
+	if !h.requireCloudRuntimeWorkspaceEnabled(w, r, workspaceID) {
+		return
+	}
 	if h.CloudRuntime == nil || !h.CloudRuntime.Enabled() {
 		writeError(w, http.StatusServiceUnavailable, "cloud runtime is not configured")
 		return

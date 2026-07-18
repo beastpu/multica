@@ -167,6 +167,7 @@ import type {
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
 import type {
+  CloudRuntimeAccess,
   CloudRuntimeEnv,
   CloudRuntimeNode,
   CreateCloudRuntimeNodeRequest,
@@ -188,6 +189,8 @@ import {
   CommentTriggerPreviewSchema,
   IssueTriggerPreviewSchema,
   CloudRuntimeEnvSchema,
+  CloudRuntimeAccessSchema,
+  EMPTY_CLOUD_RUNTIME_ACCESS,
   EMPTY_CLOUD_RUNTIME_ENV,
   CloudRuntimeNodeListSchema,
   CloudRuntimeNodeSchema,
@@ -1183,6 +1186,16 @@ export class ApiClient {
       CloudRuntimeNodeListSchema,
       EMPTY_CLOUD_RUNTIME_NODE_LIST,
       { endpoint: "GET /api/cloud-runtime/nodes" },
+    );
+  }
+
+  async getCloudRuntimeAccess(): Promise<CloudRuntimeAccess> {
+    const raw = await this.fetch<unknown>("/api/cloud-runtime/access");
+    return parseWithFallback(
+      raw,
+      CloudRuntimeAccessSchema,
+      EMPTY_CLOUD_RUNTIME_ACCESS,
+      { endpoint: "GET /api/cloud-runtime/access" },
     );
   }
 

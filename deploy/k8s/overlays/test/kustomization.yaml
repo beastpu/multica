@@ -8,6 +8,7 @@ namespace: multica-test
 
 resources:
   - ../../base
+  - feature-flags.yaml
   # Cloud runtime (kubefleet) RBAC: SA `multica-server` + ClusterRole/Binding
   # granting namespace/statefulset/secret create in-cluster. The `namespace:`
   # field above retargets the SA to multica-test and rewrites the binding's
@@ -24,9 +25,6 @@ commonAnnotations:
 images:
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server
     newTag: "test-20260717-a837f9125-kubefleet"
-  # The web image MUST be built with --build-arg NEXT_PUBLIC_ENABLE_CLOUD_RUNTIME=true
-  # (Dockerfile.web) or the /runtimes cloud tab is compiled out — the flag is
-  # baked at build time, not read at runtime. See this overlay's README.
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web
     newTag: "test-20260717-d519bc9cb-kubefleet"
 

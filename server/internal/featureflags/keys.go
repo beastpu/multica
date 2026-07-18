@@ -13,6 +13,9 @@ const (
 	// The access model exists to gate Composio sharing, so the two ship on the
 	// same switch.
 	ComposioMCPApps = "composio_mcp_apps"
+	// CloudRuntime grants the managed cloud runtime surface to explicitly
+	// approved workspaces. Rules target workspace_id and default off.
+	CloudRuntime = "cloud_runtime"
 	// AgentBuilder controls writes of system builder agents. It stays disabled
 	// through the schema-only rollout so an older server cannot expose them.
 	AgentBuilder = "agents_agent_builder"
@@ -33,6 +36,12 @@ var frontendPublicFlags = []string{
 
 func ComposioMCPAppsEnabled(ctx context.Context, flags *featureflag.Service) bool {
 	return flags.IsEnabled(ctx, ComposioMCPApps, false)
+}
+
+func CloudRuntimeEnabledForWorkspace(ctx context.Context, flags *featureflag.Service, workspaceID string) bool {
+	eval := featureflag.EvalContextFrom(ctx)
+	eval.WorkspaceID = workspaceID
+	return flags.IsEnabled(featureflag.WithEvalContext(ctx, eval), CloudRuntime, false)
 }
 
 func AgentBuilderEnabled(ctx context.Context, flags *featureflag.Service) bool {

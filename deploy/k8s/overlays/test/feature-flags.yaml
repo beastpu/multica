@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: multica-feature-flags
+data:
+  feature-flags.yaml: |
+    cloud_runtime:
+      default: false
+      allow_by: workspace_id
+      allow: []

@@ -47,7 +47,11 @@ import type {
   WorkspaceCapability,
   PerforceReview,
 } from "../types";
-import type { CloudRuntimeEnv, CloudRuntimeNode } from "../runtimes/cloud-runtime";
+import type {
+  CloudRuntimeAccess,
+  CloudRuntimeEnv,
+  CloudRuntimeNode,
+} from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
 
 // Label responses are consumed by settings tables and resource pickers. Keep
@@ -868,6 +872,12 @@ export const CloudRuntimeNodeSchema = z.object({
 }).loose();
 
 export const CloudRuntimeNodeListSchema = z.array(CloudRuntimeNodeSchema);
+
+export const CloudRuntimeAccessSchema = z.object({
+  enabled: z.boolean(),
+}).loose();
+
+export const EMPTY_CLOUD_RUNTIME_ACCESS: CloudRuntimeAccess = { enabled: false };
 
 // Per-workspace cloud runtime env (LLM proxy keys) — write-only. The GET
 // response never carries plaintext, only variable names + last-4 fingerprints.

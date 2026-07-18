@@ -654,6 +654,31 @@ describe("ApiClient", () => {
     });
   });
 
+  it("reads Cloud Runtime workspace access and fails closed on response drift", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ enabled: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ enabled: "yes" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.getCloudRuntimeAccess()).resolves.toEqual({ enabled: true });
+    await expect(client.getCloudRuntimeAccess()).resolves.toEqual({ enabled: false });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://api.example.test/api/cloud-runtime/access",
+    );
+  });
+
   it("falls back when Cloud Runtime node responses drift", async () => {
     const fetchMock = vi
       .fn()

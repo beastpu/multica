@@ -46,12 +46,15 @@ type cloudRuntimeEnvVarInfo struct {
 // silently drop every variable not re-entered. Merge lets the admin add or
 // update one variable at a time; DELETE clears everything.
 func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Request) {
-	if h.CloudRuntimeEnvBox == nil {
-		writeError(w, http.StatusServiceUnavailable, "cloud runtime env is not configured on this server (MULTICA_CLOUD_RUNTIME_SECRET_KEY)")
-		return
-	}
 	wsUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
 	if !ok {
+		return
+	}
+	if !h.requireCloudRuntimeWorkspaceEnabled(w, r, uuidToString(wsUUID)) {
+		return
+	}
+	if h.CloudRuntimeEnvBox == nil {
+		writeError(w, http.StatusServiceUnavailable, "cloud runtime env is not configured on this server (MULTICA_CLOUD_RUNTIME_SECRET_KEY)")
 		return
 	}
 	var req putCloudRuntimeEnvRequest
@@ -134,12 +137,15 @@ func (h *Handler) PutWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 // GetWorkspaceCloudRuntimeEnv returns variable names and last-4 fingerprints
 // only — the plaintext never leaves the server after PUT.
 func (h *Handler) GetWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Request) {
-	if h.CloudRuntimeEnvBox == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"configured": false, "env": []any{}})
-		return
-	}
 	wsUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
 	if !ok {
+		return
+	}
+	if !h.requireCloudRuntimeWorkspaceEnabled(w, r, uuidToString(wsUUID)) {
+		return
+	}
+	if h.CloudRuntimeEnvBox == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"configured": false, "env": []any{}})
 		return
 	}
 	row, err := h.Queries.GetWorkspaceCloudRuntimeEnv(r.Context(), wsUUID)
@@ -166,6 +172,9 @@ func (h *Handler) GetWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Req
 func (h *Handler) DeleteWorkspaceCloudRuntimeEnv(w http.ResponseWriter, r *http.Request) {
 	wsUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
 	if !ok {
+		return
+	}
+	if !h.requireCloudRuntimeWorkspaceEnabled(w, r, uuidToString(wsUUID)) {
 		return
 	}
 	if err := h.Queries.DeleteWorkspaceCloudRuntimeEnv(r.Context(), wsUUID); err != nil {
