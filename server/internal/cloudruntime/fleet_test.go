@@ -151,6 +151,38 @@ func TestFleet_AuthAndQuota(t *testing.T) {
 	}
 }
 
+func TestFleet_DiskSizeValidation(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database")
+	}
+	for _, tc := range []struct {
+		name string
+		size int
+	}{
+		{name: "too small", size: 10},
+		{name: "too large", size: 110},
+		{name: "wrong step", size: 25},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fp := &fakeProvider{}
+			f := NewFleet(FleetConfig{Provider: fp, Queries: testQ, MaxNodesPerWorkspace: 3})
+			resp, body := do(t, f, ctxFor("owner"), http.MethodPost, map[string]any{
+				"instance_type": "t4g.medium",
+				"disk_size_gb":  tc.size,
+			})
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s", resp.StatusCode, resp.Body)
+			}
+			if _, ok := body["error"].(string); !ok {
+				t.Fatalf("missing error body: %#v", body)
+			}
+			if len(fp.created) != 0 {
+				t.Fatalf("provider should not be called: %+v", fp.created)
+			}
+		})
+	}
+}
+
 func TestFleet_TokenRolledBackOnProviderFailure(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database")
