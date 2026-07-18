@@ -13,6 +13,10 @@ const TEST_RESOURCES = {
   en: { common: enCommon, runtimes: enRuntimes, agents: enAgents },
 };
 
+const { deleteCloudRuntimeNode } = vi.hoisted(() => ({
+  deleteCloudRuntimeNode: vi.fn(),
+}));
+
 // Stub the workspace queries the columns reach into. None of them feed the
 // row menu directly, but `createRuntimeColumns` wires CliCell + CostCell
 // against the same query client, so we still need useQuery to resolve.
@@ -53,6 +57,10 @@ vi.mock("@multica/core/runtimes", () => ({
   useUpdateRuntimeProfile: () => ({
     isPending: false,
     mutateAsync: vi.fn(),
+  }),
+  useDeleteCloudRuntimeNode: () => ({
+    mutate: deleteCloudRuntimeNode,
+    isPending: false,
   }),
 }));
 
@@ -166,7 +174,10 @@ function renderActionsCell(row: RuntimeRow) {
 }
 
 describe("runtime list row menu", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+  });
 
   it("renders a visible delete action for an online local runtime", () => {
     // MUL-3352: hiding the kebab on a self-healing row left owners reading
@@ -185,11 +196,34 @@ describe("runtime list row menu", () => {
     expect(screen.getByLabelText("Delete")).toBeInTheDocument();
   });
 
-  it("renders a visible delete action for a cloud runtime regardless of status", () => {
+  it("renders a visible cloud node delete action for a cloud runtime", () => {
     renderActionsCell(
       makeRow(makeRuntime({ runtime_mode: "cloud", status: "online" })),
     );
-    expect(screen.getByLabelText("Delete")).toBeInTheDocument();
+    expect(screen.getByLabelText("Delete node")).toBeInTheDocument();
+  });
+
+  it("deletes cloud runtimes through the cloud node API using the daemon id", () => {
+    renderActionsCell(
+      makeRow(
+        makeRuntime({
+          runtime_mode: "cloud",
+          status: "offline",
+          daemon_id: "node-a1441f33",
+        }),
+      ),
+    );
+
+    fireEvent.click(screen.getByLabelText("Delete node"));
+
+    expect(window.confirm).toHaveBeenCalled();
+    expect(deleteCloudRuntimeNode).toHaveBeenCalledWith(
+      "node-a1441f33",
+      expect.objectContaining({
+        onSuccess: expect.any(Function),
+        onError: expect.any(Function),
+      }),
+    );
   });
 
   it("renders edit actions and visible delete for a custom runtime when the profile is available", () => {

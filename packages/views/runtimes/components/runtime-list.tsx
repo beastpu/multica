@@ -31,6 +31,7 @@ import {
   deriveRuntimeHealth,
   runtimeProfileListOptions,
   runtimeUsageOptions,
+  useDeleteCloudRuntimeNode,
 } from "@multica/core/runtimes";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
@@ -533,7 +534,12 @@ export function RuntimeRowMenu({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const isCustomRuntime = !!runtime.profile_id;
-  const deleteLabel = isCustomRuntime
+  const isCloudRuntime = runtime.runtime_mode === "cloud";
+  const deleteCloudNode = useDeleteCloudRuntimeNode(wsId);
+  const cloudNodeId = runtime.daemon_id?.trim() ?? "";
+  const deleteLabel = isCloudRuntime
+    ? t(($) => $.cloud_runtime.delete)
+    : isCustomRuntime
     ? t(($) => $.list.delete_profile_action)
     : t(($) => $.list.delete_action);
   // Deletion is intentionally visible as a first-class row action. Stale
@@ -543,6 +549,27 @@ export function RuntimeRowMenu({
   if (!canDelete) {
     return <span aria-hidden />;
   }
+
+  const handleDelete = () => {
+    if (!isCloudRuntime) {
+      setDeleteOpen(true);
+      return;
+    }
+    if (!cloudNodeId) {
+      toast.error(t(($) => $.cloud_runtime.toast_delete_failed));
+      return;
+    }
+    if (!window.confirm(t(($) => $.cloud_runtime.delete_confirm))) return;
+    deleteCloudNode.mutate(cloudNodeId, {
+      onSuccess: () => toast.success(t(($) => $.cloud_runtime.toast_deleted)),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : t(($) => $.cloud_runtime.toast_delete_failed),
+        ),
+    });
+  };
 
   return (
     <>
@@ -575,9 +602,14 @@ export function RuntimeRowMenu({
           className="size-7 text-muted-foreground hover:text-destructive"
           aria-label={deleteLabel}
           title={deleteLabel}
-          onClick={() => setDeleteOpen(true)}
+          disabled={isCloudRuntime && deleteCloudNode.isPending}
+          onClick={handleDelete}
         >
-          <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+          {isCloudRuntime && deleteCloudNode.isPending ? (
+            <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+          )}
         </Button>
       </div>
       {isCustomRuntime && profile && editOpen && (
