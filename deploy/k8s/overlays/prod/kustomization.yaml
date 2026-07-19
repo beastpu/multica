@@ -3,6 +3,10 @@ kind: Kustomization
 
 resources:
   - ../../base
+  - feature-flags.yaml
+  # Standalone Fleet service (node provisioning + mcn_ token authority +
+  # workspace env), provisioning into the external cloud-runtime cluster.
+  - fleet.yaml
 
 commonAnnotations:
   multica.lilithgames.com/environment: "prod"
@@ -13,9 +17,17 @@ commonAnnotations:
 #     lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web=...:${GIT_SHA}
 images:
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server
-    newTag: "0.2.57-disable-agent-summary-20260610-d82bad5a3"
+    newTag: "0.4.4"
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web
-    newTag: "0.2.56-upstream-merge"
+    newTag: "0.4.4"
+
+patches:
+  # Cloud runtime: point the server at the in-cluster Fleet service and mount
+  # the per-workspace feature-flags file.
+  - path: cloud-runtime-patch.yaml
+    target:
+      kind: Deployment
+      name: multica-server
 
 replicas:
   - name: multica-server

@@ -1,0 +1,90 @@
+# Standalone Fleet service for prod (multica namespace). Provisions runtime
+# nodes into the external cloud-runtime cluster via the mounted kubeconfig — so
+# it needs no in-cluster RBAC and runs as the `default` SA. Node daemons there
+# reach the prod server over the public URL.
+#
+# Out-of-band Secrets (not in the kustomization — see README):
+#   multica-fleet:       MULTICA_FLEET_SERVICE_TOKEN + MULTICA_CLOUD_RUNTIME_SECRET_KEY
+#   fleet-cr-kubeconfig: kubeconfig for the external cloud-runtime cluster
+# DATABASE_URL is reused from `multica-secrets` (fleet_* tables in the public
+# schema — the app role cannot create schemas).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multica-fleet
+  labels:
+    app: multica-fleet
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multica-fleet
+  template:
+    metadata:
+      labels:
+        app: multica-fleet
+    spec:
+      imagePullSecrets:
+        - name: regcred
+      containers:
+        - name: fleet
+          image: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-fleet:test-20260719-a48b6f2
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8090
+          env:
+            - name: FLEET_LISTEN_ADDR
+              value: ":8090"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: multica-secrets, key: DATABASE_URL }
+            - name: MULTICA_FLEET_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: multica-fleet, key: MULTICA_FLEET_SERVICE_TOKEN }
+            - name: MULTICA_CLOUD_RUNTIME_SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: multica-fleet, key: MULTICA_CLOUD_RUNTIME_SECRET_KEY }
+            - name: MULTICA_CLOUD_RUNTIME_IMAGE
+              value: lilith-registry.cn-shanghai.cr.aliyuncs.com/yunwei/multica:decoupled-f3f51eb
+            - name: MULTICA_CLOUD_RUNTIME_KUBECONFIG
+              value: /etc/fleet/kubeconfig
+            - name: MULTICA_CLOUD_RUNTIME_SERVER_URL
+              value: https://multica.lilithgames.com
+            - name: MULTICA_CLOUD_RUNTIME_STORAGE_CLASS
+              value: alicloud-disk-topology-alltype
+            - name: MULTICA_CLOUD_RUNTIME_PULL_SECRET_DOCKERCONFIGJSON
+              valueFrom:
+                secretKeyRef: { name: regcred, key: .dockerconfigjson }
+          volumeMounts:
+            - name: cr-kubeconfig
+              mountPath: /etc/fleet
+              readOnly: true
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8090 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8090 }
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 256Mi }
+      volumes:
+        - name: cr-kubeconfig
+          secret:
+            secretName: fleet-cr-kubeconfig
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: multica-fleet
+  labels:
+    app: multica-fleet
+spec:
+  selector:
+    app: multica-fleet
+  ports:
+    - name: http
+      port: 8090
+      targetPort: 8090
