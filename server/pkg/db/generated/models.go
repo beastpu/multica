@@ -479,16 +479,6 @@ type ChatSession struct {
 	PinnedAt     pgtype.Timestamptz `json:"pinned_at"`
 }
 
-type CloudNodeToken struct {
-	ID          pgtype.UUID        `json:"id"`
-	TokenHash   string             `json:"token_hash"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	OwnerID     pgtype.UUID        `json:"owner_id"`
-	NodeName    string             `json:"node_name"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-}
-
 type Comment struct {
 	ID             pgtype.UUID        `json:"id"`
 	IssueID        pgtype.UUID        `json:"issue_id"`
@@ -1331,13 +1321,6 @@ type WorkspaceAgentCapability struct {
 	ProjectID          pgtype.UUID        `json:"project_id"`
 	MaxConcurrentTasks int32              `json:"max_concurrent_tasks"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-}
-
-type WorkspaceCloudRuntimeEnv struct {
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	EnvSealed   []byte             `json:"env_sealed"`
-	UpdatedBy   pgtype.UUID        `json:"updated_by"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkspaceInvitation struct {
