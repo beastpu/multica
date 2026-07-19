@@ -73,10 +73,11 @@ automated by the kustomization.
    server replica count above 1.
 
 5. **Cloud runtime (Fleet) prerequisites.** Node provisioning + mcn_ token
-   authority now live in the standalone **Fleet** service (`fleet.yaml` in this
-   overlay); `cloud-runtime-patch.yaml` points the server at it, and Fleet runs
-   as the `multica-server` SA (`../../cloud-runtime` RBAC) to provision nodes
-   in-cluster. One thing is NOT in the kustomization:
+   authority live in the standalone **Fleet** service (`fleet.yaml` in this
+   overlay); `cloud-runtime-patch.yaml` points the server at it. Fleet
+   provisions nodes into the dedicated **external** cloud-runtime cluster via a
+   mounted kubeconfig; the node daemons there reach the server over the public
+   URL. Three things are NOT in the kustomization:
 
    a. **The `multica-fleet` Secret** — the shared server↔Fleet token and Fleet's
       env-sealing key:
@@ -96,7 +97,32 @@ automated by the kustomization.
       the app role cannot create schemas) and the registry pull creds directly
       from `regcred`.
 
-   b. **Grant access per workspace.** Cloud Runtime is denied by default in
+   b. **The `fleet-cr-kubeconfig` Secret** — the kubeconfig for the external
+      cloud-runtime cluster Fleet provisions into (key `kubeconfig`, mounted at
+      `/etc/fleet/kubeconfig`):
+
+      ```bash
+      kubectl -n multica-test create secret generic fleet-cr-kubeconfig \
+        --from-file=kubeconfig=/path/to/cloud-runtime-cluster.kubeconfig
+      ```
+
+      The identity in it needs cluster-wide namespace/statefulset/secret/
+      resourcequota create + pod delete. To keep Fleet in-cluster instead (nodes
+      in this cluster), drop this secret + the `MULTICA_CLOUD_RUNTIME_KUBECONFIG`
+      env and set `MULTICA_CLOUD_RUNTIME_SERVER_URL` to the in-cluster FQDN.
+
+   c. **Whitelist the runtime cluster on the test ALB ACL.** The external
+      cluster's node daemons reach the server over the public URL, which sits
+      behind the IP-restricted test ALB ACL. Add the cluster's egress IP (find
+      it with `curl checkip.amazonaws.com` from a pod there):
+
+      ```bash
+      aliyun alb AddEntriesToAcl --AclId <test-acl-id> --region cn-shanghai \
+        --AclEntries.1.Entry "<cluster-egress-ip>/32" \
+        --AclEntries.1.Description "cloud-runtime-cluster-egress" --force
+      ```
+
+   d. **Grant access per workspace.** Cloud Runtime is denied by default in
       both the UI and API. Add approved workspace UUIDs to
       `feature-flags.yaml`:
 
