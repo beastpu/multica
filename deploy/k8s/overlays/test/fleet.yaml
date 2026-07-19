@@ -1,12 +1,13 @@
 # Standalone Fleet service for the test environment. Runs alongside
-# multica-server and provisions runtime nodes in-cluster (co-located): node
-# daemons reach the server over in-cluster DNS. Runs as the `multica-server`
-# ServiceAccount, which carries the multica-cloud-runtime ClusterRole from
-# ../../cloud-runtime/rbac.yaml (namespace/statefulset/secret create).
+# multica-server and provisions runtime nodes into the dedicated EXTERNAL
+# cloud-runtime cluster via the mounted kubeconfig. Node daemons there reach
+# the server over the public URL (the cluster's egress IP is whitelisted on the
+# test ALB ACL — see README).
 #
-# Secrets come from the out-of-band `multica-fleet` Secret (see README):
-#   MULTICA_FLEET_SERVICE_TOKEN      shared server↔Fleet secret
-#   MULTICA_CLOUD_RUNTIME_SECRET_KEY AES key sealing per-workspace env
+# Secrets come from out-of-band Secrets (see README):
+#   multica-fleet:        MULTICA_FLEET_SERVICE_TOKEN (shared server↔Fleet
+#                         secret) + MULTICA_CLOUD_RUNTIME_SECRET_KEY (AES env key)
+#   fleet-cr-kubeconfig:  kubeconfig for the external cloud-runtime cluster
 # DATABASE_URL is reused from `multica-secrets` (Fleet creates fleet_* tables
 # in the public schema — the app role cannot create schemas).
 apiVersion: apps/v1
@@ -54,10 +55,14 @@ spec:
                   key: MULTICA_CLOUD_RUNTIME_SECRET_KEY
             - name: MULTICA_CLOUD_RUNTIME_IMAGE
               value: lilith-registry.cn-shanghai.cr.aliyuncs.com/yunwei/multica:decoupled-f3f51eb
-            # Node daemons (in per-workspace mrt-* namespaces) reach the server
-            # cross-namespace, so this must be the FQDN, not the short name.
+            # Provisions into the external cloud-runtime cluster via kubeconfig.
+            - name: MULTICA_CLOUD_RUNTIME_KUBECONFIG
+              value: /etc/fleet/kubeconfig
+            # Node daemons run in the EXTERNAL cluster, so they reach the server
+            # over the public URL (not in-cluster DNS). The cluster egress IP is
+            # whitelisted on the test ALB ACL.
             - name: MULTICA_CLOUD_RUNTIME_SERVER_URL
-              value: http://multica-server.multica-test.svc.cluster.local:8080
+              value: https://multica-test.lilithgames.com
             - name: MULTICA_CLOUD_RUNTIME_STORAGE_CLASS
               value: alicloud-disk-topology-alltype
             - name: MULTICA_CLOUD_RUNTIME_PULL_SECRET_DOCKERCONFIGJSON
@@ -65,6 +70,10 @@ spec:
                 secretKeyRef:
                   name: regcred
                   key: .dockerconfigjson
+          volumeMounts:
+            - name: cr-kubeconfig
+              mountPath: /etc/fleet
+              readOnly: true
           readinessProbe:
             httpGet: { path: /readyz, port: 8090 }
             initialDelaySeconds: 3
@@ -76,6 +85,10 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 128Mi }
             limits: { cpu: "1", memory: 256Mi }
+      volumes:
+        - name: cr-kubeconfig
+          secret:
+            secretName: fleet-cr-kubeconfig
 ---
 apiVersion: v1
 kind: Service
