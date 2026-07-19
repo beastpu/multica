@@ -46,18 +46,6 @@ func GenerateDaemonToken() (string, error) {
 	return "mdt_" + hex.EncodeToString(b), nil
 }
 
-// GenerateCloudNodeToken creates a new cloud node PAT: "mcn_" + 40 random hex
-// chars. Minted by the in-process k8s fleet (kubefleet) for each provisioned
-// node and verified locally via LocalCloudPATVerifier — same prefix and
-// middleware path as Fleet-issued mcn_ PATs on Multica Cloud.
-func GenerateCloudNodeToken() (string, error) {
-	b := make([]byte, 20)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate cloud node token: %w", err)
-	}
-	return CloudPATPrefix + hex.EncodeToString(b), nil
-}
-
 // GenerateAgentTaskToken creates a new task-scoped agent auth token:
 // "mat_" + 40 random hex chars. The token is single-purpose — bound to a
 // specific (agent_id, task_id) pair on the server side — and is what the
