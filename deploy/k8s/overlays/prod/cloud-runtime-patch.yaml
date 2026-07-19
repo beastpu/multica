@@ -1,0 +1,30 @@
+# Points the prod multica-server at the in-cluster Fleet service (fleet.yaml)
+# and mounts the feature-flags file that gates Cloud Runtime per workspace.
+# MULTICA_FLEET_SERVICE_TOKEN comes from the out-of-band `multica-fleet` Secret.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multica-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          env:
+            - name: MULTICA_FEATURE_FLAGS_FILE
+              value: /etc/multica/feature-flags/feature-flags.yaml
+            - name: MULTICA_CLOUD_FLEET_URL
+              value: http://multica-fleet:8090
+            - name: MULTICA_FLEET_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: multica-fleet
+                  key: MULTICA_FLEET_SERVICE_TOKEN
+          volumeMounts:
+            - name: feature-flags
+              mountPath: /etc/multica/feature-flags
+              readOnly: true
+      volumes:
+        - name: feature-flags
+          configMap:
+            name: multica-feature-flags
