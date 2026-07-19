@@ -195,17 +195,35 @@ for the behavior contracts the skill teaches.
 
 ## Dashboard metric contract
 
+- `server/pkg/db/queries/agent.sql` and `server/internal/handler/agent.go`
+  expose `issue_assignee_type` / `issue_assignee_id` from the issue's current
+  assignment. They intentionally remain separate from `agent_id`, which is the
+  latest task's historical Agent and must not define the opportunity pool.
 - `packages/views/dashboard/operations-metrics.ts` computes the operations
-  dashboard KPIs from assessment rows. `isVerifiableOutput` (the quality-pipeline
-  gate: judged / pass rate / coverage) requires a completed assessment and AI
-  output evidence (`ai_shelved_cls` or `swarm_reviews`) — a committed CL is NOT
-  required, because quality judges the plan's code, not whether it shipped. The
-  headline is a strict nesting chain — contribution (AI produced a plan /
-  外部完成) → coverage (judged / produced) → pass rate (`likely_correct` /
-  judged). Delivery attribution (`ai_delivered` / `ai_assisted` from
-  `delivery_attribution_prediction`) drives the analysis tab's attribution
-  distribution and the composition partition, which is why attribution must not
-  be guessed.
+  dashboard KPIs from assessment rows. Contribution is recognizable AI output
+  (`ai_shelved_cls` or `swarm_reviews`) divided by Feishu-test-passed,
+  Multica-done issues currently assigned to an Agent. Quality, automatic, and
+  assisted rates share the narrower denominator of participated rows with an
+  explicit judgement (`likely_correct`, `likely_needs_changes`, or
+  `likely_wrong`); `unknown` remains diagnostic and is excluded. Automatic and
+  assisted are mutually exclusive passing subsets: automatic is a passing
+  `ai_delivered` plan, while assisted is every other passing implementation
+  comparison, so assisted pass = total pass - automatic pass. The pass itself
+  establishes method equivalence even if an older attribution field disagrees.
+  A committed CL is NOT
+  required for the quality denominator because quality judges the plan's code,
+  not whether it shipped. Delivery attribution (`ai_delivered` /
+  `ai_assisted` from `delivery_attribution_prediction`) normally drives the
+  delivery composition. For historical rows, a passing implementation
+  comparison normalizes a non-direct legacy attribution to assisted because
+  the pass already establishes method equivalence.
+- Human submission is not itself an assisted-delivery signal. The assessment
+  skill emits `ai_assisted` when the human final CL materially follows a
+  verified, method-equivalent AI implementation. Chronology is supporting
+  context rather than an exclusion rule because this metric measures solution
+  equivalence, not strict causality. A non-equivalent human fix emits
+  `human_delivered` when ownership is proven; insufficient comparison or
+  ownership evidence emits `unknown`.
 - Delivery-side metrics and the missing-CL process gap read the structured
   `*_committed_cls` arrays, not `summary` / `prediction_reasons`. This is why
   the SKILL requires a verified submitted CL — including one confirmed only via

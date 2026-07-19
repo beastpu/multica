@@ -246,13 +246,22 @@ func (s *P4AssessmentService) Trigger(ctx context.Context, workspaceID, bindingI
 		if err != nil {
 			return err
 		}
+		var originatorUserID pgtype.UUID
+		originatorSource := "rule_owner"
+		if actor.Trigger != P4AssessmentTriggerScan {
+			originatorUserID = actor.CreatorID
+			originatorSource = "direct_human"
+		}
 		task, err := q.CreateP4AssessmentTask(ctx, db.CreateP4AssessmentTaskParams{
-			AgentID:     capability.AgentID,
-			RuntimeID:   capability.AgentRuntimeID,
-			IssueID:     projIssueID,
-			Priority:    int32(1),
-			Context:     taskContext,
-			HandoffNote: pgtype.Text{String: p4AssessmentHandoffNote(bindingID), Valid: true},
+			AgentID:           capability.AgentID,
+			RuntimeID:         capability.AgentRuntimeID,
+			IssueID:           projIssueID,
+			Priority:          int32(1),
+			Context:           taskContext,
+			HandoffNote:       pgtype.Text{String: p4AssessmentHandoffNote(bindingID), Valid: true},
+			OriginatorUserID:  originatorUserID,
+			AccountableUserID: actor.CreatorID,
+			OriginatorSource:  pgtype.Text{String: originatorSource, Valid: true},
 		})
 		if err != nil {
 			return err
@@ -309,6 +318,10 @@ func p4AssessmentHandoffNote(bindingID pgtype.UUID) string {
 	fmt.Fprintf(&b, "  multica api get /api/operations/agent-fixes/%s/p4-evidence\n\n", binding)
 	b.WriteString("Step 2 — you MAY inspect inner-network Swarm/P4 with read-only commands (e.g. `p4 describe -s`) when it helps classify CLs. Never mutate anything.\n")
 	b.WriteString("If the `multica-agent-fix-p4-assessment` skill is available, follow it for CL role classification and the full schema.\n\n")
+	b.WriteString("Attribution rule for a human-submitted final CL:\n")
+	b.WriteString("  If it used or materially followed a verified, method-equivalent AI implementation, use \"ai_assisted\", regardless of whether the AI output was produced before or after the human submission.\n")
+	b.WriteString("  If it used a materially different implementation, use \"human_delivered\" when human ownership is proven.\n")
+	b.WriteString("  If the evidence cannot compare the implementations or establish delivery ownership, use \"unknown\". Base equivalence on implementation diffs, not matching titles or root-cause prose alone.\n\n")
 	b.WriteString("Step 3 — FINAL OUTPUT: print exactly one JSON object (or one fenced ```json block containing exactly one JSON object) and NOTHING else — no prose before or after. Unknown keys are rejected, so use only these keys:\n")
 	b.WriteString("  delivery_attribution_prediction: one of \"ai_delivered\" | \"ai_assisted\" | \"human_delivered\" | \"conflict\" | \"unattributed\" | \"unknown\"\n")
 	b.WriteString("  quality_prediction: one of \"likely_correct\" | \"likely_needs_changes\" | \"likely_wrong\" | \"unknown\"\n")

@@ -1,11 +1,136 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiClient, ApiError } from "./client";
+import { ApiClient, ApiError, CHAT_DRAFT_RESTORE_CAPABILITY } from "./client";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("ApiClient label response schemas", () => {
+  it("falls back safely for malformed label catalog, label, and resource responses", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ labels: "not-an-array", total: "not-a-number" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listLabels("agent")).resolves.toEqual({ labels: [], total: 0 });
+    await expect(client.getLabel("label-1")).resolves.toMatchObject({ id: "" });
+    await expect(
+      client.createLabel({ resource_type: "agent", name: "Ops", color: "#3b82f6" }),
+    ).resolves.toMatchObject({ id: "" });
+    await expect(
+      client.updateLabel("label-1", { name: "Operations" }),
+    ).resolves.toMatchObject({ id: "" });
+
+    await expect(client.listLabelsForIssue("issue-1")).resolves.toEqual({ labels: [] });
+    await expect(client.attachLabel("issue-1", "label-1")).resolves.toEqual({ labels: [] });
+    await expect(client.detachLabel("issue-1", "label-1")).resolves.toEqual({ labels: [] });
+
+    await expect(client.listLabelsForResource("agent", "agent-1")).resolves.toEqual({ labels: [] });
+    await expect(
+      client.attachLabelToResource("agent", "agent-1", "label-1"),
+    ).resolves.toEqual({ labels: [] });
+    await expect(
+      client.detachLabelFromResource("agent", "agent-1", "label-1"),
+    ).resolves.toEqual({ labels: [] });
+
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+  });
+});
+
+describe("ApiClient notification preferences", () => {
+  it("sends atomic preference updates with PATCH", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          workspace_id: "workspace-1",
+          preferences: {
+            status_changes: "muted",
+            comments: "muted",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(
+      client.updateNotificationPreferences(
+        { comments: "muted" },
+        "workspace-one",
+      ),
+    ).resolves.toEqual({
+      workspace_id: "workspace-1",
+      preferences: {
+        status_changes: "muted",
+        comments: "muted",
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://api.example.test/api/notification-preferences",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        method: "PATCH",
+        headers: expect.objectContaining({
+          "X-Workspace-Slug": "workspace-one",
+        }),
+        body: JSON.stringify({ preferences: { comments: "muted" } }),
+      }),
+    );
+  });
+
+  it("falls back safely when a preference response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ workspace_id: "workspace-1", preferences: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.getNotificationPreferences()).resolves.toEqual({
+      workspace_id: "",
+      preferences: {},
+    });
+  });
+});
+
 describe("ApiClient", () => {
+  it("passes the Feishu business status into the Operations feed", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.getOperationsAgentFixes({
+      days: 30,
+      search: "auth failure",
+      externalStatus: "Iw0fE6Yfa",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/operations/agent-fixes?days=30&search=auth+failure&external_status=Iw0fE6Yfa",
+      expect.any(Object),
+    );
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",
@@ -140,6 +265,75 @@ describe("ApiClient", () => {
         method: "PUT",
       }),
     );
+  });
+
+  it("preserves planned and delivered comment coverage from issue task runs", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            {
+              id: "task-1",
+              status: "queued",
+              trigger_comment_id: "comment-3",
+              coalesced_comment_ids: ["comment-1", "comment-2"],
+              delivered_comment_ids: ["comment-1", "comment-2", "comment-3"],
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    const tasks = await client.listTasksByIssue("issue-1");
+
+    expect(tasks[0]?.trigger_comment_id).toBe("comment-3");
+    expect(tasks[0]?.coalesced_comment_ids).toEqual([
+      "comment-1",
+      "comment-2",
+    ]);
+    expect(tasks[0]?.delivered_comment_ids).toEqual([
+      "comment-1",
+      "comment-2",
+      "comment-3",
+    ]);
+  });
+
+  it("keeps task runs when optional comment coverage is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            {
+              id: "task-1",
+              status: "queued",
+              coalesced_comment_ids: ["comment-1", 2],
+              delivered_comment_ids: "not-an-array",
+            },
+            {
+              id: "task-2",
+              status: "completed",
+              delivered_comment_ids: ["comment-2", "comment-3"],
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    const tasks = await client.listTasksByIssue("issue-1");
+
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0]?.coalesced_comment_ids).toBeUndefined();
+    expect(tasks[0]?.delivered_comment_ids).toBeUndefined();
+    expect(tasks[1]?.delivered_comment_ids).toEqual([
+      "comment-2",
+      "comment-3",
+    ]);
   });
 
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
@@ -460,6 +654,31 @@ describe("ApiClient", () => {
     });
   });
 
+  it("reads Cloud Runtime workspace access and fails closed on response drift", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ enabled: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ enabled: "yes" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.getCloudRuntimeAccess()).resolves.toEqual({ enabled: true });
+    await expect(client.getCloudRuntimeAccess()).resolves.toEqual({ enabled: false });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://api.example.test/api/cloud-runtime/access",
+    );
+  });
+
   it("falls back when Cloud Runtime node responses drift", async () => {
     const fetchMock = vi
       .fn()
@@ -500,6 +719,27 @@ describe("ApiClient", () => {
     expect(opts).toMatchObject({
       method: "DELETE",
       body: JSON.stringify({ instance_id: "i-0123456789abcdef0" }),
+    });
+    expect((opts.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/json",
+    );
+  });
+
+  it("rebootCloudRuntimeNode sends POST with JSON body containing instance id", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(null, { status: 204 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.rebootCloudRuntimeNode("node-abc12345");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, opts] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://api.example.test/api/cloud-runtime/nodes/reboot");
+    expect(opts).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ instance_id: "node-abc12345" }),
     });
     expect((opts.headers as Record<string, string>)["Content-Type"]).toBe(
       "application/json",
@@ -838,6 +1078,74 @@ describe("ApiClient", () => {
         content: "restore me",
         restore_to_input: true,
       });
+    });
+
+    it("parses task attribution when the backend enriches it", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({
+            ...taskResponse,
+            attribution: {
+              source: "direct_human",
+              precise: true,
+              initiator: { id: "user-1", name: "Ada", avatar_url: "https://x/a.png" },
+              originator: { id: "user-1", name: "Ada" },
+              evidence: { kind: "comment", ref_id: "comment-1" },
+            },
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+
+      const client = new ApiClient("https://api.example.test");
+      const result = await client.cancelTaskById("task-1");
+
+      expect(result.attribution).toEqual({
+        source: "direct_human",
+        precise: true,
+        initiator: { id: "user-1", name: "Ada", avatar_url: "https://x/a.png" },
+        originator: { id: "user-1", name: "Ada" },
+        evidence: { kind: "comment", ref_id: "comment-1" },
+      });
+    });
+
+    it("leaves attribution absent on servers that predate it", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify(taskResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+
+      const client = new ApiClient("https://api.example.test");
+      const result = await client.cancelTaskById("task-1");
+
+      expect(result.attribution).toBeUndefined();
+    });
+
+    // The server only defers the empty-transcript judgment — and so only
+    // withholds the synchronous restore — for clients that advertise this
+    // capability (#5219). Drop the header and this client is treated as a
+    // pre-#5219 build, quietly losing the deferred path it actually implements.
+    it("advertises the durable draft-restore capability", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(taskResponse), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      await new ApiClient("https://api.example.test").cancelTaskById("task-1");
+
+      const init = fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> };
+      expect(init.headers["X-Client-Capabilities"]).toBe(CHAT_DRAFT_RESTORE_CAPABILITY);
     });
 
     it("treats a null cancelled chat message as absent", async () => {

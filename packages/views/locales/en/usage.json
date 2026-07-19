@@ -60,7 +60,7 @@
   "operations": {
     "title": "Operations",
     "assessment_title": "AI fix assessment",
-    "subtitle": "P4/Swarm evidence, delivery attribution, and AI quality analysis for issues your agents worked on.",
+    "subtitle": "Feishu test-passed issues whose synced Multica issue is done, summarized by AI pickup, repair quality, and delivery attribution.",
     "range_label": "Last {{days}} days",
     "search_placeholder": "Search comments",
     "search_clear": "Clear search",
@@ -69,37 +69,70 @@
       "status_all": "All statuses",
       "workstream": "Workstream",
       "workstream_all": "All workstreams",
-      "attribution": "Delivery attribution",
-      "attribution_all": "All attribution",
+      "attribution": "Repair method",
+      "attribution_all": "All repair methods",
       "quality": "AI quality prediction",
       "quality_all": "All quality",
-      "pending_only": "Pending judgement only"
+      "pending_only": "Pending judgement only",
+      "reset": "Reset filters",
+      "scope_note": "Filters apply to this table only — the stats above don't change"
     },
     "tabs": {
       "detail": "Assessments",
       "analysis": "Insights",
-      "detail_hint": "External completion, submitted CL records, AI predictions, and human review.",
+      "detail_hint": "Feishu test pass, synced completion, submitted CL records, AI predictions, and human review.",
       "analysis_hint": "Lightweight rollups from the current filtered rows."
     },
     "summary": {
-      "contribution_rate": "AI contribution rate",
-      "contribution_rate_hint": "{{num}} produced a plan / {{den}} external done",
-      "pass_rate": "AI plan pass rate",
-      "pass_rate_hint": "{{num}} correct / {{den}} assessed",
-      "coverage_rate": "Assessment coverage",
-      "coverage_rate_hint": "{{num}} assessed / {{den}} AI produced",
-      "health_footnote": "{{noOutput}} no output · {{unjudged}} undetermined",
-      "funnel_title": "Delivery funnel",
-      "funnel_total": "{{count}} records",
-      "stage_external_done": "External done",
-      "stage_ai_engaged": "AI engaged",
-      "stage_ai_planned": "Shelve/Swarm record",
-      "stage_verifiable": "Verifiable output",
+      "contribution_rate": "AI coverage",
+      "contribution_rate_hint": "Picked up by AI / assigned to an Agent",
+      "assessment_rate": "AI assessment completion rate",
+      "assessment_rate_hint": "Explicit quality verdicts / AI-handled tickets",
+      "quality_rate": "AI repair quality",
+      "quality_rate_hint": "AI-marked passes / AI-assessed repairable tickets",
+      "automatic_rate": "AI automatic repair share",
+      "automatic_rate_hint": "Direct AI submissions passed / AI-marked passes",
+      "health_footnote": "{{unassessed}} unassessed · {{missingCl}} missing human CL",
       "stage_judged": "Judged",
-      "stage_passed": "Passed"
+      "overview": "Last {{days}} days: {{done}} assigned to an Agent, {{handled}} picked up by AI, and {{judged}} judged for quality.",
+      "composition_title": "AI delivery composition",
+      "composition_total": "AI picked up {{count}} / {{total}} assigned to an Agent",
+      "composition_direct": "AI automatic repair",
+      "composition_assisted": "AI-human collaborative repair",
+      "assisted_with_unconverted": "AI-human collaborative repair",
+      "composition_not_participated": "AI not handled",
+      "composition_unconverted": "Unable to determine",
+      "composition_empty": "No tickets assigned to an Agent in this window.",
+      "health_footnote_hint": "Unassessed = assessment not completed yet (queue state); missing human CL = the external item is done but no submitted CL exists in any evidence source"
+    },
+    "fetch_cap_notice": "Hit the {{limit}}-row fetch cap — this window may be incomplete",
+    "drawer": {
+      "card_hint": "Click to see the breakdown",
+      "back": "Back",
+      "view_all": "View all in the detail table",
+      "more": "{{count}} more not shown",
+      "empty": "No records in this group",
+      "unjudged": "Not judged",
+      "handled": "Processed by AI",
+      "unhandled": "Not processed by AI",
+      "assessment_completed": "AI assessment completed",
+      "assessment_blocked": "AI assessment blocked",
+      "no_plan_reasons": "Why no verifiable plan was found",
+      "no_plan_comment_only": "Comment only; no plan artifact",
+      "no_plan_no_visible_output": "No comment or plan artifact",
+      "no_plan_task_cancelled": "Agent task cancelled",
+      "no_plan_assessment_incomplete": "Plan assessment incomplete",
+      "attribution_breakdown": "Repair method",
+      "not_automatic": "Not automatically repaired by AI",
+      "not_assisted": "No AI-assisted repair",
+      "open_issue": "Open issue",
+      "status": "Status",
+      "summary": "Assessment summary",
+      "no_summary": "No assessment summary yet.",
+      "reasons": "Judgement basis"
     },
     "analysis": {
-      "attribution_title": "Delivery attribution",
+      "attribution_title": "Repair method distribution",
       "quality_title": "AI quality distribution",
       "blocked_title": "Evidence access blocked ({{completed}} completed)",
       "blocked_auth": "Auth failed",
@@ -109,11 +142,8 @@
       "blocked_evidence": "Evidence API unavailable",
       "blocked_misc": "Other",
       "blocked_none": "No blocked assessments",
-      "gaps_title": "Process gaps",
-      "gaps_missing_cl": "Missing human CL on work item",
-      "workstream_title": "Workstream outcome",
-      "workstream_counts": "{{total}} total · {{judged}} judged · {{passed}} passed",
-      "drill_hint": "Click to filter details"
+      "drill_hint": "Click to filter details",
+      "completed_caption": "{{count}} assessed"
     },
     "table": {
       "issue": "Issue",
@@ -122,7 +152,8 @@
       "reason": "Reason / description",
       "external_status": "External status",
       "p4_evidence": "Submitted CL record",
-      "ai_attribution": "Delivery attribution",
+      "ai_attribution": "Repair method",
+      "assessment_status": "Assessment status",
       "ai_quality": "AI assessment"
     },
     "pagination": {
@@ -150,7 +181,9 @@
       "warnings": "warnings",
       "warning_count": "{{count}} warning",
       "confidence": "confidence {{value}}",
-      "no_evidence": "No submitted CL record"
+      "no_evidence": "No submitted CL record",
+      "repair_details_title": "Repair details",
+      "repair_details": "View repair details for {{issue}}: {{method}}"
     },
     "assessment_obs": {
       "attempts": "{{count}} attempts"
@@ -165,9 +198,15 @@
       "failed": "Failed to queue assessment",
       "blocked_external": "Available once the external work item is done"
     },
+    "error": {
+      "title": "Could not load operations data",
+      "body": "Meegle and AI repair metrics are temporarily unavailable. Try again.",
+      "retry": "Reload"
+    },
     "enums": {
       "assessment": {
         "missing": "Needs AI assessment",
+        "pending": "Awaiting assessment",
         "running": "AI assessing",
         "failed": "AI failed",
         "completed": "AI assessed",
@@ -175,14 +214,14 @@
       },
       "attribution": {
         "unassessed": "Not assessed",
-        "ai_delivered": "AI delivered",
+        "ai_delivered": "AI submitted",
         "ai_assisted": "AI assisted",
         "human_delivered": "Human delivered",
         "conflict": "Attribution conflict",
         "unattributed": "Unattributed",
         "ai_no_output": "AI no output",
         "ai_plan_no_record": "Plan, no record",
-        "unknown": "Insufficient evidence"
+        "unknown": "Unable to determine"
       },
       "quality": {
         "unassessed": "Not assessed",
@@ -243,13 +282,12 @@
       "save_failed": "Failed to save review"
     },
     "no_reason": "—",
-    "export_csv": "Export CSV",
     "caption": "{{count}} records",
     "resize_column": "Resize {{column}} column",
     "reset_columns": "Reset columns",
     "empty": {
       "title": "No fixes yet",
-      "body": "Once your agents start working issues, each one shows up here with its status and latest comment.",
+      "body": "Feishu test-passed issues appear here after their synced Multica issue is done, including items AI has not picked up.",
       "search_title": "No matching comments",
       "search_body": "No agent comment in this period contains “{{term}}”. Try a different term or widen the time range."
     }

@@ -15,12 +15,22 @@ const (
 	confirmationMessageCancel       = "取消执行"
 	confirmationCardTTL             = 30 * time.Minute
 	maxConfirmationMessageRunes     = 12
+	// maxConfirmationCardContentRunes caps the prompt copy embedded in each
+	// button value (see confirmationCardValue.Content). Both buttons carry
+	// it, so the cap keeps the card comfortably under Lark's size limits.
+	maxConfirmationCardContentRunes = 600
 )
 
 type confirmationCardValue struct {
-	Kind          string `json:"kind"`
-	Action        string `json:"action"`
-	Message       string `json:"message"`
+	Kind    string `json:"kind"`
+	Action  string `json:"action"`
+	Message string `json:"message"`
+	// Content is a truncated copy of the card's prompt text. The
+	// card.action.trigger callback does not echo the card body, so this is
+	// the only way the resolved-card ACK can keep the original question
+	// visible after the buttons are removed. Optional: cards sent before
+	// this field existed resolve to a result-only card.
+	Content       string `json:"content,omitempty"`
 	TaskID        string `json:"task_id"`
 	ChatID        string `json:"chat_id"`
 	ChatType      string `json:"chat_type"`
@@ -44,10 +54,30 @@ type issueConfirmationCardValue struct {
 }
 
 func chatReplyNeedsConfirmationAction(content string) bool {
-	_, ok := confirmationReplyMessage(content)
+	_, ok := chatConfirmationReplyMessage(content)
 	return ok
 }
 
+// chatConfirmationReplyMessage detects a confirmation prompt in a chat reply
+// using the EXPLICIT tiers only (quoted 回复“确认X” / standalone 确认X line).
+// The soft prompt-cue tier was retired from the chat path: agents on
+// ask-capable channels declare confirmations via `multica chat ask`
+// (docs/chat-ask-structured-signal-spec.md), and the cue tier's misfires on
+// information requests ("请提供…确认后…") produced dead buttons.
+func chatConfirmationReplyMessage(content string) (string, bool) {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" || !strings.Contains(trimmed, "确认") {
+		return "", false
+	}
+	if message, ok := confirmationReplyFromQuotedReply(trimmed); ok {
+		return message, true
+	}
+	return standaloneConfirmationReply(trimmed)
+}
+
+// confirmationReplyMessage is the full three-tier detection (explicit tiers
+// plus the guarded prompt-cue tier). Still used by the issue inbox
+// confirmation flow, which has no structured-ask replacement yet.
 func confirmationReplyMessage(content string) (string, bool) {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" || !strings.Contains(trimmed, "确认") {
@@ -128,7 +158,29 @@ func trimStandaloneConfirmationLine(line string) string {
 	return line
 }
 
+// informationRequestCues mark replies that need the user to SUPPLY something
+// (a full domain name, an ID, a file, …). A confirm button cannot answer such
+// a prompt — the task needs free-form input — so the soft prompt-cue tier
+// below must not render a confirmation card when one of these is present.
+// The explicit tiers (quoted 回复“确认X” and a standalone 确认X line) still
+// win over this guard: there the agent literally instructed a 确认 reply.
+var informationRequestCues = []string{
+	"请提供", "请补充", "请输入", "请告知", "请给出", "请上传", "请指定", "请附上",
+}
+
+func containsInformationRequestCue(content string) bool {
+	for _, cue := range informationRequestCues {
+		if strings.Contains(content, cue) {
+			return true
+		}
+	}
+	return false
+}
+
 func confirmationReplyFromPromptCue(content string) (string, bool) {
+	if containsInformationRequestCue(content) {
+		return "", false
+	}
 	for _, line := range strings.Split(content, "\n") {
 		if !strings.Contains(line, "确认") {
 			continue
@@ -263,19 +315,26 @@ func confirmationActionMessage(action, message string) (string, bool) {
 }
 
 func renderConfirmationCard(content string, binding ChatSessionBinding, taskID, allowedOpenID string, now time.Time) (string, error) {
-	confirmMessage, ok := confirmationReplyMessage(content)
+	confirmMessage, ok := chatConfirmationReplyMessage(content)
 	if !ok {
 		confirmMessage = confirmationMessageConfirm
 	}
 	cancelMessage := confirmationCancelMessage(confirmMessage)
 	issuedAt := now.Unix()
 	expiresAt := now.Add(confirmationCardTTL).Unix()
+	// The value rides back through decodeChatConfirmationCardAction and
+	// re-enters the inbound pipeline, so ChatID must be the REAL chat id
+	// (a composite topic binding key is not a valid Lark chat id); together
+	// with ThreadID it re-derives the same per-topic session key.
+	chatID := string(outboundChatID(binding))
+	embeddedContent := truncateConfirmationCardContent(content)
 	confirm := confirmationCardValue{
 		Kind:          confirmationCardActionKind,
 		Action:        confirmationActionConfirm,
 		Message:       confirmMessage,
+		Content:       embeddedContent,
 		TaskID:        taskID,
-		ChatID:        binding.ChannelChatID,
+		ChatID:        chatID,
 		ChatType:      binding.ChatType,
 		AllowedOpenID: allowedOpenID,
 		IssuedAtUnix:  issuedAt,
@@ -285,8 +344,9 @@ func renderConfirmationCard(content string, binding ChatSessionBinding, taskID, 
 		Kind:          confirmationCardActionKind,
 		Action:        confirmationActionCancel,
 		Message:       cancelMessage,
+		Content:       embeddedContent,
 		TaskID:        taskID,
-		ChatID:        binding.ChannelChatID,
+		ChatID:        chatID,
 		ChatType:      binding.ChatType,
 		AllowedOpenID: allowedOpenID,
 		IssuedAtUnix:  issuedAt,
@@ -342,23 +402,38 @@ func renderConfirmationCard(content string, binding ChatSessionBinding, taskID, 
 	return string(raw), nil
 }
 
+func truncateConfirmationCardContent(content string) string {
+	runes := []rune(strings.TrimSpace(content))
+	if len(runes) <= maxConfirmationCardContentRunes {
+		return string(runes)
+	}
+	return string(runes[:maxConfirmationCardContentRunes]) + "…"
+}
+
 // RenderIssueConfirmationResolvedCard replaces an issue inbox confirmation
 // card after the user clicks one of its buttons. The original agent prompt is
 // kept visible, but the interactive controls are removed so the card no longer
 // invites a second action.
 func RenderIssueConfirmationResolvedCard(content string, action IssueConfirmationCardAction) (string, error) {
+	return renderConfirmationResolvedCard(content, action.Action, action.Message)
+}
+
+// renderConfirmationResolvedCard is the shared receipt card for both the
+// issue and chat confirmation flows: original prompt kept, buttons removed,
+// outcome line appended.
+func renderConfirmationResolvedCard(content, action, rawMessage string) (string, error) {
 	status := "已处理"
 	template := "blue"
-	switch action.Action {
+	switch action {
 	case confirmationActionConfirm:
 		status = "已确认"
 		template = "green"
 	case confirmationActionCancel:
 		status = "已取消"
 	}
-	message := strings.TrimSpace(action.Message)
+	message := strings.TrimSpace(rawMessage)
 	if message == "" {
-		if fallback, ok := confirmationActionMessage(action.Action, ""); ok {
+		if fallback, ok := confirmationActionMessage(action, ""); ok {
 			message = fallback
 		}
 	}
@@ -414,6 +489,21 @@ func RenderIssueConfirmationCardActionResponse(content string, action IssueConfi
 	if err != nil {
 		return "", err
 	}
+	return wrapCardActionResponse(cardJSON)
+}
+
+// renderChatConfirmationCardActionResponse builds the card.action.trigger
+// response for a chat confirmation click from the button value alone (the
+// callback carries no card body — Content is the embedded prompt copy).
+func renderChatConfirmationCardActionResponse(value confirmationCardValue) (string, error) {
+	cardJSON, err := renderConfirmationResolvedCard(value.Content, value.Action, value.Message)
+	if err != nil {
+		return "", err
+	}
+	return wrapCardActionResponse(cardJSON)
+}
+
+func wrapCardActionResponse(cardJSON string) (string, error) {
 	var card json.RawMessage
 	if err := json.Unmarshal([]byte(cardJSON), &card); err != nil {
 		return "", err

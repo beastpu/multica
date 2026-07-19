@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -363,5 +364,18 @@ func TestRenewPAT_RejectsTokenBelongingToDifferentUser(t *testing.T) {
 	testHandler.RenewCurrentPersonalAccessToken(w, newRenewRequest(raw))
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 on user mismatch, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// mcn_ node tokens are owned by the standalone Fleet service (mint/rotate); the
+// server's PAT renew endpoint no longer knows about them and rejects the renew.
+func TestRenewCloudNodeTokenRejected(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	w := httptest.NewRecorder()
+	testHandler.RenewCurrentPersonalAccessToken(w, newRenewRequest("mcn_"+strings.Repeat("a", 40)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for mcn_ renew, got %d: %s", w.Code, w.Body.String())
 	}
 }

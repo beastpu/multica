@@ -27,12 +27,37 @@ export const dashboardKeys = {
     projectId: string | null,
     tz: string,
   ) => [...dashboardKeys.all(wsId), "runtime-daily", days, projectId, tz] as const,
-  operationsFixes: (wsId: string, days: number, search: string) =>
-    [...dashboardKeys.all(wsId), "operations-fixes", days, search] as const,
+  operationsFixes: (
+    wsId: string,
+    days: number,
+    externalStatus: string,
+    search: string,
+  ) =>
+    [
+      ...dashboardKeys.all(wsId),
+      "operations-fixes",
+      days,
+      externalStatus,
+      search,
+    ] as const,
 };
 
 // 5-min rollup cadence on the server, 60s background refetch on the client.
 const STALE_TIME = 60 * 1000;
+
+// Range changes should keep the previous result mounted so KPI cards and
+// charts transition in place instead of falling back to a full-page skeleton.
+// Scope changes are deliberately excluded: carrying data across workspaces,
+// projects, report kinds, or timezones would briefly display the wrong data.
+function isSameDashboardScope(
+  previousKey: readonly unknown[] | undefined,
+  nextKey: readonly unknown[],
+): boolean {
+  if (!previousKey || previousKey.length !== nextKey.length) return false;
+  return previousKey.every(
+    (part, index) => index === 3 || Object.is(part, nextKey[index]),
+  );
+}
 
 // `tz` participates in every dashboard key so a Preferences change
 // repoints the cache. All four series — token rollups and the
@@ -44,8 +69,9 @@ export function dashboardUsageDailyOptions(
   projectId: string | null,
   tz: string,
 ) {
+  const queryKey = dashboardKeys.daily(wsId, days, projectId, tz);
   return queryOptions({
-    queryKey: dashboardKeys.daily(wsId, days, projectId, tz),
+    queryKey,
     queryFn: () =>
       api.getDashboardUsageDaily({
         days,
@@ -54,6 +80,10 @@ export function dashboardUsageDailyOptions(
       }),
     enabled: !!wsId,
     staleTime: STALE_TIME,
+    placeholderData: (previousData, previousQuery) =>
+      isSameDashboardScope(previousQuery?.queryKey, queryKey)
+        ? keepPreviousData(previousData)
+        : undefined,
   });
 }
 
@@ -63,8 +93,9 @@ export function dashboardUsageByAgentOptions(
   projectId: string | null,
   tz: string,
 ) {
+  const queryKey = dashboardKeys.byAgent(wsId, days, projectId, tz);
   return queryOptions({
-    queryKey: dashboardKeys.byAgent(wsId, days, projectId, tz),
+    queryKey,
     queryFn: () =>
       api.getDashboardUsageByAgent({
         days,
@@ -73,6 +104,10 @@ export function dashboardUsageByAgentOptions(
       }),
     enabled: !!wsId,
     staleTime: STALE_TIME,
+    placeholderData: (previousData, previousQuery) =>
+      isSameDashboardScope(previousQuery?.queryKey, queryKey)
+        ? keepPreviousData(previousData)
+        : undefined,
   });
 }
 
@@ -82,8 +117,9 @@ export function dashboardAgentRunTimeOptions(
   projectId: string | null,
   tz: string,
 ) {
+  const queryKey = dashboardKeys.agentRuntime(wsId, days, projectId, tz);
   return queryOptions({
-    queryKey: dashboardKeys.agentRuntime(wsId, days, projectId, tz),
+    queryKey,
     queryFn: () =>
       api.getDashboardAgentRunTime({
         days,
@@ -92,6 +128,10 @@ export function dashboardAgentRunTimeOptions(
       }),
     enabled: !!wsId,
     staleTime: STALE_TIME,
+    placeholderData: (previousData, previousQuery) =>
+      isSameDashboardScope(previousQuery?.queryKey, queryKey)
+        ? keepPreviousData(previousData)
+        : undefined,
   });
 }
 
@@ -101,8 +141,9 @@ export function dashboardRunTimeDailyOptions(
   projectId: string | null,
   tz: string,
 ) {
+  const queryKey = dashboardKeys.runTimeDaily(wsId, days, projectId, tz);
   return queryOptions({
-    queryKey: dashboardKeys.runTimeDaily(wsId, days, projectId, tz),
+    queryKey,
     queryFn: () =>
       api.getDashboardRunTimeDaily({
         days,
@@ -111,24 +152,38 @@ export function dashboardRunTimeDailyOptions(
       }),
     enabled: !!wsId,
     staleTime: STALE_TIME,
+    placeholderData: (previousData, previousQuery) =>
+      isSameDashboardScope(previousQuery?.queryKey, queryKey)
+        ? keepPreviousData(previousData)
+        : undefined,
   });
 }
 
 // Per-agent "fix record" feed for the Usage page's Operations tab. No tz /
-// project axis — agent and issue-status narrowing stays client-side, but the
-// comment `search` is a server filter (it must run before the row cap to cover
-// the whole window), so both `days` and `search` key the cache. A trimmed empty
-// search is the unfiltered feed.
+// project axis — Agent narrowing stays client-side, but the
+// comment `search` and Feishu `externalStatus` are server filters (they must run
+// before the row cap to cover the whole window), so both key the cache with
+// `days`. A trimmed empty search is the unfiltered feed.
 export function operationsFixesOptions(
   wsId: string,
   days: number,
   search = "",
+  externalStatus?: string,
 ) {
   const term = search.trim();
+  const status = externalStatus?.trim() ?? "";
   return queryOptions({
-    queryKey: dashboardKeys.operationsFixes(wsId, days, term),
-    queryFn: () => api.getOperationsAgentFixes({ days, search: term }),
-    enabled: !!wsId,
+    queryKey: dashboardKeys.operationsFixes(wsId, days, status, term),
+    queryFn: () =>
+      api.getOperationsAgentFixes({
+        days,
+        search: term,
+        externalStatus: status || undefined,
+      }),
+    // Callers that omit externalStatus keep the legacy broad feed (used by
+    // issue-level assessment entry). Operations passes an explicit status and
+    // stays disabled until the Feishu option has resolved.
+    enabled: !!wsId && (externalStatus === undefined || !!status),
     staleTime: STALE_TIME,
     // Keep the prior rows on screen while a new term/window refetches, so
     // typing in the search box doesn't flash the skeleton on every keystroke.

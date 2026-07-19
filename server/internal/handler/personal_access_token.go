@@ -167,7 +167,13 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 	// and we need the row, not just the user.
 	authHeader := r.Header.Get("Authorization")
 	rawToken := strings.TrimPrefix(authHeader, "Bearer ")
-	if rawToken == "" || rawToken == authHeader || !strings.HasPrefix(rawToken, "mul_") {
+	if rawToken == "" || rawToken == authHeader {
+		writeError(w, http.StatusBadRequest, "only personal access tokens can be renewed")
+		return
+	}
+	// Cloud node PATs (mcn_) are owned by the standalone Fleet service, which
+	// manages their lifecycle (mint/rotate) — they are not renewable here.
+	if !strings.HasPrefix(rawToken, "mul_") {
 		writeError(w, http.StatusBadRequest, "only personal access tokens can be renewed")
 		return
 	}

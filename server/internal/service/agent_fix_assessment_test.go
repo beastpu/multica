@@ -41,6 +41,23 @@ func TestParseP4AssessmentTaskOutputStrictJSON(t *testing.T) {
 	}
 }
 
+func TestP4AssessmentHandoffNoteDefinesHumanSubmissionAttribution(t *testing.T) {
+	note := p4AssessmentHandoffNote(pgtype.UUID{})
+	for _, want := range []string{
+		"human-submitted final CL",
+		"materially followed a verified, method-equivalent AI implementation",
+		"regardless of whether the AI output was produced before or after the human submission",
+		"use \"ai_assisted\"",
+		"materially different implementation",
+		"use \"human_delivered\"",
+		"use \"unknown\"",
+	} {
+		if !strings.Contains(note, want) {
+			t.Errorf("handoff note missing %q", want)
+		}
+	}
+}
+
 func TestParseP4AssessmentTaskOutputRejectsNaturalLanguage(t *testing.T) {
 	result, _ := json.Marshal(map[string]string{
 		"output": "The fix looks good. final CL 123456.",

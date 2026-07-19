@@ -1,0 +1,58 @@
+# RBAC for the in-process k8s cloud runtime fleet (kubefleet).
+#
+# multica-server creates the runtime nodes in the SAME cluster it runs in,
+# using its in-cluster ServiceAccount token (the standard projected token at
+# /var/run/secrets/kubernetes.io/serviceaccount). This grants that SA exactly
+# the verbs kubefleet calls. Cross-cluster operation is not supported.
+#
+# Not part of the base kustomization: only needed when
+# MULTICA_CLOUD_RUNTIME_PROVIDER=k8s is enabled.
+#
+#   kubectl apply -n <server-namespace> -f deploy/k8s/cloud-runtime/rbac.yaml
+#
+# The binding targets the ServiceAccount named "multica-server" — point the
+# server Deployment at it (spec.template.spec.serviceAccountName:
+# multica-server), or edit the subject below to match the SA the server pod
+# already runs as.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: multica-server
+---
+# Cluster-scoped because kubefleet creates one namespace per workspace
+# (mrt-<workspace-uuid>) dynamically — RBAC cannot pre-scope to namespaces
+# that do not exist yet. The verb list is exactly what kubefleet calls.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: multica-cloud-runtime
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["create"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["create", "list", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: multica-cloud-runtime
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: multica-cloud-runtime
+subjects:
+  - kind: ServiceAccount
+    name: multica-server
+    # Replace with the namespace multica-server is deployed in.
+    namespace: multica

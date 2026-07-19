@@ -9,10 +9,16 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
+	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/logger"
+	appmiddleware "github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const maxCloudRuntimeRequestBodySize = 1 << 20
@@ -21,6 +27,31 @@ type cloudRuntimeProxyOptions struct {
 	withUserID bool
 	withQuery  bool
 	withBody   bool
+	// afterSuccess runs when Fleet returns 2xx, for server-side follow-up the
+	// remote Fleet cannot do itself (e.g. agent_runtime cleanup keyed on the
+	// server DB). Best-effort — it must not change the response the client sees.
+	afterSuccess func(ctx context.Context, workspaceID string, body []byte)
+}
+
+func (h *Handler) GetCloudRuntimeAccess(w http.ResponseWriter, r *http.Request) {
+	workspaceID := appmiddleware.ResolveWorkspaceIDFromRequest(r, h.Queries)
+	enabled := workspaceID != "" &&
+		h.cloudRuntimeWorkspaceEnabled(r, workspaceID) &&
+		h.CloudRuntime != nil && h.CloudRuntime.Enabled()
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": enabled})
+}
+
+func (h *Handler) cloudRuntimeWorkspaceEnabled(r *http.Request, workspaceID string) bool {
+	return workspaceID != "" &&
+		featureflags.CloudRuntimeEnabledForWorkspace(r.Context(), h.FeatureFlags, workspaceID)
+}
+
+func (h *Handler) requireCloudRuntimeWorkspaceEnabled(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
+	if h.cloudRuntimeWorkspaceEnabled(r, workspaceID) {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "cloud runtime is not enabled for this workspace")
+	return false
 }
 
 func (h *Handler) GetCloudRuntimeService(w http.ResponseWriter, r *http.Request) {
@@ -60,9 +91,38 @@ func (h *Handler) CreateCloudRuntimeNode(w http.ResponseWriter, r *http.Request)
 
 func (h *Handler) DeleteCloudRuntimeNode(w http.ResponseWriter, r *http.Request) {
 	h.proxyCloudRuntime(w, r, http.MethodDelete, "/api/v1/nodes", cloudRuntimeProxyOptions{
-		withUserID: true,
-		withBody:   true,
+		withUserID:   true,
+		withBody:     true,
+		afterSuccess: h.cascadeDeleteCloudRuntimeNode,
 	})
+}
+
+// cascadeDeleteCloudRuntimeNode drops the offline cloud runtime rows the node
+// registered (daemon_id = node name) once Fleet has torn it down, so they don't
+// linger as UI orphans. Rows with an agent still bound are skipped by the
+// query. Best-effort: a cleanup failure must not fail a delete the client has
+// already seen succeed. (The remote Fleet cannot do this — agent_runtime is a
+// multica-server table.)
+func (h *Handler) cascadeDeleteCloudRuntimeNode(ctx context.Context, workspaceID string, body []byte) {
+	var ref struct {
+		ID         string `json:"id"`
+		InstanceID string `json:"instance_id"`
+	}
+	_ = json.Unmarshal(body, &ref)
+	nodeName := strings.TrimSpace(ref.InstanceID)
+	if nodeName == "" {
+		nodeName = strings.TrimSpace(ref.ID)
+	}
+	wsUUID, err := util.ParseUUID(workspaceID)
+	if nodeName == "" || err != nil {
+		return
+	}
+	if _, err := h.Queries.DeleteCloudRuntimesByNode(ctx, db.DeleteCloudRuntimesByNodeParams{
+		WorkspaceID: wsUUID,
+		DaemonID:    pgtype.Text{String: nodeName, Valid: true},
+	}); err != nil {
+		slog.Warn("cloud runtime: cascade delete failed", "error", err, "node", nodeName)
+	}
 }
 
 func (h *Handler) StartCloudRuntimeNode(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +161,10 @@ func (h *Handler) ExecCloudRuntimeNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) proxyCloudRuntime(w http.ResponseWriter, r *http.Request, method, path string, opts cloudRuntimeProxyOptions) {
+	workspaceID := appmiddleware.ResolveWorkspaceIDFromRequest(r, h.Queries)
+	if !h.requireCloudRuntimeWorkspaceEnabled(w, r, workspaceID) {
+		return
+	}
 	if h.CloudRuntime == nil || !h.CloudRuntime.Enabled() {
 		writeError(w, http.StatusServiceUnavailable, "cloud runtime is not configured")
 		return
@@ -129,6 +193,18 @@ func (h *Handler) proxyCloudRuntime(w http.ResponseWriter, r *http.Request, meth
 		query = r.URL.Query()
 	}
 
+	// Forward the workspace scope so the standalone Fleet (which has no
+	// server DB / middleware context) can tenant its work. The SaaS Fleet
+	// ignores these; the self-hosted Fleet keys namespaces on them. Slug is
+	// best-effort — Fleet falls back to the UUID for the namespace name.
+	headers := http.Header{}
+	headers.Set("X-Workspace-ID", workspaceID)
+	if wsUUID, err := util.ParseUUID(workspaceID); err == nil {
+		if ws, werr := h.Queries.GetWorkspace(r.Context(), wsUUID); werr == nil {
+			headers.Set("X-Workspace-Slug", ws.Slug)
+		}
+	}
+
 	resp, err := h.CloudRuntime.Do(r.Context(), cloudruntime.Request{
 		Method:    method,
 		Path:      path,
@@ -136,10 +212,14 @@ func (h *Handler) proxyCloudRuntime(w http.ResponseWriter, r *http.Request, meth
 		Body:      body,
 		UserID:    userID,
 		RequestID: cloudRuntimeRequestID(r),
+		Headers:   headers,
 	})
 	if err != nil {
 		writeCloudRuntimeError(w, r, err)
 		return
+	}
+	if opts.afterSuccess != nil && resp != nil && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		opts.afterSuccess(r.Context(), workspaceID, body)
 	}
 	writeCloudRuntimeResponse(w, resp)
 }

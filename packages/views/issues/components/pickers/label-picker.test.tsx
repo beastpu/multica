@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
+import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { renderWithI18n } from "../../../test/i18n";
+import { NavigationProvider, type NavigationAdapter } from "../../../navigation";
 import { LabelPicker } from "./label-picker";
 
 const labels = vi.hoisted(() => [
@@ -54,7 +56,21 @@ describe("LabelPicker", () => {
   it("renders an attached-label popover trigger without Base UI native button warnings", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    renderWithI18n(<LabelPicker issueId="issue-1" />);
+    const navigation: NavigationAdapter = {
+      push: vi.fn(),
+      replace: vi.fn(),
+      back: vi.fn(),
+      pathname: "/acme/issues/issue-1",
+      searchParams: new URLSearchParams(),
+      getShareableUrl: (path) => path,
+    };
+    renderWithI18n(
+      <WorkspaceSlugProvider slug="acme">
+        <NavigationProvider value={navigation}>
+          <LabelPicker issueId="issue-1" />
+        </NavigationProvider>
+      </WorkspaceSlugProvider>,
+    );
 
     expect(screen.getByText("Needs QA")).toBeTruthy();
     expect(

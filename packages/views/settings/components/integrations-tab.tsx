@@ -65,6 +65,7 @@ import { AssessmentCapabilitySection } from "./assessment-capability-section";
 import { useT } from "../../i18n";
 import { FeishuProjectRoutingSection, type RouteRow } from "./feishu-project-routing-section";
 import { FeishuProjectWorkItemTypesSection } from "./feishu-project-work-item-types-section";
+import { SettingsSection, SettingsTab } from "./settings-layout";
 
 const NO_FIELD = "__none__";
 const NO_MATCH = "__none__";
@@ -453,10 +454,8 @@ export function IntegrationsTab() {
     composioToolkits.error instanceof ApiError && composioToolkits.error.status === 503;
 
   return (
-    <div className="space-y-10">
-      <section className="space-y-4">
-        <h2 className="text-sm font-semibold">{t(($) => $.integrations.section_title)}</h2>
-
+    <SettingsTab title={t(($) => $.page.tabs.integrations)}>
+      <SettingsSection title={t(($) => $.integrations.section_title)}>
         <div className="space-y-3">
           <Card>
             <CardContent className="flex items-start justify-between gap-6">
@@ -753,6 +752,10 @@ export function IntegrationsTab() {
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     <Select
+                      items={FEISHU_SYNC_LOOKBACK_DAY_OPTIONS.map((days) => ({
+                        value: String(days),
+                        label: t(($) => $.integrations.feishu_project_sync_range_days, { days }),
+                      }))}
                       value={String(syncLookbackDays)}
                       onValueChange={(value) =>
                         setSyncLookbackDays(Number(value) || FEISHU_SYNC_LOOKBACK_DAY_OPTIONS[0])
@@ -864,26 +867,22 @@ export function IntegrationsTab() {
             </>
           )}
         </div>
-      </section>
-      <section className="space-y-4">
-        <h2 className="text-sm font-semibold">{t(($) => $.lark.section_title)}</h2>
+      </SettingsSection>
+      <SettingsSection title={t(($) => $.lark.section_title)}>
         <LarkTab />
-      </section>
-      <section className="space-y-4">
-        <h2 className="text-sm font-semibold">{t(($) => $.assessment.section_title)}</h2>
+      </SettingsSection>
+      <SettingsSection title={t(($) => $.assessment.section_title)}>
         <AssessmentCapabilitySection />
-      </section>
+      </SettingsSection>
       {composioEnabled && !composioUnconfigured && (
-        <section className="space-y-4">
-          <h2 className="text-sm font-semibold">{t(($) => $.composio.section_title)}</h2>
+        <SettingsSection title={t(($) => $.composio.section_title)}>
           <ComposioTab />
-        </section>
+        </SettingsSection>
       )}
-      <section className="space-y-4">
-        <h2 className="text-sm font-semibold">{t(($) => $.slack.section_title)}</h2>
+      <SettingsSection title={t(($) => $.slack.section_title)}>
         <SlackTab />
-      </section>
-    </div>
+      </SettingsSection>
+    </SettingsTab>
   );
 }
 
@@ -1084,6 +1083,10 @@ function FeishuProjectLabelSyncRuleRow({
         {t(($) => $.integrations.feishu_project_label_sync_match)}
         {fieldOptions.length > 0 ? (
           <Select
+            items={[
+              { value: NO_MATCH, label: t(($) => $.integrations.feishu_project_label_sync_match_placeholder) },
+              ...fieldOptions.map((option) => ({ value: option.name, label: option.name })),
+            ]}
             value={rule.match || NO_MATCH}
             onValueChange={(value) => {
               const selected = value ?? NO_MATCH;

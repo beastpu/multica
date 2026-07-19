@@ -10,6 +10,16 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// CloudPATVerifier abstracts mcn_ token verification so deployments can plug
+// in either the remote Multica Cloud Fleet verifier (*auth.CloudPATVerifier)
+// or the local DB-backed one used by the in-process k8s fleet
+// (*auth.LocalCloudPATVerifier). Callers must pass an untyped nil (not a nil
+// concrete pointer) to disable mcn_ support — the middlewares' `== nil`
+// fail-closed guard relies on it.
+type CloudPATVerifier interface {
+	Verify(ctx context.Context, token string, lookup auth.OwnerLookupFunc) (auth.CloudPATIdentity, error)
+}
+
 // ownerLookupFor returns an auth.OwnerLookupFunc that asks the
 // generated GetUser query whether `ownerID` is a real row in our
 // `user` table. It is used by the mcn_ branches of Auth and

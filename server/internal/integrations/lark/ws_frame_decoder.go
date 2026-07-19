@@ -78,6 +78,7 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst Installation) (Inboun
 		MessageID:    evt.Message.MessageID,
 		SenderOpenID: OpenID(evt.Sender.SenderID.OpenID),
 		MessageType:  evt.Message.MessageType,
+		Content:      evt.Message.Content,
 		CreateTime:   evt.Message.CreateTime,
 		// parent_id / root_id are populated by Lark only in reply
 		// scenarios. The enricher keys quoted-reply expansion off
@@ -96,16 +97,18 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst Installation) (Inboun
 		botUnionID = inst.BotUnionID.String
 	}
 
-	// text + post are flattened synchronously here (no external calls —
-	// the decoder must stay fast and dependency-free). merge_forward
-	// leaves Body empty: it needs an HTTP round-trip to expand and is
-	// handled downstream by the enricher, which keys off MessageType.
-	// Other types (image, file, …) also leave Body empty in this MVP;
-	// attachment ingestion is a separate issue.
+	// text + post are flattened synchronously here (no external calls — the
+	// decoder must stay fast and dependency-free). merge_forward leaves Body
+	// empty: it needs an HTTP round-trip to expand and is handled downstream by
+	// the enricher, which keys off MessageType. Standalone media gets a short
+	// visible marker while the channel adapter separately downloads and binds
+	// the binary as a Multica attachment.
 	switch evt.Message.MessageType {
 	case "text", "post":
 		msg.Body = resolveMentions(flattenContent(evt.Message.MessageType, evt.Message.Content),
 			evt.Message.Mentions, inst.BotOpenID, botUnionID)
+	case "image", "file", "audio", "media", "video":
+		msg.Body = flattenContent(evt.Message.MessageType, evt.Message.Content)
 	}
 
 	// Snapshot the user's own text as the command source BEFORE any
@@ -129,6 +132,13 @@ func (d *LarkJSONFrameDecoder) decodeCardActionTrigger(env larkEventEnvelope) (I
 	if err := json.Unmarshal(env.Event, &evt); err != nil {
 		return InboundMessage{}, false, fmt.Errorf("card action event: %w", err)
 	}
+	if value, ok := parseChatAskCardValue(evt.Action.Value); ok {
+		operatorOpenID := evt.operatorOpenID()
+		if operatorOpenID == "" {
+			return InboundMessage{}, false, errors.New("card.action.trigger missing operator open_id")
+		}
+		return d.decodeChatAskCardAction(env, evt, value, operatorOpenID)
+	}
 	if value, ok := parseConfirmationCardValue(evt.Action.Value); ok {
 		operatorOpenID := evt.operatorOpenID()
 		if operatorOpenID == "" {
@@ -144,6 +154,58 @@ func (d *LarkJSONFrameDecoder) decodeCardActionTrigger(env larkEventEnvelope) (I
 		return d.decodeIssueConfirmationCardAction(env, evt, value, operatorOpenID)
 	}
 	return InboundMessage{}, false, nil
+}
+
+// decodeChatAskCardAction turns a structured-ask button click into an
+// InboundMessage: Body carries the answer text, CardAction.ChatAsk carries
+// the ask identity for the card handler's DB validation. Only the operator
+// gate lives here (no per-user feedback possible for others anyway); state
+// checks (pending / expired / superseded) are DB-backed and belong to the
+// card handler, which can ACK the appropriate receipt.
+func (d *LarkJSONFrameDecoder) decodeChatAskCardAction(env larkEventEnvelope, evt larkCardActionTriggerEvent, value chatAskCardValue, operatorOpenID string) (InboundMessage, bool, error) {
+	if value.AllowedOpenID != operatorOpenID {
+		return InboundMessage{}, false, nil
+	}
+	chatID := evt.chatID()
+	if chatID == "" {
+		return InboundMessage{}, false, errors.New("card.action.trigger missing chat_id")
+	}
+	// Use the REAL clicked-card message id as the dispatched message id, like
+	// the legacy confirmation path: it flows into the reply-target
+	// (last_message_id) and the typing reaction, both of which call Lark with
+	// this id — a synthetic id 400s there (a topic session would even thread
+	// the agent's reply onto it). Router dedup on the card id also gives
+	// first-click-wins for free. Fall back to a synthetic id only when the
+	// event omits the message id (should not happen for a card action).
+	messageID := evt.messageID()
+	if messageID == "" {
+		messageID = "chat_ask:" + value.AskID + ":" + env.Header.EventID
+	}
+	return InboundMessage{
+		EventType:      env.Header.EventType,
+		EventID:        env.Header.EventID,
+		AppID:          env.Header.AppID,
+		ChatID:         ChatID(chatID),
+		ChatType:       normalizeChatType(value.ChatType),
+		MessageID:      messageID,
+		SenderOpenID:   OpenID(operatorOpenID),
+		Body:           value.Reply,
+		CommandBody:    value.Reply,
+		MessageType:    "text",
+		CreateTime:     env.Header.CreateTime,
+		ThreadID:       value.ThreadID,
+		AddressedToBot: true,
+		CardAction: &InboundCardAction{
+			CardMessageID: evt.messageID(),
+			ChatAsk: &ChatAskCardAction{
+				AskID:         value.AskID,
+				Choice:        value.Choice,
+				Reply:         value.Reply,
+				AllowedOpenID: value.AllowedOpenID,
+				ExpiresAtUnix: value.ExpiresAtUnix,
+			},
+		},
+	}, true, nil
 }
 
 func (d *LarkJSONFrameDecoder) decodeChatConfirmationCardAction(env larkEventEnvelope, evt larkCardActionTriggerEvent, value confirmationCardValue, operatorOpenID string) (InboundMessage, bool, error) {
@@ -172,20 +234,28 @@ func (d *LarkJSONFrameDecoder) decodeChatConfirmationCardAction(env larkEventEnv
 			return InboundMessage{}, false, nil
 		}
 	}
+	// Best-effort: an ACK without the resolved card still dispatches the
+	// click; the render only fails on a marshal error, which map-of-strings
+	// input cannot realistically produce.
+	ackJSON, err := renderChatConfirmationCardActionResponse(value)
+	if err != nil {
+		ackJSON = ""
+	}
 	return InboundMessage{
-		EventType:      env.Header.EventType,
-		EventID:        env.Header.EventID,
-		AppID:          env.Header.AppID,
-		ChatID:         ChatID(chatID),
-		ChatType:       normalizeChatType(value.ChatType),
-		MessageID:      messageID,
-		SenderOpenID:   OpenID(operatorOpenID),
-		Body:           body,
-		CommandBody:    body,
-		MessageType:    "text",
-		CreateTime:     env.Header.CreateTime,
-		ThreadID:       value.ThreadID,
-		AddressedToBot: true,
+		EventType:              env.Header.EventType,
+		EventID:                env.Header.EventID,
+		AppID:                  env.Header.AppID,
+		ChatID:                 ChatID(chatID),
+		ChatType:               normalizeChatType(value.ChatType),
+		MessageID:              messageID,
+		SenderOpenID:           OpenID(operatorOpenID),
+		Body:                   body,
+		CommandBody:            body,
+		MessageType:            "text",
+		CreateTime:             env.Header.CreateTime,
+		ThreadID:               value.ThreadID,
+		AddressedToBot:         true,
+		CardActionResponseJSON: ackJSON,
 	}, true, nil
 }
 

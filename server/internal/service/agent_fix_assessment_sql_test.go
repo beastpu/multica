@@ -132,6 +132,8 @@ func TestOperationsFeedUsesBindingSpineWithoutAssessmentTaskPollution(t *testing
 		"fib.last_external_updated_at",
 		"COALESCE(fib.last_external_updated_at, fib.last_synced_at)",
 		"false AS has_normal_task",
+		"WHEN i.assignee_type = 'agent' THEN i.assignee_id",
+		"LEFT JOIN agent a ON a.id = spine.agent_id",
 		// Derived agent_work issues (per-run assessment projections) must not
 		// spawn feed rows — the metadata marker is the only isolation anchor
 		// now that task_category is gone.
@@ -141,6 +143,9 @@ func TestOperationsFeedUsesBindingSpineWithoutAssessmentTaskPollution(t *testing
 			t.Fatalf("ListWorkspaceAgentFixes missing binding spine invariant %q\n---\n%s", want, chunk)
 		}
 	}
+	if strings.Contains(chunk, "AND i.assignee_type = 'agent'") {
+		t.Fatalf("ListWorkspaceAgentFixes must keep external-done bindings without an Agent assignee\n---\n%s", chunk)
+	}
 
 	src, err := os.ReadFile("../handler/agent.go")
 	if err != nil {
@@ -148,6 +153,7 @@ func TestOperationsFeedUsesBindingSpineWithoutAssessmentTaskPollution(t *testing
 	}
 	handlerChunk := sourceFunction(t, string(src), "ListWorkspaceAgentFixes")
 	for _, want := range []string{
+		"workspaceMember",
 		"external := buildAgentFixExternal(row)",
 		"!row.HasNormalTask",
 		`external.MappedStatus != "done"`,
@@ -156,6 +162,49 @@ func TestOperationsFeedUsesBindingSpineWithoutAssessmentTaskPollution(t *testing
 		if !strings.Contains(handlerChunk, want) {
 			t.Fatalf("ListWorkspaceAgentFixes handler missing no-task done filter %q\n---\n%s", want, handlerChunk)
 		}
+	}
+	for _, forbidden := range []string{
+		"accessibleAgentIDs",
+		"row.AgentID.Valid",
+	} {
+		if strings.Contains(handlerChunk, forbidden) {
+			t.Fatalf("ListWorkspaceAgentFixes must not apply per-Agent visibility filter %q\n---\n%s", forbidden, handlerChunk)
+		}
+	}
+}
+
+func TestOperationsFeedFiltersBusinessStatusBeforeRowCap(t *testing.T) {
+	sql, err := os.ReadFile("../../pkg/db/queries/agent.sql")
+	if err != nil {
+		t.Fatalf("read agent.sql: %v", err)
+	}
+	chunk := sqlSection(t, string(sql), "ListWorkspaceAgentFixes")
+	for _, want := range []string{
+		"i.status = 'done'",
+		"sqlc.narg('external_status')::text IS NULL",
+		"fib.external_status_label = sqlc.narg('external_status')::text",
+		"LIMIT 10000",
+	} {
+		if !strings.Contains(chunk, want) {
+			t.Fatalf("ListWorkspaceAgentFixes must prefilter the reporting pool with %q\n---\n%s", want, chunk)
+		}
+	}
+	if strings.Index(chunk, "fib.external_status_label = sqlc.narg('external_status')::text") > strings.Index(chunk, "LIMIT 10000") {
+		t.Fatalf("external status filter must run before the row cap\n---\n%s", chunk)
+	}
+}
+
+func TestFeishuStatusOptionsAreWorkspaceMemberReadable(t *testing.T) {
+	src, err := os.ReadFile("../handler/feishu_project.go")
+	if err != nil {
+		t.Fatalf("read feishu_project.go: %v", err)
+	}
+	chunk := sourceFunction(t, string(src), "GetFeishuProjectIssueStatuses")
+	if !strings.Contains(chunk, "workspaceMember") {
+		t.Fatalf("status options must be readable by every workspace member\n---\n%s", chunk)
+	}
+	if strings.Contains(chunk, "requireWorkspaceRole") {
+		t.Fatalf("status options must not require owner/admin\n---\n%s", chunk)
 	}
 }
 

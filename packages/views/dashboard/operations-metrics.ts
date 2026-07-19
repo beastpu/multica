@@ -60,9 +60,22 @@ export function deriveAttribution(fix: AgentFixRecord): string {
   return prediction;
 }
 
+export type RepairMethod = "ai_delivered" | "ai_assisted" | "unknown";
+
+// The detail table deliberately exposes a compact, operator-facing repair
+// method instead of every internal attribution state. A passed implementation
+// comparison is assisted even when legacy attribution recorded human delivery;
+// missing comparison evidence still degrades to "unknown".
+export function repairMethod(fix: AgentFixRecord): RepairMethod {
+  const role = deliveryRole(fix);
+  if (role === "direct") return "ai_delivered";
+  if (role === "assisted") return "ai_assisted";
+  return "unknown";
+}
+
 export function isAiDelivered(fix: AgentFixRecord): boolean {
-  const attribution = deriveAttribution(fix);
-  return attribution === "ai_delivered" || attribution === "ai_assisted";
+  const role = deliveryRole(fix);
+  return role === "direct" || role === "assisted";
 }
 
 // AI quality predictions that count as "已判定" (the assessment reached a
@@ -86,8 +99,8 @@ export function isPendingJudgement(fix: AgentFixRecord): boolean {
 // ---------------------------------------------------------------------------
 // Distribution buckets — the reconciliation layer.
 //
-// The analysis distributions, the detail filters, and the drill-downs must
-// all agree with the KPI numerators, so they share these bucket functions.
+// The KPI drawers, detail filters, and drill-downs must agree with the KPI
+// numerators, so they share these bucket functions.
 // Rows without a COMPLETED assessment go into a dedicated "unassessed" bucket
 // instead of polluting "unknown"/"证据不足": an unfinished assessment is a
 // queue state, not a verdict. With that split, the quality card's "无法判断"
@@ -120,8 +133,8 @@ export function attributionBucket(fix: AgentFixRecord): string {
 // ---------------------------------------------------------------------------
 // Access-blocked warning classification.
 //
-// Used only by the blocked-analysis card (computeBlockedStats) — NOT by the
-// quality-pipeline gate. Production agents emit drifting variants
+// Used by blocker breakdowns — not by the quality-pipeline gate. Production
+// agents emit drifting variants
 // ("p4_lookup_unavailable_for_candidate_cls", ...), so classify by FAMILY.
 // ---------------------------------------------------------------------------
 
@@ -156,13 +169,13 @@ export function blockedWarningFamily(warning: string): BlockedFamily | null {
 
 // ---------------------------------------------------------------------------
 // Assessable AI output — the quality-pipeline gate (verifiable → judged →
-// passed, and the coverage numerator).
+// passed).
 //
 // Quality is about the PLAN: the assessment judges whether the AI's shelved
 // fix / proposal is correct by reading the code — it does not need the fix to
 // have shipped. So the gate is just "completed assessment with an AI plan"; a
 // committed CL is NOT required. Delivery (did the plan actually ship?) is a
-// separate axis, measured by contribution + the delivery-composition bar.
+// separate axis, measured by contribution and delivery attribution.
 // Requiring a committed CL here used to drop ~30% of already-judged plans
 // (their commit evidence was unreachable), understating coverage badly.
 // ---------------------------------------------------------------------------
@@ -216,8 +229,116 @@ export function isVerifiableOutput(fix: AgentFixRecord): boolean {
   );
 }
 
-// Per-family counts of access-blocked completed assessments, for the analysis
-// card. A row counts once per family it hits (a row with both p4 and swarm
+// AI's role in one ticket's delivery — the single source for the composition
+// bar, the KPI loop, and the card-breakdown drawer, so their counts always
+// reconcile. "none" = no AI involvement (no plan artifact, not attributed).
+export type DeliveryRole = "direct" | "assisted" | "unconverted" | "none";
+
+export function deliveryRole(fix: AgentFixRecord): DeliveryRole {
+  const attribution = deriveAttribution(fix);
+  if (attribution === "ai_delivered") return "direct";
+  if (attribution === "ai_assisted") return "assisted";
+  // quality_prediction is the implementation-comparison verdict. A passing AI
+  // plan is therefore an equivalent human delivery even if an older assessment
+  // used a chronology-based attribution or omitted the inspected final CL from
+  // its structured arrays.
+  if (aiProducedPlan(fix) && qualityJudgement(fix) === "likely_correct") {
+    return "assisted";
+  }
+  return aiProducedPlan(fix) ? "unconverted" : "none";
+}
+
+// The canonical Operations participation predicate. Contribution, delivery
+// composition, rate denominators, and drawers all reuse this exact rule so
+// "AI 已处理" and "AI 参与" always reconcile.
+export function isAiParticipated(fix: AgentFixRecord): boolean {
+  return deliveryRole(fix) !== "none";
+}
+
+// The contribution opportunity pool is the issue's CURRENT Agent assignment,
+// not the agent from its latest task. New servers expose the current assignee
+// explicitly. Older servers omit both fields, so fall back to agent_id to keep
+// installed desktop clients useful during a staggered server rollout.
+export function isAssignedToAgent(fix: AgentFixRecord): boolean {
+  if (
+    fix.issue_assignee_type !== undefined ||
+    fix.issue_assignee_id !== undefined
+  ) {
+    return (
+      fix.issue_assignee_type === "agent" &&
+      (fix.issue_assignee_id ?? "").trim() !== ""
+    );
+  }
+  return fix.agent_id.trim() !== "";
+}
+
+// The quality drawer population: an eligible ticket that AI participated in
+// and whose assessment agent finished evaluating it. This deliberately also
+// contains `unknown` so operators can diagnose excluded outcomes; KPI
+// denominators apply qualityJudgement separately and only count explicit
+// pass / needs-changes / fail results.
+export function isAiParticipatedAndAssessed(fix: AgentFixRecord): boolean {
+  return (
+    isExternalDone(fix) &&
+    isAssignedToAgent(fix) &&
+    isAiParticipated(fix) &&
+    isAssessmentCompleted(fix)
+  );
+}
+
+export type UnconvertedReason =
+  | "evidence_unconfirmed"
+  | "human_delivered"
+  | "attribution_conflict";
+
+// Why an assigned ticket with a recognizable AI plan did not become a
+// confirmed AI delivery. These buckets are mutually exclusive and only apply
+// to the unconverted delivery role.
+export function unconvertedReason(
+  fix: AgentFixRecord,
+): UnconvertedReason | null {
+  if (deliveryRole(fix) !== "unconverted") return null;
+  const prediction =
+    fix.p4_assessment?.delivery_attribution_prediction?.trim() || "unknown";
+  if (prediction === "human_delivered") return "human_delivered";
+  if (prediction === "conflict") return "attribution_conflict";
+  return "evidence_unconfirmed";
+}
+
+export type NoPlanReason =
+  | "task_cancelled"
+  | "assessment_incomplete"
+  | "comment_only"
+  | "no_visible_output";
+
+// Primary reason an assigned ticket has no recognizable shelve/Swarm plan.
+// Cancellation wins first. An assessment that explicitly started but did not
+// complete is an assessment gap. Otherwise a completed task/assessment is
+// classified by the visible evidence it left. This ordering keeps the buckets
+// MECE while preserving older completed-task rows that predate assessments.
+export function noPlanReason(fix: AgentFixRecord): NoPlanReason | null {
+  if (deliveryRole(fix) !== "none") return null;
+  if (fix.task_status?.trim() === "cancelled") return "task_cancelled";
+  if (fix.p4_assessment && !isAssessmentCompleted(fix)) {
+    return "assessment_incomplete";
+  }
+  if (
+    fix.task_status?.trim() === "completed" ||
+    isAssessmentCompleted(fix)
+  ) {
+    return hasAgentPlanComment(fix) ? "comment_only" : "no_visible_output";
+  }
+  return "assessment_incomplete";
+}
+
+export function isExternalDone(fix: AgentFixRecord): boolean {
+  return (
+    fix.external?.done === true || fix.external?.mapped_status === "done"
+  );
+}
+
+// Per-family counts of access-blocked completed assessments. A row counts once
+// per family it hits (a row with both p4 and swarm
 // block warnings contributes to both), plus the completed total for shares.
 export interface BlockedStats {
   completed: number;
@@ -313,13 +434,11 @@ function rate(numerator: number, denominator: number): OperationsRate {
   };
 }
 
-// Delivery funnel counts. Stages are nested: passed ⊆ judged ⊆ verifiable ⊆
-// aiPlanned ⊆ aiEngaged; externalDone is the upstream gate. Each drop is one
-// process problem: engaged→planned = the agent proposed but never landed a
-// shelve/Swarm record; planned→verifiable = the assessment hasn't completed.
-// `verifiable` is the quality-pipeline pool (completed assessment with an AI
-// plan). Judgement is the AI quality analysis — there is no human review in
-// this flow.
+// Delivery funnel diagnostics. aiPlanned/verifiable describe artifact and
+// assessment progress; judged/passed describe explicit quality outcomes among
+// AI-participated rows. The two sequences intentionally overlap but are not
+// assumed to be nested because a structured attribution can exist without a
+// shelve/Swarm artifact in older records.
 export interface OperationsFunnel {
   total: number;
   externalDone: number;
@@ -333,52 +452,50 @@ export interface OperationsFunnel {
   passed: number;
 }
 
-// A MECE partition of 外部完成 (every shipped ticket lands in exactly one
-// bucket) by AI's role, for the delivery-composition stacked bar:
+// A MECE partition of the page's eligible reporting pool by AI delivery role:
 //   directDelivered + assisted + unconverted + notParticipated === externalDone
-// participation = directDelivered + assisted + unconverted (AI was involved);
-// contribution  = directDelivered + assisted (AI's work reached delivery).
+// participation = directDelivered + assisted + unconverted (AI was involved).
 export interface DeliveryComposition {
   directDelivered: number; // AI's CL is the final CL (ai_delivered)
   assisted: number; // human shipped an AI-equivalent CL (ai_assisted)
-  unconverted: number; // AI produced a plan but it did not reach delivery
+  unconverted: number; // AI plan has no verified equivalent final delivery
   notParticipated: number; // shipped with no AI involvement at all
 }
 
 export interface OperationsKpis {
   funnel: OperationsFunnel;
-  // MECE breakdown of 外部完成 by AI role — backs the composition bar.
+  // MECE breakdown of eligible reporting rows by AI role.
   composition: DeliveryComposition;
-  // AI 贡献率：AI 产出了方案(shelve/Swarm review,或被归因交付) / 外部完成。
-  // Artifact-driven, so evidence blocks can't suppress it. Its numerator is the
-  // SAME count as coverageRate's denominator, making the three headline cards a
-  // strict nesting chain: produced ⊇ judged ⊇ passed — each card's denominator
-  // is the previous card's numerator, so their numerators can never appear to
-  // contradict each other across cards.
+  // AI repair contribution: assigned-to-Agent rows with a recognizable AI
+  // plan / all rows currently assigned to an Agent.
   contributionRate: OperationsRate;
-  // AI 方案通过率：通过(likely_correct) / 已判定。One plan-quality rate over the
-  // full judged pool — it does NOT require a committed CL. Committed-CL evidence
-  // is unreliable (agents verify delivery via read-only P4 describe but write
-  // the CL into prose, not the structured field), so gating pass on it dropped
-  // real passes; and delivery already lives in contribution / the composition
-  // bar. Keeping ONE rate (not a channel split) also sidesteps the "attribution
-  // and quality share a source → split denominator reads 100% forever" trap.
-  passRate: OperationsRate;
-  // 评估覆盖率：已判定 / AI 参与。上面几个数有多可信——覆盖率低说明大量 AI
-  // 产出没能被验证(证据受阻),通过率只建立在少数可见样本上。
-  coverageRate: OperationsRate;
+  // Shared assessment outcome count: assigned rows where AI participated and
+  // produced an explicit quality judgement.
+  // Unknown/unrecognised results stay visible in the drawer but are excluded.
+  judgedCount: number;
+  // Explicitly judged AI-handled plans / all AI-handled rows. This makes the
+  // coverage numerator the next stage's denominator.
+  assessmentRate: OperationsRate;
+  // AI-marked pass / all explicitly judged AI-handled plans.
+  qualityRate: OperationsRate;
+  // Passing direct AI deliveries / all passing AI-handled plans.
+  automaticShare: OperationsRate;
+  // Passing AI-assisted plans / all explicitly judged AI-handled plans.
+  // A passing comparison establishes implementation equivalence, so every
+  // non-direct pass is assisted even if a legacy attribution field disagrees.
+  assistedRate: OperationsRate;
   // Demoted data-health counts (rendered as a muted footnote, not a headline
-  // card): AI produced no record (no-output + plan-no-record) / assessment
-  // completed without a verdict.
-  noOutput: number;
-  unjudged: number;
+  // card): rows whose assessment hasn't completed (the queue backlog) and
+  // done tickets missing a recorded human CL (work-item hygiene, not an AI
+  // defect). Completed assessment outcomes live in the KPI drawers.
+  unassessed: number;
+  missingExternalCl: number;
 }
 
 export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   let externalDone = 0;
   let aiEngaged = 0;
   let aiPlanned = 0;
-  let participatedAll = 0;
   let directDelivered = 0;
   let assisted = 0;
   let unconverted = 0;
@@ -386,47 +503,47 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
   let verifiable = 0;
   let judged = 0;
   let passed = 0;
-  let noOutput = 0;
-  let unjudged = 0;
+  let unassessed = 0;
+  let missingExternalCl = 0;
+  let handled = 0;
+  let automatic = 0;
+  let assistedPassed = 0;
   for (const fix of rows) {
-    const done = fix.external?.done === true;
-    if (done) externalDone += 1;
-    const attribution = deriveAttribution(fix);
-    if (attribution === AI_NO_OUTPUT || attribution === AI_PLAN_NO_RECORD) {
-      noOutput += 1;
-    }
-    const contributed =
-      attribution === "ai_delivered" || attribution === "ai_assisted";
+    const done = isExternalDone(fix);
+    if (!done || !isAssignedToAgent(fix)) continue;
+    externalDone += 1;
+    if (fix.p4_assessment?.assessment_status !== "completed") unassessed += 1;
+    if (hasMissingExternalClWarning(fix)) missingExternalCl += 1;
     const planned = aiProducedPlan(fix);
     if (planned) aiPlanned += 1;
     // Engagement is looser than participation: a comment-only plan counts as
     // the agent showing up (the funnel's engaged→planned drop), but not as
     // artifact-driven participation.
     if (planned || hasAgentPlanComment(fix)) aiEngaged += 1;
-    // Participation counts contribution too: an ai_delivered row whose shelve
-    // wasn't captured in ai_shelved_cls must still count as involvement, so
-    // contribution ⊆ participation always holds.
-    const participated = planned || contributed;
-    if (participated) participatedAll += 1;
-    if (done) {
-      if (attribution === "ai_delivered") directDelivered += 1;
-      else if (attribution === "ai_assisted") assisted += 1;
-      else if (participated) unconverted += 1;
-      else notParticipated += 1;
-    }
-    const completed = fix.p4_assessment?.assessment_status === "completed";
+    // Delivery role is also the canonical contribution/pickup predicate.
+    const role = deliveryRole(fix);
+    const participated = role !== "none";
+    if (participated) handled += 1;
+    if (role === "direct") directDelivered += 1;
+    else if (role === "assisted") assisted += 1;
+    else if (role === "unconverted") unconverted += 1;
+    else notParticipated += 1;
     const quality = qualityJudgement(fix);
-    if (completed && quality === "") unjudged += 1;
-    if (!isVerifiableOutput(fix)) continue;
-    verifiable += 1;
-    if (quality !== "") {
-      judged += 1;
-      if (quality === "likely_correct") passed += 1;
+    if (isVerifiableOutput(fix)) verifiable += 1;
+    if (!participated || quality === "") continue;
+    judged += 1;
+    // Automatic repair requires both direct AI delivery and a passing quality
+    // judgement. A direct submission with unknown/failed quality is not an
+    // automatic repair success.
+    if (role === "direct" && quality === "likely_correct") automatic += 1;
+    if (quality === "likely_correct" && role === "assisted") {
+      assistedPassed += 1;
     }
+    if (quality === "likely_correct") passed += 1;
   }
   return {
     funnel: {
-      total: rows.length,
+      total: externalDone,
       externalDone,
       aiEngaged,
       aiPlanned,
@@ -435,15 +552,126 @@ export function computeOperationsKpis(rows: AgentFixRecord[]): OperationsKpis {
       passed,
     },
     composition: { directDelivered, assisted, unconverted, notParticipated },
-    // participatedAll is deliberately the numerator here AND coverageRate's
-    // denominator — the nesting chain (produced ⊇ judged ⊇ passed) depends on
-    // these two cards sharing one count.
-    contributionRate: rate(participatedAll, externalDone),
-    passRate: rate(passed, judged),
-    coverageRate: rate(judged, participatedAll),
-    noOutput,
-    unjudged,
+    contributionRate: rate(handled, externalDone),
+    judgedCount: judged,
+    assessmentRate: rate(judged, handled),
+    qualityRate: rate(passed, judged),
+    automaticShare: rate(automatic, passed),
+    assistedRate: rate(assistedPassed, judged),
+    unassessed,
+    missingExternalCl,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Evidence derivation — the normalized P4/Swarm evidence view over one row.
+//
+// Structured assessment fields win; legacy comment-regex extraction is the
+// fallback for rows written before the assessment pipeline existed. Shared by
+// the detail table cells and drawers.
+// ---------------------------------------------------------------------------
+
+function compactList(values: Array<string | number> | undefined): string {
+  return (values ?? [])
+    .map((v) => String(v).trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function extractToken(text: string, patterns: RegExp[]): string {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return "";
+}
+
+export function derivedEvidence(fix: AgentFixRecord) {
+  const comment = fix.last_comment ?? "";
+  const p4 = fix.p4_assessment;
+  const reviewChanges = compactList(
+    (p4?.swarm_reviews ?? []).flatMap((review) => review.changes ?? []),
+  );
+  const reviewCommits = compactList(
+    (p4?.swarm_reviews ?? []).flatMap((review) => review.commits ?? []),
+  );
+  const swarm =
+    firstSwarmReview(fix) ||
+    extractToken(comment, [
+      /\b(SW-\d+)\b/i,
+      /\bswarm(?:\s+review)?[:#\s]+(\d+)\b/i,
+    ]);
+  const shelve =
+    compactList(p4?.ai_shelved_cls) ||
+    extractToken(comment, [
+      /\bshelv(?:e|ed)?(?:\s+CL)?[:#\s]+(\d+)\b/i,
+      /\bpending\s+P4\s+CL[:#\s]+(\d+)\b/i,
+      /\bCL[:#\s]+(\d+)\b[^\n\r]*(?:shelv(?:e|ed)|已\s*shelve|已\s*shelved)\b/i,
+    ]);
+  const finalCl =
+    String(fix.external?.final_cl ?? "").trim() ||
+    compactList(p4?.external_committed_cls) ||
+    compactList(p4?.swarm_committed_cls);
+  return {
+    workstream:
+      String(p4?.workstream ?? "").trim() ||
+      String(fix.external?.workstream ?? "").trim() ||
+      firstSwarmReviewField(fix, "swarm_branch"),
+    swarm,
+    shelve,
+    swarmChanges: compactList(p4?.swarm_change_cls) || reviewChanges,
+    swarmCommits: compactList(p4?.swarm_committed_cls) || reviewCommits,
+    swarmBranch: firstSwarmReviewField(fix, "swarm_branch"),
+    eventType: firstSwarmReviewField(fix, "event_type"),
+    sentAt: firstSwarmReviewField(fix, "sent_at"),
+    finalCl,
+  };
+}
+
+function firstSwarmReview(fix: AgentFixRecord): string {
+  const review = fix.p4_assessment?.swarm_reviews?.find(
+    (r) => String(r.review_id ?? r.id ?? "").trim().length > 0,
+  );
+  return String(review?.review_id ?? review?.id ?? "").trim();
+}
+
+// The URL of the first swarm review, when the webhook payload carried one —
+// preferred over rebuilding from the connection base.
+export function firstSwarmReviewUrl(fix: AgentFixRecord): string {
+  const review = fix.p4_assessment?.swarm_reviews?.find(
+    (r) => String(r.url ?? "").trim().length > 0,
+  );
+  return String(review?.url ?? "").trim();
+}
+
+function firstSwarmReviewField(
+  fix: AgentFixRecord,
+  field: "swarm_branch" | "event_type" | "sent_at",
+): string {
+  const review = fix.p4_assessment?.swarm_reviews?.find(
+    (r) => String(r[field] ?? "").trim().length > 0,
+  );
+  return String(review?.[field] ?? "").trim();
+}
+
+function hasP4Assessment(fix: AgentFixRecord): boolean {
+  const p4 = fix.p4_assessment;
+  if (!p4) return false;
+  return Boolean(
+      p4.assessment_status ||
+      p4.delivery_attribution_prediction ||
+      p4.quality_prediction ||
+      p4.workstream ||
+      derivedEvidence(fix).swarm ||
+      derivedEvidence(fix).shelve ||
+      derivedEvidence(fix).finalCl,
+  );
+}
+
+export function hasP4Signal(fix: AgentFixRecord): boolean {
+  if (hasP4Assessment(fix)) return true;
+  const evidence = derivedEvidence(fix);
+  return Boolean(evidence.swarm || evidence.shelve || evidence.finalCl);
 }
 
 // Builds the Swarm links for evidence chips. `base` is the workspace's Helix

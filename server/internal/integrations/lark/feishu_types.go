@@ -1,6 +1,10 @@
 package lark
 
-import "github.com/jackc/pgx/v5/pgtype"
+import (
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
+)
 
 // This file holds the Feishu adapter's native-ish inbound/outbound value
 // types. The WS connector decodes a raw Lark event into an InboundMessage;
@@ -22,6 +26,11 @@ type InboundMessage struct {
 	MessageID    string
 	SenderOpenID OpenID
 	Body         string
+	// Content is the raw msg_type-specific JSON string Lark sends in
+	// event.message.content. Text/post decoding consumes it immediately; media
+	// ingestion keeps it so the adapter can extract image_key/file_key before
+	// translating to channel.InboundMessage.
+	Content string
 	// ForceFreshSession marks this dispatch as a one-off fresh start: the
 	// daemon should skip prior session resume when it claims the resulting
 	// chat task.
@@ -55,9 +64,21 @@ type InboundMessage struct {
 	// THIS, not the enriched Body.
 	CommandBody string
 
+	// MediaRefs are downloaded Feishu resources already persisted into Multica
+	// object storage. feishuChannel fills these before handing the normalized
+	// message to the channel engine.
+	MediaRefs []channel.MediaRef
+
 	// CardAction is populated for Multica-owned interactive-card callbacks
 	// whose business semantics should not be routed as ordinary chat text.
 	CardAction *InboundCardAction
+
+	// CardActionResponseJSON is a pre-rendered card.action.trigger callback
+	// response for card clicks that are dispatched as ordinary chat text
+	// (chat confirmation buttons). After the dispatch succeeds, the channel
+	// copies it into DispatchResult so the connector's ACK replaces the card
+	// and the buttons stop inviting another click.
+	CardActionResponseJSON string
 }
 
 type InboundCardAction struct {
@@ -66,6 +87,19 @@ type InboundCardAction struct {
 	// successful action so stale buttons disappear from the chat.
 	CardMessageID     string
 	IssueConfirmation *IssueConfirmationCardAction
+	ChatAsk           *ChatAskCardAction
+}
+
+// ChatAskCardAction is a click on a structured chat ask card
+// (docs/chat-ask-structured-signal-spec.md). The card handler validates it
+// against the stored chat_ask row; on a valid click the channel dispatches
+// Reply into the chat session as the user's answer.
+type ChatAskCardAction struct {
+	AskID         string
+	Choice        string
+	Reply         string
+	AllowedOpenID string
+	ExpiresAtUnix int64
 }
 
 type IssueConfirmationCardAction struct {
@@ -120,4 +154,10 @@ type DispatchResult struct {
 	// message PATCH calls can return success without updating the clicked
 	// card in the user's client.
 	CardActionResponseJSON string
+	// DispatchAsChatText tells the channel that, after this card-action
+	// verdict, the message body should ALSO be dispatched through the
+	// ordinary chat handler (a valid chat-ask click carries the user's
+	// answer as text). False for stale clicks: expired / superseded /
+	// already-answered asks must not re-enter the session.
+	DispatchAsChatText bool
 }

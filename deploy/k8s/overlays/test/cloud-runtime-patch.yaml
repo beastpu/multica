@@ -1,0 +1,36 @@
+# Points multica-server at the standalone Fleet service (deploy fleet.yaml in
+# this overlay). Node provisioning + mcn_ token authority live in Fleet now, so
+# the server needs no cloud-runtime RBAC — it just proxies to Fleet over the
+# in-cluster network with a shared service token.
+#
+# The shared server↔Fleet secret MULTICA_FLEET_SERVICE_TOKEN arrives via the
+# out-of-band `multica-fleet` Secret (see README, cloud-runtime section).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multica-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          env:
+            - name: MULTICA_FEATURE_FLAGS_FILE
+              value: /etc/multica/feature-flags/feature-flags.yaml
+            # In-cluster Fleet Service (fleet.yaml). Enables the remote
+            # cloud-runtime client + the remote mcn_ PAT verifier.
+            - name: MULTICA_CLOUD_FLEET_URL
+              value: http://multica-fleet:8090
+            - name: MULTICA_FLEET_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: multica-fleet
+                  key: MULTICA_FLEET_SERVICE_TOKEN
+          volumeMounts:
+            - name: feature-flags
+              mountPath: /etc/multica/feature-flags
+              readOnly: true
+      volumes:
+        - name: feature-flags
+          configMap:
+            name: multica-feature-flags

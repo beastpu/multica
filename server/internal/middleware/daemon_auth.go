@@ -76,7 +76,7 @@ func WithDaemonContext(ctx context.Context, workspaceID, daemonID string) contex
 // branch — same fail-closed contract as the regular Auth middleware.
 //
 // Cache misses fall back to the original DB-backed behavior.
-func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.DaemonTokenCache, cloudPAT *auth.CloudPATVerifier) func(http.Handler) http.Handler {
+func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.DaemonTokenCache, cloudPAT CloudPATVerifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source is server-set only — strip any

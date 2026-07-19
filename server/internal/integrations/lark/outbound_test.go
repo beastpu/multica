@@ -33,6 +33,8 @@ type fakePatcherQueries struct {
 	created         []CreateOutboundCardMessageParams
 	createReturn    OutboundCardMessage
 	statusUpdates   []UpdateOutboundCardStatusParams
+
+	askMessageUpdates []db.UpdateChatAskChannelMessageParams
 }
 
 func (f *fakePatcherQueries) GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error) {
@@ -66,6 +68,12 @@ func (f *fakePatcherQueries) UpdateLarkOutboundCardStatus(ctx context.Context, a
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.statusUpdates = append(f.statusUpdates, arg)
+	return nil
+}
+func (f *fakePatcherQueries) UpdateChatAskChannelMessage(ctx context.Context, arg db.UpdateChatAskChannelMessageParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.askMessageUpdates = append(f.askMessageUpdates, arg)
 	return nil
 }
 
@@ -165,6 +173,9 @@ func (f *fakeAPIClient) GetMessage(ctx context.Context, creds InstallationCreden
 }
 func (f *fakeAPIClient) ListChatMessages(ctx context.Context, creds InstallationCredentials, p ListMessagesParams) ([]LarkMessage, error) {
 	return nil, nil
+}
+func (f *fakeAPIClient) DownloadMessageResource(ctx context.Context, creds InstallationCredentials, p DownloadResourceParams) (DownloadedResource, error) {
+	return DownloadedResource{}, nil
 }
 func (f *fakeAPIClient) BatchGetUsers(ctx context.Context, creds InstallationCredentials, openIDs []string) (map[string]string, error) {
 	return nil, nil
@@ -697,6 +708,65 @@ func TestPatcherRepliesInThreadWhenTriggerWasInThread(t *testing.T) {
 	got := api.textSent[0].ReplyTarget
 	if got.MessageID != "om_trigger" || !got.InThread {
 		t.Errorf("expected thread reply target {om_trigger, InThread:true}; got %+v", got)
+	}
+}
+
+// TestPatcherTopicSessionSendsToRealChatID pins the composite-key outbound
+// contract: a per-topic session stores "chat:thread" as channel_chat_id (the
+// isolation key), so the send target MUST come from the binding config's real
+// chat id — the raw key is not a valid Lark chat id.
+func TestPatcherTopicSessionSendsToRealChatID(t *testing.T) {
+	p, q, api := newTestPatcher(t)
+	q.binding.ChannelChatID = "oc_test_chat:omt_topic1"
+	q.binding.Config = []byte(`{"chat_id":"oc_test_chat"}`)
+	q.binding.ChatType = "group"
+	q.binding.LastMessageID = pgtype.Text{String: "om_trigger", Valid: true}
+	q.binding.LastThreadID = pgtype.Text{String: "omt_topic1", Valid: true}
+	taskID := uuidFromString(t, "eeaaaaaa-eeaa-eeaa-eeaa-eeeeeeeeeeee")
+
+	p.handleEvent(events.Event{
+		Type:          protocol.EventChatDone,
+		TaskID:        uuidString(taskID),
+		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		Payload:       protocol.ChatDonePayload{Content: "topic reply"},
+	})
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.textSent) != 1 {
+		t.Fatalf("expected one text send; got %d", len(api.textSent))
+	}
+	got := api.textSent[0]
+	if got.ChatID != "oc_test_chat" {
+		t.Errorf("chat_id = %q, want the real chat id from binding config", got.ChatID)
+	}
+	if got.ReplyTarget.MessageID != "om_trigger" || !got.ReplyTarget.InThread {
+		t.Errorf("expected thread reply target {om_trigger, InThread:true}; got %+v", got.ReplyTarget)
+	}
+}
+
+// TestPatcherLegacyBindingFallsBackToKey pins backward compatibility: rows
+// created before topic isolation have the raw chat id as the key and "{}" as
+// config — the send target must stay the key itself.
+func TestPatcherLegacyBindingFallsBackToKey(t *testing.T) {
+	p, q, api := newTestPatcher(t)
+	q.binding.Config = []byte(`{}`)
+	taskID := uuidFromString(t, "eebbbbbb-eebb-eebb-eebb-eeeeeeeeeeee")
+
+	p.handleEvent(events.Event{
+		Type:          protocol.EventChatDone,
+		TaskID:        uuidString(taskID),
+		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		Payload:       protocol.ChatDonePayload{Content: "legacy reply"},
+	})
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.textSent) != 1 {
+		t.Fatalf("expected one text send; got %d", len(api.textSent))
+	}
+	if got := api.textSent[0].ChatID; got != "oc_test_chat" {
+		t.Errorf("chat_id = %q, want the raw binding key for legacy rows", got)
 	}
 }
 

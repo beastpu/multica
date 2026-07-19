@@ -39,7 +39,7 @@ func flattenContent(msgType, rawContent string) string {
 		return "[File]"
 	case "audio":
 		return "[Audio]"
-	case "media":
+	case "media", "video":
 		return "[Video]"
 	case "sticker":
 		return "[Sticker]"
@@ -142,6 +142,11 @@ type larkPostSpan struct {
 	Href     string `json:"href"`
 	UserID   string `json:"user_id"`
 	UserName string `json:"user_name"`
+	ImageKey string `json:"image_key"`
+	FileKey  string `json:"file_key"`
+	FileName string `json:"file_name"`
+	Name     string `json:"name"`
+	MimeType string `json:"mime_type"`
 }
 
 // flattenPostContent flattens a received `post` body.content into plain

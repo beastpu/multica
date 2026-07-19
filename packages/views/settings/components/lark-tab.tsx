@@ -236,7 +236,7 @@ function InstallationRow({
         <ActorAvatar
           actorType="agent"
           actorId={installation.agent_id}
-          size={32}
+          size="lg"
           enableHoverCard
           profileLink
         />
@@ -276,9 +276,14 @@ function InstallationRow({
 // button is the entry point.
 //
 // Visibility rules, in order:
-//   1. Users who cannot manage this agent see nothing. The backend uses
-//      the same rule: workspace owner/admin OR this agent's owner.
-//   2. If this agent ALREADY has an active installation, managers see
+//   1. Only the agent's owner or a workspace owner/admin see anything —
+//      the backend authorizes `POST /lark/install/begin`, the status
+//      poll, AND disconnect with canManageAgent (agent owner OR ws
+//      owner/admin; see server/internal/handler/lark.go, MUL-4213), so
+//      the gate here mirrors that. `agentOwnerId` is what lets a
+//      non-admin owner through; when it is omitted the button stays
+//      workspace owner/admin-only.
+//   2. If this agent ALREADY has an active installation, they see
 //      the "Connected + Manage in Lark" badge — regardless of
 //      install_supported. install_supported governs only whether NEW
 //      scan-installs can complete; already-installed bots stay manageable
@@ -298,6 +303,13 @@ export function LarkAgentBindButton({
 }: {
   agentId: string;
   agentName?: string;
+  /**
+   * The bound agent's owner (`agent.owner_id`). When it matches the
+   * current user, the button treats them as able to manage the bot even
+   * if they are not a workspace owner/admin — mirroring the backend's
+   * canManageAgent authorization (MUL-4213). Omit it to keep the button
+   * workspace owner/admin-only.
+   */
   agentOwnerId?: string | null;
   className?: string;
   /**
@@ -334,10 +346,13 @@ export function LarkAgentBindButton({
     enabled: !!wsId,
   });
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManage =
-    currentMember?.role === "owner" ||
-    currentMember?.role === "admin" ||
-    (!!agentOwnerId && agentOwnerId === user?.id);
+  const isWorkspaceAdmin =
+    currentMember?.role === "owner" || currentMember?.role === "admin";
+  const isAgentOwner =
+    !!user?.id && agentOwnerId != null && agentOwnerId === user.id;
+  // Mirror the backend canManageAgent gate: the agent's owner OR a
+  // workspace owner/admin may bind/manage the bot (MUL-4213).
+  const canManage = isWorkspaceAdmin || isAgentOwner;
 
   if (!canManage) return null;
 
@@ -481,10 +496,10 @@ function LarkAgentBotStatusRow({
 // (new tab). Disconnect removes the installation after a confirm dialog.
 //
 // Visibility rules carry over from the parent `LarkAgentBindButton`:
-// only users who can manage this agent ever reach this component, so the
-// unbind affordance is unconditionally shown — the backend gates DELETE on
-// the same rule and would 403 anyone else, which makes a redundant
-// `canManage` check here dead code.
+// only the agent's owner or a workspace owner/admin ever reach this
+// component, so the unbind affordance is unconditionally shown — the
+// backend authorizes DELETE with the same canManageAgent check (MUL-4213)
+// and would 403 anyone else, which makes a redundant gate here dead code.
 //
 // The dev-console host depends on which Lark cloud the bot lives on:
 // Feishu (mainland) bots are managed at open.feishu.cn, Lark

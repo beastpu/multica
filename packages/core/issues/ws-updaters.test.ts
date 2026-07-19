@@ -76,6 +76,7 @@ const baseIssue: Issue = {
   start_date: null,
   due_date: null,
   metadata: {},
+  properties: {},
   labels: [labelA],
   created_at: "2025-01-01T00:00:00Z",
   updated_at: "2025-01-01T00:00:00Z",
@@ -296,6 +297,23 @@ describe("project progress invalidation", () => {
   });
 });
 
+describe("onIssueCreated — carries the label snapshot into list cache", () => {
+  it("keeps the created issue's labels so members other than the creator render it already labeled", () => {
+    // The backend now attaches labels in the create transaction and echoes
+    // them on the issue:created event. Guard that the cache insert doesn't
+    // strip them — otherwise online members would see the new issue blank
+    // until a refetch (staleTime: Infinity means no self-heal).
+    const qc = new QueryClient();
+    qc.setQueryData<ListIssuesCache>(issueKeys.list(WS_ID), makeListCache());
+
+    onIssueCreated(qc, WS_ID, { ...baseIssue, labels: [labelA, labelB] });
+
+    const cache = qc.getQueryData<ListIssuesCache>(issueKeys.list(WS_ID));
+    const cached = cache?.byStatus.todo?.issues.find((i) => i.id === ISSUE_ID);
+    expect(cached?.labels).toEqual([labelA, labelB]);
+  });
+});
+
 describe("onIssueUpdated — position move is surgical, not a list refetch", () => {
   let qc: QueryClient;
 
@@ -493,6 +511,36 @@ describe("onIssueUpdated — off-screen status change reconciles column counts",
     );
 
     expectInvalidated(qc, issueKeys.myAll(WS_ID));
+  });
+
+  it("moves the bucket counts AND refetches when the off-screen issue's base entity is known", () => {
+    // The detail cache knows the pre-change entity, so the coordinator moves
+    // one unit of total between the buckets instantly — but the row itself
+    // can only be placed into done's loaded window by the server, and with
+    // staleTime: Infinity this invalidation is the only reconcile channel.
+    // (Before the fix this branch moved counts with no stale key: an open
+    // board showed "done 61" with 60 visible rows until something else
+    // happened to invalidate the list.)
+    const offScreen: Issue = { ...baseIssue, id: "off-screen", status: "in_review" };
+    qc.setQueryData<Issue>(issueKeys.detail(WS_ID, "off-screen"), offScreen);
+    qc.setQueryData<ListIssuesCache>(issueKeys.list(WS_ID), {
+      byStatus: {
+        in_review: { issues: [], total: 1 },
+        done: { issues: [], total: 60 },
+      },
+    });
+
+    onIssueUpdated(
+      qc,
+      WS_ID,
+      { ...offScreen, status: "done" },
+      { statusChanged: true },
+    );
+
+    const list = qc.getQueryData<ListIssuesCache>(issueKeys.list(WS_ID));
+    expect(list?.byStatus.in_review?.total).toBe(0);
+    expect(list?.byStatus.done?.total).toBe(61);
+    expectInvalidated(qc, issueKeys.list(WS_ID));
   });
 
   it("does NOT refetch when the status-changed issue is loaded (surgical patch suffices)", () => {

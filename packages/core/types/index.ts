@@ -8,6 +8,9 @@ export type {
   AgentInvocationTarget,
   AgentInvocationTargetInput,
   AgentTask,
+  TaskAttribution,
+  AttributionUser,
+  TaskEvidence,
   AgentActivityBucket,
   AgentRunCount,
   TaskFailureReason,
@@ -19,6 +22,7 @@ export type {
   CreateRuntimeProfileRequest,
   UpdateRuntimeProfileRequest,
   CreateAgentRequest,
+  AgentBuilderSession,
   AgentTemplate,
   AgentTemplateSummary,
   AgentTemplateSkillRef,
@@ -60,6 +64,7 @@ export type {
   RuntimeLocalSkillImportAction,
   RuntimeLocalSkillImportConflict,
   RuntimeLocalSkillSummary,
+	RuntimeLocalMcpServerSummary,
   RuntimeLocalSkillListRequest,
   CreateRuntimeLocalSkillImportRequest,
   RuntimeLocalSkillImportRequest,
@@ -71,8 +76,10 @@ export { RUNTIME_PROFILE_PROTOCOL_FAMILIES } from "./agent";
 export type { Workspace, WorkspaceRepo, WorkspaceCapability, Member, MemberRole, User, MemberWithUser, Invitation } from "./workspace";
 export type { InboxItem, InboxSeverity, InboxItemType, InboxWorkspaceUnread } from "./inbox";
 export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences, NotificationPreferenceResponse } from "./notification-preference";
-export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, Reaction } from "./comment";
-export type { Label, CreateLabelRequest, UpdateLabelRequest, ListLabelsResponse, IssueLabelsResponse } from "./label";
+export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, CommentTriggerOutcome, CommentTriggerStatus, Reaction } from "./comment";
+export type { Label, LabelResourceType, CreateLabelRequest, UpdateLabelRequest, ListLabelsResponse, IssueLabelsResponse, ResourceLabelsResponse } from "./label";
+export type { IssueProperty, IssuePropertyType, IssuePropertyOption, IssuePropertyConfig, IssuePropertyValue, IssuePropertyValues, CreatePropertyRequest, UpdatePropertyRequest, ListPropertiesResponse, IssuePropertiesResponse } from "./property";
+export { ISSUE_PROPERTY_TYPES, isKnownPropertyType } from "./property";
 export type {
   TimelineEntry,
   AssigneeFrequencyEntry,
@@ -90,14 +97,19 @@ export type { Attachment } from "./attachment";
 export { attachmentDownloadPath, attachmentIdFromDownloadURL, contentReferencesAttachment } from "./attachment-url";
 export type {
   ChatSession,
+  ChatLastMessage,
+  ChatPinnedAgent,
   ChatMessage,
   ChatMessagesPage,
   ChatPendingTask,
   PendingChatTaskItem,
   PendingChatTasksResponse,
+  HasPendingChatTasksResponse,
   SendChatMessageResponse,
   CancelledChatMessage,
   CancelTaskResponse,
+  ChatDraftRestore,
+  ChatDraftRestoresResponse,
 } from "./chat";
 export type { StorageAdapter } from "./storage";
 export type {
@@ -185,6 +197,7 @@ export type {
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
   ListAutopilotsResponse,
+  CronPreviewResponse,
   GetAutopilotResponse,
   ListAutopilotRunsResponse,
   WebhookDelivery,

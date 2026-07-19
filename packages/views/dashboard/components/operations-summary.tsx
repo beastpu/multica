@@ -1,16 +1,18 @@
 "use client";
 
+import { ChevronRight } from "lucide-react";
 import { useT } from "../../i18n";
-import type { OperationsKpis, OperationsRate } from "../operations-metrics";
+import type {
+  DeliveryComposition,
+  OperationsKpis,
+  OperationsRate,
+} from "../operations-metrics";
+import type { OperationsCardKey } from "./operations-drawers";
 
-// Headline KPI band for the operations page: three cards forming one strict
-// nesting chain — contribution (AI produced a plan / 外部完成) → coverage
-// (judged / AI produced) → pass rate (correct / judged). Each card's
-// denominator IS the previous card's numerator, so the numerators read as a
-// single shrinking pipeline (e.g. 149 → 80 → 50) and can never appear to
-// contradict each other across cards. Delivery attribution (direct/assisted)
-// lives in the analysis tab's attribution distribution; the funnel below
-// carries absolute counts and stage drop-offs.
+// Four operator-facing KPIs. Coverage measures pickup over the eligible pool;
+// assessment completion advances handled work into an explicit judgement;
+// quality advances judged work into passes, then automatic repair measures the
+// direct-delivery share of those passing fixes.
 
 function formatPercent(rate: OperationsRate): string {
   if (rate.value == null) return "—";
@@ -21,6 +23,10 @@ function RateCard({
   label,
   hint,
   rate,
+  // When set, the whole card is a button opening the breakdown drawer.
+  onClick,
+  clickHint,
+  className = "",
   // Optional extra datum under the hint (e.g. the independent-submission
   // count on the assisted card).
   footer,
@@ -28,148 +34,213 @@ function RateCard({
   label: string;
   hint: string;
   rate: OperationsRate;
+  onClick?: () => void;
+  clickHint?: string;
+  className?: string;
   footer?: string;
 }) {
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border bg-card p-4">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="flex items-baseline gap-2">
+  const inner = (
+    <>
+      <div className="text-sm font-semibold text-foreground">{label}</div>
+      <div className="text-xs leading-relaxed text-muted-foreground">
+        {hint}
+      </div>
+      <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span className="text-3xl font-semibold leading-none tabular-nums">
           {formatPercent(rate)}
         </span>
+        <span className="text-sm text-muted-foreground tabular-nums">
+          {rate.numerator} / {rate.denominator}
+        </span>
       </div>
-      <div className="text-xs text-muted-foreground">{hint}</div>
       {footer ? (
         <div className="border-t pt-2 text-xs text-muted-foreground">
           {footer}
         </div>
       ) : null}
+    </>
+  );
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        title={clickHint}
+        className={`group relative flex min-w-0 flex-col gap-1.5 p-3.5 text-left transition-colors hover:bg-muted/25 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${className}`}
+      >
+        <ChevronRight className="absolute right-3 top-3 h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+        {inner}
+      </button>
+    );
+  }
+  return (
+    <div className={`flex min-w-0 flex-col gap-1.5 p-3.5 ${className}`}>
+      {inner}
     </div>
+  );
+}
+
+// A MECE view over every eligible ticket. Confirmed assisted repair stays
+// separate from plans whose delivery relationship cannot be determined, while
+// tickets with no AI delivery role remain visible so the bar reconciles to the
+// full reporting denominator.
+function CompositionBar({
+  composition,
+  externalDone,
+}: {
+  composition: DeliveryComposition;
+  externalDone: number;
+}) {
+  const { t } = useT("usage");
+  const title = t(($) => $.operations.summary.composition_title);
+  const participated =
+    composition.directDelivered +
+    composition.assisted +
+    composition.unconverted;
+  const segments = [
+    {
+      key: "automatic",
+      label: t(($) => $.operations.summary.composition_direct),
+      count: composition.directDelivered,
+      className: "bg-chart-1",
+    },
+    {
+      key: "assisted",
+      label: t(($) => $.operations.summary.composition_assisted),
+      count: composition.assisted,
+      className: "bg-chart-2",
+    },
+    {
+      key: "unconverted",
+      label: t(($) => $.operations.summary.composition_unconverted),
+      count: composition.unconverted,
+      className: "bg-muted-foreground/45",
+    },
+    {
+      key: "not-participated",
+      label: t(($) => $.operations.summary.composition_not_participated),
+      count: composition.notParticipated,
+      className: "bg-muted-foreground/25",
+    },
+  ];
+  const pct = (count: number) =>
+    externalDone > 0
+      ? `${Math.round((count / externalDone) * 100)}%`
+      : "0%";
+
+  return (
+    <section
+      role="region"
+      aria-label={title}
+      className="rounded-lg border bg-card p-3.5"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-xs font-medium text-muted-foreground">{title}</h2>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {t(($) => $.operations.summary.composition_total, {
+            count: participated,
+            total: externalDone,
+          })}
+        </span>
+      </div>
+      {externalDone === 0 ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          {t(($) => $.operations.summary.composition_empty)}
+        </p>
+      ) : (
+        <>
+          <div
+            className="mt-2.5 flex h-2.5 overflow-hidden rounded-full bg-muted"
+            aria-hidden="true"
+          >
+            {segments
+              .filter((segment) => segment.count > 0)
+              .map((segment) => (
+                <span
+                  key={segment.key}
+                  className={segment.className}
+                  style={{ width: `${(segment.count / externalDone) * 100}%` }}
+                />
+              ))}
+          </div>
+          <div className="mt-2 grid gap-x-6 gap-y-1.5 sm:grid-cols-2 xl:grid-cols-4">
+            {segments.map((segment) => (
+              <div
+                key={segment.key}
+                className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+              >
+                <span className="inline-flex min-w-0 items-center gap-1.5">
+                  <span
+                    aria-hidden="true"
+                    className={`h-2 w-2 shrink-0 rounded-full ${segment.className}`}
+                  />
+                  <span className="leading-tight">{segment.label}</span>
+                </span>
+                <span className="shrink-0 tabular-nums">
+                  <span className="font-medium text-foreground">
+                    {segment.count}
+                  </span>{" "}
+                  · {pct(segment.count)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 
 export function OperationsSummary({
   kpis,
-  externalDoneBreakdown = [],
+  onCardClick,
 }: {
   kpis: OperationsKpis;
-  // Which external statuses make up the external-done stage (multiple raw
-  // statuses can map to done), largest first, e.g. 测试通过 291 · 已关闭 36.
-  externalDoneBreakdown?: Array<{ label: string; count: number }>;
+  onCardClick?: (card: OperationsCardKey) => void;
 }) {
   const { t } = useT("usage");
-  const { funnel } = kpis;
-  const stages = [
-    {
-      key: "external_done",
-      label: t(($) => $.operations.summary.stage_external_done),
-      count: funnel.externalDone,
-    },
-    {
-      key: "ai_engaged",
-      label: t(($) => $.operations.summary.stage_ai_engaged),
-      count: funnel.aiEngaged,
-    },
-    {
-      key: "ai_planned",
-      label: t(($) => $.operations.summary.stage_ai_planned),
-      count: funnel.aiPlanned,
-    },
-    {
-      key: "verifiable",
-      label: t(($) => $.operations.summary.stage_verifiable),
-      count: funnel.verifiable,
-    },
-    {
-      key: "judged",
-      label: t(($) => $.operations.summary.stage_judged),
-      count: funnel.judged,
-    },
-    {
-      key: "passed",
-      label: t(($) => $.operations.summary.stage_passed),
-      count: funnel.passed,
-    },
-  ];
-  const max = Math.max(1, ...stages.map((s) => s.count));
+  const { funnel, composition } = kpis;
   return (
-    <section className="grid gap-3">
-      <div className="grid gap-3 sm:grid-cols-3">
+    <section className="grid gap-2.5">
+      <div className="grid overflow-hidden rounded-lg border bg-card sm:grid-cols-2 xl:grid-cols-4">
         <RateCard
           label={t(($) => $.operations.summary.contribution_rate)}
-          hint={t(($) => $.operations.summary.contribution_rate_hint, {
-            num: kpis.contributionRate.numerator,
-            den: kpis.contributionRate.denominator,
-          })}
+          hint={t(($) => $.operations.summary.contribution_rate_hint)}
           rate={kpis.contributionRate}
+          onClick={onCardClick ? () => onCardClick("contribution") : undefined}
+          clickHint={t(($) => $.operations.drawer.card_hint)}
+          className="border-b sm:border-r xl:border-b-0"
         />
         <RateCard
-          label={t(($) => $.operations.summary.coverage_rate)}
-          hint={t(($) => $.operations.summary.coverage_rate_hint, {
-            num: kpis.coverageRate.numerator,
-            den: kpis.coverageRate.denominator,
-          })}
-          rate={kpis.coverageRate}
+          label={t(($) => $.operations.summary.assessment_rate)}
+          hint={t(($) => $.operations.summary.assessment_rate_hint)}
+          rate={kpis.assessmentRate}
+          className="border-b xl:border-b-0 xl:border-r"
         />
         <RateCard
-          label={t(($) => $.operations.summary.pass_rate)}
-          hint={t(($) => $.operations.summary.pass_rate_hint, {
-            num: kpis.passRate.numerator,
-            den: kpis.passRate.denominator,
-          })}
-          rate={kpis.passRate}
+          label={t(($) => $.operations.summary.quality_rate)}
+          hint={t(($) => $.operations.summary.quality_rate_hint)}
+          rate={kpis.qualityRate}
+          className="border-b sm:border-b-0 sm:border-r"
+        />
+        <RateCard
+          label={t(($) => $.operations.summary.automatic_rate)}
+          hint={t(($) => $.operations.summary.automatic_rate_hint)}
+          rate={kpis.automaticShare}
         />
       </div>
-      <div className="text-xs text-muted-foreground">
+      <CompositionBar
+        composition={composition}
+        externalDone={funnel.externalDone}
+      />
+      <div
+        className="justify-self-end text-[11px] text-muted-foreground tabular-nums"
+        title={t(($) => $.operations.summary.health_footnote_hint)}
+      >
         {t(($) => $.operations.summary.health_footnote, {
-          noOutput: kpis.noOutput,
-          unjudged: kpis.unjudged,
+          unassessed: kpis.unassessed,
+          missingCl: kpis.missingExternalCl,
         })}
-      </div>
-      <div className="rounded-lg border bg-card p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-xs font-medium text-muted-foreground">
-            {t(($) => $.operations.summary.funnel_title)}
-          </h2>
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {t(($) => $.operations.summary.funnel_total, {
-              count: funnel.total,
-            })}
-          </span>
-        </div>
-        <div className="mt-3 grid gap-2">
-          {stages.map((stage) => (
-            <div key={stage.key} className="grid gap-1">
-              <div className="grid grid-cols-[88px_minmax(0,1fr)_48px] items-center gap-3">
-                <span className="truncate text-xs text-muted-foreground">
-                  {stage.label}
-                </span>
-                <div className="h-2 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-primary"
-                    style={{
-                      width: `${Math.max(stage.count > 0 ? 4 : 0, (stage.count / max) * 100)}%`,
-                    }}
-                  />
-                </div>
-                <span className="text-right text-xs font-medium tabular-nums">
-                  {stage.count}
-                </span>
-              </div>
-              {stage.key === "external_done" &&
-              externalDoneBreakdown.length > 0 ? (
-                <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
-                  <span aria-hidden="true" />
-                  <span className="truncate text-xs text-muted-foreground tabular-nums">
-                    {externalDoneBreakdown
-                      .map((entry) => `${entry.label} ${entry.count}`)
-                      .join(" · ")}
-                  </span>
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
       </div>
     </section>
   );

@@ -37,7 +37,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-1",
       work_item_id: "BUG-93218",
-      status: "vcvaCnnGi",
+      status: "test-passed",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -90,7 +90,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-2",
       work_item_id: "BUG-93219",
-      status: "Done",
+      status: "test-passed",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -151,7 +151,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-4",
       work_item_id: "BUG-10000",
-      status: "Done",
+      status: "test-passed",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -177,7 +177,7 @@ const FIXES = vi.hoisted(() => [
       ],
       ai_shelved_cls: [283111],
       external_committed_cls: [283222],
-      warnings: ["final CL differs from AI shelve"],
+      warnings: ["final CL differs from AI shelve", "p4_shelve_unavailable"],
     },
     human_review: {
       outcome: "needs_changes",
@@ -202,7 +202,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-5",
       work_item_id: "BUG-10001",
-      status: "Done",
+      status: "test-passed",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -233,7 +233,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-6",
       work_item_id: "7035395614",
-      status: "Done",
+      status: "test-passed",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -257,7 +257,7 @@ const FIXES = vi.hoisted(() => [
     external: {
       binding_id: "binding-7",
       work_item_id: "BUG-10002",
-      status: "Done",
+      status: "test-passed",
       mapped_status: "done",
       done: true,
       project: "Warpath3",
@@ -267,10 +267,92 @@ const FIXES = vi.hoisted(() => [
       delivery_attribution_prediction: "unattributed",
       quality_prediction: "unknown",
       ai_shelved_cls: [],
-      // Canonical data-gap warning (not an access block): the external item
-      // is done but no submitted CL exists in any evidence source.
-      warnings: ["missing_external_cl"],
+      // One data-gap warning (missing_external_cl — not an access block) and
+      // one access block (auth family), so the coverage drawer's blocked
+      // section has a row while the process-gaps card keeps its count.
+      warnings: ["missing_external_cl", "swarm_api_unauthorized"],
     },
+  },
+  // External done, synced from Meegle, but no Agent was assigned and no normal
+  // repair task exists. The Operations opportunity pool is explicitly scoped
+  // to current Agent assignments, so this row must stay out of every metric.
+  {
+    task_id: "",
+    agent_id: "",
+    agent_name: "",
+    issue_id: "i-9",
+    issue_identifier: "MUL-13",
+    issue_title: "No agent pickup",
+    issue_status: "done",
+    started_at: null,
+    completed_at: null,
+    created_at: dayIso(1),
+    external: {
+      binding_id: "binding-9",
+      work_item_id: "BUG-10003",
+      status: "test-passed",
+      mapped_status: "done",
+      done: true,
+      project: "Warpath3",
+    },
+  },
+  // A different Feishu terminal state may still map to done, but it is not
+  // part of the Operations denominator unless its raw status is 测试通过.
+  {
+    task_id: "t-10",
+    agent_id: "a-1",
+    agent_name: "Fixer",
+    issue_id: "i-10",
+    issue_identifier: "MUL-101",
+    issue_title: "Closed without test pass",
+    issue_status: "done",
+    started_at: null,
+    completed_at: dayIso(1),
+    created_at: dayIso(1),
+    external: {
+      binding_id: "binding-10",
+      work_item_id: "BUG-10101",
+      status: "Done",
+      mapped_status: "done",
+      done: true,
+      project: "Warpath3",
+    },
+  },
+  // Feishu has reached 测试通过, but the synced Multica issue has not reached
+  // done yet. Both sides of the intersection are required.
+  {
+    task_id: "t-11",
+    agent_id: "a-1",
+    agent_name: "Fixer",
+    issue_id: "i-11",
+    issue_identifier: "MUL-102",
+    issue_title: "Test passed but sync pending",
+    issue_status: "in_progress",
+    started_at: null,
+    completed_at: dayIso(1),
+    created_at: dayIso(1),
+    external: {
+      binding_id: "binding-11",
+      work_item_id: "BUG-10102",
+      status: "test-passed",
+      mapped_status: "done",
+      done: true,
+      project: "Warpath3",
+    },
+  },
+  // Derived assessment issues can themselves be done, but without a Feishu
+  // 测试通过 binding they must never inflate the denominator.
+  {
+    task_id: "t-12",
+    agent_id: "a-1",
+    agent_name: "Fixer",
+    issue_id: "i-12",
+    issue_identifier: "MUL-103",
+    issue_title: "AI assessment projection",
+    issue_status: "done",
+    started_at: null,
+    completed_at: dayIso(1),
+    created_at: dayIso(1),
   },
   // Older than the selected 30d window — must never appear in the table
   // or the KPIs.
@@ -311,6 +393,8 @@ const AGENTS = vi.hoisted(() => [
 ]);
 
 const TRIGGER_ASSESSMENT = vi.hoisted(() => vi.fn());
+const FIXES_QUERY_ERROR = vi.hoisted(() => ({ value: false }));
+const REFRESH_FIXES = vi.hoisted(() => vi.fn());
 
 // useQuery is keyed: the operations-fixes options carry "operations-fixes" in
 // their key, with the debounced search term as the last key segment; the agent
@@ -327,6 +411,14 @@ vi.mock("@tanstack/react-query", async () => {
     ...actual,
     useQuery: (opts: { queryKey: unknown[] }) => {
       if (opts.queryKey.includes("operations-fixes")) {
+        if (FIXES_QUERY_ERROR.value) {
+          return {
+            data: undefined,
+            isLoading: false,
+            isError: true,
+            refetch: REFRESH_FIXES,
+          };
+        }
         const term = String(
           opts.queryKey[opts.queryKey.length - 1] ?? "",
         ).toLowerCase();
@@ -335,7 +427,12 @@ vi.mock("@tanstack/react-query", async () => {
               (f.last_comment ?? "").toLowerCase().includes(term),
             )
           : FIXES;
-        return { data, isLoading: false };
+        return {
+          data,
+          isLoading: false,
+          isError: false,
+          refetch: REFRESH_FIXES,
+        };
       }
       if (opts.queryKey.includes("agents")) {
         return { data: AGENTS, isLoading: false };
@@ -344,12 +441,14 @@ vi.mock("@tanstack/react-query", async () => {
         return {
           data: {
             statuses: [
-              { key: "vcvaCnnGi", name: "设计如此" },
+              { key: "test-passed", name: "测试通过" },
               { key: "Done", name: "Done" },
               { key: "In Progress", name: "In Progress" },
             ],
           },
           isLoading: false,
+          isError: false,
+          refetch: vi.fn(),
         };
       }
       if (
@@ -441,21 +540,25 @@ vi.mock("../../common/actor-avatar", () => ({
   ),
 }));
 
-import {
-  OperationsPage,
-  buildOperationsP4AssessmentCsv,
-  splitHighlight,
-} from "./operations-page";
+import { OperationsPage, splitHighlight } from "./operations-page";
 
-let exportedBlob: Blob | null = null;
-
-// Analysis is the default tab; tests exercising the per-ticket detail table
-// switch to it first. `label` is the localized tab caption ("评估明细" in zh).
 async function openAssessments(
   user: ReturnType<typeof userEvent.setup>,
   label = "Assessments",
 ) {
-  await user.click(screen.getByText(label));
+  // The detail table is now the only main-page surface; attribution and
+  // quality distributions moved into their KPI drawers.
+  void user;
+  void label;
+}
+
+async function openRepairDetails(
+  user: ReturnType<typeof userEvent.setup>,
+  issueIdentifier: string,
+) {
+  await user.click(
+    screen.getByRole("button", { name: new RegExp(issueIdentifier) }),
+  );
 }
 
 describe("OperationsPage", () => {
@@ -464,26 +567,15 @@ describe("OperationsPage", () => {
     // Each test starts from the default column layout, regardless of prior runs.
     useOperationsViewStore.getState().resetColumnWidths();
     TRIGGER_ASSESSMENT.mockClear();
-    exportedBlob = null;
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: vi.fn((blob: Blob) => {
-        exportedBlob = blob;
-        return "blob:operations-p4-assessment";
-      }),
-    });
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      value: vi.fn(),
-    });
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    FIXES_QUERY_ERROR.value = false;
+    REFRESH_FIXES.mockClear();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("renders one row per issue with agent, issue, status, and last comment", async () => {
+  it("renders one row per issue with agent, assessment status, and last comment", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
@@ -495,16 +587,26 @@ describe("OperationsPage", () => {
     expect(screen.getByText("MUL-7")).toBeTruthy();
     expect(screen.getByText("MUL-8")).toBeTruthy();
     expect(screen.getByText("Parser cleanup")).toBeTruthy();
-    expect(screen.getByText("设计如此")).toBeTruthy();
-    expect(screen.queryByText("vcvaCnnGi")).toBeNull();
+    expect(screen.queryByText("测试通过")).toBeNull();
+    expect(screen.queryByText("test-passed")).toBeNull();
 
-    // Agent name appears for each visible row (the feed hides rows without a
-    // normal agent run, done issue status, and done external binding).
+    // Agent name appears for each visible row. The unassigned row is outside
+    // the reporting pool and therefore absent from the detail table.
     expect(screen.getAllByText("Fixer").length).toBe(5);
     expect(screen.getByText("Reviewer")).toBeTruthy();
 
-    // "状态" column = ISSUE workflow status (labels from the issues namespace).
-    expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
+    // Workflow details moved to the issue drawer; the table exposes assessment
+    // progress as the comparable operational state.
+    expect(screen.queryByText("Done")).toBeNull();
+    expect(screen.queryByText("External status")).toBeNull();
+    expect(screen.getByText("Assessment status")).toBeTruthy();
+    expect(screen.getAllByText("AI assessed").length).toBeGreaterThanOrEqual(1);
+
+    // CL evidence and AI assessment are consolidated under Repair method.
+    expect(screen.getByText("Repair method")).toBeTruthy();
+    expect(screen.queryByText("Submitted CL record")).toBeNull();
+    expect(screen.queryByText("AI assessment")).toBeNull();
+    expect(screen.queryByText("Human delivered")).toBeNull();
 
     // Issue cell includes a compact preview of the most recent comment.
     expect(screen.getByText("looks good, ready for review")).toBeTruthy();
@@ -514,44 +616,201 @@ describe("OperationsPage", () => {
     expect(screen.getAllByText(dayLabel(5)).length).toBeGreaterThanOrEqual(1);
   });
 
+  it("moves issue and external workflow details into the issue drawer", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    expect(screen.queryByText("Done")).toBeNull();
+    expect(screen.queryByText("测试通过")).toBeNull();
+    expect(screen.queryByText("BUG-93218")).toBeNull();
+    expect(screen.queryByText("Warpath3")).toBeNull();
+
+    await user.click(screen.getAllByText("Fixer")[0]!);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Done")).toBeTruthy();
+    expect(within(dialog).getByText("External status")).toBeTruthy();
+    expect(within(dialog).getByText("测试通过")).toBeTruthy();
+    expect(within(dialog).getByText("In stats")).toBeTruthy();
+    const workItem = within(dialog).getByText("BUG-93218").closest("a");
+    expect(workItem?.getAttribute("href")).toBe(
+      "https://meego.example.com/items/BUG-93218",
+    );
+    expect(within(dialog).queryByText("i-1")).toBeNull();
+  });
+
   it("excludes rows older than the selected window from the table", () => {
     renderWithI18n(<OperationsPage />);
     expect(screen.queryByText("Previous period fix")).toBeNull();
   });
 
-  it("renders the KPI band with the headline rates and the funnel", () => {
+  it("shows a recoverable error state when the operations feed fails", async () => {
+    FIXES_QUERY_ERROR.value = true;
+    const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
 
-    // Three headline cards forming the nesting chain: contribution (produced /
-    // external done) → coverage (judged / produced) → pass rate (correct /
-    // judged).
-    expect(screen.getByText("AI contribution rate")).toBeTruthy();
-    expect(screen.getByText("Assessment coverage")).toBeTruthy();
-    expect(screen.getByText("AI plan pass rate")).toBeTruthy();
-    expect(screen.getByText("Delivery funnel")).toBeTruthy();
-    expect(screen.getByText("Last 30 days")).toBeTruthy();
-    // Funnel stages, with the verifiable-output stage as the quality pool.
-    expect(screen.getByText("External done")).toBeTruthy();
-    expect(screen.getByText("AI engaged")).toBeTruthy();
-    expect(
-      screen.getAllByText("Shelve/Swarm record").length,
-    ).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Verifiable output")).toBeTruthy();
-    expect(screen.getByText("Judged")).toBeTruthy();
-        // External-done splits by resolved status label: five fixtures carry the
-    // raw "Done" status and t-1 resolves vcvaCnnGi → 设计如此 via the status
-    // name map.
-    expect(screen.getByText("Done 5 · 设计如此 1")).toBeTruthy();
-    // Coverage: both AI plans (t-1, t-4) reached a verdict → 2/2 = 100%.
-    expect(screen.getAllByText("100%").length).toBeGreaterThanOrEqual(1);
-    // Data-health footnote replaces the old no-output/undetermined cards.
-    expect(screen.getByText(/no output · \d+ undetermined/)).toBeTruthy();
+    expect(screen.getByText("Could not load operations data")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Reload" }));
+    expect(REFRESH_FIXES).toHaveBeenCalledTimes(2);
   });
 
-  it("derives AI no output for completed assessments without an AI shelve", () => {
+  it("renders progressive coverage, assessment, quality, and automatic repair cards", () => {
     renderWithI18n(<OperationsPage />);
-    // t-7: unattributed prediction + empty ai_shelved_cls → derived label.
-    expect(screen.getAllByText("AI no output").length).toBeGreaterThanOrEqual(1);
+
+    expect(screen.getByText("AI coverage")).toBeTruthy();
+    expect(screen.getByText("AI assessment completion rate")).toBeTruthy();
+    expect(screen.getByText("AI repair quality")).toBeTruthy();
+    expect(screen.getByText("AI automatic repair share")).toBeTruthy();
+    expect(screen.queryByText("AI-assisted repair rate")).toBeNull();
+    expect(
+      screen.getByText(
+        "Explicit quality verdicts / AI-handled tickets",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("AI-marked passes / AI-assessed repairable tickets"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Direct AI submissions passed / AI-marked passes",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("2 / 6")).toBeTruthy();
+    expect(screen.getByText("1 / 2")).toBeTruthy();
+    expect(screen.getByText("1 / 1")).toBeTruthy();
+    expect(screen.getByText("2 / 2")).toBeTruthy();
+    expect(screen.getByText(/unassessed · \d+ missing human CL/)).toBeTruthy();
+  });
+
+  it("keeps assessment, quality, and automatic cards informational", () => {
+    renderWithI18n(<OperationsPage />);
+
+    expect(
+      screen.getByText("AI assessment completion rate").closest("button"),
+    ).toBeNull();
+    expect(
+      screen.getByText("AI repair quality").closest("button"),
+    ).toBeNull();
+    expect(
+      screen.getByText("AI automatic repair share").closest("button"),
+    ).toBeNull();
+  });
+
+  it("renders a complete delivery composition without a duplicate overview", () => {
+    renderWithI18n(<OperationsPage />);
+
+    expect(
+      screen.queryByText(
+        "Last 30 days: 6 assigned to an Agent, 2 picked up by AI, and 2 judged for quality.",
+      ),
+    ).toBeNull();
+    const composition = screen.getByRole("region", {
+      name: "AI delivery composition",
+    });
+    expect(composition.textContent).toContain(
+      "AI picked up 2 / 6 assigned to an Agent",
+    );
+    expect(composition.textContent).toContain("AI automatic repair1 · 17%");
+    expect(composition.textContent).toContain(
+      "AI-human collaborative repair0 · 0%",
+    );
+    expect(composition.textContent).toContain("Unable to determine1 · 17%");
+    expect(composition.textContent).toContain("AI not handled4 · 67%");
+  });
+
+  it("keeps delivery attribution out of the contribution drawer", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    // The whole contribution card is a button opening the breakdown drawer.
+    await user.click(
+      screen.getByRole("button", { name: /AI coverage/ }),
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).queryByText("Delivery attribution")).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", { name: /AI automatic repair/ }),
+    ).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", { name: /AI-assisted/ }),
+    ).toBeNull();
+  });
+
+  it("excludes items that are not currently assigned to an Agent", () => {
+    renderWithI18n(<OperationsPage />);
+
+    expect(screen.queryByText("No agent pickup")).toBeNull();
+    expect(screen.getByText("2 / 6")).toBeTruthy();
+  });
+
+  it("shows assessment progress and no-plan reasons inside the coverage drawer", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    await user.click(
+      screen.getByRole("button", { name: /AI coverage/ }),
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Processed by AI")).toBeTruthy();
+    expect(within(dialog).getByText("AI assessment completed")).toBeTruthy();
+    expect(within(dialog).getByText("AI assessment blocked")).toBeTruthy();
+    expect(within(dialog).getByText("Not processed by AI")).toBeTruthy();
+    expect(within(dialog).getByText("Why no verifiable plan was found")).toBeTruthy();
+    expect(within(dialog).queryByText("Why conversion is unconfirmed")).toBeNull();
+    await user.click(
+      within(dialog).getByRole("button", { name: /Plan assessment incomplete/ }),
+    );
+    expect(within(dialog).getByText("Parser cleanup")).toBeTruthy();
+  });
+
+  it("opens the issue drawer from a breakdown ticket card", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+
+    await user.click(
+      screen.getByRole("button", { name: /AI coverage/ }),
+    );
+    const dialog = screen.getByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: /Processed by AI/ }),
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: /Login broke/ }),
+    );
+    // Issue panel: summary and judgement-basis enum labels surface here.
+    expect(
+      within(dialog).getByText("AI shelve was submitted as the final CL."),
+    ).toBeTruthy();
+    expect(within(dialog).getByText("Complete")).toBeTruthy();
+    // Back returns to the branch list.
+    await user.click(within(dialog).getByRole("button", { name: "Back" }));
+    expect(within(dialog).getByText("Login broke")).toBeTruthy();
+  });
+
+  it("opens the issue drawer from a detail-table row", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
+
+    // Click a non-interactive cell (the day text) of t-1's row; links and
+    // buttons inside the row keep their own behavior.
+    const [dayCell] = screen.getAllByText(dayLabel(6));
+    expect(dayCell).toBeTruthy();
+    await user.click(dayCell!);
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText("AI shelve was submitted as the final CL."),
+    ).toBeTruthy();
+    expect(within(dialog).getByText("Open issue")).toBeTruthy();
+  });
+
+  it("collapses internal non-AI attribution states to unable to determine", () => {
+    renderWithI18n(<OperationsPage />);
+    expect(screen.queryByText("AI no output")).toBeNull();
+    expect(
+      screen.getByRole("button", {
+        name: "View repair details for MUL-12: Unable to determine",
+      }),
+    ).toBeTruthy();
   });
 
   it("renders demo-like P4 assessment evidence and quality analysis", async () => {
@@ -560,52 +819,49 @@ describe("OperationsPage", () => {
     await openAssessments(user);
 
     expect(screen.getByText("AI fix assessment")).toBeTruthy();
-    expect(screen.getByText("Assessments")).toBeTruthy();
-    expect(screen.getByText("Insights")).toBeTruthy();
-    expect(screen.getByText("BUG-93218")).toBeTruthy();
-    expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("In stats").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("AI assessed").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("stream rel_1.7.2/server")).toBeTruthy();
+    expect(screen.queryByText("Insights")).toBeNull();
+    expect(screen.queryByText("BUG-93218")).toBeNull();
+    expect(screen.queryByText("Done")).toBeNull();
+    expect(screen.queryByText("In stats")).toBeNull();
     expect(screen.queryByText("Swarm SW-11872")).toBeNull();
-    // The detail table shows the submitted CL first; shelved CLs stay hidden
-    // when a final committed CL exists.
+    expect(screen.queryByText("final CL 283006")).toBeNull();
+
+    await openRepairDetails(user, "MUL-7");
+    expect(screen.getByText("Repair details")).toBeTruthy();
+    expect(screen.getByText("Submitted CL record")).toBeTruthy();
+    expect(screen.getByText("AI assessment")).toBeTruthy();
+    expect(screen.getAllByText("AI assessed").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("stream rel_1.7.2/server")).toBeTruthy();
+    // The popover shows the submitted CL first; shelved CLs stay hidden when a
+    // final committed CL exists.
     const badgeTexts = Array.from(document.querySelectorAll("span")).map((s) =>
       (s.textContent ?? "").replace(/\s+/g, " ").trim(),
     );
     expect(badgeTexts).toContain("final CL 283006");
-    expect(badgeTexts).toContain("final CL 284805");
-    expect(badgeTexts).toContain("shelve 287451");
     expect(badgeTexts).not.toContain("shelve 282941");
-    expect(badgeTexts).not.toContain("final CL 287451");
     expect(screen.queryByText("changes 282941, 282944")).toBeNull();
 
     await user.click(screen.getAllByRole("button", { name: "Details" })[0]!);
     expect(screen.getByText("SW-11872")).toBeTruthy();
     expect(screen.getByText("282941, 282944")).toBeTruthy();
-    // "283006" also renders as the linked final-CL badge text in the row.
+    // "283006" also renders as the linked final-CL badge text in the popover.
     expect(screen.getAllByText("283006").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("main")).toBeTruthy();
     expect(screen.getByText("review.committed")).toBeTruthy();
     expect(screen.getByText("2026-06-01T00:30:00Z")).toBeTruthy();
     await user.keyboard("{Escape}");
 
-    expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("AI submitted").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("confidence 86%")).toBeTruthy();
-    expect(screen.getAllByText("Fail").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("links external work items, swarm reviews, and CLs", async () => {
+  it("links swarm reviews and CLs from repair details", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
 
-    // Feishu/Meego work item → external.url.
-    const workItem = screen.getByText("BUG-93218").closest("a");
-    expect(workItem?.getAttribute("href")).toBe(
-      "https://meego.example.com/items/BUG-93218",
-    );
+    await openRepairDetails(user, "MUL-7");
     // Swarm review lives in the submitted-CL details popover.
     await user.click(screen.getAllByRole("button", { name: "Details" })[0]!);
     const swarm = screen.getByText("SW-11872").closest("a");
@@ -624,11 +880,13 @@ describe("OperationsPage", () => {
   it("renders quality analysis copy in Chinese locale", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />, { locale: "zh-Hans" });
+    expect(screen.getByText("AI 已处理 / 分配给智能体")).toBeTruthy();
+    expect(screen.getByText("AI 已处理 2 / 分配给智能体 6")).toBeTruthy();
     await openAssessments(user, "评估明细");
 
-    // Quality prediction badges + funnel stage labels.
-    expect(screen.getByText("\u4e0d\u901a\u8fc7")).toBeTruthy();
-    expect(screen.getByText("\u5df2\u5224\u5b9a")).toBeTruthy();
+    await openRepairDetails(user, "MUL-7");
+    expect(screen.getByText("\u4fee\u590d\u65b9\u5f0f\u8be6\u60c5")).toBeTruthy();
+    // Quality prediction moved into the localized repair-details popover.
     expect(screen.getAllByText("\u901a\u8fc7").length).toBeGreaterThanOrEqual(1);
 
     // The submitted-CL record popover still opens with the localized trigger.
@@ -636,12 +894,13 @@ describe("OperationsPage", () => {
     expect(screen.getByText("282941, 282944")).toBeTruthy();
   });
 
-  it("shows only done issues with an agent run and a done external binding", async () => {
+  it("counts only Feishu test-passed rows whose synced issue is done", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
 
     // t-2 (done, no assessment yet) → enabled Run assessment.
+    await openRepairDetails(user, "MUL-8");
     const runButtons = screen.getAllByRole("button", {
       name: "Queue assessment",
     });
@@ -649,11 +908,13 @@ describe("OperationsPage", () => {
       true,
     );
 
-    // t-3 has an agent run, but its issue status and external mapping are not
-    // done, so it must not leak into the Operations detail table.
+    // None of these satisfy both sides of the reporting intersection.
     expect(screen.queryByText("Future work")).toBeNull();
     expect(screen.queryByText("triaged")).toBeNull();
     expect(screen.queryByText("rel_future/server")).toBeNull();
+    expect(screen.queryByText("Closed without test pass")).toBeNull();
+    expect(screen.queryByText("Test passed but sync pending")).toBeNull();
+    expect(screen.queryByText("AI assessment projection")).toBeNull();
   });
 
   it("triggers a new assessment with binding_id and force=false", async () => {
@@ -661,6 +922,7 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
 
+    await openRepairDetails(user, "MUL-8");
     const enabled = screen
       .getAllByRole("button", { name: "Queue assessment" })
       .find((b) => !(b as HTMLButtonElement).disabled)!;
@@ -679,6 +941,7 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
 
+    await openRepairDetails(user, "MUL-7");
     const enabled = screen
       .getAllByRole("button", { name: "Requeue assessment" })
       .find((b) => !(b as HTMLButtonElement).disabled)!;
@@ -699,6 +962,7 @@ describe("OperationsPage", () => {
 
     // t-5 failed after 3 leases with a recorded reason — the detail line under
     // the status badge answers "why is this stuck" without psql.
+    await openRepairDetails(user, "MUL-11");
     expect(
       screen.getByText(/3 attempts · task output parse failed/),
     ).toBeTruthy();
@@ -709,18 +973,9 @@ describe("OperationsPage", () => {
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
 
-    let failedRow = screen.getByText("Assessment parser failed").parentElement;
-    while (
-      failedRow &&
-      !failedRow.getAttribute("style")?.includes("grid-template-columns")
-    ) {
-      failedRow = failedRow.parentElement;
-    }
-    expect(failedRow).not.toBeNull();
+    await openRepairDetails(user, "MUL-11");
     await user.click(
-      within(failedRow as HTMLElement).getByRole("button", {
-        name: "Requeue assessment",
-      }),
+      screen.getByRole("button", { name: "Requeue assessment" }),
     );
 
     await waitFor(() => {
@@ -728,49 +983,6 @@ describe("OperationsPage", () => {
         binding_id: "binding-5",
         force: true,
       });
-    });
-  });
-
-  it("switches to the lightweight analysis report tab", async () => {
-    const user = userEvent.setup();
-    renderWithI18n(<OperationsPage />);
-
-    await user.click(screen.getByText("Insights"));
-
-    expect(screen.getByText("Delivery attribution")).toBeTruthy();
-    expect(screen.getByText("AI quality distribution")).toBeTruthy();
-    // Blocked-evidence card: none of the current fixtures carry an
-    // access-blocked warning, so the empty copy shows.
-    expect(
-      screen.getByText(/Evidence access blocked \(\d+ completed\)/),
-    ).toBeTruthy();
-    expect(screen.getByText("No blocked assessments")).toBeTruthy();
-    // Process-gaps card: t-7 carries missing_external_cl with no committed CL
-    // (its warning is a data gap, not an access block — the blocked card above
-    // must stay empty). Zero-count rows stay visible.
-    expect(screen.getByText("Process gaps")).toBeTruthy();
-    expect(screen.getByText("Missing human CL on work item")).toBeTruthy();
-    expect(screen.getAllByText("Plan, no record").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Workstream outcome")).toBeTruthy();
-    // The free-text AI-reasons ranking is gone: same-meaning sentences
-    // fragment into distinct rows, so the card carried no signal.
-    expect(screen.queryByText("Top AI reasons")).toBeNull();
-    expect(screen.getByText("rel_1.7.3/client")).toBeTruthy();
-    expect(screen.getAllByText("AI delivered").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("drills down from an analysis distribution into the filtered detail table", async () => {
-    const user = userEvent.setup();
-    renderWithI18n(<OperationsPage />);
-
-    await user.click(screen.getByText("Insights"));
-    // Clicking a distribution row applies the filter and jumps back to detail.
-    await user.click(screen.getAllByText("Human delivered")[0]!);
-
-    await waitFor(() => {
-      expect(screen.getByText("Client crash")).toBeTruthy();
-      expect(screen.queryByText("Login broke")).toBeNull();
     });
   });
 
@@ -787,9 +999,9 @@ describe("OperationsPage", () => {
     expect(screen.getByText("Client crash")).toBeTruthy();
     expect(screen.queryByText("Login broke")).toBeNull();
 
-    await user.click(screen.getByLabelText("Delivery attribution"));
+    await user.click(screen.getByLabelText("Repair method"));
     await user.click(
-      within(await screen.findByRole("listbox")).getByText("Human delivered"),
+      within(await screen.findByRole("listbox")).getByText("Unable to determine"),
     );
 
     expect(screen.getByText("Client crash")).toBeTruthy();
@@ -874,49 +1086,19 @@ describe("OperationsPage", () => {
     expect(within(listbox).getByText("rel_1.7.2/server")).toBeTruthy();
   });
 
-  it("exports the current filtered P4 assessment rows as CSV", async () => {
-    const user = userEvent.setup();
-    renderWithI18n(<OperationsPage />);
-
-    await user.click(screen.getByLabelText("Workstream"));
-    await user.click(
-      within(await screen.findByRole("listbox")).getByText("rel_1.7.3/client"),
-    );
-    await user.click(screen.getByText("Export CSV"));
-
-    expect(exportedBlob).not.toBeNull();
-    const csv = await exportedBlob!.text();
-    expect(csv).toContain("Issue,Issue Title,External Work Item ID");
-    expect(csv).toContain(
-      "Swarm Review,Swarm Changes,Swarm Commits,Swarm Branch,Swarm Event Type,Swarm Sent At",
-    );
-    expect(csv).toContain("MUL-10,Client crash,BUG-10000");
-    expect(csv).toContain("rel_1.7.3/client");
-    expect(csv).toContain("SW-11900");
-    expect(csv).toContain("283111; 283112");
-    expect(csv).toContain("release/client");
-    expect(csv).toContain("review.updated");
-    expect(csv).toContain("2026-06-04T00:30:00Z");
-    expect(csv).toContain("283111");
-    expect(csv).toContain("283222");
-    expect(csv).toContain("likely_wrong");
-    expect(csv).not.toContain("Login broke");
-  });
-
   it("renders a resize handle for each sizable column", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
     await openAssessments(user);
     const handles = screen.getAllByRole("separator");
-    expect(handles.length).toBe(6);
+    expect(handles.length).toBe(5);
     expect(
       handles.map((h) => h.getAttribute("aria-label")),
     ).toEqual([
       "Resize Issue column",
       "Resize Agent column",
-      "Resize Submitted CL record column",
-      "Resize Delivery attribution column",
-      "Resize AI assessment column",
+      "Resize Repair method column",
+      "Resize Assessment status column",
       "Resize Date column",
     ]);
     expect(
@@ -979,11 +1161,16 @@ describe("OperationsPage", () => {
     expect(
       Array.from(marks).some((m) => m.textContent?.toLowerCase() === "review"),
     ).toBe(true);
+
+    // Detail filters never bend the stats: the headline ratio still reports
+    // the full page-level pool while the table is narrowed by search.
+    expect(screen.getByText("2 / 6")).toBeTruthy();
   });
 
   it("shows a search-specific empty state when nothing matches", async () => {
     const user = userEvent.setup();
     renderWithI18n(<OperationsPage />);
+    await openAssessments(user);
 
     await user.type(
       screen.getByLabelText("Search comments"),
@@ -1042,31 +1229,5 @@ describe("splitHighlight", () => {
   it("treats the keyword literally (no regex/wildcard semantics)", () => {
     const parts = splitHighlight("100% done now", "%");
     expect(parts.filter((p) => p.match).map((p) => p.text)).toEqual(["%"]);
-  });
-});
-
-describe("buildOperationsP4AssessmentCsv", () => {
-  it("writes a BOM, stable headers, escaped cells, arrays, and sparse fields", () => {
-    const csv = buildOperationsP4AssessmentCsv([
-      {
-        ...(FIXES[0] as any),
-        issue_title: 'Login, "broke"',
-        p4_assessment: {
-          ...((FIXES[0] as any).p4_assessment ?? {}),
-          summary: "first line\nsecond line",
-        },
-      },
-      { ...(FIXES[1] as any), external: undefined },
-    ]);
-
-    expect(csv.startsWith("\uFEFF")).toBe(true);
-    expect(csv).toContain("Issue,Issue Title,External Work Item ID");
-    expect(csv).toContain("Derived Attribution");
-    expect(csv).toContain('MUL-7,"Login, ""broke""",BUG-93218');
-    expect(csv).toContain('"first line\nsecond line"');
-    expect(csv).toContain("SW-11872");
-    expect(csv).toContain("282941");
-    expect(csv).toContain("283006");
-    expect(csv).toContain("MUL-8,Parser cleanup,,,,,,,,Fixer");
   });
 });

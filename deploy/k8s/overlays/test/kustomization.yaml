@@ -8,6 +8,16 @@ namespace: multica-test
 
 resources:
   - ../../base
+  - feature-flags.yaml
+  # Cloud runtime RBAC: SA `multica-server` + ClusterRole/Binding granting
+  # namespace/statefulset/secret create in-cluster. The standalone Fleet
+  # service (fleet.yaml) runs as this SA to provision nodes; the server no
+  # longer needs it. The `namespace:` field above retargets the SA to
+  # multica-test and rewrites the binding's subject namespace to match.
+  - ../../cloud-runtime
+  # Standalone Fleet service (node provisioning + mcn_ token authority +
+  # workspace env). The server proxies to it — see cloud-runtime-patch.yaml.
+  - fleet.yaml
 
 commonAnnotations:
   multica.lilithgames.com/environment: "test"
@@ -18,9 +28,9 @@ commonAnnotations:
 # tag (e.g. main-<sha>) once CI is wired and you can drop the Always patch.
 images:
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server
-    newTag: "0.2-p4-swarm-webhook-8da6ee501"
+    newTag: "test-20260717-a837f9125-kubefleet"
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web
-    newTag: "0.2-p4-swarm-webhook-8da6ee501"
+    newTag: "test-20260717-d519bc9cb-kubefleet"
 
 # Test runs at 1/1 — single web pod is enough for smoke testing and matches
 # the server's single-replica constraint (in-memory WS hub).
@@ -136,3 +146,22 @@ patches:
     target:
       kind: Job
       name: multica-migrate
+
+  # Cloud runtime: point the server at the in-cluster Fleet service.
+  - path: cloud-runtime-patch.yaml
+    target:
+      kind: Deployment
+      name: multica-server
+
+  # rbac.yaml hardcodes the binding subject namespace to `multica` (so it stays
+  # valid when applied standalone). kustomize's namespace transformer does NOT
+  # rewrite it because the explicit `namespace: multica` doesn't match the SA's
+  # unset original namespace. Point it at multica-test explicitly, else the
+  # ClusterRole binds the wrong SA and every node create 403s.
+  - target:
+      kind: ClusterRoleBinding
+      name: multica-cloud-runtime
+    patch: |-
+      - op: replace
+        path: /subjects/0/namespace
+        value: multica-test

@@ -8,6 +8,10 @@ This document is the maintenance-oriented source for the current P4 assessment
 workflow. Older files under `docs/agent-fix-p4-*` record design history and
 should be read as background, not as the current implementation contract.
 
+The Operations KPI formulas, current production discrepancies, terminology,
+and open product decisions are documented separately in
+[`operations-ai-repair-metrics.md`](./operations-ai-repair-metrics.md).
+
 ## Purpose
 
 The workflow answers one product question for Feishu/Meego-synced bug fixes:
@@ -331,8 +335,8 @@ enum values, and confidence range before persistence.
 | Value | Meaning |
 |---|---|
 | `ai_delivered` | Automation/AI delivered the final fix directly. |
-| `ai_assisted` | Human final submission used or materially followed the AI/Swarm fix. |
-| `human_delivered` | Human delivered the final fix without relying on AI implementation. |
+| `ai_assisted` | Human final submission uses or materially follows a verified, method-equivalent AI/Swarm implementation. Chronology does not exclude the match. |
+| `human_delivered` | Human delivered a materially different implementation and human ownership is proven. |
 | `conflict` | Evidence conflicts and attribution cannot be cleanly resolved. |
 | `unattributed` | Final delivery exists but owner/source is not attributable. |
 | `unknown` | Insufficient evidence. |
@@ -471,8 +475,9 @@ Filters:
 Filter reset buttons are visible after selecting a non-all filter value.
 
 `AI 交付` summary currently counts both `ai_delivered` and `ai_assisted`. It
-means AI participated in delivery, not necessarily that the final CL was
-submitted by automation.
+means the final implementation was delivered directly by AI or is
+method-equivalent to the AI implementation, not necessarily that automation
+submitted the final CL.
 
 `仅看偏差` shows rows whose `ai_judgement_eval` is one of:
 

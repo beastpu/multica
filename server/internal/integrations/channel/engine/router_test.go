@@ -383,6 +383,49 @@ func TestRouter_Ingested_InTxMark_FinalizeNone(t *testing.T) {
 	}
 }
 
+type fakeAskResolver struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (f *fakeAskResolver) ResolveAskOnUserMessage(_ context.Context, sessionID pgtype.UUID, senderUserID pgtype.UUID, text string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, text)
+}
+
+func (f *fakeAskResolver) texts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+// TestRouter_AskResolverFiresOnDurableIngestOnly: the text-preemption hook
+// runs exactly for messages that durably enter the session — a message that
+// never lands (claim lost) must not retire a pending ask.
+func TestRouter_AskResolverFiresOnDurableIngestOnly(t *testing.T) {
+	h := newHarness(t)
+	resolver := &fakeAskResolver{}
+	h.router.SetAskResolver(resolver)
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if texts := resolver.texts(); len(texts) != 1 {
+		t.Fatalf("ask resolver calls = %d, want 1", len(texts))
+	}
+
+	h2 := newHarness(t)
+	resolver2 := &fakeAskResolver{}
+	h2.router.SetAskResolver(resolver2)
+	h2.binder.appendErr = ErrClaimLost
+	if err := h2.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolver2.texts()) != 0 {
+		t.Fatalf("undelivered message must not preempt a pending ask: %v", resolver2.texts())
+	}
+}
+
 func TestRouter_ClaimLost_Drops(t *testing.T) {
 	h := newHarness(t)
 	h.binder.appendErr = ErrClaimLost

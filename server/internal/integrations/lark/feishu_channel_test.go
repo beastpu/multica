@@ -1,9 +1,12 @@
 package lark
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -14,13 +17,55 @@ import (
 // SendTextMessage — the single method feishuChannel.Send calls.
 type fakeSender struct {
 	APIClient
-	last  SendTextParams
-	msgID string
+	last          SendTextParams
+	msgID         string
+	downloadCalls []DownloadResourceParams
+	downloaded    DownloadedResource
 }
 
 func (f *fakeSender) SendTextMessage(_ context.Context, p SendTextParams) (string, error) {
 	f.last = p
 	return f.msgID, nil
+}
+
+func (f *fakeSender) DownloadMessageResource(_ context.Context, _ InstallationCredentials, p DownloadResourceParams) (DownloadedResource, error) {
+	f.downloadCalls = append(f.downloadCalls, p)
+	return f.downloaded, nil
+}
+
+func (f *fakeSender) DownloadMessageResourceStream(_ context.Context, _ InstallationCredentials, p DownloadResourceParams) (DownloadedResourceStream, error) {
+	f.downloadCalls = append(f.downloadCalls, p)
+	return DownloadedResourceStream{
+		Body:        io.NopCloser(bytes.NewReader(f.downloaded.Data)),
+		ContentType: f.downloaded.ContentType,
+		Filename:    f.downloaded.Filename,
+		SizeBytes:   f.downloaded.SizeBytes,
+	}, nil
+}
+
+type fakeMediaStorage struct {
+	uploads []fakeMediaUpload
+}
+
+type fakeMediaUpload struct {
+	key         string
+	data        []byte
+	contentType string
+	filename    string
+}
+
+func (s *fakeMediaStorage) Upload(_ context.Context, key string, data []byte, contentType string, filename string) (string, error) {
+	s.uploads = append(s.uploads, fakeMediaUpload{key: key, data: append([]byte(nil), data...), contentType: contentType, filename: filename})
+	return "https://cdn.example.test/" + key, nil
+}
+
+func (s *fakeMediaStorage) UploadStream(_ context.Context, key string, data io.Reader, contentType string, filename string) (string, error) {
+	body, err := io.ReadAll(data)
+	if err != nil {
+		return "", err
+	}
+	s.uploads = append(s.uploads, fakeMediaUpload{key: key, data: body, contentType: contentType, filename: filename})
+	return "https://cdn.example.test/" + key, nil
 }
 
 type fakeCreds struct{ secret string }
@@ -198,6 +243,314 @@ func TestFeishuChannel_RoutesCardActionOutsideChatHandler(t *testing.T) {
 	}
 	if cardHandler.msg.MessageID != msg.MessageID {
 		t.Fatalf("card handler message mismatch: %+v", cardHandler.msg)
+	}
+}
+
+// resultCapturingConnector records the DispatchResult the channel returns
+// for one emitted message — the value the WS connector would place in the
+// card.action.trigger ACK.
+type resultCapturingConnector struct {
+	msg InboundMessage
+	res DispatchResult
+	err error
+}
+
+func (c *resultCapturingConnector) Run(ctx context.Context, inst Installation, emit EventEmitter) error {
+	c.res, c.err = emit(ctx, c.msg)
+	return nil
+}
+
+// TestFeishuChannel_ChatAskClickDispatchesAnswer: a valid ask click first
+// runs the card handler (state machine + receipt ACK), then dispatches the
+// answer text through the ordinary chat handler. A stale click (handler says
+// DispatchAsChatText=false) must not reach the chat handler.
+func TestFeishuChannel_ChatAskClickDispatchesAnswer(t *testing.T) {
+	msg := InboundMessage{
+		EventID:      "evt-ask-click",
+		AppID:        "cli",
+		ChatID:       "oc_group",
+		ChatType:     ChatTypeGroup,
+		MessageID:    "chat_ask:ask-1:evt-ask-click",
+		SenderOpenID: "ou_requester",
+		Body:         "确认：触发流水线 X",
+		MessageType:  "text",
+		CardAction: &InboundCardAction{
+			CardMessageID: "om_ask_card",
+			ChatAsk: &ChatAskCardAction{
+				AskID:         "ask-1",
+				Choice:        chatAskChoiceApprove,
+				Reply:         "确认：触发流水线 X",
+				AllowedOpenID: "ou_requester",
+			},
+		},
+	}
+
+	cardHandler := &recordingCardActionHandler{response: DispatchResult{
+		CardActionResponseJSON: `{"card":{"type":"raw","data":{}}}`,
+		DispatchAsChatText:     true,
+	}}
+	var dispatched []channel.InboundMessage
+	conn := &resultCapturingConnector{msg: msg}
+	fc := &feishuChannel{
+		inst:        Installation{AppID: "cli", Region: "feishu"},
+		conn:        conn,
+		cardActions: cardHandler,
+		handler: func(_ context.Context, m channel.InboundMessage) error {
+			dispatched = append(dispatched, m)
+			return nil
+		},
+	}
+	if err := fc.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if conn.err != nil {
+		t.Fatalf("emit: %v", conn.err)
+	}
+	if cardHandler.calls != 1 {
+		t.Fatalf("card handler calls = %d", cardHandler.calls)
+	}
+	if len(dispatched) != 1 || dispatched[0].Text != "确认：触发流水线 X" {
+		t.Fatalf("answer text not dispatched: %+v", dispatched)
+	}
+	if conn.res.CardActionResponseJSON == "" {
+		t.Fatal("receipt ACK lost on dispatch")
+	}
+
+	// Stale click: no dispatch.
+	cardHandler = &recordingCardActionHandler{response: DispatchResult{
+		CardActionResponseJSON: `{"card":{"type":"raw","data":{}}}`,
+	}}
+	dispatched = nil
+	conn = &resultCapturingConnector{msg: msg}
+	fc.conn = conn
+	fc.cardActions = cardHandler
+	if err := fc.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if len(dispatched) != 0 {
+		t.Fatalf("stale click must not dispatch: %+v", dispatched)
+	}
+	if conn.res.CardActionResponseJSON == "" {
+		t.Fatal("stale click still needs its receipt ACK")
+	}
+}
+
+// TestFeishuChannel_ChatConfirmationClickThreadsAckResponse: a chat
+// confirmation click is dispatched as ordinary chat text, but its
+// resolved-card ACK must still reach the connector so the card updates.
+func TestFeishuChannel_ChatConfirmationClickThreadsAckResponse(t *testing.T) {
+	msg := InboundMessage{
+		EventID:                "evt-chat-card",
+		AppID:                  "cli",
+		ChatID:                 "oc_group",
+		ChatType:               ChatTypeGroup,
+		MessageID:              "om_card_1",
+		SenderOpenID:           "ou_requester",
+		Body:                   "确认执行",
+		MessageType:            "text",
+		CardActionResponseJSON: `{"card":{"type":"raw","data":{}}}`,
+	}
+
+	conn := &resultCapturingConnector{msg: msg}
+	fc := &feishuChannel{
+		inst:    Installation{AppID: "cli", Region: "feishu"},
+		conn:    conn,
+		handler: func(context.Context, channel.InboundMessage) error { return nil },
+	}
+	if err := fc.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if conn.err != nil {
+		t.Fatalf("emit: %v", conn.err)
+	}
+	if conn.res.CardActionResponseJSON != msg.CardActionResponseJSON {
+		t.Fatalf("ACK response not threaded: %+v", conn.res)
+	}
+
+	// A failed dispatch must NOT confirm the card: the connector NACKs on
+	// error and Lark retries, so no resolved-card response may leak out.
+	conn = &resultCapturingConnector{msg: msg}
+	fc.conn = conn
+	fc.handler = func(context.Context, channel.InboundMessage) error { return context.DeadlineExceeded }
+	if err := fc.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if conn.err == nil {
+		t.Fatal("handler error must propagate to the connector")
+	}
+	if conn.res.CardActionResponseJSON != "" {
+		t.Fatalf("failed dispatch must not return a resolved card: %+v", conn.res)
+	}
+}
+
+func TestFeishuMediaResolver_AttachesImageMediaRef(t *testing.T) {
+	sender := &fakeSender{downloaded: DownloadedResource{
+		Data:        []byte{1, 2, 3},
+		ContentType: "image/png",
+		Filename:    "from-header.png",
+		SizeBytes:   3,
+	}}
+	storage := &fakeMediaStorage{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, newDiscardLogger())
+	lm := InboundMessage{
+		EventID:      "evt-image",
+		AppID:        "cli_app",
+		ChatID:       "oc_dm",
+		ChatType:     ChatTypeP2P,
+		MessageID:    "om_image",
+		SenderOpenID: "ou_user",
+		MessageType:  "image",
+		Body:         "[Image]",
+		Content:      `{"image_key":"img_v3_key"}`,
+	}
+	got := resolver.ResolveMedia(context.Background(), engine.ResolvedInstallation{
+		WorkspaceID: uuidFromString(t, "11111111-1111-1111-1111-111111111111"),
+		Platform:    Installation{AppID: "cli_app", Region: "feishu"},
+	}, engine.ResolvedIdentity{}, uuidFromString(t, "22222222-2222-2222-2222-222222222222"), channelMessageFromLark(lm))
+	if len(sender.downloadCalls) != 1 {
+		t.Fatalf("download calls = %d, want 1", len(sender.downloadCalls))
+	}
+	call := sender.downloadCalls[0]
+	if call.MessageID != "om_image" || call.FileKey != "img_v3_key" || call.Type != "image" {
+		t.Fatalf("download params wrong: %+v", call)
+	}
+	if len(storage.uploads) != 1 {
+		t.Fatalf("uploads = %d, want 1", len(storage.uploads))
+	}
+	up := storage.uploads[0]
+	if up.contentType != "image/png" || up.filename != "from-header.png" || string(up.data) != string([]byte{1, 2, 3}) {
+		t.Fatalf("upload metadata wrong: %+v", up)
+	}
+	if !strings.Contains(up.key, "workspaces/11111111-1111-1111-1111-111111111111/lark/") {
+		t.Fatalf("upload key should be workspace-scoped, got %q", up.key)
+	}
+	if len(got.MediaRefs) != 1 {
+		t.Fatalf("media refs = %+v, want 1", got.MediaRefs)
+	}
+	ref := got.MediaRefs[0]
+	if ref.Type != channel.MsgTypeImage || ref.Filename != "from-header.png" || ref.MimeType != "image/png" ||
+		ref.SizeBytes != 3 || ref.StorageURL == "" || ref.StorageKey == "" {
+		t.Fatalf("media ref wrong: %+v", ref)
+	}
+}
+
+func TestFeishuMediaResolver_AttachesPostEmbeddedImageMediaRef(t *testing.T) {
+	sender := &fakeSender{downloaded: DownloadedResource{
+		Data:        []byte{4, 5, 6},
+		ContentType: "image/png",
+		Filename:    "post-image.png",
+		SizeBytes:   3,
+	}}
+	storage := &fakeMediaStorage{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, newDiscardLogger())
+	rawPost := `{"content":[[{"tag":"img","image_key":"img_post_key"}],[{"tag":"text","text":"识别一下图片"}]]}`
+	lm := InboundMessage{
+		EventID:      "evt-post-image",
+		AppID:        "cli_app",
+		ChatID:       "oc_dm",
+		ChatType:     ChatTypeP2P,
+		MessageID:    "om_post_image",
+		SenderOpenID: "ou_user",
+		MessageType:  "post",
+		Body:         flattenPostContent(rawPost),
+		Content:      rawPost,
+	}
+	got := resolver.ResolveMedia(context.Background(), engine.ResolvedInstallation{
+		WorkspaceID: uuidFromString(t, "11111111-1111-1111-1111-111111111111"),
+		Platform:    Installation{AppID: "cli_app", Region: "feishu"},
+	}, engine.ResolvedIdentity{}, uuidFromString(t, "22222222-2222-2222-2222-222222222222"), channelMessageFromLark(lm))
+	if got.Text != "[Image]\n识别一下图片" {
+		t.Fatalf("message text = %q, want post placeholder plus text", got.Text)
+	}
+	if len(sender.downloadCalls) != 1 {
+		t.Fatalf("download calls = %d, want 1", len(sender.downloadCalls))
+	}
+	call := sender.downloadCalls[0]
+	if call.MessageID != "om_post_image" || call.FileKey != "img_post_key" || call.Type != "image" {
+		t.Fatalf("download params wrong: %+v", call)
+	}
+	if len(storage.uploads) != 1 {
+		t.Fatalf("uploads = %d, want 1", len(storage.uploads))
+	}
+	if len(got.MediaRefs) != 1 {
+		t.Fatalf("media refs = %+v, want 1", got.MediaRefs)
+	}
+	ref := got.MediaRefs[0]
+	if ref.Type != channel.MsgTypeImage || ref.Filename != "post-image.png" || ref.MimeType != "image/png" ||
+		ref.SizeBytes != 3 || ref.StorageURL == "" || ref.StorageKey == "" {
+		t.Fatalf("post image ref wrong: %+v", ref)
+	}
+}
+
+func TestFeishuMediaResolver_AttachesPostEmbeddedVideoMediaRef(t *testing.T) {
+	sender := &fakeSender{downloaded: DownloadedResource{
+		Data:        []byte("mp4"),
+		ContentType: "video/mp4",
+		Filename:    "demo.mp4",
+		SizeBytes:   3,
+	}}
+	storage := &fakeMediaStorage{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, newDiscardLogger())
+	rawPost := `{"content":[[{"tag":"text","text":"看一下视频"},{"tag":"media","file_key":"file_post_key","file_name":"demo.mp4"}]]}`
+	lm := InboundMessage{
+		EventID:      "evt-post-video",
+		AppID:        "cli_app",
+		ChatID:       "oc_dm",
+		ChatType:     ChatTypeP2P,
+		MessageID:    "om_post_video",
+		SenderOpenID: "ou_user",
+		MessageType:  "post",
+		Body:         flattenPostContent(rawPost),
+		Content:      rawPost,
+	}
+	got := resolver.ResolveMedia(context.Background(), engine.ResolvedInstallation{
+		WorkspaceID: uuidFromString(t, "11111111-1111-1111-1111-111111111111"),
+		Platform:    Installation{AppID: "cli_app", Region: "feishu"},
+	}, engine.ResolvedIdentity{}, uuidFromString(t, "22222222-2222-2222-2222-222222222222"), channelMessageFromLark(lm))
+	if len(sender.downloadCalls) != 1 {
+		t.Fatalf("download calls = %d, want 1", len(sender.downloadCalls))
+	}
+	call := sender.downloadCalls[0]
+	if call.MessageID != "om_post_video" || call.FileKey != "file_post_key" || call.Type != "file" {
+		t.Fatalf("download params wrong: %+v", call)
+	}
+	if len(got.MediaRefs) != 1 || got.MediaRefs[0].Type != channel.MsgTypeVideo || got.MediaRefs[0].Filename != "demo.mp4" {
+		t.Fatalf("post video ref wrong: %+v", got.MediaRefs)
+	}
+}
+
+func TestFeishuMediaResolver_AttachesVideoMediaRef(t *testing.T) {
+	sender := &fakeSender{downloaded: DownloadedResource{
+		Data:        []byte("mp4"),
+		ContentType: "video/mp4",
+		SizeBytes:   3,
+	}}
+	storage := &fakeMediaStorage{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, newDiscardLogger())
+	lm := InboundMessage{
+		EventID:      "evt-video",
+		AppID:        "cli_app",
+		ChatID:       "oc_dm",
+		ChatType:     ChatTypeP2P,
+		MessageID:    "om_video",
+		SenderOpenID: "ou_user",
+		MessageType:  "media",
+		Body:         "[Video]",
+		Content:      `{"file_key":"file_v3_key","file_name":"clip.mp4"}`,
+	}
+	got := resolver.ResolveMedia(context.Background(), engine.ResolvedInstallation{
+		WorkspaceID: uuidFromString(t, "11111111-1111-1111-1111-111111111111"),
+		Platform:    Installation{AppID: "cli_app", Region: "feishu"},
+	}, engine.ResolvedIdentity{}, uuidFromString(t, "22222222-2222-2222-2222-222222222222"), channelMessageFromLark(lm))
+	if len(sender.downloadCalls) != 1 {
+		t.Fatalf("download calls = %d, want 1", len(sender.downloadCalls))
+	}
+	call := sender.downloadCalls[0]
+	if call.MessageID != "om_video" || call.FileKey != "file_v3_key" || call.Type != "file" {
+		t.Fatalf("download params wrong: %+v", call)
+	}
+	if len(got.MediaRefs) != 1 || got.MediaRefs[0].Type != channel.MsgTypeVideo || got.MediaRefs[0].Filename != "clip.mp4" {
+		t.Fatalf("video ref wrong: %+v", got.MediaRefs)
 	}
 }
 

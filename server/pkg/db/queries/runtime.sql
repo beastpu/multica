@@ -7,6 +7,15 @@ ORDER BY created_at ASC;
 SELECT * FROM agent_runtime
 WHERE id = $1;
 
+-- name: GetAgentRuntimes :many
+-- Batch variant of GetAgentRuntime (MUL-4257): loads every runtime in the
+-- input set in one round trip so the machine-level batch claim handler can
+-- resolve+authorize all of a daemon's runtimes without one point query per
+-- runtime. Rows are returned only for ids that exist; the caller matches them
+-- back by id and skips any that are missing.
+SELECT * FROM agent_runtime
+WHERE id = ANY(@ids::uuid[]);
+
 -- name: LockAgentRuntime :one
 -- Acquires a row-level exclusive lock on the runtime row. Used at the
 -- top of the cascade-delete transaction so that:
@@ -43,8 +52,11 @@ INSERT INTO agent_runtime (
     device_info,
     metadata,
     owner_id,
+    visibility,
     last_seen_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+-- visibility only applies on INSERT; conflicts keep the existing value so a
+-- manual toggle via UpdateAgentRuntimeVisibility survives re-registration.
 -- Built-in runtimes carry no profile_id. The arbiter is the partial unique
 -- index from migration 121 (WHERE profile_id IS NULL); the predicate must be
 -- spelled out so Postgres selects that partial index, not the custom-runtime
@@ -79,9 +91,10 @@ INSERT INTO agent_runtime (
     device_info,
     metadata,
     owner_id,
+    visibility,
     profile_id,
     last_seen_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
 ON CONFLICT (workspace_id, daemon_id, profile_id) WHERE profile_id IS NOT NULL
 DO UPDATE SET
     name = EXCLUDED.name,
@@ -104,6 +117,44 @@ UPDATE agent_runtime
 SET visibility = @visibility, updated_at = now()
 WHERE id = @id
 RETURNING *;
+
+-- name: UpdateAgentRuntimeCustomName :one
+-- Sets or clears a runtime's user-facing custom name (MUL-4217). custom_name
+-- overrides the daemon-proposed `name` for display; passing NULL reverts to
+-- the default. Kept separate from the registration upserts above (which do
+-- name = EXCLUDED.name on every heartbeat) so a custom name is never
+-- clobbered by the daemon. Gated at the handler to owner / workspace admin.
+UPDATE agent_runtime
+SET custom_name = @custom_name, updated_at = now()
+WHERE id = @id
+RETURNING *;
+
+-- name: UpdateAgentRuntimeCustomNameByDaemon :many
+-- Machine-level rename (MUL-4217): applies one custom name to every runtime
+-- sharing a daemon_id in the workspace, since a single machine hosts one
+-- runtime per provider. @owner_id is NULL for workspace owners/admins (rename
+-- the whole machine) or the actor's user id otherwise (only their own
+-- runtimes on that machine), so a member cannot relabel someone else's
+-- runtime that happens to share the host.
+UPDATE agent_runtime
+SET custom_name = @custom_name, updated_at = now()
+WHERE workspace_id = @workspace_id
+  AND daemon_id = @daemon_id
+  AND (@owner_id::uuid IS NULL OR owner_id = @owner_id)
+RETURNING *;
+
+-- name: ListDaemonCustomNames :many
+-- Lists the custom_name of every OTHER runtime on (workspace_id, daemon_id)
+-- (MUL-4217). @exclude_id drops the just-registered row. The caller derives
+-- the machine-level name in Go — the same "all runtimes share one non-null
+-- name" rule the frontend applies in sharedCustomName — so a freshly-added
+-- runtime on an already-named machine can inherit that name and keep the
+-- machine's display name stable. A daemon hosts only a handful of runtimes
+-- (one per provider), so this is a tiny read.
+SELECT custom_name FROM agent_runtime
+WHERE workspace_id = @workspace_id
+  AND daemon_id = @daemon_id
+  AND id <> @exclude_id;
 
 
 -- name: TouchAgentRuntimeLastSeen :execrows
@@ -234,6 +285,12 @@ RETURNING *;
 -- name: DeleteAgentRuntime :exec
 DELETE FROM agent_runtime WHERE id = $1;
 
+-- name: DeleteSystemAgentsByRuntime :exec
+-- System agents are invisible execution infrastructure (for example the Agent
+-- Builder). Remove them before deleting their runtime so the RESTRICT runtime
+-- FK cannot block an otherwise dependency-free delete.
+DELETE FROM agent WHERE runtime_id = $1 AND kind = 'system';
+
 -- name: CountActiveAgentsByRuntime :one
 SELECT count(*) FROM agent WHERE runtime_id = $1 AND archived_at IS NULL;
 
@@ -332,3 +389,16 @@ WHERE status = 'offline'
   AND last_seen_at < now() - make_interval(secs => @stale_seconds::double precision)
   AND id NOT IN (SELECT DISTINCT runtime_id FROM agent)
 RETURNING id, workspace_id;
+
+-- name: DeleteCloudRuntimesByNode :many
+-- Cascade cleanup when a kubefleet node is deleted: remove the cloud runtime
+-- rows the node's daemon registered (daemon_id = node name) so no offline
+-- orphans linger in the UI. Skips any runtime that still has an agent bound
+-- (agent.runtime_id is ON DELETE RESTRICT) — those stay until the agent is
+-- moved, so deleting a node never silently archives someone's agent.
+DELETE FROM agent_runtime
+WHERE agent_runtime.workspace_id = @workspace_id
+  AND agent_runtime.daemon_id = @daemon_id
+  AND agent_runtime.runtime_mode = 'cloud'
+  AND agent_runtime.id NOT IN (SELECT DISTINCT agent.runtime_id FROM agent)
+RETURNING agent_runtime.id;

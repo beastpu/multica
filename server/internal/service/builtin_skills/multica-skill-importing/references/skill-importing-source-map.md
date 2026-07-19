@@ -81,6 +81,21 @@ archive path (below); a JSON body keeps the URL flow. Both converge on the share
 | Legacy duplicate response `{error, existing_skill}` | `server/internal/handler/skill.go:118-123` |
 | CLI normalizes legacy `{existing_skill}` body into `status:"conflict"` | `server/cmd/multica/cmd_skill.go:454-482`, helper at `:484` |
 
+## In-place upgrade (`multica skill upgrade` / `POST /api/skills/{id}/upgrade`)
+
+| Behavior | File:line |
+|---|---|
+| `UpgradeSkill` handler (`POST /api/skills/{id}/upgrade`) | `server/internal/handler/skill.go:2322` |
+| Reads stored source via `skillOriginSourceURL(config)`; `400` when origin absent | `server/internal/handler/skill.go:2291` |
+| Re-fetches from the recorded source (`fetchImportedSkill` → `detectImportSource` + `fetchImportedSkillFromSource`) | `server/internal/handler/skill.go:869`, dispatch at `:850` |
+| Overwrites in place preserving skill ID / bindings via `overwriteSkillWithFiles` | `server/internal/handler/skill_create.go:133` (called from `UpgradeSkill`) |
+| Broader permission (creator **or** owner/admin) via `canManageSkillRole` | `server/internal/handler/skill.go:412` |
+| Injectable `Permit` predicate on `skillOverwriteInput` (import passes creator-only; upgrade passes creator-or-admin) | `server/internal/handler/skill_create.go` (`grep -n "Permit"`) |
+| Route registration `r.Post("/upgrade", h.UpgradeSkill)` | `server/cmd/server/router.go:1235` |
+| CLI `skill upgrade <id>` command def | `server/cmd/multica/cmd_skill.go:66-67` |
+| `runSkillUpgrade` → `POST /api/skills/{id}/upgrade` (nil body) | `server/cmd/multica/cmd_skill.go:425`; POST `:435` |
+| Tests (binding preservation, admin-can-upgrade-others, no-origin 400) | `server/internal/handler/skill_upgrade_test.go` |
+
 ## Response shape: `SkillWithFilesResponse`
 
 | Behavior | File:line |

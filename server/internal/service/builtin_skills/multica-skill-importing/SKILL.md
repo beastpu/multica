@@ -1,6 +1,6 @@
 ---
 name: multica-skill-importing
-description: "Use when a user provides a skill URL, slug, or clear intent to import/install a specific skill into the current Multica workspace. Teaches the workspace import API/CLI path (POST /api/skills/import), the supported URL source families, --on-conflict fail|overwrite|rename|skip behavior and structured import results, additive agent binding vs replace-all, and the reserved SKILL.md supporting-file rule. Do not use it to decide which skill the user needs, and never treat an external local installer like npx skills add as the final Multica install."
+description: "Use when a user provides a skill URL, slug, or clear intent to import/install a specific skill into the current Multica workspace, or to upgrade an already-imported skill in place. Teaches the workspace import API/CLI path (POST /api/skills/import), the in-place upgrade path (POST /api/skills/{id}/upgrade, multica skill upgrade) that re-fetches from a skill's recorded source while preserving agent bindings, the supported URL source families, --on-conflict fail|overwrite|rename|skip behavior and structured import results, additive agent binding vs replace-all, and the reserved SKILL.md supporting-file rule. Do not use it to decide which skill the user needs, and never treat an external local installer like npx skills add as the final Multica install."
 user-invocable: false
 allowed-tools: Bash(multica *)
 ---
@@ -241,6 +241,35 @@ multica skill get <skill-id> --output json
 Then report that the skill already exists and include its `id` / `name`. Do not
 retry in a loop, and do not create a second skill under a different name just to
 dodge the conflict.
+
+## Upgrading an imported skill in place
+
+When a workspace skill was imported from a hosted source, re-pull its latest
+version without deleting and re-importing:
+
+```bash
+multica skill upgrade <skill-id> --output json
+```
+
+This sends `POST /api/skills/{id}/upgrade`. The server reads the skill's recorded
+`config.origin.source_url`, re-fetches the current content from that source (same
+source families as import — ClawHub / Skills.sh / GitHub / Atlas Skill Hub), and
+overwrites the skill **in place**. Because the update keys on the existing skill
+ID, it preserves the skill's ID, `created_by`, `created_at`, and — critically —
+every `agent_skill` binding. This is the correct way to keep a bound skill current;
+delete + re-import unbinds every agent using it.
+
+Differences from `--on-conflict overwrite`:
+
+- **Permission is broader.** Upgrade is allowed for the skill creator **or** any
+  workspace owner/admin, not creator-only. A non-creator admin can upgrade a
+  teammate's imported skill.
+- **No URL argument.** The source is taken from the skill's stored origin, so a
+  skill imported with no recorded source (`config.origin` absent — e.g. a manually
+  created skill, or a local-archive import) returns `400` with a message that there
+  is no source to upgrade from.
+- On success it returns the upgraded `SkillWithFilesResponse` (same shape as an
+  import's `skill`).
 
 ## Incorrect → correct
 

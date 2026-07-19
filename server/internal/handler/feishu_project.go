@@ -558,7 +558,7 @@ func (h *Handler) GetFeishuProjectSyncRun(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) GetFeishuProjectIssueStatuses(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
-	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return
 	}
 	cfg, err := h.Queries.GetFeishuProjectIntegration(r.Context(), parseUUID(workspaceID))

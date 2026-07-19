@@ -285,11 +285,18 @@ Use the comparison to classify delivery and quality:
 - If the final submitted CL was submitted by Multica/automation or a Multica
   issue comment records the final submitted CL, use that evidence when choosing
   `delivery_attribution_prediction`.
-- If a human manually submitted a CL that is method-equivalent to the AI/Swarm
-  work, prefer `ai_assisted`. If automation submitted the equivalent final CL,
-  prefer `ai_delivered`.
-- If a human submitted a non-equivalent final CL, prefer `human_delivered` or
-  `unattributed` depending on whether the human ownership is proven.
+- If a human manually submitted a CL that uses or materially follows a verified,
+  method-equivalent AI/Swarm implementation, use `ai_assisted` regardless of
+  whether the AI output predates or follows the human submission. This metric
+  measures solution equivalence, not strict causal ordering.
+- Chronology is supporting context, not an exclusion rule. Establish equivalence
+  from the implementation diffs; matching titles, issue descriptions, or
+  root-cause prose alone are not implementation evidence.
+- If automation submitted the equivalent final CL, prefer `ai_delivered`.
+- If a human submitted a non-equivalent final CL, prefer `human_delivered` when
+  human ownership is proven.
+- If evidence is insufficient to compare the implementations or to establish
+  delivery ownership, use `unknown`; do not guess `ai_assisted`.
 
 ## Prediction policy
 
@@ -306,9 +313,16 @@ against the final delivery (the implementation comparison above). It is never
 a grade of a human-authored fix. When there is no verified AI output evidence
 (no AI shelve CL and no Swarm review), or the AI output evidence could not be
 accessed, output `quality_prediction: "unknown"` — do not judge the human fix
-in its place. The operations dashboard computes the AI fix rate only from
-tickets whose AI output evidence was reachable, so a wrongly-graded human fix
-corrupts the metric.
+in its place. The operations dashboard computes quality, automatic-repair,
+and assisted-repair rates only from currently Agent-assigned tickets where AI
+produced a recognizable plan and the assessment returned an explicit quality
+judgement (`likely_correct`, `likely_needs_changes`, or `likely_wrong`). An
+`unknown` judgement remains visible for diagnosis but is excluded from those
+rate denominators. Among passed plans, direct AI delivery is automatic repair;
+every other passed implementation comparison is assisted repair because the
+pass establishes method equivalence. Therefore assisted-pass count equals total
+pass count minus automatic-pass count. A wrongly-graded human fix corrupts these
+metrics.
 
 Prefer `unknown` with warnings over guessing. Useful warnings include:
 

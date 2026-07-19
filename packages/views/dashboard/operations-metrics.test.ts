@@ -12,6 +12,11 @@ import {
   deriveAttribution,
   fixDayIso,
   hasMissingExternalClWarning,
+  isAssignedToAgent,
+  isAiParticipated,
+  noPlanReason,
+  repairMethod,
+  unconvertedReason,
   isVerifiableOutput,
   trimOperationsWindow,
   swarmChangeUrl,
@@ -27,6 +32,8 @@ function fix(overrides: Partial<AgentFixRecord> = {}): AgentFixRecord {
     issue_identifier: "MUL-1",
     issue_title: "Fix it",
     issue_status: "done",
+    issue_assignee_type: "agent",
+    issue_assignee_id: "agent-1",
     started_at: null,
     completed_at: "2026-07-01T10:00:00Z",
     created_at: "2026-07-01T09:00:00Z",
@@ -174,6 +181,67 @@ describe("deriveAttribution", () => {
   });
 });
 
+describe("repairMethod", () => {
+  it("exposes only AI submitted, AI assisted, or unknown", () => {
+    const withAttribution = (value: string) =>
+      fix({
+        p4_assessment: {
+          assessment_status: "completed",
+          delivery_attribution_prediction: value,
+          ai_shelved_cls: ["123"],
+        },
+      });
+
+    expect(repairMethod(withAttribution("ai_delivered"))).toBe("ai_delivered");
+    expect(repairMethod(withAttribution("ai_assisted"))).toBe("ai_assisted");
+    expect(repairMethod(withAttribution("human_delivered"))).toBe("unknown");
+    expect(repairMethod(withAttribution("conflict"))).toBe("unknown");
+    expect(repairMethod(fix())).toBe("unknown");
+  });
+
+  it("does not infer AI assistance from a needs-changes quality judgement", () => {
+    const needsChanges = (attribution: string) =>
+      fix({
+        p4_assessment: {
+          assessment_status: "completed",
+          delivery_attribution_prediction: attribution,
+          quality_prediction: "likely_needs_changes",
+          ai_shelved_cls: ["123"],
+        },
+      });
+
+    expect(repairMethod(needsChanges("ai_assisted"))).toBe("ai_assisted");
+    expect(repairMethod(needsChanges("unknown"))).toBe("unknown");
+    expect(repairMethod(needsChanges("human_delivered"))).toBe("unknown");
+    expect(repairMethod(needsChanges("conflict"))).toBe("unknown");
+  });
+
+  it("treats a passed implementation comparison as assisted", () => {
+    const equivalentHumanDelivery = fix({
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+        quality_prediction: "likely_correct",
+        ai_shelved_cls: [123],
+        external_committed_cls: [456],
+      },
+    });
+    const missingFinalCl = fix({
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "unknown",
+        quality_prediction: "likely_correct",
+        ai_shelved_cls: [123],
+      },
+    });
+
+    expect(repairMethod(equivalentHumanDelivery)).toBe("ai_assisted");
+    // The completed comparison verdict is authoritative even when an older
+    // record did not persist the inspected final CL into its structured array.
+    expect(repairMethod(missingFinalCl)).toBe("ai_assisted");
+  });
+});
+
 describe("computeOperationsKpis", () => {
   const aiPassed = fix({
     external: { done: true },
@@ -206,6 +274,8 @@ describe("computeOperationsKpis", () => {
     },
   });
   const noOutput = fix({
+    task_id: "",
+    agent_id: "",
     external: { done: true },
     p4_assessment: {
       assessment_status: "completed",
@@ -224,7 +294,7 @@ describe("computeOperationsKpis", () => {
       notDone,
     ]);
     expect(kpis.funnel).toEqual({
-      total: 5,
+      total: 4,
       externalDone: 4,
       aiEngaged: 3,
       aiPlanned: 3,
@@ -240,28 +310,48 @@ describe("computeOperationsKpis", () => {
       unconverted: 0,
       notParticipated: 1,
     });
-    // Contribution: 3 of 4 done tickets have an AI plan. Its numerator is the
-    // SAME count as coverage's denominator — the headline nesting chain.
+    // Contribution: 3 of 4 external-done tickets have a normal Agent task.
     expect(kpis.contributionRate).toEqual({
       value: 0.75,
       numerator: 3,
       denominator: 4,
     });
-    // Coverage: 2 of the 3 AI plans reached a verdict (aiUnjudged did not).
-    expect(kpis.coverageRate).toEqual({
+    // Outcome cards only use explicit judgements. An "unknown" assessment is
+    // visible in the quality drawer but stays outside the denominator.
+    expect(kpis.judgedCount).toBe(2);
+    expect(kpis.assessmentRate).toEqual({
       value: 2 / 3,
       numerator: 2,
       denominator: 3,
     });
-    expect(kpis.coverageRate.denominator).toBe(kpis.contributionRate.numerator);
-    // Quality (plan-quality, one rate): 1 of 2 judged is likely_correct.
-    expect(kpis.passRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
-    expect(kpis.passRate.denominator).toBe(kpis.coverageRate.numerator);
-    // Demoted health counts. noOutput = the unattributed-with-no-shelve row.
-    // unjudged = every completed assessment without a verdict: aiUnjudged
-    // (unknown quality) AND noOutput (no quality at all).
-    expect(kpis.noOutput).toBe(1);
-    expect(kpis.unjudged).toBe(2);
+    expect(kpis.assessmentRate.denominator).toBe(
+      kpis.contributionRate.numerator,
+    );
+    expect(kpis.judgedCount).toBeLessThanOrEqual(
+      kpis.contributionRate.numerator,
+    );
+    expect(kpis.qualityRate).toEqual({
+      value: 1 / 2,
+      numerator: 1,
+      denominator: 2,
+    });
+    expect(kpis.automaticShare).toEqual({
+      value: 1,
+      numerator: 1,
+      denominator: 1,
+    });
+    expect(kpis.assistedRate).toEqual({
+      value: 0,
+      numerator: 0,
+      denominator: 2,
+    });
+    expect(kpis.assistedRate.numerator).toBe(
+      kpis.qualityRate.numerator - kpis.automaticShare.numerator,
+    );
+    // Health counts use the same assigned + external-done opportunity pool;
+    // notDone is outside it. No fixture carries missing_external_cl.
+    expect(kpis.unassessed).toBe(0);
+    expect(kpis.missingExternalCl).toBe(0);
   });
 
   it("counts a verifiable row regardless of noisy warnings", () => {
@@ -282,15 +372,14 @@ describe("computeOperationsKpis", () => {
     expect(kpis.funnel.verifiable).toBe(2);
     expect(kpis.funnel.judged).toBe(2);
     expect(kpis.funnel.passed).toBe(2);
-    expect(kpis.passRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
+    expect(kpis.qualityRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
   });
 
-  it("judges an AI plan even without a committed CL (assessment ≠ delivery)", () => {
-    // AI shelved a fix and the assessment judged the plan likely_correct. Even
-    // though nothing shipped (no committed CL), the quality verdict is valid —
-    // quality is about the plan, not delivery. Whether it shipped is
-    // contribution's job, not the quality pipeline's.
-    const shelvedButUnshipped = fix({
+  it("trusts a completed comparison when structured CL evidence is missing", () => {
+    // AI shelved a fix and the completed assessment judged it likely_correct.
+    // Some older rows did not persist the inspected final CL into the structured
+    // arrays, but the comparison verdict still records implementation parity.
+    const legacyComparison = fix({
       external: { done: true },
       p4_assessment: {
         assessment_status: "completed",
@@ -299,17 +388,18 @@ describe("computeOperationsKpis", () => {
         ai_shelved_cls: [9],
       },
     });
-    const kpis = computeOperationsKpis([aiPassed, shelvedButUnshipped]);
+    const kpis = computeOperationsKpis([aiPassed, legacyComparison]);
     expect(kpis.funnel.verifiable).toBe(2);
     expect(kpis.funnel.judged).toBe(2);
     expect(kpis.funnel.passed).toBe(2);
-    // The unshipped plan is judged and passed — pass rate does not require a
-    // committed CL.
-    expect(kpis.passRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
-    // Both plans count as contribution (artifact-driven) and both were
-    // assessed, so coverage is 2/2 — delivery attribution plays no role here.
+    // The plan is judged and passed even though structured CL evidence was not
+    // backfilled into this historical row.
+    expect(kpis.qualityRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
+    // Both external-done tickets had a normal Agent task.
     expect(kpis.contributionRate.numerator).toBe(2);
-    expect(kpis.coverageRate).toEqual({ value: 1, numerator: 2, denominator: 2 });
+    // A passing comparison means the AI plan is equivalent to the delivered
+    // implementation, so it is an assisted success even if attribution is old.
+    expect(kpis.assistedRate).toEqual({ value: 0.5, numerator: 1, denominator: 2 });
   });
 
   it("excludes a committed CL with no AI plan (human-delivered)", () => {
@@ -327,10 +417,10 @@ describe("computeOperationsKpis", () => {
     });
     const kpis = computeOperationsKpis([aiPassed, humanDelivered]);
     expect(kpis.funnel.verifiable).toBe(1);
-    expect(kpis.passRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
+    expect(kpis.qualityRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
   });
 
-  it("counts an unused AI plan as contribution (artifact-driven)", () => {
+  it("keeps a failed unused AI plan in participation but not assisted success", () => {
     // AI shelved a fix but a human shipped a different CL (human_delivered).
     const planNotUsed = fix({
       external: { done: true },
@@ -349,16 +439,169 @@ describe("computeOperationsKpis", () => {
       unconverted: 1,
       notParticipated: 0,
     });
-    // Contribution is artifact-driven: the plan exists, so it counts even
-    // though a human shipped a different CL. Where it landed (unconverted)
-    // stays visible in the composition partition and the analysis tab.
+    // Contribution and delivery composition share the same participation
+    // predicate, so the two headline counts cannot drift apart.
     expect(kpis.contributionRate).toEqual({
       value: 1,
       numerator: 1,
       denominator: 1,
     });
-    // The failed plan is judged (it reached a verdict) but not passed.
-    expect(kpis.passRate).toEqual({ value: 0, numerator: 0, denominator: 1 });
+    // The failed, unconverted plan remains AI participation, but it is not a
+    // successful assisted repair.
+    expect(kpis.qualityRate).toEqual({ value: 0, numerator: 0, denominator: 1 });
+    expect(kpis.assistedRate).toEqual({ value: 0, numerator: 0, denominator: 1 });
+  });
+
+  it("defines pickup by AI participation rather than normal task presence", () => {
+    const participatedWithoutTask = fix({
+      task_id: "",
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "ai_assisted",
+        quality_prediction: "likely_needs_changes",
+        ai_shelved_cls: [88],
+      },
+    });
+    const taskWithoutParticipation = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+        quality_prediction: "likely_correct",
+        ai_shelved_cls: [],
+      },
+    });
+
+    expect(isAiParticipated(participatedWithoutTask)).toBe(true);
+    expect(isAiParticipated(taskWithoutParticipation)).toBe(false);
+    const kpis = computeOperationsKpis([
+      participatedWithoutTask,
+      taskWithoutParticipation,
+    ]);
+    expect(kpis.contributionRate).toEqual({
+      value: 0.5,
+      numerator: 1,
+      denominator: 2,
+    });
+    expect(
+      kpis.composition.directDelivered +
+        kpis.composition.assisted +
+        kpis.composition.unconverted,
+    ).toBe(kpis.contributionRate.numerator);
+  });
+
+  it("uses judged AI participation as every repair-rate denominator", () => {
+    const judgedWithoutPlanArtifact = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "ai_delivered",
+        quality_prediction: "likely_correct",
+        ai_shelved_cls: [],
+      },
+    });
+    const participatedButUnknown = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "ai_assisted",
+        quality_prediction: "unknown",
+        ai_shelved_cls: [91],
+      },
+    });
+
+    const kpis = computeOperationsKpis([
+      judgedWithoutPlanArtifact,
+      participatedButUnknown,
+    ]);
+    expect(kpis.judgedCount).toBe(1);
+    expect(kpis.assessmentRate).toEqual({
+      value: 1 / 2,
+      numerator: 1,
+      denominator: 2,
+    });
+    expect(kpis.qualityRate).toEqual({ value: 1, numerator: 1, denominator: 1 });
+    expect(kpis.automaticShare).toEqual({
+      value: 1,
+      numerator: 1,
+      denominator: 1,
+    });
+    expect(kpis.assistedRate).toEqual({
+      value: 0,
+      numerator: 0,
+      denominator: 1,
+    });
+  });
+
+  it("uses current Agent assignment as the contribution opportunity pool", () => {
+    const historicalTaskOnly = fix({
+      issue_assignee_type: "",
+      issue_assignee_id: "",
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "ai_delivered",
+        quality_prediction: "likely_correct",
+      },
+    });
+    const assignedWithoutPlan = fix({
+      external: { done: true },
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+      },
+    });
+    expect(isAssignedToAgent(historicalTaskOnly)).toBe(false);
+    expect(isAssignedToAgent(assignedWithoutPlan)).toBe(true);
+    const kpis = computeOperationsKpis([historicalTaskOnly, assignedWithoutPlan]);
+    expect(kpis.contributionRate).toEqual({
+      value: 0,
+      numerator: 0,
+      denominator: 1,
+    });
+    expect(kpis.composition.notParticipated).toBe(1);
+  });
+
+  it("classifies contribution loss reasons into mutually exclusive buckets", () => {
+    const unconvertedHuman = fix({
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+        ai_shelved_cls: [1],
+      },
+    });
+    const unconvertedUnknown = fix({
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "unknown",
+        swarm_reviews: [{ sent_at: "2026-07-01T00:00:00Z" }],
+      },
+    });
+    const cancelled = fix({ task_status: "cancelled" });
+    const assessmentPending = fix({
+      task_status: "completed",
+      p4_assessment: { assessment_status: "pending" },
+    });
+    const commentOnly = fix({
+      task_status: "completed",
+      agent_comment_count: 1,
+    });
+    const noVisibleOutput = fix({
+      task_status: "completed",
+      agent_comment_count: 0,
+      p4_assessment: {
+        assessment_status: "completed",
+        delivery_attribution_prediction: "human_delivered",
+      },
+    });
+
+    expect(unconvertedReason(unconvertedHuman)).toBe("human_delivered");
+    expect(unconvertedReason(unconvertedUnknown)).toBe("evidence_unconfirmed");
+    expect(noPlanReason(cancelled)).toBe("task_cancelled");
+    expect(noPlanReason(assessmentPending)).toBe("assessment_incomplete");
+    expect(noPlanReason(commentOnly)).toBe("comment_only");
+    expect(noPlanReason(noVisibleOutput)).toBe("no_visible_output");
   });
 
   it("counts a comment-only plan as engaged but not planned or participated", () => {
@@ -380,16 +623,32 @@ describe("computeOperationsKpis", () => {
     expect(kpis.funnel.aiEngaged).toBe(1);
     expect(kpis.funnel.aiPlanned).toBe(0);
     expect(kpis.composition.notParticipated).toBe(1);
-    expect(kpis.noOutput).toBe(1);
   });
 
   it("returns null rates on empty input instead of fake zeros", () => {
     const kpis = computeOperationsKpis([]);
     expect(kpis.contributionRate.value).toBeNull();
-    expect(kpis.passRate.value).toBeNull();
-    expect(kpis.coverageRate.value).toBeNull();
-    expect(kpis.noOutput).toBe(0);
-    expect(kpis.unjudged).toBe(0);
+    expect(kpis.qualityRate.value).toBeNull();
+    expect(kpis.automaticShare.value).toBeNull();
+    expect(kpis.assistedRate.value).toBeNull();
+    expect(kpis.assessmentRate.value).toBeNull();
+    expect(kpis.unassessed).toBe(0);
+    expect(kpis.missingExternalCl).toBe(0);
+  });
+
+  it("keeps mapped external done rows in the denominator on older responses", () => {
+    const kpis = computeOperationsKpis([
+      fix({
+        task_id: "",
+        agent_id: "",
+        external: { mapped_status: "done" },
+      }),
+    ]);
+    expect(kpis.contributionRate).toEqual({
+      value: 0,
+      numerator: 0,
+      denominator: 1,
+    });
   });
 
   it("does not count an unknown or drifting quality value as judged", () => {
@@ -410,6 +669,7 @@ describe("computeOperationsKpis", () => {
 
 describe("distribution buckets reconcile with the KPI numerators", () => {
   const completedUnknown = fix({
+    external: { done: true },
     p4_assessment: {
       assessment_status: "completed",
       delivery_attribution_prediction: "unknown",
@@ -417,13 +677,16 @@ describe("distribution buckets reconcile with the KPI numerators", () => {
     },
   });
   const running = fix({
+    external: { done: true },
     p4_assessment: { assessment_status: "running" },
   });
   const failed = fix({
+    external: { done: true },
     p4_assessment: { assessment_status: "failed", quality_prediction: "unknown" },
   });
-  const neverAssessed = fix();
+  const neverAssessed = fix({ external: { done: true } });
   const passed = fix({
+    external: { done: true },
     p4_assessment: {
       assessment_status: "completed",
       delivery_attribution_prediction: "ai_delivered",
@@ -444,17 +707,15 @@ describe("distribution buckets reconcile with the KPI numerators", () => {
     expect(attributionBucket(passed)).toBe("ai_delivered");
   });
 
-  it("quality-card unknown equals the undetermined footnote count", () => {
+  it("unassessed bucket count equals the footnote's queue backlog", () => {
     const rows = [completedUnknown, running, failed, neverAssessed, passed];
     const kpis = computeOperationsKpis(rows);
-    const unknownInCard = rows.filter((r) => qualityBucket(r) === "unknown").length;
-    // The reported mismatch (208 vs 157) came from counting unfinished
-    // assessments as "unknown" in the card; with the bucket split both
-    // surfaces count exactly the completed-without-verdict rows.
-    expect(unknownInCard).toBe(kpis.unjudged);
+    // The footnote's 未评估 and the (card-excluded) unassessed bucket count
+    // the same rows, so the queue backlog reads identically everywhere.
     expect(
       rows.filter((r) => qualityBucket(r) === UNASSESSED).length,
-    ).toBe(3);
+    ).toBe(kpis.unassessed);
+    expect(kpis.unassessed).toBe(3);
   });
 });
 

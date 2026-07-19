@@ -140,6 +140,64 @@ func TestGetDownloadFile_LatestYmlGetsShortCache(t *testing.T) {
 	}
 }
 
+func TestGetDownloadFile_CliPointersGetShortCache(t *testing.T) {
+	// The CLI version pointer and the bootstrap script are republished in
+	// place every release, so — like latest-*.yml — they must not be
+	// cached for a year, or a new release would be invisible to
+	// `install.sh` for up to that long.
+	for _, name := range []string{"latest-cli.txt", "install.sh"} {
+		body := "0.2.39\n"
+		stub := newStubS3()
+		stub.Set("downloads/"+name, func() (*s3.GetObjectOutput, error) {
+			return &s3.GetObjectOutput{
+				Body:          io.NopCloser(strings.NewReader(body)),
+				ContentLength: aws.Int64(int64(len(body))),
+			}, nil
+		})
+		h := &Handler{Downloads: newProxyWithStub(t, stub)}
+
+		req := chiRequest(http.MethodGet, "/api/downloads/"+name, name)
+		w := httptest.NewRecorder()
+		h.GetDownloadFile(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d: %s", name, w.Code, w.Body.String())
+		}
+		cc := w.Header().Get("Cache-Control")
+		if !strings.Contains(cc, "max-age=60") || strings.Contains(cc, "immutable") {
+			t.Fatalf("%s: expected short-cache header, got %q", name, cc)
+		}
+	}
+}
+
+func TestGetDownloadFile_VersionedCliTarballGetsLongCache(t *testing.T) {
+	// A versioned CLI tarball has its version baked into the filename and
+	// so is immutable — it must get the long, immutable cache like the
+	// versioned desktop installers.
+	body := "tarball-bytes"
+	stub := newStubS3()
+	stub.Set("downloads/multica-cli-0.2.39-linux-arm64.tar.gz", func() (*s3.GetObjectOutput, error) {
+		return &s3.GetObjectOutput{
+			Body:          io.NopCloser(strings.NewReader(body)),
+			ContentLength: aws.Int64(int64(len(body))),
+		}, nil
+	})
+	h := &Handler{Downloads: newProxyWithStub(t, stub)}
+
+	req := chiRequest(http.MethodGet,
+		"/api/downloads/multica-cli-0.2.39-linux-arm64.tar.gz",
+		"multica-cli-0.2.39-linux-arm64.tar.gz")
+	w := httptest.NewRecorder()
+	h.GetDownloadFile(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Fatalf("expected long-cache header on versioned CLI tarball, got %q", cc)
+	}
+}
+
 func TestGetDownloadFile_NoSuchKeyIs404(t *testing.T) {
 	stub := newStubS3() // no handlers → default NoSuchKey
 	h := &Handler{Downloads: newProxyWithStub(t, stub)}

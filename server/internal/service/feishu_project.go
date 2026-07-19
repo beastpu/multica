@@ -1133,33 +1133,11 @@ func feishuProjectLabelRuleMatches(item FeishuProjectWorkItem, rule FeishuProjec
 
 func (s *FeishuProjectSyncService) ensureIssueLabel(ctx context.Context, workspaceID pgtype.UUID, name string) (db.IssueLabel, error) {
 	name = strings.TrimSpace(name)
-	labels, err := s.Queries.ListLabels(ctx, workspaceID)
-	if err != nil {
-		return db.IssueLabel{}, err
-	}
-	for _, label := range labels {
-		if strings.EqualFold(label.Name, name) {
-			return label, nil
-		}
-	}
-	label, err := s.Queries.CreateLabel(ctx, db.CreateLabelParams{
+	return s.Queries.UpsertLabelByName(ctx, db.UpsertLabelByNameParams{
 		WorkspaceID: workspaceID,
 		Name:        name,
 		Color:       "#3b82f6",
 	})
-	if err == nil {
-		return label, nil
-	}
-	labels, listErr := s.Queries.ListLabels(ctx, workspaceID)
-	if listErr != nil {
-		return db.IssueLabel{}, err
-	}
-	for _, label := range labels {
-		if strings.EqualFold(label.Name, name) {
-			return label, nil
-		}
-	}
-	return db.IssueLabel{}, err
 }
 
 func (s *FeishuProjectSyncService) detachManagedLabel(ctx context.Context, workspaceID, issueID, labelID pgtype.UUID) error {

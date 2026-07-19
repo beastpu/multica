@@ -34,7 +34,7 @@ func uuidToString(u pgtype.UUID) string { return util.UUIDToString(u) }
 // local DB. When nil (Fleet URL unset) mcn_ tokens are rejected at the
 // prefix branch — we don't fall through to the mul_ / JWT paths, since
 // an mcn_ string is by construction not a valid mul_ PAT or JWT.
-func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier) func(http.Handler) http.Handler {
+func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT CloudPATVerifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source is server-set only — any value supplied by

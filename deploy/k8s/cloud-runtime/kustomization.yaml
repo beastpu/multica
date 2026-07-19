@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# In-process k8s cloud runtime (kubefleet) RBAC. Referenced from an overlay's
+# `resources:` (e.g. overlays/test) rather than the shared base, because the
+# fleet is enabled per-environment. The overlay's `namespace:` field retargets
+# the ServiceAccount and rewrites the ClusterRoleBinding subject namespace.
+resources:
+  - rbac.yaml

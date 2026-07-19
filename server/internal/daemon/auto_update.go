@@ -8,8 +8,8 @@ import (
 )
 
 // Indirections over the real release / version helpers so tests can run the
-// auto-update loop deterministically without reaching out to GitHub or
-// shelling out to brew/curl. Mirrors the pattern used at the top of daemon.go
+// auto-update loop deterministically without reaching out to the download host
+// or shelling out to brew/curl. Mirrors the pattern used at the top of daemon.go
 // for `isBrewInstall` / `getBrewPrefix` / `matchKnownBrewPrefix`.
 var (
 	fetchLatestRelease = cli.FetchLatestRelease
@@ -20,12 +20,12 @@ var (
 // autoUpdateInitialDelay is how long the loop waits after Run() returns before
 // performing its first version check. The daemon has plenty to do at startup
 // (auth, register, sync workspaces, kick off heartbeats); we don't want to add
-// an outbound HTTPS call to GitHub on top of that. The delay is also short
+// an outbound HTTPS call to the download host on top of that. The delay is also short
 // enough that a brand-new install with an available update still self-updates
 // within a couple of minutes rather than after the full check interval.
 var autoUpdateInitialDelay = 2 * time.Minute
 
-// autoUpdateLoop periodically polls GitHub for a newer CLI release and, when
+// autoUpdateLoop periodically polls the download host for a newer CLI release and, when
 // one is available and the daemon is idle, runs the same brew-or-download
 // upgrade path as the server-triggered update. On success it triggers a
 // graceful restart into the new binary.
@@ -101,8 +101,8 @@ func (d *Daemon) tryAutoUpdate(ctx context.Context) {
 		return
 	}
 	// Cheap pre-fetch idle check: the release-metadata fetch below makes an
-	// HTTPS call to GitHub, and there is no point paying that cost (or the
-	// rate-limit budget) when we already know we are going to defer. A task
+	// HTTPS call to the download host, and there is no point paying that cost
+	// when we already know we are going to defer. A task
 	// that starts between this load and the barrier check below is caught
 	// by the strict re-check under claimMu inside trySetClaimBarrier.
 	if running := d.activeTasks.Load(); running > 0 {
