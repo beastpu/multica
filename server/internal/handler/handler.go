@@ -31,7 +31,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
-	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -89,8 +88,12 @@ type Config struct {
 	// return 503 instead of attempting to dial a hard-coded private service.
 	CloudRuntimeFleetURL     string
 	CloudRuntimeFleetTimeout time.Duration
-	AttachmentDownloadMode   string
-	AttachmentDownloadURLTTL time.Duration
+	// CloudRuntimeFleetServiceToken is the pre-shared secret sent as
+	// `Authorization: Bearer` to the standalone Fleet service. Empty for the
+	// SaaS Fleet (network-trust) or when cloud runtime is disabled.
+	CloudRuntimeFleetServiceToken string
+	AttachmentDownloadMode        string
+	AttachmentDownloadURLTTL      time.Duration
 	// AttachmentFrameAncestors are trusted browser origins allowed to embed
 	// attachment preview responses. In production this should mirror the
 	// frontend/CORS origin allowlist so split app/api self-hosted deployments
@@ -171,11 +174,6 @@ type Handler struct {
 	WebhookAbsoluteIPRateLimiter WebhookRateLimiter
 	WebhookDeliveryWorker        *WebhookDeliveryWorker
 	CloudRuntime                 cloudRuntimeProxy
-	// CloudRuntimeEnvBox seals/opens the per-workspace cloud runtime env
-	// (LLM proxy keys injected into kubefleet node pods). Nil when
-	// MULTICA_CLOUD_RUNTIME_SECRET_KEY is unset — PUT then returns 503 and
-	// GET reports not-configured. Wired in cmd/server/router.go.
-	CloudRuntimeEnvBox *secretbox.Box
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
 	// handlers return 503 in that case so a misconfigured self-host
@@ -305,8 +303,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		WebhookIPRateLimiter:         NewMemoryWebhookIPRateLimiter(DefaultWebhookIPRateLimit()),
 		WebhookAbsoluteIPRateLimiter: NewMemoryWebhookAbsoluteIPRateLimiter(DefaultWebhookAbsoluteIPRateLimit()),
 		CloudRuntime: cloudruntime.NewClient(cloudruntime.Config{
-			BaseURL: cfg.CloudRuntimeFleetURL,
-			Timeout: cfg.CloudRuntimeFleetTimeout,
+			BaseURL:      cfg.CloudRuntimeFleetURL,
+			Timeout:      cfg.CloudRuntimeFleetTimeout,
+			ServiceToken: cfg.CloudRuntimeFleetServiceToken,
 		}),
 		LLM: llm.New(llm.Config{
 			APIKey:       cfg.LLMAPIKey,

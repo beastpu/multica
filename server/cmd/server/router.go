@@ -3,20 +3,16 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/netip"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -24,7 +20,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
-	"github.com/multica-ai/multica/server/internal/cloudruntime/kubefleet"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
@@ -202,21 +197,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	origins := allowedOrigins()
 
 	signupConfig := handler.Config{
-		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
-		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
-		AllowedEmailDomains:      splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
-		DisableWorkspaceCreation: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
-		PublicURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
-		TrustedProxies:           parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
-		CloudRuntimeFleetURL:     cloudRuntimeFleetURLFromEnv(),
-		CloudRuntimeFleetTimeout: envDuration("MULTICA_CLOUD_FLEET_TIMEOUT", 35*time.Second),
-		AttachmentDownloadMode:   os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
-		AttachmentDownloadURLTTL: envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
-		AttachmentFrameAncestors: origins,
-		LLMAPIKey:                strings.TrimSpace(os.Getenv("MULTICA_LLM_API_KEY")),
-		LLMBaseURL:               strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
-		LLMDefaultModel:          strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
-		ServerVersion:            normalizeServerVersion(version),
+		AllowSignup:                   os.Getenv("ALLOW_SIGNUP") != "false",
+		AllowedEmails:                 splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
+		AllowedEmailDomains:           splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
+		DisableWorkspaceCreation:      os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+		PublicURL:                     strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+		TrustedProxies:                parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
+		CloudRuntimeFleetURL:          cloudRuntimeFleetURLFromEnv(),
+		CloudRuntimeFleetTimeout:      envDuration("MULTICA_CLOUD_FLEET_TIMEOUT", 35*time.Second),
+		CloudRuntimeFleetServiceToken: strings.TrimSpace(os.Getenv("MULTICA_FLEET_SERVICE_TOKEN")),
+		AttachmentDownloadMode:        os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
+		AttachmentDownloadURLTTL:      envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
+		AttachmentFrameAncestors:      origins,
+		LLMAPIKey:                     strings.TrimSpace(os.Getenv("MULTICA_LLM_API_KEY")),
+		LLMBaseURL:                    strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
+		LLMDefaultModel:               strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
+		ServerVersion:                 normalizeServerVersion(version),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	h.Metrics = opts.BusinessMetrics
@@ -680,72 +676,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	if remote := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{
 		FleetBaseURL: signupConfig.CloudRuntimeFleetURL,
 		Redis:        rdb,
+		ServiceToken: signupConfig.CloudRuntimeFleetServiceToken,
 	}); remote != nil {
 		cloudPATVerifier = remote
 	}
 
-	// Workspace cloud runtime env master key. Independent of the provider
-	// switch below so admins can stage keys before the fleet is enabled.
-	// Unset = feature off (endpoints report not-configured); set-but-invalid
-	// is a deployment bug and fails startup rather than silently disabling.
-	if strings.TrimSpace(os.Getenv("MULTICA_CLOUD_RUNTIME_SECRET_KEY")) != "" {
-		envKey, err := secretbox.LoadKey("MULTICA_CLOUD_RUNTIME_SECRET_KEY")
-		if err == nil {
-			h.CloudRuntimeEnvBox, err = secretbox.New(envKey)
-		}
-		if err != nil {
-			slog.Error("cloud runtime env: invalid MULTICA_CLOUD_RUNTIME_SECRET_KEY", "error", err)
-			os.Exit(1)
-		}
-	}
+	// Workspace cloud runtime env is now stored and sealed by the standalone
+	// Fleet service (MULTICA_CLOUD_RUNTIME_SECRET_KEY lives there); server just
+	// proxies the admin CRUD.
 
-	// In-process k8s fleet: MULTICA_CLOUD_RUNTIME_PROVIDER=k8s swaps the
-	// remote Fleet proxy for kubefleet (one namespace per workspace, one
-	// StatefulSet per node) and verifies mcn_ node PATs against the local
-	// cloud_node_token table instead of a remote Fleet.
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("MULTICA_CLOUD_RUNTIME_PROVIDER")), "k8s") {
-		serverURL := strings.TrimSpace(os.Getenv("MULTICA_CLOUD_RUNTIME_SERVER_URL"))
-		if serverURL == "" {
-			serverURL = signupConfig.PublicURL
-		}
-		extraEnv, err := kubefleet.ParseExtraEnv(os.Getenv("MULTICA_CLOUD_RUNTIME_EXTRA_ENV"))
-		if err != nil {
-			slog.Error("cloud runtime provider k8s configured but unusable", "error", err)
-			os.Exit(1)
-		}
-		maxNodes := 0
-		if raw := strings.TrimSpace(os.Getenv("MULTICA_CLOUD_RUNTIME_MAX_NODES_PER_WORKSPACE")); raw != "" {
-			n, perr := strconv.Atoi(raw)
-			if perr != nil || n <= 0 {
-				slog.Error("cloud runtime provider k8s configured but unusable", "error", "MULTICA_CLOUD_RUNTIME_MAX_NODES_PER_WORKSPACE must be a positive integer")
-				os.Exit(1)
-			}
-			maxNodes = n
-		}
-		provider, err := kubefleet.New(kubefleet.Config{
-			Image:                      os.Getenv("MULTICA_CLOUD_RUNTIME_IMAGE"),
-			ServerURL:                  serverURL,
-			KubeAPIURL:                 os.Getenv("MULTICA_CLOUD_RUNTIME_KUBE_API_URL"),
-			Kubeconfig:                 os.Getenv("MULTICA_CLOUD_RUNTIME_KUBECONFIG"),
-			NamespacePrefix:            os.Getenv("MULTICA_CLOUD_RUNTIME_NAMESPACE_PREFIX"),
-			StorageClass:               os.Getenv("MULTICA_CLOUD_RUNTIME_STORAGE_CLASS"),
-			PullSecretDockerConfigJSON: os.Getenv("MULTICA_CLOUD_RUNTIME_PULL_SECRET_DOCKERCONFIGJSON"),
-			ExtraEnv:                   extraEnv,
-			MaxNodesPerWorkspace:       maxNodes,
-		})
-		if err != nil {
-			slog.Error("cloud runtime provider k8s configured but unusable", "error", err)
-			os.Exit(1)
-		}
-		h.CloudRuntime = cloudruntime.NewFleet(cloudruntime.FleetConfig{
-			Provider:             provider,
-			Queries:              queries,
-			EnvBox:               h.CloudRuntimeEnvBox,
-			NodeTokenTTL:         envDuration("MULTICA_CLOUD_RUNTIME_NODE_TOKEN_TTL", 0),
-			MaxNodesPerWorkspace: maxNodes,
-		})
-		cloudPATVerifier = &auth.LocalCloudPATVerifier{Lookup: cloudNodeTokenLookup(queries)}
-	}
+	// Node provisioning and mcn_ token authority live in the standalone
+	// multica-cloud Fleet service; multica-server proxies to it via the
+	// cloudruntime.Client (wired in handler.New from MULTICA_CLOUD_FLEET_URL)
+	// and verifies mcn_ tokens through the remote CloudPATVerifier configured
+	// above.
 
 	// Empty-claim cache: lets the daemon poll path skip a Postgres
 	// scan when a recent check confirmed the runtime had no queued
@@ -1733,27 +1677,6 @@ func splitAndTrim(s string) []string {
 		}
 	}
 	return res
-}
-
-// cloudNodeTokenLookup resolves a hashed mcn_ token against the local
-// cloud_node_token table for auth.LocalCloudPATVerifier. Unknown or expired
-// hashes map to ErrCloudPATInvalid (→ 401); any other DB failure maps to
-// ErrCloudPATUnavailable (→ 503) so a transient outage doesn't tell clients
-// to discard a still-valid token.
-func cloudNodeTokenLookup(queries *db.Queries) func(ctx context.Context, tokenHash string) (auth.CloudPATIdentity, error) {
-	return func(ctx context.Context, tokenHash string) (auth.CloudPATIdentity, error) {
-		row, err := queries.GetCloudNodeTokenByHash(ctx, tokenHash)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return auth.CloudPATIdentity{}, auth.ErrCloudPATInvalid
-			}
-			return auth.CloudPATIdentity{}, fmt.Errorf("%w: %v", auth.ErrCloudPATUnavailable, err)
-		}
-		return auth.CloudPATIdentity{
-			OwnerID:    util.UUIDToString(row.OwnerID),
-			InstanceID: row.NodeName,
-		}, nil
-	}
 }
 
 func cloudRuntimeFleetURLFromEnv() string {

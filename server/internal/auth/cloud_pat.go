@@ -166,9 +166,10 @@ type OwnerLookupFunc func(ctx context.Context, ownerID string) (bool, error)
 // MULTICA_CLOUD_FLEET_URL configured simply rejects mcn_ tokens at
 // the prefix branch instead of nil-derefing.
 type CloudPATVerifier struct {
-	baseURL string
-	http    *http.Client
-	rdb     *redis.Client // may be nil — disables caching
+	baseURL      string
+	http         *http.Client
+	rdb          *redis.Client // may be nil — disables caching
+	serviceToken string
 }
 
 // CloudPATVerifierConfig assembles the dependencies for
@@ -191,6 +192,11 @@ type CloudPATVerifierConfig struct {
 	// every Verify call hits Fleet. Same nil-safe contract as
 	// PATCache / DaemonTokenCache.
 	Redis *redis.Client
+
+	// ServiceToken, when set, is sent as `Authorization: Bearer <token>` on
+	// the verify call — the pre-shared secret the standalone Fleet service
+	// authenticates multica-server with. Empty for the SaaS Fleet.
+	ServiceToken string
 }
 
 // NewCloudPATVerifier returns a verifier for cfg.FleetBaseURL. If the
@@ -206,9 +212,10 @@ func NewCloudPATVerifier(cfg CloudPATVerifierConfig) *CloudPATVerifier {
 		client = &http.Client{Timeout: cloudPATDefaultTimeout}
 	}
 	return &CloudPATVerifier{
-		baseURL: base,
-		http:    client,
-		rdb:     cfg.Redis,
+		baseURL:      base,
+		http:         client,
+		rdb:          cfg.Redis,
+		serviceToken: strings.TrimSpace(cfg.ServiceToken),
 	}
 }
 
@@ -334,6 +341,9 @@ func (v *CloudPATVerifier) fetch(ctx context.Context, token string) (CloudPATIde
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if v.serviceToken != "" {
+		req.Header.Set("Authorization", "Bearer "+v.serviceToken)
+	}
 
 	resp, err := v.http.Do(req)
 	if err != nil {

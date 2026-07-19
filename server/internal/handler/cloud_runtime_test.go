@@ -153,6 +153,74 @@ func TestCreateCloudRuntimeNodeForwardsBody(t *testing.T) {
 	}
 }
 
+// TestDeleteCloudRuntimeNodeCascadesOfflineRows: deleting a node cleans up the
+// offline cloud runtime rows its daemon registered (the remote Fleet can't —
+// agent_runtime is a server table), while a runtime with an agent bound stays.
+func TestDeleteCloudRuntimeNodeCascadesOfflineRows(t *testing.T) {
+	ctx := context.Background()
+	var orphanID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at)
+		VALUES ($1, 'node-cascade01', 'Cascade Runtime', 'cloud', 'test', 'offline', 'n', '{}'::jsonb, now())
+		RETURNING id`, testWorkspaceID).Scan(&orphanID); err != nil {
+		t.Fatalf("insert runtime: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, orphanID) })
+
+	proxy := &fakeCloudRuntimeProxy{
+		enabled: true,
+		resp:    &cloudruntime.Response{StatusCode: http.StatusOK, Body: []byte(`{"status":"deleted"}`)},
+	}
+	useCloudRuntimeProxy(t, proxy)
+
+	req := newRequest(http.MethodDelete, "/api/cloud-runtime/nodes", map[string]any{"instance_id": "node-cascade01"})
+	w := httptest.NewRecorder()
+	testHandler.DeleteCloudRuntimeNode(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !proxy.called {
+		t.Fatal("delete was not proxied to Fleet")
+	}
+	var count int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_runtime WHERE id = $1`, orphanID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("offline runtime row should have been cascaded, %d remain", count)
+	}
+}
+
+// TestDeleteCloudRuntimeNodeNoCascadeOnFleetError: a failed delete must not
+// touch server rows (afterSuccess only fires on 2xx).
+func TestDeleteCloudRuntimeNodeNoCascadeOnFleetError(t *testing.T) {
+	ctx := context.Background()
+	var orphanID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at)
+		VALUES ($1, 'node-cascade02', 'Cascade Runtime 2', 'cloud', 'test', 'offline', 'n', '{}'::jsonb, now())
+		RETURNING id`, testWorkspaceID).Scan(&orphanID); err != nil {
+		t.Fatalf("insert runtime: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, orphanID) })
+
+	proxy := &fakeCloudRuntimeProxy{
+		enabled: true,
+		resp:    &cloudruntime.Response{StatusCode: http.StatusBadGateway, Body: []byte(`{"error":"boom"}`)},
+	}
+	useCloudRuntimeProxy(t, proxy)
+
+	req := newRequest(http.MethodDelete, "/api/cloud-runtime/nodes", map[string]any{"instance_id": "node-cascade02"})
+	testHandler.DeleteCloudRuntimeNode(httptest.NewRecorder(), req)
+
+	var count int
+	testPool.QueryRow(ctx, `SELECT count(*) FROM agent_runtime WHERE id = $1`, orphanID).Scan(&count)
+	if count != 1 {
+		t.Errorf("row must survive a failed delete, got count %d", count)
+	}
+}
+
 func TestCloudRuntimeDisabledReturnsUnavailable(t *testing.T) {
 	useCloudRuntimeProxy(t, &fakeCloudRuntimeProxy{enabled: false})
 
