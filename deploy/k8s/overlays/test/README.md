@@ -72,28 +72,29 @@ automated by the kustomization.
    `REDIS_URL` is what makes multi-pod WS fanout safe if you later raise the
    server replica count above 1.
 
-5. **Cloud runtime (kubefleet) prerequisites.** The `cloud-runtime-patch.yaml`
-   + `../../cloud-runtime` RBAC in this overlay turn on the in-process k8s
-   fleet (one namespace per workspace, one StatefulSet per node). Two things
-   are NOT in the kustomization:
+5. **Cloud runtime (Fleet) prerequisites.** Node provisioning + mcn_ token
+   authority now live in the standalone **Fleet** service (`fleet.yaml` in this
+   overlay); `cloud-runtime-patch.yaml` points the server at it, and Fleet runs
+   as the `multica-server` SA (`../../cloud-runtime` RBAC) to provision nodes
+   in-cluster. One thing is NOT in the kustomization:
 
-   a. **Two secret keys** — add them to the `multica-secrets` created above
-      (they flow into the server via the base `envFrom`):
+   a. **The `multica-fleet` Secret** — the shared server↔Fleet token and Fleet's
+      env-sealing key:
 
       ```bash
-      kubectl -n multica-test patch secret multica-secrets --type=merge -p "{
-        \"stringData\": {
-          \"MULTICA_CLOUD_RUNTIME_SECRET_KEY\": \"$(openssl rand -hex 32)\",
-          \"MULTICA_CLOUD_RUNTIME_PULL_SECRET_DOCKERCONFIGJSON\": \"$(kubectl -n multica-test get secret regcred -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d)\"
-        }
-      }"
+      kubectl -n multica-test create secret generic multica-fleet \
+        --from-literal=MULTICA_FLEET_SERVICE_TOKEN="mfs_$(openssl rand -hex 24)" \
+        --from-literal=MULTICA_CLOUD_RUNTIME_SECRET_KEY="$(openssl rand -base64 32)"
       ```
 
-      `SECRET_KEY` is the secretbox master key encrypting per-workspace LLM
-      keys at rest — **do not rotate it** once workspaces have saved keys, or
-      those keys become undecryptable. `PULL_SECRET_DOCKERCONFIGJSON` here
-      reuses the same registry creds as `regcred` so node namespaces can pull
-      the private runtime image.
+      `MULTICA_FLEET_SERVICE_TOKEN` is the pre-shared secret the server presents
+      to Fleet (`Authorization: Bearer`) — both read it from this Secret.
+      `MULTICA_CLOUD_RUNTIME_SECRET_KEY` is Fleet's AES-256 key encrypting
+      per-workspace LLM keys at rest — **do not rotate it** once workspaces have
+      saved keys, or those keys become undecryptable. Fleet reuses `DATABASE_URL`
+      from `multica-secrets` (it creates `fleet_*` tables in the public schema —
+      the app role cannot create schemas) and the registry pull creds directly
+      from `regcred`.
 
    b. **Grant access per workspace.** Cloud Runtime is denied by default in
       both the UI and API. Add approved workspace UUIDs to
@@ -121,9 +122,9 @@ automated by the kustomization.
       not deleted automatically; remove them before revoking if they should no
       longer consume resources.
 
-   The runtime **node** image (`MULTICA_CLOUD_RUNTIME_IMAGE` in
-   `cloud-runtime-patch.yaml`) is ops-built and versioned independently of the
-   server/web images — bump it there when a new runtime image ships.
+   The runtime **node** image (`MULTICA_CLOUD_RUNTIME_IMAGE` in `fleet.yaml`)
+   and the Fleet service image are ops-built and versioned independently of the
+   server/web images — bump them in `fleet.yaml` when a new image ships.
 
 ## First deploy
 
