@@ -9,11 +9,15 @@ namespace: multica-test
 resources:
   - ../../base
   - feature-flags.yaml
-  # Cloud runtime (kubefleet) RBAC: SA `multica-server` + ClusterRole/Binding
-  # granting namespace/statefulset/secret create in-cluster. The `namespace:`
-  # field above retargets the SA to multica-test and rewrites the binding's
-  # subject namespace to match. Test-only for now — prod enables it separately.
+  # Cloud runtime RBAC: SA `multica-server` + ClusterRole/Binding granting
+  # namespace/statefulset/secret create in-cluster. The standalone Fleet
+  # service (fleet.yaml) runs as this SA to provision nodes; the server no
+  # longer needs it. The `namespace:` field above retargets the SA to
+  # multica-test and rewrites the binding's subject namespace to match.
   - ../../cloud-runtime
+  # Standalone Fleet service (node provisioning + mcn_ token authority +
+  # workspace env). The server proxies to it — see cloud-runtime-patch.yaml.
+  - fleet.yaml
 
 commonAnnotations:
   multica.lilithgames.com/environment: "test"
@@ -143,7 +147,7 @@ patches:
       kind: Job
       name: multica-migrate
 
-  # Cloud runtime (kubefleet): serviceAccountName + provider env on the server.
+  # Cloud runtime: point the server at the in-cluster Fleet service.
   - path: cloud-runtime-patch.yaml
     target:
       kind: Deployment
