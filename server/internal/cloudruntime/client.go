@@ -33,6 +33,11 @@ type Config struct {
 	BaseURL    string
 	Timeout    time.Duration
 	HTTPClient *http.Client
+	// ServiceToken, when set, is sent as `Authorization: Bearer <token>` on
+	// every request — the pre-shared secret the standalone Fleet service
+	// authenticates multica-server with. Empty for the SaaS Fleet, which
+	// gates on network trust.
+	ServiceToken string
 	// Recorder, when non-nil, receives one observation per Do() call with
 	// the inferred op, status bucket, and elapsed time. Production wires
 	// this to the BusinessMetrics collector; tests leave it nil.
@@ -73,9 +78,10 @@ type Response struct {
 }
 
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
-	recorder   RequestRecorder
+	baseURL      string
+	httpClient   *http.Client
+	serviceToken string
+	recorder     RequestRecorder
 }
 
 func NewClient(cfg Config) *Client {
@@ -88,9 +94,10 @@ func NewClient(cfg Config) *Client {
 		httpClient = &http.Client{Timeout: timeout}
 	}
 	return &Client{
-		baseURL:    strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
-		httpClient: httpClient,
-		recorder:   cfg.Recorder,
+		baseURL:      strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
+		httpClient:   httpClient,
+		serviceToken: strings.TrimSpace(cfg.ServiceToken),
+		recorder:     cfg.Recorder,
 	}
 }
 
@@ -159,13 +166,16 @@ func (c *Client) doInner(ctx context.Context, req Request) (*Response, error) {
 		// fast path so calling it twice per iteration would double
 		// the per-request header overhead for no reason.
 		canon := http.CanonicalHeaderKey(k)
-		if canon == "X-User-Id" || canon == "X-Request-Id" {
+		if canon == "X-User-Id" || canon == "X-Request-Id" || canon == "Authorization" {
 			continue
 		}
 		httpReq.Header.Del(k)
 		for _, v := range vs {
 			httpReq.Header.Add(k, v)
 		}
+	}
+	if c.serviceToken != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.serviceToken)
 	}
 	if req.UserID != "" {
 		httpReq.Header.Set("X-User-ID", req.UserID)

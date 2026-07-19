@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/logger"
 	appmiddleware "github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/util"
 )
 
 const maxCloudRuntimeRequestBodySize = 1 << 20
@@ -156,6 +157,18 @@ func (h *Handler) proxyCloudRuntime(w http.ResponseWriter, r *http.Request, meth
 		query = r.URL.Query()
 	}
 
+	// Forward the workspace scope so the standalone Fleet (which has no
+	// server DB / middleware context) can tenant its work. The SaaS Fleet
+	// ignores these; the self-hosted Fleet keys namespaces on them. Slug is
+	// best-effort — Fleet falls back to the UUID for the namespace name.
+	headers := http.Header{}
+	headers.Set("X-Workspace-ID", workspaceID)
+	if wsUUID, err := util.ParseUUID(workspaceID); err == nil {
+		if ws, werr := h.Queries.GetWorkspace(r.Context(), wsUUID); werr == nil {
+			headers.Set("X-Workspace-Slug", ws.Slug)
+		}
+	}
+
 	resp, err := h.CloudRuntime.Do(r.Context(), cloudruntime.Request{
 		Method:    method,
 		Path:      path,
@@ -163,6 +176,7 @@ func (h *Handler) proxyCloudRuntime(w http.ResponseWriter, r *http.Request, meth
 		Body:      body,
 		UserID:    userID,
 		RequestID: cloudRuntimeRequestID(r),
+		Headers:   headers,
 	})
 	if err != nil {
 		writeCloudRuntimeError(w, r, err)

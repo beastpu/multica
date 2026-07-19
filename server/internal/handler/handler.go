@@ -89,8 +89,12 @@ type Config struct {
 	// return 503 instead of attempting to dial a hard-coded private service.
 	CloudRuntimeFleetURL     string
 	CloudRuntimeFleetTimeout time.Duration
-	AttachmentDownloadMode   string
-	AttachmentDownloadURLTTL time.Duration
+	// CloudRuntimeFleetServiceToken is the pre-shared secret sent as
+	// `Authorization: Bearer` to the standalone Fleet service. Empty for the
+	// SaaS Fleet (network-trust) or when cloud runtime is disabled.
+	CloudRuntimeFleetServiceToken string
+	AttachmentDownloadMode        string
+	AttachmentDownloadURLTTL      time.Duration
 	// AttachmentFrameAncestors are trusted browser origins allowed to embed
 	// attachment preview responses. In production this should mirror the
 	// frontend/CORS origin allowlist so split app/api self-hosted deployments
@@ -305,8 +309,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		WebhookIPRateLimiter:         NewMemoryWebhookIPRateLimiter(DefaultWebhookIPRateLimit()),
 		WebhookAbsoluteIPRateLimiter: NewMemoryWebhookAbsoluteIPRateLimiter(DefaultWebhookAbsoluteIPRateLimit()),
 		CloudRuntime: cloudruntime.NewClient(cloudruntime.Config{
-			BaseURL: cfg.CloudRuntimeFleetURL,
-			Timeout: cfg.CloudRuntimeFleetTimeout,
+			BaseURL:      cfg.CloudRuntimeFleetURL,
+			Timeout:      cfg.CloudRuntimeFleetTimeout,
+			ServiceToken: cfg.CloudRuntimeFleetServiceToken,
 		}),
 		LLM: llm.New(llm.Config{
 			APIKey:       cfg.LLMAPIKey,
