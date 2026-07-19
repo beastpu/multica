@@ -681,20 +681,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		cloudPATVerifier = remote
 	}
 
-	// Workspace cloud runtime env master key. Independent of the provider
-	// switch below so admins can stage keys before the fleet is enabled.
-	// Unset = feature off (endpoints report not-configured); set-but-invalid
-	// is a deployment bug and fails startup rather than silently disabling.
-	if strings.TrimSpace(os.Getenv("MULTICA_CLOUD_RUNTIME_SECRET_KEY")) != "" {
-		envKey, err := secretbox.LoadKey("MULTICA_CLOUD_RUNTIME_SECRET_KEY")
-		if err == nil {
-			h.CloudRuntimeEnvBox, err = secretbox.New(envKey)
-		}
-		if err != nil {
-			slog.Error("cloud runtime env: invalid MULTICA_CLOUD_RUNTIME_SECRET_KEY", "error", err)
-			os.Exit(1)
-		}
-	}
+	// Workspace cloud runtime env is now stored and sealed by the standalone
+	// Fleet service (MULTICA_CLOUD_RUNTIME_SECRET_KEY lives there); server just
+	// proxies the admin CRUD.
 
 	// Node provisioning and mcn_ token authority live in the standalone
 	// multica-cloud Fleet service; multica-server proxies to it via the
