@@ -9,13 +9,16 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/logger"
 	appmiddleware "github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const maxCloudRuntimeRequestBodySize = 1 << 20
@@ -24,6 +27,10 @@ type cloudRuntimeProxyOptions struct {
 	withUserID bool
 	withQuery  bool
 	withBody   bool
+	// afterSuccess runs when Fleet returns 2xx, for server-side follow-up the
+	// remote Fleet cannot do itself (e.g. agent_runtime cleanup keyed on the
+	// server DB). Best-effort — it must not change the response the client sees.
+	afterSuccess func(ctx context.Context, workspaceID string, body []byte)
 }
 
 func (h *Handler) GetCloudRuntimeAccess(w http.ResponseWriter, r *http.Request) {
@@ -84,9 +91,38 @@ func (h *Handler) CreateCloudRuntimeNode(w http.ResponseWriter, r *http.Request)
 
 func (h *Handler) DeleteCloudRuntimeNode(w http.ResponseWriter, r *http.Request) {
 	h.proxyCloudRuntime(w, r, http.MethodDelete, "/api/v1/nodes", cloudRuntimeProxyOptions{
-		withUserID: true,
-		withBody:   true,
+		withUserID:   true,
+		withBody:     true,
+		afterSuccess: h.cascadeDeleteCloudRuntimeNode,
 	})
+}
+
+// cascadeDeleteCloudRuntimeNode drops the offline cloud runtime rows the node
+// registered (daemon_id = node name) once Fleet has torn it down, so they don't
+// linger as UI orphans. Rows with an agent still bound are skipped by the
+// query. Best-effort: a cleanup failure must not fail a delete the client has
+// already seen succeed. (The remote Fleet cannot do this — agent_runtime is a
+// multica-server table.)
+func (h *Handler) cascadeDeleteCloudRuntimeNode(ctx context.Context, workspaceID string, body []byte) {
+	var ref struct {
+		ID         string `json:"id"`
+		InstanceID string `json:"instance_id"`
+	}
+	_ = json.Unmarshal(body, &ref)
+	nodeName := strings.TrimSpace(ref.InstanceID)
+	if nodeName == "" {
+		nodeName = strings.TrimSpace(ref.ID)
+	}
+	wsUUID, err := util.ParseUUID(workspaceID)
+	if nodeName == "" || err != nil {
+		return
+	}
+	if _, err := h.Queries.DeleteCloudRuntimesByNode(ctx, db.DeleteCloudRuntimesByNodeParams{
+		WorkspaceID: wsUUID,
+		DaemonID:    pgtype.Text{String: nodeName, Valid: true},
+	}); err != nil {
+		slog.Warn("cloud runtime: cascade delete failed", "error", err, "node", nodeName)
+	}
 }
 
 func (h *Handler) StartCloudRuntimeNode(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +217,9 @@ func (h *Handler) proxyCloudRuntime(w http.ResponseWriter, r *http.Request, meth
 	if err != nil {
 		writeCloudRuntimeError(w, r, err)
 		return
+	}
+	if opts.afterSuccess != nil && resp != nil && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		opts.afterSuccess(r.Context(), workspaceID, body)
 	}
 	writeCloudRuntimeResponse(w, resp)
 }
