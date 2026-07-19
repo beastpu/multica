@@ -28,6 +28,10 @@ export function DesktopRuntimesPage() {
       // consistent with every other machine row.
       hasLocalMachine
       bootstrapping={context.bootstrapping}
+      // Lilith self-host offers Cloud Runtime on desktop too (not just web);
+      // the actual entry still only appears when the server reports the
+      // workspace is enabled for it (cloudRuntimeAccess.enabled).
+      cloudRuntimeEnabled
     />
   );
 }
