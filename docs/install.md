@@ -9,10 +9,10 @@ Multica 入口：<https://multica.lilithgames.com>
 
 先**问用户一句**："你想装 CLI 模式还是 Desktop 模式？"
 
-- **CLI 模式**：纯命令行 daemon，跑在终端 / 服务器上。适合机房机器、开发机后台跑 agent。
-- **Desktop 模式**：图形界面客户端，自带 daemon。适合个人 Mac 平时用。
+- **CLI 模式**：纯命令行 daemon，跑在终端 / 服务器上。适合机房机器、开发机后台跑 agent。**只支持 Linux（amd64 / arm64）**。
+- **Desktop 模式**：图形界面客户端，自带 daemon（也内置 CLI）。适合个人 Mac / Windows。
 
-不确定就推荐 **CLI 模式**。下面两条路径选一条执行。
+判断：**Linux 机器 → CLI 模式；macOS / Windows → Desktop 模式**（这两个平台没有独立 CLI，CLI 打包在 Desktop 里）。下面两条路径选一条执行。
 
 ---
 
@@ -20,43 +20,23 @@ Multica 入口：<https://multica.lilithgames.com>
 
 ### A.1 安装 multica CLI
 
-**macOS**（首选 brew）：
+CLI 只发 **Linux（amd64 / arm64）**。一行安装（脚本自动识别架构、读 `latest-cli.txt` 拿最新版、装到 `/usr/local/bin/multica`）：
 
 ```bash
-brew install multica
-```
-
-**Linux 或非 brew 环境**（自动识别架构）：
-
-```bash
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')   # darwin or linux
-ARCH=$(uname -m)                              # x86_64 or arm64
-if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; fi
-
-curl -fsSL "https://multica.lilithgames.com/api/downloads/cli/${OS}/${ARCH}" \
-  -o /tmp/multica.tar.gz
-tar -xzf /tmp/multica.tar.gz -C /tmp multica
-sudo mv /tmp/multica /usr/local/bin/multica
-rm /tmp/multica.tar.gz
+curl -fsSL https://multica.lilithgames.com/api/downloads/install.sh | bash
 ```
 
 装完用 `multica version` 验证。
 
+> **macOS / Windows 没有独立 CLI** —— CLI 打包在 Desktop 客户端里。这两个平台请改走[路径 B：Desktop 模式](#路径-b-desktop-模式)。
+
 ### A.2 已安装用户：升级 multica CLI
 
-如果机器上已经装过 `multica`，先升级 CLI。小队、活动上报等新功能依赖新版 CLI；只重启 daemon 不会更新本机二进制。
-
-**macOS（brew）**：
+如果机器上已经装过 `multica`，**重新跑一次安装脚本即可就地升级**到最新版。小队、活动上报等新功能依赖新版 CLI；只重启 daemon 不会更新本机二进制。
 
 ```bash
-brew update
-brew upgrade multica || brew install multica
-hash -r
+curl -fsSL https://multica.lilithgames.com/api/downloads/install.sh | bash
 ```
-
-**Linux 或非 brew 环境**：
-
-按 A.1 的 Linux 安装命令重新下载最新包，并覆盖 `/usr/local/bin/multica`。
 
 升级后验证版本和小队命令：
 
