@@ -23,7 +23,7 @@ type mediaStorage interface {
 }
 
 type mediaStreamStorage interface {
-	UploadStream(ctx context.Context, key string, data io.Reader, contentType string, filename string) (string, error)
+	UploadStream(ctx context.Context, key string, data io.Reader, sizeBytes int64, contentType string, filename string) (string, error)
 }
 
 type messageResourceStreamer interface {
@@ -90,7 +90,7 @@ func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.Reso
 		}
 		filename := mediaFilename(lm, res, got, contentType)
 		key := mediaObjectKey(inst, res)
-		link, uploadedBytes, err := r.uploadResource(ctx, key, got.Body, contentType, filename)
+		link, uploadedBytes, err := r.uploadResource(ctx, key, got.Body, got.SizeBytes, contentType, filename)
 		if err != nil {
 			r.logMediaWarn("lark media upload failed", lm, err)
 			continue
@@ -138,13 +138,16 @@ func (r *feishuMediaResolver) downloadResource(ctx context.Context, creds Instal
 	}, nil
 }
 
-func (r *feishuMediaResolver) uploadResource(ctx context.Context, key string, body io.ReadCloser, contentType string, filename string) (string, int64, error) {
+func (r *feishuMediaResolver) uploadResource(ctx context.Context, key string, body io.ReadCloser, sizeBytes int64, contentType string, filename string) (string, int64, error) {
 	defer body.Close()
 	counter := &countingReader{r: body}
-	if streamStorage, ok := r.storage.(mediaStreamStorage); ok {
-		link, err := streamStorage.UploadStream(ctx, key, counter, contentType, filename)
+	if streamStorage, ok := r.storage.(mediaStreamStorage); ok && sizeBytes > 0 {
+		link, err := streamStorage.UploadStream(ctx, key, counter, sizeBytes, contentType, filename)
 		return link, counter.n, err
 	}
+	// Unknown-length HTTP bodies cannot be sent through S3 PutObject as a
+	// non-seekable stream. The transport already enforces the 100 MiB resource
+	// cap, so buffer this uncommon fallback and use the seekable Upload path.
 	data, err := io.ReadAll(counter)
 	if err != nil {
 		return "", counter.n, err

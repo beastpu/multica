@@ -21,8 +21,9 @@ import (
 // channel.InboundMessage and calls Handle, which routes by ChannelType to that
 // platform's registered resolver set and runs the same ordered pipeline for
 // every platform — installation route → two-phase dedup → group @bot filter →
-// identity + membership → ensure session → append+mark → /issue → debounced
-// run trigger — then drives the detached outbound replier + typing indicator.
+// identity + membership → ensure session → append+mark → /issue → detached
+// media binding → debounced run trigger — then drives the detached outbound
+// replier + typing indicator.
 //
 // The core contains no platform specifics: everything platform-shaped lives
 // behind the resolver interfaces (a feishu ResolverSet is the first
@@ -41,6 +42,10 @@ type Router struct {
 	replyTimeout time.Duration
 	mediaTimeout time.Duration
 	replyWg      sync.WaitGroup
+	mediaWg      sync.WaitGroup
+
+	mediaQueueMu sync.Mutex
+	mediaQueues  map[string]*mediaQueueEntry
 
 	logger *slog.Logger
 
@@ -54,9 +59,8 @@ type RouterConfig struct {
 	// call. It runs off the connector ACK path, so it must stay strictly
 	// under the platform ACK deadline (Lark: 3s). Defaults to 2.5s.
 	ReplyTimeout time.Duration
-	// MediaTimeout caps best-effort media resolution on the connector ACK
-	// path. On timeout, the original message is appended without MediaRefs.
-	// Defaults to 2.5s.
+	// MediaTimeout caps detached best-effort media download, upload, and
+	// attachment binding for one message. Defaults to 45s.
 	MediaTimeout time.Duration
 	Logger       *slog.Logger
 }
@@ -70,7 +74,7 @@ func NewRouter(issues IssueCreator, tasks TaskEnqueuer, reader SessionReader, cf
 		cfg.ReplyTimeout = 2500 * time.Millisecond
 	}
 	if cfg.MediaTimeout == 0 {
-		cfg.MediaTimeout = 2500 * time.Millisecond
+		cfg.MediaTimeout = 45 * time.Second
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -84,7 +88,13 @@ func NewRouter(issues IssueCreator, tasks TaskEnqueuer, reader SessionReader, cf
 		mediaTimeout: cfg.MediaTimeout,
 		logger:       cfg.Logger,
 		pendingFresh: make(map[string]bool),
+		mediaQueues:  make(map[string]*mediaQueueEntry),
 	}
+}
+
+type mediaQueueEntry struct {
+	tail       chan struct{}
+	forceFresh bool
 }
 
 // Register binds a platform's ResolverSet under t. Call at boot, before Run.
@@ -106,9 +116,14 @@ func (r *Router) EnableRunBatching(window time.Duration) {
 	r.batcher = newPendingBatcher(window)
 }
 
-// Drain flushes debounced run triggers and joins in-flight reply goroutines.
+// Drain joins detached media processing, flushes debounced run triggers, and
+// joins in-flight reply goroutines.
 // Call on shutdown AFTER the Supervisor has stopped delivering events.
 func (r *Router) Drain() {
+	// Media jobs schedule the run only after attachment binding, so join them
+	// before flushing the batcher. Handle is no longer called at this point,
+	// making Wait safe from concurrent Add calls.
+	r.mediaWg.Wait()
 	if r.batcher != nil {
 		r.batcher.FlushAll()
 	}
@@ -267,16 +282,11 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		// Single tx; an error rolled it back, nothing landed. Release.
 		return Result{}, finalizeRelease, fmt.Errorf("ensure chat session: %w", err)
 	}
-	if set.Media != nil {
-		msg = r.resolveMedia(ctx, set, inst, identity, sessionID, msg)
-	}
-
 	// 6. Append message + in-tx dedup Mark — the durable transition point.
 	appendRes, err := set.Session.AppendMessage(ctx, AppendParams{
 		SessionID:      sessionID,
 		Sender:         identity.UserID,
 		InstallationID: inst.ID,
-		WorkspaceID:    inst.WorkspaceID,
 		Message:        msg,
 		ClaimToken:     claimToken,
 	})
@@ -324,31 +334,105 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	//    THIS message's sender (the task initiator), deliberately not the
 	//    session creator (group sessions are creator=installer). Latest sender
 	//    in a window wins (MUL-2645).
-	r.scheduleRun(set, inst, msg, sessionID, identity.UserID)
+	if set.Media != nil {
+		r.enqueueMediaAndRun(set, inst, identity, appendRes.MessageID, msg, sessionID)
+	} else {
+		r.scheduleRun(set, inst, msg, sessionID, identity.UserID)
+	}
 	return res, postAppendFinalize, nil
 }
 
-func (r *Router) resolveMedia(ctx context.Context, set ResolverSet, inst ResolvedInstallation, identity ResolvedIdentity, sessionID pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage {
-	if r.mediaTimeout <= 0 {
-		return set.Media.ResolveMedia(ctx, inst, identity, sessionID, msg)
+// enqueueMediaAndRun detaches remote media I/O from Handle while preserving
+// message order within a chat session. Only the tail job schedules the run, so
+// the agent cannot observe a later placeholder before an earlier attachment is
+// linked. Different sessions still resolve media concurrently.
+func (r *Router) enqueueMediaAndRun(set ResolverSet, inst ResolvedInstallation, identity ResolvedIdentity, chatMessageID pgtype.UUID, msg channel.InboundMessage, sessionID pgtype.UUID) {
+	key := keyForSession(sessionID)
+	done := make(chan struct{})
+
+	r.mediaQueueMu.Lock()
+	entry, ok := r.mediaQueues[key]
+	var previous <-chan struct{}
+	if !ok {
+		entry = &mediaQueueEntry{}
+		r.mediaQueues[key] = entry
+	} else {
+		previous = entry.tail
 	}
-	mctx, cancel := context.WithTimeout(ctx, r.mediaTimeout)
-	defer cancel()
-	done := make(chan channel.InboundMessage, 1)
+	entry.tail = done
+	entry.forceFresh = entry.forceFresh || msg.ForceFresh
+	if r.batcher != nil {
+		// A prior queue tail may already have armed the debounce window. This
+		// newer durable message supersedes it until its media job completes.
+		r.batcher.Cancel(key)
+	}
+	r.mediaWg.Add(1)
+	r.mediaQueueMu.Unlock()
+
 	go func() {
-		done <- set.Media.ResolveMedia(mctx, inst, identity, sessionID, msg)
+		defer r.mediaWg.Done()
+		if previous != nil {
+			<-previous
+		}
+		r.resolveAndBindMedia(set, inst, identity, chatMessageID, msg, sessionID)
+		close(done)
+		r.finishMediaQueue(key, done, set, inst, msg, sessionID, identity.UserID)
 	}()
-	select {
-	case resolved := <-done:
-		return resolved
-	case <-mctx.Done():
+}
+
+func (r *Router) resolveAndBindMedia(set ResolverSet, inst ResolvedInstallation, identity ResolvedIdentity, chatMessageID pgtype.UUID, msg channel.InboundMessage, sessionID pgtype.UUID) {
+	ctx := context.Background()
+	cancel := func() {}
+	if r.mediaTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, r.mediaTimeout)
+	}
+	defer cancel()
+
+	resolved := set.Media.ResolveMedia(ctx, inst, identity, sessionID, msg)
+	if err := ctx.Err(); err != nil {
 		r.logger.Warn("channel router: media resolution timed out",
 			"channel_type", string(msg.Source.ChannelType),
 			"event_id", msg.EventID,
 			"message_id", msg.MessageID,
 			"timeout", r.mediaTimeout.String())
-		return msg
+		return
 	}
+	if len(resolved.MediaRefs) == 0 {
+		return
+	}
+	if err := set.Session.BindMedia(ctx, BindMediaParams{
+		MessageID:   chatMessageID,
+		SessionID:   sessionID,
+		WorkspaceID: inst.WorkspaceID,
+		Sender:      identity.UserID,
+		MediaRefs:   resolved.MediaRefs,
+	}); err != nil {
+		r.logger.Warn("channel router: media attachment binding failed",
+			"channel_type", string(msg.Source.ChannelType),
+			"event_id", msg.EventID,
+			"message_id", msg.MessageID,
+			"err", err)
+	}
+}
+
+func (r *Router) finishMediaQueue(key string, done chan struct{}, set ResolverSet, inst ResolvedInstallation, msg channel.InboundMessage, sessionID, initiatorUserID pgtype.UUID) {
+	r.mediaQueueMu.Lock()
+	entry, ok := r.mediaQueues[key]
+	if !ok || entry.tail != done {
+		r.mediaQueueMu.Unlock()
+		return
+	}
+	delete(r.mediaQueues, key)
+	msg.ForceFresh = entry.forceFresh
+	if r.batcher != nil {
+		// Schedule while holding mediaQueueMu so a concurrently arriving newer
+		// message can only proceed after this timer exists and can cancel it.
+		r.scheduleRun(set, inst, msg, sessionID, initiatorUserID)
+		r.mediaQueueMu.Unlock()
+		return
+	}
+	r.mediaQueueMu.Unlock()
+	r.scheduleRun(set, inst, msg, sessionID, initiatorUserID)
 }
 
 // scheduleRun hands the per-session run trigger to the debouncer (or fires it

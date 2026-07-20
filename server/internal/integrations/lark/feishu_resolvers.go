@@ -160,6 +160,7 @@ func (r *feishuDeduper) Release(ctx context.Context, installationID pgtype.UUID,
 type chatSession interface {
 	EnsureSession(ctx context.Context, in engine.EnsureSessionInput) (pgtype.UUID, error)
 	AppendUserMessage(ctx context.Context, in engine.AppendInput) (engine.AppendResult, error)
+	BindMediaRefs(ctx context.Context, in engine.BindMediaInput) error
 }
 
 type feishuSessionBinder struct{ session chatSession }
@@ -213,13 +214,21 @@ func (r *feishuSessionBinder) AppendMessage(ctx context.Context, p engine.Append
 		SessionID:      p.SessionID,
 		Sender:         p.Sender,
 		InstallationID: p.InstallationID,
-		WorkspaceID:    p.WorkspaceID,
 		Body:           p.Message.Text,
 		CommandText:    lm.CommandBody,
 		MessageID:      p.Message.MessageID,
 		ThreadID:       p.Message.Source.ThreadID,
-		MediaRefs:      p.Message.MediaRefs,
 		ClaimToken:     p.ClaimToken,
+	})
+}
+
+func (r *feishuSessionBinder) BindMedia(ctx context.Context, p engine.BindMediaParams) error {
+	return r.session.BindMediaRefs(ctx, engine.BindMediaInput{
+		MessageID:   p.MessageID,
+		SessionID:   p.SessionID,
+		WorkspaceID: p.WorkspaceID,
+		Sender:      p.Sender,
+		MediaRefs:   p.MediaRefs,
 	})
 }
 

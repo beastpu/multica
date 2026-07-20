@@ -93,18 +93,32 @@ type AppendParams struct {
 	SessionID      pgtype.UUID
 	Sender         pgtype.UUID
 	InstallationID pgtype.UUID
-	WorkspaceID    pgtype.UUID
 	Message        channel.InboundMessage
 	ClaimToken     pgtype.UUID
 }
 
 // AppendResult reports what AppendMessage decided.
 type AppendResult struct {
+	// MessageID is the durable chat_message row created by AppendMessage.
+	// Detached media processing uses it to link attachments after the
+	// connector ACK path has completed.
+	MessageID pgtype.UUID
 	// IssueCommand is non-nil when the message was an /issue command.
 	IssueCommand *IssueCommand
 	// DedupMarked is true when AppendMessage finalized the dedup claim in its
 	// own tx; the Router then skips the post-pipeline finalize.
 	DedupMarked bool
+}
+
+// BindMediaParams carries stored media references to the post-append
+// attachment transaction. MessageID is the durable chat_message created by
+// AppendMessage; media downloads must never run inside this transaction.
+type BindMediaParams struct {
+	MessageID   pgtype.UUID
+	SessionID   pgtype.UUID
+	WorkspaceID pgtype.UUID
+	Sender      pgtype.UUID
+	MediaRefs   []channel.MediaRef
 }
 
 // IssueCommand is the parsed /issue command.
@@ -162,12 +176,13 @@ type Deduper interface {
 type SessionBinder interface {
 	EnsureSession(ctx context.Context, p EnsureSessionParams) (pgtype.UUID, error)
 	AppendMessage(ctx context.Context, p AppendParams) (AppendResult, error)
+	BindMedia(ctx context.Context, p BindMediaParams) error
 }
 
-// MediaResolver resolves platform media after a message has passed routing,
-// group-addressing, identity, and session checks, but before AppendMessage
-// persists the user message. Implementations are best-effort: failures should
-// leave the message text intact and omit the failed MediaRefs.
+// MediaResolver resolves platform media after the user message and dedup mark
+// are durable. The Router runs it off the connector ACK path and binds any
+// returned MediaRefs before scheduling the debounced chat run. Implementations
+// are best-effort: failures leave the stored placeholder text intact.
 type MediaResolver interface {
 	ResolveMedia(ctx context.Context, inst ResolvedInstallation, sender ResolvedIdentity, sessionID pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage
 }

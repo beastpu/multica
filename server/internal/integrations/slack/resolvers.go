@@ -338,14 +338,22 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 		SessionID:      p.SessionID,
 		Sender:         p.Sender,
 		InstallationID: p.InstallationID,
-		WorkspaceID:    p.WorkspaceID,
 		Body:           p.Message.Text,
 		// Slack text is not enriched, so the command source is the body itself.
 		CommandText: p.Message.Text,
 		MessageID:   p.Message.MessageID,
 		ThreadID:    replyThread,
-		MediaRefs:   p.Message.MediaRefs,
 		ClaimToken:  p.ClaimToken,
+	})
+}
+
+func (r *sessionBinder) BindMedia(ctx context.Context, p engine.BindMediaParams) error {
+	return r.session.BindMediaRefs(ctx, engine.BindMediaInput{
+		MessageID:   p.MessageID,
+		SessionID:   p.SessionID,
+		WorkspaceID: p.WorkspaceID,
+		Sender:      p.Sender,
+		MediaRefs:   p.MediaRefs,
 	})
 }
 

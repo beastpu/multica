@@ -96,16 +96,24 @@ func seedSessionPersistenceFixture(t *testing.T, pool *pgxpool.Pool) sessionPers
 	return f
 }
 
-func TestAppendUserMessage_PersistsAndLinksMediaAttachment(t *testing.T) {
+func TestBindMediaRefs_PersistsAndLinksAttachmentToDurableMessage(t *testing.T) {
 	pool := sessionPersistenceTestDB(t)
 	fixture := seedSessionPersistenceFixture(t, pool)
 	session := NewChatSession(db.New(pool), pool, channel.TypeFeishu, SessionTitles{})
 
-	_, err := session.AppendUserMessage(context.Background(), AppendInput{
+	appendRes, err := session.AppendUserMessage(context.Background(), AppendInput{
+		SessionID: fixture.sessionID,
+		Sender:    fixture.userID,
+		Body:      "[Image]",
+	})
+	if err != nil {
+		t.Fatalf("AppendUserMessage: %v", err)
+	}
+	err = session.BindMediaRefs(context.Background(), BindMediaInput{
+		MessageID:   appendRes.MessageID,
 		SessionID:   fixture.sessionID,
 		WorkspaceID: fixture.workspaceID,
 		Sender:      fixture.userID,
-		Body:        "[Image]",
 		MediaRefs: []channel.MediaRef{{
 			Type:       channel.MsgTypeImage,
 			StorageKey: "workspaces/ws/lark/image",
@@ -116,7 +124,7 @@ func TestAppendUserMessage_PersistsAndLinksMediaAttachment(t *testing.T) {
 		}},
 	})
 	if err != nil {
-		t.Fatalf("AppendUserMessage: %v", err)
+		t.Fatalf("BindMediaRefs: %v", err)
 	}
 
 	var content, filename, url, contentType string
@@ -146,17 +154,25 @@ func (failingLinkSessionQueries) LinkAttachmentsToChatMessage(context.Context, d
 	return nil, errors.New("injected attachment link failure")
 }
 
-func TestAppendUserMessage_LinkFailureRollsBackMessageAndAttachment(t *testing.T) {
+func TestBindMediaRefs_LinkFailureKeepsMessageAndRollsBackAttachment(t *testing.T) {
 	pool := sessionPersistenceTestDB(t)
 	fixture := seedSessionPersistenceFixture(t, pool)
 	queries := failingLinkSessionQueries{SessionQueries: dbSessionQueries{q: db.New(pool)}}
 	session := newChatSessionWith(queries, pool, channel.TypeFeishu, SessionTitles{})
 
-	_, err := session.AppendUserMessage(context.Background(), AppendInput{
+	appendRes, err := session.AppendUserMessage(context.Background(), AppendInput{
+		SessionID: fixture.sessionID,
+		Sender:    fixture.userID,
+		Body:      "rollback-media",
+	})
+	if err != nil {
+		t.Fatalf("AppendUserMessage: %v", err)
+	}
+	err = session.BindMediaRefs(context.Background(), BindMediaInput{
+		MessageID:   appendRes.MessageID,
 		SessionID:   fixture.sessionID,
 		WorkspaceID: fixture.workspaceID,
 		Sender:      fixture.userID,
-		Body:        "rollback-media",
 		MediaRefs: []channel.MediaRef{{
 			Type:       channel.MsgTypeImage,
 			StorageURL: "https://cdn.example.test/rollback.png",
@@ -166,7 +182,7 @@ func TestAppendUserMessage_LinkFailureRollsBackMessageAndAttachment(t *testing.T
 		}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "injected attachment link failure") {
-		t.Fatalf("AppendUserMessage error = %v", err)
+		t.Fatalf("BindMediaRefs error = %v", err)
 	}
 
 	var messageCount, attachmentCount int
@@ -177,7 +193,7 @@ func TestAppendUserMessage_LinkFailureRollsBackMessageAndAttachment(t *testing.T
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM attachment WHERE chat_session_id = $1 AND filename = 'rollback.png'`, fixture.sessionID).Scan(&attachmentCount); err != nil {
 		t.Fatalf("count attachments: %v", err)
 	}
-	if messageCount != 0 || attachmentCount != 0 {
-		t.Fatalf("rollback left rows: messages=%d attachments=%d", messageCount, attachmentCount)
+	if messageCount != 1 || attachmentCount != 0 {
+		t.Fatalf("fallback persistence mismatch: messages=%d attachments=%d", messageCount, attachmentCount)
 	}
 }

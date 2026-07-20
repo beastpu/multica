@@ -68,6 +68,8 @@ type fakeMediaStorage struct {
 type fakeMediaUpload struct {
 	key         string
 	data        []byte
+	sizeBytes   int64
+	streamed    bool
 	contentType string
 	filename    string
 }
@@ -80,7 +82,7 @@ func (s *fakeMediaStorage) Upload(_ context.Context, key string, data []byte, co
 	return "https://cdn.example.test/" + key, nil
 }
 
-func (s *fakeMediaStorage) UploadStream(_ context.Context, key string, data io.Reader, contentType string, filename string) (string, error) {
+func (s *fakeMediaStorage) UploadStream(_ context.Context, key string, data io.Reader, sizeBytes int64, contentType string, filename string) (string, error) {
 	if s.err != nil {
 		return "", s.err
 	}
@@ -88,7 +90,7 @@ func (s *fakeMediaStorage) UploadStream(_ context.Context, key string, data io.R
 	if err != nil {
 		return "", err
 	}
-	s.uploads = append(s.uploads, fakeMediaUpload{key: key, data: body, contentType: contentType, filename: filename})
+	s.uploads = append(s.uploads, fakeMediaUpload{key: key, data: body, sizeBytes: sizeBytes, streamed: true, contentType: contentType, filename: filename})
 	return "https://cdn.example.test/" + key, nil
 }
 
@@ -247,6 +249,9 @@ func TestFeishuMediaResolver_AttachesImageMediaRef(t *testing.T) {
 	if up.contentType != "image/png" || up.filename != "from-header.png" || string(up.data) != string([]byte{1, 2, 3}) {
 		t.Fatalf("upload metadata wrong: %+v", up)
 	}
+	if !up.streamed || up.sizeBytes != 3 {
+		t.Fatalf("known-length resource did not stream with its declared size: %+v", up)
+	}
 	if !strings.Contains(up.key, "workspaces/11111111-1111-1111-1111-111111111111/lark/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/") {
 		t.Fatalf("upload key should be workspace-scoped, got %q", up.key)
 	}
@@ -257,6 +262,30 @@ func TestFeishuMediaResolver_AttachesImageMediaRef(t *testing.T) {
 	if ref.Type != channel.MsgTypeImage || ref.Filename != "from-header.png" || ref.MimeType != "image/png" ||
 		ref.SizeBytes != 3 || ref.StorageURL == "" || ref.StorageKey == "" {
 		t.Fatalf("media ref wrong: %+v", ref)
+	}
+}
+
+func TestFeishuMediaResolver_UnknownLengthUsesBufferedUpload(t *testing.T) {
+	sender := &fakeSender{downloaded: DownloadedResource{
+		Data:        []byte{1, 2, 3},
+		ContentType: "image/png",
+		SizeBytes:   0,
+	}}
+	storage := &fakeMediaStorage{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, newDiscardLogger())
+	lm := InboundMessage{
+		MessageID:   "om_unknown_length",
+		MessageType: "image",
+		Body:        "[Image]",
+		Content:     `{"image_key":"img_unknown_length"}`,
+	}
+	got := resolver.ResolveMedia(context.Background(), testMediaInstallation(t), engine.ResolvedIdentity{},
+		uuidFromString(t, "22222222-2222-2222-2222-222222222222"), channelMessageFromLark(lm))
+	if len(storage.uploads) != 1 || storage.uploads[0].streamed {
+		t.Fatalf("unknown-length resource must use buffered Upload: %+v", storage.uploads)
+	}
+	if len(got.MediaRefs) != 1 || got.MediaRefs[0].SizeBytes != 3 {
+		t.Fatalf("buffered upload size not recorded: %+v", got.MediaRefs)
 	}
 }
 

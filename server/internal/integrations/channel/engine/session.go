@@ -253,20 +253,30 @@ type AppendInput struct {
 	SessionID      pgtype.UUID
 	Sender         pgtype.UUID
 	InstallationID pgtype.UUID
-	WorkspaceID    pgtype.UUID
 	Body           string
 	CommandText    string
 	MessageID      string
 	ThreadID       string
-	MediaRefs      []channel.MediaRef
 	ClaimToken     pgtype.UUID
+}
+
+// BindMediaInput links already-uploaded media to a durable chat message in a
+// short database-only transaction. Remote downloads/uploads happen before
+// this call and outside the connector ACK path.
+type BindMediaInput struct {
+	MessageID   pgtype.UUID
+	SessionID   pgtype.UUID
+	WorkspaceID pgtype.UUID
+	Sender      pgtype.UUID
+	MediaRefs   []channel.MediaRef
 }
 
 // AppendUserMessage writes the user message into the chat_session (touching it
 // and recording the reply target), runs the in-tx dedup Mark when a claim token
-// is supplied, and returns the parsed `/issue` command when present. Returns
-// ErrClaimLost when a concurrent reclaim rotated the dedup token mid-flight, in
-// which case the whole transaction rolls back (no chat_message lands).
+// is supplied, and returns the durable message id plus the parsed `/issue`
+// command when present. Returns ErrClaimLost when a concurrent reclaim rotated
+// the dedup token mid-flight, in which case the whole transaction rolls back
+// (no chat_message lands).
 func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (AppendResult, error) {
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
@@ -298,11 +308,6 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	})
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("create chat message: %w", err)
-	}
-	if len(in.MediaRefs) > 0 {
-		if err := s.bindMediaRefs(ctx, qtx, in, msg.ID); err != nil {
-			return AppendResult{}, err
-		}
 	}
 	if err := qtx.TouchChatSession(ctx, in.SessionID); err != nil {
 		return AppendResult{}, fmt.Errorf("touch chat session: %w", err)
@@ -341,12 +346,36 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	if err := tx.Commit(ctx); err != nil {
 		return AppendResult{}, fmt.Errorf("commit: %w", err)
 	}
-	return AppendResult{IssueCommand: cmd, DedupMarked: markedInTx}, nil
+	return AppendResult{MessageID: msg.ID, IssueCommand: cmd, DedupMarked: markedInTx}, nil
 }
 
-func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in AppendInput, messageID pgtype.UUID) error {
+// BindMediaRefs creates attachment rows and links them to an existing durable
+// chat message atomically. A link failure rolls back only the attachment rows;
+// the placeholder chat message remains available for graceful degradation.
+func (s *ChatSession) BindMediaRefs(ctx context.Context, in BindMediaInput) error {
+	if len(in.MediaRefs) == 0 {
+		return nil
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin media tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if err := s.bindMediaRefs(ctx, s.q.WithTx(tx), in); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit media: %w", err)
+	}
+	return nil
+}
+
+func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in BindMediaInput) error {
 	if !in.WorkspaceID.Valid {
 		return errors.New("bind media refs: workspace_id is required")
+	}
+	if !in.MessageID.Valid {
+		return errors.New("bind media refs: message_id is required")
 	}
 	ids := make([]pgtype.UUID, 0, len(in.MediaRefs))
 	for _, ref := range in.MediaRefs {
@@ -385,7 +414,7 @@ func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in 
 		return nil
 	}
 	if _, err := qtx.LinkAttachmentsToChatMessage(ctx, db.LinkAttachmentsToChatMessageParams{
-		ChatMessageID: messageID,
+		ChatMessageID: in.MessageID,
 		ChatSessionID: in.SessionID,
 		WorkspaceID:   in.WorkspaceID,
 		UploaderType:  "member",

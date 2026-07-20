@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -274,17 +275,28 @@ func (s *S3Storage) Upload(ctx context.Context, key string, data []byte, content
 	return s.uploadedURL(key), nil
 }
 
-func (s *S3Storage) UploadStream(ctx context.Context, key string, data io.Reader, contentType string, filename string) (string, error) {
+func (s *S3Storage) UploadStream(ctx context.Context, key string, data io.Reader, sizeBytes int64, contentType string, filename string) (string, error) {
+	if sizeBytes <= 0 {
+		return "", fmt.Errorf("s3 PutObject: content length is required for streaming upload")
+	}
 	input := &s3.PutObjectInput{
 		Bucket:             aws.String(s.bucket),
 		Key:                aws.String(key),
 		Body:               data,
+		ContentLength:      aws.Int64(sizeBytes),
 		ContentType:        aws.String(contentType),
 		ContentDisposition: aws.String(ContentDisposition(contentType, filename)),
 		CacheControl:       aws.String("max-age=432000,public"),
 		StorageClass:       s.storageClass(),
 	}
-	_, err := s.client.PutObject(ctx, input)
+	_, err := s.client.PutObject(ctx, input, func(opts *s3.Options) {
+		// A non-seekable stream cannot be rewound for SigV4 payload hashing.
+		// S3 supports UNSIGNED-PAYLOAD for authenticated requests. Avoid the
+		// optional trailing-checksum path as well: it requires another rewind
+		// or aws-chunked framing that S3-compatible backends handle unevenly.
+		opts.APIOptions = append(opts.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
+		opts.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+	})
 	if err != nil {
 		return "", fmt.Errorf("s3 PutObject: %w", err)
 	}

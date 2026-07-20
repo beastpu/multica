@@ -152,7 +152,7 @@ func (s *LocalStorage) Upload(ctx context.Context, key string, data []byte, cont
 	return fmt.Sprintf("/uploads/%s", key), nil
 }
 
-func (s *LocalStorage) UploadStream(ctx context.Context, key string, data io.Reader, contentType string, filename string) (string, error) {
+func (s *LocalStorage) UploadStream(ctx context.Context, key string, data io.Reader, _ int64, contentType string, filename string) (string, error) {
 	dest := filepath.Join(s.uploadDir, key)
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 		return "", fmt.Errorf("local storage MkdirAll: %w", err)

@@ -62,7 +62,8 @@ const (
 	defaultResourceDownloadTimeout = 45 * time.Second
 
 	// Feishu caps message resources at 100 MiB. Keep the local transport guard
-	// aligned with that contract while the Router bounds ACK-path latency.
+	// aligned with that contract; detached media processing keeps large
+	// transfers off the connector ACK path.
 	maxMessageResourceBytes = 100 << 20
 
 	// Lark's "invalid tenant_access_token" / "tenant_access_token
@@ -857,15 +858,6 @@ func (r *cancelReadCloser) Close() error {
 	err := r.ReadCloser.Close()
 	r.cancel()
 	return err
-}
-
-func looksLikeJSON(contentType string, body []byte) bool {
-	contentType = strings.ToLower(contentType)
-	if strings.Contains(contentType, "json") {
-		return true
-	}
-	trimmed := strings.TrimSpace(string(body))
-	return strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, `"code"`)
 }
 
 func filenameFromContentDisposition(raw string) string {

@@ -299,15 +299,29 @@ func TestAppendUserMessage_CommandTextOverridesEnrichedBody(t *testing.T) {
 	}
 }
 
-func TestAppendUserMessage_BindsMediaRefsAsChatAttachments(t *testing.T) {
+func TestBindMediaRefs_CreatesAndLinksChatAttachments(t *testing.T) {
 	f := newFake()
 	s := newTestSession(f)
 	res, err := s.AppendUserMessage(context.Background(), AppendInput{
+		SessionID: uid(1),
+		Sender:    uid(7),
+		Body:      "[Image]",
+		MessageID: "om_image",
+	})
+	if err != nil {
+		t.Fatalf("AppendUserMessage: %v", err)
+	}
+	if res.IssueCommand != nil {
+		t.Fatalf("media placeholder must not parse as /issue: %+v", res.IssueCommand)
+	}
+	if res.MessageID != f.messageID {
+		t.Fatalf("message id = %v, want %v", res.MessageID, f.messageID)
+	}
+	err = s.BindMediaRefs(context.Background(), BindMediaInput{
+		MessageID:   res.MessageID,
 		SessionID:   uid(1),
 		WorkspaceID: uid(9),
 		Sender:      uid(7),
-		Body:        "[Image]",
-		MessageID:   "om_image",
 		MediaRefs: []channel.MediaRef{
 			{
 				Type:       channel.MsgTypeImage,
@@ -320,10 +334,7 @@ func TestAppendUserMessage_BindsMediaRefsAsChatAttachments(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("AppendUserMessage: %v", err)
-	}
-	if res.IssueCommand != nil {
-		t.Fatalf("media placeholder must not parse as /issue: %+v", res.IssueCommand)
+		t.Fatalf("BindMediaRefs: %v", err)
 	}
 	if len(f.attachments) != 1 {
 		t.Fatalf("attachments created = %d, want 1", len(f.attachments))
@@ -336,7 +347,7 @@ func TestAppendUserMessage_BindsMediaRefsAsChatAttachments(t *testing.T) {
 		att.ContentType != "image/png" || att.SizeBytes != 3 {
 		t.Fatalf("attachment metadata wrong: %+v", att)
 	}
-	if f.linked.ChatMessageID != f.messageID || f.linked.ChatSessionID != uid(1) || f.linked.WorkspaceID != uid(9) {
+	if f.linked.ChatMessageID != res.MessageID || f.linked.ChatSessionID != uid(1) || f.linked.WorkspaceID != uid(9) {
 		t.Fatalf("link params wrong: %+v", f.linked)
 	}
 	if len(f.linked.AttachmentIds) != 1 || f.linked.AttachmentIds[0] != att.ID {
