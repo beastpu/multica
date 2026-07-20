@@ -223,6 +223,7 @@ func newTestPatcher(t *testing.T) (*Patcher, *fakePatcherQueries, *fakeAPIClient
 func TestPatcherSendsPlainTextOnChatDone(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee333333-ee33-ee33-ee33-eeeeeeeeeeee")
+	q.task = db.AgentTaskQueue{ID: taskID}
 
 	p.handleEvent(events.Event{
 		Type:          protocol.EventChatDone,
@@ -536,6 +537,133 @@ func TestPatcherSkipsWhenNoChatSessionBinding(t *testing.T) {
 	if len(api.textSent) != 0 || len(api.sent) != 0 {
 		t.Fatalf("web-only chat sessions must produce no outbound; got text=%d cards=%d",
 			len(api.textSent), len(api.sent))
+	}
+}
+
+func TestPatcherSkipsUnboundSessionBeforeLoadingTask(t *testing.T) {
+	p, q, _ := newTestPatcher(t)
+	q.bindingErr = pgx.ErrNoRows
+	q.taskErr = errors.New("task lookup must not run")
+	taskID := uuidFromString(t, "ee979797-ee97-ee97-ee97-eeeeeeeeeeee")
+
+	err := p.processEvent(context.Background(), events.Event{
+		Type:          protocol.EventChatDone,
+		TaskID:        uuidString(taskID),
+		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		Payload: protocol.ChatDonePayload{
+			TaskID:        uuidString(taskID),
+			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			Content:       "web-only answer",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unbound session should return before task lookup: %v", err)
+	}
+}
+
+// TestPatcherSkipsDirectChatTaskOnBoundSession guards the channel boundary:
+// opening a Lark-bound session in the web/mobile UI must not make that direct
+// conversation's reply or failure leak back into the external chat. Direct
+// tasks own an input batch through chat_input_task_id; channel tasks leave it
+// NULL and continue through the existing outbound paths.
+func TestPatcherSkipsDirectChatTaskOnBoundSession(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventType string
+		payload   func(taskID, chatSessionID string) any
+	}{
+		{
+			name:      "completed reply",
+			eventType: protocol.EventChatDone,
+			payload: func(taskID, chatSessionID string) any {
+				return protocol.ChatDonePayload{TaskID: taskID, ChatSessionID: chatSessionID, Content: "web-only answer"}
+			},
+		},
+		{
+			name:      "failed run",
+			eventType: protocol.EventTaskFailed,
+			payload: func(taskID, chatSessionID string) any {
+				return map[string]any{"task_id": taskID, "chat_session_id": chatSessionID, "error": "web-only failure"}
+			},
+		},
+		{
+			name:      "structured ask",
+			eventType: protocol.EventChatAsk,
+			payload: func(taskID, chatSessionID string) any {
+				return protocol.ChatAskPayload{
+					AskID:         "0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f",
+					TaskID:        taskID,
+					ChatSessionID: chatSessionID,
+					Type:          "confirm",
+					Message:       "web-only question",
+					Action:        "private action",
+					ExpiresAtUnix: time.Now().Add(30 * time.Minute).Unix(),
+				}
+			},
+		},
+		{
+			name:      "resolved structured ask",
+			eventType: protocol.EventChatAskResolved,
+			payload: func(taskID, chatSessionID string) any {
+				return protocol.ChatAskResolvedPayload{
+					AskID:            "0b0b0b0b-0b0b-0b0b-0b0b-0b0b0b0b0b0b",
+					TaskID:           taskID,
+					ChatSessionID:    chatSessionID,
+					Status:           "superseded",
+					ChannelMessageID: "om_web_only_ask",
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, q, api := newTestPatcher(t)
+			taskID := uuidFromString(t, "ee999999-ee99-ee99-ee99-eeeeeeeeeeee")
+			chatSessionID := uuidString(q.binding.ChatSessionID)
+			q.task = db.AgentTaskQueue{ID: taskID, ChatInputTaskID: taskID}
+
+			p.handleEvent(events.Event{
+				Type:          tt.eventType,
+				TaskID:        uuidString(taskID),
+				ChatSessionID: chatSessionID,
+				Payload:       tt.payload(uuidString(taskID), chatSessionID),
+			})
+
+			api.mu.Lock()
+			defer api.mu.Unlock()
+			if len(api.textSent) != 0 || len(api.mdCardSent) != 0 || len(api.sent) != 0 || len(api.patched) != 0 {
+				t.Fatalf("direct task must produce no channel outbound; got text=%d markdown=%d cards=%d patches=%d",
+					len(api.textSent), len(api.mdCardSent), len(api.sent), len(api.patched))
+			}
+		})
+	}
+}
+
+func TestPatcherFailsClosedWhenTaskOriginCannotBeLoaded(t *testing.T) {
+	p, q, api := newTestPatcher(t)
+	q.taskErr = errors.New("database unavailable")
+	taskID := uuidFromString(t, "ee989898-ee98-ee98-ee98-eeeeeeeeeeee")
+
+	err := p.processEvent(context.Background(), events.Event{
+		Type:          protocol.EventChatDone,
+		TaskID:        uuidString(taskID),
+		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		Payload: protocol.ChatDonePayload{
+			TaskID:        uuidString(taskID),
+			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			Content:       "must not leave Multica",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "load agent task") {
+		t.Fatalf("task lookup error = %v, want load agent task error", err)
+	}
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.textSent) != 0 || len(api.mdCardSent) != 0 || len(api.sent) != 0 || len(api.patched) != 0 {
+		t.Fatalf("unknown task origin must produce no channel outbound; got text=%d markdown=%d cards=%d patches=%d",
+			len(api.textSent), len(api.mdCardSent), len(api.sent), len(api.patched))
 	}
 }
 

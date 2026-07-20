@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -27,6 +28,14 @@ type fakeOutboundQueries struct {
 	bindingErr error
 	inst       db.ChannelInstallation
 	instErr    error
+	task       db.AgentTaskQueue
+	taskErr    error
+	taskCalls  int
+}
+
+func (f *fakeOutboundQueries) GetAgentTask(context.Context, pgtype.UUID) (db.AgentTaskQueue, error) {
+	f.taskCalls++
+	return f.task, f.taskErr
 }
 
 func (f *fakeOutboundQueries) GetChannelChatSessionBindingBySession(context.Context, db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error) {
@@ -67,14 +76,20 @@ func newTestOutbound(q outboundQueries, fs *fakeSender) *Outbound {
 
 func chatDoneEvent(sessionID string, content string) events.Event {
 	return events.Event{
+		TaskID:        "00000000-0000-0000-0000-000000000002",
 		Type:          protocol.EventChatDone,
 		ChatSessionID: sessionID,
-		Payload:       protocol.ChatDonePayload{Content: content},
+		Payload: protocol.ChatDonePayload{
+			TaskID:        "00000000-0000-0000-0000-000000000002",
+			ChatSessionID: sessionID,
+			Content:       content,
+		},
 	}
 }
 
 func TestOutbound_PostsReplyToBoundSlackChannel(t *testing.T) {
 	q := &fakeOutboundQueries{
+		task: db.AgentTaskQueue{ID: uid(2)},
 		// Composite isolation key; real channel + reply thread come from config /
 		// last_thread_id.
 		binding: db.ChannelChatSessionBinding{
@@ -101,6 +116,59 @@ func TestOutbound_PostsReplyToBoundSlackChannel(t *testing.T) {
 	}
 	if fs.got.Text != "**all done**" {
 		t.Errorf("Text = %q, want the raw content (Send applies mrkdwn)", fs.got.Text)
+	}
+}
+
+func TestOutbound_SkipsDirectChatTaskOnBoundSlackSession(t *testing.T) {
+	q := &fakeOutboundQueries{
+		task: db.AgentTaskQueue{ID: uid(2), ChatInputTaskID: uid(2)},
+		binding: db.ChannelChatSessionBinding{
+			InstallationID: uid(1),
+			ChannelChatID:  "C123",
+			Config:         []byte(`{"channel_id":"C123"}`),
+		},
+		inst: db.ChannelInstallation{ID: uid(1), Status: "active", Config: slackInstallConfigJSON()},
+	}
+	fs := &fakeSender{}
+
+	newTestOutbound(q, fs).handleEvent(chatDoneEvent("00000000-0000-0000-0000-000000000001", "private web reply"))
+
+	if fs.called != 0 {
+		t.Fatalf("sender called %d times, want 0 for a direct-chat task", fs.called)
+	}
+}
+
+func TestOutbound_SkipsUnboundSessionBeforeLoadingTask(t *testing.T) {
+	q := &fakeOutboundQueries{bindingErr: pgx.ErrNoRows, taskErr: errors.New("task lookup must not run")}
+	fs := &fakeSender{}
+
+	err := newTestOutbound(q, fs).processEvent(context.Background(), chatDoneEvent("00000000-0000-0000-0000-000000000001", "web-only answer"))
+	if err != nil {
+		t.Fatalf("unbound session should return before task lookup: %v", err)
+	}
+	if q.taskCalls != 0 {
+		t.Fatalf("task lookup calls = %d, want 0 for an unbound session", q.taskCalls)
+	}
+}
+
+func TestOutbound_FailsClosedWhenTaskOriginCannotBeLoaded(t *testing.T) {
+	q := &fakeOutboundQueries{
+		taskErr: errors.New("database unavailable"),
+		binding: db.ChannelChatSessionBinding{
+			InstallationID: uid(1),
+			ChannelChatID:  "C123",
+			Config:         []byte(`{"channel_id":"C123"}`),
+		},
+		inst: db.ChannelInstallation{ID: uid(1), Status: "active", Config: slackInstallConfigJSON()},
+	}
+	fs := &fakeSender{}
+
+	err := newTestOutbound(q, fs).processEvent(context.Background(), chatDoneEvent("00000000-0000-0000-0000-000000000001", "must not leave Multica"))
+	if err == nil {
+		t.Fatal("expected task lookup error")
+	}
+	if fs.called != 0 {
+		t.Fatalf("sender called %d times, want 0 when task origin is unknown", fs.called)
 	}
 }
 

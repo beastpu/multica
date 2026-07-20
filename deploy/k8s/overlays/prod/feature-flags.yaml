@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: multica-feature-flags
+data:
+  feature-flags.yaml: |
+    # Cloud Runtime is denied by default. Add approved workspace UUIDs to the
+    # allow list, then restart multica-server so it reloads this file.
+    cloud_runtime:
+      default: false
+      allow_by: workspace_id
+      allow:
+        - "3a9228a0-964a-43b3-9ba6-e38ecd477d64" # ai-infra
+        - "5b0c5119-92ea-438d-9bf8-f523f3fa2bd0" # w3-test (rollout verification)
