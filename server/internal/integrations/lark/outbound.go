@@ -294,7 +294,6 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 		// Issue / autopilot tasks have no chat_session.
 		return nil
 	}
-
 	binding, err := p.queries.GetLarkChatSessionBindingBySession(ctx, chatSessionID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -302,6 +301,21 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 			return nil
 		}
 		return fmt.Errorf("lookup chat session binding: %w", err)
+	}
+
+	// Only bound sessions reach here, so load the task to classify its origin.
+	// Web/mobile direct-chat tasks can reuse a session that originated in Lark,
+	// but their replies belong only in Multica. Channel-created tasks leave
+	// chat_input_task_id NULL and continue to the bound chat below.
+	task, err := p.queries.GetAgentTask(ctx, taskID)
+	if err != nil {
+		// Fail closed at the channel boundary. The in-process bus has no retry,
+		// so a transient lookup failure drops this reply rather than risking a
+		// private Multica turn being sent to Lark.
+		return fmt.Errorf("load agent task: %w", err)
+	}
+	if task.ChatInputTaskID.Valid {
+		return nil
 	}
 
 	inst, err := p.queries.GetLarkInstallation(ctx, binding.InstallationID)
