@@ -46,6 +46,7 @@ type fakeSessionQueries struct {
 	lastConfig      []byte // config of the most recent CreateChannelChatSessionBinding
 	attachments     []db.CreateAttachmentParams
 	linked          db.LinkAttachmentsToChatMessageParams
+	mediaCleared    int
 
 	prevMessage      *string // GetMostRecentUserChatMessage result; nil → ErrNoRows
 	markRows         int64   // MarkChannelInboundDedupProcessed result
@@ -93,6 +94,11 @@ func (f *fakeSessionQueries) CreateChannelChatSessionBinding(_ context.Context, 
 func (f *fakeSessionQueries) CreateChatMessage(_ context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error) {
 	f.messages = append(f.messages, arg.Content)
 	return db.ChatMessage{ID: f.messageID}, nil
+}
+
+func (f *fakeSessionQueries) ClearChatMessageChannelMediaPending(context.Context, db.ClearChatMessageChannelMediaPendingParams) error {
+	f.mediaCleared++
+	return nil
 }
 
 func (f *fakeSessionQueries) CreateAttachment(_ context.Context, arg db.CreateAttachmentParams) (db.Attachment, error) {

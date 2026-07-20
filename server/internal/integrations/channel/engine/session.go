@@ -43,6 +43,7 @@ type SessionQueries interface {
 	CreateChatSession(ctx context.Context, arg db.CreateChatSessionParams) (db.ChatSession, error)
 	CreateChannelChatSessionBinding(ctx context.Context, arg db.CreateChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error)
 	CreateChatMessage(ctx context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error)
+	ClearChatMessageChannelMediaPending(ctx context.Context, arg db.ClearChatMessageChannelMediaPendingParams) error
 	CreateAttachment(ctx context.Context, arg db.CreateAttachmentParams) (db.Attachment, error)
 	LinkAttachmentsToChatMessage(ctx context.Context, arg db.LinkAttachmentsToChatMessageParams) ([]pgtype.UUID, error)
 	TouchChatSession(ctx context.Context, id pgtype.UUID) error
@@ -73,6 +74,9 @@ func (a dbSessionQueries) CreateChannelChatSessionBinding(ctx context.Context, a
 }
 func (a dbSessionQueries) CreateChatMessage(ctx context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error) {
 	return a.q.CreateChatMessage(ctx, arg)
+}
+func (a dbSessionQueries) ClearChatMessageChannelMediaPending(ctx context.Context, arg db.ClearChatMessageChannelMediaPendingParams) error {
+	return a.q.ClearChatMessageChannelMediaPending(ctx, arg)
 }
 func (a dbSessionQueries) CreateAttachment(ctx context.Context, arg db.CreateAttachmentParams) (db.Attachment, error) {
 	return a.q.CreateAttachment(ctx, arg)
@@ -250,14 +254,15 @@ func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSess
 // its own binding row, recording the real thread here per session does not clash
 // across sibling threads.
 type AppendInput struct {
-	SessionID      pgtype.UUID
-	Sender         pgtype.UUID
-	InstallationID pgtype.UUID
-	Body           string
-	CommandText    string
-	MessageID      string
-	ThreadID       string
-	ClaimToken     pgtype.UUID
+	SessionID         pgtype.UUID
+	Sender            pgtype.UUID
+	InstallationID    pgtype.UUID
+	Body              string
+	CommandText       string
+	MessageID         string
+	ThreadID          string
+	ClaimToken        pgtype.UUID
+	MediaPendingUntil pgtype.Timestamptz
 }
 
 // BindMediaInput links already-uploaded media to a durable chat message in a
@@ -302,9 +307,10 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	}
 
 	msg, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
-		ChatSessionID: in.SessionID,
-		Role:          "user",
-		Content:       in.Body,
+		ChatSessionID:            in.SessionID,
+		Role:                     "user",
+		Content:                  in.Body,
+		ChannelMediaPendingUntil: in.MediaPendingUntil,
 	})
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("create chat message: %w", err)
@@ -349,23 +355,41 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	return AppendResult{MessageID: msg.ID, IssueCommand: cmd, DedupMarked: markedInTx}, nil
 }
 
-// BindMediaRefs creates attachment rows and links them to an existing durable
-// chat message atomically. A link failure rolls back only the attachment rows;
-// the placeholder chat message remains available for graceful degradation.
+// BindMediaRefs creates attachment rows, links them to an existing durable chat
+// message, and clears its media-pending marker. A link failure rolls back the
+// attachment rows, then clears the marker separately so the placeholder can be
+// promoted immediately for graceful degradation.
 func (s *ChatSession) BindMediaRefs(ctx context.Context, in BindMediaInput) error {
-	if len(in.MediaRefs) == 0 {
-		return nil
-	}
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin media tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	if err := s.bindMediaRefs(ctx, s.q.WithTx(tx), in); err != nil {
+	qtx := s.q.WithTx(tx)
+	if len(in.MediaRefs) > 0 {
+		if err := s.bindMediaRefs(ctx, qtx, in); err != nil {
+			_ = tx.Rollback(ctx)
+			if clearErr := s.clearMediaPending(ctx, s.q, in); clearErr != nil {
+				return errors.Join(err, clearErr)
+			}
+			return err
+		}
+	}
+	if err := s.clearMediaPending(ctx, qtx, in); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit media: %w", err)
+	}
+	return nil
+}
+
+func (s *ChatSession) clearMediaPending(ctx context.Context, q SessionQueries, in BindMediaInput) error {
+	if err := q.ClearChatMessageChannelMediaPending(ctx, db.ClearChatMessageChannelMediaPendingParams{
+		ID:            in.MessageID,
+		ChatSessionID: in.SessionID,
+	}); err != nil {
+		return fmt.Errorf("clear chat message media pending: %w", err)
 	}
 	return nil
 }

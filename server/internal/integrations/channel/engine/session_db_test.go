@@ -102,9 +102,10 @@ func TestBindMediaRefs_PersistsAndLinksAttachmentToDurableMessage(t *testing.T) 
 	session := NewChatSession(db.New(pool), pool, channel.TypeFeishu, SessionTitles{})
 
 	appendRes, err := session.AppendUserMessage(context.Background(), AppendInput{
-		SessionID: fixture.sessionID,
-		Sender:    fixture.userID,
-		Body:      "[Image]",
+		SessionID:         fixture.sessionID,
+		Sender:            fixture.userID,
+		Body:              "[Image]",
+		MediaPendingUntil: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	})
 	if err != nil {
 		t.Fatalf("AppendUserMessage: %v", err)
@@ -128,17 +129,21 @@ func TestBindMediaRefs_PersistsAndLinksAttachmentToDurableMessage(t *testing.T) 
 	}
 
 	var content, filename, url, contentType string
+	var mediaPendingUntil pgtype.Timestamptz
 	var sizeBytes int64
 	if err := pool.QueryRow(context.Background(), `
-		SELECT m.content, a.filename, a.url, a.content_type, a.size_bytes
+		SELECT m.content, a.filename, a.url, a.content_type, a.size_bytes, m.channel_media_pending_until
 		FROM chat_message m
 		JOIN attachment a ON a.chat_message_id = m.id
 		WHERE m.chat_session_id = $1 AND a.chat_session_id = $1`, fixture.sessionID).
-		Scan(&content, &filename, &url, &contentType, &sizeBytes); err != nil {
+		Scan(&content, &filename, &url, &contentType, &sizeBytes, &mediaPendingUntil); err != nil {
 		t.Fatalf("load linked attachment: %v", err)
 	}
 	if content != "[Image]" || filename != "image.png" || url != "https://cdn.example.test/image" || contentType != "image/png" || sizeBytes != 3 {
 		t.Fatalf("persisted media mismatch: content=%q filename=%q url=%q content_type=%q size=%d", content, filename, url, contentType, sizeBytes)
+	}
+	if mediaPendingUntil.Valid {
+		t.Fatalf("media pending deadline was not cleared: %v", mediaPendingUntil.Time)
 	}
 }
 
@@ -161,9 +166,10 @@ func TestBindMediaRefs_LinkFailureKeepsMessageAndRollsBackAttachment(t *testing.
 	session := newChatSessionWith(queries, pool, channel.TypeFeishu, SessionTitles{})
 
 	appendRes, err := session.AppendUserMessage(context.Background(), AppendInput{
-		SessionID: fixture.sessionID,
-		Sender:    fixture.userID,
-		Body:      "rollback-media",
+		SessionID:         fixture.sessionID,
+		Sender:            fixture.userID,
+		Body:              "rollback-media",
+		MediaPendingUntil: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	})
 	if err != nil {
 		t.Fatalf("AppendUserMessage: %v", err)
@@ -186,6 +192,7 @@ func TestBindMediaRefs_LinkFailureKeepsMessageAndRollsBackAttachment(t *testing.
 	}
 
 	var messageCount, attachmentCount int
+	var mediaPendingUntil pgtype.Timestamptz
 	ctx := context.Background()
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM chat_message WHERE chat_session_id = $1 AND content = 'rollback-media'`, fixture.sessionID).Scan(&messageCount); err != nil {
 		t.Fatalf("count messages: %v", err)
@@ -193,7 +200,13 @@ func TestBindMediaRefs_LinkFailureKeepsMessageAndRollsBackAttachment(t *testing.
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM attachment WHERE chat_session_id = $1 AND filename = 'rollback.png'`, fixture.sessionID).Scan(&attachmentCount); err != nil {
 		t.Fatalf("count attachments: %v", err)
 	}
+	if err := pool.QueryRow(ctx, `SELECT channel_media_pending_until FROM chat_message WHERE id = $1`, appendRes.MessageID).Scan(&mediaPendingUntil); err != nil {
+		t.Fatalf("load fallback marker: %v", err)
+	}
 	if messageCount != 1 || attachmentCount != 0 {
 		t.Fatalf("fallback persistence mismatch: messages=%d attachments=%d", messageCount, attachmentCount)
+	}
+	if mediaPendingUntil.Valid {
+		t.Fatalf("failed attachment kept media pending until %v", mediaPendingUntil.Time)
 	}
 }

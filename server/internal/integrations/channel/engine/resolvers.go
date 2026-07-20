@@ -89,12 +89,14 @@ type EnsureSessionParams struct {
 // AppendParams carries the inputs for SessionBinder.AppendMessage. ClaimToken
 // is the dedup owner-fence token; the binder runs the dedup Mark INSIDE its
 // chat_message+session tx so the durable write and the Mark commit atomically.
+// MediaPendingUntil persists the placeholder fallback deadline.
 type AppendParams struct {
-	SessionID      pgtype.UUID
-	Sender         pgtype.UUID
-	InstallationID pgtype.UUID
-	Message        channel.InboundMessage
-	ClaimToken     pgtype.UUID
+	SessionID         pgtype.UUID
+	Sender            pgtype.UUID
+	InstallationID    pgtype.UUID
+	Message           channel.InboundMessage
+	ClaimToken        pgtype.UUID
+	MediaPendingUntil pgtype.Timestamptz
 }
 
 // AppendResult reports what AppendMessage decided.
@@ -181,8 +183,9 @@ type SessionBinder interface {
 
 // MediaResolver resolves platform media after the user message and dedup mark
 // are durable. The Router runs it off the connector ACK path and binds any
-// returned MediaRefs before scheduling the debounced chat run. Implementations
-// are best-effort: failures leave the stored placeholder text intact.
+// returned MediaRefs; the independently scheduled task remains deferred until
+// binding finishes or the persisted deadline expires. Implementations are
+// best-effort: failures leave the stored placeholder text intact.
 type MediaResolver interface {
 	ResolveMedia(ctx context.Context, inst ResolvedInstallation, sender ResolvedIdentity, sessionID pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage
 }
@@ -241,6 +244,7 @@ type IssueCreator interface {
 // trigger a chat run. Shared across platforms.
 type TaskEnqueuer interface {
 	EnqueueChatTask(ctx context.Context, session db.ChatSession, initiatorUserID pgtype.UUID, forceFreshSession bool) (db.AgentTaskQueue, error)
+	PromoteChannelChatTasksIfMediaReady(ctx context.Context, sessionID pgtype.UUID) error
 }
 
 // SessionReader reads the rows the debounced flush + /issue identifier need.

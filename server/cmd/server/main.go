@@ -498,7 +498,11 @@ func main() {
 			)
 		}
 		if h.ChannelRouter != nil {
-			h.ChannelRouter.Drain()
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if !h.ChannelRouter.Drain(drainCtx) {
+				slog.Warn("channel router: drain deadline reached; deferred media fallback remains durable")
+			}
+			drainCancel()
 		}
 	}
 

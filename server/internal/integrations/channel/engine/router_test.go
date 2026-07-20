@@ -224,9 +224,17 @@ type fakeTasks struct {
 	mu         sync.Mutex
 	called     bool
 	callCount  int
+	promotions int
 	forceFresh bool
 	initiator  pgtype.UUID
 	err        error
+}
+
+func (f *fakeTasks) PromoteChannelChatTasksIfMediaReady(_ context.Context, _ pgtype.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.promotions++
+	return nil
 }
 
 func (f *fakeTasks) EnqueueChatTask(_ context.Context, _ db.ChatSession, initiator pgtype.UUID, forceFresh bool) (db.AgentTaskQueue, error) {
@@ -241,6 +249,11 @@ func (f *fakeTasks) EnqueueChatTask(_ context.Context, _ db.ChatSession, initiat
 func (f *fakeTasks) wasCalled() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.called }
 func (f *fakeTasks) freshArg() bool  { f.mu.Lock(); defer f.mu.Unlock(); return f.forceFresh }
 func (f *fakeTasks) calls() int      { f.mu.Lock(); defer f.mu.Unlock(); return f.callCount }
+func (f *fakeTasks) promotionCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.promotions
+}
 func (f *fakeTasks) initiatorArg() pgtype.UUID {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -540,6 +553,18 @@ func TestRouter_MediaResolverTimeoutAppendsOriginalMessage(t *testing.T) {
 	}
 }
 
+func TestRouter_MediaBindFailureStillChecksPlaceholderPromotion(t *testing.T) {
+	h := newHarness(t)
+	h.binder.bindErr = errors.New("attachment write failed")
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !waitFor(time.Second, func() bool { return h.tasks.promotionCalls() == 1 }) {
+		t.Fatal("binding failure did not check whether the cleared placeholder task could be promoted")
+	}
+}
+
 func TestRouter_MediaResolutionDoesNotBlockInboundHandle(t *testing.T) {
 	h := newHarness(t)
 	h.reader.session = db.ChatSession{}
@@ -567,17 +592,17 @@ func TestRouter_MediaResolutionDoesNotBlockInboundHandle(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("Handle waited for media resolution on the connector ACK path")
 	}
-	if h.tasks.wasCalled() {
-		t.Fatal("chat run started before media resolution completed")
+	if !h.tasks.wasCalled() {
+		t.Fatal("durable run trigger was not scheduled while media resolution was pending")
 	}
 
 	close(release)
-	if !waitFor(time.Second, h.tasks.wasCalled) {
-		t.Fatal("chat run did not start after media resolution completed")
+	if !waitFor(time.Second, func() bool { return h.tasks.promotionCalls() == 1 }) {
+		t.Fatal("media completion did not promote the durable deferred run")
 	}
 }
 
-func TestRouter_MediaQueuePreservesSessionOrderAndDebouncesAfterTail(t *testing.T) {
+func TestRouter_MediaQueuePreservesSessionOrderWithoutCancellingRunBoundary(t *testing.T) {
 	h := newHarness(t)
 	timers := &fakeTimerFactory{}
 	h.router.batcher = newTestBatcher(timers)
@@ -599,8 +624,8 @@ func TestRouter_MediaQueuePreservesSessionOrderAndDebouncesAfterTail(t *testing.
 	if err := h.router.Handle(context.Background(), first); err != nil {
 		t.Fatalf("first Handle: %v", err)
 	}
-	if !waitFor(time.Second, func() bool { return h.router.batcher.pendingCount() == 1 }) {
-		t.Fatal("first media queue tail did not arm a run")
+	if got := h.router.batcher.pendingCount(); got != 1 {
+		t.Fatalf("first message did not arm a run, pending=%d", got)
 	}
 
 	second := p2pMessage(t)
@@ -613,21 +638,17 @@ func TestRouter_MediaQueuePreservesSessionOrderAndDebouncesAfterTail(t *testing.
 	case <-time.After(time.Second):
 		t.Fatal("second media job did not start")
 	}
-	if got := h.router.batcher.pendingCount(); got != 0 {
-		t.Fatalf("new media job must cancel the stale run timer, pending=%d", got)
-	}
-	timers.fireArmed()
-	if h.tasks.wasCalled() {
-		t.Fatal("stale timer fired before the media queue tail completed")
-	}
-
-	close(releaseSecond)
-	if !waitFor(time.Second, func() bool { return h.router.batcher.pendingCount() == 1 }) {
-		t.Fatal("queue tail did not re-arm the debounced run")
+	if got := h.router.batcher.pendingCount(); got != 1 {
+		t.Fatalf("new media must keep one fenced run boundary, pending=%d", got)
 	}
 	timers.fireArmed()
 	if !waitFor(time.Second, func() bool { return h.tasks.calls() == 1 }) {
-		t.Fatalf("chat run calls = %d, want 1", h.tasks.calls())
+		t.Fatal("durable run trigger did not flush while media was pending")
+	}
+
+	close(releaseSecond)
+	if !waitFor(time.Second, func() bool { return h.tasks.promotionCalls() == 2 }) {
+		t.Fatalf("media completion promotions = %d, want 2", h.tasks.promotionCalls())
 	}
 }
 
@@ -765,7 +786,7 @@ func TestRouter_DrainJoinsReplies(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	done := make(chan struct{})
-	go func() { h.router.Drain(); close(done) }()
+	go func() { h.router.Drain(context.Background()); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -774,6 +795,33 @@ func TestRouter_DrainJoinsReplies(t *testing.T) {
 	if len(h.replier.calls()) != 1 {
 		t.Fatalf("expected exactly one reply after drain, got %d", len(h.replier.calls()))
 	}
+}
+
+func TestRouter_DrainHonorsDeadlineWhenMediaResolverIgnoresCancellation(t *testing.T) {
+	h := newHarness(t)
+	release := make(chan struct{})
+	started := make(chan struct{})
+	h.media.resolve = func(_ context.Context, msg channel.InboundMessage) channel.InboundMessage {
+		close(started)
+		<-release
+		return msg
+	}
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("media resolver did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if h.router.Drain(ctx) {
+		t.Fatal("Drain reported completion for a wedged media resolver")
+	}
+	close(release)
 }
 
 func TestRouter_EmptyMessageID_SkipsDedup(t *testing.T) {

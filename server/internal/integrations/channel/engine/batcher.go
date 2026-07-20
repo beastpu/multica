@@ -103,18 +103,6 @@ func (b *pendingBatcher) Schedule(key string, flush func()) {
 	b.mu.Unlock()
 }
 
-// Cancel disarms a pending run without flushing it. Detached media processing
-// calls this when a newer durable message arrives for the same session, then
-// re-schedules once that session's ordered media queue is fully drained.
-func (b *pendingBatcher) Cancel(key string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if e, ok := b.pending[key]; ok {
-		e.timer.Stop()
-		delete(b.pending, key)
-	}
-}
-
 // onFire runs the flush for key if it is still the live, armed generation. It
 // is the timer callback; in production it runs on time.AfterFunc's goroutine,
 // so the flush is naturally detached from the inbound path.

@@ -1397,8 +1397,10 @@ var ErrChatTaskAgentArchived = errors.New("chat task: agent archived")
 // path returns a task row, not this error.
 var ErrChatTaskAgentNoRuntime = errors.New("chat task: agent has no runtime")
 
-// EnqueueChatTask creates a queued task for a chat session.
-// Unlike issue tasks, chat tasks have no issue_id.
+// EnqueueChatTask creates a task-owned input batch for a chat session. Channel
+// media makes the task deferred until binding completes or its durable fallback
+// deadline expires; other chat tasks are queued immediately. Unlike issue
+// tasks, chat tasks have no issue_id.
 //
 // Errors split into two layers:
 //
@@ -1450,12 +1452,28 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 	}
 	attrSource, _, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
 	runtimeMCPOverlay := s.buildRuntimeMCPOverlay(ctx, initiatorUserID, agent)
-	task, err := s.Queries.CreateChatTask(ctx, db.CreateChatTaskParams{
+
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("begin chat task enqueue: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.Queries.WithTx(tx)
+	mediaPendingUntil, err := qtx.GetChannelMediaPendingUntil(ctx, chatSession.ID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		slog.Error("chat task enqueue failed", "chat_session_id", util.UUIDToString(chatSession.ID), "error", err)
+		return db.AgentTaskQueue{}, fmt.Errorf("load channel media pending deadline: %w", err)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		mediaPendingUntil = pgtype.Timestamptz{}
+	}
+	task, err := qtx.CreateChatTask(ctx, db.CreateChatTaskParams{
 		AgentID:           chatSession.AgentID,
 		RuntimeID:         agent.RuntimeID,
 		Priority:          2, // medium priority for chat
 		ChatSessionID:     chatSession.ID,
 		InitiatorUserID:   initiatorUserID,
+		FireAt:            mediaPendingUntil,
 		OriginatorUserID:  initiatorUserID,
 		AccountableUserID: attr.AccountableUserID,
 		ForceFreshSession: pgtype.Bool{
@@ -1472,12 +1490,62 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 		slog.Error("chat task enqueue failed", "chat_session_id", util.UUIDToString(chatSession.ID), "error", err)
 		return db.AgentTaskQueue{}, fmt.Errorf("create chat task: %w", err)
 	}
+	task, err = qtx.SetChatTaskInputOwnerSelf(ctx, task.ID)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("set channel chat task input owner: %w", err)
+	}
+	if err := qtx.LinkUnownedChannelChatMessagesToTask(ctx, db.LinkUnownedChannelChatMessagesToTaskParams{
+		TaskID:        task.ID,
+		ChatSessionID: chatSession.ID,
+	}); err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("seal channel chat task input: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("commit chat task enqueue: %w", err)
+	}
+
+	if task.Status == "deferred" {
+		slog.Info("chat task deferred for channel media",
+			"task_id", util.UUIDToString(task.ID),
+			"chat_session_id", util.UUIDToString(chatSession.ID),
+			"agent_id", util.UUIDToString(chatSession.AgentID),
+			"fire_at", task.FireAt.Time,
+		)
+		// Fence the clear-vs-create race: media completion may have found no
+		// committed task after our deadline read. Re-check after commit so the
+		// task is promoted immediately when the marker has already cleared.
+		if err := s.PromoteChannelChatTasksIfMediaReady(ctx, chatSession.ID); err != nil {
+			return task, err
+		}
+		return task, nil
+	}
 
 	slog.Info("chat task enqueued", "task_id", util.UUIDToString(task.ID), "chat_session_id", util.UUIDToString(chatSession.ID), "agent_id", util.UUIDToString(chatSession.AgentID))
 	// See EnqueueTaskForIssue for ordering rationale.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
 	return task, nil
+}
+
+// PromoteChannelChatTasksIfMediaReady queues channel tasks as soon as every
+// unexpired media marker in the session has been cleared. If the process dies
+// first, the normal deferred-task promoter queues them at their persisted
+// fire_at deadline, preserving the placeholder fallback across restarts.
+func (s *TaskService) PromoteChannelChatTasksIfMediaReady(ctx context.Context, sessionID pgtype.UUID) error {
+	tasks, err := s.Queries.PromoteChannelChatTasksIfMediaReady(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("promote channel chat tasks after media: %w", err)
+	}
+	for _, task := range tasks {
+		slog.Info("channel media-ready chat task promoted",
+			"task_id", util.UUIDToString(task.ID),
+			"chat_session_id", util.UUIDToString(sessionID),
+			"agent_id", util.UUIDToString(task.AgentID),
+		)
+		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
+		s.NotifyTaskEnqueued(ctx, task)
+	}
+	return nil
 }
 
 // DirectChatSendResult carries the rows a transactional direct-chat send
