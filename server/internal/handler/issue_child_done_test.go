@@ -404,6 +404,119 @@ func TestChildDoneMentionsParentAssignee_Squad(t *testing.T) {
 	}
 }
 
+// TestChildDoneWakesSquadThatCreatedChildForUnassignedParent covers GH #5706:
+// an explicit @squad mention can start a leader run without assigning the
+// parent issue. When that run creates staged work, the task row is the durable
+// proof of which squad owns the orchestration handoff. Closing the child must
+// route the parent-level stage instruction back to that same squad leader while
+// leaving the parent itself unassigned.
+func TestChildDoneWakesSquadThatCreatedChildForUnassignedParent(t *testing.T) {
+	ctx := context.Background()
+	fx := newChildDoneFixture(t, "in_progress")
+	sq := newSquadCommentTriggerFixture(t)
+
+	// Make the child look exactly like one created during a completed leader
+	// run on the unassigned parent. The task window brackets the child's
+	// creation time, which prevents an unrelated historical @squad run from
+	// being reused as orchestration authority.
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET creator_type = 'agent', creator_id = $2,
+		    created_at = now() - interval '1 minute', stage = 1
+		WHERE id = $1
+	`, fx.child.ID, sq.LeaderID); err != nil {
+		t.Fatalf("stamp child creator: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, is_leader_task, squad_id,
+			created_at, started_at, completed_at
+		)
+		SELECT
+			a.id, a.runtime_id, $2, 'completed', 0, true, $3,
+			now() - interval '2 minutes',
+			now() - interval '2 minutes',
+			now() - interval '30 seconds'
+		FROM agent a
+		WHERE a.id = $1
+	`, sq.LeaderID, fx.parent.ID, sq.SquadID); err != nil {
+		t.Fatalf("create originating squad leader task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(),
+			`DELETE FROM agent_task_queue WHERE issue_id = $1`, fx.parent.ID)
+	})
+
+	updateChildStatus(t, fx.child.ID, "done")
+
+	content := parentSystemCommentContent(t, fx.parent.ID)
+	if !strings.Contains(content, "mention://squad/"+sq.SquadID) {
+		t.Errorf("expected originating squad mention in system comment, got: %s", content)
+	}
+	if got := countPendingTasksForAgent(t, fx.parent.ID, sq.LeaderID); got != 1 {
+		t.Errorf("expected 1 pending leader task for unassigned parent, got %d", got)
+	}
+
+	var assigneeType, assigneeID *string
+	if err := testPool.QueryRow(ctx,
+		`SELECT assignee_type, assignee_id::text FROM issue WHERE id = $1`,
+		fx.parent.ID,
+	).Scan(&assigneeType, &assigneeID); err != nil {
+		t.Fatalf("load parent assignee: %v", err)
+	}
+	if assigneeType != nil || assigneeID != nil {
+		t.Fatalf("parent should remain unassigned, got type=%v id=%v", assigneeType, assigneeID)
+	}
+}
+
+// TestChildDoneDoesNotWakeHistoricalSquadForUnassignedParent proves the
+// fallback is bound to the task that actually created the child. A leader run
+// that ended before the child existed is not orchestration authority for that
+// child's later stage-complete handoff.
+func TestChildDoneDoesNotWakeHistoricalSquadForUnassignedParent(t *testing.T) {
+	ctx := context.Background()
+	fx := newChildDoneFixture(t, "in_progress")
+	sq := newSquadCommentTriggerFixture(t)
+
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET creator_type = 'agent', creator_id = $2,
+		    created_at = now() - interval '1 minute', stage = 1
+		WHERE id = $1
+	`, fx.child.ID, sq.LeaderID); err != nil {
+		t.Fatalf("stamp child creator: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, is_leader_task, squad_id,
+			created_at, started_at, completed_at
+		)
+		SELECT
+			a.id, a.runtime_id, $2, 'completed', 0, true, $3,
+			now() - interval '4 minutes',
+			now() - interval '4 minutes',
+			now() - interval '3 minutes'
+		FROM agent a
+		WHERE a.id = $1
+	`, sq.LeaderID, fx.parent.ID, sq.SquadID); err != nil {
+		t.Fatalf("create historical squad leader task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(),
+			`DELETE FROM agent_task_queue WHERE issue_id = $1`, fx.parent.ID)
+	})
+
+	updateChildStatus(t, fx.child.ID, "done")
+
+	content := parentSystemCommentContent(t, fx.parent.ID)
+	if strings.Contains(content, "mention://squad/"+sq.SquadID) {
+		t.Errorf("historical squad must not be mentioned, got: %s", content)
+	}
+	if got := countPendingTasksForAgent(t, fx.parent.ID, sq.LeaderID); got != 0 {
+		t.Errorf("historical squad leader received %d pending tasks, want 0", got)
+	}
+}
+
 // TestChildDoneTriggersParentAgentWhenSameAgentOwnsChild — when the parent
 // agent assignee is the SAME agent that owns the just-finished child, the
 // parent agent must still be triggered (MUL-2808). A child finishing and

@@ -2,12 +2,14 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -263,10 +265,15 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 	title := sanitizeChildTitleForSystemComment(completed.Title)
 	parentID := uuidToString(parent.ID)
 
-	// Build the parent-assignee mention prefix. Empty when the parent has no
-	// assignee or the assignee row is missing (deleted member, archived
-	// agent the workspace lost track of, etc.).
-	mentionPrefix := h.buildParentAssigneeMention(ctx, parent)
+	// An explicit @squad mention starts a leader task without assigning the
+	// issue. If that task created this child, its task row is durable proof of
+	// the orchestration owner and can carry the stage-complete handoff back to
+	// the same squad (GH #5706). A real parent assignee always wins.
+	dispatchTarget := h.resolveChildDoneDispatchTarget(ctx, parent, completed)
+
+	// Build the dispatch-target mention prefix. Empty when neither a parent
+	// assignee nor a proven originating squad context exists.
+	mentionPrefix := h.buildParentAssigneeMention(ctx, dispatchTarget)
 
 	var content string
 	if staged {
@@ -331,7 +338,45 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 	// author_type='system'); this keeps smuggled mentions from the child
 	// title inert and gives the platform a single place to apply the loop
 	// and idempotency guards.
-	h.dispatchParentAssigneeTrigger(ctx, parent, comment)
+	h.dispatchParentAssigneeTrigger(ctx, dispatchTarget, comment)
+}
+
+// resolveChildDoneDispatchTarget returns the durable owner of a child-done
+// handoff without mutating the parent issue's assignment.
+//
+// Assigned parents keep their explicit assignee. For an unassigned parent, a
+// child created by an agent may be tied to the exact squad-leader task whose
+// execution window brackets the child's creation time. That task's squad_id is
+// the fallback routing target. Requiring the parent issue, child creator, and
+// creation timestamp to match prevents an unrelated historical @squad run from
+// being woken merely because it was the most recent task on the parent.
+func (h *Handler) resolveChildDoneDispatchTarget(ctx context.Context, parent, completed db.Issue) db.Issue {
+	if parent.AssigneeType.Valid || parent.AssigneeID.Valid {
+		return parent
+	}
+	if completed.CreatorType != "agent" || !completed.CreatorID.Valid || !completed.CreatedAt.Valid {
+		return parent
+	}
+
+	squadID, err := h.Queries.GetSquadLeaderTaskForChildCreation(ctx, db.GetSquadLeaderTaskForChildCreationParams{
+		ParentIssueID:  parent.ID,
+		ChildCreatorID: completed.CreatorID,
+		ChildCreatedAt: completed.CreatedAt,
+	})
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("child done: failed to resolve originating squad task",
+				"error", err,
+				"child_id", uuidToString(completed.ID),
+				"parent_id", uuidToString(parent.ID))
+		}
+		return parent
+	}
+
+	target := parent
+	target.AssigneeType = pgtype.Text{String: "squad", Valid: true}
+	target.AssigneeID = squadID
+	return target
 }
 
 // isTerminalChildStatus reports whether a child issue status counts as

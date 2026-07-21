@@ -1028,6 +1028,21 @@ WHERE issue_id = $1 AND agent_id = $2
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: GetSquadLeaderTaskForChildCreation :one
+-- Finds the squad orchestration context that created a child for an
+-- unassigned parent. The task window must bracket the child's creation time,
+-- so an unrelated historical @squad run cannot become the fallback owner of a
+-- later stage-complete handoff (GH #5706).
+SELECT squad_id FROM agent_task_queue
+WHERE issue_id = sqlc.arg(parent_issue_id)
+  AND agent_id = sqlc.arg(child_creator_id)
+  AND is_leader_task = TRUE
+  AND squad_id IS NOT NULL
+  AND created_at <= sqlc.arg(child_created_at)
+  AND (completed_at IS NULL OR completed_at >= sqlc.arg(child_created_at))
+ORDER BY created_at DESC
+LIMIT 1;
+
 -- name: ListPendingTasksByRuntime :many
 SELECT * FROM agent_task_queue
 WHERE runtime_id = $1 AND status IN ('queued', 'dispatched')
