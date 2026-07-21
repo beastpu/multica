@@ -43,6 +43,7 @@ type Router struct {
 	mediaTimeout time.Duration
 	mediaCtx     context.Context
 	mediaCancel  context.CancelFunc
+	mediaSem     chan struct{}
 	replyWg      sync.WaitGroup
 	mediaWg      sync.WaitGroup
 
@@ -63,9 +64,17 @@ type RouterConfig struct {
 	// under the platform ACK deadline (Lark: 3s). Defaults to 2.5s.
 	ReplyTimeout time.Duration
 	// MediaTimeout caps detached best-effort media download, upload, and
-	// attachment binding for one message. Defaults to 45s.
+	// attachment binding for one message. The budget starts at append time
+	// (it must match the persisted fire_at fallback), so it also spans any
+	// wait behind earlier media in the same session and for a global
+	// concurrency slot. Defaults to 45s.
 	MediaTimeout time.Duration
-	Logger       *slog.Logger
+	// MediaConcurrency caps concurrent media resolutions across all
+	// sessions, bounding burst memory (unknown-length uploads buffer up to
+	// the 100 MiB resource cap each) and platform download pressure.
+	// Per-session ordering is unaffected. Defaults to 8.
+	MediaConcurrency int
+	Logger           *slog.Logger
 }
 
 // NewRouter builds a Router around the shared (platform-agnostic) services:
@@ -78,6 +87,9 @@ func NewRouter(issues IssueCreator, tasks TaskEnqueuer, reader SessionReader, cf
 	}
 	if cfg.MediaTimeout == 0 {
 		cfg.MediaTimeout = 45 * time.Second
+	}
+	if cfg.MediaConcurrency == 0 {
+		cfg.MediaConcurrency = 8
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -92,6 +104,7 @@ func NewRouter(issues IssueCreator, tasks TaskEnqueuer, reader SessionReader, cf
 		mediaTimeout: cfg.MediaTimeout,
 		mediaCtx:     mediaCtx,
 		mediaCancel:  mediaCancel,
+		mediaSem:     make(chan struct{}, cfg.MediaConcurrency),
 		logger:       cfg.Logger,
 		pendingFresh: make(map[string]bool),
 		mediaQueues:  make(map[string]*mediaQueueEntry),
@@ -399,6 +412,15 @@ func (r *Router) enqueueMedia(set ResolverSet, inst ResolvedInstallation, identi
 			case <-r.mediaCtx.Done():
 			}
 		}
+		select {
+		case r.mediaSem <- struct{}{}:
+			defer func() { <-r.mediaSem }()
+		case <-r.mediaCtx.Done():
+			// Cancelled while queued for a slot: proceed without one.
+			// ResolveMedia returns immediately on the dead context and only
+			// the bounded DB finalize runs, preserving prompt marker
+			// clearing on shutdown.
+		}
 		r.resolveAndBindMedia(set, inst, identity, chatMessageID, msg, sessionID, deadline)
 	}()
 }
@@ -411,6 +433,9 @@ func (r *Router) resolveAndBindMedia(set ResolverSet, inst ResolvedInstallation,
 
 	resolved := set.Media.ResolveMedia(ctx, inst, identity, sessionID, msg)
 	if err := ctx.Err(); err != nil {
+		// Refs resolved before the deadline may already sit in object
+		// storage; their deterministic keys mean a redelivery overwrites
+		// rather than leaks, so the orphans stay bounded.
 		resolved.MediaRefs = nil
 		r.logger.Warn("channel router: media resolution incomplete; using placeholder",
 			"channel_type", string(msg.Source.ChannelType),

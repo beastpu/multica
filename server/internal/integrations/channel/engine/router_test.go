@@ -797,6 +797,56 @@ func TestRouter_DrainJoinsReplies(t *testing.T) {
 	}
 }
 
+func TestRouter_MediaConcurrencyCapAppliesAcrossSessions(t *testing.T) {
+	h := newHarness(t)
+	h.router = NewRouter(h.issues, h.tasks, h.reader, RouterConfig{MediaConcurrency: 1, Logger: discardLogger()})
+	release := make(chan struct{})
+	h.media.resolve = func(ctx context.Context, msg channel.InboundMessage) channel.InboundMessage {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return msg
+	}
+	h.router.Register(channel.TypeFeishu, ResolverSet{
+		Installation: h.inst,
+		Identity:     h.ident,
+		Dedup:        h.dedup,
+		Session:      h.binder,
+		Audit:        h.audit,
+		Replier:      h.replier,
+		Typing:       h.typing,
+		Media:        h.media,
+		OriginType:   "lark_chat",
+	})
+
+	first := p2pMessage(t)
+	first.MessageID = "m1"
+	if err := h.router.Handle(context.Background(), first); err != nil {
+		t.Fatalf("first Handle: %v", err)
+	}
+	if !waitFor(time.Second, func() bool { return h.media.calls() == 1 }) {
+		t.Fatalf("first media job did not start, calls=%d", h.media.calls())
+	}
+
+	// A different session gets its own queue; only the global cap gates it.
+	h.binder.ensureID = uuidFromString(t, "77777777-7777-4777-8777-777777777777")
+	second := p2pMessage(t)
+	second.MessageID = "m2"
+	second.Source.ChatID = "oc_chat_b"
+	if err := h.router.Handle(context.Background(), second); err != nil {
+		t.Fatalf("second Handle: %v", err)
+	}
+	if waitFor(150*time.Millisecond, func() bool { return h.media.calls() == 2 }) {
+		t.Fatal("second media job ran while the only concurrency slot was held")
+	}
+
+	close(release)
+	if !waitFor(time.Second, func() bool { return h.media.calls() == 2 }) {
+		t.Fatalf("second media job never ran after the slot freed, calls=%d", h.media.calls())
+	}
+}
+
 func TestRouter_DrainHonorsDeadlineWhenMediaResolverIgnoresCancellation(t *testing.T) {
 	h := newHarness(t)
 	release := make(chan struct{})
