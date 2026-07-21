@@ -200,6 +200,27 @@ WHERE message.chat_session_id = @chat_session_id
         AND (prior.created_at, prior.id) > (message.created_at, message.id)
   );
 
+-- name: DeferChatTaskForSealedPendingMedia :one
+-- Closes the enqueue-vs-append race: under READ COMMITTED a media message can
+-- commit between GetChannelMediaPendingUntil and the batch seal above, landing
+-- an unexpired media marker inside a task the deadline read decided was
+-- 'queued'. Re-derive the deferral from the sealed batch itself, in the same
+-- transaction, so a task is never claimable while its own input still has an
+-- unexpired marker. No row (ErrNoRows) means no correction was needed.
+UPDATE agent_task_queue AS task
+SET status = 'deferred', fire_at = pending.max_until
+FROM (
+    SELECT max(message.channel_media_pending_until) AS max_until
+    FROM chat_message AS message
+    WHERE message.task_id = @task_id
+      AND message.role = 'user'
+      AND message.channel_media_pending_until > now()
+) AS pending
+WHERE task.id = @task_id
+  AND pending.max_until IS NOT NULL
+  AND (task.fire_at IS NULL OR task.fire_at < pending.max_until)
+RETURNING task.*;
+
 -- name: DeleteUserChatMessageByTask :one
 DELETE FROM chat_message
 WHERE task_id = $1 AND role = 'user'

@@ -1500,6 +1500,16 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 	}); err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("seal channel chat task input: %w", err)
 	}
+	// The deadline read above ran before the seal; under READ COMMITTED a media
+	// message committed between the two statements is sealed into this task
+	// without deferring it, and the daemon could claim it before its media
+	// binds. Re-derive the deferral from the sealed batch itself.
+	switch corrected, err := qtx.DeferChatTaskForSealedPendingMedia(ctx, task.ID); {
+	case err == nil:
+		task = corrected
+	case !errors.Is(err, pgx.ErrNoRows):
+		return db.AgentTaskQueue{}, fmt.Errorf("defer chat task for sealed pending media: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("commit chat task enqueue: %w", err)
 	}
