@@ -171,6 +171,13 @@ type fakeMedia struct {
 	resolve       func(context.Context, channel.InboundMessage) channel.InboundMessage
 	discardedRefs []channel.MediaRef
 	discardCalls  int
+	discardCtxErr error
+}
+
+func (f *fakeMedia) lastDiscardCtxErr() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.discardCtxErr
 }
 
 func (f *fakeMedia) HasMedia(_ channel.InboundMessage) bool {
@@ -179,10 +186,11 @@ func (f *fakeMedia) HasMedia(_ channel.InboundMessage) bool {
 	return !f.noMedia
 }
 
-func (f *fakeMedia) DiscardMedia(_ context.Context, refs []channel.MediaRef) {
+func (f *fakeMedia) DiscardMedia(ctx context.Context, refs []channel.MediaRef) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.discardCalls++
+	f.discardCtxErr = ctx.Err()
 	f.discardedRefs = append(f.discardedRefs, refs...)
 }
 
@@ -613,9 +621,16 @@ func TestRouter_MediaBindFailureStillChecksPlaceholderPromotion(t *testing.T) {
 	}
 	// Bind failure means the uploaded objects have no attachment row and no
 	// other reclaim path — they must be discarded.
-	refs := h.media.discarded()
-	if len(refs) != 1 || refs[0].StorageKey != "workspaces/ws/lark/image" {
+	if !waitFor(time.Second, func() bool { return len(h.media.discarded()) == 1 }) {
+		t.Fatalf("bind failure discarded refs = %+v, want the one uploaded ref", h.media.discarded())
+	}
+	if refs := h.media.discarded(); refs[0].StorageKey != "workspaces/ws/lark/image" {
 		t.Fatalf("bind failure discarded refs = %+v, want the one uploaded ref", refs)
+	}
+	// A bind that failed because the finalize budget expired must not hand
+	// the storage deletes that same dead context.
+	if err := h.media.lastDiscardCtxErr(); err != nil {
+		t.Fatalf("discard ran on a dead context: %v", err)
 	}
 }
 

@@ -438,12 +438,14 @@ func (r *Router) resolveAndBindMedia(set ResolverSet, inst ResolvedInstallation,
 	resolved := set.Media.ResolveMedia(ctx, inst, identity, sessionID, msg)
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), mediaFinalizeTimeout)
 	defer finalizeCancel()
+	var discardRefs []channel.MediaRef
 	if err := ctx.Err(); err != nil {
 		// Refs resolved before the deadline already sit in object storage but
 		// will never gain an attachment row — and the dedup mark committed
 		// with the message, so a redelivery is dropped and never re-resolves
-		// these keys. Delete them now or they leak permanently.
-		set.Media.DiscardMedia(finalizeCtx, resolved.MediaRefs)
+		// these keys. Collected for deletion below, after the user-facing
+		// marker clear and promotion.
+		discardRefs = resolved.MediaRefs
 		resolved.MediaRefs = nil
 		r.logger.Warn("channel router: media resolution incomplete; using placeholder",
 			"channel_type", string(msg.Source.ChannelType),
@@ -460,7 +462,7 @@ func (r *Router) resolveAndBindMedia(set ResolverSet, inst ResolvedInstallation,
 	}); err != nil {
 		// Same lifecycle rule as the deadline path: uploads that failed to
 		// bind are unreachable through the attachment table — reclaim them.
-		set.Media.DiscardMedia(finalizeCtx, resolved.MediaRefs)
+		discardRefs = append(discardRefs, resolved.MediaRefs...)
 		r.logger.Warn("channel router: media attachment binding failed",
 			"channel_type", string(msg.Source.ChannelType),
 			"event_id", msg.EventID,
@@ -473,6 +475,15 @@ func (r *Router) resolveAndBindMedia(set ResolverSet, inst ResolvedInstallation,
 			"event_id", msg.EventID,
 			"message_id", msg.MessageID,
 			"err", err)
+	}
+	if len(discardRefs) > 0 {
+		// A fresh budget, not finalizeCtx: a bind that failed BECAUSE the
+		// finalize deadline expired must not hand the storage deletes an
+		// already-dead context, and running last keeps S3 round-trips from
+		// starving the marker clear / promotion above.
+		discardCtx, discardCancel := context.WithTimeout(context.Background(), mediaFinalizeTimeout)
+		defer discardCancel()
+		set.Media.DiscardMedia(discardCtx, discardRefs)
 	}
 }
 
