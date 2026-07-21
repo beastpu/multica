@@ -65,8 +65,9 @@ type InboundMessage struct {
 	CommandBody string
 
 	// MediaRefs are downloaded Feishu resources already persisted into Multica
-	// object storage. feishuChannel fills these before handing the normalized
-	// message to the channel engine.
+	// object storage. The detached media resolver fills these after the user
+	// message is appended — off the connector ACK path — and the channel
+	// engine then binds them to that message as chat attachments.
 	MediaRefs []channel.MediaRef
 }
 
