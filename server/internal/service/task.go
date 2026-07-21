@@ -1524,8 +1524,15 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 		// Fence the clear-vs-create race: media completion may have found no
 		// committed task after our deadline read. Re-check after commit so the
 		// task is promoted immediately when the marker has already cleared.
+		// The task is already durably committed, so a fence failure must not
+		// surface as an enqueue failure — the router would treat it as "no
+		// task" and clear the typing indicator while the run still happens.
+		// The claim-path deferred promoter re-queues it at fire_at regardless.
 		if err := s.PromoteChannelChatTasksIfMediaReady(ctx, chatSession.ID); err != nil {
-			return task, err
+			slog.Warn("chat task media-ready fence failed; deferred task falls back to its deadline",
+				"task_id", util.UUIDToString(task.ID),
+				"chat_session_id", util.UUIDToString(chatSession.ID),
+				"error", err)
 		}
 		return task, nil
 	}
