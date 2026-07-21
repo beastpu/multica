@@ -1853,7 +1853,19 @@ func (s *TaskService) finalizeCancelledChatMessage(ctx context.Context, task db.
 		if err != nil {
 			return fmt.Errorf("list cancelled chat task messages: %w", err)
 		}
-		if len(messages) == 0 && task.StartedAt.Valid && opts.ClientSupportsDraftRestore {
+		restorable := len(messages) == 0
+		if restorable {
+			// Channel-ingested user messages are the durable record of what
+			// the platform sender wrote — the sender has no Multica composer
+			// to restore a draft into. A bound session settles as "Stopped."
+			// below instead of deleting its sealed input batch.
+			channelBound, err := qtx.ChatSessionHasChannelBinding(ctx, task.ChatSessionID)
+			if err != nil {
+				return fmt.Errorf("check cancelled chat channel binding: %w", err)
+			}
+			restorable = !channelBound
+		}
+		if restorable && task.StartedAt.Valid && opts.ClientSupportsDraftRestore {
 			// A started task's daemon learns of the cancellation by polling
 			// and may still be flushing its transcript tail, so "empty" is
 			// not trustworthy yet. Defer the judgment until the daemon acks
@@ -1873,7 +1885,7 @@ func (s *TaskService) finalizeCancelledChatMessage(ctx context.Context, task db.
 			}
 			return nil
 		}
-		if len(messages) == 0 {
+		if restorable {
 			// Detach attachments BEFORE deleting the user message — the
 			// attachment FK is ON DELETE CASCADE, so deleting first would
 			// destroy rows the restored draft needs to re-bind.
@@ -1980,7 +1992,19 @@ func (s *TaskService) FinalizeDeferredCancelledChat(ctx context.Context, taskID 
 		if err != nil {
 			return fmt.Errorf("list cancelled chat task messages: %w", err)
 		}
-		if len(messages) == 0 {
+		restorable := len(messages) == 0
+		if restorable {
+			// Same guard as finalizeCancelledChatMessage: channel-bound
+			// sessions never restore-delete their sealed input. The sync path
+			// no longer defers such tasks; this covers markers created by an
+			// older replica during a rolling deploy.
+			channelBound, err := qtx.ChatSessionHasChannelBinding(ctx, claimed.ChatSessionID)
+			if err != nil {
+				return fmt.Errorf("check cancelled chat channel binding: %w", err)
+			}
+			restorable = !channelBound
+		}
+		if restorable {
 			// The transcript stayed empty through the daemon flush: same
 			// outcome as the synchronous empty branch, but the cancel HTTP
 			// response is long gone and the broadcast is best-effort. The
