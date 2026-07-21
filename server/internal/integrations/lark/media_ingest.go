@@ -26,6 +26,10 @@ type mediaStreamStorage interface {
 	UploadStream(ctx context.Context, key string, data io.Reader, sizeBytes int64, contentType string, filename string) (string, error)
 }
 
+type mediaDeleteStorage interface {
+	Delete(ctx context.Context, key string)
+}
+
 type messageResourceStreamer interface {
 	DownloadMessageResourceStream(ctx context.Context, creds InstallationCredentials, p DownloadResourceParams) (DownloadedResourceStream, error)
 }
@@ -42,6 +46,27 @@ func NewFeishuMediaResolver(api APIClient, creds CredentialsResolver, storage me
 		logger = slog.Default()
 	}
 	return &feishuMediaResolver{api: api, creds: creds, storage: storage, logger: logger}
+}
+
+// DiscardMedia deletes uploaded objects that will never gain an attachment
+// row (resolution deadline expired, attachment binding failed). Deletion is
+// keyed by StorageKey and best-effort: the storage backends log their own
+// failures, and a leaked object here has no other reclaim path.
+func (r *feishuMediaResolver) DiscardMedia(ctx context.Context, refs []channel.MediaRef) {
+	if len(refs) == 0 {
+		return
+	}
+	deleter, ok := r.storage.(mediaDeleteStorage)
+	if !ok {
+		r.logMediaWarn("lark media discard skipped: storage cannot delete", InboundMessage{}, nil)
+		return
+	}
+	for _, ref := range refs {
+		if ref.StorageKey == "" {
+			continue
+		}
+		deleter.Delete(ctx, ref.StorageKey)
+	}
 }
 
 // HasMedia reports whether the message carries downloadable Feishu resources

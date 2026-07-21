@@ -169,12 +169,27 @@ type fakeMedia struct {
 	started       chan struct{}
 	release       <-chan struct{}
 	resolve       func(context.Context, channel.InboundMessage) channel.InboundMessage
+	discardedRefs []channel.MediaRef
+	discardCalls  int
 }
 
 func (f *fakeMedia) HasMedia(_ channel.InboundMessage) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return !f.noMedia
+}
+
+func (f *fakeMedia) DiscardMedia(_ context.Context, refs []channel.MediaRef) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.discardCalls++
+	f.discardedRefs = append(f.discardedRefs, refs...)
+}
+
+func (f *fakeMedia) discarded() []channel.MediaRef {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]channel.MediaRef(nil), f.discardedRefs...)
 }
 
 func (f *fakeMedia) ResolveMedia(ctx context.Context, _ ResolvedInstallation, _ ResolvedIdentity, _ pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage {
@@ -595,6 +610,51 @@ func TestRouter_MediaBindFailureStillChecksPlaceholderPromotion(t *testing.T) {
 	}
 	if !waitFor(time.Second, func() bool { return h.tasks.promotionCalls() == 1 }) {
 		t.Fatal("binding failure did not check whether the cleared placeholder task could be promoted")
+	}
+	// Bind failure means the uploaded objects have no attachment row and no
+	// other reclaim path — they must be discarded.
+	refs := h.media.discarded()
+	if len(refs) != 1 || refs[0].StorageKey != "workspaces/ws/lark/image" {
+		t.Fatalf("bind failure discarded refs = %+v, want the one uploaded ref", refs)
+	}
+}
+
+func TestRouter_MediaDeadlineDiscardsUploadedRefs(t *testing.T) {
+	h := newHarness(t)
+	h.router = NewRouter(h.issues, h.tasks, h.reader, RouterConfig{MediaTimeout: 10 * time.Millisecond, Logger: discardLogger()})
+	// A rich post where an early upload succeeded before the deadline killed
+	// the rest of the resolution: the resolver returns the partial refs.
+	h.media.resolve = func(ctx context.Context, msg channel.InboundMessage) channel.InboundMessage {
+		msg.MediaRefs = append(msg.MediaRefs, channel.MediaRef{
+			Type:       channel.MsgTypeImage,
+			StorageKey: "workspaces/ws/lark/uploaded-before-deadline",
+		})
+		<-ctx.Done()
+		return msg
+	}
+	h.router.Register(channel.TypeFeishu, ResolverSet{
+		Installation: h.inst,
+		Identity:     h.ident,
+		Dedup:        h.dedup,
+		Session:      h.binder,
+		Audit:        h.audit,
+		Replier:      h.replier,
+		Typing:       h.typing,
+		Media:        h.media,
+		OriginType:   "lark_chat",
+	})
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !waitFor(time.Second, func() bool { return len(h.media.discarded()) == 1 }) {
+		t.Fatalf("deadline expiry did not discard the uploaded ref: %+v", h.media.discarded())
+	}
+	if got := h.media.discarded()[0].StorageKey; got != "workspaces/ws/lark/uploaded-before-deadline" {
+		t.Fatalf("discarded key = %q", got)
+	}
+	if refs := h.binder.boundMedia().MediaRefs; len(refs) != 0 {
+		t.Fatalf("timed-out refs must not bind: %+v", refs)
 	}
 }
 

@@ -436,10 +436,14 @@ func (r *Router) resolveAndBindMedia(set ResolverSet, inst ResolvedInstallation,
 	defer cancel()
 
 	resolved := set.Media.ResolveMedia(ctx, inst, identity, sessionID, msg)
+	finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), mediaFinalizeTimeout)
+	defer finalizeCancel()
 	if err := ctx.Err(); err != nil {
-		// Refs resolved before the deadline may already sit in object
-		// storage; their deterministic keys mean a redelivery overwrites
-		// rather than leaks, so the orphans stay bounded.
+		// Refs resolved before the deadline already sit in object storage but
+		// will never gain an attachment row — and the dedup mark committed
+		// with the message, so a redelivery is dropped and never re-resolves
+		// these keys. Delete them now or they leak permanently.
+		set.Media.DiscardMedia(finalizeCtx, resolved.MediaRefs)
 		resolved.MediaRefs = nil
 		r.logger.Warn("channel router: media resolution incomplete; using placeholder",
 			"channel_type", string(msg.Source.ChannelType),
@@ -447,8 +451,6 @@ func (r *Router) resolveAndBindMedia(set ResolverSet, inst ResolvedInstallation,
 			"message_id", msg.MessageID,
 			"error", err)
 	}
-	finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), mediaFinalizeTimeout)
-	defer finalizeCancel()
 	if err := set.Session.BindMedia(finalizeCtx, BindMediaParams{
 		MessageID:   chatMessageID,
 		SessionID:   sessionID,
@@ -456,6 +458,9 @@ func (r *Router) resolveAndBindMedia(set ResolverSet, inst ResolvedInstallation,
 		Sender:      identity.UserID,
 		MediaRefs:   resolved.MediaRefs,
 	}); err != nil {
+		// Same lifecycle rule as the deadline path: uploads that failed to
+		// bind are unreachable through the attachment table — reclaim them.
+		set.Media.DiscardMedia(finalizeCtx, resolved.MediaRefs)
 		r.logger.Warn("channel router: media attachment binding failed",
 			"channel_type", string(msg.Source.ChannelType),
 			"event_id", msg.EventID,

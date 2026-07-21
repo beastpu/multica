@@ -62,7 +62,12 @@ func (f *fakeSender) download(p DownloadResourceParams) (DownloadedResource, err
 
 type fakeMediaStorage struct {
 	uploads []fakeMediaUpload
+	deleted []string
 	err     error
+}
+
+func (s *fakeMediaStorage) Delete(_ context.Context, key string) {
+	s.deleted = append(s.deleted, key)
 }
 
 type fakeMediaUpload struct {
@@ -238,6 +243,20 @@ func TestFeishuMediaResolver_HasMedia(t *testing.T) {
 	}
 	if !resolver.HasMedia(channel.InboundMessage{MediaRefs: []channel.MediaRef{{Type: channel.MsgTypeImage}}}) {
 		t.Fatal("pre-resolved MediaRefs must report media")
+	}
+}
+
+func TestFeishuMediaResolver_DiscardMediaDeletesUploadedObjects(t *testing.T) {
+	storage := &fakeMediaStorage{}
+	resolver := NewFeishuMediaResolver(&fakeSender{}, fakeCreds{secret: "plain"}, storage, newDiscardLogger())
+	resolver.DiscardMedia(context.Background(), []channel.MediaRef{
+		{Type: channel.MsgTypeImage, StorageKey: "workspaces/ws/lark/inst/aaa"},
+		{Type: channel.MsgTypeVideo, StorageKey: ""},
+		{Type: channel.MsgTypeVideo, StorageKey: "workspaces/ws/lark/inst/bbb"},
+	})
+	want := []string{"workspaces/ws/lark/inst/aaa", "workspaces/ws/lark/inst/bbb"}
+	if len(storage.deleted) != 2 || storage.deleted[0] != want[0] || storage.deleted[1] != want[1] {
+		t.Fatalf("deleted keys = %v, want %v", storage.deleted, want)
 	}
 }
 

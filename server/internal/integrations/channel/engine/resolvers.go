@@ -195,6 +195,14 @@ type MediaResolver interface {
 	// plain ingest path: no marker, no deferred run, no semaphore slot.
 	HasMedia(msg channel.InboundMessage) bool
 	ResolveMedia(ctx context.Context, inst ResolvedInstallation, sender ResolvedIdentity, sessionID pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage
+	// DiscardMedia best-effort deletes objects that ResolveMedia uploaded but
+	// that will never gain an attachment row (deadline expiry, BindMedia
+	// failure). Without it those uploads are unreachable orphans: the dedup
+	// mark commits with the message before media runs, so a redelivered event
+	// is dropped as a duplicate and never re-resolves (and thus never
+	// overwrites) these keys, and workspace/session deletion only enumerates
+	// the attachment table.
+	DiscardMedia(ctx context.Context, refs []channel.MediaRef)
 }
 
 // Auditor records a dropped inbound event (no message body — drop-audit
