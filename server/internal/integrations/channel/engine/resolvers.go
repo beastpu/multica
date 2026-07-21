@@ -187,6 +187,13 @@ type SessionBinder interface {
 // binding finishes or the persisted deadline expires. Implementations are
 // best-effort: failures leave the stored placeholder text intact.
 type MediaResolver interface {
+	// HasMedia reports whether msg references platform media that
+	// ResolveMedia would fetch. The Router calls it synchronously on the
+	// connector ACK path to decide whether to persist a media deadline and
+	// queue a resolution job at all, so implementations must be pure
+	// in-memory checks (no I/O). A false result keeps the message on the
+	// plain ingest path: no marker, no deferred run, no semaphore slot.
+	HasMedia(msg channel.InboundMessage) bool
 	ResolveMedia(ctx context.Context, inst ResolvedInstallation, sender ResolvedIdentity, sessionID pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage
 }
 

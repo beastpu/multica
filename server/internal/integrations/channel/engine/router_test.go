@@ -100,6 +100,11 @@ func (f *fakeBinder) boundMedia() BindMediaParams {
 	defer f.mu.Unlock()
 	return f.lastBind
 }
+func (f *fakeBinder) appendedParams() AppendParams {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastAppend
+}
 
 type fakeAuditor struct {
 	mu    sync.Mutex
@@ -159,10 +164,17 @@ func (f *fakeTyping) settledCalls() int { f.mu.Lock(); defer f.mu.Unlock(); retu
 type fakeMedia struct {
 	mu            sync.Mutex
 	count         int
+	noMedia       bool
 	waitForCancel bool
 	started       chan struct{}
 	release       <-chan struct{}
 	resolve       func(context.Context, channel.InboundMessage) channel.InboundMessage
+}
+
+func (f *fakeMedia) HasMedia(_ channel.InboundMessage) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.noMedia
 }
 
 func (f *fakeMedia) ResolveMedia(ctx context.Context, _ ResolvedInstallation, _ ResolvedIdentity, _ pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage {
@@ -517,6 +529,27 @@ func TestRouter_Ingested_InTxMark_FinalizeNone(t *testing.T) {
 	}
 	if refs := h.binder.boundMedia().MediaRefs; len(refs) != 1 {
 		t.Fatalf("resolved media not bound after append: %+v", refs)
+	}
+}
+
+func TestRouter_NoMediaMessageSkipsMediaPipeline(t *testing.T) {
+	h := newHarness(t)
+	h.media.noMedia = true
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !waitFor(time.Second, h.tasks.wasCalled) {
+		t.Fatal("no-media message must still trigger a chat run")
+	}
+	if got := h.binder.appendedParams().MediaPendingUntil; got.Valid {
+		t.Fatalf("no-media message persisted a media deadline: %v", got.Time)
+	}
+	if h.media.calls() != 0 {
+		t.Fatalf("no-media message ran ResolveMedia %d times, want 0", h.media.calls())
+	}
+	if h.tasks.promotionCalls() != 0 {
+		t.Fatalf("no-media message triggered %d promotions, want 0", h.tasks.promotionCalls())
 	}
 }
 

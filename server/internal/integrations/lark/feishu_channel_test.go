@@ -213,6 +213,34 @@ func TestFeishuChannel_SendMapsTextAndReplyTarget(t *testing.T) {
 	}
 }
 
+func TestFeishuMediaResolver_HasMedia(t *testing.T) {
+	resolver := NewFeishuMediaResolver(&fakeSender{}, fakeCreds{secret: "plain"}, &fakeMediaStorage{}, newDiscardLogger())
+	cases := []struct {
+		name string
+		lm   InboundMessage
+		want bool
+	}{
+		{"text", InboundMessage{MessageID: "om_t", MessageType: "text", Body: "hello", Content: `{"text":"hello"}`}, false},
+		{"image", InboundMessage{MessageID: "om_i", MessageType: "image", Body: "[Image]", Content: `{"image_key":"img_k"}`}, true},
+		{"video", InboundMessage{MessageID: "om_v", MessageType: "media", Body: "[Video]", Content: `{"file_key":"file_k"}`}, true},
+		{"post with image", InboundMessage{MessageID: "om_p", MessageType: "post",
+			Content: `{"content":[[{"tag":"img","image_key":"img_post"}]]}`}, true},
+		{"post text only", InboundMessage{MessageID: "om_pt", MessageType: "post",
+			Content: `{"content":[[{"tag":"text","text":"plain"}]]}`}, false},
+		{"image missing key", InboundMessage{MessageID: "om_bad", MessageType: "image", Content: `{}`}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolver.HasMedia(channelMessageFromLark(tc.lm)); got != tc.want {
+				t.Fatalf("HasMedia = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if !resolver.HasMedia(channel.InboundMessage{MediaRefs: []channel.MediaRef{{Type: channel.MsgTypeImage}}}) {
+		t.Fatal("pre-resolved MediaRefs must report media")
+	}
+}
+
 func TestFeishuMediaResolver_AttachesImageMediaRef(t *testing.T) {
 	sender := &fakeSender{downloaded: DownloadedResource{
 		Data:        []byte{1, 2, 3},

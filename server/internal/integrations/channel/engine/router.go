@@ -314,8 +314,12 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		return Result{}, finalizeRelease, fmt.Errorf("ensure chat session: %w", err)
 	}
 	// 6. Append message + in-tx dedup Mark — the durable transition point.
+	// The media deadline is persisted only when the message actually carries
+	// media: a plain text message must never wait behind the media semaphore
+	// or fall back to the 45s deadline after a crash.
 	mediaPendingUntil := pgtype.Timestamptz{}
-	if set.Media != nil {
+	resolveMedia := set.Media != nil && set.Media.HasMedia(msg)
+	if resolveMedia {
 		mediaPendingUntil = pgtype.Timestamptz{Time: time.Now().Add(r.mediaTimeout), Valid: true}
 	}
 	appendRes, err := set.Session.AppendMessage(ctx, AppendParams{
@@ -371,7 +375,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	//    session creator (group sessions are creator=installer). Latest sender
 	//    in a window wins (MUL-2645).
 	r.scheduleRun(set, inst, msg, sessionID, identity.UserID)
-	if set.Media != nil {
+	if resolveMedia {
 		r.enqueueMedia(set, inst, identity, appendRes.MessageID, msg, sessionID, mediaPendingUntil.Time)
 	}
 	return res, postAppendFinalize, nil

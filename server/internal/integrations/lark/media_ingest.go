@@ -44,6 +44,20 @@ func NewFeishuMediaResolver(api APIClient, creds CredentialsResolver, storage me
 	return &feishuMediaResolver{api: api, creds: creds, storage: storage, logger: logger}
 }
 
+// HasMedia reports whether the message carries downloadable Feishu resources
+// (standalone image/video or post-embedded img/media spans). Pure in-memory
+// decode of the already-received payload — it runs on the connector ACK path.
+func (r *feishuMediaResolver) HasMedia(msg channel.InboundMessage) bool {
+	if len(msg.MediaRefs) > 0 {
+		return true
+	}
+	lm, err := larkMsgFromRaw(msg)
+	if err != nil {
+		return false
+	}
+	return len(mediaResourcesFromMessage(lm)) > 0
+}
+
 func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.ResolvedInstallation, _ engine.ResolvedIdentity, _ pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage {
 	if len(msg.MediaRefs) > 0 {
 		return msg
