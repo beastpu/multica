@@ -182,6 +182,13 @@ Current behavior: resolve the squad, read `leader_id`, enqueue a leader task,
 and use the current comment as the trigger comment. It does not enqueue every
 squad member.
 
+A squad mention does not assign the issue. If that mention-started leader task
+creates child issues, however, each agent-created child's exact `origin_id`
+preserves the scoped orchestration handoff. When a child closes a stage barrier
+under an otherwise unassigned parent, Multica wakes that same squad leader
+without changing the parent's assignee. Missing or mismatched provenance does
+not fall back to timestamp or latest-task inference.
+
 ## Autopilot behavior
 
 Autopilots can be assigned to squads. For `assignee_type = "squad"`:

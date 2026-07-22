@@ -415,18 +415,40 @@ func TestChildDoneWakesSquadThatCreatedChildForUnassignedParent(t *testing.T) {
 	fx := newChildDoneFixture(t, "in_progress")
 	sq := newSquadCommentTriggerFixture(t)
 
-	// Make the child look exactly like one created during a completed leader
-	// run on the unassigned parent. The task window brackets the child's
-	// creation time, which prevents an unrelated historical @squad run from
-	// being reused as orchestration authority.
-	if _, err := testPool.Exec(ctx, `
-		UPDATE issue
-		SET creator_type = 'agent', creator_id = $2,
-		    created_at = now() - interval '1 minute', stage = 1
-		WHERE id = $1
-	`, fx.child.ID, sq.LeaderID); err != nil {
-		t.Fatalf("stamp child creator: %v", err)
+	// origin_id is the authoritative link to the task that created the child.
+	// Deliberately put the task outside the child's timestamp window: exact
+	// provenance must keep working despite clock skew or timestamp correction.
+	var originTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, is_leader_task, squad_id,
+			created_at, started_at, completed_at
+		)
+		SELECT
+			a.id, a.runtime_id, $2, 'completed', 0, true, $3,
+			now() - interval '4 minutes',
+			now() - interval '4 minutes',
+			now() - interval '3 minutes'
+		FROM agent a
+		WHERE a.id = $1
+		RETURNING id
+	`, sq.LeaderID, fx.parent.ID, sq.SquadID).Scan(&originTaskID); err != nil {
+		t.Fatalf("create originating squad leader task: %v", err)
 	}
+
+	// The same leader may lead multiple squads. A newer task for another squad
+	// on the same parent must not override the child's exact origin task.
+	var otherSquadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
+		VALUES ($1, $2, '', $3, $4)
+		RETURNING id
+	`, testWorkspaceID, "Other Child Origin Squad", sq.LeaderID, testUserID).Scan(&otherSquadID); err != nil {
+		t.Fatalf("create other squad: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, otherSquadID)
+	})
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id, status, priority, is_leader_task, squad_id,
@@ -434,13 +456,22 @@ func TestChildDoneWakesSquadThatCreatedChildForUnassignedParent(t *testing.T) {
 		)
 		SELECT
 			a.id, a.runtime_id, $2, 'completed', 0, true, $3,
-			now() - interval '2 minutes',
-			now() - interval '2 minutes',
+			now() - interval '90 seconds',
+			now() - interval '90 seconds',
 			now() - interval '30 seconds'
 		FROM agent a
 		WHERE a.id = $1
-	`, sq.LeaderID, fx.parent.ID, sq.SquadID); err != nil {
-		t.Fatalf("create originating squad leader task: %v", err)
+	`, sq.LeaderID, fx.parent.ID, otherSquadID); err != nil {
+		t.Fatalf("create unrelated newer squad leader task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET creator_type = 'agent', creator_id = $2,
+		    created_at = now() - interval '1 minute', stage = 1,
+		    origin_type = 'agent_create', origin_id = $3
+		WHERE id = $1
+	`, fx.child.ID, sq.LeaderID, originTaskID); err != nil {
+		t.Fatalf("stamp child provenance: %v", err)
 	}
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(),
@@ -452,6 +483,9 @@ func TestChildDoneWakesSquadThatCreatedChildForUnassignedParent(t *testing.T) {
 	content := parentSystemCommentContent(t, fx.parent.ID)
 	if !strings.Contains(content, "mention://squad/"+sq.SquadID) {
 		t.Errorf("expected originating squad mention in system comment, got: %s", content)
+	}
+	if strings.Contains(content, "mention://squad/"+otherSquadID) {
+		t.Errorf("newer unrelated squad must not be mentioned, got: %s", content)
 	}
 	if got := countPendingTasksForAgent(t, fx.parent.ID, sq.LeaderID); got != 1 {
 		t.Errorf("expected 1 pending leader task for unassigned parent, got %d", got)
@@ -469,23 +503,35 @@ func TestChildDoneWakesSquadThatCreatedChildForUnassignedParent(t *testing.T) {
 	}
 }
 
-// TestChildDoneDoesNotWakeHistoricalSquadForUnassignedParent proves the
-// fallback is bound to the task that actually created the child. A leader run
-// that ended before the child existed is not orchestration authority for that
-// child's later stage-complete handoff.
-func TestChildDoneDoesNotWakeHistoricalSquadForUnassignedParent(t *testing.T) {
+// TestChildDoneDoesNotInferSquadWhenOriginTaskIsNotLeader proves that an
+// unrelated leader run cannot become orchestration authority merely because
+// its timestamp window contains child creation. The exact origin task is a
+// generic agent task, so the unassigned parent must remain unwoken.
+func TestChildDoneDoesNotInferSquadWhenOriginTaskIsNotLeader(t *testing.T) {
 	ctx := context.Background()
 	fx := newChildDoneFixture(t, "in_progress")
 	sq := newSquadCommentTriggerFixture(t)
 
-	if _, err := testPool.Exec(ctx, `
-		UPDATE issue
-		SET creator_type = 'agent', creator_id = $2,
-		    created_at = now() - interval '1 minute', stage = 1
-		WHERE id = $1
-	`, fx.child.ID, sq.LeaderID); err != nil {
-		t.Fatalf("stamp child creator: %v", err)
+	var originTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority,
+			created_at, started_at, completed_at
+		)
+		SELECT
+			a.id, a.runtime_id, $2, 'completed', 0,
+			now() - interval '3 minutes',
+			now() - interval '3 minutes',
+			now() - interval '2 minutes'
+		FROM agent a
+		WHERE a.id = $1
+		RETURNING id
+	`, sq.LeaderID, fx.parent.ID).Scan(&originTaskID); err != nil {
+		t.Fatalf("create generic origin task: %v", err)
 	}
+
+	// This leader task is deliberately a tempting but unrelated candidate for
+	// the old timestamp inference: it brackets the child's creation time.
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id, status, priority, is_leader_task, squad_id,
@@ -493,13 +539,22 @@ func TestChildDoneDoesNotWakeHistoricalSquadForUnassignedParent(t *testing.T) {
 		)
 		SELECT
 			a.id, a.runtime_id, $2, 'completed', 0, true, $3,
-			now() - interval '4 minutes',
-			now() - interval '4 minutes',
-			now() - interval '3 minutes'
+			now() - interval '90 seconds',
+			now() - interval '90 seconds',
+			now() - interval '30 seconds'
 		FROM agent a
 		WHERE a.id = $1
 	`, sq.LeaderID, fx.parent.ID, sq.SquadID); err != nil {
-		t.Fatalf("create historical squad leader task: %v", err)
+		t.Fatalf("create unrelated squad leader task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET creator_type = 'agent', creator_id = $2,
+		    created_at = now() - interval '1 minute', stage = 1,
+		    origin_type = 'agent_create', origin_id = $3
+		WHERE id = $1
+	`, fx.child.ID, sq.LeaderID, originTaskID); err != nil {
+		t.Fatalf("stamp child provenance: %v", err)
 	}
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(),
@@ -510,10 +565,10 @@ func TestChildDoneDoesNotWakeHistoricalSquadForUnassignedParent(t *testing.T) {
 
 	content := parentSystemCommentContent(t, fx.parent.ID)
 	if strings.Contains(content, "mention://squad/"+sq.SquadID) {
-		t.Errorf("historical squad must not be mentioned, got: %s", content)
+		t.Errorf("unrelated squad must not be mentioned, got: %s", content)
 	}
 	if got := countPendingTasksForAgent(t, fx.parent.ID, sq.LeaderID); got != 0 {
-		t.Errorf("historical squad leader received %d pending tasks, want 0", got)
+		t.Errorf("unrelated squad leader received %d pending tasks, want 0", got)
 	}
 }
 

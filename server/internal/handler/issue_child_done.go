@@ -2,14 +2,12 @@ package handler
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -344,38 +342,42 @@ func (h *Handler) postChildDoneComment(ctx context.Context, parent, completed db
 // resolveChildDoneDispatchTarget returns the durable owner of a child-done
 // handoff without mutating the parent issue's assignment.
 //
-// Assigned parents keep their explicit assignee. For an unassigned parent, a
-// child created by an agent may be tied to the exact squad-leader task whose
-// execution window brackets the child's creation time. That task's squad_id is
-// the fallback routing target. Requiring the parent issue, child creator, and
-// creation timestamp to match prevents an unrelated historical @squad run from
-// being woken merely because it was the most recent task on the parent.
+// Assigned parents keep their explicit assignee. For an unassigned parent, an
+// agent-created child's origin_id names the exact task that created it. That
+// task's squad_id is the fallback routing target only when it is a leader task
+// on this parent by this child creator. This avoids guessing from timestamps or
+// unrelated runs by a leader that may lead more than one squad.
 func (h *Handler) resolveChildDoneDispatchTarget(ctx context.Context, parent, completed db.Issue) db.Issue {
 	if parent.AssigneeType.Valid || parent.AssigneeID.Valid {
 		return parent
 	}
-	if completed.CreatorType != "agent" || !completed.CreatorID.Valid || !completed.CreatedAt.Valid {
+	if completed.CreatorType != "agent" || !completed.CreatorID.Valid ||
+		!completed.OriginType.Valid || completed.OriginType.String != "agent_create" || !completed.OriginID.Valid {
 		return parent
 	}
 
-	squadID, err := h.Queries.GetSquadLeaderTaskForChildCreation(ctx, db.GetSquadLeaderTaskForChildCreationParams{
-		ParentIssueID:  parent.ID,
-		ChildCreatorID: completed.CreatorID,
-		ChildCreatedAt: completed.CreatedAt,
-	})
+	originTask, err := h.Queries.GetAgentTask(ctx, completed.OriginID)
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			slog.Warn("child done: failed to resolve originating squad task",
-				"error", err,
-				"child_id", uuidToString(completed.ID),
-				"parent_id", uuidToString(parent.ID))
-		}
+		slog.Warn("child done: failed to load exact origin task",
+			"error", err,
+			"child_id", uuidToString(completed.ID),
+			"parent_id", uuidToString(parent.ID),
+			"origin_task_id", uuidToString(completed.OriginID))
+		return parent
+	}
+	if uuidToString(originTask.IssueID) != uuidToString(parent.ID) ||
+		uuidToString(originTask.AgentID) != uuidToString(completed.CreatorID) ||
+		!originTask.IsLeaderTask || !originTask.SquadID.Valid {
+		slog.Warn("child done: exact origin task is not valid squad orchestration context",
+			"child_id", uuidToString(completed.ID),
+			"parent_id", uuidToString(parent.ID),
+			"origin_task_id", uuidToString(originTask.ID))
 		return parent
 	}
 
 	target := parent
 	target.AssigneeType = pgtype.Text{String: "squad", Valid: true}
-	target.AssigneeID = squadID
+	target.AssigneeID = originTask.SquadID
 	return target
 }
 

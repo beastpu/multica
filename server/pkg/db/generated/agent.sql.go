@@ -2747,35 +2747,6 @@ func (q *Queries) GetLatestTaskRoleForIssueAndAgent(ctx context.Context, arg Get
 	return i, err
 }
 
-const getSquadLeaderTaskForChildCreation = `-- name: GetSquadLeaderTaskForChildCreation :one
-SELECT squad_id FROM agent_task_queue
-WHERE issue_id = $1
-  AND agent_id = $2
-  AND is_leader_task = TRUE
-  AND squad_id IS NOT NULL
-  AND created_at <= $3
-  AND (completed_at IS NULL OR completed_at >= $3)
-ORDER BY created_at DESC
-LIMIT 1
-`
-
-type GetSquadLeaderTaskForChildCreationParams struct {
-	ParentIssueID  pgtype.UUID        `json:"parent_issue_id"`
-	ChildCreatorID pgtype.UUID        `json:"child_creator_id"`
-	ChildCreatedAt pgtype.Timestamptz `json:"child_created_at"`
-}
-
-// Finds the squad orchestration context that created a child for an
-// unassigned parent. The task window must bracket the child's creation time,
-// so an unrelated historical @squad run cannot become the fallback owner of a
-// later stage-complete handoff (GH #5706).
-func (q *Queries) GetSquadLeaderTaskForChildCreation(ctx context.Context, arg GetSquadLeaderTaskForChildCreationParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, getSquadLeaderTaskForChildCreation, arg.ParentIssueID, arg.ChildCreatorID, arg.ChildCreatedAt)
-	var squad_id pgtype.UUID
-	err := row.Scan(&squad_id)
-	return squad_id, err
-}
-
 const getWorkspaceAgentActivity30d = `-- name: GetWorkspaceAgentActivity30d :many
 SELECT
     atq.agent_id,

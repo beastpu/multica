@@ -182,6 +182,12 @@ Contracts:
 - when a child issue closes a stage barrier and the parent is assigned to a
   squad, the parent squad leader is triggered (triggerChildDoneSquad in
   issue_child_done.go);
+- an unassigned parent can also resume a mention-started squad orchestration:
+  the completed child must have `origin_type=agent_create`, and its exact
+  `origin_id` task must be a squad leader task on that parent by the child's
+  creator. The task's `squad_id` is used only as the dispatch target; the parent
+  remains unassigned. Missing or mismatched provenance fails closed instead of
+  guessing from timestamps or the latest task (GH #5706);
 - routing is leader-only — one `EnqueueTaskForSquadLeader` on the leader, no
   member fan-out (triggerChildDoneSquad / dispatchParentAssigneeTrigger);
 - no self-trigger guard: a same-squad or shared-leader child still wakes the
