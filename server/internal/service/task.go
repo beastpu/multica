@@ -961,6 +961,35 @@ func headShaText(sha string) pgtype.Text {
 	return pgtype.Text{String: sha, Valid: sha != ""}
 }
 
+var errSquadUnavailableForTask = errors.New("squad is archived or unavailable")
+
+// createAgentTaskWithSquadGuard serializes squad task creation with archival.
+// A shared row lock allows concurrent enqueues but conflicts with ArchiveSquad's
+// UPDATE lock, making the active check and task insert one atomic decision.
+func (s *TaskService) createAgentTaskWithSquadGuard(ctx context.Context, params db.CreateAgentTaskParams) (db.AgentTaskQueue, error) {
+	if !params.SquadID.Valid {
+		return s.Queries.CreateAgentTask(ctx, params)
+	}
+
+	var task db.AgentTaskQueue
+	err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		if _, err := qtx.LockActiveSquadForTaskCreate(ctx, params.SquadID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return errSquadUnavailableForTask
+			}
+			return fmt.Errorf("lock active squad: %w", err)
+		}
+
+		var err error
+		task, err = qtx.CreateAgentTask(ctx, params)
+		if err != nil {
+			return fmt.Errorf("create task: %w", err)
+		}
+		return nil
+	})
+	return task, err
+}
+
 // ResolveIssueReviewSHAParam is ResolveIssueReviewSHA wrapped as the pgtype.Text
 // the dedup queries take, so both service- and handler-package call sites can
 // key dedup on the reviewed head with a single call (TEN-356).
@@ -1008,7 +1037,7 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue
 	originatorUserID := attr.UserID
 	runtimeMCPOverlay := s.buildRuntimeMCPOverlay(ctx, originatorUserID, agent)
 	attrSource, attrDelegatedFrom, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
-	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+	task, err := s.createAgentTaskWithSquadGuard(ctx, db.CreateAgentTaskParams{
 		AgentID:              issue.AssigneeID,
 		RuntimeID:            agent.RuntimeID,
 		IssueID:              issue.ID,
@@ -1146,7 +1175,7 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, iss
 	originatorUserID := attr.UserID
 	runtimeMCPOverlay := s.buildRuntimeMCPOverlay(ctx, originatorUserID, agent)
 	attrSource, attrDelegatedFrom, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
-	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+	task, err := s.createAgentTaskWithSquadGuard(ctx, db.CreateAgentTaskParams{
 		AgentID:              agentID,
 		RuntimeID:            agent.RuntimeID,
 		IssueID:              issue.ID,
