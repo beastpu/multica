@@ -188,13 +188,16 @@ Contracts:
   creator. The task's `squad_id` is used only as the dispatch target; the parent
   remains unassigned, while the continuation inherits the task's human
   attribution. Missing or mismatched provenance fails closed instead of
-  guessing from timestamps or the latest task. For a batch handoff, every
-  relevant completed child must share that exact origin task; mixed origins
-  leave the comment unmentioned and enqueue no leader (GH #5706);
+  guessing from timestamps or the latest task. Every child in the closed stage
+  (or every sibling in an unstaged barrier), including already-terminal
+  siblings, must share that exact origin task; mixed origins leave the comment
+  unmentioned and enqueue no leader (GH #5706);
 - routing is leader-only — one `EnqueueTaskForSquadLeader` for an assigned
   parent, or `EnqueueTaskForSquadLeaderFromOriginTask` for the proven unassigned
   continuation, with no member fan-out (triggerChildDoneSquad /
   dispatchParentAssigneeTrigger);
+- archived squads fail closed in `triggerChildDoneSquad` and receive no new
+  continuation task;
 - no self-trigger guard: a same-squad or shared-leader child still wakes the
   parent squad leader — the wake is a serial handoff onto the PARENT and is the
   only carrier of the stage-barrier "advance / wrap up" instruction (MUL-3969,

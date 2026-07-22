@@ -132,7 +132,8 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	if staged {
 		closedStage = issue.Stage.Int32
 	}
-	h.postChildDoneComment(ctx, parent, issue, children, staged, closedStage, false, []db.Issue{issue})
+	dispatchCandidates := childDoneDispatchCandidates(children, staged, closedStage)
+	h.postChildDoneComment(ctx, parent, issue, children, staged, closedStage, false, dispatchCandidates)
 }
 
 // notifyParentsOfBatchChildDone emits child-done parent notifications for a
@@ -210,7 +211,8 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 			if !stageBarrierClosed(children, g.children[0]) {
 				continue
 			}
-			h.postChildDoneComment(ctx, parent, g.children[0], children, false, 0, batch, g.children)
+			dispatchCandidates := childDoneDispatchCandidates(children, false, 0)
+			h.postChildDoneComment(ctx, parent, g.children[0], children, false, 0, batch, dispatchCandidates)
 			continue
 		}
 
@@ -241,14 +243,27 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 		if !found {
 			continue
 		}
-		dispatchCandidates := make([]db.Issue, 0, len(g.children))
-		for _, c := range g.children {
-			if c.Stage.Valid && c.Stage.Int32 == bestStage {
-				dispatchCandidates = append(dispatchCandidates, c)
-			}
-		}
+		dispatchCandidates := childDoneDispatchCandidates(children, true, bestStage)
 		h.postChildDoneComment(ctx, parent, rep, children, true, bestStage, batch, dispatchCandidates)
 	}
+}
+
+// childDoneDispatchCandidates returns the complete sibling set that owns the
+// barrier being announced. Routing provenance must be validated against this
+// final-state set, not only the children transitioned by the current request;
+// otherwise the last request to close a mixed-origin barrier chooses the squad.
+func childDoneDispatchCandidates(children []db.Issue, staged bool, closedStage int32) []db.Issue {
+	if !staged {
+		return children
+	}
+
+	candidates := make([]db.Issue, 0, len(children))
+	for _, child := range children {
+		if child.Stage.Valid && child.Stage.Int32 == closedStage {
+			candidates = append(candidates, child)
+		}
+	}
+	return candidates
 }
 
 // postChildDoneComment builds and posts the parent's child-done system comment
@@ -749,7 +764,7 @@ func (h *Handler) triggerChildDoneSquad(ctx context.Context, parent db.Issue, tr
 		ID:          parent.AssigneeID,
 		WorkspaceID: parent.WorkspaceID,
 	})
-	if err != nil {
+	if err != nil || squad.ArchivedAt.Valid {
 		return
 	}
 

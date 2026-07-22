@@ -188,10 +188,11 @@ preserves the scoped orchestration handoff. When a child closes a stage barrier
 under an otherwise unassigned parent, Multica wakes that same squad leader
 without changing the parent's assignee, and the continuation inherits the
 origin task's human authority and accountability. Missing or mismatched
-provenance does not fall back to timestamp or latest-task inference. A batch
-handoff wakes the leader only when its relevant completed children share the
-same exact origin task; mixed origins still produce the stage-complete comment
-but do not dispatch a coordinator.
+provenance does not fall back to timestamp or latest-task inference. A handoff
+wakes the leader only when every child in the closed stage (or every sibling in
+an unstaged barrier) shares the same exact origin task, including children that
+finished earlier. Mixed origins still produce the stage-complete comment but do
+not dispatch a coordinator. An archived origin squad also receives no wake.
 
 ## Autopilot behavior
 

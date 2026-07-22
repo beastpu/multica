@@ -148,9 +148,10 @@ Advancement is agent-driven: the server only detects the closed barrier and
 wakes the resolved parent coordinator. This is normally the parent assignee;
 for an unassigned mention-started squad flow, the exact `agent_create`
 `origin_id` task can identify the originating squad leader without assigning
-the parent and supplies the continuation's human attribution. Relevant children
-completed together in a batch must share that exact origin task; mixed origins
-fail closed for dispatch. Promoting the next stage's `backlog` sub-issues to
+the parent and supplies the continuation's human attribution. Every child in
+the closed stage (or every sibling in an unstaged barrier), including children
+that finished earlier, must share that exact origin task; mixed origins fail
+closed for dispatch. Promoting the next stage's `backlog` sub-issues to
 `todo` is the woken agent's decision, not a server side effect.
 
 ## Metadata CLI
