@@ -338,6 +338,28 @@ func createChildDoneLeaderOriginTask(t *testing.T, parentID, leaderID, squadID, 
 	return taskID
 }
 
+func createChildDoneOriginatorMember(t *testing.T) string {
+	t.Helper()
+	ctx := context.Background()
+	var userID string
+	email := "child-done-originator-" + time.Now().Format("20060102150405.000000000") + "@multica.test"
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user" (name, email) VALUES ('Child Done Originator', $1) RETURNING id
+	`, email).Scan(&userID); err != nil {
+		t.Fatalf("create child-done originator: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')
+	`, testWorkspaceID, userID); err != nil {
+		t.Fatalf("add child-done originator to workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM member WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, userID)
+		testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
+	})
+	return userID
+}
+
 func countInboxItems(t *testing.T, recipientUserID, issueID string) int {
 	t.Helper()
 	var n int
@@ -555,23 +577,7 @@ func TestChildDoneSquadContinuationInheritsOriginTaskAttribution(t *testing.T) {
 	ctx := context.Background()
 	fx := newChildDoneFixture(t, "in_progress")
 	sq := newSquadCommentTriggerFixture(t)
-
-	var mentionerID string
-	mentionerEmail := "child-done-mentioner-" + time.Now().Format("20060102150405.000000000") + "@multica.test"
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email) VALUES ('Child Done Mentioner', $1) RETURNING id
-	`, mentionerEmail).Scan(&mentionerID); err != nil {
-		t.Fatalf("create mentioner: %v", err)
-	}
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')
-	`, testWorkspaceID, mentionerID); err != nil {
-		t.Fatalf("add mentioner to workspace: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM member WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, mentionerID)
-		testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, mentionerID)
-	})
+	mentionerID := createChildDoneOriginatorMember(t)
 
 	originTaskID := createChildDoneLeaderOriginTask(t, fx.parent.ID, sq.LeaderID, sq.SquadID, mentionerID)
 	if _, err := testPool.Exec(ctx, `
@@ -605,6 +611,117 @@ func TestChildDoneSquadContinuationInheritsOriginTaskAttribution(t *testing.T) {
 	}
 	if source != "delegation" || delegatedFrom != originTaskID {
 		t.Errorf("continuation lineage = source %q delegated_from %q, want delegation from %q", source, delegatedFrom, originTaskID)
+	}
+}
+
+// TestChildDoneDoesNotContinueAfterOriginatorPermissionRevoked proves that a
+// durable origin task preserves provenance, not permanent authority. Permission
+// changes made while the stage is running must take effect before the next
+// leader task is created.
+func TestChildDoneDoesNotContinueAfterOriginatorPermissionRevoked(t *testing.T) {
+	ctx := context.Background()
+	fx := newChildDoneFixture(t, "in_progress")
+	sq := newSquadCommentTriggerFixture(t)
+	originatorID := createChildDoneOriginatorMember(t)
+	originTaskID := createChildDoneLeaderOriginTask(t, fx.parent.ID, sq.LeaderID, sq.SquadID, originatorID)
+
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET creator_type = 'agent', creator_id = $2, stage = 1,
+		    origin_type = 'agent_create', origin_id = $3
+		WHERE id = $1
+	`, fx.child.ID, sq.LeaderID, originTaskID); err != nil {
+		t.Fatalf("stamp child provenance: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET permission_mode = 'private' WHERE id = $1`, sq.LeaderID); err != nil {
+		t.Fatalf("revoke leader invocation permission: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `UPDATE agent SET permission_mode = 'public_to' WHERE id = $1`, sq.LeaderID)
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, fx.parent.ID)
+	})
+
+	updateChildStatus(t, fx.child.ID, "done")
+
+	if got := countSystemCommentsOn(t, fx.parent.ID); got != 1 {
+		t.Errorf("closed stage emitted %d comments, want 1", got)
+	}
+	if got := countPendingTasksForAgent(t, fx.parent.ID, sq.LeaderID); got != 0 {
+		t.Errorf("revoked originator queued %d continuation tasks, want 0", got)
+	}
+}
+
+// TestChildDoneDoesNotContinueToUnauthorizedReplacementLeader covers leader
+// rotation during a running stage. The original human may continue through a
+// replacement only when they can currently invoke that replacement agent.
+func TestChildDoneDoesNotContinueToUnauthorizedReplacementLeader(t *testing.T) {
+	ctx := context.Background()
+	fx := newChildDoneFixture(t, "in_progress")
+	sq := newSquadCommentTriggerFixture(t)
+	originatorID := createChildDoneOriginatorMember(t)
+	originTaskID := createChildDoneLeaderOriginTask(t, fx.parent.ID, sq.LeaderID, sq.SquadID, originatorID)
+	replacementLeaderID := createHandlerTestAgent(t, "Child Done Private Replacement", nil)
+
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET permission_mode = 'private' WHERE id = $1`, replacementLeaderID); err != nil {
+		t.Fatalf("make replacement leader private: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE squad SET leader_id = $2 WHERE id = $1`, sq.SquadID, replacementLeaderID); err != nil {
+		t.Fatalf("rotate squad leader: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET creator_type = 'agent', creator_id = $2, stage = 1,
+		    origin_type = 'agent_create', origin_id = $3
+		WHERE id = $1
+	`, fx.child.ID, sq.LeaderID, originTaskID); err != nil {
+		t.Fatalf("stamp child provenance: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, fx.parent.ID)
+		testPool.Exec(context.Background(), `UPDATE squad SET leader_id = $2 WHERE id = $1`, sq.SquadID, sq.LeaderID)
+	})
+
+	updateChildStatus(t, fx.child.ID, "done")
+
+	if got := countSystemCommentsOn(t, fx.parent.ID); got != 1 {
+		t.Errorf("closed stage emitted %d comments, want 1", got)
+	}
+	if got := countPendingTasksForAgent(t, fx.parent.ID, replacementLeaderID); got != 0 {
+		t.Errorf("unauthorized replacement leader received %d continuation tasks, want 0", got)
+	}
+}
+
+// TestChildDoneContinuesToAuthorizedReplacementLeader keeps leader rotation a
+// supported operation. Rotation alone does not invalidate the origin task when
+// the original human can invoke the replacement leader.
+func TestChildDoneContinuesToAuthorizedReplacementLeader(t *testing.T) {
+	ctx := context.Background()
+	fx := newChildDoneFixture(t, "in_progress")
+	sq := newSquadCommentTriggerFixture(t)
+	originatorID := createChildDoneOriginatorMember(t)
+	originTaskID := createChildDoneLeaderOriginTask(t, fx.parent.ID, sq.LeaderID, sq.SquadID, originatorID)
+	replacementLeaderID := createHandlerTestAgent(t, "Child Done Public Replacement", nil)
+
+	if _, err := testPool.Exec(ctx, `UPDATE squad SET leader_id = $2 WHERE id = $1`, sq.SquadID, replacementLeaderID); err != nil {
+		t.Fatalf("rotate squad leader: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET creator_type = 'agent', creator_id = $2, stage = 1,
+		    origin_type = 'agent_create', origin_id = $3
+		WHERE id = $1
+	`, fx.child.ID, sq.LeaderID, originTaskID); err != nil {
+		t.Fatalf("stamp child provenance: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, fx.parent.ID)
+		testPool.Exec(context.Background(), `UPDATE squad SET leader_id = $2 WHERE id = $1`, sq.SquadID, sq.LeaderID)
+	})
+
+	updateChildStatus(t, fx.child.ID, "done")
+
+	if got := countPendingTasksForAgent(t, fx.parent.ID, replacementLeaderID); got != 1 {
+		t.Errorf("authorized replacement leader received %d continuation tasks, want 1", got)
 	}
 }
 

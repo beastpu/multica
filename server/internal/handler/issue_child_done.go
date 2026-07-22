@@ -745,17 +745,15 @@ func (h *Handler) triggerChildDoneAgent(ctx context.Context, parent db.Issue, tr
 //     CHILD and never carries the parent-level stage-barrier instruction, so it
 //     stranded the common "squad decomposes its parent into sub-issues assigned
 //     to its own squad" pattern (MUL-3969).
-//   - NO leader-invocation gate. Waking the parent's OWN squad leader on
-//     child-done is a coordination handoff on an issue the leader already owns,
-//     not a fresh invocation — invocation permission was already enforced when
-//     the parent was assigned to the squad (validateAssigneePair). The agent
-//     path has never gated this. Re-checking it here on behalf of the child's
-//     completer — an agent/system actor with no resolvable human originator —
-//     failed closed for the DEFAULT private leader, silently stranding every
-//     process-squad pipeline after its first stage while direct-to-leader-agent
-//     parents advanced fine (MUL-4063 / GH #4928). Removed so agent and squad
-//     child-done follow one path; if invocation permission is ever reintroduced
-//     it must be added to BOTH paths together.
+//   - Assigned squad parents need NO leader-invocation gate. Waking the parent's
+//     OWN squad leader on child-done is a coordination handoff on an issue the
+//     leader already owns, not a fresh invocation; permission was enforced when
+//     the parent was assigned (MUL-4063 / GH #4928).
+//   - Unassigned parents recovered through originTask are different: the task
+//     proves provenance but does not grant permanent authority. The original
+//     human must still be allowed to invoke the squad's current leader, so a
+//     permission revocation or leader rotation takes effect before a new task
+//     is created.
 //
 // Re-triggering is bounded by the HasPendingTaskForIssueAndAgent idempotency
 // check below, exactly as the agent path relies on it.
@@ -770,6 +768,20 @@ func (h *Handler) triggerChildDoneSquad(ctx context.Context, parent db.Issue, tr
 
 	agent, err := h.Queries.GetAgent(ctx, squad.LeaderID)
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+		return
+	}
+	if originTask != nil && !h.canInvokeAgent(
+		ctx,
+		agent,
+		"agent",
+		uuidToString(originTask.AgentID),
+		uuidToString(originTask.OriginatorUserID),
+		uuidToString(parent.WorkspaceID),
+	) {
+		slog.Debug("child done: originator cannot invoke current squad leader",
+			"parent_id", uuidToString(parent.ID),
+			"squad_id", uuidToString(squad.ID),
+			"leader_id", uuidToString(squad.LeaderID))
 		return
 	}
 
