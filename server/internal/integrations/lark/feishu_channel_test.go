@@ -519,6 +519,12 @@ func TestFeishuMediaResolver_UploadFailurePreservesMessage(t *testing.T) {
 	if got.Text != before.Text || len(got.MediaRefs) != 0 {
 		t.Fatalf("upload failure changed message: before=%+v after=%+v", before, got)
 	}
+	// A result-uncertain upload (the client saw an error, but the object may
+	// have landed server-side) must be idempotently deleted right away — the
+	// key never reaches the router, so nothing else can reclaim it.
+	if len(storage.deleted) != 1 || !strings.Contains(storage.deleted[0], "workspaces/11111111-1111-1111-1111-111111111111/lark/") {
+		t.Fatalf("attempted upload key must be deleted, got %v", storage.deleted)
+	}
 }
 
 func TestFeishuMediaResolver_PostPartialFailureKeepsTextAndSuccessfulMedia(t *testing.T) {

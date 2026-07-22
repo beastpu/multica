@@ -460,14 +460,25 @@ func (r *Router) resolveAndBindMedia(set ResolverSet, inst ResolvedInstallation,
 		Sender:      identity.UserID,
 		MediaRefs:   resolved.MediaRefs,
 	}); err != nil {
-		// Same lifecycle rule as the deadline path: uploads that failed to
-		// bind are unreachable through the attachment table — reclaim them.
-		discardRefs = append(discardRefs, resolved.MediaRefs...)
-		r.logger.Warn("channel router: media attachment binding failed",
-			"channel_type", string(msg.Source.ChannelType),
-			"event_id", msg.EventID,
-			"message_id", msg.MessageID,
-			"err", err)
+		if errors.Is(err, ErrMediaBindResultUnknown) {
+			// The commit outcome could not be verified; deleting now could
+			// destroy objects that durably-committed attachment rows
+			// reference. Keep them — a rare orphan beats a broken attachment.
+			r.logger.Warn("channel router: media bind outcome unknown; keeping uploads",
+				"channel_type", string(msg.Source.ChannelType),
+				"event_id", msg.EventID,
+				"message_id", msg.MessageID,
+				"err", err)
+		} else {
+			// Known-failed bind: the uploads are unreachable through the
+			// attachment table — reclaim them.
+			discardRefs = append(discardRefs, resolved.MediaRefs...)
+			r.logger.Warn("channel router: media attachment binding failed",
+				"channel_type", string(msg.Source.ChannelType),
+				"event_id", msg.EventID,
+				"message_id", msg.MessageID,
+				"err", err)
+		}
 	}
 	if err := r.tasks.PromoteChannelChatTasksIfMediaReady(finalizeCtx, sessionID); err != nil {
 		r.logger.Warn("channel router: media-ready task promotion failed",

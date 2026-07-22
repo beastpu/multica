@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -631,6 +632,23 @@ func TestRouter_MediaBindFailureStillChecksPlaceholderPromotion(t *testing.T) {
 	// the storage deletes that same dead context.
 	if err := h.media.lastDiscardCtxErr(); err != nil {
 		t.Fatalf("discard ran on a dead context: %v", err)
+	}
+}
+
+func TestRouter_MediaBindUnknownOutcomeKeepsUploads(t *testing.T) {
+	h := newHarness(t)
+	h.binder.bindErr = fmt.Errorf("commit media: %w", ErrMediaBindResultUnknown)
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !waitFor(time.Second, func() bool { return h.tasks.promotionCalls() == 1 }) {
+		t.Fatal("unknown bind outcome must still check placeholder promotion")
+	}
+	// The commit may have durably landed despite the error report; deleting
+	// could destroy objects that persisted attachment rows reference.
+	if refs := h.media.discarded(); len(refs) != 0 {
+		t.Fatalf("unknown bind outcome must keep the uploads, discarded %+v", refs)
 	}
 }
 

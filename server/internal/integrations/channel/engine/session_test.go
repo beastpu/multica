@@ -35,19 +35,20 @@ func (fakeTxStarter) Begin(context.Context) (pgx.Tx, error) { return fakeTx{}, n
 
 // fakeSessionQueries is an in-memory SessionQueries for unit tests.
 type fakeSessionQueries struct {
-	bindings        map[string]pgtype.UUID
-	nextSession     byte
-	createdSessions int
-	messages        []string
-	messageID       pgtype.UUID
-	lastCreate      db.CreateChatMessageParams
-	touched         int
-	replyTargets    int
-	lockedWorkspace int    // count of LockWorkspaceForChatSessionCreate calls
-	lastConfig      []byte // config of the most recent CreateChannelChatSessionBinding
-	attachments     []db.CreateAttachmentParams
-	linked          db.LinkAttachmentsToChatMessageParams
-	mediaCleared    int
+	bindings         map[string]pgtype.UUID
+	nextSession      byte
+	createdSessions  int
+	messages         []string
+	messageID        pgtype.UUID
+	lastCreate       db.CreateChatMessageParams
+	touched          int
+	replyTargets     int
+	lockedWorkspace  int    // count of LockWorkspaceForChatSessionCreate calls
+	lastConfig       []byte // config of the most recent CreateChannelChatSessionBinding
+	attachments      []db.CreateAttachmentParams
+	linked           db.LinkAttachmentsToChatMessageParams
+	mediaCleared     int
+	boundAttachments []db.Attachment
 
 	prevMessage      *string // GetMostRecentUserChatMessage result; nil → ErrNoRows
 	markRows         int64   // MarkChannelInboundDedupProcessed result
@@ -111,6 +112,10 @@ func (f *fakeSessionQueries) CreateAttachment(_ context.Context, arg db.CreateAt
 func (f *fakeSessionQueries) LinkAttachmentsToChatMessage(_ context.Context, arg db.LinkAttachmentsToChatMessageParams) ([]pgtype.UUID, error) {
 	f.linked = arg
 	return append([]pgtype.UUID(nil), arg.AttachmentIds...), nil
+}
+
+func (f *fakeSessionQueries) ListAttachmentsByChatMessage(context.Context, db.ListAttachmentsByChatMessageParams) ([]db.Attachment, error) {
+	return f.boundAttachments, nil
 }
 
 func (f *fakeSessionQueries) TouchChatSession(context.Context, pgtype.UUID) error {

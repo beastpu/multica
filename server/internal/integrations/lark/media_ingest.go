@@ -11,6 +11,7 @@ import (
 	"mime"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -29,6 +30,11 @@ type mediaStreamStorage interface {
 type mediaDeleteStorage interface {
 	Delete(ctx context.Context, key string)
 }
+
+// mediaUploadDiscardTimeout bounds the immediate idempotent delete after a
+// result-uncertain upload error. Fresh budget: the failing case includes the
+// resolve context itself having expired mid-write.
+const mediaUploadDiscardTimeout = 5 * time.Second
 
 type messageResourceStreamer interface {
 	DownloadMessageResourceStream(ctx context.Context, creds InstallationCredentials, p DownloadResourceParams) (DownloadedResourceStream, error)
@@ -132,6 +138,14 @@ func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.Reso
 		link, uploadedBytes, err := r.uploadResource(ctx, key, got.Body, got.SizeBytes, contentType, filename)
 		if err != nil {
 			r.logMediaWarn("lark media upload failed", lm, err)
+			// The object may have landed server-side even though the client
+			// saw an error (lost response, deadline firing mid-write) — and
+			// with the key never reaching the router, DiscardMedia would
+			// never learn about it. The key is deterministic and already
+			// computed, so delete it idempotently on a fresh budget.
+			discardCtx, discardCancel := context.WithTimeout(context.Background(), mediaUploadDiscardTimeout)
+			r.DiscardMedia(discardCtx, []channel.MediaRef{{StorageKey: key}})
+			discardCancel()
 			continue
 		}
 		sizeBytes := got.SizeBytes

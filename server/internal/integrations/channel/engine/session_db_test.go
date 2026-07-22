@@ -214,3 +214,123 @@ func TestBindMediaRefs_LinkFailureKeepsMessageAndRollsBackAttachment(t *testing.
 		t.Fatalf("failed attachment kept media pending until %v", mediaPendingUntil.Time)
 	}
 }
+
+// lostAckTxStarter simulates a lost commit ack: the transaction durably
+// commits, but the client is handed an error — the result-uncertain window
+// the compensation protocol must not treat as "nothing landed".
+type lostAckTxStarter struct{ pool *pgxpool.Pool }
+
+func (s *lostAckTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &lostAckTx{Tx: tx}, nil
+}
+
+type lostAckTx struct{ pgx.Tx }
+
+func (t *lostAckTx) Commit(ctx context.Context) error {
+	if err := t.Tx.Commit(ctx); err != nil {
+		return err
+	}
+	return errors.New("injected lost commit ack")
+}
+
+// rolledBackCommitTxStarter simulates a commit failure whose rollback is
+// definite: nothing landed, so the caller may safely reclaim the uploads.
+type rolledBackCommitTxStarter struct{ pool *pgxpool.Pool }
+
+func (s *rolledBackCommitTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &rolledBackCommitTx{Tx: tx}, nil
+}
+
+type rolledBackCommitTx struct{ pgx.Tx }
+
+func (t *rolledBackCommitTx) Commit(ctx context.Context) error {
+	_ = t.Tx.Rollback(ctx)
+	return errors.New("injected commit failure")
+}
+
+// bindOneMediaRef appends the user message through a healthy session, then
+// binds one ref through bindSession — the seam tests inject commit faults into.
+func bindOneMediaRef(t *testing.T, pool *pgxpool.Pool, bindSession *ChatSession, fixture sessionPersistenceFixture, url string) error {
+	t.Helper()
+	appendSession := NewChatSession(db.New(pool), pool, channel.TypeFeishu, SessionTitles{})
+	appendRes, err := appendSession.AppendUserMessage(context.Background(), AppendInput{
+		SessionID:         fixture.sessionID,
+		Sender:            fixture.userID,
+		Body:              "[Image]",
+		MediaPendingUntil: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("AppendUserMessage: %v", err)
+	}
+	return bindSession.BindMediaRefs(context.Background(), BindMediaInput{
+		MessageID:   appendRes.MessageID,
+		SessionID:   fixture.sessionID,
+		WorkspaceID: fixture.workspaceID,
+		Sender:      fixture.userID,
+		MediaRefs: []channel.MediaRef{{
+			Type:       channel.MsgTypeImage,
+			StorageKey: "workspaces/ws/lark/ack",
+			StorageURL: url,
+			Filename:   "ack.png",
+			MimeType:   "image/png",
+			SizeBytes:  1,
+		}},
+	})
+}
+
+// A Commit error is not a rollback guarantee. When the rows durably landed
+// despite the error report, BindMediaRefs must verify and report SUCCESS —
+// returning an error would make the router delete objects that persisted
+// attachment rows reference.
+func TestBindMediaRefs_LostCommitAckVerifiesAndKeepsBoundAttachment(t *testing.T) {
+	pool := sessionPersistenceTestDB(t)
+	fixture := seedSessionPersistenceFixture(t, pool)
+	session := newChatSessionWith(dbSessionQueries{q: db.New(pool)}, &lostAckTxStarter{pool: pool}, channel.TypeFeishu, SessionTitles{})
+
+	if err := bindOneMediaRef(t, pool, session, fixture, "https://cdn.example.test/lost-ack.png"); err != nil {
+		t.Fatalf("lost-ack bind must verify the durable commit and succeed, got %v", err)
+	}
+	var attachments int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM attachment WHERE chat_session_id = $1 AND url = 'https://cdn.example.test/lost-ack.png'
+	`, fixture.sessionID).Scan(&attachments); err != nil {
+		t.Fatalf("count attachments: %v", err)
+	}
+	if attachments != 1 {
+		t.Fatalf("attachments = %d, want the durably committed row", attachments)
+	}
+}
+
+// The mirror case: a commit failure whose transaction definitely rolled back
+// must stay an error — and NOT the result-unknown sentinel — so the router
+// reclaims the uploads.
+func TestBindMediaRefs_RolledBackCommitStaysDiscardableError(t *testing.T) {
+	pool := sessionPersistenceTestDB(t)
+	fixture := seedSessionPersistenceFixture(t, pool)
+	session := newChatSessionWith(dbSessionQueries{q: db.New(pool)}, &rolledBackCommitTxStarter{pool: pool}, channel.TypeFeishu, SessionTitles{})
+
+	err := bindOneMediaRef(t, pool, session, fixture, "https://cdn.example.test/rolled-back.png")
+	if err == nil || !strings.Contains(err.Error(), "injected commit failure") {
+		t.Fatalf("rolled-back commit error = %v", err)
+	}
+	if errors.Is(err, ErrMediaBindResultUnknown) {
+		t.Fatalf("verified rollback must not be reported as result-unknown: %v", err)
+	}
+	var attachments int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM attachment WHERE chat_session_id = $1 AND url = 'https://cdn.example.test/rolled-back.png'
+	`, fixture.sessionID).Scan(&attachments); err != nil {
+		t.Fatalf("count attachments: %v", err)
+	}
+	if attachments != 0 {
+		t.Fatalf("attachments = %d, want none after rollback", attachments)
+	}
+}

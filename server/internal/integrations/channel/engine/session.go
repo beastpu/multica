@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -46,6 +47,7 @@ type SessionQueries interface {
 	ClearChatMessageChannelMediaPending(ctx context.Context, arg db.ClearChatMessageChannelMediaPendingParams) error
 	CreateAttachment(ctx context.Context, arg db.CreateAttachmentParams) (db.Attachment, error)
 	LinkAttachmentsToChatMessage(ctx context.Context, arg db.LinkAttachmentsToChatMessageParams) ([]pgtype.UUID, error)
+	ListAttachmentsByChatMessage(ctx context.Context, arg db.ListAttachmentsByChatMessageParams) ([]db.Attachment, error)
 	TouchChatSession(ctx context.Context, id pgtype.UUID) error
 	GetMostRecentUserChatMessage(ctx context.Context, chatSessionID pgtype.UUID) (db.ChatMessage, error)
 	UpdateChannelChatSessionBindingReplyTarget(ctx context.Context, arg db.UpdateChannelChatSessionBindingReplyTargetParams) error
@@ -83,6 +85,9 @@ func (a dbSessionQueries) CreateAttachment(ctx context.Context, arg db.CreateAtt
 }
 func (a dbSessionQueries) LinkAttachmentsToChatMessage(ctx context.Context, arg db.LinkAttachmentsToChatMessageParams) ([]pgtype.UUID, error) {
 	return a.q.LinkAttachmentsToChatMessage(ctx, arg)
+}
+func (a dbSessionQueries) ListAttachmentsByChatMessage(ctx context.Context, arg db.ListAttachmentsByChatMessageParams) ([]db.Attachment, error) {
+	return a.q.ListAttachmentsByChatMessage(ctx, arg)
 }
 func (a dbSessionQueries) TouchChatSession(ctx context.Context, id pgtype.UUID) error {
 	return a.q.TouchChatSession(ctx, id)
@@ -383,9 +388,54 @@ func (s *ChatSession) BindMediaRefs(ctx context.Context, in BindMediaInput) erro
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit media: %w", err)
+		return s.resolveMediaCommitOutcome(in, err)
 	}
 	return nil
+}
+
+// ErrMediaBindResultUnknown marks a media bind whose durable outcome could not
+// be established: the commit reported an error AND the follow-up verification
+// failed. The router must NOT discard the uploaded objects on this error — a
+// lost commit ack may have durably persisted attachment rows that reference
+// them, and a rare orphan beats a broken attachment.
+var ErrMediaBindResultUnknown = errors.New("media bind result unknown")
+
+const mediaBindVerifyTimeout = 5 * time.Second
+
+// resolveMediaCommitOutcome converges an ambiguous media-bind commit into a
+// definite verdict. A Commit error is not a rollback guarantee — a lost ack or
+// a context expiring mid-commit can report failure after Postgres durably
+// committed the attachment + link rows, and discarding the objects on that
+// report would break the persisted attachments. The transaction is atomic, so
+// any of this batch's URLs being present proves the whole bind (marker clear
+// included) landed; none present proves the rollback. The check runs on a
+// fresh budget because the ambiguous case IS the caller's context expiring.
+func (s *ChatSession) resolveMediaCommitOutcome(in BindMediaInput, commitErr error) error {
+	if len(in.MediaRefs) == 0 {
+		// Only the marker clear was in flight; there is nothing a discard
+		// could delete, so the plain error is safe in both outcomes.
+		return fmt.Errorf("commit media: %w", commitErr)
+	}
+	verifyCtx, cancel := context.WithTimeout(context.Background(), mediaBindVerifyTimeout)
+	defer cancel()
+	atts, err := s.q.ListAttachmentsByChatMessage(verifyCtx, db.ListAttachmentsByChatMessageParams{
+		ChatMessageID: in.MessageID,
+		WorkspaceID:   in.WorkspaceID,
+	})
+	if err != nil {
+		return fmt.Errorf("commit media: %w: %w", ErrMediaBindResultUnknown, errors.Join(commitErr, err))
+	}
+	bound := make(map[string]bool, len(atts))
+	for _, a := range atts {
+		bound[a.Url] = true
+	}
+	for _, ref := range in.MediaRefs {
+		if bound[ref.StorageURL] {
+			// The commit landed despite the error report.
+			return nil
+		}
+	}
+	return fmt.Errorf("commit media: %w", commitErr)
 }
 
 func (s *ChatSession) clearMediaPending(ctx context.Context, q SessionQueries, in BindMediaInput) error {
