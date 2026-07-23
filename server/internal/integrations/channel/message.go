@@ -133,7 +133,11 @@ type InboundMessage struct {
 	// itself is in MediaRefs.
 	Text string
 
-	// MediaRefs are the attachments, already persisted to object storage.
+	// MediaRefs is the OUTPUT channel of engine.MediaResolver.ResolveMedia:
+	// the objects it downloaded and uploaded for this message, each covered
+	// by an intent-ledger row written before its PUT. Inbound messages always
+	// arrive with this empty — adapters must not pre-populate it, because
+	// binding only attaches refs whose ledger intent it can claim.
 	MediaRefs []MediaRef
 
 	// ReplyTo is the quoted/replied-to context, or nil.

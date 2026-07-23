@@ -1,10 +1,6 @@
 package lark
 
-import (
-	"github.com/jackc/pgx/v5/pgtype"
-
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
-)
+import "github.com/jackc/pgx/v5/pgtype"
 
 // This file holds the Feishu adapter's native-ish inbound/outbound value
 // types. The WS connector decodes a raw Lark event into an InboundMessage;
@@ -63,12 +59,6 @@ type InboundMessage struct {
 	// enricher prepends quoted/forwarded context). `/issue` is parsed from
 	// THIS, not the enriched Body.
 	CommandBody string
-
-	// MediaRefs are downloaded Feishu resources already persisted into Multica
-	// object storage. The detached media resolver fills these after the user
-	// message is appended — off the connector ACK path — and the channel
-	// engine then binds them to that message as chat attachments.
-	MediaRefs []channel.MediaRef
 }
 
 // Outcome categorizes what the inbound pipeline decided. The OutcomeReplier

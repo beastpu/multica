@@ -270,9 +270,6 @@ func TestFeishuMediaResolver_HasMedia(t *testing.T) {
 			}
 		})
 	}
-	if !resolver.HasMedia(channel.InboundMessage{MediaRefs: []channel.MediaRef{{Type: channel.MsgTypeImage}}}) {
-		t.Fatal("pre-resolved MediaRefs must report media")
-	}
 }
 
 // TestFeishuMediaResolver_RecordsIntentBeforeUpload pins the ledger ordering:

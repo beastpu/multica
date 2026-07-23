@@ -53,9 +53,6 @@ func NewFeishuMediaResolver(api APIClient, creds CredentialsResolver, storage me
 // (standalone image/video or post-embedded img/media spans). Pure in-memory
 // decode of the already-received payload — it runs on the connector ACK path.
 func (r *feishuMediaResolver) HasMedia(msg channel.InboundMessage) bool {
-	if len(msg.MediaRefs) > 0 {
-		return true
-	}
 	lm, err := larkMsgFromRaw(msg)
 	if err != nil {
 		return false
@@ -64,9 +61,6 @@ func (r *feishuMediaResolver) HasMedia(msg channel.InboundMessage) bool {
 }
 
 func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.ResolvedInstallation, _ engine.ResolvedIdentity, _ pgtype.UUID, chatMessageID pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage {
-	if len(msg.MediaRefs) > 0 {
-		return msg
-	}
 	lm, err := larkMsgFromRaw(msg)
 	if err != nil {
 		r.logMediaWarn("lark media ingest skipped: raw decode failed", InboundMessage{MessageID: msg.MessageID}, err)
