@@ -39,6 +39,13 @@ const (
 	// Backoff for failed object-storage deletes: base << (attempt-1), capped.
 	channelMediaReconcileBackoffBase = time.Minute
 	channelMediaReconcileBackoffCap  = time.Hour
+	// channelMediaReconcileDeleteTimeout bounds ONE object-storage DELETE.
+	// The SDK's default HTTP client has no overall request timeout, so a
+	// black-holed connection would otherwise wedge the sequential sweep loop
+	// forever (single-replica deployments have no other worker to take over).
+	// Kept well under the lease so a timed-out delete releases with backoff
+	// before any replica could reclaim the row.
+	channelMediaReconcileDeleteTimeout = 30 * time.Second
 )
 
 // MediaObjectDeleter is the single storage capability the reconciler needs —
@@ -62,8 +69,9 @@ type ChannelMediaReconciler struct {
 	Logger  *slog.Logger
 	Metrics *metrics.ChannelMediaReconcilerMetrics
 
-	// now is overridable for deterministic tests.
-	now func() time.Time
+	// now and deleteTimeout are overridable for deterministic tests.
+	now           func() time.Time
+	deleteTimeout time.Duration
 }
 
 func (r *ChannelMediaReconciler) logger() *slog.Logger {
@@ -159,8 +167,17 @@ func (r *ChannelMediaReconciler) settle(ctx context.Context, row db.ChannelMedia
 		return
 	}
 	// Unreferenced: delete the object OUTSIDE any transaction (no DB
-	// connection or row lock held across storage I/O), gated by the lease.
-	if err := r.Storage.DeleteObject(ctx, row.StorageKey); err != nil {
+	// connection or row lock held across storage I/O), gated by the lease and
+	// bounded by its own timeout so one stalled connection cannot wedge the
+	// sequential sweep loop.
+	delTimeout := r.deleteTimeout
+	if delTimeout == 0 {
+		delTimeout = channelMediaReconcileDeleteTimeout
+	}
+	delCtx, delCancel := context.WithTimeout(ctx, delTimeout)
+	err = r.Storage.DeleteObject(delCtx, row.StorageKey)
+	delCancel()
+	if err != nil {
 		if r.Metrics != nil {
 			r.Metrics.DeleteFailures.Inc()
 		}

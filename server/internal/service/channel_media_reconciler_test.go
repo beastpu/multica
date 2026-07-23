@@ -337,3 +337,31 @@ func TestChannelMediaReconciler_WrongWorkspaceCannotReleaseOrDelete(t *testing.T
 		t.Fatalf("row = (state=%q, lease_held=%v), want untouched ('deleting', true)", state, leaseStillHeld)
 	}
 }
+
+// blockingDeleter hangs until its context ends — the black-holed-connection
+// shape. The per-delete timeout must bound it so one stalled DELETE cannot
+// wedge the sequential sweep, and the row must go to backoff.
+type blockingDeleter struct{}
+
+func (blockingDeleter) DeleteObject(ctx context.Context, _ string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestChannelMediaReconciler_StalledDeleteIsBoundedAndBacksOff(t *testing.T) {
+	pool := newCancelFinalizePool(t)
+	f := seedReconcilerFixture(t, pool)
+	rec := &ChannelMediaReconciler{Queries: db.New(pool), Storage: blockingDeleter{}, deleteTimeout: 50 * time.Millisecond}
+
+	f.seedLedgerRow(t, "ws/lark/stalled", "https://cdn.test/stalled", "pending", ChannelMediaReconcileSettleDelay+time.Minute)
+
+	start := time.Now()
+	rec.RunOnce(context.Background())
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("stalled delete wedged the sweep for %v", elapsed)
+	}
+	state, attempt, exists := f.rowState(t, "ws/lark/stalled")
+	if !exists || state != "deleting" || attempt != 1 {
+		t.Fatalf("row = (%q, attempt=%d, %v), want released 'deleting' with backoff", state, attempt, exists)
+	}
+}
