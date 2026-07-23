@@ -259,15 +259,15 @@ func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSess
 // its own binding row, recording the real thread here per session does not clash
 // across sibling threads.
 type AppendInput struct {
-	SessionID         pgtype.UUID
-	Sender            pgtype.UUID
-	InstallationID    pgtype.UUID
-	Body              string
-	CommandText       string
-	MessageID         string
-	ThreadID          string
-	ClaimToken        pgtype.UUID
-	MediaPendingUntil pgtype.Timestamptz
+	SessionID           pgtype.UUID
+	Sender              pgtype.UUID
+	InstallationID      pgtype.UUID
+	Body                string
+	CommandText         string
+	MessageID           string
+	ThreadID            string
+	ClaimToken          pgtype.UUID
+	MediaPendingSeconds float64
 }
 
 // BindMediaInput links already-uploaded media to a durable chat message in a
@@ -315,11 +315,11 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	// it must be stamped in the same transaction as the message so no later
 	// binding deletion (archive, installation rebind) can strip it.
 	msg, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
-		ChatSessionID:            in.SessionID,
-		Role:                     "user",
-		Content:                  in.Body,
-		ChannelMediaPendingUntil: in.MediaPendingUntil,
-		ChannelIngested:          pgtype.Bool{Bool: true, Valid: true},
+		ChatSessionID:           in.SessionID,
+		Role:                    "user",
+		Content:                 in.Body,
+		ChannelMediaPendingSecs: pgtype.Float8{Float64: in.MediaPendingSeconds, Valid: in.MediaPendingSeconds > 0},
+		ChannelIngested:         pgtype.Bool{Bool: true, Valid: true},
 	})
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("create chat message: %w", err)

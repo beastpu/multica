@@ -93,22 +93,29 @@ INSERT INTO chat_message (
 VALUES (
     $1, $2, $3, $4, $5, $6,
     COALESCE($7::text, 'message'),
-    $8,
+    -- The media deadline is DB-clock time: every consumer compares it against
+    -- SQL now() (GetChannelMediaPendingUntil, the deferred promote, the
+    -- trailing-message guard), so the writer must use the same clock. The
+    -- caller passes a relative budget in seconds; an application-clock
+    -- timestamp here would let a skewed app node shrink or stretch the
+    -- fallback window.
+    CASE WHEN $8::float8 IS NULL THEN NULL
+         ELSE now() + make_interval(secs => $8::float8) END,
     COALESCE($9::boolean, FALSE)
 )
 RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, channel_media_pending_until, channel_ingested
 `
 
 type CreateChatMessageParams struct {
-	ChatSessionID            pgtype.UUID        `json:"chat_session_id"`
-	Role                     string             `json:"role"`
-	Content                  string             `json:"content"`
-	TaskID                   pgtype.UUID        `json:"task_id"`
-	FailureReason            pgtype.Text        `json:"failure_reason"`
-	ElapsedMs                pgtype.Int8        `json:"elapsed_ms"`
-	MessageKind              pgtype.Text        `json:"message_kind"`
-	ChannelMediaPendingUntil pgtype.Timestamptz `json:"channel_media_pending_until"`
-	ChannelIngested          pgtype.Bool        `json:"channel_ingested"`
+	ChatSessionID           pgtype.UUID   `json:"chat_session_id"`
+	Role                    string        `json:"role"`
+	Content                 string        `json:"content"`
+	TaskID                  pgtype.UUID   `json:"task_id"`
+	FailureReason           pgtype.Text   `json:"failure_reason"`
+	ElapsedMs               pgtype.Int8   `json:"elapsed_ms"`
+	MessageKind             pgtype.Text   `json:"message_kind"`
+	ChannelMediaPendingSecs pgtype.Float8 `json:"channel_media_pending_secs"`
+	ChannelIngested         pgtype.Bool   `json:"channel_ingested"`
 }
 
 // message_kind defaults to 'message' via COALESCE so every existing caller
@@ -123,7 +130,7 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		arg.FailureReason,
 		arg.ElapsedMs,
 		arg.MessageKind,
-		arg.ChannelMediaPendingUntil,
+		arg.ChannelMediaPendingSecs,
 		arg.ChannelIngested,
 	)
 	var i ChatMessage

@@ -90,14 +90,16 @@ type EnsureSessionParams struct {
 // AppendParams carries the inputs for SessionBinder.AppendMessage. ClaimToken
 // is the dedup owner-fence token; the binder runs the dedup Mark INSIDE its
 // chat_message+session tx so the durable write and the Mark commit atomically.
-// MediaPendingUntil persists the placeholder fallback deadline.
+// MediaPendingSeconds persists the placeholder fallback budget; the append
+// transaction turns it into a DB-clock deadline (now() + budget) so every
+// now()-based consumer reads the same clock that wrote it.
 type AppendParams struct {
-	SessionID         pgtype.UUID
-	Sender            pgtype.UUID
-	InstallationID    pgtype.UUID
-	Message           channel.InboundMessage
-	ClaimToken        pgtype.UUID
-	MediaPendingUntil pgtype.Timestamptz
+	SessionID           pgtype.UUID
+	Sender              pgtype.UUID
+	InstallationID      pgtype.UUID
+	Message             channel.InboundMessage
+	ClaimToken          pgtype.UUID
+	MediaPendingSeconds float64
 }
 
 // AppendResult reports what AppendMessage decided.

@@ -344,7 +344,7 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 		MessageID:         p.Message.MessageID,
 		ThreadID:          replyThread,
 		ClaimToken:        p.ClaimToken,
-		MediaPendingUntil: p.MediaPendingUntil,
+		MediaPendingSeconds: p.MediaPendingSeconds,
 	})
 }
 

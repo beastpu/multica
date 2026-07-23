@@ -319,21 +319,23 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		return Result{}, finalizeRelease, fmt.Errorf("ensure chat session: %w", err)
 	}
 	// 6. Append message + in-tx dedup Mark — the durable transition point.
-	// The media deadline is persisted only when the message actually carries
+	// The media budget is persisted only when the message actually carries
 	// media: a plain text message must never wait behind the media semaphore
-	// or fall back to the 45s deadline after a crash.
-	mediaPendingUntil := pgtype.Timestamptz{}
+	// or fall back to the 45s deadline after a crash. It is a relative
+	// duration — the append transaction anchors it to the DB clock, the same
+	// clock every now()-based reader uses.
+	mediaPendingSeconds := 0.0
 	resolveMedia := set.Media != nil && set.Media.HasMedia(msg)
 	if resolveMedia {
-		mediaPendingUntil = pgtype.Timestamptz{Time: time.Now().Add(r.mediaTimeout), Valid: true}
+		mediaPendingSeconds = r.mediaTimeout.Seconds()
 	}
 	appendRes, err := set.Session.AppendMessage(ctx, AppendParams{
-		SessionID:         sessionID,
-		Sender:            identity.UserID,
-		InstallationID:    inst.ID,
-		Message:           msg,
-		ClaimToken:        claimToken,
-		MediaPendingUntil: mediaPendingUntil,
+		SessionID:           sessionID,
+		Sender:              identity.UserID,
+		InstallationID:      inst.ID,
+		Message:             msg,
+		ClaimToken:          claimToken,
+		MediaPendingSeconds: mediaPendingSeconds,
 	})
 	if err != nil {
 		if errors.Is(err, ErrClaimLost) {
@@ -381,7 +383,9 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	//    in a window wins (MUL-2645).
 	r.scheduleRun(set, inst, msg, sessionID, identity.UserID)
 	if resolveMedia {
-		r.enqueueMedia(set, inst, identity, appendRes.MessageID, msg, sessionID, mediaPendingUntil.Time)
+		// The local resolve budget is monotonic (time.Now retains the
+		// monotonic reading), independent of the persisted DB-clock fallback.
+		r.enqueueMedia(set, inst, identity, appendRes.MessageID, msg, sessionID, time.Now().Add(r.mediaTimeout))
 	}
 	return res, postAppendFinalize, nil
 }
@@ -415,20 +419,35 @@ func (r *Router) enqueueMedia(set ResolverSet, inst ResolvedInstallation, identi
 		defer r.mediaWg.Done()
 		defer close(done)
 		defer r.finishMediaQueue(key, done)
+		// Both queue waits are bounded by the message's own deadline, not
+		// just global shutdown: in a media burst an already-expired job must
+		// not keep holding its goroutine and payload until it reaches the
+		// front — it skips straight to the empty finalize (marker clear +
+		// promotion), which also unblocks the session's later messages.
+		expiry := time.NewTimer(time.Until(deadline))
+		defer expiry.Stop()
+		expired := false
 		if previous != nil {
 			select {
 			case <-previous:
 			case <-r.mediaCtx.Done():
+			case <-expiry.C:
+				expired = true
 			}
 		}
-		select {
-		case r.mediaSem <- struct{}{}:
-			defer func() { <-r.mediaSem }()
-		case <-r.mediaCtx.Done():
-			// Cancelled while queued for a slot: proceed without one.
-			// ResolveMedia returns immediately on the dead context and only
-			// the bounded DB finalize runs, preserving prompt marker
-			// clearing on shutdown.
+		if !expired {
+			select {
+			case r.mediaSem <- struct{}{}:
+				defer func() { <-r.mediaSem }()
+			case <-r.mediaCtx.Done():
+				// Cancelled while queued for a slot: proceed without one.
+				// ResolveMedia is skipped on the dead context and only the
+				// bounded DB finalize runs, preserving prompt marker
+				// clearing on shutdown.
+			case <-expiry.C:
+				// Expired while queued: no slot needed — resolveAndBindMedia
+				// sees the dead deadline and runs only the empty finalize.
+			}
 		}
 		r.resolveAndBindMedia(set, inst, identity, chatMessageID, msg, sessionID, deadline)
 	}()
@@ -440,7 +459,13 @@ func (r *Router) resolveAndBindMedia(set ResolverSet, inst ResolvedInstallation,
 	ctx, cancel := context.WithDeadline(r.mediaCtx, deadline)
 	defer cancel()
 
-	resolved := set.Media.ResolveMedia(ctx, inst, identity, sessionID, chatMessageID, msg)
+	resolved := msg
+	if ctx.Err() == nil {
+		// Skipped entirely when the budget expired while queued (or on
+		// shutdown): resolving on a dead context would only churn through
+		// intent writes that immediately fail.
+		resolved = set.Media.ResolveMedia(ctx, inst, identity, sessionID, chatMessageID, msg)
+	}
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), mediaFinalizeTimeout)
 	defer finalizeCancel()
 	if err := ctx.Err(); err != nil {

@@ -550,8 +550,8 @@ func TestRouter_NoMediaMessageSkipsMediaPipeline(t *testing.T) {
 	if !waitFor(time.Second, h.tasks.wasCalled) {
 		t.Fatal("no-media message must still trigger a chat run")
 	}
-	if got := h.binder.appendedParams().MediaPendingUntil; got.Valid {
-		t.Fatalf("no-media message persisted a media deadline: %v", got.Time)
+	if got := h.binder.appendedParams().MediaPendingSeconds; got != 0 {
+		t.Fatalf("no-media message persisted a media budget: %v", got)
 	}
 	if h.media.calls() != 0 {
 		t.Fatalf("no-media message ran ResolveMedia %d times, want 0", h.media.calls())
@@ -969,5 +969,67 @@ func TestRouter_EmptyMessageID_SkipsDedup(t *testing.T) {
 	}
 	if !waitFor(time.Second, h.tasks.wasCalled) {
 		t.Fatalf("message must still ingest without a dedup key")
+	}
+}
+
+// A media job whose budget expires while it is still QUEUED (waiting for the
+// global slot) must not wait for the front of the line: it finalizes the
+// placeholder (marker clear + promotion) immediately, without ever invoking
+// the resolver, while the slot holder keeps running.
+func TestRouter_MediaQueueWaitExpiryFinalizesWithoutResolving(t *testing.T) {
+	h := newHarness(t)
+	h.router = NewRouter(h.issues, h.tasks, h.reader, RouterConfig{MediaConcurrency: 1, MediaTimeout: 150 * time.Millisecond, Logger: discardLogger()})
+	release := make(chan struct{})
+	firstStarted := make(chan struct{})
+	h.media.resolve = func(_ context.Context, msg channel.InboundMessage) channel.InboundMessage {
+		if msg.MessageID == "m1" {
+			close(firstStarted)
+			// Deliberately ignores ctx: the slot must stay held past m2's
+			// expiry so m2 deterministically expires while QUEUED.
+			<-release
+		}
+		return msg
+	}
+	h.router.Register(channel.TypeFeishu, ResolverSet{
+		Installation: h.inst,
+		Identity:     h.ident,
+		Dedup:        h.dedup,
+		Session:      h.binder,
+		Audit:        h.audit,
+		Replier:      h.replier,
+		Typing:       h.typing,
+		Media:        h.media,
+		OriginType:   "lark_chat",
+	})
+
+	first := p2pMessage(t)
+	first.MessageID = "m1"
+	if err := h.router.Handle(context.Background(), first); err != nil {
+		t.Fatalf("first Handle: %v", err)
+	}
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first media job did not start")
+	}
+
+	// Second job (another session) queues behind the only slot and expires
+	// there; it must finalize while the slot is still held.
+	h.binder.ensureID = uuidFromString(t, "77777777-7777-4777-8777-777777777777")
+	second := p2pMessage(t)
+	second.MessageID = "m2"
+	second.Source.ChatID = "oc_chat_b"
+	if err := h.router.Handle(context.Background(), second); err != nil {
+		t.Fatalf("second Handle: %v", err)
+	}
+	if !waitFor(2*time.Second, func() bool { return h.tasks.promotionCalls() >= 1 }) {
+		t.Fatal("expired queued job did not finalize while the slot was held")
+	}
+	if h.media.calls() != 1 {
+		t.Fatalf("expired job must not invoke the resolver, calls=%d", h.media.calls())
+	}
+	close(release)
+	if !waitFor(2*time.Second, func() bool { return h.tasks.promotionCalls() == 2 }) {
+		t.Fatalf("slot holder promotion missing, promotions=%d", h.tasks.promotionCalls())
 	}
 }

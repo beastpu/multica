@@ -103,10 +103,10 @@ func TestBindMediaRefs_PersistsAndLinksAttachmentToDurableMessage(t *testing.T) 
 	session := NewChatSession(db.New(pool), pool, channel.TypeFeishu, SessionTitles{})
 
 	appendRes, err := session.AppendUserMessage(context.Background(), AppendInput{
-		SessionID:         fixture.sessionID,
-		Sender:            fixture.userID,
-		Body:              "[Image]",
-		MediaPendingUntil: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+		SessionID:           fixture.sessionID,
+		Sender:              fixture.userID,
+		Body:                "[Image]",
+		MediaPendingSeconds: 60,
 	})
 	if err != nil {
 		t.Fatalf("AppendUserMessage: %v", err)
@@ -175,10 +175,10 @@ func TestBindMediaRefs_LinkFailureKeepsMessageAndRollsBackAttachment(t *testing.
 	session := newChatSessionWith(queries, pool, channel.TypeFeishu, SessionTitles{})
 
 	appendRes, err := session.AppendUserMessage(context.Background(), AppendInput{
-		SessionID:         fixture.sessionID,
-		Sender:            fixture.userID,
-		Body:              "rollback-media",
-		MediaPendingUntil: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+		SessionID:           fixture.sessionID,
+		Sender:              fixture.userID,
+		Body:                "rollback-media",
+		MediaPendingSeconds: 60,
 	})
 	if err != nil {
 		t.Fatalf("AppendUserMessage: %v", err)
@@ -302,10 +302,10 @@ func bindOneMediaRef(t *testing.T, pool *pgxpool.Pool, bindSession *ChatSession,
 	t.Helper()
 	appendSession := NewChatSession(db.New(pool), pool, channel.TypeFeishu, SessionTitles{})
 	appendRes, err := appendSession.AppendUserMessage(context.Background(), AppendInput{
-		SessionID:         fixture.sessionID,
-		Sender:            fixture.userID,
-		Body:              "[Image]",
-		MediaPendingUntil: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+		SessionID:           fixture.sessionID,
+		Sender:              fixture.userID,
+		Body:                "[Image]",
+		MediaPendingSeconds: 60,
 	})
 	if err != nil {
 		t.Fatalf("AppendUserMessage: %v", err)
@@ -393,10 +393,10 @@ func TestBindMediaRefs_ReconcilerOwnedKeySkipsAttach(t *testing.T) {
 	session := NewChatSession(db.New(pool), pool, channel.TypeFeishu, SessionTitles{})
 
 	appendRes, err := session.AppendUserMessage(context.Background(), AppendInput{
-		SessionID:         fixture.sessionID,
-		Sender:            fixture.userID,
-		Body:              "[Image]",
-		MediaPendingUntil: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
+		SessionID:           fixture.sessionID,
+		Sender:              fixture.userID,
+		Body:                "[Image]",
+		MediaPendingSeconds: 60,
 	})
 	if err != nil {
 		t.Fatalf("AppendUserMessage: %v", err)
@@ -489,5 +489,37 @@ func TestDBMediaIntentLedger_CrossWorkspaceKeyCannotBeStolen(t *testing.T) {
 	}
 	if gotWorkspace != fixture.workspaceID || gotURL != "https://cdn.example.test/cross-a" {
 		t.Fatalf("row ownership changed: workspace=%v url=%q", gotWorkspace, gotURL)
+	}
+}
+
+// The persisted media deadline must come from the DATABASE clock: every
+// consumer compares it against SQL now(), so an application-clock timestamp
+// would let a skewed app node shrink or stretch the fallback window. The
+// budget is passed as a relative duration and anchored server-side.
+func TestAppendUserMessage_MediaDeadlineUsesDatabaseClock(t *testing.T) {
+	pool := sessionPersistenceTestDB(t)
+	fixture := seedSessionPersistenceFixture(t, pool)
+	session := NewChatSession(db.New(pool), pool, channel.TypeFeishu, SessionTitles{})
+
+	appendRes, err := session.AppendUserMessage(context.Background(), AppendInput{
+		SessionID:           fixture.sessionID,
+		Sender:              fixture.userID,
+		Body:                "[Image]",
+		MediaPendingSeconds: 60,
+	})
+	if err != nil {
+		t.Fatalf("AppendUserMessage: %v", err)
+	}
+	var remaining float64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT EXTRACT(EPOCH FROM (channel_media_pending_until - now())) FROM chat_message WHERE id = $1
+	`, appendRes.MessageID).Scan(&remaining); err != nil {
+		t.Fatalf("load deadline: %v", err)
+	}
+	// Anchored to DB now() at insert time: the remaining budget measured by
+	// the SAME clock must be the requested 60s minus round-trip slack — a
+	// window no application clock skew can distort.
+	if remaining < 55 || remaining > 60 {
+		t.Fatalf("deadline remaining = %.2fs (DB clock), want ~60s budget", remaining)
 	}
 }

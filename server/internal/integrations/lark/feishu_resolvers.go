@@ -219,7 +219,7 @@ func (r *feishuSessionBinder) AppendMessage(ctx context.Context, p engine.Append
 		MessageID:         p.Message.MessageID,
 		ThreadID:          p.Message.Source.ThreadID,
 		ClaimToken:        p.ClaimToken,
-		MediaPendingUntil: p.MediaPendingUntil,
+		MediaPendingSeconds: p.MediaPendingSeconds,
 	})
 }
 

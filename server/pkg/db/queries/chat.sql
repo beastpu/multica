@@ -179,7 +179,14 @@ INSERT INTO chat_message (
 VALUES (
     $1, $2, $3, sqlc.narg(task_id), sqlc.narg(failure_reason), sqlc.narg(elapsed_ms),
     COALESCE(sqlc.narg(message_kind)::text, 'message'),
-    sqlc.narg(channel_media_pending_until),
+    -- The media deadline is DB-clock time: every consumer compares it against
+    -- SQL now() (GetChannelMediaPendingUntil, the deferred promote, the
+    -- trailing-message guard), so the writer must use the same clock. The
+    -- caller passes a relative budget in seconds; an application-clock
+    -- timestamp here would let a skewed app node shrink or stretch the
+    -- fallback window.
+    CASE WHEN sqlc.narg(channel_media_pending_secs)::float8 IS NULL THEN NULL
+         ELSE now() + make_interval(secs => sqlc.narg(channel_media_pending_secs)::float8) END,
     COALESCE(sqlc.narg(channel_ingested)::boolean, FALSE)
 )
 RETURNING *;
