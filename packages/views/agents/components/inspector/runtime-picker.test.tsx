@@ -151,12 +151,16 @@ describe("RuntimePicker (agent settings)", () => {
   it("navigates back to the machine list and scopes it with Mine/All", () => {
     renderPicker();
     openPicker();
-    fireEvent.click(screen.getByRole("button", { name: "Back to machines" }));
+    const back = screen.getByRole("button", { name: "Back to machines" });
+    expect(back.getAttribute("title")).toBe("Jiayuan's MacBook Pro");
+    fireEvent.click(back);
 
     // Mine scope: only my machine, with its online count.
-    expect(
-      screen.getByRole("button", { name: /^Jiayuan's MacBook Pro/ }),
-    ).toBeTruthy();
+    const machine = screen.getByRole("button", {
+      name: /^Jiayuan's MacBook Pro/,
+    });
+    expect(machine).toBeTruthy();
+    expect(machine.getAttribute("title")).toBe("Jiayuan's MacBook Pro");
     expect(screen.getByText("2/2 online")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^other\.local/ })).toBeNull();
 
