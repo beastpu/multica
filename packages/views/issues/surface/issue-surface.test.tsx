@@ -335,6 +335,17 @@ describe("IssueSurface — table pagination ownership", () => {
           })) as unknown as AgentTask[],
         ),
       ),
+      getWorkspaceWorkingAgents: vi.fn(() =>
+        Promise.resolve(
+          runningIssues.map((issue, index) => ({
+            id: `agent-${index}`,
+            name: `Agent ${index}`,
+            avatar_url: null,
+            running_task_count: 1,
+            issue_ids: [issue.id],
+          })),
+        ),
+      ),
       getChildIssueProgress: vi.fn(() => never()),
       listProperties: vi.fn(() => never()),
       listMembers: vi.fn(() => never()),
@@ -354,14 +365,20 @@ describe("IssueSurface — table pagination ownership", () => {
       </QueryClientProvider>,
     );
 
-    await waitFor(() => expect(listIssueTableRows).toHaveBeenCalledTimes(1));
-    expect(listIssueTableRows).toHaveBeenCalledWith(
+    // The first render has not received the independent working-agents query
+    // yet and therefore requests the explicit match-none form. Once that
+    // query resolves, the Table owns a new query key containing the agent id
+    // list and starts the real branch.
+    await waitFor(() => expect(listIssueTableRows).toHaveBeenCalledTimes(2));
+    expect(listIssueTableRows).toHaveBeenLastCalledWith(
       expect.objectContaining({
         group: { kind: "none" },
         group_key: null,
         parent_id: null,
         query: expect.objectContaining({
-          filters: expect.objectContaining({ working_only: true }),
+          filters: expect.objectContaining({
+            working_issue_ids: runningIssues.map((issue) => issue.id),
+          }),
         }),
       }),
     );

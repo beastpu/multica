@@ -33,6 +33,9 @@ import type {
   AgentTask,
   AgentActivityBucket,
   AgentRunCount,
+  WorkspaceWorkingAgent,
+  WorkspaceWorkingAgentMineRelation,
+  WorkspaceWorkingAgentType,
   AgentRuntime,
   RuntimeProfile,
   CreateRuntimeProfileRequest,
@@ -1683,6 +1686,24 @@ export class ApiClient {
     return this.fetch(`/api/agent-task-snapshot`);
   }
 
+  // Independent workspace-level projection. Unlike the task snapshot, this
+  // already deduplicates running agents and returns only the display fields
+  // consumers need. Callers may narrow the projection by task source and, for
+  // issue work, the authenticated member's My Issues relation.
+  async getWorkspaceWorkingAgents(
+    type?: WorkspaceWorkingAgentType,
+    mineRelation?: WorkspaceWorkingAgentMineRelation,
+  ): Promise<WorkspaceWorkingAgent[]> {
+    const search = new URLSearchParams();
+    if (type) search.set("type", type);
+    if (mineRelation) {
+      search.set("scope", "mine");
+      search.set("relation", mineRelation);
+    }
+    const query = search.toString();
+    return this.fetch(`/api/working-agents${query ? `?${query}` : ""}`);
+  }
+
   // Per-agent daily activity for the last 30 days, anchored on
   // completed_at. One workspace-wide fetch backs both the Agents-list
   // sparkline (uses trailing 7 buckets) and the agent detail "Last 30
@@ -2063,7 +2084,11 @@ export class ApiClient {
     return this.fetch(`/api/chat/sessions/${id}`);
   }
 
-  async createChatSession(data: { agent_id: string; title?: string }): Promise<ChatSession> {
+  async createChatSession(data: {
+    agent_id: string;
+    title?: string;
+    project_id?: string | null;
+  }): Promise<ChatSession> {
     return this.fetch("/api/chat/sessions", {
       method: "POST",
       body: JSON.stringify(data),
@@ -2074,7 +2099,10 @@ export class ApiClient {
     await this.fetch(`/api/chat/sessions/${id}`, { method: "DELETE" });
   }
 
-  async updateChatSession(id: string, data: { title: string }): Promise<ChatSession> {
+  async updateChatSession(
+    id: string,
+    data: { title: string } | { project_id: string | null },
+  ): Promise<ChatSession> {
     return this.fetch(`/api/chat/sessions/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),

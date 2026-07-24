@@ -211,7 +211,6 @@ function IssueSurfaceContent({
         ) : (
           <IssuesHeader
             scopedIssues={controller.surfaceIssues}
-            workingIssues={workingIssues}
             allowGantt={controller.allowGantt}
             isRefreshing={controller.isRefreshing}
             facetCountsExact={
@@ -309,7 +308,6 @@ function IssueSurfaceContent({
                 myIssuesFilter={controller.loadMoreFilter}
                 sort={controller.sort}
                 projectId={controller.projectId}
-                activityByIssueId={controller.activity.activityByIssueId}
                 onCreateIssue={openCreateIssue}
                 groupBranches={controller.groupBranches}
               />

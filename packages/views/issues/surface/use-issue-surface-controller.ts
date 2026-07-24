@@ -14,6 +14,7 @@ import type {
   IssueTableQuerySpec,
   Project,
 } from "@multica/core/types";
+import { workspaceWorkingAgentsOptions } from "@multica/core/agents";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { ALL_STATUSES } from "@multica/core/issues/config";
 import { dateOnlyToLocalDate } from "@multica/core/issues/date";
@@ -36,7 +37,6 @@ import type { IssueFilters } from "../utils/filter";
 import type { ChildProgress } from "../components/list-row";
 import { IssueTableExportIntegrityError } from "../components/table-view-model";
 import type { IssueSurfaceMode } from "./types";
-import { useIssueSurfaceActivity, type IssueSurfaceActivity } from "./activity";
 import type { IssueSurfaceActions } from "./actions-context";
 import {
   type IssueSurfaceSelection,
@@ -94,8 +94,7 @@ export interface IssueSurfaceController {
   /** Exact group catalog plus independent row cursors for Assignee/Property
    * Board and compound Swimlane cells. */
   groupBranches?: IssueGroupBranches;
-  activeFilters: Omit<IssueFilters, "statusFilters" | "runningIssueIds">;
-  activity: IssueSurfaceActivity;
+  activeFilters: Omit<IssueFilters, "statusFilters">;
   actions: IssueSurfaceActions;
   selection: IssueSurfaceSelection;
   childProgressMap: Map<string, ChildProgress>;
@@ -319,7 +318,22 @@ export function useIssueSurfaceController({
   const { projectFilters: viewProjectFilters, includeNoProject: viewIncludeNoProject } =
     projectFilterState;
 
-  const activity = useIssueSurfaceActivity();
+  const workingAgentMineRelation =
+    scope.type === "my"
+      ? scope.relation === "all"
+        ? "any"
+        : scope.relation
+      : undefined;
+  const { data: workspaceWorkingAgents = [] } = useQuery(
+    workspaceWorkingAgentsOptions(wsId, "issue", workingAgentMineRelation),
+  );
+  const workingIssueIDs = useMemo(() => {
+    const issueIDs = new Set<string>();
+    for (const agent of workspaceWorkingAgents) {
+      for (const issueID of agent.issue_ids) issueIDs.add(issueID);
+    }
+    return issueIDs;
+  }, [workspaceWorkingAgents]);
 
   const tableQuerySpec = useMemo<IssueTableQuerySpec>(() => {
     let queryScope: IssueTableQuerySpec["scope"];
@@ -378,7 +392,9 @@ export function useIssueSurfaceController({
           ? { properties: effectivePropertyFilters }
           : {}),
         ...(date ? { date } : {}),
-        ...(agentRunningFilter ? { working_only: true } : {}),
+        ...(agentRunningFilter
+          ? { working_issue_ids: [...workingIssueIDs] }
+          : {}),
         include_sub_issues: showSubIssues,
       },
       ...(debouncedActiveSearch ? { search: debouncedActiveSearch } : {}),
@@ -404,6 +420,7 @@ export function useIssueSurfaceController({
     statusFilters,
     viewIncludeNoProject,
     viewProjectFilters,
+    workingIssueIDs,
   ]);
 
   const [activeTableFacet, setActiveTableFacet] =
@@ -562,17 +579,17 @@ export function useIssueSurfaceController({
     serverGroupBranches,
     ganttShowCompleted,
     sort,
-    activity,
     statusFilters,
     priorityFilters,
     assigneeFilters,
     includeNoAssignee,
+    agentRunningFilter,
     creatorFilters,
     projectFilters: viewProjectFilters,
     includeNoProject: viewIncludeNoProject,
     labelFilters,
     propertyFilters: effectivePropertyFilters,
-    agentRunningFilter,
+    workingIssueIDs,
     showSubIssues,
     loadProjects:
       cardProperties.project ||

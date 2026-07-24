@@ -331,6 +331,43 @@ describe("ApiClient issue move intent", () => {
   });
 });
 
+describe("ApiClient workspace working agents", () => {
+  it("supports an optional source-type filter", async () => {
+    const payload = [
+      {
+        id: "agent-1",
+        name: "Agent 1",
+        avatar_url: null,
+        running_task_count: 2,
+        issue_ids: ["issue-1"],
+      },
+    ];
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(
+      client.getWorkspaceWorkingAgents("issue", "assigned"),
+    ).resolves.toEqual(payload);
+    await expect(
+      client.getWorkspaceWorkingAgents("issue"),
+    ).resolves.toEqual(payload);
+    await expect(client.getWorkspaceWorkingAgents()).resolves.toEqual(payload);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.example.test/api/working-agents?type=issue&scope=mine&relation=assigned",
+      "https://api.example.test/api/working-agents?type=issue",
+      "https://api.example.test/api/working-agents",
+    ]);
+  });
+});
+
 describe("ApiClient label response schemas", () => {
   it("falls back safely for malformed label catalog, label, and resource responses", async () => {
     const fetchMock = vi.fn().mockImplementation(() =>

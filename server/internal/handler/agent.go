@@ -2094,6 +2094,118 @@ type AgentRunCount struct {
 	RunCount int32  `json:"run_count"`
 }
 
+// WorkspaceWorkingAgent is the privacy-safe agent summary returned by the
+// workspace working-agents endpoint. It deliberately carries only display
+// information plus the current running-task count and referenced issue ids;
+// full AgentResponse fields include runtime and integration configuration that
+// this chip does not need.
+type WorkspaceWorkingAgent struct {
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	AvatarURL        *string  `json:"avatar_url"`
+	RunningTaskCount int32    `json:"running_task_count"`
+	IssueIDs         []string `json:"issue_ids"`
+}
+
+// ListWorkspaceWorkingAgents returns currently working user-authored agents in
+// the workspace, independent of issue filters or Table pagination. The
+// optional type query selects issue, autopilot, or chat work; omitting it keeps
+// the all-sources projection. scope=mine narrows issue work to the authenticated
+// member's selected My Issues relation. Access filtering mirrors the other
+// workspace-wide agent aggregations so a private/non-allow-listed agent is
+// never exposed by its name, avatar, count, or even presence.
+func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return
+	}
+
+	workType := strings.TrimSpace(r.URL.Query().Get("type"))
+	switch workType {
+	case "", "issue", "autopilot", "chat":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid type: must be issue, autopilot, or chat")
+		return
+	}
+
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	mineRelation := strings.TrimSpace(r.URL.Query().Get("relation"))
+	var memberID pgtype.UUID
+	switch scope {
+	case "":
+		if mineRelation != "" {
+			writeError(w, http.StatusBadRequest, "relation requires scope=mine")
+			return
+		}
+	case "mine":
+		if workType != "issue" {
+			writeError(w, http.StatusBadRequest, "scope=mine requires type=issue")
+			return
+		}
+		if mineRelation == "" {
+			mineRelation = "any"
+		}
+		switch mineRelation {
+		case "assigned", "created", "involved", "any":
+		default:
+			writeError(w, http.StatusBadRequest, "invalid relation: must be assigned, created, involved, or any")
+			return
+		}
+		userID, ok := requireUserID(w, r)
+		if !ok {
+			return
+		}
+		var err error
+		memberID, err = util.ParseUUID(userID)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "user not authenticated")
+			return
+		}
+	default:
+		writeError(w, http.StatusBadRequest, "invalid scope: must be mine")
+		return
+	}
+
+	rows, err := h.Queries.ListWorkspaceWorkingAgents(
+		r.Context(),
+		db.ListWorkspaceWorkingAgentsParams{
+			WorkspaceID:  parseUUID(workspaceID),
+			WorkType:     workType,
+			MineRelation: mineRelation,
+			MemberID:     memberID,
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list workspace working agents")
+		return
+	}
+
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		return
+	}
+
+	resp := make([]WorkspaceWorkingAgent, 0, len(rows))
+	for _, row := range rows {
+		agentID := uuidToString(row.ID)
+		if _, ok := allowed[agentID]; !ok {
+			continue
+		}
+		resp = append(resp, WorkspaceWorkingAgent{
+			ID:               agentID,
+			Name:             row.Name,
+			AvatarURL:        textToPtr(row.AvatarUrl),
+			RunningTaskCount: row.RunningTaskCount,
+			IssueIDs:         uuidStringsOrEmpty(row.IssueIds),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // GetWorkspaceAgentRunCounts returns 30-day total run counts for every
 // agent in the workspace. Same single-fetch pattern as live-tasks /
 // activity to keep the Agents list cheap regardless of agent count.

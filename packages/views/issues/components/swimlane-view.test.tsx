@@ -1775,7 +1775,6 @@ describe("SwimLaneView", () => {
           projectFilters: [],
           includeNoProject: false,
           labelFilters: [],
-          agentRunningFilter: false,
         }}
         childProgressMap={childProgressMap}
         onMoveIssue={vi.fn()}
@@ -1792,7 +1791,7 @@ describe("SwimLaneView", () => {
     });
   });
 
-  it("filters batch-fetched children using working filter", async () => {
+  it("filters batch-fetched children using API-derived running issue ids", async () => {
     mockViewState.swimlaneGrouping = "parent";
 
     const grandparent: Issue = {
@@ -1835,6 +1834,8 @@ describe("SwimLaneView", () => {
       identifier: "PROJ-32",
       title: "Running Child",
       status: "in_progress",
+      assignee_type: "agent",
+      assignee_id: "idle-agent",
       parent_issue_id: "p-3",
       position: 12,
     };
@@ -1845,13 +1846,11 @@ describe("SwimLaneView", () => {
       identifier: "PROJ-33",
       title: "Non-running Child",
       status: "in_progress",
+      assignee_type: "agent",
+      assignee_id: "working-agent",
       parent_issue_id: "p-3",
       position: 13,
     };
-
-    mockGetAgentTaskSnapshot.mockResolvedValueOnce([
-      { id: "task-1", status: "running", issue_id: "gc-running" },
-    ]);
 
     mockListChildrenByParents.mockResolvedValueOnce({
       issues: [runningGrandchild, nonRunningGrandchild],
@@ -1868,11 +1867,12 @@ describe("SwimLaneView", () => {
           priorityFilters: [],
           assigneeFilters: [],
           includeNoAssignee: false,
+          agentRunningFilter: true,
+          runningIssueIds: new Set(["gc-running"]),
           creatorFilters: [],
           projectFilters: [],
           includeNoProject: false,
           labelFilters: [],
-          agentRunningFilter: true,
         }}
         childProgressMap={childProgressMap}
         onMoveIssue={vi.fn()}
@@ -1887,6 +1887,48 @@ describe("SwimLaneView", () => {
       expect(screen.getByText("Running Child")).toBeInTheDocument();
       expect(screen.queryByText("Non-running Child")).toBeNull();
     });
+  });
+
+  it("hides batch-fetched children when the running issue set is empty", async () => {
+    mockViewState.swimlaneGrouping = "parent";
+    const parent = mockIssues[0]!;
+    const batchOnlyChild: Issue = {
+      ...mockIssues[1]!,
+      id: "working-empty-child",
+      identifier: "PROJ-34",
+      title: "Working Empty Child",
+      parent_issue_id: parent.id,
+    };
+    mockListChildrenByParents.mockResolvedValueOnce({
+      issues: [batchOnlyChild],
+    });
+
+    renderWithI18n(
+      <SwimLaneView
+        issues={[parent]}
+        activeFilters={{
+          priorityFilters: [],
+          assigneeFilters: [],
+          includeNoAssignee: false,
+          agentRunningFilter: true,
+          runningIssueIds: new Set(),
+          creatorFilters: [],
+          projectFilters: [],
+          includeNoProject: false,
+          labelFilters: [],
+        }}
+        childProgressMap={
+          new Map([[parent.id, { done: 0, total: 1 }]])
+        }
+        onMoveIssue={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockListChildrenByParents).toHaveBeenCalled();
+    });
+    await act(async () => {});
+    expect(screen.queryByText("Working Empty Child")).toBeNull();
   });
 
   it("hides batch-fetched children when 'Show sub-issues' is off", async () => {
@@ -1955,7 +1997,6 @@ describe("SwimLaneView", () => {
           projectFilters: [],
           includeNoProject: false,
           labelFilters: [],
-          agentRunningFilter: false,
           showSubIssues: false,
         }}
         childProgressMap={childProgressMap}

@@ -7,7 +7,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { setApiInstance } from "@multica/core/api";
 import type { ApiClient } from "@multica/core/api/client";
-import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import {
   getIssueSurfaceViewStore,
   pruneIssueSurfaceViewStates,
@@ -19,6 +18,7 @@ import type {
   IssueStatus,
   ListIssuesParams,
   ListIssuesResponse,
+  WorkspaceWorkingAgent,
 } from "@multica/core/types";
 import { useIssueSurfaceController } from "./use-issue-surface-controller";
 import { IssueTableExportIntegrityError } from "../components/table-view-model";
@@ -115,6 +115,20 @@ function makeRunningTask(id: string, agentId: string, issueId: string): AgentTas
   };
 }
 
+function makeWorkingAgent(
+  id: string,
+  issueIDs: string[] = [],
+  runningTaskCount = 1,
+): WorkspaceWorkingAgent {
+  return {
+    id,
+    name: id,
+    avatar_url: null,
+    running_task_count: runningTaskCount,
+    issue_ids: issueIDs,
+  };
+}
+
 describe("useIssueSurfaceController", () => {
   let qc: QueryClient;
   let listIssues: ReturnType<
@@ -123,6 +137,9 @@ describe("useIssueSurfaceController", () => {
   let getAgentTaskSnapshot: ReturnType<
     typeof vi.fn<() => Promise<AgentTask[]>>
   >;
+  let getWorkspaceWorkingAgents: ReturnType<
+    typeof vi.fn<() => Promise<WorkspaceWorkingAgent[]>>
+  >;
   let listIssueTableRows: ReturnType<typeof vi.fn>;
   let listIssueTableFacets: ReturnType<typeof vi.fn>;
 
@@ -130,6 +147,9 @@ describe("useIssueSurfaceController", () => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     listIssues = vi.fn(() => never<ListIssuesResponse>());
     getAgentTaskSnapshot = vi.fn(() => never<AgentTask[]>());
+    getWorkspaceWorkingAgents = vi.fn(() =>
+      Promise.resolve([] satisfies WorkspaceWorkingAgent[]),
+    );
     const tableMethods = statusTableMethodsFromLegacy(listIssues);
     listIssueTableRows = vi.fn(tableMethods.listIssueTableRows);
     listIssueTableFacets = vi.fn(tableMethods.listIssueTableFacets);
@@ -141,6 +161,7 @@ describe("useIssueSurfaceController", () => {
       listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
       getAgentTaskSnapshot,
+      getWorkspaceWorkingAgents,
       getChildIssueProgress: vi.fn(() => never()),
     } as unknown as ApiClient);
     pruneIssueSurfaceViewStates([]);
@@ -784,11 +805,29 @@ describe("useIssueSurfaceController", () => {
     );
   });
 
-  it("sends the agents-working filter as a backend predicate without sending running ids", async () => {
+  it("sends workspace running-task issue ids through the Table filter", async () => {
     const store = getIssueSurfaceViewStore("project:p1");
     store.getState().setViewMode("table");
     store.getState().toggleAgentRunningFilter();
     listIssues.mockResolvedValue({ issues: [], total: 0 });
+    const getWorkspaceWorkingAgents = vi.fn(() =>
+      Promise.resolve([
+        {
+          id: "agent-1",
+          name: "Agent 1",
+          avatar_url: null,
+          running_task_count: 1,
+          issue_ids: ["issue-running"],
+        },
+        {
+          id: "agent-2",
+          name: "Agent 2",
+          avatar_url: null,
+          running_task_count: 2,
+          issue_ids: ["issue-running-2"],
+        },
+      ] satisfies WorkspaceWorkingAgent[]),
+    );
     setApiInstance({
       listIssues,
       listGroupedIssues: vi.fn(() => never()),
@@ -798,6 +837,7 @@ describe("useIssueSurfaceController", () => {
           { id: "task-1", issue_id: "issue-running", status: "running" },
         ] as unknown as AgentTask[]),
       ),
+      getWorkspaceWorkingAgents,
       getChildIssueProgress: vi.fn(() => never()),
     } as unknown as ApiClient);
 
@@ -810,46 +850,122 @@ describe("useIssueSurfaceController", () => {
       { wrapper: makeWrapper(qc, "project:p1") },
     );
 
-    expect(result.current.tableQuerySpec.filters.working_only).toBe(true);
+    await waitFor(() =>
+      expect(result.current.tableQuerySpec.filters.working_issue_ids).toEqual([
+        "issue-running",
+        "issue-running-2",
+      ]),
+    );
+    expect(result.current.tableQuerySpec.filters.assignees).toBeUndefined();
+    expect(result.current.tableQuerySpec.filters.working_only).toBeUndefined();
+    expect(getWorkspaceWorkingAgents).toHaveBeenCalledWith("issue", undefined);
     expect(listIssues).not.toHaveBeenCalled();
   });
 
-  it("keeps the table working-chip scope unknown without materializing a second issue window", async () => {
-    const store = getIssueSurfaceViewStore("project:p1");
+  it("uses the active My Issues relation for the Table working-agent filter", async () => {
+    const store = getIssueSurfaceViewStore("my:user-1:assigned");
     store.getState().setViewMode("table");
-    const running = makeIssue({ id: "issue-running", status: "in_progress" });
-    // A running issue may live in an unopened cursor branch. The header must
-    // stay unknown instead of deriving a false zero from visible rows.
-    listIssues.mockImplementation((params?: ListIssuesParams) =>
-      Promise.resolve(
-        params?.ids
-          ? { issues: [running], total: 1 }
-          : { issues: [], total: 0 },
-      ),
+    store.getState().toggleAgentRunningFilter();
+    const getWorkspaceWorkingAgents = vi.fn(() =>
+      Promise.resolve([] satisfies WorkspaceWorkingAgent[]),
     );
     setApiInstance({
       listIssues,
       listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
-      getAgentTaskSnapshot: vi.fn(() =>
-        Promise.resolve([
-          { id: "task-1", issue_id: "issue-running", status: "running" },
-        ] as unknown as AgentTask[]),
-      ),
+      getAgentTaskSnapshot: vi.fn(() => Promise.resolve([])),
+      getWorkspaceWorkingAgents,
       getChildIssueProgress: vi.fn(() => never()),
     } as unknown as ApiClient);
 
     const { result } = renderHook(
       () =>
         useIssueSurfaceController({
-          scope: { type: "project", projectId: "p1" },
+          scope: { type: "my", relation: "assigned", userId: "user-1" },
           modes: ["table"],
+        }),
+      { wrapper: makeWrapper(qc, "my:user-1:assigned") },
+    );
+
+    await waitFor(() =>
+      expect(getWorkspaceWorkingAgents).toHaveBeenCalledWith(
+        "issue",
+        "assigned",
+      ),
+    );
+    expect(result.current.tableQuerySpec.filters.working_issue_ids).toEqual([]);
+  });
+
+  it.each(["board", "list", "swimlane"] as const)(
+    "uses running tasks for the %s server query without reading the task snapshot",
+    async (viewMode) => {
+      const store = getIssueSurfaceViewStore("project:p1");
+      store.getState().setViewMode(viewMode);
+      store.getState().toggleAgentRunningFilter();
+      getWorkspaceWorkingAgents.mockResolvedValue([
+        makeWorkingAgent("agent-from-working-api", ["issue-from-working-api"]),
+      ]);
+      // Deliberately contradictory legacy data. It must neither be fetched nor
+      // influence membership after the quick filter moved to working-agents.
+      getAgentTaskSnapshot.mockResolvedValue([
+        makeRunningTask("legacy-task", "legacy-agent", "legacy-issue"),
+      ]);
+
+      const { result } = renderHook(
+        () =>
+          useIssueSurfaceController({
+            scope: { type: "project", projectId: "p1" },
+            modes: ["board", "list", "swimlane"],
+          }),
+        { wrapper: makeWrapper(qc, "project:p1") },
+      );
+
+      await waitFor(() =>
+        expect(
+          result.current.tableQuerySpec.filters.working_issue_ids,
+        ).toEqual(["issue-from-working-api"]),
+      );
+      expect(result.current.tableQuerySpec.filters.assignees).toBeUndefined();
+      expect(result.current.tableQuerySpec.filters.working_only).toBeUndefined();
+      expect(getWorkspaceWorkingAgents).toHaveBeenCalledWith("issue", undefined);
+      expect(getAgentTaskSnapshot).not.toHaveBeenCalled();
+    },
+  );
+
+  it("combines regular assignees with the independent running-task predicate", async () => {
+    const store = getIssueSurfaceViewStore("project:p1");
+    store.getState().setViewMode("list");
+    store.getState().toggleAssigneeFilter({ type: "agent", id: "agent-1" });
+    store.getState().toggleAssigneeFilter({ type: "agent", id: "agent-2" });
+    store.getState().toggleAssigneeFilter({ type: "member", id: "member-1" });
+    store.getState().toggleNoAssignee();
+    store.getState().toggleAgentRunningFilter();
+    getWorkspaceWorkingAgents.mockResolvedValue([
+      makeWorkingAgent("agent-2", ["member-assigned-running-issue"]),
+      makeWorkingAgent("agent-3", ["unassigned-running-issue"]),
+    ]);
+
+    const { result } = renderHook(
+      () =>
+        useIssueSurfaceController({
+          scope: { type: "project", projectId: "p1" },
+          modes: ["list"],
         }),
       { wrapper: makeWrapper(qc, "project:p1") },
     );
 
-    await waitFor(() => expect(result.current.workingScopeIssues).toBeUndefined());
-    expect(listIssues).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(result.current.tableQuerySpec.filters.assignees).toEqual([
+        { type: "agent", id: "agent-1" },
+        { type: "agent", id: "agent-2" },
+        { type: "member", id: "member-1" },
+      ]);
+      expect(result.current.tableQuerySpec.filters.working_issue_ids).toEqual([
+        "member-assigned-running-issue",
+        "unassigned-running-issue",
+      ]);
+    });
+    expect(result.current.tableQuerySpec.filters.include_no_assignee).toBe(true);
   });
 
   it("does not subscribe Table to the legacy offset window", async () => {
@@ -884,169 +1000,6 @@ describe("useIssueSurfaceController", () => {
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isEmpty).toBe(false);
     expect(listIssues).not.toHaveBeenCalled();
-  });
-
-  it("does not materialize a multi-page working window for Table chrome", async () => {
-    const store = getIssueSurfaceViewStore("project:p1");
-    store.getState().setViewMode("table");
-    // 101 running issues spread over two pages: presenting page 1 alone as
-    // the authoritative scope makes the chip under-count until the filter is
-    // toggled (round-4 review P2#3) — the bounded loop must fetch page 2 by
-    // itself, and only a COMPLETE window is treated as authoritative.
-    const runningIssues = Array.from({ length: 101 }, (_, index) =>
-      makeIssue({ id: `run-${index}`, status: "in_progress" }),
-    );
-    listIssues.mockImplementation((params?: ListIssuesParams) => {
-      if (params?.ids) {
-        const offset = params.offset ?? 0;
-        return Promise.resolve({
-          issues: runningIssues.slice(offset, offset + 100),
-          total: runningIssues.length,
-        });
-      }
-      return Promise.resolve({ issues: [], total: 0 });
-    });
-    setApiInstance({
-      listIssues,
-      listGroupedIssues: vi.fn(() => never()),
-      listProjects: vi.fn(() => never()),
-      getAgentTaskSnapshot: vi.fn(() =>
-        Promise.resolve(
-          runningIssues.map((issue, index) => ({
-            id: `task-${index}`,
-            issue_id: issue.id,
-            status: "running",
-          })) as unknown as AgentTask[],
-        ),
-      ),
-      getChildIssueProgress: vi.fn(() => never()),
-    } as unknown as ApiClient);
-
-    const { result } = renderHook(
-      () =>
-        useIssueSurfaceController({
-          scope: { type: "project", projectId: "p1" },
-          modes: ["table"],
-        }),
-      { wrapper: makeWrapper(qc, "project:p1") },
-    );
-
-    await waitFor(() => expect(result.current.workingScopeIssues).toBeUndefined());
-    expect(listIssues).not.toHaveBeenCalled();
-  });
-
-  it("never starts a legacy working-window request, regardless of result size", async () => {
-    const store = getIssueSurfaceViewStore("project:p1");
-    store.getState().setViewMode("table");
-    // The working window shares the MAIN table cache key while the filter is
-    // on, so an uncapped chip-driven loop would re-open the very ceiling the
-    // structure loop enforces (round-5 review P1). An over-ceiling window
-    // must stop after page 1 — and the chip must see UNKNOWN, not a number
-    // built from one page.
-    const runningIssues = Array.from({ length: 100 }, (_, index) =>
-      makeIssue({ id: `run-${index}`, status: "in_progress" }),
-    );
-    const idsCalls: Array<number | undefined> = [];
-    listIssues.mockImplementation((params?: ListIssuesParams) => {
-      if (params?.ids) {
-        idsCalls.push(params.offset);
-        return Promise.resolve({ issues: runningIssues, total: 5_000 });
-      }
-      return Promise.resolve({ issues: [], total: 0 });
-    });
-    setApiInstance({
-      listIssues,
-      listGroupedIssues: vi.fn(() => never()),
-      listProjects: vi.fn(() => never()),
-      getAgentTaskSnapshot: vi.fn(() =>
-        Promise.resolve(
-          runningIssues.map((issue, index) => ({
-            id: `task-${index}`,
-            issue_id: issue.id,
-            status: "running",
-          })) as unknown as AgentTask[],
-        ),
-      ),
-      getChildIssueProgress: vi.fn(() => never()),
-    } as unknown as ApiClient);
-
-    const { result } = renderHook(
-      () =>
-        useIssueSurfaceController({
-          scope: { type: "project", projectId: "p1" },
-          modes: ["table"],
-        }),
-      { wrapper: makeWrapper(qc, "project:p1") },
-    );
-
-    // Give any accidental auto-loop a chance to fire before asserting.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
-    expect(idsCalls).toEqual([]);
-    await waitFor(() =>
-      expect(result.current.workingScopeIssues).toBeUndefined(),
-    );
-  });
-
-  it("keeps the Table activity scope unknown across task-snapshot rekeys", async () => {
-    const store = getIssueSurfaceViewStore("project:p1");
-    store.getState().setViewMode("table");
-    // Running set A resolves to a complete window; then the set changes to B
-    // and B's request stays pending. keepPreviousData leaves A's rows as
-    // PLACEHOLDER under the new key — publishing them (paired with the new
-    // snapshot) would be a precise-looking number for a scope nobody fetched
-    // (round-6 review P2#1). Until B resolves, the scope must be unknown.
-    const issueA = makeIssue({ id: "run-A", status: "in_progress" });
-    let snapshotIssueId = "run-A";
-    listIssues.mockImplementation((params?: ListIssuesParams) => {
-      if (params?.ids?.includes("run-A")) {
-        return Promise.resolve({ issues: [issueA], total: 1 });
-      }
-      if (params?.ids) return never<ListIssuesResponse>();
-      return Promise.resolve({ issues: [], total: 0 });
-    });
-    setApiInstance({
-      listIssues,
-      listGroupedIssues: vi.fn(() => never()),
-      listProjects: vi.fn(() => never()),
-      getAgentTaskSnapshot: vi.fn(() =>
-        Promise.resolve([
-          {
-            id: "task-1",
-            issue_id: snapshotIssueId,
-            status: "running",
-          },
-        ] as unknown as AgentTask[]),
-      ),
-      getChildIssueProgress: vi.fn(() => never()),
-    } as unknown as ApiClient);
-
-    const { result } = renderHook(
-      () =>
-        useIssueSurfaceController({
-          scope: { type: "project", projectId: "p1" },
-          modes: ["table"],
-        }),
-      { wrapper: makeWrapper(qc, "project:p1") },
-    );
-
-    await waitFor(() =>
-      expect(result.current.workingScopeIssues).toBeUndefined(),
-    );
-    expect(listIssues).not.toHaveBeenCalled();
-
-    // The running set moves to B; B's ids window never resolves in this test.
-    snapshotIssueId = "run-B";
-    await act(async () => {
-      await qc.invalidateQueries({
-        queryKey: agentTaskSnapshotOptions("ws-1").queryKey,
-      });
-    });
-
-    await waitFor(() => {
-      expect(result.current.workingScopeIssues).toBeUndefined();
-    });
   });
 
   it("leaves Table empty/error ownership to the server-backed renderer", async () => {
@@ -1232,12 +1185,10 @@ describe("useIssueSurfaceController", () => {
 
   // --- working-chip scope (MUL-4884) ------------------------------------
   // The header chip promises "N issues in progress" where N is the number of
-  // rows clicking it leaves. That only holds if the count comes out of the
-  // same filter pipeline the rows do. It used to be re-derived from the task
-  // snapshot against the PRE-filter issue set, so any active filter made the
-  // chip disagree with the list it was filtering.
+  // rows clicking it leaves. The working-agents endpoint identifies both the
+  // running agents and the issues referenced by those agents' running tasks.
 
-  it("sends the working filter to the server without reconstructing a local scope", async () => {
+  it("sends working issue ids to the server without reconstructing a local scope", async () => {
     mockListByStatus({
       todo: [
         makeIssue({ id: "todo-1", status: "todo" }),
@@ -1245,10 +1196,9 @@ describe("useIssueSurfaceController", () => {
       ],
       in_progress: [makeIssue({ id: "prog-1", status: "in_progress" })],
     });
-    // Running work on todo-1 and prog-1; todo-2 is idle.
-    getAgentTaskSnapshot.mockResolvedValue([
-      makeRunningTask("t-1", "agent-1", "todo-1"),
-      makeRunningTask("t-2", "agent-2", "prog-1"),
+    getWorkspaceWorkingAgents.mockResolvedValue([
+      makeWorkingAgent("agent-1", ["todo-1"]),
+      makeWorkingAgent("agent-2", ["prog-1"]),
     ]);
 
     const store = getIssueSurfaceViewStore("project:p1");
@@ -1264,7 +1214,13 @@ describe("useIssueSurfaceController", () => {
     );
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
-    expect(result.current.tableQuerySpec.filters.working_only).toBe(true);
+    expect(result.current.tableQuerySpec.filters.working_issue_ids).toEqual([
+      "todo-1",
+      "prog-1",
+    ]);
+    expect(result.current.tableQuerySpec.filters.assignees).toBeUndefined();
+    expect(result.current.tableQuerySpec.filters.working_only).toBeUndefined();
+    expect(getAgentTaskSnapshot).not.toHaveBeenCalled();
     // Membership is cursor-paged and server-owned. A partial page cannot
     // produce the exact activity-chip scope, so it stays explicitly unknown.
     expect(result.current.workingScopeIssues).toBeUndefined();
@@ -1277,8 +1233,8 @@ describe("useIssueSurfaceController", () => {
         makeIssue({ id: "todo-2", status: "todo" }),
       ],
     });
-    getAgentTaskSnapshot.mockResolvedValue([
-      makeRunningTask("t-1", "agent-1", "todo-1"),
+    getWorkspaceWorkingAgents.mockResolvedValue([
+      makeWorkingAgent("agent-1", ["todo-1"]),
     ]);
 
     const { result } = renderHook(
@@ -1303,10 +1259,9 @@ describe("useIssueSurfaceController", () => {
       todo: [makeIssue({ id: "todo-1", status: "todo" })],
       in_progress: [makeIssue({ id: "prog-1", status: "in_progress" })],
     });
-    // Both issues have running agents...
-    getAgentTaskSnapshot.mockResolvedValue([
-      makeRunningTask("t-1", "agent-1", "todo-1"),
-      makeRunningTask("t-2", "agent-2", "prog-1"),
+    getWorkspaceWorkingAgents.mockResolvedValue([
+      makeWorkingAgent("agent-1", ["todo-1"]),
+      makeWorkingAgent("agent-2", ["prog-1"]),
     ]);
 
     // ...but the user is only looking at `todo`.
@@ -1328,7 +1283,12 @@ describe("useIssueSurfaceController", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.tableQuerySpec.filters.statuses).toEqual(["todo"]);
-    expect(result.current.tableQuerySpec.filters.working_only).toBe(true);
+    expect(result.current.tableQuerySpec.filters.working_issue_ids).toEqual([
+      "todo-1",
+      "prog-1",
+    ]);
+    expect(result.current.tableQuerySpec.filters.assignees).toBeUndefined();
+    expect(result.current.tableQuerySpec.filters.working_only).toBeUndefined();
     expect(result.current.workingScopeIssues).toBeUndefined();
   });
 
@@ -1339,8 +1299,8 @@ describe("useIssueSurfaceController", () => {
         makeIssue({ id: "child-1", status: "todo", parent_issue_id: "parent-1" }),
       ],
     });
-    getAgentTaskSnapshot.mockResolvedValue([
-      makeRunningTask("t-1", "agent-1", "child-1"),
+    getWorkspaceWorkingAgents.mockResolvedValue([
+      makeWorkingAgent("agent-1", ["parent-1"]),
     ]);
 
     const store = getIssueSurfaceViewStore("project:p1");
@@ -1361,17 +1321,10 @@ describe("useIssueSurfaceController", () => {
     expect(result.current.workingScopeIssues).toBeUndefined();
   });
 
-  it("keeps issue-less chat/autopilot tasks out of the working scope", async () => {
+  it("requests issue working agents so chat/autopilot work stays out of scope", async () => {
     mockListByStatus({
       todo: [makeIssue({ id: "todo-1", status: "todo" })],
     });
-    // issue_id "" is how the API models a chat/autopilot task — it must not
-    // become a phantom row (it used to inflate the count by exactly 1).
-    getAgentTaskSnapshot.mockResolvedValue([
-      makeRunningTask("t-2", "agent-2", ""),
-      makeRunningTask("t-3", "agent-3", ""),
-    ]);
-
     const { result } = renderHook(
       () =>
         useIssueSurfaceController({
@@ -1383,6 +1336,8 @@ describe("useIssueSurfaceController", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.workingScopeIssues).toEqual([]);
+    expect(getWorkspaceWorkingAgents).toHaveBeenCalledWith("issue", undefined);
+    expect(getAgentTaskSnapshot).not.toHaveBeenCalled();
   });
 
   it("keeps swimlane chrome bounded while descriptors retain hidden-status counts", async () => {
@@ -1390,9 +1345,9 @@ describe("useIssueSurfaceController", () => {
       todo: [makeIssue({ id: "todo-1", status: "todo" })],
       in_progress: [makeIssue({ id: "prog-1", status: "in_progress" })],
     });
-    getAgentTaskSnapshot.mockResolvedValue([
-      makeRunningTask("t-1", "agent-1", "todo-1"),
-      makeRunningTask("t-2", "agent-2", "prog-1"),
+    getWorkspaceWorkingAgents.mockResolvedValue([
+      makeWorkingAgent("agent-1", ["todo-1"]),
+      makeWorkingAgent("agent-2", ["prog-1"]),
     ]);
 
     const store = getIssueSurfaceViewStore("project:p1");
@@ -1445,31 +1400,46 @@ describe("useIssueSurfaceController", () => {
     makeIssue({
       id: "gantt-open",
       status: "in_progress",
+      assignee_type: "agent",
+      assignee_id: "agent-1",
       start_date: "2026-01-01",
       due_date: "2026-01-05",
     }),
     makeIssue({
       id: "gantt-done",
       status: "done",
+      assignee_type: "agent",
+      assignee_id: "agent-2",
       start_date: "2026-01-01",
       due_date: "2026-01-05",
     }),
     // Scheduled server-side but momentarily dateless (e.g. a WS patch that
     // just cleared both dates) — the canvas cannot place it.
-    makeIssue({ id: "gantt-undated", status: "in_progress" }),
+    makeIssue({
+      id: "gantt-undated",
+      status: "in_progress",
+      assignee_type: "agent",
+      assignee_id: "agent-3",
+    }),
   ];
 
-  it("keeps rows the gantt canvas hides out of the working scope", async () => {
+  it("filters Gantt by running-task issue ids rather than issue assignees", async () => {
     mockGanttIssues(ganttFixture);
-    // Every one of them has a running agent.
+    getWorkspaceWorkingAgents.mockResolvedValue([
+      // The editing agent deliberately differs from the issue assignee.
+      makeWorkingAgent("agent-editor", ["gantt-open"]),
+    ]);
+    // Contradictory legacy membership must not affect the canvas.
     getAgentTaskSnapshot.mockResolvedValue([
-      makeRunningTask("t-1", "agent-1", "gantt-open"),
       makeRunningTask("t-2", "agent-2", "gantt-done"),
       makeRunningTask("t-3", "agent-3", "gantt-undated"),
     ]);
 
     const store = getIssueSurfaceViewStore("project:p1");
-    act(() => store.getState().setViewMode("gantt"));
+    act(() => {
+      store.getState().setViewMode("gantt");
+      store.getState().toggleAgentRunningFilter();
+    });
 
     const { result } = renderHook(
       () =>
@@ -1492,19 +1462,78 @@ describe("useIssueSurfaceController", () => {
     expect(result.current.workingScopeIssues?.map((i) => i.id)).toEqual(
       result.current.filteredGanttIssues.map((i) => i.id),
     );
+    expect(getAgentTaskSnapshot).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "the working-agent API returns no agents",
+      workingAgents: [] as WorkspaceWorkingAgent[],
+      selectedAssigneeId: null,
+    },
+    {
+      name: "the selected assignee excludes all running-task issues",
+      workingAgents: [makeWorkingAgent("agent-1", ["gantt-open"])],
+      selectedAssigneeId: "agent-2",
+    },
+  ])("keeps Gantt empty when $name", async ({
+    workingAgents,
+    selectedAssigneeId,
+  }) => {
+    mockGanttIssues(ganttFixture);
+    getWorkspaceWorkingAgents.mockResolvedValue(workingAgents);
+
+    const store = getIssueSurfaceViewStore("project:p1");
+    act(() => {
+      store.getState().setViewMode("gantt");
+      if (selectedAssigneeId) {
+        store.getState().toggleAssigneeFilter({
+          type: "agent",
+          id: selectedAssigneeId,
+        });
+      }
+      store.getState().toggleAgentRunningFilter();
+    });
+
+    const { result } = renderHook(
+      () =>
+        useIssueSurfaceController({
+          scope: { type: "project", projectId: "p1" },
+          modes: ["board", "list", "swimlane", "gantt"],
+        }),
+      { wrapper: makeWrapper(qc, "project:p1") },
+    );
+
+    await waitFor(() => expect(result.current.ganttIssues).toHaveLength(3));
+    await waitFor(() =>
+      expect(getWorkspaceWorkingAgents).toHaveBeenCalledWith(
+        "issue",
+        undefined,
+      ),
+    );
+
+    expect(result.current.tableQuerySpec.filters.working_issue_ids).toEqual(
+      workingAgents.flatMap((agent) => agent.issue_ids),
+    );
+    expect(result.current.tableQuerySpec.filters.assignees).toEqual(
+      selectedAssigneeId
+        ? [{ type: "agent", id: selectedAssigneeId }]
+        : undefined,
+    );
+    expect(result.current.filteredGanttIssues).toEqual([]);
+    expect(result.current.workingScopeIssues).toEqual([]);
   });
 
   it("widens the gantt working scope when show-completed is turned on", async () => {
     mockGanttIssues(ganttFixture);
-    getAgentTaskSnapshot.mockResolvedValue([
-      makeRunningTask("t-1", "agent-1", "gantt-open"),
-      makeRunningTask("t-2", "agent-2", "gantt-done"),
-      makeRunningTask("t-3", "agent-3", "gantt-undated"),
+    getWorkspaceWorkingAgents.mockResolvedValue([
+      makeWorkingAgent("agent-editor", ["gantt-open", "gantt-done"]),
     ]);
 
     const store = getIssueSurfaceViewStore("project:p1");
     act(() => {
       store.getState().setViewMode("gantt");
+      store.getState().toggleAgentRunningFilter();
       store.getState().toggleGanttShowCompleted();
     });
 
@@ -1530,5 +1559,6 @@ describe("useIssueSurfaceController", () => {
     expect(result.current.workingScopeIssues?.map((i) => i.id)).toEqual(
       result.current.filteredGanttIssues.map((i) => i.id),
     );
+    expect(getAgentTaskSnapshot).not.toHaveBeenCalled();
   });
 });

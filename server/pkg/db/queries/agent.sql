@@ -1232,6 +1232,120 @@ SELECT t.* FROM (
   ORDER BY atq.agent_id, atq.completed_at DESC NULLS LAST
 ) t;
 
+-- name: ListWorkspaceWorkingAgents :many
+-- Workspace-level source for consumers that show currently working agents.
+-- One row per visible, user-authored agent with at least one task that has
+-- actually started running. work_type is optional (empty = every source);
+-- source-specific reads use the same precedence as computeTaskKind:
+-- chat > autopilot > issue. "issue" intentionally groups direct and
+-- comment-triggered issue work. Quick-create work is present only in the
+-- unfiltered projection because it has no source FK yet. mine_relation is
+-- optional (empty = workspace); when set it narrows issue work to the
+-- authenticated member's My Issues relation.
+SELECT
+  a.id,
+  a.name,
+  a.avatar_url,
+  COUNT(*)::int AS running_task_count,
+  COALESCE(
+    ARRAY_AGG(DISTINCT atq.issue_id ORDER BY atq.issue_id)
+      FILTER (WHERE atq.issue_id IS NOT NULL),
+    ARRAY[]::uuid[]
+  )::uuid[] AS issue_ids
+FROM agent a
+JOIN agent_task_queue atq ON atq.agent_id = a.id
+WHERE a.workspace_id = $1
+  AND a.kind = 'user'
+  AND a.archived_at IS NULL
+  AND atq.status = 'running'
+  AND (
+    @work_type::text = ''
+    OR (@work_type::text = 'chat' AND atq.chat_session_id IS NOT NULL)
+    OR (
+      @work_type::text = 'autopilot'
+      AND atq.chat_session_id IS NULL
+      AND atq.autopilot_run_id IS NOT NULL
+    )
+    OR (
+      @work_type::text = 'issue'
+      AND atq.chat_session_id IS NULL
+      AND atq.autopilot_run_id IS NULL
+      AND atq.issue_id IS NOT NULL
+    )
+  )
+  AND (
+    @mine_relation::text = ''
+    OR EXISTS (
+      SELECT 1
+      FROM issue i
+      WHERE i.id = atq.issue_id
+        AND i.workspace_id = a.workspace_id
+        AND (
+          (
+            @mine_relation::text IN ('assigned', 'any')
+            AND i.assignee_type = 'member'
+            AND i.assignee_id = @member_id::uuid
+          )
+          OR (
+            @mine_relation::text IN ('created', 'any')
+            AND i.creator_type = 'member'
+            AND i.creator_id = @member_id::uuid
+          )
+          OR (
+            @mine_relation::text IN ('involved', 'any')
+            AND (
+              (
+                i.assignee_type = 'agent'
+                AND EXISTS (
+                  SELECT 1
+                  FROM agent owned_agent
+                  WHERE owned_agent.id = i.assignee_id
+                    AND owned_agent.workspace_id = a.workspace_id
+                    AND owned_agent.owner_id = @member_id::uuid
+                )
+              )
+              OR (
+                i.assignee_type = 'squad'
+                AND EXISTS (
+                  SELECT 1
+                  FROM squad s
+                  WHERE s.id = i.assignee_id
+                    AND s.workspace_id = a.workspace_id
+                    AND (
+                      EXISTS (
+                        SELECT 1
+                        FROM squad_member sm
+                        WHERE sm.squad_id = s.id
+                          AND sm.member_type = 'member'
+                          AND sm.member_id = @member_id::uuid
+                      )
+                      OR EXISTS (
+                        SELECT 1
+                        FROM agent leader
+                        WHERE leader.id = s.leader_id
+                          AND leader.workspace_id = a.workspace_id
+                          AND leader.owner_id = @member_id::uuid
+                      )
+                      OR EXISTS (
+                        SELECT 1
+                        FROM squad_member sm
+                        JOIN agent owned_member ON owned_member.id = sm.member_id
+                        WHERE sm.squad_id = s.id
+                          AND sm.member_type = 'agent'
+                          AND owned_member.workspace_id = a.workspace_id
+                          AND owned_member.owner_id = @member_id::uuid
+                      )
+                    )
+                )
+              )
+            )
+          )
+        )
+    )
+  )
+GROUP BY a.id, a.name, a.avatar_url, a.created_at
+ORDER BY a.created_at ASC;
+
 -- name: ListTasksByIssue :many
 SELECT * FROM agent_task_queue
 WHERE issue_id = $1

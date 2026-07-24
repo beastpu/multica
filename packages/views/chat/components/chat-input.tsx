@@ -17,7 +17,8 @@ import { createLogger } from "@multica/core/logger";
 import { formatShortcut, useShortcut } from "@multica/core/shortcuts";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import type { MentionItem } from "../../editor/extensions/mention-suggestion";
-import type { Attachment } from "@multica/core/types";
+import type { Attachment, Project } from "@multica/core/types";
+import { ProjectPicker } from "../../projects/components/project-picker";
 import { useT } from "../../i18n";
 
 const logger = createLogger("chat.ui");
@@ -95,6 +96,11 @@ interface ChatInputProps {
   leftAdornment?: ReactNode;
   /** Chat @ suggestions: current/recent issue/project entries. */
   contextItems?: MentionItem[];
+  /** Optional project context for the draft or current chat session. */
+  projects?: Project[];
+  projectId?: string | null;
+  onProjectChange?: (projectId: string | null) => void;
+  isProjectUpdating?: boolean;
   /** Monotonic nonce bumped by the owner whenever the compose box should grab
    *  keyboard focus — currently on "new chat" so the user can type right away.
    *  0 (the initial value) is inert, so a plain deep-link open never steals
@@ -122,6 +128,10 @@ export function ChatInput({
   agentName,
   leftAdornment,
   contextItems,
+  projects = [],
+  projectId,
+  onProjectChange,
+  isProjectUpdating,
   focusRequest,
   draftKeyOverride,
   editorKeyOverride,
@@ -488,6 +498,16 @@ export function ChatInput({
         : t(($) => $.input.placeholder_default);
 
   const uploadEnabled = !!onUploadFile && !disabled && !noAgent;
+  // Lock only while the send request itself is creating/resolving the target
+  // session. Once accepted, its project can still be detached while agent work
+  // continues: changing session metadata does not cancel or move that task.
+  const projectSelectionEnabled =
+    !!onProjectChange &&
+    !disabled &&
+    !noAgent &&
+    !isSubmitting &&
+    !isProjectUpdating;
+  const selectedProject = projects.find((project) => project.id === projectId);
 
   return (
     <div
@@ -527,6 +547,31 @@ export function ChatInput({
         )}
         aria-disabled={noAgent || undefined}
       >
+        {selectedProject && (
+          <div className="px-3 pt-2">
+            <div
+              className={cn(
+                "inline-flex max-w-full",
+                !projectSelectionEnabled && "pointer-events-none opacity-60",
+              )}
+            >
+              <ProjectPicker
+                projectId={selectedProject.id}
+                onUpdate={(updates) => onProjectChange?.(updates.project_id ?? null)}
+                disabled={!projectSelectionEnabled}
+                triggerRender={
+                  <button
+                    type="button"
+                    disabled={!projectSelectionEnabled}
+                    aria-label={t(($) => $.input.change_project_context)}
+                    title={t(($) => $.input.change_project_context)}
+                    className="flex h-6 max-w-56 items-center gap-1.5 rounded-full border border-surface-border bg-surface-raised px-2 pr-7 text-xs font-medium text-foreground transition-colors hover:bg-accent/60"
+                  />
+                }
+              />
+            </div>
+          </div>
+        )}
         <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2">
           <ContentEditor
             // See the editorKey / draftKey split note above — editor identity
@@ -559,11 +604,16 @@ export function ChatInput({
             showBubbleMenu
           />
         </div>
-        {(uploadEnabled || leftAdornment) && (
+        {(uploadEnabled || projectSelectionEnabled || leftAdornment) && (
           <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1">
-            {uploadEnabled && (
+            {(uploadEnabled || projectSelectionEnabled) && (
               <ChatAddMenu
-                onSelectFile={(file) => editorRef.current?.uploadFile(file)}
+                onSelectFile={uploadEnabled
+                  ? (file) => editorRef.current?.uploadFile(file)
+                  : undefined}
+                projects={projects}
+                projectId={projectId}
+                onSelectProject={projectSelectionEnabled ? onProjectChange : undefined}
               />
             )}
             {leftAdornment}
