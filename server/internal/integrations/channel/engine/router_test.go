@@ -73,6 +73,7 @@ type fakeBinder struct {
 	ensureErr    error
 	appendResult AppendResult
 	appendErr    error
+	appendDelay  time.Duration
 	bindErr      error
 	lastEnsure   EnsureSessionParams
 	lastAppend   AppendParams
@@ -85,9 +86,14 @@ func (f *fakeBinder) EnsureSession(_ context.Context, p EnsureSessionParams) (pg
 }
 func (f *fakeBinder) AppendMessage(_ context.Context, p AppendParams) (AppendResult, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
+	delay := f.appendDelay
 	f.lastAppend = p
-	return f.appendResult, f.appendErr
+	res, err := f.appendResult, f.appendErr
+	f.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	return res, err
 }
 func (f *fakeBinder) BindMedia(_ context.Context, p BindMediaParams) error {
 	f.mu.Lock()
@@ -1031,5 +1037,51 @@ func TestRouter_MediaQueueWaitExpiryFinalizesWithoutResolving(t *testing.T) {
 	close(release)
 	if !waitFor(2*time.Second, func() bool { return h.tasks.promotionCalls() == 2 }) {
 		t.Fatalf("slot holder promotion missing, promotions=%d", h.tasks.promotionCalls())
+	}
+}
+
+// The local resolve budget must start BEFORE the append transaction: the DB
+// anchors the durable fallback at insert-time now(), so a budget started
+// post-commit would outlive the fallback by the append latency and let the
+// task fire while the resolver still runs. With a slow append, the resolver's
+// context deadline must still be measured from the pre-append instant.
+func TestRouter_MediaDeadlineStartsBeforeAppend(t *testing.T) {
+	h := newHarness(t)
+	const timeout = 300 * time.Millisecond
+	const appendLatency = 150 * time.Millisecond
+	h.router = NewRouter(h.issues, h.tasks, h.reader, RouterConfig{MediaTimeout: timeout, Logger: discardLogger()})
+	h.binder.appendDelay = appendLatency
+	deadlines := make(chan time.Time, 1)
+	h.media.resolve = func(ctx context.Context, msg channel.InboundMessage) channel.InboundMessage {
+		if d, ok := ctx.Deadline(); ok {
+			deadlines <- d
+		}
+		return msg
+	}
+	h.router.Register(channel.TypeFeishu, ResolverSet{
+		Installation: h.inst,
+		Identity:     h.ident,
+		Dedup:        h.dedup,
+		Session:      h.binder,
+		Audit:        h.audit,
+		Replier:      h.replier,
+		Typing:       h.typing,
+		Media:        h.media,
+		OriginType:   "lark_chat",
+	})
+
+	start := time.Now()
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	select {
+	case d := <-deadlines:
+		// Started pre-append: deadline ≈ start+timeout. Started post-append it
+		// would be ≥ start+appendLatency+timeout; the midpoint separates them.
+		if limit := start.Add(timeout + appendLatency/2); d.After(limit) {
+			t.Fatalf("resolve deadline %v exceeds %v — local budget started after the append", d.Sub(start), timeout+appendLatency/2)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("resolver did not run")
 	}
 }

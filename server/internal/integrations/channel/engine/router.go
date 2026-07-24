@@ -326,6 +326,13 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	// clock every now()-based reader uses.
 	mediaPendingSeconds := 0.0
 	resolveMedia := set.Media != nil && set.Media.HasMedia(msg)
+	// The local monotonic budget starts BEFORE the append: the DB anchors its
+	// fallback at now() during the insert, so a post-commit local start would
+	// end Δ(append latency) AFTER the durable deadline — a window where the
+	// task is already claimable while the resolver still runs, handing the
+	// agent a placeholder that binds moments later. Starting here keeps the
+	// ordering local-gives-up ≤ durable-fallback-fires.
+	localMediaDeadline := time.Now().Add(r.mediaTimeout)
 	if resolveMedia {
 		mediaPendingSeconds = r.mediaTimeout.Seconds()
 	}
@@ -383,9 +390,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	//    in a window wins (MUL-2645).
 	r.scheduleRun(set, inst, msg, sessionID, identity.UserID)
 	if resolveMedia {
-		// The local resolve budget is monotonic (time.Now retains the
-		// monotonic reading), independent of the persisted DB-clock fallback.
-		r.enqueueMedia(set, inst, identity, appendRes.MessageID, msg, sessionID, time.Now().Add(r.mediaTimeout))
+		r.enqueueMedia(set, inst, identity, appendRes.MessageID, msg, sessionID, localMediaDeadline)
 	}
 	return res, postAppendFinalize, nil
 }
