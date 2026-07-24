@@ -22,6 +22,13 @@ const (
 	// ResourceLabels controls the agent- and skill-scoped label namespaces.
 	// Issue labels remain available while this release flag is off.
 	ResourceLabels = "settings_resource_labels"
+	// WorkflowsActivityEngine gates every native workflow write and the
+	// corresponding frontend surface. Reads remain available for recovery.
+	WorkflowsActivityEngine = "workflows_activity_engine"
+	// OpsPauseWorkflowProgression is an operational kill switch. It pauses
+	// materialization and reconciliation without hiding or deleting runtime
+	// data. The diagnostic sweeper continues to report anomalies.
+	OpsPauseWorkflowProgression = "ops_pause_workflow_progression"
 	// agentSkillTogglesCompat is no longer a release flag. Keep publishing the
 	// key as enabled so installed v0.4.0 desktop clients, which still gate the
 	// switch on this config decision, receive the permanently enabled behavior.
@@ -32,6 +39,7 @@ var frontendPublicFlags = []string{
 	ComposioMCPApps,
 	AgentBuilder,
 	ResourceLabels,
+	WorkflowsActivityEngine,
 }
 
 func ComposioMCPAppsEnabled(ctx context.Context, flags *featureflag.Service) bool {
@@ -50,6 +58,38 @@ func AgentBuilderEnabled(ctx context.Context, flags *featureflag.Service) bool {
 
 func ResourceLabelsEnabled(ctx context.Context, flags *featureflag.Service) bool {
 	return flags.IsEnabled(ctx, ResourceLabels, false)
+}
+
+func WorkflowsActivityEngineEnabled(ctx context.Context, flags *featureflag.Service) bool {
+	return flags.IsEnabled(ctx, WorkflowsActivityEngine, false)
+}
+
+func WorkflowsActivityEngineEnabledForWorkspace(
+	ctx context.Context,
+	flags *featureflag.Service,
+	workspaceID string,
+) bool {
+	eval := featureflag.EvalContextFrom(ctx)
+	eval.WorkspaceID = workspaceID
+	return flags.IsEnabled(
+		featureflag.WithEvalContext(ctx, eval),
+		WorkflowsActivityEngine,
+		false,
+	)
+}
+
+func WorkflowProgressionPaused(
+	ctx context.Context,
+	flags *featureflag.Service,
+	workspaceID string,
+) bool {
+	eval := featureflag.EvalContextFrom(ctx)
+	eval.WorkspaceID = workspaceID
+	return flags.IsEnabled(
+		featureflag.WithEvalContext(ctx, eval),
+		OpsPauseWorkflowProgression,
+		false,
+	)
 }
 
 func EvaluateFrontendPublicFlags(ctx context.Context, flags *featureflag.Service) map[string]bool {

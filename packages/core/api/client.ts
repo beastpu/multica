@@ -176,6 +176,30 @@ import type {
   CreateCloudRuntimeNodeRequest,
   ListCloudRuntimeNodesParams,
 } from "../runtimes/cloud-runtime";
+import type {
+  ListWorkflowInstancesResponse,
+  ListWorkflowTemplatesResponse,
+  StartWorkflowInput,
+  CreateWorkflowInput,
+  WorkflowAcceptance,
+  WorkflowAcceptancesResponse,
+  WorkflowDefinition,
+  WorkflowDiagnostics,
+  WorkflowEventsResponse,
+  WorkflowInstance,
+  WorkflowInstanceDetail,
+  WorkflowIssuesResponse,
+  WorkflowIssueTemplate,
+  WorkflowConfirmation,
+  WorkflowExecutorResolution,
+  WorkflowNodeDetail,
+  WorkflowNodeTask,
+  WorkflowSubmission,
+  WorkflowVerdict,
+  WorkflowTemplate,
+  WorkflowTemplateDetail,
+  WorkflowTemplateVersion,
+} from "../workflows/types";
 import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
@@ -312,6 +336,36 @@ import {
   EMPTY_LIST_LABELS_RESPONSE,
   EMPTY_RESOURCE_LABELS_RESPONSE,
 } from "./schemas";
+import {
+  EMPTY_LIST_WORKFLOW_INSTANCES,
+  EMPTY_LIST_WORKFLOW_TEMPLATES,
+  EMPTY_WORKFLOW_INSTANCE_DETAIL,
+  EMPTY_WORKFLOW_NODE_DETAIL,
+  EMPTY_WORKFLOW_TEMPLATE_DETAIL,
+  EMPTY_WORKFLOW_TEMPLATE_VERSION,
+  EMPTY_WORKFLOW_ACCEPTANCES,
+  ListWorkflowInstancesResponseSchema,
+  ListWorkflowTemplatesResponseSchema,
+  WorkflowAcceptanceMutationResponseSchema,
+  WorkflowAcceptancesResponseSchema,
+  WorkflowConfirmationMutationResponseSchema,
+  WorkflowExecutorResolutionMutationResponseSchema,
+  WorkflowDiagnosticsSchema,
+  WorkflowEventsResponseSchema,
+  WorkflowInstanceDetailSchema,
+  WorkflowIssuesResponseSchema,
+  WorkflowNodeDetailSchema,
+  WorkflowSubmissionMutationResponseSchema,
+  WorkflowVerdictMutationResponseSchema,
+  WorkflowTaskMutationResponseSchema,
+  WorkflowTasksMutationResponseSchema,
+  WorkflowTemplateCreateResponseSchema,
+  WorkflowTemplateDetailSchema,
+  WorkflowTemplatePublishResponseSchema,
+  WorkflowTemplateSchema,
+  WorkflowTemplateVersionSchema,
+  WorkflowDefinitionValidationResponseSchema,
+} from "./workflow-schemas";
 
 /** Identifies the calling client to the server.
  *  Sent on every HTTP request as X-Client-Platform / X-Client-Version /
@@ -695,6 +749,10 @@ export class ApiClient {
     if (params?.project_ids?.length) search.set("project_ids", params.project_ids.join(","));
     if (params?.include_no_project) search.set("include_no_project", "true");
     if (params?.label_ids?.length) search.set("label_ids", params.label_ids.join(","));
+    if (params?.workflow_template_id) search.set("workflow_template_id", params.workflow_template_id);
+    if (params?.workflow_instance_id) search.set("workflow_instance_id", params.workflow_instance_id);
+    if (params?.workflow_activity) search.set("workflow_activity", params.workflow_activity);
+    if (params?.workflow_issue_only) search.set("workflow_issue_only", "true");
     if (params?.date_field) search.set("date_field", params.date_field);
     if (params?.date_start) search.set("date_start", params.date_start);
     if (params?.date_end) search.set("date_end", params.date_end);
@@ -736,6 +794,10 @@ export class ApiClient {
     if (params.project_ids?.length) search.set("project_ids", params.project_ids.join(","));
     if (params.include_no_project) search.set("include_no_project", "true");
     if (params.label_ids?.length) search.set("label_ids", params.label_ids.join(","));
+    if (params.workflow_template_id) search.set("workflow_template_id", params.workflow_template_id);
+    if (params.workflow_instance_id) search.set("workflow_instance_id", params.workflow_instance_id);
+    if (params.workflow_activity) search.set("workflow_activity", params.workflow_activity);
+    if (params.workflow_issue_only) search.set("workflow_issue_only", "true");
     if (params.group_assignee_type) search.set("group_assignee_type", params.group_assignee_type);
     if (params.group_assignee_id) search.set("group_assignee_id", params.group_assignee_id);
     if (params.date_field) search.set("date_field", params.date_field);
@@ -3117,6 +3179,585 @@ export class ApiClient {
     return this.fetch(`/api/lark/binding/redeem`, {
       method: "POST",
       body: JSON.stringify({ token }),
+    });
+  }
+
+  // Native activity-container workflows.
+  async listWorkflowInstances(params?: {
+    status?: string;
+    related_to_me?: boolean;
+    project_id?: string;
+    template_id?: string;
+    current_node_key?: string;
+    owner_type?: "member" | "agent" | "squad";
+    owner_id?: string;
+    intervention_type?: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<ListWorkflowInstancesResponse> {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    if (params?.related_to_me) search.set("related_to_me", "true");
+    if (params?.project_id) search.set("project_id", params.project_id);
+    if (params?.template_id) search.set("template_id", params.template_id);
+    if (params?.current_node_key) search.set("current_node_key", params.current_node_key);
+    if (params?.owner_type) search.set("owner_type", params.owner_type);
+    if (params?.owner_id) search.set("owner_id", params.owner_id);
+    if (params?.intervention_type) search.set("intervention_type", params.intervention_type);
+    if (params?.cursor) search.set("cursor", params.cursor);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const suffix = search.size > 0 ? `?${search.toString()}` : "";
+    const raw = await this.fetch<unknown>(`/api/workflow-instances${suffix}`);
+    return parseWithFallback(raw, ListWorkflowInstancesResponseSchema, EMPTY_LIST_WORKFLOW_INSTANCES, {
+      endpoint: "GET /api/workflow-instances",
+    });
+  }
+
+  async getWorkflowInstance(id: string): Promise<WorkflowInstanceDetail> {
+    const raw = await this.fetch<unknown>(`/api/workflow-instances/${id}`);
+    return parseWithFallback(raw, WorkflowInstanceDetailSchema, EMPTY_WORKFLOW_INSTANCE_DETAIL, {
+      endpoint: "GET /api/workflow-instances/:id",
+    });
+  }
+
+  async updateWorkflowInstanceRoles(
+    id: string,
+    input: {
+      role_assignments: StartWorkflowInput["role_assignments"];
+      idempotency_key: string;
+    },
+  ): Promise<WorkflowInstanceDetail> {
+    const raw = await this.fetch<unknown>(`/api/workflow-instances/${id}/roles`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return parseWithFallback(
+      raw,
+      WorkflowInstanceDetailSchema,
+      EMPTY_WORKFLOW_INSTANCE_DETAIL,
+      { endpoint: "POST /api/workflow-instances/:id/roles" },
+    );
+  }
+
+  async createWorkflow(input: CreateWorkflowInput): Promise<WorkflowInstanceDetail> {
+    const raw = await this.fetch<unknown>("/api/workflow-instances", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return parseWithFallback(
+      raw,
+      WorkflowInstanceDetailSchema,
+      EMPTY_WORKFLOW_INSTANCE_DETAIL,
+      { endpoint: "POST /api/workflow-instances" },
+    );
+  }
+
+  async getIssueWorkflow(issueId: string): Promise<WorkflowInstanceDetail> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/workflow`);
+    return parseWithFallback(raw, WorkflowInstanceDetailSchema, EMPTY_WORKFLOW_INSTANCE_DETAIL, {
+      endpoint: "GET /api/issues/:id/workflow",
+    });
+  }
+
+  async startIssueWorkflow(issueId: string, input: StartWorkflowInput): Promise<WorkflowInstanceDetail> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/workflow`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return parseWithFallback(raw, WorkflowInstanceDetailSchema, EMPTY_WORKFLOW_INSTANCE_DETAIL, {
+      endpoint: "POST /api/issues/:id/workflow",
+    });
+  }
+
+  async getWorkflowNode(id: string): Promise<WorkflowNodeDetail> {
+    const raw = await this.fetch<unknown>(`/api/workflow-node-instances/${id}`);
+    return parseWithFallback(raw, WorkflowNodeDetailSchema, EMPTY_WORKFLOW_NODE_DETAIL, {
+      endpoint: "GET /api/workflow-node-instances/:id",
+    });
+  }
+
+  async createWorkflowNodeIssue(
+    nodeId: string,
+    input: {
+      title: string;
+      description?: string;
+      initial_status?: string;
+      priority?: string;
+      assignee_type?: string;
+      assignee_id?: string;
+      required?: boolean;
+      idempotency_key: string;
+    },
+  ): Promise<WorkflowNodeTask> {
+    const raw = await this.fetch<unknown>(`/api/workflow-node-instances/${nodeId}/issues`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    const parsed = parseWithFallback(
+      raw,
+      WorkflowTaskMutationResponseSchema,
+      {
+        task: {
+          id: "", workflow_node_instance_id: nodeId, task_key: "", source: "dynamic",
+          required: false, definition: { key: "", title: "", required: false },
+          materialization_status: "unknown", issue_id: null,
+          executor_resolution_id: null, attempt_count: 0, last_error: "",
+        },
+      },
+      { endpoint: "POST /api/workflow-node-instances/:id/issues" },
+    );
+    return parsed.task;
+  }
+
+  async listWorkflowInstanceIssues(id: string): Promise<WorkflowIssuesResponse> {
+    const raw = await this.fetch<unknown>(`/api/workflow-instances/${id}/issues`);
+    return parseWithFallback(raw, WorkflowIssuesResponseSchema, { issues: [], total: 0 }, {
+      endpoint: "GET /api/workflow-instances/:id/issues",
+    });
+  }
+
+  async listWorkflowInstanceEvents(id: string): Promise<WorkflowEventsResponse> {
+    const raw = await this.fetch<unknown>(`/api/workflow-instances/${id}/events`);
+    return parseWithFallback(
+      raw,
+      WorkflowEventsResponseSchema,
+      { events: [] },
+      { endpoint: "GET /api/workflow-instances/:id/events" },
+    );
+  }
+
+  async getWorkflowInstanceDiagnostics(id: string): Promise<WorkflowDiagnostics> {
+    const raw = await this.fetch<unknown>(`/api/workflow-instances/${id}/diagnostics`);
+    return parseWithFallback(
+      raw,
+      WorkflowDiagnosticsSchema,
+      {
+        instance: EMPTY_WORKFLOW_INSTANCE_DETAIL.instance,
+        instance_revision: 0,
+        last_reconciled_at: null,
+        nodes: [],
+        acceptances: [],
+        allowed_rework_targets: [],
+        recent_sweeper_events: [],
+        events: [],
+      },
+      { endpoint: "GET /api/workflow-instances/:id/diagnostics" },
+    );
+  }
+
+  async listWorkflowAcceptances(id: string): Promise<WorkflowAcceptancesResponse> {
+    const raw = await this.fetch<unknown>(`/api/workflow-instances/${id}/acceptances`);
+    return parseWithFallback(
+      raw,
+      WorkflowAcceptancesResponseSchema,
+      EMPTY_WORKFLOW_ACCEPTANCES,
+      { endpoint: "GET /api/workflow-instances/:id/acceptances" },
+    );
+  }
+
+  async reconcileWorkflowInstance(id: string, idempotencyKey: string): Promise<WorkflowInstanceDetail> {
+    const raw = await this.fetch<unknown>(`/api/workflow-instances/${id}/reconcile`, {
+      method: "POST",
+      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+    });
+    return parseWithFallback(raw, WorkflowInstanceDetailSchema, EMPTY_WORKFLOW_INSTANCE_DETAIL, {
+      endpoint: "POST /api/workflow-instances/:id/reconcile",
+    });
+  }
+
+  async pauseWorkflowInstance(id: string, idempotencyKey: string): Promise<WorkflowInstanceDetail> {
+    const raw = await this.fetch<unknown>(`/api/workflow-instances/${id}/pause`, {
+      method: "POST",
+      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+    });
+    return parseWithFallback(raw, WorkflowInstanceDetailSchema, EMPTY_WORKFLOW_INSTANCE_DETAIL, {
+      endpoint: "POST /api/workflow-instances/:id/pause",
+    });
+  }
+
+  async resumeWorkflowInstance(id: string, idempotencyKey: string): Promise<WorkflowInstanceDetail> {
+    const raw = await this.fetch<unknown>(`/api/workflow-instances/${id}/resume`, {
+      method: "POST",
+      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+    });
+    return parseWithFallback(raw, WorkflowInstanceDetailSchema, EMPTY_WORKFLOW_INSTANCE_DETAIL, {
+      endpoint: "POST /api/workflow-instances/:id/resume",
+    });
+  }
+
+  async cancelWorkflowInstance(
+    id: string,
+    reason: string,
+    idempotencyKey: string,
+  ): Promise<WorkflowInstanceDetail> {
+    const raw = await this.fetch<unknown>(`/api/workflow-instances/${id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ reason, idempotency_key: idempotencyKey }),
+    });
+    return parseWithFallback(raw, WorkflowInstanceDetailSchema, EMPTY_WORKFLOW_INSTANCE_DETAIL, {
+      endpoint: "POST /api/workflow-instances/:id/cancel",
+    });
+  }
+
+  async transitionWorkflowNode(
+    nodeId: string,
+    action: "complete" | "skip" | "rollback",
+    reason: string,
+    idempotencyKey: string,
+  ): Promise<WorkflowInstanceDetail> {
+    const raw = await this.fetch<unknown>(
+      `/api/workflow-node-instances/${nodeId}/${action}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason, idempotency_key: idempotencyKey }),
+      },
+    );
+    return parseWithFallback(raw, WorkflowInstanceDetailSchema, EMPTY_WORKFLOW_INSTANCE_DETAIL, {
+      endpoint: `POST /api/workflow-node-instances/:id/${action}`,
+    });
+  }
+
+  async resolveWorkflowNodeExecutor(
+    nodeId: string,
+    input: {
+      task_id: string;
+      actor_type: "member" | "agent" | "squad";
+      actor_id: string;
+      reason?: string;
+      idempotency_key: string;
+    },
+  ): Promise<WorkflowExecutorResolution> {
+    const raw = await this.fetch<unknown>(
+      `/api/workflow-node-instances/${nodeId}/resolve-executor`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+    const parsed = parseWithFallback(
+      raw,
+      WorkflowExecutorResolutionMutationResponseSchema,
+      {
+        resolution: {
+          id: "", workflow_node_instance_id: nodeId,
+          workflow_node_task_id: input.task_id, strategy: "manual",
+          status: "unknown", actor_type: null, actor_id: null, candidates: [],
+          reason: "", resolved_at: null, created_at: "",
+        },
+      },
+      { endpoint: "POST /api/workflow-node-instances/:id/resolve-executor" },
+    );
+    return parsed.resolution;
+  }
+
+  async confirmWorkflowNode(
+    nodeId: string,
+    input: {
+      decision: "approved" | "rejected";
+      comment?: string;
+      idempotency_key: string;
+    },
+  ): Promise<WorkflowConfirmation> {
+    const raw = await this.fetch<unknown>(
+      `/api/workflow-node-instances/${nodeId}/confirm`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+    const parsed = parseWithFallback(
+      raw,
+      WorkflowConfirmationMutationResponseSchema,
+      {
+        confirmation: {
+          id: "", workflow_node_instance_id: nodeId, member_id: "",
+          decision: "unknown", comment: "", decided_at: "", updated_at: "",
+        },
+      },
+      { endpoint: "POST /api/workflow-node-instances/:id/confirm" },
+    );
+    return parsed.confirmation;
+  }
+
+  async changeWorkflowNodeTask(
+    taskId: string,
+    action: "retry" | "detach",
+    reason: string,
+    idempotencyKey: string,
+  ): Promise<WorkflowNodeTask> {
+    const raw = await this.fetch<unknown>(
+      `/api/workflow-node-tasks/${taskId}/${action}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason, idempotency_key: idempotencyKey }),
+      },
+    );
+    const parsed = parseWithFallback(
+      raw,
+      WorkflowTaskMutationResponseSchema,
+      {
+        task: {
+          id: taskId, workflow_node_instance_id: "", task_key: "", source: "unknown",
+          required: false, definition: { key: "", title: "", required: false },
+          materialization_status: "unknown", issue_id: null,
+          executor_resolution_id: null, attempt_count: 0, last_error: "",
+        },
+      },
+      { endpoint: `POST /api/workflow-node-tasks/:id/${action}` },
+    );
+    return parsed.task;
+  }
+
+  async createWorkflowSubmission(
+    nodeId: string,
+    input: {
+      payload: Record<string, unknown>;
+      summary?: string;
+      evidence?: unknown[];
+      source_issue_id?: string;
+      source_agent_run_id?: string;
+      proposed_tasks?: WorkflowIssueTemplate[];
+      idempotency_key: string;
+    },
+  ): Promise<{ submission: WorkflowSubmission; validation_errors: Array<{ code: string; field?: string; message: string }> }> {
+    const raw = await this.fetch<unknown>(`/api/workflow-node-instances/${nodeId}/submissions`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return parseWithFallback(
+      raw,
+      WorkflowSubmissionMutationResponseSchema,
+      {
+        submission: {
+          id: "", workflow_node_instance_id: nodeId, revision: 0, status: "unknown",
+          payload: {}, summary: "", evidence: [], submitted_by_type: "system",
+          submitted_by_id: null, source_issue_id: null,
+          source_agent_run_id: null, proposed_tasks: [], created_at: "",
+        },
+        validation_errors: [],
+      },
+      { endpoint: "POST /api/workflow-node-instances/:id/submissions" },
+    );
+  }
+
+  async createWorkflowVerdict(
+    nodeId: string,
+    input: {
+      result: "pass" | "fail" | "blocked";
+      reason?: string;
+      confidence?: number;
+      evidence?: unknown[];
+      idempotency_key: string;
+    },
+  ): Promise<WorkflowVerdict> {
+    const raw = await this.fetch<unknown>(
+      `/api/workflow-node-instances/${nodeId}/verdicts`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    );
+    const parsed = parseWithFallback(
+      raw,
+      WorkflowVerdictMutationResponseSchema,
+      {
+        verdict: {
+          id: "",
+          workflow_node_instance_id: nodeId,
+          revision: 0,
+          result: "unknown",
+          reason: "",
+          confidence: null,
+          evidence: [],
+          basis: {},
+          evaluator_type: "unknown",
+          evaluator_id: null,
+          created_at: "",
+        },
+      },
+      { endpoint: "POST /api/workflow-node-instances/:id/verdicts" },
+    );
+    return parsed.verdict;
+  }
+
+  async confirmWorkflowSubmissionTasks(
+    nodeId: string,
+    submissionId: string,
+    idempotencyKey: string,
+  ): Promise<{ tasks: WorkflowNodeTask[]; replayed: boolean }> {
+    const raw = await this.fetch<unknown>(
+      `/api/workflow-node-instances/${nodeId}/submissions/${submissionId}/confirm-tasks`,
+      {
+        method: "POST",
+        body: JSON.stringify({ idempotency_key: idempotencyKey }),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      WorkflowTasksMutationResponseSchema,
+      { tasks: [], replayed: false },
+      {
+        endpoint:
+          "POST /api/workflow-node-instances/:id/submissions/:submissionId/confirm-tasks",
+      },
+    );
+  }
+
+  async decideWorkflowAcceptance(
+    instanceId: string,
+    input: {
+      status: "approved" | "rejected" | "changes_requested";
+      reason?: string;
+      rework_target_node_key?: string;
+      evidence?: unknown[];
+      idempotency_key: string;
+    },
+  ): Promise<{ acceptance: WorkflowAcceptance; instance?: WorkflowInstance }> {
+    const raw = await this.fetch<unknown>(`/api/workflow-instances/${instanceId}/acceptances`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return parseWithFallback(
+      raw,
+      WorkflowAcceptanceMutationResponseSchema,
+      {
+        acceptance: {
+          id: "", workflow_node_instance_id: "", revision: 0, status: "unknown",
+          decided_by_type: null, decided_by_id: null, reason: "",
+          rework_target_node_key: null, evidence: [], decided_at: null, created_at: "",
+        },
+      },
+      { endpoint: "POST /api/workflow-instances/:id/acceptances" },
+    );
+  }
+
+  async listWorkflowTemplates(params?: { status?: string }): Promise<ListWorkflowTemplatesResponse> {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    const suffix = search.size > 0 ? `?${search.toString()}` : "";
+    const raw = await this.fetch<unknown>(`/api/workflow-templates${suffix}`);
+    return parseWithFallback(raw, ListWorkflowTemplatesResponseSchema, EMPTY_LIST_WORKFLOW_TEMPLATES, {
+      endpoint: "GET /api/workflow-templates",
+    });
+  }
+
+  async getWorkflowTemplate(id: string): Promise<WorkflowTemplateDetail> {
+    const raw = await this.fetch<unknown>(`/api/workflow-templates/${id}`);
+    return parseWithFallback(raw, WorkflowTemplateDetailSchema, EMPTY_WORKFLOW_TEMPLATE_DETAIL, {
+      endpoint: "GET /api/workflow-templates/:id",
+    });
+  }
+
+  async createWorkflowTemplate(input: {
+    name: string;
+    description?: string;
+    applies_to_type_key?: string;
+    definition: WorkflowDefinition;
+    change_summary?: string;
+  }): Promise<{ template: WorkflowTemplate; draft: WorkflowTemplateVersion }> {
+    const raw = await this.fetch<unknown>("/api/workflow-templates", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return parseWithFallback(
+      raw,
+      WorkflowTemplateCreateResponseSchema,
+      {
+        template: EMPTY_WORKFLOW_TEMPLATE_DETAIL.template,
+        draft: { ...EMPTY_WORKFLOW_TEMPLATE_VERSION },
+      },
+      { endpoint: "POST /api/workflow-templates" },
+    );
+  }
+
+  async updateWorkflowTemplate(
+    templateId: string,
+    input: {
+      name?: string;
+      description?: string;
+      applies_to_type_key?: string;
+    },
+  ): Promise<WorkflowTemplate> {
+    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+    return parseWithFallback(
+      raw,
+      WorkflowTemplateSchema,
+      {
+        ...EMPTY_WORKFLOW_TEMPLATE_DETAIL.template,
+        id: templateId,
+        name: input.name ?? "",
+        description: input.description ?? "",
+        applies_to_type_key: input.applies_to_type_key ?? "",
+      },
+      { endpoint: "PATCH /api/workflow-templates/:id" },
+    );
+  }
+
+  async updateWorkflowTemplateDraft(
+    templateId: string,
+    input: { definition: WorkflowDefinition; change_summary?: string; revision: number },
+  ): Promise<WorkflowTemplateVersion> {
+    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}/draft`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+    return parseWithFallback(raw, WorkflowTemplateVersionSchema, {
+      id: "", workspace_id: "", template_id: templateId, version: 0, revision: input.revision,
+      status: "draft", definition: input.definition, definition_checksum: "",
+      change_summary: input.change_summary ?? "", created_by: "", published_by: null,
+      published_at: null, created_at: "", updated_at: "",
+    }, { endpoint: "PUT /api/workflow-templates/:id/draft" });
+  }
+
+  async createWorkflowTemplateDraft(templateId: string): Promise<WorkflowTemplateVersion> {
+    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}/draft`, {
+      method: "POST",
+    });
+    return parseWithFallback(
+      raw,
+      WorkflowTemplateVersionSchema,
+      { ...EMPTY_WORKFLOW_TEMPLATE_VERSION, template_id: templateId },
+      { endpoint: "POST /api/workflow-templates/:id/draft" },
+    );
+  }
+
+  async validateWorkflowTemplateDefinition(
+    templateId: string,
+    definition: WorkflowDefinition,
+  ): Promise<{ valid: boolean; errors: string[] }> {
+    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}/validate`, {
+      method: "POST",
+      body: JSON.stringify({ definition }),
+    });
+    return parseWithFallback(
+      raw,
+      WorkflowDefinitionValidationResponseSchema,
+      { valid: false, errors: [] },
+      { endpoint: "POST /api/workflow-templates/:id/validate" },
+    );
+  }
+
+  async publishWorkflowTemplate(templateId: string): Promise<{ template: WorkflowTemplate; version: WorkflowTemplateVersion }> {
+    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}/publish`, { method: "POST" });
+    return parseWithFallback(
+      raw,
+      WorkflowTemplatePublishResponseSchema,
+      {
+        template: EMPTY_WORKFLOW_TEMPLATE_DETAIL.template,
+        version: {
+          id: "", workspace_id: "", template_id: templateId, version: 0, revision: 1,
+          status: "unknown", definition: {
+            schema_version: 1, name: "", applies_to: { kind: "issue" },
+            roles: [], nodes: [], edges: [], acceptance: {},
+          }, definition_checksum: "", change_summary: "", created_by: "",
+          published_by: null, published_at: null, created_at: "", updated_at: "",
+        },
+      },
+      { endpoint: "POST /api/workflow-templates/:id/publish" },
+    );
+  }
+
+  async archiveWorkflowTemplate(templateId: string): Promise<WorkflowTemplate> {
+    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}/archive`, { method: "POST" });
+    return parseWithFallback(raw, WorkflowTemplateSchema, EMPTY_WORKFLOW_TEMPLATE_DETAIL.template, {
+      endpoint: "POST /api/workflow-templates/:id/archive",
     });
   }
 

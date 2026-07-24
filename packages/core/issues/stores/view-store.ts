@@ -98,6 +98,10 @@ export interface IssueViewState {
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
+  workflowTemplateFilter: string;
+  workflowInstanceFilter: string;
+  workflowActivityFilter: string;
+  workflowIssueOnly: boolean;
   /**
    * Custom-property filters: definition id → selected option ids (checkbox
    * definitions use the pseudo-options "true"/"false"). Empty array = no
@@ -145,6 +149,10 @@ export interface IssueViewState {
   toggleProjectFilter: (projectId: string) => void;
   toggleNoProject: () => void;
   toggleLabelFilter: (labelId: string) => void;
+  setWorkflowTemplateFilter: (templateId: string) => void;
+  setWorkflowInstanceFilter: (instanceId: string) => void;
+  setWorkflowActivityFilter: (activityKey: string) => void;
+  toggleWorkflowIssueOnly: () => void;
   togglePropertyFilter: (propertyId: string, optionId: string) => void;
   setDateFilter: (filter: IssueDateFilter | null) => void;
   toggleAgentRunningFilter: () => void;
@@ -175,6 +183,10 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   projectFilters: [],
   includeNoProject: false,
   labelFilters: [],
+  workflowTemplateFilter: "",
+  workflowInstanceFilter: "",
+  workflowActivityFilter: "",
+  workflowIssueOnly: false,
   propertyFilters: {},
   dateFilter: null,
   agentRunningFilter: false,
@@ -258,6 +270,18 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
         ? state.labelFilters.filter((id) => id !== labelId)
         : [...state.labelFilters, labelId],
     })),
+  setWorkflowTemplateFilter: (templateId) =>
+    set({
+      workflowTemplateFilter: templateId,
+      workflowInstanceFilter: "",
+      workflowActivityFilter: "",
+    }),
+  setWorkflowInstanceFilter: (instanceId) =>
+    set({ workflowInstanceFilter: instanceId }),
+  setWorkflowActivityFilter: (activityKey) =>
+    set({ workflowActivityFilter: activityKey }),
+  toggleWorkflowIssueOnly: () =>
+    set((state) => ({ workflowIssueOnly: !state.workflowIssueOnly })),
   togglePropertyFilter: (propertyId, optionId) =>
     set((state) => {
       const current = state.propertyFilters[propertyId] ?? [];
@@ -298,6 +322,10 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       projectFilters: [],
       includeNoProject: false,
       labelFilters: [],
+      workflowTemplateFilter: "",
+      workflowInstanceFilter: "",
+      workflowActivityFilter: "",
+      workflowIssueOnly: false,
       propertyFilters: {},
       dateFilter: null,
       agentRunningFilter: false,
@@ -363,6 +391,10 @@ export const viewStorePersistOptions = (name: string) => ({
     projectFilters: state.projectFilters,
     includeNoProject: state.includeNoProject,
     labelFilters: state.labelFilters,
+    workflowTemplateFilter: state.workflowTemplateFilter,
+    workflowInstanceFilter: state.workflowInstanceFilter,
+    workflowActivityFilter: state.workflowActivityFilter,
+    workflowIssueOnly: state.workflowIssueOnly,
     propertyFilters: state.propertyFilters,
     sortBy: state.sortBy,
     sortDirection: state.sortDirection,

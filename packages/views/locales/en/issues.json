@@ -53,6 +53,11 @@
     "section_creator": "Creator",
     "section_project": "Project",
     "section_label": "Label",
+    "section_workflow": "Workflow",
+    "workflow_issues_only": "Workflow issues only",
+    "workflow_template": "Template",
+    "workflow_instance": "Workflow run",
+    "workflow_activity": "Activity",
     "section_date": "Date",
     "date_field": "Field",
     "date_field_created": "Created",
@@ -71,6 +76,11 @@
     "reset": "Reset all filters",
     "active_count_one": "{{count}} filter",
     "active_count_other": "{{count}} filters"
+  },
+  "workflow_context": {
+    "host": "Host: {{identifier}} · {{title}}",
+    "required": "Required workflow issue",
+    "optional": "Optional workflow issue"
   },
   "display": {
     "tooltip": "Display settings",

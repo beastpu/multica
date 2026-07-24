@@ -471,6 +471,18 @@ const IssueMetadataSchema = z.preprocess(
   z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
 );
 const IssueExternalFieldsSchema = z.record(z.string(), z.string()).default({});
+const IssueWorkflowContextSchema = z.object({
+  workflow_instance_id: z.string(),
+  workflow_template_id: z.string(),
+  workflow_template_name: z.string().optional().default(""),
+  workflow_node_instance_id: z.string(),
+  activity_key: z.string().optional().default(""),
+  activity_name: z.string().optional().default(""),
+  host_issue_id: z.string(),
+  host_issue_identifier: z.string().optional().default(""),
+  host_issue_title: z.string().optional().default(""),
+  required: z.boolean().optional().default(false),
+}).loose();
 
 export const IssueSchema = z.object({
   id: z.string(),
@@ -495,6 +507,9 @@ export const IssueSchema = z.object({
   due_date: z.string().nullable(),
   metadata: IssueMetadataSchema,
   external_fields: IssueExternalFieldsSchema,
+  // Workflow is an additive surface. A mixed-version or malformed workflow
+  // projection must not make the underlying issue disappear.
+  workflow_context: IssueWorkflowContextSchema.nullable().optional().catch(undefined),
   // Older backends predate custom properties; default {} so consumers never
   // nil-guard issue.properties.
   properties: IssuePropertyValuesSchema,

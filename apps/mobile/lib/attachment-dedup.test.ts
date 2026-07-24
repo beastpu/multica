@@ -15,6 +15,7 @@ function att(over: Partial<Attachment> = {}): Attachment {
     filename: "chart.png",
     url: "https://cdn.example/chart.png",
     download_url: "https://signed.example/chart.png?sig=x",
+    content_url: "https://app.example/api/attachments/att-1/content",
     markdown_url: "https://public.example/api/attachments/att-1/download",
     content_type: "image/png",
     size_bytes: 123,

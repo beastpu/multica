@@ -8,6 +8,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
 type AppConfig struct {
@@ -73,7 +74,22 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	config.CdnSigned = h.CFSigner != nil
 	config.DaemonServerURL, config.DaemonAppURL = daemonSetupURLsFromEnv()
-	config.FeatureFlags = featureflags.EvaluateFrontendPublicFlags(r.Context(), h.FeatureFlags)
+	flagContext := r.Context()
+	// Public config is also fetched after entering a workspace. Carry that
+	// workspace into the public flag evaluation so an allowlist/percentage
+	// rollout by workspace controls the visible surface as well as backend
+	// writes. Anonymous bootstrap requests without a workspace keep the
+	// global/default decision.
+	workspaceID := strings.TrimSpace(r.Header.Get("X-Workspace-ID"))
+	if h.Queries != nil {
+		workspaceID = h.resolveWorkspaceID(r)
+	}
+	if workspaceID != "" {
+		eval := featureflag.EvalContextFrom(flagContext)
+		eval.WorkspaceID = workspaceID
+		flagContext = featureflag.WithEvalContext(flagContext, eval)
+	}
+	config.FeatureFlags = featureflags.EvaluateFrontendPublicFlags(flagContext, h.FeatureFlags)
 	// Only surface the build version on self-hosted deployments. The managed
 	// cloud is continuously deployed and its users can't choose the build, so
 	// the Help popover's version row would just be noise there (MUL-4108).

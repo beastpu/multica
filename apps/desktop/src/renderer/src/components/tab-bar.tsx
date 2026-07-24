@@ -21,6 +21,7 @@ import {
   PinOff,
   ListX,
   AppWindow,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -67,6 +68,7 @@ const TAB_ICONS: Record<string, LucideIcon> = {
   Monitor,
   BookOpenText,
   Settings,
+  Workflow,
 };
 
 const TAB_SCROLL_FADE_SIZE = 24;

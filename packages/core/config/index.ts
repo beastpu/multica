@@ -1,5 +1,7 @@
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand";
+import { useQuery } from "@tanstack/react-query";
+import { getApi } from "../api";
 
 interface ConfigState {
   cdnDomain: string;
@@ -71,4 +73,23 @@ export function useFeatureEnabled(key: string, defaultValue = false): boolean {
   return useConfigStore((state) =>
     featureFlagEnabled(state.featureFlags, key, defaultValue),
   );
+}
+
+/**
+ * Re-evaluates a public feature flag with the active workspace header.
+ * The initial unauthenticated `/api/config` bootstrap has no tenant context,
+ * so it cannot represent workspace allowlists. Workspace surfaces must use
+ * this hook; a missing/legacy response fails closed.
+ */
+export function useWorkspaceFeatureEnabled(
+  workspaceId: string | null | undefined,
+  key: string,
+): boolean {
+  const query = useQuery({
+    queryKey: ["app-config", "workspace", workspaceId] as const,
+    queryFn: () => getApi().getConfig(),
+    enabled: Boolean(workspaceId),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  return query.data?.feature_flags?.[key] ?? false;
 }

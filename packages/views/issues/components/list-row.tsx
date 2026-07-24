@@ -24,6 +24,7 @@ import { IssueActionsContextMenu } from "../actions";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { IssueP4AssessmentButton, IssueP4AssessmentTags } from "./p4-assessment-entry";
+import { WorkflowActivityChip } from "./workflow-activity-chip";
 import { useIssueSurfaceSelection } from "../surface/selection-context";
 
 export interface ChildProgress {
@@ -114,6 +115,12 @@ function ListRowContent({
 
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="truncate">{issue.title}</span>
+            {issue.workflow_context && (
+              <WorkflowActivityChip
+                context={issue.workflow_context}
+                className="hidden sm:inline-flex"
+              />
+            )}
             {showChildProgress && (
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/60 px-1.5 py-0.5">
                 <ProgressRing done={childProgress!.done} total={childProgress!.total} size={14} />

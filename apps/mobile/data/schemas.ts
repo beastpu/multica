@@ -40,6 +40,16 @@ import type {
 } from "@multica/core/types";
 import { IssueSchema } from "@multica/core/api/schemas";
 
+export interface PublicConfig {
+  feature_flags: Record<string, boolean>;
+}
+
+export const PublicConfigSchema: z.ZodType<PublicConfig> = z.object({
+  feature_flags: z.record(z.string(), z.boolean()).default({}),
+}).loose();
+
+export const EMPTY_PUBLIC_CONFIG: PublicConfig = { feature_flags: {} };
+
 /** Upload response. Only fields mobile actually consumes — `url` to put
  *  into the markdown link, `filename` for the `[📎 name](url)` form, `id`
  *  for future linking. `.loose()` so the server can add fields without
@@ -59,6 +69,7 @@ export const AttachmentSchema: z.ZodType<Attachment> = z.object({
   filename: z.string(),
   url: z.string(),
   download_url: z.string().default(""),
+  content_url: z.string().default(""),
   markdown_url: z.string().default(""),
   content_type: z.string().default(""),
   size_bytes: z.number().default(0),

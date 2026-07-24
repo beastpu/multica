@@ -29,6 +29,7 @@ import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { useIssueSurfaceActionsOptional } from "../surface/actions-context";
 import { useT } from "../../i18n";
 import { IssueP4AssessmentTags } from "./p4-assessment-entry";
+import { WorkflowActivityChip } from "./workflow-activity-chip";
 
 function formatDate(date: string): string {
   return formatDateOnly(date, { month: "short", day: "numeric" }, "en-US");
@@ -204,8 +205,11 @@ export const BoardCardContent = memo(function BoardCardContent({
       })()}
 
       {/* Chip row: project + labels + custom property values */}
-      {(showProject || showLabels || cardCustomProperties.length > 0) && (
+      {(issue.workflow_context || showProject || showLabels || cardCustomProperties.length > 0) && (
         <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+          {issue.workflow_context && (
+            <WorkflowActivityChip context={issue.workflow_context} />
+          )}
           {showProject && (
             <span className="inline-flex items-center gap-1 rounded-full bg-muted/60 px-1.5 py-0.5 text-[11px] text-muted-foreground max-w-[160px]">
               <ProjectIcon project={project} size="sm" />

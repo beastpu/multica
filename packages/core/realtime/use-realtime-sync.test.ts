@@ -7,6 +7,7 @@ import { inboxKeys } from "../inbox/queries";
 import { issueKeys } from "../issues/queries";
 import { notificationPreferenceKeys } from "../notification-preferences/queries";
 import { workspaceKeys } from "../workspace/queries";
+import { workflowKeys } from "../workflows/queries";
 import type {
   ChatDonePayload,
   ChatMessage,
@@ -23,6 +24,7 @@ import {
   applyWorkspaceUpdatedToCache,
   handleInboxNew,
   invalidateChatMessageQueries,
+  invalidateWorkflowRealtime,
   refetchPendingChatAggregate,
   resolveInboxSourceSlug,
 } from "./use-realtime-sync";
@@ -39,6 +41,41 @@ function createQueryClient() {
     },
   });
 }
+
+describe("invalidateWorkflowRealtime", () => {
+  it("handles duplicate and out-of-order runtime events without patching stale state", () => {
+    const qc = createQueryClient();
+    const wsId = "ws-1";
+    const instanceKey = workflowKeys.instance(wsId, "instance-1");
+    const cached = { instance: { id: "instance-1", revision: 9 } };
+    qc.setQueryData(instanceKey, cached);
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+
+    // A later node event can arrive before an earlier instance event, and both
+    // may be replayed after reconnect. Every delivery marks the same
+    // authoritative workflow projection stale without overwriting revision 9.
+    invalidateWorkflowRealtime(qc, wsId, "workflow_node");
+    invalidateWorkflowRealtime(qc, wsId, "workflow_instance");
+    invalidateWorkflowRealtime(qc, wsId, "workflow_node");
+
+    expect(qc.getQueryData(instanceKey)).toBe(cached);
+    expect(invalidate).toHaveBeenCalledTimes(3);
+    for (const call of invalidate.mock.calls) {
+      expect(call[0]).toEqual({ queryKey: workflowKeys.all(wsId) });
+    }
+  });
+
+  it("keeps template refreshes scoped away from running-instance caches", () => {
+    const qc = createQueryClient();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+
+    invalidateWorkflowRealtime(qc, "ws-1", "workflow_template");
+
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: workflowKeys.templates("ws-1"),
+    });
+  });
+});
 
 function userMessage(): ChatMessage {
   return {

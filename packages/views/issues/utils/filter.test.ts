@@ -274,6 +274,71 @@ describe("filterIssues", () => {
     expect(result.map((i) => i.id)).toEqual(["1"]);
   });
 
+  describe("workflow context", () => {
+    const inWorkflow = (
+      id: string,
+      templateId: string,
+      instanceId: string,
+      activityKey: string,
+    ) => makeIssue({
+      id,
+      workflow_context: {
+        workflow_instance_id: instanceId,
+        workflow_template_id: templateId,
+        workflow_template_name: `Template ${templateId}`,
+        workflow_node_instance_id: `node-${id}`,
+        activity_key: activityKey,
+        activity_name: `Activity ${activityKey}`,
+        host_issue_id: "host-1",
+        host_issue_identifier: "MUL-100",
+        host_issue_title: "Host issue",
+        required: true,
+      },
+    });
+    const workflowIssues = [
+      inWorkflow("W1", "template-1", "instance-1", "design"),
+      inWorkflow("W2", "template-1", "instance-2", "review"),
+      inWorkflow("W3", "template-2", "instance-3", "design"),
+      makeIssue({ id: "N1" }),
+    ];
+
+    it("keeps only workflow-related issues", () => {
+      const result = filterIssues(workflowIssues, {
+        ...NO_FILTER,
+        workflowIssueOnly: true,
+      });
+      expect(result.map((issue) => issue.id)).toEqual(["W1", "W2", "W3"]);
+    });
+
+    it("filters independently by template, instance, and activity", () => {
+      expect(filterIssues(workflowIssues, {
+        ...NO_FILTER,
+        workflowTemplateFilter: "template-1",
+      }).map((issue) => issue.id)).toEqual(["W1", "W2"]);
+      expect(filterIssues(workflowIssues, {
+        ...NO_FILTER,
+        workflowInstanceFilter: "instance-2",
+      }).map((issue) => issue.id)).toEqual(["W2"]);
+      expect(filterIssues(workflowIssues, {
+        ...NO_FILTER,
+        workflowActivityFilter: "design",
+      }).map((issue) => issue.id)).toEqual(["W1", "W3"]);
+    });
+
+    it("composes workflow filters with ordinary issue filters", () => {
+      const input = workflowIssues.map((issue) =>
+        issue.id === "W1" ? { ...issue, status: "done" as const } : issue
+      );
+      const result = filterIssues(input, {
+        ...NO_FILTER,
+        statusFilters: ["todo"],
+        workflowTemplateFilter: "template-1",
+        workflowActivityFilter: "design",
+      });
+      expect(result).toEqual([]);
+    });
+  });
+
   // --- Show sub-issues display toggle ---
   const parentChildIssues: Issue[] = [
     makeIssue({ id: "P1", parent_issue_id: null }),
@@ -382,6 +447,39 @@ describe("filterAssigneeGroups", () => {
       runningIssueIds: new Set(["C"]),
     });
     expect(result).toEqual([]);
+  });
+
+  it("applies workflow filters and recomputes grouped totals", () => {
+    const workflowIssue = makeIssue({
+      id: "W1",
+      workflow_context: {
+        workflow_instance_id: "instance-1",
+        workflow_template_id: "template-1",
+        workflow_template_name: "Delivery",
+        workflow_node_instance_id: "node-1",
+        activity_key: "review",
+        activity_name: "Review",
+        host_issue_id: "host-1",
+        host_issue_identifier: "MUL-100",
+        host_issue_title: "Host issue",
+        required: true,
+      },
+    });
+    const groups = [
+      group("a1", [workflowIssue, makeIssue({ id: "N1" })]),
+      group("a2", [makeIssue({ id: "N2" })]),
+    ];
+    const result = filterAssigneeGroups(groups, {
+      workflowTemplateFilter: "template-1",
+      workflowActivityFilter: "review",
+    });
+    expect(
+      result?.map((item) => ({
+        id: item.id,
+        issueIds: item.issues.map((issue) => issue.id),
+        total: item.total,
+      })),
+    ).toEqual([{ id: "a1", issueIds: ["W1"], total: 1 }]);
   });
 });
 

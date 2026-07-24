@@ -85,7 +85,18 @@ export type WSEventType =
   | "github_installation:deleted"
   | "pull_request:linked"
   | "pull_request:updated"
-  | "pull_request:unlinked";
+  | "pull_request:unlinked"
+  | "workflow_template:created"
+  | "workflow_template:updated"
+  | "workflow_template:published"
+  | "workflow_instance:updated"
+  | "workflow_node:updated"
+  | "workflow_node_task:updated"
+  | "workflow_executor_resolution:updated"
+  | "workflow_submission:created"
+  | "workflow_verdict:created"
+  | "workflow_confirmation:updated"
+  | "workflow_acceptance:updated";
 
 export interface WSMessage<T = unknown> {
   type: WSEventType;

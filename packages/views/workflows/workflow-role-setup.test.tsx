@@ -1,0 +1,445 @@
+// @vitest-environment jsdom
+
+import { I18nProvider } from "@multica/core/i18n/react";
+import type {
+  WorkflowExecutorResolution,
+  WorkflowNodeInstance,
+  WorkflowNodeTask,
+  WorkflowSubmission,
+  WorkflowVerdict,
+} from "@multica/core/workflows";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import enCommon from "../locales/en/common.json";
+import enWorkflows from "../locales/en/workflows.json";
+import {
+  RoleSetupPanel,
+  AcceptancePanel,
+  SubmissionPanel,
+  VerdictPanel,
+  WorkflowTaskCard,
+} from "./workflow-workbench";
+
+const mocks = vi.hoisted(() => ({
+  mutate: vi.fn(),
+  submit: vi.fn(),
+  resolveExecutor: vi.fn(),
+  recordVerdict: vi.fn(),
+  decideAcceptance: vi.fn(),
+}));
+
+vi.mock("@multica/core/workflows", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/workflows")>()),
+  useUpdateWorkflowInstanceRoles: () => ({
+    mutate: mocks.mutate,
+    isPending: false,
+    isError: false,
+  }),
+  useCreateWorkflowSubmission: () => ({
+    mutate: mocks.submit,
+    isPending: false,
+    isError: false,
+  }),
+  useConfirmWorkflowSubmissionTasks: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+  useResolveWorkflowNodeExecutor: () => ({
+    mutate: mocks.resolveExecutor,
+    isPending: false,
+  }),
+  useChangeWorkflowNodeTask: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+  useCreateWorkflowVerdict: () => ({
+    mutate: mocks.recordVerdict,
+    isPending: false,
+    isError: false,
+  }),
+  useDecideWorkflowAcceptance: () => ({
+    mutate: mocks.decideAcceptance,
+    isPending: false,
+  }),
+}));
+
+function renderPanel(canConfigure = true) {
+  render(
+    <I18nProvider
+      locale="en"
+      resources={{
+        en: { common: enCommon, workflows: enWorkflows },
+      }}
+    >
+      <RoleSetupPanel
+        instanceId="instance-1"
+        roles={[{
+          key: "owner",
+          name: "Owner",
+          required: true,
+          allowed_actor_types: ["member"],
+        }]}
+        currentAssignments={[]}
+        actorOptions={[
+          { type: "member", id: "member-1", name: "Ada" },
+          { type: "agent", id: "agent-1", name: "Build Agent" },
+        ]}
+        canConfigure={canConfigure}
+      />
+    </I18nProvider>,
+  );
+}
+
+describe("RoleSetupPanel", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("requires every mandatory role and only submits eligible actors", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    const save = screen.getByRole("button", {
+      name: "Save role assignments",
+    });
+    expect(save).toBeDisabled();
+    expect(screen.queryByRole("option", { name: /Build Agent/ }))
+      .not.toBeInTheDocument();
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /Owner/ }),
+      "member:member-1",
+    );
+    expect(save).toBeEnabled();
+    await user.click(save);
+
+    expect(mocks.mutate).toHaveBeenCalledWith([{
+      role_key: "owner",
+      actor_type: "member",
+      actor_id: "member-1",
+      source: "user_selected",
+    }]);
+  });
+
+  it("shows the pending setup without controls to an unauthorized viewer", () => {
+    renderPanel(false);
+
+    expect(screen.getByText(
+      "The workflow starter or a workspace admin must assign the missing roles.",
+    )).toBeInTheDocument();
+    expect(screen.queryByRole("button", {
+      name: "Save role assignments",
+    })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /Owner/ })).toBeDisabled();
+  });
+});
+
+function renderSubmissionPanel(
+  submissions: WorkflowSubmission[] = [],
+) {
+  const node = {
+    id: "node-1",
+    status: "active",
+    definition: {
+      key: "review",
+      kind: "activity",
+      name: "Review",
+      issue_policy: "fixed",
+      submission_schema: {
+        policy: "single",
+        fields: [
+          { key: "summary", name: "Summary", type: "text", required: true },
+          { key: "approved", name: "Approved", type: "boolean", required: true },
+          { key: "reviewer", name: "Reviewer", type: "member", required: true },
+        ],
+      },
+    },
+  } as unknown as WorkflowNodeInstance;
+  render(
+    <I18nProvider
+      locale="en"
+      resources={{
+        en: { common: enCommon, workflows: enWorkflows },
+      }}
+    >
+      <SubmissionPanel
+        instanceId="instance-1"
+        node={node}
+        submissions={submissions}
+        tasks={[]}
+        actorOptions={[
+          { type: "member", id: "member-1", name: "Ada" },
+          { type: "agent", id: "agent-1", name: "Build Agent" },
+        ]}
+        canManage
+      />
+    </I18nProvider>,
+  );
+}
+
+describe("SubmissionPanel", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("validates required schema fields and submits typed actor values", async () => {
+    const user = userEvent.setup();
+    renderSubmissionPanel();
+
+    const submit = screen.getByRole("button", { name: "Submit result" });
+    expect(submit).toBeDisabled();
+    expect(screen.queryByRole("option", { name: "Build Agent" }))
+      .not.toBeInTheDocument();
+
+    await user.type(
+      screen.getAllByRole("textbox", { name: /Summary/ })[0]!,
+      "Ready",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /Approved/ }),
+      "false",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /Reviewer/ }),
+      "member-1",
+    );
+    expect(submit).toBeEnabled();
+    await user.click(submit);
+
+    expect(mocks.submit).toHaveBeenCalledWith({
+      payload: {
+        summary: "Ready",
+        approved: false,
+        reviewer: "member-1",
+      },
+      summary: "",
+      source_issue_id: undefined,
+      proposed_tasks: [],
+    }, expect.any(Object));
+  });
+
+  it("keeps all submission revisions visible", () => {
+    const revisions = [2, 1].map((revision) => ({
+      id: `submission-${revision}`,
+      workflow_node_instance_id: "node-1",
+      revision,
+      status: "valid",
+      payload: { summary: `Revision ${revision}` },
+      summary: `Revision ${revision}`,
+      source_issue_id: null,
+      source_agent_run_id: null,
+      proposed_tasks: [],
+      evidence: [],
+      submitted_by_type: "member",
+      submitted_by_id: "member-1",
+      created_at: "2026-07-23T00:00:00Z",
+    }));
+    renderSubmissionPanel(revisions);
+
+    expect(screen.getByText("#1")).toBeInTheDocument();
+    expect(screen.getByText("#2")).toBeInTheDocument();
+    expect(screen.getByText("Revision 1")).toBeInTheDocument();
+    expect(screen.getByText("Revision 2")).toBeInTheDocument();
+  });
+});
+
+describe("WorkflowTaskCard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("shows executor resolution evidence and supports manual fallback", async () => {
+    const user = userEvent.setup();
+    const task = {
+      id: "task-1",
+      definition: { title: "Implement API" },
+      required: true,
+      source: "template",
+      materialization_status: "pending_materialization",
+      executor_resolution_id: null,
+      issue_id: null,
+      last_error: "",
+    } as unknown as WorkflowNodeTask;
+    const resolution = {
+      id: "resolution-1",
+      workflow_node_instance_id: "node-1",
+      workflow_node_task_id: "task-1",
+      strategy: "capability_match",
+      status: "unresolved",
+      actor_type: null,
+      actor_id: null,
+      candidates: [],
+      reason: "No actor matched the required capability",
+      resolved_at: null,
+      created_at: "2026-07-23T00:00:00Z",
+    } satisfies WorkflowExecutorResolution;
+
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{
+          en: { common: enCommon, workflows: enWorkflows },
+        }}
+      >
+        <WorkflowTaskCard
+          instanceId="instance-1"
+          nodeId="node-1"
+          task={task}
+          resolution={resolution}
+          actorOptions={[
+            { type: "member", id: "member-1", name: "Ada" },
+          ]}
+          canManage
+          canAdmin={false}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText(
+      /capability_match · No actor matched the required capability/,
+    )).toBeInTheDocument();
+    await user.selectOptions(
+      screen.getByRole("combobox", {
+        name: "Choose a member, agent, or squad",
+      }),
+      "member:member-1",
+    );
+    await user.click(screen.getByRole("button", { name: "Assign" }));
+
+    expect(mocks.resolveExecutor).toHaveBeenCalledWith({
+      task_id: "task-1",
+      actor_type: "member",
+      actor_id: "member-1",
+      reason: "Configured manually in the workflow workbench",
+    });
+  });
+});
+
+function workflowNode(overrides: Partial<WorkflowNodeInstance> = {}) {
+  return {
+    id: "node-1",
+    workflow_instance_id: "instance-1",
+    node_key: "review",
+    node_kind: "activity",
+    attempt: 1,
+    name: "Review",
+    display_order: 1,
+    definition: {
+      key: "review",
+      kind: "activity",
+      name: "Review",
+      verdict: { evaluator: "member" },
+    },
+    status: "active",
+    waiting_reasons: [],
+    latest_submission_id: null,
+    latest_verdict_id: null,
+    activated_at: "2026-07-23T00:00:00Z",
+    completed_at: null,
+    ...overrides,
+  } as WorkflowNodeInstance;
+}
+
+describe("VerdictPanel", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("renders verdict evidence and requires a reason for non-pass decisions", async () => {
+    const user = userEvent.setup();
+    const verdict = {
+      id: "verdict-1",
+      workflow_node_instance_id: "node-1",
+      revision: 2,
+      result: "blocked",
+      reason: "Security review is missing",
+      confidence: 0.75,
+      evidence: [{ artifact: "report" }],
+      basis: {},
+      evaluator_type: "member",
+      evaluator_id: "member-1",
+      created_at: "2026-07-23T00:00:00Z",
+    } satisfies WorkflowVerdict;
+
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{
+          en: { common: enCommon, workflows: enWorkflows },
+        }}
+      >
+        <VerdictPanel
+          instanceId="instance-1"
+          node={workflowNode()}
+          verdicts={[verdict]}
+          canRecord
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("Security review is missing")).toBeInTheDocument();
+    expect(screen.getByText(/75%/)).toBeInTheDocument();
+    expect(screen.getByText(/\"artifact\": \"report\"/)).toBeInTheDocument();
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Check result" }),
+      "fail",
+    );
+    const record = screen.getByRole("button", { name: "Record check result" });
+    expect(record).toBeDisabled();
+    await user.type(
+      screen.getByRole("textbox", { name: /Reason/ }),
+      "Tests failed",
+    );
+    await user.click(record);
+    expect(mocks.recordVerdict).toHaveBeenCalledWith({
+      result: "fail",
+      reason: "Tests failed",
+      confidence: undefined,
+    }, expect.any(Object));
+  });
+});
+
+describe("AcceptancePanel", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("supports approval and a reasoned rework target", async () => {
+    const user = userEvent.setup();
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{
+          en: { common: enCommon, workflows: enWorkflows },
+        }}
+      >
+        <AcceptancePanel
+          instanceId="instance-1"
+          node={workflowNode({ id: "acceptance-node" })}
+          targets={[{ value: "implementation", label: "Implementation" }]}
+          pending
+          canDecide
+        />
+      </I18nProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    expect(mocks.decideAcceptance).toHaveBeenCalledWith({
+      status: "approved",
+    });
+
+    const rework = screen.getByRole("button", { name: "Request changes" });
+    expect(rework).toBeDisabled();
+    await user.type(screen.getByRole("textbox", { name: "Reason" }), "Fix API");
+    expect(rework).toBeEnabled();
+    await user.click(rework);
+    expect(mocks.decideAcceptance).toHaveBeenLastCalledWith({
+      status: "changes_requested",
+      reason: "Fix API",
+      rework_target_node_key: "implementation",
+    });
+  });
+});

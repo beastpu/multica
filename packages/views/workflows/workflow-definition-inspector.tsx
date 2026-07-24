@@ -1,0 +1,1221 @@
+"use client";
+
+import { Plus, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import type {
+  WorkflowDefinition,
+  WorkflowExecutorStrategy,
+  WorkflowIssueTemplate,
+  WorkflowNodeDefinition,
+  WorkflowRoleDefinition,
+  WorkflowSubmissionField,
+} from "@multica/core/workflows";
+import { Button } from "@multica/ui/components/ui/button";
+import { Input } from "@multica/ui/components/ui/input";
+import { Label } from "@multica/ui/components/ui/label";
+import { Textarea } from "@multica/ui/components/ui/textarea";
+import { useT } from "../i18n";
+
+const actorTypes = ["member", "agent", "squad"] as const;
+const fieldTypes = [
+  "text",
+  "number",
+  "boolean",
+  "date",
+  "member",
+  "agent",
+  "squad",
+] as const;
+const executorKinds = [
+  "fixed_role",
+  "fallback_role",
+  "previous_selected",
+  "capability_match",
+  "manual",
+] as const;
+
+function stableKey(prefix: string) {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function InspectorSection({
+  title,
+  children,
+  open = false,
+}: {
+  title: string;
+  children: React.ReactNode;
+  open?: boolean;
+}) {
+  return (
+    <details open={open} className="group rounded-lg border bg-background">
+      <summary className="min-h-11 cursor-pointer select-none px-3 py-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        {title}
+      </summary>
+      <div className="space-y-4 border-t p-3">{children}</div>
+    </details>
+  );
+}
+
+function RemoveButton({
+  label,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      size="icon-sm"
+      variant="ghost"
+      disabled={disabled}
+      aria-label={label}
+      onClick={onClick}
+    >
+      <Trash2 />
+    </Button>
+  );
+}
+
+function JsonObjectEditor({
+  value,
+  readOnly,
+  label,
+  placeholder,
+  onChange,
+}: {
+  value: unknown;
+  readOnly: boolean;
+  label: string;
+  placeholder: string;
+  onChange: (value: unknown | undefined) => void;
+}) {
+  const { t } = useT("workflows");
+  const [text, setText] = useState(
+    value === undefined ? "" : JSON.stringify(value, null, 2),
+  );
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setText(value === undefined ? "" : JSON.stringify(value, null, 2));
+    setError("");
+  }, [value]);
+
+  const apply = () => {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      setError("");
+      onChange(undefined);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("expected object");
+      }
+      setError("");
+      onChange(parsed);
+    } catch {
+      setError(t(($) => $.errors.invalid_json));
+    }
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      <Textarea
+        value={text}
+        disabled={readOnly}
+        rows={5}
+        className="font-mono text-xs"
+        placeholder={placeholder}
+        onChange={(event) => setText(event.target.value)}
+        onBlur={apply}
+      />
+      {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+function RoleEditor({
+  roles,
+  readOnly,
+  onChange,
+}: {
+  roles: WorkflowRoleDefinition[];
+  readOnly: boolean;
+  onChange: (roles: WorkflowRoleDefinition[]) => void;
+}) {
+  const { t } = useT("workflows");
+  return (
+    <div className="space-y-3">
+      {roles.map((role, index) => (
+        <div key={role.key} className="space-y-3 rounded-lg border p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Label htmlFor={`workflow-role-name-${role.key}`}>
+                {t(($) => $.editor.role_name)}
+              </Label>
+              <Input
+                id={`workflow-role-name-${role.key}`}
+                value={role.name}
+                disabled={readOnly}
+                className="min-h-11"
+                onChange={(event) => {
+                  const next = [...roles];
+                  next[index] = { ...role, name: event.target.value };
+                  onChange(next);
+                }}
+              />
+              <p className="font-mono text-xs text-muted-foreground">{role.key}</p>
+            </div>
+            <RemoveButton
+              label={t(($) => $.actions.remove)}
+              disabled={readOnly}
+              onClick={() => onChange(roles.filter((item) => item.key !== role.key))}
+            />
+          </div>
+          <label className="flex min-h-11 items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={role.required}
+              disabled={readOnly}
+              onChange={(event) => {
+                const next = [...roles];
+                next[index] = { ...role, required: event.target.checked };
+                onChange(next);
+              }}
+            />
+            {t(($) => $.editor.role_required)}
+          </label>
+          <fieldset>
+            <legend className="mb-1.5 text-xs font-medium">
+              {t(($) => $.editor.allowed_actor_types)}
+            </legend>
+            <div className="grid grid-cols-3 gap-1">
+              {actorTypes.map((actorType) => (
+                <label
+                  key={actorType}
+                  className="flex min-h-11 items-center gap-1.5 rounded-md border px-2 text-xs"
+                >
+                  <input
+                    type="checkbox"
+                    checked={role.allowed_actor_types.includes(actorType)}
+                    disabled={readOnly}
+                    onChange={(event) => {
+                      const values = event.target.checked
+                        ? [...role.allowed_actor_types, actorType]
+                        : role.allowed_actor_types.filter((item) => item !== actorType);
+                      const next = [...roles];
+                      next[index] = { ...role, allowed_actor_types: values };
+                      onChange(next);
+                    }}
+                  />
+                  {actorType}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        </div>
+      ))}
+      {!readOnly && (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 w-full"
+          onClick={() => {
+            const key = stableKey("role");
+            onChange([
+              ...roles,
+              { key, name: t(($) => $.editor.new_role), required: false, allowed_actor_types: ["member"] },
+            ]);
+          }}
+        >
+          <Plus />
+          {t(($) => $.editor.add_role)}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function AcceptanceEditor({
+  definition,
+  readOnly,
+  onChange,
+}: {
+  definition: WorkflowDefinition;
+  readOnly: boolean;
+  onChange: (definition: WorkflowDefinition) => void;
+}) {
+  const { t } = useT("workflows");
+  const acceptance = definition.acceptance;
+  const activityNodes = definition.nodes.filter((node) => node.kind === "activity");
+  const policy = acceptance.policy ?? "none";
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1.5">
+        <Label htmlFor="workflow-acceptance-policy">
+          {t(($) => $.editor.acceptance_policy)}
+        </Label>
+        <select
+          id="workflow-acceptance-policy"
+          value={policy}
+          disabled={readOnly}
+          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+          onChange={(event) => onChange({
+            ...definition,
+            acceptance: event.target.value === "none"
+              ? {}
+              : { ...acceptance, policy: event.target.value },
+          })}
+        >
+          <option value="none">{t(($) => $.editor.acceptance_none)}</option>
+          <option value="member">{t(($) => $.editor.acceptance_member)}</option>
+          <option value="node_verdict">{t(($) => $.editor.acceptance_verdict)}</option>
+        </select>
+      </div>
+      {policy !== "none" && (
+        <>
+          <div className="space-y-1.5">
+            <Label htmlFor="workflow-acceptance-node">
+              {t(($) => $.editor.acceptance_node)}
+            </Label>
+            <select
+              id="workflow-acceptance-node"
+              value={acceptance.node_key ?? ""}
+              disabled={readOnly}
+              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              onChange={(event) => onChange({
+                ...definition,
+                acceptance: { ...acceptance, node_key: event.target.value || undefined },
+              })}
+            >
+              <option value="">—</option>
+              {activityNodes.map((node) => (
+                <option key={node.key} value={node.key}>{node.name}</option>
+              ))}
+            </select>
+          </div>
+          {policy === "member" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="workflow-acceptance-role">
+                {t(($) => $.editor.approver_role)}
+              </Label>
+              <select
+                id="workflow-acceptance-role"
+                value={acceptance.approver_role ?? ""}
+                disabled={readOnly}
+                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                onChange={(event) => onChange({
+                  ...definition,
+                  acceptance: {
+                    ...acceptance,
+                    approver_role: event.target.value || undefined,
+                  },
+                })}
+              >
+                <option value="">—</option>
+                {definition.roles.map((role) => (
+                  <option key={role.key} value={role.key}>{role.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <fieldset>
+            <legend className="mb-1.5 text-xs font-medium">
+              {t(($) => $.editor.rework_targets)}
+            </legend>
+            <div className="space-y-1">
+              {activityNodes.map((node) => (
+                <label
+                  key={node.key}
+                  className="flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={acceptance.rework_targets?.includes(node.key) ?? false}
+                    disabled={readOnly || node.key === acceptance.node_key}
+                    onChange={(event) => {
+                      const current = acceptance.rework_targets ?? [];
+                      const next = event.target.checked
+                        ? [...current, node.key]
+                        : current.filter((key) => key !== node.key);
+                      onChange({
+                        ...definition,
+                        acceptance: { ...acceptance, rework_targets: next },
+                      });
+                    }}
+                  />
+                  {node.name}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function WorkflowDefinitionInspector({
+  definition,
+  readOnly,
+  onChange,
+}: {
+  definition: WorkflowDefinition;
+  readOnly: boolean;
+  onChange: (definition: WorkflowDefinition) => void;
+}) {
+  const { t } = useT("workflows");
+  return (
+    <div className="space-y-3">
+      <InspectorSection title={t(($) => $.editor.workflow_roles)}>
+        <RoleEditor
+          roles={definition.roles}
+          readOnly={readOnly}
+          onChange={(roles) => onChange({ ...definition, roles })}
+        />
+      </InspectorSection>
+      <InspectorSection title={t(($) => $.editor.workflow_acceptance)}>
+        <AcceptanceEditor
+          definition={definition}
+          readOnly={readOnly}
+          onChange={onChange}
+        />
+      </InspectorSection>
+    </div>
+  );
+}
+
+function ExecutorEditor({
+  node,
+  definition,
+  readOnly,
+  onChange,
+}: {
+  node: WorkflowNodeDefinition;
+  definition: WorkflowDefinition;
+  readOnly: boolean;
+  onChange: (node: WorkflowNodeDefinition) => void;
+}) {
+  const { t } = useT("workflows");
+  const strategies = node.executor?.strategies ?? [];
+  const update = (index: number, strategy: WorkflowExecutorStrategy) => {
+    const next = [...strategies];
+    next[index] = strategy;
+    onChange({ ...node, executor: { strategies: next } });
+  };
+
+  return (
+    <div className="space-y-3">
+      {strategies.map((strategy, index) => (
+        <div key={`${index}-${strategy.kind}`} className="space-y-3 rounded-lg border p-3">
+          <div className="flex items-center gap-2">
+            <select
+              aria-label={t(($) => $.editor.executor_strategy)}
+              value={strategy.kind}
+              disabled={readOnly}
+              className="min-h-11 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-sm"
+              onChange={(event) => update(index, { kind: event.target.value })}
+            >
+              {executorKinds.map((kind) => (
+                <option key={kind} value={kind}>{kind}</option>
+              ))}
+            </select>
+            <RemoveButton
+              label={t(($) => $.actions.remove)}
+              disabled={readOnly}
+              onClick={() => onChange({
+                ...node,
+                executor: {
+                  strategies: strategies.filter((_, itemIndex) => itemIndex !== index),
+                },
+              })}
+            />
+          </div>
+          {(strategy.kind === "fixed_role" ||
+            strategy.kind === "fallback_role" ||
+            strategy.kind === "capability_match") && (
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.executor_role)}</Label>
+              <select
+                value={strategy.role ?? ""}
+                disabled={readOnly}
+                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                onChange={(event) => update(index, {
+                  ...strategy,
+                  role: event.target.value || undefined,
+                })}
+              >
+                <option value="">—</option>
+                {definition.roles.map((role) => (
+                  <option key={role.key} value={role.key}>{role.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {strategy.kind === "capability_match" && (
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.capability)}</Label>
+              <Input
+                value={strategy.capability ?? ""}
+                disabled={readOnly}
+                className="min-h-11"
+                onChange={(event) => update(index, {
+                  ...strategy,
+                  capability: event.target.value,
+                })}
+              />
+            </div>
+          )}
+          {strategy.kind === "previous_selected" && (
+            <>
+              <div className="space-y-1.5">
+                <Label>{t(($) => $.editor.source_node)}</Label>
+                <select
+                  value={strategy.node ?? ""}
+                  disabled={readOnly}
+                  className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                  onChange={(event) => update(index, {
+                    ...strategy,
+                    node: event.target.value || undefined,
+                    field: undefined,
+                  })}
+                >
+                  <option value="">—</option>
+                  {definition.nodes.filter((item) =>
+                    item.kind === "activity" && item.key !== node.key
+                  ).map((item) => (
+                    <option key={item.key} value={item.key}>{item.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t(($) => $.editor.source_field)}</Label>
+                <select
+                  value={strategy.field ?? ""}
+                  disabled={readOnly || !strategy.node}
+                  className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                  onChange={(event) => update(index, {
+                    ...strategy,
+                    field: event.target.value || undefined,
+                  })}
+                >
+                  <option value="">—</option>
+                  {definition.nodes.find((item) => item.key === strategy.node)
+                    ?.submission_schema?.fields.filter((field) =>
+                      actorTypes.includes(field.type as typeof actorTypes[number])
+                    ).map((field) => (
+                      <option key={field.key} value={field.key}>{field.name}</option>
+                    ))}
+                </select>
+              </div>
+            </>
+          )}
+        </div>
+      ))}
+      {!readOnly && (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 w-full"
+          onClick={() => onChange({
+            ...node,
+            executor: {
+              strategies: [...strategies, { kind: "manual" }],
+            },
+          })}
+        >
+          <Plus />
+          {t(($) => $.editor.add_executor_strategy)}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function IssueTemplateEditor({
+  node,
+  roles,
+  readOnly,
+  onChange,
+}: {
+  node: WorkflowNodeDefinition;
+  roles: WorkflowRoleDefinition[];
+  readOnly: boolean;
+  onChange: (node: WorkflowNodeDefinition) => void;
+}) {
+  const { t } = useT("workflows");
+  const templates = node.issue_templates ?? [];
+  const canDeclareFixed = node.issue_policy === "fixed" ||
+    node.issue_policy === "fixed_and_dynamic";
+  const update = (index: number, template: WorkflowIssueTemplate) => {
+    const next = [...templates];
+    next[index] = template;
+    onChange({ ...node, issue_templates: next });
+  };
+
+  return (
+    <div className="space-y-3">
+      {templates.map((template, index) => (
+        <div key={template.key} className="space-y-3 rounded-lg border p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Label>{t(($) => $.editor.issue_title)}</Label>
+              <Input
+                value={template.title}
+                disabled={readOnly}
+                className="min-h-11"
+                onChange={(event) => update(index, {
+                  ...template,
+                  title: event.target.value,
+                })}
+              />
+              <p className="font-mono text-xs text-muted-foreground">{template.key}</p>
+            </div>
+            <RemoveButton
+              label={t(($) => $.actions.remove)}
+              disabled={readOnly}
+              onClick={() => onChange({
+                ...node,
+                issue_templates: templates.filter((item) => item.key !== template.key),
+              })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t(($) => $.editor.issue_description)}</Label>
+            <Textarea
+              value={template.description ?? ""}
+              disabled={readOnly}
+              rows={2}
+              onChange={(event) => update(index, {
+                ...template,
+                description: event.target.value || undefined,
+              })}
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.assignee_role)}</Label>
+              <select
+                value={template.assignee_role ?? ""}
+                disabled={readOnly}
+                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                onChange={(event) => update(index, {
+                  ...template,
+                  assignee_role: event.target.value || undefined,
+                })}
+              >
+                <option value="">—</option>
+                {roles.map((role) => (
+                  <option key={role.key} value={role.key}>{role.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.initial_status)}</Label>
+              <select
+                value={template.initial_status ?? "todo"}
+                disabled={readOnly}
+                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                onChange={(event) => update(index, {
+                  ...template,
+                  initial_status: event.target.value,
+                })}
+              >
+                {["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"].map((status) => (
+                  <option key={status} value={status}>{status}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.priority)}</Label>
+              <select
+                value={template.priority ?? "none"}
+                disabled={readOnly}
+                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                onChange={(event) => update(index, {
+                  ...template,
+                  priority: event.target.value,
+                })}
+              >
+                {["none", "low", "medium", "high", "urgent"].map((priority) => (
+                  <option key={priority} value={priority}>{priority}</option>
+                ))}
+              </select>
+            </div>
+            <label className="flex min-h-11 items-center gap-2 pt-5 text-sm">
+              <input
+                type="checkbox"
+                checked={template.required}
+                disabled={readOnly}
+                onChange={(event) => update(index, {
+                  ...template,
+                  required: event.target.checked,
+                })}
+              />
+              {t(($) => $.editor.required_task)}
+            </label>
+          </div>
+        </div>
+      ))}
+      {!canDeclareFixed && (
+        <p className="text-xs text-muted-foreground">
+          {t(($) => $.editor.fixed_tasks_disabled)}
+        </p>
+      )}
+      {!readOnly && canDeclareFixed && (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 w-full"
+          onClick={() => {
+            const key = stableKey("task");
+            onChange({
+              ...node,
+              issue_templates: [
+                ...templates,
+                {
+                  key,
+                  title: "Complete {{host.title}}",
+                  required: true,
+                  initial_status: "todo",
+                  priority: "none",
+                },
+              ],
+            });
+          }}
+        >
+          <Plus />
+          {t(($) => $.editor.add_issue_template)}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function SubmissionEditor({
+  node,
+  readOnly,
+  onChange,
+}: {
+  node: WorkflowNodeDefinition;
+  readOnly: boolean;
+  onChange: (node: WorkflowNodeDefinition) => void;
+}) {
+  const { t } = useT("workflows");
+  const schema = node.submission_schema;
+  const policy = schema?.policy ?? (schema ? "single" : "none");
+  const fields = schema?.fields ?? [];
+  const updateField = (index: number, field: WorkflowSubmissionField) => {
+    const next = [...fields];
+    next[index] = field;
+    onChange({ ...node, submission_schema: { policy: policy === "none" ? "single" : policy, fields: next } });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1.5">
+        <Label>{t(($) => $.editor.submission_policy)}</Label>
+        <select
+          value={policy}
+          disabled={readOnly}
+          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+          onChange={(event) => {
+            const nextPolicy = event.target.value as "none" | "single" | "per_required_task" | "fan_in";
+            onChange({
+              ...node,
+              submission_schema: nextPolicy === "none"
+                ? undefined
+                : { policy: nextPolicy, fields },
+              completion: {
+                ...(node.completion ?? {}),
+                submission_required: nextPolicy === "none"
+                  ? false
+                  : node.completion?.submission_required,
+              },
+            });
+          }}
+        >
+          <option value="none">{t(($) => $.editor.submission_none)}</option>
+          <option value="single">{t(($) => $.editor.submission_single)}</option>
+          <option value="per_required_task">{t(($) => $.editor.submission_per_task)}</option>
+          <option value="fan_in">{t(($) => $.editor.submission_fan_in)}</option>
+        </select>
+      </div>
+      {policy !== "none" && (
+        <>
+          {fields.map((field, index) => (
+            <div key={field.key} className="space-y-3 rounded-lg border p-3">
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <Label>{t(($) => $.editor.field_name)}</Label>
+                  <Input
+                    value={field.name}
+                    disabled={readOnly}
+                    className="min-h-11"
+                    onChange={(event) => updateField(index, {
+                      ...field,
+                      name: event.target.value,
+                    })}
+                  />
+                  <p className="font-mono text-xs text-muted-foreground">{field.key}</p>
+                </div>
+                <RemoveButton
+                  label={t(($) => $.actions.remove)}
+                  disabled={readOnly}
+                  onClick={() => onChange({
+                    ...node,
+                    submission_schema: {
+                      policy: policy as "single" | "per_required_task" | "fan_in",
+                      fields: fields.filter((item) => item.key !== field.key),
+                    },
+                  })}
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>{t(($) => $.editor.field_type)}</Label>
+                  <select
+                    value={field.type}
+                    disabled={readOnly}
+                    className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                    onChange={(event) => updateField(index, {
+                      ...field,
+                      type: event.target.value,
+                    })}
+                  >
+                    {fieldTypes.map((type) => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                </div>
+                <label className="flex min-h-11 items-center gap-2 pt-5 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={field.required}
+                    disabled={readOnly}
+                    onChange={(event) => updateField(index, {
+                      ...field,
+                      required: event.target.checked,
+                    })}
+                  />
+                  {t(($) => $.editor.field_required)}
+                </label>
+              </div>
+            </div>
+          ))}
+          {!readOnly && (
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 w-full"
+              onClick={() => {
+                const key = stableKey("field");
+                onChange({
+                  ...node,
+                  submission_schema: {
+                    policy: policy as "single" | "per_required_task" | "fan_in",
+                    fields: [...fields, { key, name: t(($) => $.editor.new_field), type: "text", required: true }],
+                  },
+                });
+              }}
+            >
+              <Plus />
+              {t(($) => $.editor.add_submission_field)}
+            </Button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function CompletionEditor({
+  node,
+  roles,
+  readOnly,
+  onChange,
+}: {
+  node: WorkflowNodeDefinition;
+  roles: WorkflowRoleDefinition[];
+  readOnly: boolean;
+  onChange: (node: WorkflowNodeDefinition) => void;
+}) {
+  const { t } = useT("workflows");
+  const completion = node.completion ?? {};
+  const evaluator = node.verdict?.evaluator ?? "none";
+  const confirmation = completion.confirmation ?? "none";
+  const ownerRole = roles.find((role) => role.key === node.owner_role);
+  const ownerCanConfirm = ownerRole?.allowed_actor_types.length === 1 &&
+    ownerRole.allowed_actor_types[0] === "member";
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1.5">
+        <Label>{t(($) => $.editor.required_issue_outcome)}</Label>
+        <select
+          value={completion.required_issue_outcome ?? "none"}
+          disabled={readOnly}
+          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+          onChange={(event) => onChange({
+            ...node,
+            completion: {
+              ...completion,
+              required_issue_outcome: event.target.value as "done" | "terminal" | "none",
+            },
+          })}
+        >
+          <option value="none">{t(($) => $.editor.issue_outcome_none)}</option>
+          <option value="done">{t(($) => $.editor.issue_outcome_done)}</option>
+          <option value="terminal">{t(($) => $.editor.issue_outcome_terminal)}</option>
+        </select>
+      </div>
+      <label className="flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm">
+        <input
+          type="checkbox"
+          checked={completion.submission_required ?? false}
+          disabled={readOnly || !node.submission_schema}
+          onChange={(event) => onChange({
+            ...node,
+            completion: { ...completion, submission_required: event.target.checked },
+          })}
+        />
+        {t(($) => $.editor.submission_required)}
+      </label>
+      <div className="space-y-1.5">
+        <Label>{t(($) => $.editor.verdict_evaluator)}</Label>
+        <select
+          value={evaluator}
+          disabled={readOnly}
+          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+          onChange={(event) => {
+            const nextEvaluator = event.target.value;
+            onChange({
+              ...node,
+              verdict: nextEvaluator === "none"
+                ? undefined
+                : {
+                    evaluator: nextEvaluator,
+                    required_result: node.verdict?.required_result ?? "pass",
+                    condition: nextEvaluator === "deterministic"
+                      ? node.verdict?.condition
+                      : undefined,
+                  },
+              completion: {
+                ...completion,
+                verdict_required: nextEvaluator === "none"
+                  ? "none"
+                  : completion.verdict_required,
+              },
+            });
+          }}
+        >
+          <option value="none">{t(($) => $.editor.verdict_none)}</option>
+          <option value="deterministic">{t(($) => $.editor.verdict_deterministic)}</option>
+          <option value="member">{t(($) => $.editor.verdict_member)}</option>
+        </select>
+      </div>
+      {evaluator !== "none" && (
+        <>
+          <div className="space-y-1.5">
+            <Label>{t(($) => $.editor.required_verdict)}</Label>
+            <select
+              value={completion.verdict_required ?? "none"}
+              disabled={readOnly}
+              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              onChange={(event) => onChange({
+                ...node,
+                verdict: {
+                  ...node.verdict!,
+                  required_result: event.target.value === "none"
+                    ? undefined
+                    : event.target.value,
+                },
+                completion: {
+                  ...completion,
+                  verdict_required: event.target.value as "none" | "pass" | "not_blocked",
+                },
+              })}
+            >
+              <option value="none">{t(($) => $.editor.verdict_none)}</option>
+              <option value="pass">{t(($) => $.editor.verdict_pass)}</option>
+              <option value="not_blocked">
+                {t(($) => $.editor.verdict_not_blocked)}
+              </option>
+            </select>
+          </div>
+          {evaluator === "deterministic" && (
+            <JsonObjectEditor
+              label={t(($) => $.editor.verdict_condition)}
+              value={node.verdict?.condition}
+              readOnly={readOnly}
+              placeholder={'{"source":"node_submission","node":"review","key":"approved","op":"eq","value":true}'}
+              onChange={(condition) => onChange({
+                ...node,
+                verdict: { ...node.verdict!, condition },
+              })}
+            />
+          )}
+        </>
+      )}
+      <div className="space-y-1.5">
+        <Label>{t(($) => $.editor.confirmation)}</Label>
+        <select
+          value={confirmation}
+          disabled={readOnly}
+          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+          onChange={(event) => onChange({
+            ...node,
+            completion: {
+              ...completion,
+              confirmation: event.target.value as typeof confirmation,
+            },
+          })}
+        >
+          <option value="none">{t(($) => $.editor.confirmation_none)}</option>
+          <option value="owner_any" disabled={!ownerCanConfirm}>
+            {t(($) => $.editor.confirmation_owner_any)}
+          </option>
+          <option value="owner_all" disabled={!ownerCanConfirm}>
+            {t(($) => $.editor.confirmation_owner_all)}
+          </option>
+          <option value="member_any">{t(($) => $.editor.confirmation_member_any)}</option>
+          <option value="member_all">{t(($) => $.editor.confirmation_member_all)}</option>
+          <option value="admin_only">{t(($) => $.editor.confirmation_admin)}</option>
+        </select>
+        {!ownerCanConfirm && (
+          <p className="text-xs text-muted-foreground">
+            {t(($) => $.editor.owner_confirmation_member_only)}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function WorkflowNodeDefinitionInspector({
+  node,
+  definition,
+  readOnly,
+  onChange,
+}: {
+  node: WorkflowNodeDefinition;
+  definition: WorkflowDefinition;
+  readOnly: boolean;
+  onChange: (node: WorkflowNodeDefinition) => void;
+}) {
+  const { t } = useT("workflows");
+  const activity = node.kind === "activity";
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-sm font-medium">{node.name}</h2>
+        <p className="mt-1 font-mono text-xs text-muted-foreground">{node.key}</p>
+      </div>
+      <InspectorSection title={t(($) => $.editor.section_basic)} open>
+        <div className="space-y-1.5">
+          <Label htmlFor="workflow-node-name">{t(($) => $.editor.activity_name)}</Label>
+          <Input
+            id="workflow-node-name"
+            value={node.name}
+            disabled={readOnly}
+            className="min-h-11"
+            onChange={(event) => onChange({ ...node, name: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="workflow-node-description">
+            {t(($) => $.editor.node_description)}
+          </Label>
+          <Textarea
+            id="workflow-node-description"
+            value={node.description ?? ""}
+            disabled={readOnly}
+            rows={3}
+            onChange={(event) => onChange({
+              ...node,
+              description: event.target.value || undefined,
+            })}
+          />
+        </div>
+        {activity && (
+          <>
+            <div className="grid grid-cols-[minmax(0,1fr)_3rem] gap-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="workflow-node-color">{t(($) => $.editor.node_color)}</Label>
+                <Input
+                  id="workflow-node-color"
+                  value={node.color ?? ""}
+                  disabled={readOnly}
+                  placeholder="#6366f1"
+                  className="min-h-11"
+                  onChange={(event) => onChange({
+                    ...node,
+                    color: event.target.value || undefined,
+                  })}
+                />
+              </div>
+              <input
+                type="color"
+                aria-label={t(($) => $.editor.node_color)}
+                value={node.color?.match(/^#[0-9a-fA-F]{6}$/) ? node.color : "#6366f1"}
+                disabled={readOnly}
+                className="mt-6 size-11 rounded-md border bg-background p-1"
+                onChange={(event) => onChange({ ...node, color: event.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="workflow-node-timeout">{t(($) => $.editor.timeout_minutes)}</Label>
+              <Input
+                id="workflow-node-timeout"
+                type="number"
+                min={0}
+                max={525600}
+                value={node.timeout_minutes ?? 0}
+                disabled={readOnly}
+                className="min-h-11"
+                onChange={(event) => onChange({
+                  ...node,
+                  timeout_minutes: Number(event.target.value) || undefined,
+                })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.activity_mode)}</Label>
+              <select
+                value={node.activity_mode ?? "work"}
+                disabled={readOnly}
+                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                onChange={(event) => onChange({ ...node, activity_mode: event.target.value })}
+              >
+                <option value="work">{t(($) => $.editor.work_activity)}</option>
+                <option value="acceptance">{t(($) => $.editor.acceptance_activity)}</option>
+              </select>
+            </div>
+          </>
+        )}
+        {node.kind === "parallel_join" && (
+          <div className="space-y-1.5">
+            <Label>{t(($) => $.editor.join_mode)}</Label>
+            <select
+              value={node.join_mode ?? "all"}
+              disabled={readOnly}
+              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              onChange={(event) => onChange({ ...node, join_mode: event.target.value })}
+            >
+              <option value="all">{t(($) => $.editor.join_all)}</option>
+              <option value="any">{t(($) => $.editor.join_any)}</option>
+            </select>
+          </div>
+        )}
+      </InspectorSection>
+      {activity && (
+        <>
+          <InspectorSection title={t(($) => $.editor.section_responsibility)}>
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.owner_role)}</Label>
+              <select
+                value={node.owner_role ?? ""}
+                disabled={readOnly}
+                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                onChange={(event) => onChange({
+                  ...node,
+                  owner_role: event.target.value || undefined,
+                })}
+              >
+                <option value="">—</option>
+                {definition.roles.map((role) => (
+                  <option key={role.key} value={role.key}>{role.name}</option>
+                ))}
+              </select>
+            </div>
+            <fieldset>
+              <legend className="mb-1.5 text-xs font-medium">
+                {t(($) => $.editor.participant_roles)}
+              </legend>
+              <div className="space-y-1">
+                {definition.roles.map((role) => (
+                  <label
+                    key={role.key}
+                    className="flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={node.participant_roles?.includes(role.key) ?? false}
+                      disabled={readOnly}
+                      onChange={(event) => {
+                        const current = node.participant_roles ?? [];
+                        onChange({
+                          ...node,
+                          participant_roles: event.target.checked
+                            ? [...current, role.key]
+                            : current.filter((key) => key !== role.key),
+                        });
+                      }}
+                    />
+                    {role.name}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <ExecutorEditor
+              node={node}
+              definition={definition}
+              readOnly={readOnly}
+              onChange={onChange}
+            />
+          </InspectorSection>
+          <InspectorSection title={t(($) => $.editor.section_work)}>
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.issue_policy)}</Label>
+              <select
+                value={node.issue_policy ?? "none"}
+                disabled={readOnly}
+                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                onChange={(event) => {
+                  const policy = event.target.value;
+                  onChange({
+                    ...node,
+                    issue_policy: policy,
+                    issue_templates: policy === "none" || policy === "dynamic"
+                      ? []
+                      : node.issue_templates,
+                  });
+                }}
+              >
+                <option value="none">{t(($) => $.editor.issue_policy_none)}</option>
+                <option value="fixed">{t(($) => $.editor.issue_policy_fixed)}</option>
+                <option value="dynamic">{t(($) => $.editor.issue_policy_dynamic)}</option>
+                <option value="fixed_and_dynamic">{t(($) => $.editor.issue_policy_both)}</option>
+              </select>
+            </div>
+            <IssueTemplateEditor
+              node={node}
+              roles={definition.roles}
+              readOnly={readOnly}
+              onChange={onChange}
+            />
+          </InspectorSection>
+          <InspectorSection title={t(($) => $.editor.section_submission)}>
+            <SubmissionEditor node={node} readOnly={readOnly} onChange={onChange} />
+          </InspectorSection>
+          <InspectorSection title={t(($) => $.editor.section_completion)}>
+            <CompletionEditor
+              node={node}
+              roles={definition.roles}
+              readOnly={readOnly}
+              onChange={onChange}
+            />
+          </InspectorSection>
+        </>
+      )}
+    </div>
+  );
+}

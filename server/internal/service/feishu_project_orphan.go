@@ -44,6 +44,17 @@ type IssueAttachmentDeleter interface {
 	DeleteKeys(ctx context.Context, keys []string)
 }
 
+// HardDeleteIssueOptions lets callers extend the issue deletion transaction
+// with application-owned relationship cleanup. Workflow uses it because its
+// runtime tables intentionally have no foreign keys or database cascades.
+type HardDeleteIssueOptions struct {
+	TxStarter TxStarter
+	// WithinDeleteTransaction runs immediately before the issue row is
+	// deleted. It must only use qtx and must not publish events or perform
+	// external side effects.
+	WithinDeleteTransaction func(ctx context.Context, qtx *db.Queries, issue db.Issue) error
+}
+
 // HardDeleteIssue permanently deletes an issue and all its dependents, matching
 // the cascade the HTTP delete handler performs: cancel running agent tasks,
 // fail linked autopilot runs, delete the issue (the DB cascade removes
@@ -53,23 +64,46 @@ type IssueAttachmentDeleter interface {
 // tasks, store, and pub may be nil — the corresponding step is skipped. Task
 // cancellation and autopilot failure are best-effort (matching the handler);
 // only a failed issue delete is returned as an error.
-func HardDeleteIssue(ctx context.Context, q *db.Queries, tasks IssueTaskCanceller, store IssueAttachmentDeleter, pub FeishuProjectEventPublisher, issue db.Issue, actorType, actorID string) error {
+func HardDeleteIssue(
+	ctx context.Context,
+	q *db.Queries,
+	tasks IssueTaskCanceller,
+	store IssueAttachmentDeleter,
+	pub FeishuProjectEventPublisher,
+	issue db.Issue,
+	actorType, actorID string,
+	options ...HardDeleteIssueOptions,
+) error {
 	if tasks != nil {
 		_ = tasks.CancelTasksForIssue(ctx, issue.ID)
 	}
-	// Fail any linked autopilot runs before delete (ON DELETE SET NULL clears
-	// issue_id). Best-effort, mirroring the handler.
-	_ = q.FailAutopilotRunsByIssue(ctx, issue.ID)
 
-	// Collect attachment URLs (issue-level + comment-level) before the CASCADE
-	// delete removes the rows.
-	attachmentURLs, _ := q.ListAttachmentURLsByIssueOrComments(ctx, issue.ID)
+	var opts HardDeleteIssueOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
 
-	if err := q.DeleteIssue(ctx, db.DeleteIssueParams{
-		ID:          issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-	}); err != nil {
-		return err
+	var attachmentURLs []string
+	if opts.TxStarter != nil {
+		tx, err := opts.TxStarter.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("begin issue delete transaction: %w", err)
+		}
+		defer tx.Rollback(ctx)
+		qtx := q.WithTx(tx)
+		attachmentURLs, err = hardDeleteIssueRecords(ctx, qtx, issue, opts.WithinDeleteTransaction)
+		if err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit issue delete transaction: %w", err)
+		}
+	} else {
+		var err error
+		attachmentURLs, err = hardDeleteIssueRecords(ctx, q, issue, opts.WithinDeleteTransaction)
+		if err != nil {
+			return err
+		}
 	}
 
 	if store != nil && len(attachmentURLs) > 0 {
@@ -90,6 +124,34 @@ func HardDeleteIssue(ctx context.Context, q *db.Queries, tasks IssueTaskCancelle
 		})
 	}
 	return nil
+}
+
+func hardDeleteIssueRecords(
+	ctx context.Context,
+	q *db.Queries,
+	issue db.Issue,
+	withinDeleteTransaction func(context.Context, *db.Queries, db.Issue) error,
+) ([]string, error) {
+	if withinDeleteTransaction != nil {
+		if err := withinDeleteTransaction(ctx, q, issue); err != nil {
+			return nil, fmt.Errorf("extend issue delete transaction: %w", err)
+		}
+	}
+
+	// Fail any linked autopilot runs before delete (ON DELETE SET NULL clears
+	// issue_id). Best-effort, mirroring the original HTTP handler behavior.
+	_ = q.FailAutopilotRunsByIssue(ctx, issue.ID)
+
+	// Collect attachment URLs (issue-level + comment-level) before the issue
+	// delete removes the rows.
+	attachmentURLs, _ := q.ListAttachmentURLsByIssueOrComments(ctx, issue.ID)
+	if err := q.DeleteIssue(ctx, db.DeleteIssueParams{
+		ID:          issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	}); err != nil {
+		return nil, err
+	}
+	return attachmentURLs, nil
 }
 
 // detectOrphanBindings asks Feishu Project which of the given bindings' work

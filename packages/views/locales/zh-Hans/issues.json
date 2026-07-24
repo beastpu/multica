@@ -53,6 +53,11 @@
     "section_creator": "创建者",
     "section_project": "项目",
     "section_label": "标签",
+    "section_workflow": "工作流",
+    "workflow_issues_only": "仅工作流 issue",
+    "workflow_template": "模板",
+    "workflow_instance": "工作流运行",
+    "workflow_activity": "活动",
     "section_date": "日期",
     "date_field": "字段",
     "date_field_created": "创建时间",
@@ -69,6 +74,11 @@
     "issue_count_other": "{{count}} 个 issue",
     "reset": "重置全部筛选",
     "active_count_other": "{{count}} 个筛选"
+  },
+  "workflow_context": {
+    "host": "宿主：{{identifier}} · {{title}}",
+    "required": "必需的工作流 issue",
+    "optional": "可选的工作流 issue"
   },
   "display": {
     "tooltip": "显示设置",

@@ -53,6 +53,11 @@
     "section_creator": "생성자",
     "section_project": "프로젝트",
     "section_label": "라벨",
+    "section_workflow": "워크플로",
+    "workflow_issues_only": "워크플로 issue만",
+    "workflow_template": "템플릿",
+    "workflow_instance": "워크플로 실행",
+    "workflow_activity": "활동",
     "section_date": "날짜",
     "date_field": "필드",
     "date_field_created": "생성",
@@ -69,6 +74,11 @@
     "issue_count_other": "이슈 {{count}}개",
     "reset": "필터 모두 초기화",
     "active_count_other": "필터 {{count}}개"
+  },
+  "workflow_context": {
+    "host": "호스트: {{identifier}} · {{title}}",
+    "required": "필수 워크플로 issue",
+    "optional": "선택 워크플로 issue"
   },
   "display": {
     "tooltip": "보기 설정",

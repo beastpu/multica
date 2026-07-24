@@ -1,0 +1,374 @@
+{
+  "title": "工作流",
+  "description": "用可见的活动、产出与准出规则组织人与智能体的协作。",
+  "tabs": {
+    "active": "进行中",
+    "mine": "与我相关",
+    "completed": "已完成",
+    "templates": "模板"
+  },
+  "actions": {
+    "new_workflow": "新建工作流",
+    "new_template": "新建模板",
+    "open": "打开工作流",
+    "save": "保存草稿",
+    "publish": "发布",
+    "reconcile": "修复状态",
+    "pause": "暂停",
+    "resume": "继续",
+    "submit": "提交结果",
+    "record_verdict": "记录检查结果",
+    "approve": "验收通过",
+    "request_changes": "要求返工",
+    "assign": "分配",
+    "retry": "重试",
+    "detach": "解除关联",
+    "create_issue": "创建 issue",
+    "confirm": "确认通过",
+    "reject": "拒绝",
+    "force_complete": "强制完成",
+    "complete": "完成活动",
+    "skip": "跳过",
+    "rollback": "回退到此节点",
+    "cancel_workflow": "取消工作流",
+    "validate": "校验定义",
+    "add_node": "新增节点",
+    "connect": "连接",
+    "remove_connection": "删除连接",
+    "add_activity": "新增活动",
+    "add_task": "新增任务",
+    "remove": "删除",
+    "move_left": "左移",
+    "move_right": "右移",
+    "copy": "复制",
+    "edit_metadata": "编辑详情",
+    "save_metadata": "保存详情",
+    "save_roles": "保存角色分配",
+    "archive": "归档",
+    "start_workflow": "启动工作流",
+    "start_existing_workflow": "从已有 issue 启动",
+    "load_more": "加载更多",
+    "loading_more": "加载中..."
+  },
+  "create": {
+    "title": "启动工作流",
+    "description": "一次操作原子创建宿主需求 issue，并启动所选的已发布工作流。",
+    "issue_title": "需求标题",
+    "template": "工作流模板",
+    "choose_template": "选择一个已发布模板",
+    "no_templates": "请先发布一个模板，再启动工作流。"
+  },
+  "start": {
+    "title": "从当前 issue 启动工作流",
+    "description": "选择已发布的工作流版本、分配角色，并将当前 issue 作为宿主需求。",
+    "existing_title": "从已有 issue 启动工作流",
+    "existing_description": "选择宿主需求、已发布的工作流版本，并补齐必需角色。",
+    "host_issue": "宿主需求 issue",
+    "choose_host_issue": "选择一个未完成的顶层 issue",
+    "loading_issues": "正在加载 issue...",
+    "no_host_issues": "当前没有可用的未完成顶层 issue。",
+    "template": "工作流模板",
+    "choose_template": "选择已发布模板",
+    "no_templates": "目前没有已发布模板，请先让工作区管理员发布模板。",
+    "loading_template": "正在加载工作流模板",
+    "template_load_failed": "无法加载所选模板，请选择其他模板或重试。",
+    "version": "已发布版本",
+    "activity_preview": "活动预览",
+    "roles": "工作流角色",
+    "choose_actor": "选择符合条件的执行主体",
+    "unassigned": "暂不分配",
+    "no_eligible_actor": "这个必需角色没有可选的执行主体。",
+    "actor_type": {
+      "member": "成员",
+      "agent": "智能体",
+      "squad": "小队"
+    },
+    "host_status": "issue 状态策略",
+    "independent": "issue 状态独立",
+    "independent_help": "适合已有 issue。工作流进度不会修改 issue 状态。",
+    "managed": "由工作流管理 issue 状态",
+    "managed_help": "启动时设为 in_progress，工作流完成时设为 done。",
+    "cancel": "取消",
+    "starting": "正在启动..."
+  },
+  "runs": {
+    "intervention_title": "需要你介入",
+    "intervention_description": "等待配置、决策或修复的工作流会固定在最前面。",
+    "all_title": "工作流运行",
+    "empty_title": "这里还没有工作流",
+    "empty_description": "工作流启动后，会在这里持续展示运行状态。",
+    "host_issue": "宿主需求",
+    "current_activity": "当前活动",
+    "current_owner": "当前负责人",
+    "progress": "整体进度",
+    "project": "项目",
+    "none": "无",
+    "updated": "最近更新",
+    "next_action": "下一步",
+    "healthy": "正常运行中"
+  },
+  "filters": {
+    "title": "工作流筛选",
+    "status": "状态",
+    "all_statuses": "全部状态",
+    "project": "项目",
+    "all_projects": "全部项目",
+    "template": "模板",
+    "all_templates": "全部模板",
+    "owner": "当前负责人",
+    "all_owners": "全部负责人",
+    "current_node": "当前节点 Key"
+  },
+  "templates": {
+    "title": "工作流模板",
+    "empty_title": "创建第一个工作流模板",
+    "empty_description": "定义可复用的活动、角色、交付物与验收规则。",
+    "admin_only": "只有工作区 Owner 和管理员可以管理模板。",
+    "draft": "草稿",
+    "published": "已发布",
+    "archived": "已归档",
+    "version": "版本 {{version}}",
+    "revision": "草稿修订 {{revision}}",
+    "applies_to": "适用类型",
+    "latest_version": "最新版本",
+    "activities": "活动数",
+    "runs": "运行实例",
+    "copy_suffix": "副本",
+    "metadata_title": "模板详情",
+    "metadata_description": "修改模板名称、说明以及适用的 issue 类型。",
+    "name": "模板名称",
+    "description": "模板说明",
+    "applies_to_type": "issue 类型 Key",
+    "applies_to_placeholder": "留空表示适用于所有 issue 类型",
+    "archive_title": "归档这个模板？",
+    "archive_description": "归档后仍保留历史版本和已有运行实例，但不能再启动新的工作流。",
+    "archived_help": "这个模板已归档并进入只读状态；已有运行实例和已发布版本仍然保留。"
+  },
+  "workbench": {
+    "title": "工作流工作台",
+    "activity_map": "活动地图",
+    "template_version": "{{name}} · 版本 {{version}}",
+    "host_priority": "宿主 issue 优先级：{{priority}}",
+    "host_details": "需求内容与评论",
+    "host_details_description": "查看需求描述、评论、附件和操作记录",
+    "owners": "活动负责人",
+    "participants": "参与者",
+    "role_setup": "完成工作流配置",
+    "role_setup_help": "分配全部必需角色后，首个活动才会开始。",
+    "role_setup_waiting": "需要工作流发起人或工作区管理员补齐缺少的角色。",
+    "timeout": "{{minutes}} 分钟后超时",
+    "node_details": "活动细节",
+    "current_issues": "当前活动",
+    "all_issues": "全部工作流 issue",
+    "tasks": "任务",
+    "submission": "提交结果",
+    "verdict": "检查结果",
+    "acceptance": "业务验收",
+    "history": "历史",
+    "required": "必需",
+    "optional": "可选",
+    "waiting": "等待中",
+    "awaiting_approver": "等待指定验收人处理",
+    "no_issues": "当前范围没有 issue",
+    "no_nodes": "这个工作流还没有节点",
+    "no_tasks": "这个活动没有任务",
+    "no_submission": "尚未提交结果",
+    "no_verdict": "尚无检查结果",
+    "verdict_result": "检查结论",
+    "verdict_reason": "结论说明",
+    "verdict_confidence": "置信度（0–1）",
+    "dynamic_task": "动态任务",
+    "template_task": "模板任务",
+    "executor": "执行人",
+    "executor_resolution": "解析决策",
+    "executor_required": "需要配置执行人后才能继续",
+    "choose_executor": "选择成员、智能体或小队",
+    "manual_executor_reason": "在工作流工作台中手动配置",
+    "materialization_failed": "issue 创建失败",
+    "recovery_actions": "恢复操作",
+    "action_reason": "填写操作原因（必填）",
+    "add_dynamic_issue": "追加活动任务",
+    "add_dynamic_issue_help": "新 issue 会自动归属当前节点和宿主需求。",
+    "issue_title": "issue 标题",
+    "issue_description": "issue 描述",
+    "auto_resolve": "按节点策略自动解析执行人",
+    "confirmation": "节点确认",
+    "confirmation_policy": "确认策略",
+    "confirmation_comment": "确认说明（可选）",
+    "admin_actions": "受控节点操作",
+    "admin_actions_help": "强制完成、跳过和回退都会记录操作人与原因。",
+    "complete_activity": "完成人工活动",
+    "complete_activity_help": "完成会写入成员裁决和审计记录，再由工作流引擎推进。",
+    "agent_suggestion": "智能体建议",
+    "official_verdict": "正式裁决",
+    "submission_source_task": "来源任务",
+    "choose_submission_source": "选择本次提交对应的任务",
+    "submission_required_fields": "请先填写全部必需的结果字段。",
+    "boolean_true": "是",
+    "boolean_false": "否",
+    "proposed_tasks": "建议追加的任务",
+    "proposed_tasks_help": "任务先作为建议保存，节点负责人或管理员确认后才会批量创建。",
+    "proposed_task_title": "建议 issue 标题",
+    "confirm_proposed_tasks": "确认并创建任务",
+    "diagnostics": "运行诊断",
+    "no_events": "还没有操作记录",
+    "unknown_time": "未知时间",
+    "event_payload": "事件详情",
+    "revision": "实例修订号",
+    "failed_tasks": "失败任务",
+    "sweeper_anomalies": "自愈异常",
+    "no_diagnostic_problems": "没有发现需要处理的运行异常",
+    "cancel_workflow": "取消工作流",
+    "cancel_workflow_help": "取消后所有未结束节点都会关闭，且无法恢复。",
+    "summary": "结果摘要",
+    "payload": "结构化结果（JSON）",
+    "reason": "返工原因",
+    "rework_target": "返回活动",
+    "select_node": "选择一个活动，查看其中的任务、产出和检查结果。",
+    "attempt": "第 {{attempt}} 次"
+  },
+  "editor": {
+    "title": "工作流模板",
+    "description": "每个节点都是活动容器，issue、执行者、提交结果和准出判断都归属于活动。",
+    "activity_name": "活动名称",
+    "activity_kind": "活动类型",
+    "owner_role": "负责角色",
+    "issue_title": "默认 issue 标题",
+    "acceptance_activity": "验收活动",
+    "unsaved": "有未保存改动",
+    "saved": "草稿已保存",
+    "conflict": "草稿已在其他位置更新，请刷新后再保存。",
+    "publish_help": "发布后当前版本被冻结；运行中的工作流继续使用原版本。"
+    ,"change_summary": "版本变更摘要"
+    ,"change_summary_placeholder": "说明这个版本修改了什么"
+    ,"version_to_publish": "即将发布版本 {{version}}。"
+    ,"active_runs_unchanged": "已经运行的工作流实例不会被修改。"
+    ,"mobile_read_only": "移动端仅支持只读查看模板，请使用更大屏幕编辑流程图。"
+    ,"version_selector": "模板版本"
+    ,"version_option": "版本 {{version}} · {{status}}"
+    ,"graph": "流程图"
+    ,"graph_help": "节点是活动容器或控制节点；连线决定实际推进路径。"
+    ,"new_node_kind": "新增节点类型"
+    ,"node_activity": "活动"
+    ,"node_gateway": "条件网关"
+    ,"node_parallel_split": "并行拆分"
+    ,"node_parallel_join": "并行汇聚"
+    ,"node_end": "结束"
+    ,"join_mode": "汇聚规则"
+    ,"join_all": "等待全部分支"
+    ,"join_any": "任一分支完成"
+    ,"activity_mode": "活动模式"
+    ,"work_activity": "工作活动"
+    ,"issue_policy": "issue 生成策略"
+    ,"issue_policy_none": "不生成 issue"
+    ,"issue_policy_fixed": "固定任务"
+    ,"issue_policy_dynamic": "动态拆解"
+    ,"issue_policy_both": "固定 + 动态"
+    ,"confirmation": "节点确认策略"
+    ,"confirmation_none": "无需确认"
+    ,"confirmation_owner_any": "任一节点负责人"
+    ,"confirmation_owner_all": "全部节点负责人"
+    ,"confirmation_member_any": "任一参与成员"
+    ,"confirmation_member_all": "全部参与成员"
+    ,"confirmation_admin": "仅管理员"
+    ,"connections": "出入连接"
+    ,"incoming_from": "来自"
+    ,"no_outgoing": "当前节点没有出边"
+    ,"connection_target": "选择下游节点"
+    ,"default_branch": "默认分支"
+    ,"edge_condition": "结构化条件（JSON）"
+    ,"validation_failed": "工作流定义未通过校验"
+    ,"validation_passed": "工作流定义校验通过，可以发布"
+    ,"workflow_roles": "工作流角色"
+    ,"workflow_acceptance": "业务验收"
+    ,"role_name": "角色名称"
+    ,"role_required": "启动时必须分配"
+    ,"allowed_actor_types": "允许的执行主体"
+    ,"new_role": "新角色"
+    ,"add_role": "新增角色"
+    ,"acceptance_policy": "验收策略"
+    ,"acceptance_none": "无需整体验收"
+    ,"acceptance_member": "成员验收"
+    ,"acceptance_verdict": "节点判定"
+    ,"acceptance_node": "可见验收活动"
+    ,"approver_role": "验收人角色"
+    ,"rework_targets": "允许返工的活动"
+    ,"section_basic": "基础"
+    ,"section_responsibility": "责任"
+    ,"section_work": "工作"
+    ,"section_submission": "提交"
+    ,"section_completion": "准出"
+    ,"node_description": "节点说明"
+    ,"node_color": "展示颜色"
+    ,"timeout_minutes": "超时时间（分钟）"
+    ,"participant_roles": "参与角色"
+    ,"executor_strategy": "执行者策略"
+    ,"executor_role": "执行者或候选池角色"
+    ,"capability": "所需 Skill"
+    ,"source_node": "上游选择活动"
+    ,"source_field": "执行主体字段"
+    ,"add_executor_strategy": "新增执行者回退策略"
+    ,"issue_description": "issue 描述"
+    ,"assignee_role": "负责人角色"
+    ,"initial_status": "初始状态"
+    ,"priority": "优先级"
+    ,"required_task": "必需任务"
+    ,"fixed_tasks_disabled": "只有固定任务或固定 + 动态策略可以配置预置 issue。"
+    ,"add_issue_template": "新增 issue 模板"
+    ,"submission_policy": "提交策略"
+    ,"submission_none": "无需结构化提交"
+    ,"submission_single": "单份当前结果"
+    ,"submission_per_task": "每个必需任务一份结果"
+    ,"submission_fan_in": "聚合多个任务结果"
+    ,"field_name": "字段名称"
+    ,"field_type": "字段类型"
+    ,"field_required": "必填字段"
+    ,"new_field": "新字段"
+    ,"add_submission_field": "新增结果字段"
+    ,"required_issue_outcome": "必需 issue 结果"
+    ,"issue_outcome_none": "忽略 issue 状态"
+    ,"issue_outcome_done": "全部必需 issue 完成"
+    ,"issue_outcome_terminal": "全部必需 issue 进入终态"
+    ,"submission_required": "必须提交有效结果"
+    ,"verdict_evaluator": "检查方式"
+    ,"verdict_none": "无需独立检查"
+    ,"verdict_deterministic": "确定性结构化规则"
+    ,"verdict_member": "成员判断"
+    ,"verdict_pass": "必须通过"
+    ,"verdict_not_blocked": "通过或未通过均可，仅阻塞时停止"
+    ,"required_verdict": "所需检查结果"
+    ,"verdict_condition": "确定性条件（JSON）"
+    ,"owner_confirmation_member_only": "只有负责人角色保证仅解析为成员时，才能使用负责人确认。"
+  },
+  "status": {
+    "needs_setup": "待配置",
+    "running": "运行中",
+    "paused": "已暂停",
+    "completed": "已完成",
+    "cancelled": "已取消",
+    "failed": "运行失败",
+    "active": "进行中",
+    "waiting": "等待中",
+    "blocked": "已阻塞",
+    "skipped": "已跳过",
+    "superseded": "已被替代",
+    "pending": "待处理",
+    "pending_materialization": "待创建 issue",
+    "materializing": "正在创建 issue",
+    "materialized": "issue 已创建",
+    "detached": "已解除关联",
+    "approved": "已确认",
+    "rejected": "已拒绝",
+    "pass": "通过",
+    "fail": "未通过",
+    "unknown": "未知"
+  },
+  "errors": {
+    "load": "无法加载工作流数据。",
+    "not_found": "没有找到这个工作流。",
+    "invalid_json": "请输入合法的 JSON 对象。",
+    "reason_required": "返工必须填写原因并选择返回活动。",
+    "action_failed": "操作失败，请刷新状态后重试。",
+    "feature_disabled": "当前工作区尚未启用工作流。"
+  }
+}

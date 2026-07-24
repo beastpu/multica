@@ -13,6 +13,12 @@ func TestReleaseFlagsDefaultToOff(t *testing.T) {
 	if ResourceLabelsEnabled(ctx, nil) {
 		t.Fatal("resource labels release flag must default to off")
 	}
+	if WorkflowsActivityEngineEnabled(ctx, nil) {
+		t.Fatal("workflow release flag must default to off")
+	}
+	if WorkflowProgressionPaused(ctx, nil, "workspace") {
+		t.Fatal("workflow progression kill switch must default to off")
+	}
 }
 
 func TestAgentSkillTogglesCompatDecisionStaysEnabled(t *testing.T) {

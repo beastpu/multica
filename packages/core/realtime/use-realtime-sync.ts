@@ -25,6 +25,7 @@ import {
 import { githubKeys } from "../github/queries";
 import { larkKeys } from "../lark/queries";
 import { slackKeys } from "../slack/queries";
+import { workflowKeys } from "../workflows/queries";
 import {
   onIssueCreated,
   onIssueUpdated,
@@ -95,6 +96,32 @@ import type {
 const chatWsLogger = createLogger("chat.ws");
 
 const logger = createLogger("realtime-sync");
+
+export type WorkflowRealtimePrefix =
+  | "workflow_template"
+  | "workflow_instance"
+  | "workflow_node"
+  | "workflow_node_task"
+  | "workflow_executor_resolution"
+  | "workflow_submission"
+  | "workflow_verdict"
+  | "workflow_confirmation"
+  | "workflow_acceptance";
+
+// Workflow events are invalidation-only. Replays and out-of-order delivery
+// therefore cannot roll a cached instance backward; the next query reads the
+// authoritative server revision and refreshes the complete related projection.
+export function invalidateWorkflowRealtime(
+  qc: QueryClient,
+  wsId: string,
+  prefix: WorkflowRealtimePrefix,
+) {
+  qc.invalidateQueries({
+    queryKey: prefix === "workflow_template"
+      ? workflowKeys.templates(wsId)
+      : workflowKeys.all(wsId),
+  });
+}
 
 export function invalidateChatMessageQueries(
   qc: QueryClient,
@@ -684,6 +711,44 @@ export function useRealtimeSync(
         // PR list is keyed by issue id, not workspace, so we invalidate all
         // PR queries — the open issue detail page will refetch its own list.
         qc.invalidateQueries({ queryKey: ["github", "pull-requests"] });
+      },
+      workflow_template: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) invalidateWorkflowRealtime(qc, wsId, "workflow_template");
+      },
+      workflow_instance: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) invalidateWorkflowRealtime(qc, wsId, "workflow_instance");
+      },
+      workflow_node: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) invalidateWorkflowRealtime(qc, wsId, "workflow_node");
+      },
+      workflow_node_task: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) invalidateWorkflowRealtime(qc, wsId, "workflow_node_task");
+      },
+      workflow_executor_resolution: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) {
+          invalidateWorkflowRealtime(qc, wsId, "workflow_executor_resolution");
+        }
+      },
+      workflow_submission: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) invalidateWorkflowRealtime(qc, wsId, "workflow_submission");
+      },
+      workflow_verdict: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) invalidateWorkflowRealtime(qc, wsId, "workflow_verdict");
+      },
+      workflow_confirmation: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) invalidateWorkflowRealtime(qc, wsId, "workflow_confirmation");
+      },
+      workflow_acceptance: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) invalidateWorkflowRealtime(qc, wsId, "workflow_acceptance");
       },
       // Powers the agent presence cache: any task lifecycle change
       // (dispatch / completed / failed / cancelled) refreshes the

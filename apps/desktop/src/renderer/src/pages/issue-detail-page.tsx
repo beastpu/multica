@@ -1,6 +1,6 @@
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { IssueDetail } from "@multica/views/issues/components";
+import { WorkflowAwareIssueDetail } from "@multica/views/workflows";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useDocumentTitle } from "@/hooks/use-document-title";
@@ -16,5 +16,5 @@ export function IssueDetailPage({ onDelete }: { onDelete?: () => void }) {
   // Render errors bubble to the root route errorElement (DesktopRouteErrorPage),
   // which contains the crash inside the tab content pane. No page-level boundary
   // here — a whole-page wrapper duplicates the route-level error UI.
-  return <IssueDetail issueId={id} onDelete={onDelete} />;
+  return <WorkflowAwareIssueDetail issueId={id} onDelete={onDelete} />;
 }

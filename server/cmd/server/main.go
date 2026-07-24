@@ -404,6 +404,15 @@ func main() {
 	if h.WebhookDeliveryWorker != nil {
 		go h.WebhookDeliveryWorker.Run(sweepCtx)
 	}
+	if h.WorkflowMaterializer != nil {
+		go h.WorkflowMaterializer.Run(sweepCtx)
+	}
+	if h.WorkflowReconciler != nil {
+		go h.WorkflowReconciler.Run(sweepCtx)
+	}
+	if h.WorkflowSweeper != nil {
+		go h.WorkflowSweeper.Run(sweepCtx)
+	}
 
 	// Channel inbound supervisor (MUL-3620): holds the §4.4 WS lease per
 	// installation and drives each channel.Channel. It is built
@@ -491,6 +500,15 @@ func main() {
 	heartbeatScheduler.Stop()
 	if h.WebhookDeliveryWorker != nil && !h.WebhookDeliveryWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("webhook delivery worker did not exit within shutdown timeout")
+	}
+	if h.WorkflowMaterializer != nil && !h.WorkflowMaterializer.WaitWithTimeout(5*time.Second) {
+		slog.Warn("workflow materializer did not exit within shutdown timeout")
+	}
+	if h.WorkflowReconciler != nil && !h.WorkflowReconciler.WaitWithTimeout(5*time.Second) {
+		slog.Warn("workflow reconciler did not exit within shutdown timeout")
+	}
+	if h.WorkflowSweeper != nil && !h.WorkflowSweeper.WaitWithTimeout(5*time.Second) {
+		slog.Warn("workflow sweeper did not exit within shutdown timeout")
 	}
 
 	// Join the channel supervisor's per-installation goroutines so the

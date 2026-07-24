@@ -70,6 +70,7 @@
       "slugs": [
         "issues",
         "projects",
+        "workflows",
         "autopilots",
         "agents",
         "squads",

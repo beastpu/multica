@@ -137,6 +137,10 @@ export function useIssueSurfaceController({
   const projectFilters = useViewStore((s) => s.projectFilters);
   const includeNoProject = useViewStore((s) => s.includeNoProject);
   const labelFilters = useViewStore((s) => s.labelFilters);
+  const workflowTemplateFilter = useViewStore((s) => s.workflowTemplateFilter);
+  const workflowInstanceFilter = useViewStore((s) => s.workflowInstanceFilter);
+  const workflowActivityFilter = useViewStore((s) => s.workflowActivityFilter);
+  const workflowIssueOnly = useViewStore((s) => s.workflowIssueOnly);
   const propertyFilters = useViewStore((s) => s.propertyFilters);
   const agentRunningFilter = useViewStore((s) => s.agentRunningFilter);
   const showSubIssues = useViewStore((s) => s.showSubIssues);
@@ -249,6 +253,10 @@ export function useIssueSurfaceController({
     projectFilters: viewProjectFilters,
     includeNoProject: viewIncludeNoProject,
     labelFilters,
+    workflowTemplateFilter,
+    workflowInstanceFilter,
+    workflowActivityFilter,
+    workflowIssueOnly,
     propertyFilters: effectivePropertyFilters,
     agentRunningFilter,
     showSubIssues,

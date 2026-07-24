@@ -53,6 +53,11 @@
     "section_creator": "作成者",
     "section_project": "プロジェクト",
     "section_label": "ラベル",
+    "section_workflow": "ワークフロー",
+    "workflow_issues_only": "ワークフロー issue のみ",
+    "workflow_template": "テンプレート",
+    "workflow_instance": "ワークフロー実行",
+    "workflow_activity": "アクティビティ",
     "section_date": "日付",
     "date_field": "項目",
     "date_field_created": "作成",
@@ -69,6 +74,11 @@
     "issue_count_other": "イシュー {{count}} 件",
     "reset": "すべてのフィルターをリセット",
     "active_count_other": "フィルター {{count}} 件"
+  },
+  "workflow_context": {
+    "host": "ホスト：{{identifier}} · {{title}}",
+    "required": "必須のワークフロー issue",
+    "optional": "任意のワークフロー issue"
   },
   "display": {
     "tooltip": "表示設定",

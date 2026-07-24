@@ -147,6 +147,13 @@ export default function WorkspaceLayout() {
           }}
         />
         <Stack.Screen
+          name="workflow/[id]"
+          options={{
+            title: "Workflow",
+            headerBackTitle: "Back",
+          }}
+        />
+        <Stack.Screen
           name="project/[id]/edit"
           options={{
             title: "Edit Project",

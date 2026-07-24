@@ -37,7 +37,11 @@ const EMPTY_PROJECTS: Project[] = [];
 
 function hasActiveServerListFilter(filter: IssueListFilter) {
   return Object.values(filter).some((value) =>
-    Array.isArray(value) ? value.length > 0 : value === true,
+    Array.isArray(value)
+      ? value.length > 0
+      : typeof value === "string"
+        ? value.length > 0
+        : value === true,
   );
 }
 
@@ -112,6 +116,10 @@ export function useIssueSurfaceData({
   projectFilters,
   includeNoProject,
   labelFilters,
+  workflowTemplateFilter,
+  workflowInstanceFilter,
+  workflowActivityFilter,
+  workflowIssueOnly,
   propertyFilters,
   agentRunningFilter,
   showSubIssues,
@@ -134,6 +142,10 @@ export function useIssueSurfaceData({
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
+  workflowTemplateFilter: string;
+  workflowInstanceFilter: string;
+  workflowActivityFilter: string;
+  workflowIssueOnly: boolean;
   propertyFilters: Record<string, string[]>;
   agentRunningFilter: boolean;
   showSubIssues: boolean;
@@ -156,6 +168,10 @@ export function useIssueSurfaceData({
       project_ids: projectFilters,
       include_no_project: includeNoProject,
       label_ids: labelFilters,
+      workflow_template_id: workflowTemplateFilter || undefined,
+      workflow_instance_id: workflowInstanceFilter || undefined,
+      workflow_activity: workflowActivityFilter || undefined,
+      workflow_issue_only: workflowIssueOnly || undefined,
     }),
     [
       assigneeFilters,
@@ -163,6 +179,10 @@ export function useIssueSurfaceData({
       includeNoAssignee,
       includeNoProject,
       labelFilters,
+      workflowActivityFilter,
+      workflowInstanceFilter,
+      workflowIssueOnly,
+      workflowTemplateFilter,
       priorityFilters,
       projectFilters,
       queryPlan.groupedScopeFilter,
@@ -179,6 +199,10 @@ export function useIssueSurfaceData({
       project_ids: projectFilters,
       include_no_project: includeNoProject,
       label_ids: labelFilters,
+      workflow_template_id: workflowTemplateFilter || undefined,
+      workflow_instance_id: workflowInstanceFilter || undefined,
+      workflow_activity: workflowActivityFilter || undefined,
+      workflow_issue_only: workflowIssueOnly || undefined,
     };
     return hasActiveServerListFilter(nextFilter) ? nextFilter : undefined;
   }, [
@@ -187,6 +211,10 @@ export function useIssueSurfaceData({
     includeNoAssignee,
     includeNoProject,
     labelFilters,
+    workflowActivityFilter,
+    workflowInstanceFilter,
+    workflowIssueOnly,
+    workflowTemplateFilter,
     priorityFilters,
     projectFilters,
   ]);
@@ -242,6 +270,10 @@ export function useIssueSurfaceData({
       projectFilters,
       includeNoProject,
       labelFilters,
+      workflowTemplateFilter,
+      workflowInstanceFilter,
+      workflowActivityFilter,
+      workflowIssueOnly,
       propertyFilters,
       workingOnly: agentRunningFilter,
       showSubIssues,
@@ -253,6 +285,10 @@ export function useIssueSurfaceData({
       includeNoAssignee,
       includeNoProject,
       labelFilters,
+      workflowTemplateFilter,
+      workflowInstanceFilter,
+      workflowActivityFilter,
+      workflowIssueOnly,
       priorityFilters,
       projectFilters,
       propertyFilters,
@@ -298,6 +334,10 @@ export function useIssueSurfaceData({
         agentRunningFilter,
         runningIssueIds: activity.runningIssueIds,
         propertyFilters,
+        workflowTemplateFilter,
+        workflowInstanceFilter,
+        workflowActivityFilter,
+        workflowIssueOnly,
       }),
     [
       activity.runningIssueIds,
@@ -305,6 +345,10 @@ export function useIssueSurfaceData({
       assigneeGroupsQuery.data?.groups,
       propertyFilters,
       showSubIssues,
+      workflowActivityFilter,
+      workflowInstanceFilter,
+      workflowIssueOnly,
+      workflowTemplateFilter,
     ],
   );
 
@@ -354,6 +398,10 @@ export function useIssueSurfaceData({
           agentRunningFilter: true,
           runningIssueIds: activity.runningIssueIds,
           propertyFilters,
+          workflowTemplateFilter,
+          workflowInstanceFilter,
+          workflowActivityFilter,
+          workflowIssueOnly,
         }) ?? []
       ).flatMap((group) => group.issues);
     }
@@ -374,6 +422,10 @@ export function useIssueSurfaceData({
     surfaceIssues,
     usesAssigneeBoard,
     usesGantt,
+    workflowActivityFilter,
+    workflowInstanceFilter,
+    workflowIssueOnly,
+    workflowTemplateFilter,
   ]);
 
   const { data: childProgressMap = EMPTY_CHILD_PROGRESS } = useQuery(
@@ -416,6 +468,10 @@ export function useIssueSurfaceData({
       includeNoProject,
       labelFilters,
       propertyFilters,
+      workflowActivityFilter,
+      workflowInstanceFilter,
+      workflowIssueOnly,
+      workflowTemplateFilter,
       agentRunningFilter,
       showSubIssues,
     }),
@@ -427,6 +483,10 @@ export function useIssueSurfaceData({
       includeNoProject,
       labelFilters,
       propertyFilters,
+      workflowActivityFilter,
+      workflowInstanceFilter,
+      workflowIssueOnly,
+      workflowTemplateFilter,
       priorityFilters,
       projectFilters,
       showSubIssues,

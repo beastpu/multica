@@ -155,6 +155,44 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
     expect(parsed.issues[0]?.stage).toBeNull();
   });
 
+  it("keeps a valid workflow activity context", () => {
+    const workflowContext = {
+      workflow_instance_id: "workflow-1",
+      workflow_template_id: "template-1",
+      workflow_template_name: "Delivery",
+      workflow_node_instance_id: "node-1",
+      activity_key: "implementation",
+      activity_name: "Implementation",
+      host_issue_id: "host-1",
+      host_issue_identifier: "MUL-2",
+      host_issue_title: "Ship workflow",
+      required: true,
+    };
+    const parsed = ListIssuesResponseSchema.parse({
+      issues: [{ ...baseIssue, workflow_context: workflowContext }],
+      total: 1,
+    });
+
+    expect(parsed.issues[0]?.workflow_context).toEqual(workflowContext);
+  });
+
+  it("drops a malformed workflow context without dropping the issue", () => {
+    const parsed = ListIssuesResponseSchema.parse({
+      issues: [{
+        ...baseIssue,
+        workflow_context: {
+          workflow_instance_id: 42,
+          workflow_node_instance_id: null,
+        },
+      }],
+      total: 1,
+    });
+
+    expect(parsed.issues).toHaveLength(1);
+    expect(parsed.issues[0]?.workflow_context).toBeUndefined();
+    expect(parsed.issues[0]?.title).toBe(baseIssue.title);
+  });
+
   it("accepts custom property values including multi_select arrays", () => {
     const payload = {
       issues: [

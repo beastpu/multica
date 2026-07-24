@@ -28,6 +28,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import { TimelineList } from "@/components/issue/timeline-list";
 import { AgentHeaderBadge } from "@/components/issue/agent-header-badge";
 import { InlineCommentComposer } from "@/components/issue/inline-comment-composer";
+import { WorkflowHostCard } from "@/components/workflow/workflow-host-card";
 import {
   issueDetailOptions,
   issueKeys,
@@ -194,6 +195,7 @@ export default function IssueDetail() {
         </View>
       ) : (
         <View className="flex-1">
+          <WorkflowHostCard issueId={id} />
           <TimelineList
             issue={issue}
             entries={timeline.data}

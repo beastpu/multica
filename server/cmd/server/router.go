@@ -1171,6 +1171,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/properties/{propertyId}", h.DeleteIssueProperty)
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
 					r.Get("/reviews", h.ListPerforceReviewsForIssue)
+					r.Get("/workflow", h.GetIssueWorkflow)
+					r.Post("/workflow", h.StartIssueWorkflow)
 				})
 			})
 
@@ -1212,6 +1214,69 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/resources/{resourceId}", h.UpdateProjectResource)
 					r.Delete("/resources/{resourceId}", h.DeleteProjectResource)
 				})
+			})
+
+			// Native activity-container workflows. Read access follows workspace
+			// membership; template mutations require owner/admin and remain
+			// independently gated by the release flag in the handlers.
+			r.Route("/api/workflow-templates", func(r chi.Router) {
+				r.Get("/", h.ListWorkflowTemplates)
+				r.Get("/{id}", h.GetWorkflowTemplate)
+				r.Get("/{id}/versions", h.ListWorkflowTemplateVersions)
+				r.Get("/{id}/versions/{version}", h.GetWorkflowTemplateVersion)
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireWorkspaceRole(queries, "owner", "admin"))
+					r.Post("/", h.CreateWorkflowTemplate)
+					r.Patch("/{id}", h.UpdateWorkflowTemplateMetadata)
+					r.Post("/{id}/draft", h.CreateWorkflowTemplateDraft)
+					r.Post("/{id}/validate", h.ValidateWorkflowTemplateDefinition)
+					r.Put("/{id}/draft", h.UpdateWorkflowTemplateDraft)
+					r.Post("/{id}/publish", h.PublishWorkflowTemplate)
+					r.Post("/{id}/archive", h.ArchiveWorkflowTemplate)
+					r.Delete("/{id}", h.ArchiveWorkflowTemplate)
+				})
+			})
+
+			r.Route("/api/workflow-instances", func(r chi.Router) {
+				r.Get("/", h.ListWorkflowInstances)
+				r.Post("/", h.CreateWorkflow)
+				r.Route("/{instanceId}", func(r chi.Router) {
+					r.Get("/", h.GetWorkflowInstance)
+					r.Get("/issues", h.ListWorkflowInstanceIssues)
+					r.Get("/events", h.ListWorkflowInstanceEvents)
+					r.Get("/diagnostics", h.GetWorkflowInstanceDiagnostics)
+					r.Get("/acceptances", h.ListWorkflowAcceptances)
+					r.Post("/acceptances", h.DecideWorkflowAcceptance)
+					r.Post("/roles", h.UpdateWorkflowInstanceRoles)
+					r.Post("/pause", h.PauseWorkflowInstance)
+					r.Post("/resume", h.ResumeWorkflowInstance)
+					r.Post("/cancel", h.CancelWorkflowInstance)
+					r.Post("/reconcile", h.ReconcileWorkflowInstance)
+				})
+			})
+
+			r.Route("/api/workflow-node-instances/{nodeInstanceId}", func(r chi.Router) {
+				r.Get("/", h.GetWorkflowNodeInstance)
+				r.Get("/issues", h.ListWorkflowNodeIssues)
+				r.Post("/issues", h.CreateWorkflowNodeIssue)
+				r.Get("/submissions", h.ListWorkflowNodeSubmissions)
+				r.Post("/submissions", h.CreateWorkflowNodeSubmission)
+				r.Post(
+					"/submissions/{submissionId}/confirm-tasks",
+					h.ConfirmWorkflowSubmissionTasks,
+				)
+				r.Get("/verdicts", h.ListWorkflowNodeVerdicts)
+				r.Post("/verdicts", h.CreateWorkflowNodeVerdict)
+				r.Post("/confirm", h.ConfirmWorkflowNode)
+				r.Post("/complete", h.CompleteWorkflowNode)
+				r.Post("/skip", h.SkipWorkflowNode)
+				r.Post("/rollback", h.RollbackWorkflowNode)
+				r.Post("/resolve-executor", h.ResolveWorkflowNodeExecutor)
+			})
+
+			r.Route("/api/workflow-node-tasks/{taskId}", func(r chi.Router) {
+				r.Post("/retry", h.RetryWorkflowNodeTask)
+				r.Post("/detach", h.DetachWorkflowNodeTask)
 			})
 
 			// Squads

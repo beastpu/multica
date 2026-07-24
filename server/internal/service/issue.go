@@ -82,6 +82,16 @@ type IssueCreateParams struct {
 // IssueCreateOpts groups optional knobs for IssueService.Create. Most
 // callers leave it zero-valued.
 type IssueCreateOpts struct {
+	// WithinCreateTransaction extends the issue transaction with caller-owned
+	// rows that must not outlive or precede the issue. It runs after the issue
+	// and labels exist but before commit. Returning an error rolls the entire
+	// transaction back. Callbacks must only use the provided transaction-bound
+	// Queries and must not publish events or perform external side effects.
+	//
+	// Native Workflow uses this hook to create the host Issue and Workflow
+	// Instance as one atomic product action.
+	WithinCreateTransaction func(context.Context, *db.Queries, db.Issue) error
+
 	// BroadcastPayload, if non-nil, is invoked after the issue row is
 	// created and attachments are linked. Its return value is sent as
 	// the EventIssueCreated payload via the event bus. The HTTP handler
@@ -315,6 +325,12 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}
 	}
 
+	if opts.WithinCreateTransaction != nil {
+		if err := opts.WithinCreateTransaction(ctx, qtx, issue); err != nil {
+			return IssueCreateResult{}, fmt.Errorf("extend issue create transaction: %w", err)
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
 	}
@@ -469,6 +485,8 @@ func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autop
 		return analytics.SourceManual, originID, ""
 	case "autopilot":
 		return analytics.SourceAutopilot, "", originID
+	case "workflow":
+		return analytics.SourceWorkflow, "", ""
 	default:
 		slog.Warn("analytics: unknown issue origin type",
 			"origin_type", issue.OriginType.String,

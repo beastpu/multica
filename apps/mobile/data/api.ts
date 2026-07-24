@@ -57,6 +57,12 @@ import type {
   User,
   Workspace,
 } from "@multica/core/types";
+import type {
+  WorkflowInstanceDetail,
+  WorkflowIssuesResponse,
+  WorkflowNodeDetail,
+  WorkflowTemplateDetail,
+} from "@multica/core/workflows";
 import {
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_TIMELINE_ENTRIES,
@@ -64,6 +70,15 @@ import {
   ListIssuesResponseSchema,
   TimelineEntriesSchema,
 } from "@multica/core/api/schemas";
+import {
+  EMPTY_WORKFLOW_INSTANCE_DETAIL,
+  EMPTY_WORKFLOW_NODE_DETAIL,
+  EMPTY_WORKFLOW_TEMPLATE_DETAIL,
+  WorkflowInstanceDetailSchema,
+  WorkflowIssuesResponseSchema,
+  WorkflowNodeDetailSchema,
+  WorkflowTemplateDetailSchema,
+} from "@multica/core/api/workflow-schemas";
 import {
   ActiveTasksResponseSchema,
   AgentListSchema,
@@ -92,6 +107,7 @@ import {
   EMPTY_NOTIFICATION_PREFERENCES,
   EMPTY_PIN_LIST,
   EMPTY_PROJECT,
+  EMPTY_PUBLIC_CONFIG,
   EMPTY_RUNTIME_LIST,
   EMPTY_SEARCH_ISSUES_RESPONSE,
   EMPTY_SEARCH_PROJECTS_RESPONSE,
@@ -107,6 +123,7 @@ import {
   PinListSchema,
   PinnedItemSchema,
   ProjectSchema,
+  PublicConfigSchema,
   RuntimeListSchema,
   SearchIssuesResponseSchema,
   SearchProjectsResponseSchema,
@@ -397,6 +414,82 @@ class ApiClient {
       UserSchema,
       EMPTY_USER,
       { ...opts, endpoint: "getMe" },
+    );
+  }
+
+  async getPublicConfig(
+    opts?: { signal?: AbortSignal },
+  ): Promise<{ feature_flags: Record<string, boolean> }> {
+    return this.fetchValidated(
+      "/api/config",
+      PublicConfigSchema,
+      EMPTY_PUBLIC_CONFIG,
+      { ...opts, endpoint: "GET /api/config" },
+    );
+  }
+
+  // --- Workflows (mobile read-only surface) ---
+  //
+  // Mobile deliberately exposes no Workflow writes in v1. The data identity,
+  // lenient schemas, and 404 compatibility behavior mirror the shared
+  // Web/Desktop surface while the phone renders a linearized activity canvas.
+  async getIssueWorkflow(
+    issueId: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<WorkflowInstanceDetail> {
+    return this.fetchValidated(
+      `/api/issues/${issueId}/workflow`,
+      WorkflowInstanceDetailSchema,
+      EMPTY_WORKFLOW_INSTANCE_DETAIL,
+      { ...opts, endpoint: "GET /api/issues/:id/workflow" },
+    );
+  }
+
+  async getWorkflowInstance(
+    instanceId: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<WorkflowInstanceDetail> {
+    return this.fetchValidated(
+      `/api/workflow-instances/${instanceId}`,
+      WorkflowInstanceDetailSchema,
+      EMPTY_WORKFLOW_INSTANCE_DETAIL,
+      { ...opts, endpoint: "GET /api/workflow-instances/:id" },
+    );
+  }
+
+  async getWorkflowNode(
+    nodeInstanceId: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<WorkflowNodeDetail> {
+    return this.fetchValidated(
+      `/api/workflow-node-instances/${nodeInstanceId}`,
+      WorkflowNodeDetailSchema,
+      EMPTY_WORKFLOW_NODE_DETAIL,
+      { ...opts, endpoint: "GET /api/workflow-node-instances/:id" },
+    );
+  }
+
+  async listWorkflowInstanceIssues(
+    instanceId: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<WorkflowIssuesResponse> {
+    return this.fetchValidated(
+      `/api/workflow-instances/${instanceId}/issues`,
+      WorkflowIssuesResponseSchema,
+      { issues: [], total: 0 },
+      { ...opts, endpoint: "GET /api/workflow-instances/:id/issues" },
+    );
+  }
+
+  async getWorkflowTemplate(
+    templateId: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<WorkflowTemplateDetail> {
+    return this.fetchValidated(
+      `/api/workflow-templates/${templateId}`,
+      WorkflowTemplateDetailSchema,
+      EMPTY_WORKFLOW_TEMPLATE_DETAIL,
+      { ...opts, endpoint: "GET /api/workflow-templates/:id" },
     );
   }
 

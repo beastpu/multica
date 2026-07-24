@@ -127,6 +127,21 @@ const (
 	EventAutopilotRunStart = "autopilot:run_start"
 	EventAutopilotRunDone  = "autopilot:run_done"
 
+	// Native activity-container workflow events. Payloads are intentionally
+	// compact identifiers; clients treat these as invalidation signals and
+	// refetch the authoritative read model.
+	EventWorkflowTemplateCreated           = "workflow_template:created"
+	EventWorkflowTemplateUpdated           = "workflow_template:updated"
+	EventWorkflowTemplatePublished         = "workflow_template:published"
+	EventWorkflowInstanceUpdated           = "workflow_instance:updated"
+	EventWorkflowNodeUpdated               = "workflow_node:updated"
+	EventWorkflowNodeTaskUpdated           = "workflow_node_task:updated"
+	EventWorkflowExecutorResolutionUpdated = "workflow_executor_resolution:updated"
+	EventWorkflowSubmissionCreated         = "workflow_submission:created"
+	EventWorkflowVerdictCreated            = "workflow_verdict:created"
+	EventWorkflowConfirmationUpdated       = "workflow_confirmation:updated"
+	EventWorkflowAcceptanceUpdated         = "workflow_acceptance:updated"
+
 	// Squad events
 	EventSquadCreated = "squad:created"
 	EventSquadUpdated = "squad:updated"

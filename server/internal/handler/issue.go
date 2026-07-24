@@ -70,6 +70,23 @@ type IssueResponse struct {
 	// preserves whatever labels are already in cache. nil pointer = "field
 	// absent, do not touch"; non-nil (incl. empty slice) = authoritative list.
 	Labels *[]LabelResponse `json:"labels,omitempty"`
+	// WorkflowContext is present only for Issues materialized by the native
+	// workflow runtime. It keeps list surfaces self-contained without copying
+	// workflow state into the Issue table.
+	WorkflowContext *IssueWorkflowContextResponse `json:"workflow_context,omitempty"`
+}
+
+type IssueWorkflowContextResponse struct {
+	WorkflowInstanceID     string `json:"workflow_instance_id"`
+	WorkflowTemplateID     string `json:"workflow_template_id"`
+	WorkflowTemplateName   string `json:"workflow_template_name"`
+	WorkflowNodeInstanceID string `json:"workflow_node_instance_id"`
+	ActivityKey            string `json:"activity_key"`
+	ActivityName           string `json:"activity_name"`
+	HostIssueID            string `json:"host_issue_id"`
+	HostIssueIdentifier    string `json:"host_issue_identifier"`
+	HostIssueTitle         string `json:"host_issue_title"`
+	Required               bool   `json:"required"`
 }
 
 // validIssueStatuses / validIssuePriorities mirror the CHECK constraints on
@@ -134,6 +151,49 @@ func (h *Handler) attachIssueExternalFields(ctx context.Context, resp *IssueResp
 		return
 	}
 	resp.ExternalFields = feishuProjectExternalFieldsToResponse(binding.ExternalFields)
+}
+
+func (h *Handler) issueWorkflowContextsByIssue(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	issueIDs []pgtype.UUID,
+	issuePrefix string,
+) map[string]*IssueWorkflowContextResponse {
+	contexts := make(map[string]*IssueWorkflowContextResponse)
+	if len(issueIDs) == 0 {
+		return contexts
+	}
+	rows, err := h.Queries.ListIssueWorkflowContexts(
+		ctx,
+		db.ListIssueWorkflowContextsParams{
+			WorkspaceID: workspaceID,
+			IssueIds:    issueIDs,
+		},
+	)
+	if err != nil {
+		slog.Warn(
+			"load issue workflow contexts failed",
+			"error", err,
+			"workspace_id", uuidToString(workspaceID),
+		)
+		return contexts
+	}
+	for _, row := range rows {
+		issueID := uuidToString(row.IssueID)
+		contexts[issueID] = &IssueWorkflowContextResponse{
+			WorkflowInstanceID:     uuidToString(row.WorkflowInstanceID),
+			WorkflowTemplateID:     uuidToString(row.WorkflowTemplateID),
+			WorkflowTemplateName:   row.WorkflowTemplateName,
+			WorkflowNodeInstanceID: uuidToString(row.WorkflowNodeInstanceID),
+			ActivityKey:            row.ActivityKey,
+			ActivityName:           row.ActivityName,
+			HostIssueID:            uuidToString(row.HostIssueID),
+			HostIssueIdentifier:    issuePrefix + "-" + strconv.Itoa(int(row.HostIssueNumber)),
+			HostIssueTitle:         row.HostIssueTitle,
+			Required:               row.Required,
+		}
+	}
+	return contexts
 }
 
 func feishuProjectExternalFieldsToResponse(raw []byte) map[string]string {
@@ -964,6 +1024,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			ids[i] = issue.ID
 		}
 		labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
+		workflowContexts := h.issueWorkflowContextsByIssue(ctx, wsUUID, ids, prefix)
 		resp := make([]IssueResponse, len(issues))
 		for i, issue := range issues {
 			resp[i] = openIssueRowToResponse(issue, prefix)
@@ -972,6 +1033,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 				labels = []LabelResponse{}
 			}
 			resp[i].Labels = &labels
+			resp[i].WorkflowContext = workflowContexts[resp[i].ID]
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -1230,6 +1292,10 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			addArg(labelIDs),
 		))
 	}
+	where, ok = appendIssueWorkflowFilters(w, r, where, addArg)
+	if !ok {
+		return
+	}
 
 	whereSql := strings.Join(where, " AND ")
 
@@ -1318,6 +1384,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 		ids[i] = issue.ID
 	}
 	labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
+	workflowContexts := h.issueWorkflowContextsByIssue(ctx, wsUUID, ids, prefix)
 	resp := make([]IssueResponse, len(issues))
 	for i, issue := range issues {
 		resp[i] = issueListRowToResponse(issue, prefix)
@@ -1326,6 +1393,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			labels = []LabelResponse{}
 		}
 		resp[i].Labels = &labels
+		resp[i].WorkflowContext = workflowContexts[resp[i].ID]
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1413,6 +1481,67 @@ func splitCommaParam(raw string) []string {
 		}
 	}
 	return out
+}
+
+func appendIssueWorkflowFilters(
+	w http.ResponseWriter,
+	r *http.Request,
+	where []string,
+	addArg func(any) string,
+) ([]string, bool) {
+	predicates := []string{
+		"workflow_task.issue_id = i.id",
+		"workflow_task.workspace_id = $1",
+	}
+	needsFilter := r.URL.Query().Get("workflow_issue_only") == "true"
+
+	if raw := strings.TrimSpace(r.URL.Query().Get("workflow_template_id")); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "workflow_template_id")
+		if !ok {
+			return nil, false
+		}
+		predicates = append(
+			predicates,
+			fmt.Sprintf("workflow_instance.template_id = %s::uuid", addArg(id)),
+		)
+		needsFilter = true
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("workflow_instance_id")); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "workflow_instance_id")
+		if !ok {
+			return nil, false
+		}
+		predicates = append(
+			predicates,
+			fmt.Sprintf("workflow_task.workflow_instance_id = %s::uuid", addArg(id)),
+		)
+		needsFilter = true
+	}
+	if activityKey := strings.TrimSpace(r.URL.Query().Get("workflow_activity")); activityKey != "" {
+		if len(activityKey) > 128 {
+			writeError(w, http.StatusBadRequest, "workflow_activity is too long")
+			return nil, false
+		}
+		predicates = append(
+			predicates,
+			fmt.Sprintf("workflow_node.node_key = %s::text", addArg(activityKey)),
+		)
+		needsFilter = true
+	}
+	if !needsFilter {
+		return where, true
+	}
+	return append(where, fmt.Sprintf(`EXISTS (
+  SELECT 1
+  FROM workflow_node_task workflow_task
+  JOIN workflow_node_instance workflow_node
+    ON workflow_node.id = workflow_task.workflow_node_instance_id
+   AND workflow_node.workspace_id = workflow_task.workspace_id
+  JOIN workflow_instance workflow_instance
+    ON workflow_instance.id = workflow_task.workflow_instance_id
+   AND workflow_instance.workspace_id = workflow_task.workspace_id
+  WHERE %s
+)`, strings.Join(predicates, " AND "))), true
 }
 
 func isIssueActorType(s string) bool {
@@ -1678,6 +1807,10 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 			addArg(labelIDs),
 		))
 	}
+	where, ok = appendIssueWorkflowFilters(w, r, where, addArg)
+	if !ok {
+		return
+	}
 
 	dateFilter, ok := parseIssueDateFilter(w, r.URL.Query())
 	if !ok {
@@ -1858,6 +1991,7 @@ ORDER BY
 	}
 	labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
 	prefix := h.getIssuePrefix(ctx, wsUUID)
+	workflowContexts := h.issueWorkflowContextsByIssue(ctx, wsUUID, ids, prefix)
 
 	groups := []IssueAssigneeGroupResponse{}
 	groupIndex := map[string]int{}
@@ -1882,6 +2016,7 @@ ORDER BY
 			labels = []LabelResponse{}
 		}
 		issue.Labels = &labels
+		issue.WorkflowContext = workflowContexts[issue.ID]
 		groups[idx].Issues = append(groups[idx].Issues, issue)
 	}
 
@@ -1897,6 +2032,12 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
 	h.attachIssueExternalFields(r.Context(), &resp, issue.WorkspaceID, issue.ID)
+	resp.WorkflowContext = h.issueWorkflowContextsByIssue(
+		r.Context(),
+		issue.WorkspaceID,
+		[]pgtype.UUID{issue.ID},
+		prefix,
+	)[resp.ID]
 	detailLabels := h.labelsByIssue(r.Context(), issue.WorkspaceID, []pgtype.UUID{issue.ID})[uuidToString(issue.ID)]
 	if detailLabels == nil {
 		detailLabels = []LabelResponse{}
@@ -2806,6 +2947,11 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	// Track which fields were explicitly present in JSON (even if null)
 	var rawFields map[string]json.RawMessage
 	json.Unmarshal(bodyBytes, &rawFields)
+	if _, changesParent := rawFields["parent_issue_id"]; changesParent &&
+		parentIssueIDChanged(prevIssue.ParentIssueID, req.ParentIssueID) &&
+		h.rejectActiveWorkflowIssueReparent(w, r, prevIssue) {
+		return
+	}
 
 	// Pre-fill nullable fields (bare sqlc.narg) with current values
 	params := db.UpdateIssueParams{
@@ -3251,6 +3397,9 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if h.rejectActiveWorkflowIssueDelete(w, r, issue) {
+		return
+	}
 
 	// Always emit the resolved UUID — frontend caches key by UUID, so an
 	// identifier-style payload ("MUL-123") would leave stale entries on
@@ -3259,7 +3408,13 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 	// publish issue:deleted) and is shared with the Feishu orphan reconcile.
 	userID := requestUserID(r)
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
-	if err := service.HardDeleteIssue(r.Context(), h.Queries, h.TaskService, h.Storage, h.Bus, issue, actorType, actorID); err != nil {
+	if err := service.HardDeleteIssue(
+		r.Context(), h.Queries, h.TaskService, h.Storage, h.Bus, issue, actorType, actorID,
+		service.HardDeleteIssueOptions{
+			TxStarter:               h.TxStarter,
+			WithinDeleteTransaction: cleanupWorkflowRelationshipsForIssue,
+		},
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete issue")
 		return
 	}
@@ -3349,6 +3504,23 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	if req.Updates.Priority != nil {
 		if !validateIssueEnum(w, "priority", *req.Updates.Priority, validIssuePriorities) {
 			return
+		}
+	}
+	if _, changesParent := rawUpdates["parent_issue_id"]; changesParent {
+		for _, issueID := range req.IssueIDs {
+			issueUUID, err := util.ParseUUID(issueID)
+			if err != nil {
+				continue
+			}
+			prevIssue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+				ID: issueUUID, WorkspaceID: wsUUID,
+			})
+			if err != nil || !parentIssueIDChanged(prevIssue.ParentIssueID, req.Updates.ParentIssueID) {
+				continue
+			}
+			if h.rejectActiveWorkflowIssueReparent(w, r, prevIssue) {
+				return
+			}
 		}
 	}
 	updated := 0
@@ -3665,6 +3837,21 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	for _, issueID := range req.IssueIDs {
+		issueUUID, err := util.ParseUUID(issueID)
+		if err != nil {
+			continue
+		}
+		issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+			ID: issueUUID, WorkspaceID: wsUUID,
+		})
+		if err != nil {
+			continue
+		}
+		if h.rejectActiveWorkflowIssueDelete(w, r, issue) {
+			return
+		}
+	}
 	deleted := 0
 	for _, issueID := range req.IssueIDs {
 		issueUUID, err := util.ParseUUID(issueID)
@@ -3679,25 +3866,18 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
-		h.Queries.FailAutopilotRunsByIssue(r.Context(), issue.ID)
-
-		// Collect attachment URLs before CASCADE delete to clean up S3 objects.
-		attachmentURLs, _ := h.Queries.ListAttachmentURLsByIssueOrComments(r.Context(), issue.ID)
-
-		if err := h.Queries.DeleteIssue(r.Context(), db.DeleteIssueParams{
-			ID:          issue.ID,
-			WorkspaceID: issue.WorkspaceID,
-		}); err != nil {
+		actorType, actorID := h.resolveActor(r, userID, workspaceID)
+		if err := service.HardDeleteIssue(
+			r.Context(), h.Queries, h.TaskService, h.Storage, h.Bus, issue, actorType, actorID,
+			service.HardDeleteIssueOptions{
+				TxStarter:               h.TxStarter,
+				WithinDeleteTransaction: cleanupWorkflowRelationshipsForIssue,
+			},
+		); err != nil {
 			slog.Warn("batch delete issue failed", "issue_id", issueID, "error", err)
 			continue
 		}
 
-		h.deleteS3Objects(r.Context(), attachmentURLs)
-
-		// Always emit the resolved UUID — frontend caches key by UUID.
-		actorType, actorID := h.resolveActor(r, userID, workspaceID)
-		h.publish(protocol.EventIssueDeleted, workspaceID, actorType, actorID, map[string]any{"issue_id": uuidToString(issue.ID)})
 		deleted++
 	}
 

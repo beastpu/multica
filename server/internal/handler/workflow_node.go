@@ -1,0 +1,2083 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/featureflags"
+	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
+)
+
+type workflowSubmissionResponse struct {
+	ID                     string                         `json:"id"`
+	WorkflowNodeInstanceID string                         `json:"workflow_node_instance_id"`
+	Revision               int32                          `json:"revision"`
+	Status                 string                         `json:"status"`
+	Payload                json.RawMessage                `json:"payload"`
+	Summary                string                         `json:"summary"`
+	Evidence               json.RawMessage                `json:"evidence"`
+	SubmittedByType        string                         `json:"submitted_by_type"`
+	SubmittedByID          *string                        `json:"submitted_by_id"`
+	SourceIssueID          *string                        `json:"source_issue_id"`
+	SourceAgentRunID       *string                        `json:"source_agent_run_id"`
+	ProposedTasks          []workflowdomain.IssueTemplate `json:"proposed_tasks"`
+	CreatedAt              string                         `json:"created_at"`
+}
+
+type workflowVerdictResponse struct {
+	ID                     string          `json:"id"`
+	WorkflowNodeInstanceID string          `json:"workflow_node_instance_id"`
+	Revision               int32           `json:"revision"`
+	Result                 string          `json:"result"`
+	Reason                 string          `json:"reason"`
+	Confidence             *float64        `json:"confidence"`
+	Evidence               json.RawMessage `json:"evidence"`
+	Basis                  json.RawMessage `json:"basis"`
+	EvaluatorType          string          `json:"evaluator_type"`
+	EvaluatorID            *string         `json:"evaluator_id"`
+	CreatedAt              string          `json:"created_at"`
+}
+
+type workflowConfirmationResponse struct {
+	ID                     string `json:"id"`
+	WorkflowNodeInstanceID string `json:"workflow_node_instance_id"`
+	MemberID               string `json:"member_id"`
+	Decision               string `json:"decision"`
+	Comment                string `json:"comment"`
+	DecidedAt              string `json:"decided_at"`
+	UpdatedAt              string `json:"updated_at"`
+}
+
+type workflowAcceptanceResponse struct {
+	ID                     string          `json:"id"`
+	WorkflowNodeInstanceID string          `json:"workflow_node_instance_id"`
+	Revision               int32           `json:"revision"`
+	Status                 string          `json:"status"`
+	DecidedByType          *string         `json:"decided_by_type"`
+	DecidedByID            *string         `json:"decided_by_id"`
+	Reason                 string          `json:"reason"`
+	ReworkTargetNodeKey    *string         `json:"rework_target_node_key"`
+	Evidence               json.RawMessage `json:"evidence"`
+	DecidedAt              *string         `json:"decided_at"`
+	CreatedAt              string          `json:"created_at"`
+}
+
+func workflowSubmissionToResponse(row db.WorkflowNodeSubmission) workflowSubmissionResponse {
+	payload := json.RawMessage(row.Payload)
+	proposedTasks := make([]workflowdomain.IssueTemplate, 0)
+	var payloadObject map[string]json.RawMessage
+	if json.Unmarshal(row.Payload, &payloadObject) == nil {
+		if raw, exists := payloadObject[workflowProposedTasksPayloadKey]; exists {
+			_ = json.Unmarshal(raw, &proposedTasks)
+			delete(payloadObject, workflowProposedTasksPayloadKey)
+			if normalized, err := json.Marshal(payloadObject); err == nil {
+				payload = normalized
+			}
+		}
+	}
+	return workflowSubmissionResponse{
+		ID: uuidToString(row.ID), WorkflowNodeInstanceID: uuidToString(row.WorkflowNodeInstanceID),
+		Revision: row.Revision, Status: row.Status, Payload: payload,
+		Summary: row.Summary, Evidence: json.RawMessage(row.Evidence),
+		SubmittedByType: row.SubmittedByType, SubmittedByID: uuidToPtr(row.SubmittedByID),
+		SourceIssueID: uuidToPtr(row.SourceIssueID), SourceAgentRunID: uuidToPtr(row.SourceAgentRunID),
+		ProposedTasks: proposedTasks,
+		CreatedAt:     timestampToString(row.CreatedAt),
+	}
+}
+
+func workflowVerdictToResponse(row db.WorkflowNodeVerdict) workflowVerdictResponse {
+	var confidence *float64
+	if row.Confidence.Valid {
+		value := row.Confidence.Float64
+		confidence = &value
+	}
+	return workflowVerdictResponse{
+		ID: uuidToString(row.ID), WorkflowNodeInstanceID: uuidToString(row.WorkflowNodeInstanceID),
+		Revision: row.Revision, Result: row.Result, Reason: row.Reason, Confidence: confidence,
+		Evidence: json.RawMessage(row.Evidence), Basis: json.RawMessage(row.Basis),
+		EvaluatorType: row.EvaluatorType, EvaluatorID: uuidToPtr(row.EvaluatorID),
+		CreatedAt: timestampToString(row.CreatedAt),
+	}
+}
+
+func workflowConfirmationToResponse(row db.WorkflowNodeConfirmation) workflowConfirmationResponse {
+	return workflowConfirmationResponse{
+		ID:                     uuidToString(row.ID),
+		WorkflowNodeInstanceID: uuidToString(row.WorkflowNodeInstanceID),
+		MemberID:               uuidToString(row.MemberID),
+		Decision:               row.Decision,
+		Comment:                row.Comment,
+		DecidedAt:              timestampToString(row.DecidedAt),
+		UpdatedAt:              timestampToString(row.UpdatedAt),
+	}
+}
+
+func workflowAcceptanceToResponse(row db.WorkflowAcceptance) workflowAcceptanceResponse {
+	return workflowAcceptanceResponse{
+		ID: uuidToString(row.ID), WorkflowNodeInstanceID: uuidToString(row.WorkflowNodeInstanceID),
+		Revision: row.Revision, Status: row.Status, DecidedByType: textToPtr(row.DecidedByType),
+		DecidedByID: uuidToPtr(row.DecidedByID), Reason: row.Reason,
+		ReworkTargetNodeKey: textToPtr(row.ReworkTargetNodeKey), Evidence: json.RawMessage(row.Evidence),
+		DecidedAt: timestampToPtr(row.DecidedAt), CreatedAt: timestampToString(row.CreatedAt),
+	}
+}
+
+func (h *Handler) loadWorkflowNode(w http.ResponseWriter, r *http.Request) (db.WorkflowNodeInstance, db.WorkflowInstance, bool) {
+	wsUUID, ok := parseUUIDOrBadRequest(w, h.resolveWorkspaceID(r), "workspace_id")
+	if !ok {
+		return db.WorkflowNodeInstance{}, db.WorkflowInstance{}, false
+	}
+	nodeID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "nodeInstanceId"), "workflow_node_instance_id")
+	if !ok {
+		return db.WorkflowNodeInstance{}, db.WorkflowInstance{}, false
+	}
+	node, err := h.Queries.GetWorkflowNodeInstanceInWorkspace(r.Context(), db.GetWorkflowNodeInstanceInWorkspaceParams{
+		ID: nodeID, WorkspaceID: wsUUID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "workflow node instance not found")
+		return db.WorkflowNodeInstance{}, db.WorkflowInstance{}, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow node")
+		return db.WorkflowNodeInstance{}, db.WorkflowInstance{}, false
+	}
+	instance, err := h.Queries.GetWorkflowInstanceInWorkspace(r.Context(), db.GetWorkflowInstanceInWorkspaceParams{
+		ID: node.WorkflowInstanceID, WorkspaceID: wsUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "workflow instance not found")
+		return db.WorkflowNodeInstance{}, db.WorkflowInstance{}, false
+	}
+	return node, instance, true
+}
+
+func (h *Handler) GetWorkflowNodeInstance(w http.ResponseWriter, r *http.Request) {
+	node, instance, ok := h.loadWorkflowNode(w, r)
+	if !ok {
+		return
+	}
+	tasks, err := h.Queries.ListWorkflowNodeTasks(r.Context(), db.ListWorkflowNodeTasksParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow node tasks")
+		return
+	}
+	submissions, err := h.Queries.ListWorkflowSubmissions(r.Context(), db.ListWorkflowSubmissionsParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow submissions")
+		return
+	}
+	verdicts, err := h.Queries.ListWorkflowVerdicts(r.Context(), db.ListWorkflowVerdictsParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow verdicts")
+		return
+	}
+	participants, err := h.Queries.ListWorkflowNodeParticipants(
+		r.Context(),
+		db.ListWorkflowNodeParticipantsParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow participants")
+		return
+	}
+	resolutions, err := h.Queries.ListWorkflowExecutorResolutions(
+		r.Context(),
+		db.ListWorkflowExecutorResolutionsParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow executor resolutions")
+		return
+	}
+	confirmations, err := h.Queries.ListWorkflowNodeConfirmations(
+		r.Context(),
+		db.ListWorkflowNodeConfirmationsParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow confirmations")
+		return
+	}
+	taskResponses := make([]workflowTaskResponse, len(tasks))
+	for i, task := range tasks {
+		taskResponses[i] = workflowTaskToResponse(task)
+	}
+	submissionResponses := make([]workflowSubmissionResponse, len(submissions))
+	for i, submission := range submissions {
+		submissionResponses[i] = workflowSubmissionToResponse(submission)
+	}
+	verdictResponses := make([]workflowVerdictResponse, len(verdicts))
+	for i, verdict := range verdicts {
+		verdictResponses[i] = workflowVerdictToResponse(verdict)
+	}
+	participantResponses := make([]map[string]any, len(participants))
+	for i, participant := range participants {
+		participantResponses[i] = map[string]any{
+			"id": uuidToString(participant.ID), "role": participant.Role,
+			"actor_type": participant.ActorType,
+			"actor_id":   uuidToString(participant.ActorID),
+			"created_at": timestampToString(participant.CreatedAt),
+		}
+	}
+	resolutionResponses := make([]map[string]any, len(resolutions))
+	for i, resolution := range resolutions {
+		resolutionResponses[i] = workflowExecutorResolutionToResponse(resolution)
+	}
+	confirmationResponses := make([]workflowConfirmationResponse, len(confirmations))
+	for i, confirmation := range confirmations {
+		confirmationResponses[i] = workflowConfirmationToResponse(confirmation)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"instance": h.workflowInstanceToRuntimeResponse(r.Context(), instance), "node": workflowNodeToResponse(node),
+		"tasks": taskResponses, "submissions": submissionResponses, "verdicts": verdictResponses,
+		"participants": participantResponses, "executor_resolutions": resolutionResponses,
+		"confirmations": confirmationResponses,
+	})
+}
+
+func (h *Handler) ListWorkflowNodeIssues(w http.ResponseWriter, r *http.Request) {
+	node, _, ok := h.loadWorkflowNode(w, r)
+	if !ok {
+		return
+	}
+	issues, err := h.Queries.ListWorkflowNodeIssues(r.Context(), db.ListWorkflowNodeIssuesParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list workflow node issues")
+		return
+	}
+	prefix := h.getIssuePrefix(r.Context(), node.WorkspaceID)
+	items := make([]IssueResponse, len(issues))
+	issueIDs := make([]pgtype.UUID, len(issues))
+	for i, issue := range issues {
+		issueIDs[i] = issue.ID
+	}
+	workflowContexts := h.issueWorkflowContextsByIssue(
+		r.Context(),
+		node.WorkspaceID,
+		issueIDs,
+		prefix,
+	)
+	for i, issue := range issues {
+		items[i] = issueToResponse(issue, prefix)
+		items[i].WorkflowContext = workflowContexts[items[i].ID]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"issues": items, "total": len(items)})
+}
+
+func (h *Handler) ListWorkflowNodeSubmissions(w http.ResponseWriter, r *http.Request) {
+	node, _, ok := h.loadWorkflowNode(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.Queries.ListWorkflowSubmissions(r.Context(), db.ListWorkflowSubmissionsParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list workflow submissions")
+		return
+	}
+	items := make([]workflowSubmissionResponse, len(rows))
+	for i, row := range rows {
+		items[i] = workflowSubmissionToResponse(row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"submissions": items})
+}
+
+type createWorkflowSubmissionRequest struct {
+	Payload          map[string]any                 `json:"payload"`
+	Summary          string                         `json:"summary"`
+	Evidence         json.RawMessage                `json:"evidence,omitempty"`
+	SourceIssueID    string                         `json:"source_issue_id,omitempty"`
+	SourceAgentRunID string                         `json:"source_agent_run_id,omitempty"`
+	ProposedTasks    []workflowdomain.IssueTemplate `json:"proposed_tasks,omitempty"`
+	IdempotencyKey   string                         `json:"idempotency_key"`
+}
+
+func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Request) {
+	if !h.workflowWriteEnabled(w, r) {
+		return
+	}
+	var req createWorkflowSubmissionRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil || req.Payload == nil {
+		writeError(w, http.StatusBadRequest, "payload must be a JSON object")
+		return
+	}
+	idempotencyKey := strings.TrimSpace(req.IdempotencyKey)
+	if idempotencyKey == "" {
+		writeError(w, http.StatusBadRequest, "idempotency_key is required")
+		return
+	}
+	node, instance, ok := h.loadWorkflowNode(w, r)
+	if !ok {
+		return
+	}
+	var nodeDefinition workflowdomain.NodeDefinition
+	if err := json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition); err != nil {
+		writeError(w, http.StatusInternalServerError, "invalid workflow node snapshot")
+		return
+	}
+	submissionPolicy := workflowdomain.SubmissionPolicy(nodeDefinition)
+	if submissionPolicy == "none" {
+		writeError(w, http.StatusConflict, "workflow node does not accept member submissions")
+		return
+	}
+	proposedTasks, proposedTasksErr := workflowdomain.NormalizeProposedTasks(
+		req.ProposedTasks,
+	)
+	if proposedTasksErr != nil {
+		writeError(w, http.StatusBadRequest, proposedTasksErr.Error())
+		return
+	}
+	if len(proposedTasks) > 0 && !workflowdomain.AllowsDynamicIssues(nodeDefinition) {
+		writeError(
+			w,
+			http.StatusConflict,
+			"workflow node does not allow proposed dynamic tasks",
+		)
+		return
+	}
+	reasons := workflowdomain.ValidateSubmissionPayload(nodeDefinition.SubmissionSchema, req.Payload)
+	status := "valid"
+	if len(reasons) > 0 {
+		status = "invalid"
+	}
+	if len(proposedTasks) > 0 {
+		req.Payload[workflowProposedTasksPayloadKey] = proposedTasks
+	}
+	payload, _ := json.Marshal(req.Payload)
+	evidence, ok := normalizeWorkflowJSONArray(w, req.Evidence, "evidence")
+	if !ok {
+		return
+	}
+	sourceIssueID, ok := parseOptionalWorkflowUUID(w, req.SourceIssueID, "source_issue_id")
+	if !ok {
+		return
+	}
+	sourceAgentRunID, ok := parseOptionalWorkflowUUID(w, req.SourceAgentRunID, "source_agent_run_id")
+	if !ok {
+		return
+	}
+	if sourceIssueID.Valid {
+		sourceTask, sourceErr := h.Queries.GetWorkflowNodeTaskByIssue(
+			r.Context(),
+			db.GetWorkflowNodeTaskByIssueParams{
+				IssueID: sourceIssueID, WorkspaceID: node.WorkspaceID,
+			},
+		)
+		if errors.Is(sourceErr, pgx.ErrNoRows) ||
+			sourceTask.WorkflowNodeInstanceID != node.ID {
+			writeError(w, http.StatusBadRequest, "source_issue_id must belong to this workflow node")
+			return
+		}
+		if sourceErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to validate source issue")
+			return
+		}
+	}
+	if (submissionPolicy == "per_required_task" || submissionPolicy == "fan_in") &&
+		!sourceIssueID.Valid {
+		writeError(
+			w,
+			http.StatusBadRequest,
+			"source_issue_id is required by the node submission policy",
+		)
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	actorType, actorIDText := h.resolveActor(
+		r, userID, uuidToString(node.WorkspaceID),
+	)
+	actorID, ok := parseUUIDOrBadRequest(w, actorIDText, "actor_id")
+	if !ok {
+		return
+	}
+	allowed := false
+	var permissionErr error
+	if actorType == "agent" {
+		allowed, permissionErr = h.canAgentSubmitWorkflowNode(
+			r.Context(), node, actorID,
+		)
+	} else {
+		allowed, permissionErr = h.canSubmitWorkflowNode(
+			r.Context(), instance, nodeDefinition, actorID,
+		)
+	}
+	if permissionErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to verify workflow node permission")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "only an assigned node actor can submit a result")
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start workflow transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	locked, err := qtx.LockWorkflowInstance(r.Context(), db.LockWorkflowInstanceParams{ID: instance.ID, WorkspaceID: instance.WorkspaceID})
+	if err != nil {
+		writeError(w, http.StatusConflict, "workflow instance changed; refresh and try again")
+		return
+	}
+	if event, err := qtx.GetWorkflowEventByIdempotencyKey(r.Context(), db.GetWorkflowEventByIdempotencyKeyParams{
+		WorkflowInstanceID: locked.ID, WorkspaceID: locked.WorkspaceID, IdempotencyKey: idempotencyKey,
+	}); err == nil {
+		var eventPayload struct {
+			SubmissionID string `json:"submission_id"`
+		}
+		if json.Unmarshal(event.Payload, &eventPayload) == nil {
+			submissionID, parseOK := parseUUIDOrBadRequest(w, eventPayload.SubmissionID, "submission_id")
+			if !parseOK {
+				return
+			}
+			submission, getErr := qtx.GetWorkflowSubmissionInWorkspace(r.Context(), db.GetWorkflowSubmissionInWorkspaceParams{
+				ID: submissionID, WorkspaceID: locked.WorkspaceID,
+			})
+			if getErr == nil {
+				tx.Rollback(r.Context())
+				h.Metrics.RecordWorkflowOperation("duplicate", "prevented")
+				writeJSON(w, http.StatusOK, map[string]any{
+					"submission": workflowSubmissionToResponse(submission), "validation_errors": reasons,
+				})
+				return
+			}
+		}
+	}
+	currentNode, err := qtx.GetWorkflowNodeInstanceInWorkspace(
+		r.Context(),
+		db.GetWorkflowNodeInstanceInWorkspaceParams{
+			ID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	)
+	if err != nil ||
+		locked.Status != "running" ||
+		!workflowNodeIsOpen(currentNode) {
+		writeError(
+			w,
+			http.StatusConflict,
+			"workflow node is not accepting submissions",
+		)
+		return
+	}
+	revision, err := qtx.GetNextWorkflowSubmissionRevision(r.Context(), db.GetNextWorkflowSubmissionRevisionParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to allocate submission revision")
+		return
+	}
+	submission, err := qtx.CreateWorkflowSubmission(r.Context(), db.CreateWorkflowSubmissionParams{
+		WorkspaceID: node.WorkspaceID, WorkflowInstanceID: instance.ID, WorkflowNodeInstanceID: node.ID,
+		Revision: revision, Status: status, Payload: payload, Summary: strings.TrimSpace(req.Summary),
+		Evidence: evidence, SubmittedByType: actorType, SubmittedByID: actorID,
+		SourceIssueID: sourceIssueID, SourceAgentRunID: sourceAgentRunID, SchemaVersion: 1,
+	})
+	if err != nil {
+		writeError(w, http.StatusConflict, "submission revision changed; retry the request")
+		return
+	}
+	if status == "valid" {
+		if err := qtx.SetWorkflowNodeLatestSubmission(r.Context(), db.SetWorkflowNodeLatestSubmissionParams{
+			LatestSubmissionID: submission.ID, ID: node.ID, WorkspaceID: node.WorkspaceID,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update current submission")
+			return
+		}
+	}
+	eventPayload, _ := json.Marshal(map[string]any{
+		"submission_id": uuidToString(submission.ID), "revision": submission.Revision, "status": submission.Status,
+	})
+	if _, err := qtx.CreateWorkflowEvent(r.Context(), db.CreateWorkflowEventParams{
+		WorkspaceID: node.WorkspaceID, WorkflowInstanceID: instance.ID, WorkflowNodeInstanceID: node.ID,
+		EventType: "node.submission_created", ActorType: actorType, ActorID: actorID,
+		IdempotencyKey: idempotencyKey, Payload: eventPayload,
+	}); err != nil {
+		writeError(w, http.StatusConflict, "submission has already been recorded")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit submission")
+		return
+	}
+	h.Metrics.RecordWorkflowSubmission(status)
+	if status == "valid" {
+		_, _ = h.reconcileWorkflowInstance(
+			r.Context(), node.WorkspaceID, instance.ID, actorType, actorID,
+			"submission:"+uuidToString(submission.ID),
+		)
+	}
+	h.publishWorkflowRealtime(
+		protocol.EventWorkflowSubmissionCreated,
+		uuidToString(node.WorkspaceID), actorType, actorIDText,
+		map[string]any{
+			"workflow_instance_id":      uuidToString(instance.ID),
+			"workflow_node_instance_id": uuidToString(node.ID),
+			"workflow_submission_id":    uuidToString(submission.ID),
+		},
+	)
+	h.publishWorkflowNodeUpdated(
+		uuidToString(node.WorkspaceID), actorType, actorIDText,
+		uuidToString(instance.ID), uuidToString(node.ID),
+	)
+	responseStatus := http.StatusCreated
+	if status == "invalid" {
+		responseStatus = http.StatusUnprocessableEntity
+	}
+	writeJSON(w, responseStatus, map[string]any{
+		"submission": workflowSubmissionToResponse(submission), "validation_errors": reasons,
+	})
+}
+
+func (h *Handler) canSubmitWorkflowNode(
+	ctx context.Context,
+	instance db.WorkflowInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+	userID pgtype.UUID,
+) (bool, error) {
+	if nodeDefinition.OwnerRole == "" {
+		return instance.StartedByType == "member" && instance.StartedByID == userID, nil
+	}
+	assignments, err := h.Queries.ListWorkflowRoleAssignments(ctx, db.ListWorkflowRoleAssignmentsParams{
+		WorkflowInstanceID: instance.ID, WorkspaceID: instance.WorkspaceID,
+	})
+	if err != nil {
+		return false, err
+	}
+	for _, assignment := range assignments {
+		if assignment.RoleKey == nodeDefinition.OwnerRole &&
+			assignment.ActorType == "member" && assignment.ActorID == userID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (h *Handler) canAgentSubmitWorkflowNode(
+	ctx context.Context,
+	node db.WorkflowNodeInstance,
+	agentID pgtype.UUID,
+) (bool, error) {
+	participants, err := h.Queries.ListWorkflowNodeParticipants(
+		ctx,
+		db.ListWorkflowNodeParticipantsParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	)
+	if err != nil {
+		return false, err
+	}
+	for _, participant := range participants {
+		switch participant.ActorType {
+		case "agent":
+			if participant.ActorID == agentID {
+				return true, nil
+			}
+		case "squad":
+			member, memberErr := h.Queries.IsSquadMember(
+				ctx,
+				db.IsSquadMemberParams{
+					SquadID: participant.ActorID, MemberType: "agent",
+					MemberID: agentID,
+				},
+			)
+			if memberErr != nil {
+				return false, memberErr
+			}
+			if member {
+				return true, nil
+			}
+		}
+	}
+	resolutions, err := h.Queries.ListWorkflowExecutorResolutions(
+		ctx,
+		db.ListWorkflowExecutorResolutionsParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	)
+	if err != nil {
+		return false, err
+	}
+	for _, resolution := range resolutions {
+		if resolution.Status != "resolved" || !resolution.ActorID.Valid ||
+			!resolution.ActorType.Valid {
+			continue
+		}
+		switch resolution.ActorType.String {
+		case "agent":
+			if resolution.ActorID == agentID {
+				return true, nil
+			}
+		case "squad":
+			member, memberErr := h.Queries.IsSquadMember(
+				ctx,
+				db.IsSquadMemberParams{
+					SquadID: resolution.ActorID, MemberType: "agent",
+					MemberID: agentID,
+				},
+			)
+			if memberErr != nil {
+				return false, memberErr
+			}
+			if member {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func normalizeWorkflowJSONArray(w http.ResponseWriter, raw json.RawMessage, field string) ([]byte, bool) {
+	if len(raw) == 0 {
+		return []byte("[]"), true
+	}
+	var values []any
+	if err := json.Unmarshal(raw, &values); err != nil || values == nil {
+		writeError(w, http.StatusBadRequest, field+" must be a JSON array")
+		return nil, false
+	}
+	normalized, _ := json.Marshal(values)
+	return normalized, true
+}
+
+func parseOptionalWorkflowUUID(w http.ResponseWriter, value, field string) (pgtype.UUID, bool) {
+	if strings.TrimSpace(value) == "" {
+		return pgtype.UUID{}, true
+	}
+	return parseUUIDOrBadRequest(w, value, field)
+}
+
+func (h *Handler) ListWorkflowNodeVerdicts(w http.ResponseWriter, r *http.Request) {
+	node, _, ok := h.loadWorkflowNode(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.Queries.ListWorkflowVerdicts(r.Context(), db.ListWorkflowVerdictsParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list workflow verdicts")
+		return
+	}
+	items := make([]workflowVerdictResponse, len(rows))
+	for i, row := range rows {
+		items[i] = workflowVerdictToResponse(row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"verdicts": items})
+}
+
+type createWorkflowVerdictRequest struct {
+	Result         string          `json:"result"`
+	Reason         string          `json:"reason"`
+	Confidence     *float64        `json:"confidence,omitempty"`
+	Evidence       json.RawMessage `json:"evidence,omitempty"`
+	IdempotencyKey string          `json:"idempotency_key"`
+}
+
+func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Request) {
+	if !h.workflowWriteEnabled(w, r) {
+		return
+	}
+	var req createWorkflowVerdictRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	switch req.Result {
+	case "pass":
+	case "fail", "blocked":
+		if strings.TrimSpace(req.Reason) == "" {
+			writeError(w, http.StatusBadRequest, "reason is required for fail or blocked verdicts")
+			return
+		}
+	default:
+		writeError(w, http.StatusBadRequest, "result must be pass, fail, or blocked")
+		return
+	}
+	if req.Confidence != nil && (*req.Confidence < 0 || *req.Confidence > 1) {
+		writeError(w, http.StatusBadRequest, "confidence must be between 0 and 1")
+		return
+	}
+	req.IdempotencyKey = strings.TrimSpace(req.IdempotencyKey)
+	if req.IdempotencyKey == "" {
+		writeError(w, http.StatusBadRequest, "idempotency_key is required")
+		return
+	}
+	evidence, ok := normalizeWorkflowJSONArray(w, req.Evidence, "evidence")
+	if !ok {
+		return
+	}
+	node, instance, ok := h.loadWorkflowNode(w, r)
+	if !ok {
+		return
+	}
+	var nodeDefinition workflowdomain.NodeDefinition
+	if err := json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition); err != nil {
+		writeError(w, http.StatusInternalServerError, "invalid workflow node snapshot")
+		return
+	}
+	if nodeDefinition.Verdict == nil {
+		writeError(w, http.StatusConflict, "workflow node does not accept verdicts")
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	actorType, actorIDText := h.resolveActor(
+		r, userID, uuidToString(node.WorkspaceID),
+	)
+	actorID, ok := parseUUIDOrBadRequest(w, actorIDText, "actor_id")
+	if !ok {
+		return
+	}
+	allowed := false
+	var err error
+	eventAction := "member_verdict"
+	if actorType == "agent" {
+		eventAction = "agent_verdict_suggestion"
+		allowed, err = h.canAgentSubmitWorkflowNode(r.Context(), node, actorID)
+	} else {
+		if nodeDefinition.Verdict.Evaluator != "member" {
+			writeError(w, http.StatusConflict, "workflow node does not accept a member verdict")
+			return
+		}
+		allowed, err = h.canSubmitWorkflowNode(
+			r.Context(), instance, nodeDefinition, actorID,
+		)
+		if err == nil && !allowed {
+			member, memberErr := h.Queries.GetMemberByUserAndWorkspace(
+				r.Context(),
+				db.GetMemberByUserAndWorkspaceParams{
+					UserID: actorID, WorkspaceID: node.WorkspaceID,
+				},
+			)
+			allowed = memberErr == nil && roleAllowed(member.Role, "owner", "admin")
+		}
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to verify workflow verdict permission")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "only an assigned node actor can record a verdict")
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start workflow transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	locked, err := qtx.LockWorkflowInstance(r.Context(), db.LockWorkflowInstanceParams{
+		ID: instance.ID, WorkspaceID: instance.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusConflict, "workflow instance changed; refresh and try again")
+		return
+	}
+	if event, eventErr := qtx.GetWorkflowEventByIdempotencyKey(
+		r.Context(),
+		db.GetWorkflowEventByIdempotencyKeyParams{
+			WorkflowInstanceID: locked.ID,
+			WorkspaceID:        locked.WorkspaceID,
+			IdempotencyKey:     req.IdempotencyKey,
+		},
+	); eventErr == nil {
+		var payload struct {
+			Action    string `json:"action"`
+			VerdictID string `json:"verdict_id"`
+		}
+		if json.Unmarshal(event.Payload, &payload) == nil && payload.Action == eventAction {
+			verdictID, parseOK := parseUUIDOrBadRequest(w, payload.VerdictID, "verdict_id")
+			if !parseOK {
+				return
+			}
+			existing, getErr := qtx.GetWorkflowVerdictInWorkspace(
+				r.Context(),
+				db.GetWorkflowVerdictInWorkspaceParams{
+					ID: verdictID, WorkspaceID: node.WorkspaceID,
+				},
+			)
+			if getErr == nil && existing.WorkflowNodeInstanceID == node.ID {
+				h.Metrics.RecordWorkflowOperation("duplicate", "prevented")
+				writeJSON(w, http.StatusOK, map[string]any{
+					"verdict": workflowVerdictToResponse(existing),
+				})
+				return
+			}
+		}
+		writeError(w, http.StatusConflict, "idempotency_key was already used for another workflow action")
+		return
+	}
+	currentNode, err := qtx.GetWorkflowNodeInstanceInWorkspace(
+		r.Context(),
+		db.GetWorkflowNodeInstanceInWorkspaceParams{
+			ID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	)
+	if err != nil ||
+		locked.Status != "running" ||
+		!workflowNodeIsOpen(currentNode) {
+		writeError(w, http.StatusConflict, "workflow node is not accepting verdicts")
+		return
+	}
+	submissions, err := qtx.ListWorkflowSubmissions(
+		r.Context(),
+		db.ListWorkflowSubmissionsParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow submissions")
+		return
+	}
+	var submission db.WorkflowNodeSubmission
+	for _, candidate := range submissions {
+		if candidate.Status == "valid" {
+			submission = candidate
+			break
+		}
+	}
+	if !submission.ID.Valid {
+		writeError(w, http.StatusConflict, "a valid submission is required before recording a verdict")
+		return
+	}
+	revision, err := qtx.GetNextWorkflowVerdictRevision(
+		r.Context(),
+		db.GetNextWorkflowVerdictRevisionParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to allocate verdict revision")
+		return
+	}
+	var confidence pgtype.Float8
+	if req.Confidence != nil {
+		confidence = pgtype.Float8{Float64: *req.Confidence, Valid: true}
+	}
+	basis, _ := json.Marshal(map[string]any{
+		"submission_id": uuidToString(submission.ID),
+		"kind":          eventAction,
+	})
+	definitionSnapshot, _ := json.Marshal(nodeDefinition.Verdict)
+	verdict, err := qtx.CreateWorkflowVerdict(
+		r.Context(),
+		db.CreateWorkflowVerdictParams{
+			WorkspaceID: node.WorkspaceID, WorkflowInstanceID: instance.ID,
+			WorkflowNodeInstanceID: node.ID, Revision: revision,
+			Result: req.Result, Reason: strings.TrimSpace(req.Reason),
+			Confidence: confidence, Evidence: evidence, Basis: basis,
+			EvaluatorType: actorType, EvaluatorID: actorID,
+			DefinitionSnapshot: definitionSnapshot,
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusConflict, "verdict revision changed; retry the request")
+		return
+	}
+	if actorType == "member" {
+		if err := qtx.SetWorkflowNodeLatestVerdict(
+			r.Context(),
+			db.SetWorkflowNodeLatestVerdictParams{
+				LatestVerdictID: verdict.ID, ID: node.ID, WorkspaceID: node.WorkspaceID,
+			},
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update current verdict")
+			return
+		}
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"action":     eventAction,
+		"verdict_id": uuidToString(verdict.ID),
+		"revision":   verdict.Revision,
+		"result":     verdict.Result,
+	})
+	if _, err := qtx.CreateWorkflowEvent(r.Context(), db.CreateWorkflowEventParams{
+		WorkspaceID: locked.WorkspaceID, WorkflowInstanceID: locked.ID,
+		WorkflowNodeInstanceID: node.ID, EventType: "node.verdict_recorded",
+		ActorType: actorType, ActorID: actorID,
+		IdempotencyKey: req.IdempotencyKey, Payload: payload,
+	}); err != nil {
+		writeError(w, http.StatusConflict, "verdict has already been recorded")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit workflow verdict")
+		return
+	}
+	h.Metrics.RecordWorkflowVerdict(actorType, verdict.Result)
+	if actorType == "member" {
+		_, _ = h.reconcileWorkflowInstance(
+			r.Context(), node.WorkspaceID, instance.ID, actorType, actorID,
+			"verdict:"+uuidToString(verdict.ID),
+		)
+	}
+	h.publishWorkflowRealtime(
+		protocol.EventWorkflowVerdictCreated,
+		uuidToString(node.WorkspaceID), actorType, actorIDText,
+		map[string]any{
+			"workflow_instance_id":      uuidToString(instance.ID),
+			"workflow_node_instance_id": uuidToString(node.ID),
+			"workflow_verdict_id":       uuidToString(verdict.ID),
+		},
+	)
+	h.publishWorkflowNodeUpdated(
+		uuidToString(node.WorkspaceID), actorType, actorIDText,
+		uuidToString(instance.ID), uuidToString(node.ID),
+	)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"verdict": workflowVerdictToResponse(verdict),
+	})
+}
+
+type confirmWorkflowNodeRequest struct {
+	Decision       string `json:"decision"`
+	Comment        string `json:"comment"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+func (h *Handler) ConfirmWorkflowNode(w http.ResponseWriter, r *http.Request) {
+	if !h.workflowWriteEnabled(w, r) {
+		return
+	}
+	var req confirmWorkflowNodeRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Decision != "approved" && req.Decision != "rejected" {
+		writeError(w, http.StatusBadRequest, "decision must be approved or rejected")
+		return
+	}
+	req.IdempotencyKey = strings.TrimSpace(req.IdempotencyKey)
+	if req.IdempotencyKey == "" {
+		writeError(w, http.StatusBadRequest, "idempotency_key is required")
+		return
+	}
+	node, instance, ok := h.loadWorkflowNode(w, r)
+	if !ok {
+		return
+	}
+	var nodeDefinition workflowdomain.NodeDefinition
+	if err := json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition); err != nil {
+		writeError(w, http.StatusInternalServerError, "invalid workflow node snapshot")
+		return
+	}
+	policy := nodeDefinition.Completion.Confirmation
+	if policy == "" || policy == "none" {
+		writeError(w, http.StatusConflict, "workflow node does not require confirmation")
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user_id")
+	if !ok {
+		return
+	}
+	allowed, err := h.canConfirmWorkflowNode(r.Context(), node, policy, userUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to verify workflow confirmation permission")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "you cannot confirm this workflow node")
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start workflow transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	locked, err := qtx.LockWorkflowInstance(r.Context(), db.LockWorkflowInstanceParams{
+		ID: instance.ID, WorkspaceID: instance.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusConflict, "workflow instance changed; refresh and try again")
+		return
+	}
+	if event, eventErr := qtx.GetWorkflowEventByIdempotencyKey(
+		r.Context(),
+		db.GetWorkflowEventByIdempotencyKeyParams{
+			WorkflowInstanceID: locked.ID,
+			WorkspaceID:        locked.WorkspaceID,
+			IdempotencyKey:     req.IdempotencyKey,
+		},
+	); eventErr == nil {
+		var payload struct {
+			Action         string `json:"action"`
+			ConfirmationID string `json:"confirmation_id"`
+		}
+		if json.Unmarshal(event.Payload, &payload) == nil && payload.Action == "confirm" {
+			existing, getErr := qtx.GetWorkflowNodeConfirmationForMember(
+				r.Context(),
+				db.GetWorkflowNodeConfirmationForMemberParams{
+					WorkflowNodeInstanceID: node.ID,
+					WorkspaceID:            node.WorkspaceID,
+					MemberID:               userUUID,
+				},
+			)
+			if getErr == nil && uuidToString(existing.ID) == payload.ConfirmationID {
+				h.Metrics.RecordWorkflowOperation("duplicate", "prevented")
+				writeJSON(w, http.StatusOK, map[string]any{
+					"confirmation": workflowConfirmationToResponse(existing),
+				})
+				return
+			}
+		}
+		writeError(w, http.StatusConflict, "idempotency_key was already used for another workflow action")
+		return
+	}
+	currentNode, err := qtx.GetWorkflowNodeInstanceInWorkspace(
+		r.Context(),
+		db.GetWorkflowNodeInstanceInWorkspaceParams{
+			ID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	)
+	if err != nil ||
+		locked.Status != "running" ||
+		!workflowNodeIsOpen(currentNode) {
+		writeError(w, http.StatusConflict, "workflow node is not accepting confirmation")
+		return
+	}
+	confirmation, err := qtx.UpsertWorkflowNodeConfirmation(
+		r.Context(),
+		db.UpsertWorkflowNodeConfirmationParams{
+			WorkspaceID:            node.WorkspaceID,
+			WorkflowNodeInstanceID: node.ID,
+			MemberID:               userUUID,
+			Decision:               req.Decision,
+			Comment:                strings.TrimSpace(req.Comment),
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusConflict, "workflow confirmation changed; retry the request")
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"action":          "confirm",
+		"confirmation_id": uuidToString(confirmation.ID),
+		"decision":        confirmation.Decision,
+	})
+	if _, err := qtx.CreateWorkflowEvent(r.Context(), db.CreateWorkflowEventParams{
+		WorkspaceID: locked.WorkspaceID, WorkflowInstanceID: locked.ID,
+		WorkflowNodeInstanceID: node.ID, EventType: "node.confirmation_recorded",
+		ActorType: "member", ActorID: userUUID,
+		IdempotencyKey: req.IdempotencyKey, Payload: payload,
+	}); err != nil {
+		writeError(w, http.StatusConflict, "workflow confirmation has already been recorded")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit workflow confirmation")
+		return
+	}
+	h.Metrics.RecordWorkflowHumanIntervention("confirmation")
+	_, _ = h.reconcileWorkflowInstance(
+		r.Context(), node.WorkspaceID, instance.ID, "member", userUUID,
+		"confirmation:"+uuidToString(confirmation.ID),
+	)
+	h.publishWorkflowRealtime(
+		protocol.EventWorkflowConfirmationUpdated,
+		uuidToString(node.WorkspaceID), "member", userID,
+		map[string]any{
+			"workflow_instance_id":      uuidToString(instance.ID),
+			"workflow_node_instance_id": uuidToString(node.ID),
+			"workflow_confirmation_id":  uuidToString(confirmation.ID),
+		},
+	)
+	h.publishWorkflowNodeUpdated(
+		uuidToString(node.WorkspaceID), "member", userID,
+		uuidToString(instance.ID), uuidToString(node.ID),
+	)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"confirmation": workflowConfirmationToResponse(confirmation),
+	})
+}
+
+func (h *Handler) canConfirmWorkflowNode(
+	ctx context.Context,
+	node db.WorkflowNodeInstance,
+	policy string,
+	userID pgtype.UUID,
+) (bool, error) {
+	switch policy {
+	case "member_any", "member_all":
+		return true, nil
+	case "admin_only":
+		member, err := h.Queries.GetMemberByUserAndWorkspace(
+			ctx,
+			db.GetMemberByUserAndWorkspaceParams{
+				UserID: userID, WorkspaceID: node.WorkspaceID,
+			},
+		)
+		if err != nil {
+			return false, err
+		}
+		return roleAllowed(member.Role, "owner", "admin"), nil
+	case "owner_any", "owner_all":
+		participants, err := h.Queries.ListWorkflowNodeParticipants(
+			ctx,
+			db.ListWorkflowNodeParticipantsParams{
+				WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+			},
+		)
+		if err != nil {
+			return false, err
+		}
+		for _, participant := range participants {
+			if participant.Role == "owner" && participant.ActorType == "member" &&
+				participant.ActorID == userID {
+				return true, nil
+			}
+		}
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+func (h *Handler) ReconcileWorkflowInstance(w http.ResponseWriter, r *http.Request) {
+	if !h.workflowWriteEnabled(w, r) {
+		return
+	}
+	if _, roleOK := h.requireWorkspaceRole(
+		w,
+		r,
+		h.resolveWorkspaceID(r),
+		"workspace not found",
+		"owner",
+		"admin",
+	); !roleOK {
+		return
+	}
+	req, ok := decodeWorkflowActionRequest(w, r)
+	if !ok {
+		return
+	}
+	instance, ok := h.loadWorkflowInstance(w, r)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user_id")
+	if !ok {
+		return
+	}
+	updated, err := h.reconcileWorkflowInstance(r.Context(), instance.WorkspaceID, instance.ID, "member", userUUID, req.IdempotencyKey)
+	h.Metrics.RecordWorkflowHumanIntervention("reconcile")
+	if err != nil {
+		if errors.Is(err, errWorkflowNoop) {
+			h.writeWorkflowInstanceDetail(w, r, instance, http.StatusOK)
+			return
+		}
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	h.publishWorkflowInstanceUpdated(
+		uuidToString(updated.WorkspaceID), "member", userID,
+		uuidToString(updated.ID), "",
+	)
+	h.publishWorkflowRealtime(
+		protocol.EventWorkflowVerdictCreated,
+		uuidToString(updated.WorkspaceID), "member", userID,
+		workflowRealtimePayload(uuidToString(updated.ID), ""),
+	)
+	h.writeWorkflowInstanceDetail(w, r, updated, http.StatusOK)
+}
+
+var errWorkflowNoop = errors.New("workflow reconciliation made no transition")
+
+func (h *Handler) reconcileWorkflowInstance(
+	ctx context.Context,
+	workspaceID, instanceID pgtype.UUID,
+	actorType string,
+	actorID pgtype.UUID,
+	idempotencyKey string,
+) (result db.WorkflowInstance, resultErr error) {
+	transitioned := false
+	defer func() {
+		switch {
+		case resultErr == nil && transitioned:
+			h.Metrics.RecordWorkflowOperation("reconcile", "repaired")
+		case errors.Is(resultErr, errWorkflowNoop):
+			h.Metrics.RecordWorkflowOperation("reconcile", "noop")
+		case resultErr != nil:
+			h.Metrics.RecordWorkflowOperation("reconcile", "failed")
+		}
+	}()
+	if featureflags.WorkflowProgressionPaused(
+		ctx,
+		h.FeatureFlags,
+		uuidToString(workspaceID),
+	) {
+		return db.WorkflowInstance{}, errWorkflowProgressionPaused
+	}
+	current, err := h.Queries.GetWorkflowInstanceInWorkspace(ctx, db.GetWorkflowInstanceInWorkspaceParams{
+		ID: instanceID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return db.WorkflowInstance{}, err
+	}
+	maxTransitions := 128
+	for step := 0; step < maxTransitions; step++ {
+		tx, err := h.TxStarter.Begin(ctx)
+		if err != nil {
+			return current, err
+		}
+		qtx := h.Queries.WithTx(tx)
+		locked, err := qtx.LockWorkflowInstance(ctx, db.LockWorkflowInstanceParams{ID: instanceID, WorkspaceID: workspaceID})
+		if err != nil {
+			tx.Rollback(ctx)
+			return current, err
+		}
+		if locked.Status != "running" {
+			tx.Rollback(ctx)
+			if transitioned {
+				return locked, nil
+			}
+			return locked, errWorkflowNoop
+		}
+		version, err := qtx.GetWorkflowTemplateVersionInWorkspace(ctx, db.GetWorkflowTemplateVersionInWorkspaceParams{
+			ID: locked.TemplateVersionID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			tx.Rollback(ctx)
+			return locked, err
+		}
+		definition, err := workflowdomain.ParseDefinition(version.Definition)
+		if err != nil {
+			tx.Rollback(ctx)
+			return locked, err
+		}
+		plan, err := workflowdomain.BuildGraphPlan(definition)
+		if err != nil {
+			tx.Rollback(ctx)
+			return locked, err
+		}
+		nodes, err := qtx.ListWorkflowNodeInstances(ctx, db.ListWorkflowNodeInstancesParams{
+			WorkflowInstanceID: locked.ID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			tx.Rollback(ctx)
+			return locked, err
+		}
+		roleRows, err := qtx.ListWorkflowRoleAssignments(ctx, db.ListWorkflowRoleAssignmentsParams{
+			WorkflowInstanceID: locked.ID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			tx.Rollback(ctx)
+			return locked, err
+		}
+		roleMap := workflowRoleAssignmentsMap(roleRows)
+		propagated, err := h.propagateWorkflowGraph(
+			ctx, qtx, workspaceID, locked, definition, plan, roleMap,
+			nodes, actorType, actorID,
+		)
+		if err != nil {
+			tx.Rollback(ctx)
+			return locked, err
+		}
+		repairedTasks := false
+		needsSetup := propagated.NeedsSetup
+		var completedNode db.WorkflowNodeInstance
+		var completionSubmission db.WorkflowNodeSubmission
+		var completionVerdict db.WorkflowNodeVerdict
+		var blockedNodes []db.WorkflowNodeInstance
+		var createdSubmissions []db.WorkflowNodeSubmission
+		var createdVerdicts []db.WorkflowNodeVerdict
+		for _, active := range workflowActiveNodes(propagated.Nodes, plan) {
+			nodeDefinition, exists := plan.Node(active.NodeKey)
+			if !exists || nodeDefinition.Kind != "activity" {
+				continue
+			}
+			repaired, err := ensureWorkflowNodeTasks(
+				ctx, qtx, workspaceID, locked, active, nodeDefinition,
+			)
+			if err != nil {
+				tx.Rollback(ctx)
+				return locked, err
+			}
+			repairedTasks = repairedTasks || repaired
+			nodeNeedsSetup, err := workflowNodeNeedsExecutorSetup(
+				ctx, qtx, workspaceID, active.ID,
+			)
+			if err != nil {
+				tx.Rollback(ctx)
+				return locked, err
+			}
+			if nodeNeedsSetup {
+				needsSetup = true
+				if !workflowNodeBlockedForExecutor(active) {
+					reasons := workflowdomain.EncodeWaitingReasons([]workflowdomain.WaitingReason{{
+						Code:    "executor_needs_setup",
+						Message: "One or more workflow tasks require an executor",
+					}})
+					blocked, updateErr := qtx.UpdateWorkflowNodeState(
+						ctx,
+						db.UpdateWorkflowNodeStateParams{
+							Status: "blocked", WaitingReasons: reasons, MarkReconciled: true,
+							ID: active.ID, WorkspaceID: workspaceID,
+							ExpectedStatus: active.Status,
+						},
+					)
+					if updateErr != nil {
+						tx.Rollback(ctx)
+						return locked, updateErr
+					}
+					propagated.Nodes[active.NodeKey] = blocked
+					blockedNodes = append(blockedNodes, blocked)
+				}
+				continue
+			}
+			ready, reasons, submission, verdict, err := h.evaluateWorkflowNode(
+				ctx, qtx, workspaceID, locked, active, nodeDefinition, definition,
+			)
+			if err != nil {
+				tx.Rollback(ctx)
+				return locked, err
+			}
+			if submission.ID.Valid &&
+				(!active.LatestSubmissionID.Valid ||
+					active.LatestSubmissionID != submission.ID) {
+				createdSubmissions = append(createdSubmissions, submission)
+			}
+			if verdict.ID.Valid &&
+				(!active.LatestVerdictID.Valid ||
+					active.LatestVerdictID != verdict.ID) {
+				createdVerdicts = append(createdVerdicts, verdict)
+			}
+			if ready && !completedNode.ID.Valid {
+				completedNode, err = qtx.UpdateWorkflowNodeState(ctx, db.UpdateWorkflowNodeStateParams{
+					Status: "completed", WaitingReasons: []byte("[]"), MarkReconciled: true,
+					ID: active.ID, WorkspaceID: workspaceID, ExpectedStatus: active.Status,
+				})
+				if err != nil {
+					tx.Rollback(ctx)
+					return locked, err
+				}
+				propagated.Nodes[active.NodeKey] = completedNode
+				completionSubmission = submission
+				completionVerdict = verdict
+				continue
+			}
+			if !ready {
+				nextStatus := "waiting"
+				if workflowWaitingReasonsBlockNode(reasons) {
+					nextStatus = "blocked"
+				}
+				updatedNode, err := qtx.UpdateWorkflowNodeState(ctx, db.UpdateWorkflowNodeStateParams{
+					Status: nextStatus, WaitingReasons: workflowdomain.EncodeWaitingReasons(reasons),
+					MarkReconciled: true, ID: active.ID, WorkspaceID: workspaceID,
+					ExpectedStatus: active.Status,
+				})
+				if err != nil {
+					tx.Rollback(ctx)
+					return locked, err
+				}
+				propagated.Nodes[active.NodeKey] = updatedNode
+				if nextStatus == "blocked" && active.Status != "blocked" {
+					blockedNodes = append(blockedNodes, updatedNode)
+				}
+			}
+		}
+
+		activated := append([]db.WorkflowNodeInstance(nil), propagated.Activated...)
+		graphChanged := propagated.Changed
+		canComplete := propagated.CanComplete
+		if completedNode.ID.Valid {
+			eventPayload := map[string]any{"node_key": completedNode.NodeKey}
+			if completionSubmission.ID.Valid {
+				eventPayload["submission_id"] = uuidToString(completionSubmission.ID)
+			}
+			if completionVerdict.ID.Valid {
+				eventPayload["verdict_id"] = uuidToString(completionVerdict.ID)
+			}
+			payload, _ := json.Marshal(eventPayload)
+			transitionKey := fmt.Sprintf("advance:%s:%d", uuidToString(completedNode.ID), completedNode.Attempt)
+			if strings.TrimSpace(idempotencyKey) != "" && step == 0 {
+				transitionKey = idempotencyKey + ":" + transitionKey
+			}
+			if _, err := qtx.CreateWorkflowEvent(ctx, db.CreateWorkflowEventParams{
+				WorkspaceID: workspaceID, WorkflowInstanceID: locked.ID,
+				WorkflowNodeInstanceID: completedNode.ID, EventType: "node.completed",
+				ActorType: actorType, ActorID: actorID,
+				IdempotencyKey: transitionKey, Payload: payload,
+			}); err != nil {
+				tx.Rollback(ctx)
+				return locked, err
+			}
+			nodeValues := make([]db.WorkflowNodeInstance, 0, len(propagated.Nodes))
+			for _, node := range propagated.Nodes {
+				nodeValues = append(nodeValues, node)
+			}
+			afterCompletion, err := h.propagateWorkflowGraph(
+				ctx, qtx, workspaceID, locked, definition, plan, roleMap,
+				nodeValues, actorType, actorID,
+			)
+			if err != nil {
+				tx.Rollback(ctx)
+				return locked, err
+			}
+			activated = append(activated, afterCompletion.Activated...)
+			graphChanged = graphChanged || afterCompletion.Changed
+			needsSetup = needsSetup || afterCompletion.NeedsSetup
+			canComplete = afterCompletion.CanComplete
+		}
+
+		targetStatus := locked.Status
+		var result []byte
+		if needsSetup {
+			targetStatus = "needs_setup"
+		} else if canComplete {
+			targetStatus = "completed"
+			result, _ = json.Marshal(map[string]any{
+				"completed_node_key": completedNode.NodeKey,
+			})
+		}
+		updated, err := qtx.UpdateWorkflowInstanceState(ctx, db.UpdateWorkflowInstanceStateParams{
+			Status: targetStatus, Result: result, MarkReconciled: true,
+			ID: locked.ID, WorkspaceID: workspaceID, ExpectedRevision: locked.Revision,
+		})
+		if err != nil {
+			tx.Rollback(ctx)
+			return locked, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return locked, err
+		}
+		h.recordWorkflowInstanceStatusTransition(locked.Status, updated.Status)
+		if completedNode.ID.Valid {
+			h.recordWorkflowNodeTransition(completedNode, "completed")
+		}
+		for _, blockedNode := range blockedNodes {
+			h.recordWorkflowNodeTransition(blockedNode, "blocked")
+		}
+		h.recordWorkflowNodesActivated(ctx, activated)
+		for range createdSubmissions {
+			h.Metrics.RecordWorkflowSubmission("valid")
+		}
+		for _, verdict := range createdVerdicts {
+			h.Metrics.RecordWorkflowVerdict(
+				verdict.EvaluatorType,
+				verdict.Result,
+			)
+		}
+		if repairedTasks {
+			h.Metrics.RecordWorkflowOperation("task_repair", "repaired")
+		}
+		if updated.Status == "completed" {
+			if err := h.updateManagedWorkflowHostStatus(ctx, updated, "done"); err != nil {
+				return updated, err
+			}
+		}
+		stepTransitioned := completedNode.ID.Valid || graphChanged ||
+			repairedTasks || updated.Status != locked.Status
+		transitioned = transitioned || stepTransitioned
+		current = updated
+		for _, node := range activated {
+			h.materializeWorkflowNodeTasks(ctx, workspaceID, updated, node)
+		}
+		if repairedTasks && h.WorkflowMaterializer != nil {
+			h.WorkflowMaterializer.Notify()
+		}
+		if updated.Status == "completed" {
+			return updated, nil
+		}
+		if !completedNode.ID.Valid {
+			if transitioned {
+				return updated, nil
+			}
+			return updated, errWorkflowNoop
+		}
+	}
+	return current, errors.New("workflow exceeded transition safety limit")
+}
+
+func currentWorkflowNode(nodes []db.WorkflowNodeInstance) (db.WorkflowNodeInstance, bool) {
+	var selected db.WorkflowNodeInstance
+	found := false
+	for _, node := range nodes {
+		switch node.Status {
+		case "active", "waiting", "blocked":
+			if !found || node.DisplayOrder < selected.DisplayOrder || (node.NodeKey == selected.NodeKey && node.Attempt > selected.Attempt) {
+				selected = node
+				found = true
+			}
+		}
+	}
+	return selected, found
+}
+
+func latestNodeByKey(nodes []db.WorkflowNodeInstance, key string) (db.WorkflowNodeInstance, error) {
+	var selected db.WorkflowNodeInstance
+	found := false
+	for _, node := range nodes {
+		if node.NodeKey == key && (!found || node.Attempt > selected.Attempt) {
+			selected = node
+			found = true
+		}
+	}
+	if !found {
+		return db.WorkflowNodeInstance{}, fmt.Errorf("workflow node %q not found", key)
+	}
+	return selected, nil
+}
+
+func (h *Handler) evaluateWorkflowNode(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+	definition workflowdomain.Definition,
+) (bool, []workflowdomain.WaitingReason, db.WorkflowNodeSubmission, db.WorkflowNodeVerdict, error) {
+	if workflowdomain.IsAcceptanceActivity(definition, nodeDefinition) && definition.Acceptance.Policy == "member" {
+		acceptance, err := q.GetLatestWorkflowAcceptance(ctx, db.GetLatestWorkflowAcceptanceParams{
+			WorkflowInstanceID: instance.ID, WorkspaceID: workspaceID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) || acceptance.WorkflowNodeInstanceID != node.ID || acceptance.Status == "pending" {
+			return false, []workflowdomain.WaitingReason{{
+				Code: "awaiting_acceptance", Message: "Waiting for member acceptance",
+			}}, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, nil
+		}
+		if err != nil {
+			return false, nil, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, err
+		}
+		return acceptance.Status == "approved", []workflowdomain.WaitingReason{{
+			Code: "acceptance_not_approved", Message: "Acceptance did not pass",
+		}}, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, nil
+	}
+	tasks, err := q.ListWorkflowNodeTasks(ctx, db.ListWorkflowNodeTasksParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return false, nil, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, err
+	}
+	issues, err := q.ListWorkflowNodeIssues(ctx, db.ListWorkflowNodeIssuesParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return false, nil, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, err
+	}
+	issueStatuses := make(map[pgtype.UUID]string, len(issues))
+	for _, issue := range issues {
+		issueStatuses[issue.ID] = issue.Status
+	}
+	reasons := make([]workflowdomain.WaitingReason, 0)
+	requiredIssueOutcome := nodeDefinition.Completion.RequiredIssueOutcome
+	if requiredIssueOutcome == "" {
+		requiredIssueOutcome = "done"
+	}
+	for _, task := range tasks {
+		if !task.Required || requiredIssueOutcome == "none" {
+			continue
+		}
+		if task.MaterializationStatus != "materialized" || !task.IssueID.Valid {
+			reasons = append(reasons, workflowdomain.WaitingReason{
+				Code: "required_task_not_materialized", Field: task.TaskKey,
+				Message: "Required task has not been materialized",
+			})
+			continue
+		}
+		status := issueStatuses[task.IssueID]
+		outcomeSatisfied := status == "done"
+		if requiredIssueOutcome == "terminal" {
+			outcomeSatisfied = status == "done" || status == "cancelled"
+		}
+		if !outcomeSatisfied {
+			code := "required_issue_not_done"
+			message := "Required issue has not reached the configured outcome"
+			if status == "cancelled" && requiredIssueOutcome == "done" {
+				code = "required_issue_cancelled"
+				message = "Required issue was cancelled under a done-only policy"
+			}
+			reasons = append(reasons, workflowdomain.WaitingReason{
+				Code: code, Field: task.TaskKey, Message: message,
+			})
+		}
+	}
+	if len(reasons) > 0 {
+		return false, reasons, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, nil
+	}
+	submissions, err := q.ListWorkflowSubmissions(ctx, db.ListWorkflowSubmissionsParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return false, nil, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, err
+	}
+	var submission db.WorkflowNodeSubmission
+	validSubmissionsByIssue := map[pgtype.UUID]struct{}{}
+	for _, candidate := range submissions {
+		if candidate.Status != "valid" {
+			continue
+		}
+		if !submission.ID.Valid {
+			submission = candidate
+		}
+		if candidate.SourceIssueID.Valid {
+			validSubmissionsByIssue[candidate.SourceIssueID] = struct{}{}
+		}
+	}
+	submissionPolicy := workflowdomain.SubmissionPolicy(nodeDefinition)
+	if submissionPolicy == "per_required_task" || submissionPolicy == "fan_in" {
+		missingTaskSubmissions := make([]workflowdomain.WaitingReason, 0)
+		requiredTaskCount := 0
+		for _, task := range tasks {
+			if !task.Required {
+				continue
+			}
+			requiredTaskCount++
+			if !task.IssueID.Valid {
+				missingTaskSubmissions = append(
+					missingTaskSubmissions,
+					workflowdomain.WaitingReason{
+						Code: "task_submission_required", Field: task.TaskKey,
+						Message: "Required task needs a valid structured submission",
+					},
+				)
+				continue
+			}
+			if _, exists := validSubmissionsByIssue[task.IssueID]; !exists {
+				missingTaskSubmissions = append(
+					missingTaskSubmissions,
+					workflowdomain.WaitingReason{
+						Code: "task_submission_required", Field: task.TaskKey,
+						Message: "Required task needs a valid structured submission",
+					},
+				)
+			}
+		}
+		if len(missingTaskSubmissions) > 0 {
+			return false, missingTaskSubmissions, submission, db.WorkflowNodeVerdict{}, nil
+		}
+		if requiredTaskCount == 0 && !submission.ID.Valid {
+			return false, []workflowdomain.WaitingReason{{
+				Code:    "valid_submission_required",
+				Message: "At least one valid structured submission is required",
+			}}, submission, db.WorkflowNodeVerdict{}, nil
+		}
+	}
+	verdictRequired := nodeDefinition.Completion.VerdictRequired
+	if verdictRequired == "" {
+		if nodeDefinition.Verdict == nil {
+			verdictRequired = "none"
+		} else if nodeDefinition.Verdict.RequiredResult != "" {
+			verdictRequired = nodeDefinition.Verdict.RequiredResult
+		} else {
+			verdictRequired = "pass"
+		}
+	}
+	submissionRequired := nodeDefinition.Completion.SubmissionRequired ||
+		submissionPolicy != "none"
+	if !submission.ID.Valid && nodeDefinition.SubmissionSchema == nil &&
+		(submissionRequired || verdictRequired != "none") {
+		revision, err := q.GetNextWorkflowSubmissionRevision(ctx, db.GetNextWorkflowSubmissionRevisionParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			return false, nil, submission, db.WorkflowNodeVerdict{}, err
+		}
+		basis, _ := json.Marshal(map[string]any{"kind": "all_required_issues_done"})
+		submission, err = q.CreateWorkflowSubmission(ctx, db.CreateWorkflowSubmissionParams{
+			WorkspaceID: workspaceID, WorkflowInstanceID: instance.ID, WorkflowNodeInstanceID: node.ID,
+			Revision: revision, Status: "valid", Payload: basis, Summary: "All required issues are done",
+			Evidence: []byte("[]"), SubmittedByType: "system", SchemaVersion: 1,
+		})
+		if err != nil {
+			return false, nil, submission, db.WorkflowNodeVerdict{}, err
+		}
+		if err := q.SetWorkflowNodeLatestSubmission(ctx, db.SetWorkflowNodeLatestSubmissionParams{
+			LatestSubmissionID: submission.ID, ID: node.ID, WorkspaceID: workspaceID,
+		}); err != nil {
+			return false, nil, submission, db.WorkflowNodeVerdict{}, err
+		}
+	}
+	if !submission.ID.Valid && submissionRequired {
+		return false, []workflowdomain.WaitingReason{{
+			Code: "valid_submission_required", Message: "A valid structured submission is required",
+		}}, submission, db.WorkflowNodeVerdict{}, nil
+	}
+	if submission.ID.Valid {
+		if validation := workflowdomain.ValidateSubmissionPayload(
+			nodeDefinition.SubmissionSchema,
+			decodeWorkflowObject(submission.Payload),
+		); len(validation) > 0 {
+			return false, validation, submission, db.WorkflowNodeVerdict{}, nil
+		}
+	}
+	if workflowdomain.RequiresManualCompletion(nodeDefinition) {
+		verdicts, err := q.ListWorkflowVerdicts(
+			ctx,
+			db.ListWorkflowVerdictsParams{
+				WorkflowNodeInstanceID: node.ID,
+				WorkspaceID:            workspaceID,
+			},
+		)
+		if err != nil {
+			return false, nil, submission, db.WorkflowNodeVerdict{}, err
+		}
+		for _, verdict := range verdicts {
+			if verdict.EvaluatorType != "member" || verdict.Result != "pass" {
+				continue
+			}
+			var basis map[string]any
+			_ = json.Unmarshal(verdict.Basis, &basis)
+			if basis["kind"] != "manual_completion" {
+				continue
+			}
+			return true, nil, submission, verdict, nil
+		}
+		return false, []workflowdomain.WaitingReason{{
+			Code:    "manual_completion_required",
+			Message: "Waiting for the node owner to complete this activity",
+		}}, submission, db.WorkflowNodeVerdict{}, nil
+	}
+	if verdictRequired == "none" {
+		confirmationReady, confirmationReasons, err := h.evaluateWorkflowConfirmation(
+			ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
+		)
+		return confirmationReady, confirmationReasons, submission, db.WorkflowNodeVerdict{}, err
+	}
+	if nodeDefinition.Verdict == nil {
+		return false, []workflowdomain.WaitingReason{{
+			Code: "verdict_definition_missing", Message: "The node requires a verdict but has no evaluator",
+		}}, submission, db.WorkflowNodeVerdict{}, nil
+	}
+	if nodeDefinition.Verdict.Evaluator == "member" {
+		verdicts, err := q.ListWorkflowVerdicts(ctx, db.ListWorkflowVerdictsParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			return false, nil, submission, db.WorkflowNodeVerdict{}, err
+		}
+		var verdict db.WorkflowNodeVerdict
+		for _, candidate := range verdicts {
+			if candidate.EvaluatorType == "member" {
+				verdict = candidate
+				break
+			}
+		}
+		if !verdict.ID.Valid {
+			return false, []workflowdomain.WaitingReason{{
+				Code: "member_verdict_required", Message: "Waiting for a member check result",
+			}}, submission, db.WorkflowNodeVerdict{}, nil
+		}
+		if !workflowVerdictSatisfies(verdict.Result, verdictRequired) {
+			return false, []workflowdomain.WaitingReason{
+				workflowVerdictWaitingReason(verdict),
+			}, submission, verdict, nil
+		}
+		confirmationReady, confirmationReasons, err := h.evaluateWorkflowConfirmation(
+			ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
+		)
+		return confirmationReady, confirmationReasons, submission, verdict, err
+	}
+	verdictResult, verdictReason, verdictBasis, err :=
+		h.evaluateDeterministicWorkflowVerdict(
+			ctx,
+			q,
+			workspaceID,
+			instance,
+			nodeDefinition.Verdict.Condition,
+		)
+	if err != nil {
+		return false, nil, submission, db.WorkflowNodeVerdict{}, err
+	}
+	verdicts, err := q.ListWorkflowVerdicts(ctx, db.ListWorkflowVerdictsParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return false, nil, submission, db.WorkflowNodeVerdict{}, err
+	}
+	for _, candidate := range verdicts {
+		if candidate.EvaluatorType != "deterministic" {
+			continue
+		}
+		var basis map[string]any
+		_ = json.Unmarshal(candidate.Basis, &basis)
+		sameInput := !submission.ID.Valid ||
+			basis["submission_id"] == uuidToString(submission.ID)
+		sameEvaluation := true
+		if matched, exists := verdictBasis["condition_matched"]; exists {
+			sameEvaluation = basis["condition_matched"] == matched
+		}
+		if sameInput && sameEvaluation {
+			if !workflowVerdictSatisfies(candidate.Result, verdictRequired) {
+				return false, []workflowdomain.WaitingReason{
+					workflowVerdictWaitingReason(candidate),
+				}, submission, candidate, nil
+			}
+			confirmationReady, confirmationReasons, confirmationErr :=
+				h.evaluateWorkflowConfirmation(
+					ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
+				)
+			return confirmationReady, confirmationReasons, submission, candidate, confirmationErr
+		}
+	}
+	revision, err := q.GetNextWorkflowVerdictRevision(ctx, db.GetNextWorkflowVerdictRevisionParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return false, nil, submission, db.WorkflowNodeVerdict{}, err
+	}
+	basisMap := map[string]any{"rule": "configured_completion_predicates"}
+	if submission.ID.Valid {
+		basisMap["submission_id"] = uuidToString(submission.ID)
+	}
+	for key, value := range verdictBasis {
+		basisMap[key] = value
+	}
+	basis, _ := json.Marshal(basisMap)
+	definitionSnapshot, _ := json.Marshal(nodeDefinition.Verdict)
+	verdict, err := q.CreateWorkflowVerdict(ctx, db.CreateWorkflowVerdictParams{
+		WorkspaceID: workspaceID, WorkflowInstanceID: instance.ID, WorkflowNodeInstanceID: node.ID,
+		Revision: revision, Result: verdictResult, Reason: verdictReason,
+		Evidence: []byte("[]"), Basis: basis, EvaluatorType: "deterministic",
+		DefinitionSnapshot: definitionSnapshot,
+	})
+	if err != nil {
+		return false, nil, submission, verdict, err
+	}
+	if err := q.SetWorkflowNodeLatestVerdict(ctx, db.SetWorkflowNodeLatestVerdictParams{
+		LatestVerdictID: verdict.ID, ID: node.ID, WorkspaceID: workspaceID,
+	}); err != nil {
+		return false, nil, submission, verdict, err
+	}
+	if !workflowVerdictSatisfies(verdict.Result, verdictRequired) {
+		return false, []workflowdomain.WaitingReason{
+			workflowVerdictWaitingReason(verdict),
+		}, submission, verdict, nil
+	}
+	confirmationReady, confirmationReasons, err := h.evaluateWorkflowConfirmation(
+		ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
+	)
+	return confirmationReady, confirmationReasons, submission, verdict, err
+}
+
+func workflowWaitingReasonsBlockNode(
+	reasons []workflowdomain.WaitingReason,
+) bool {
+	for _, reason := range reasons {
+		if reason.Code == "required_issue_cancelled" ||
+			reason.Code == "verdict_blocked" {
+			return true
+		}
+	}
+	return false
+}
+
+func workflowVerdictWaitingReason(
+	verdict db.WorkflowNodeVerdict,
+) workflowdomain.WaitingReason {
+	code := "verdict_not_passed"
+	if verdict.Result == "blocked" {
+		code = "verdict_blocked"
+	}
+	return workflowdomain.WaitingReason{Code: code, Message: verdict.Reason}
+}
+
+func hasWorkflowJSONValue(raw json.RawMessage) bool {
+	value := strings.TrimSpace(string(raw))
+	return value != "" && value != "null"
+}
+
+func (h *Handler) evaluateDeterministicWorkflowVerdict(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	instance db.WorkflowInstance,
+	condition json.RawMessage,
+) (string, string, map[string]any, error) {
+	result := "pass"
+	reason := "All deterministic completion conditions passed"
+	basis := map[string]any{}
+	if !hasWorkflowJSONValue(condition) {
+		return result, reason, basis, nil
+	}
+	nodeRows, err := q.ListWorkflowNodeInstances(
+		ctx,
+		db.ListWorkflowNodeInstancesParams{
+			WorkflowInstanceID: instance.ID,
+			WorkspaceID:        workspaceID,
+		},
+	)
+	if err != nil {
+		return "", "", nil, err
+	}
+	resolver, err := h.workflowConditionResolver(
+		ctx,
+		q,
+		workspaceID,
+		instance,
+		latestWorkflowNodesByKey(nodeRows),
+	)
+	if err != nil {
+		return "", "", nil, err
+	}
+	matches, err := workflowdomain.EvaluateCondition(condition, resolver)
+	if err != nil {
+		return "", "", nil, err
+	}
+	basis["condition"] = json.RawMessage(condition)
+	basis["condition_matched"] = matches
+	if !matches {
+		result = "fail"
+		reason = "The deterministic verdict condition did not match"
+	}
+	return result, reason, basis, nil
+}
+
+func workflowVerdictSatisfies(result, required string) bool {
+	switch required {
+	case "not_blocked":
+		return result == "pass" || result == "fail"
+	case "pass":
+		return result == "pass"
+	default:
+		return true
+	}
+}
+
+func (h *Handler) evaluateWorkflowConfirmation(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	node db.WorkflowNodeInstance,
+	policy string,
+) (bool, []workflowdomain.WaitingReason, error) {
+	if policy == "" || policy == "none" {
+		return true, nil, nil
+	}
+	confirmations, err := q.ListWorkflowNodeConfirmations(
+		ctx,
+		db.ListWorkflowNodeConfirmationsParams{
+			WorkflowNodeInstanceID: node.ID,
+			WorkspaceID:            workspaceID,
+		},
+	)
+	if err != nil {
+		return false, nil, err
+	}
+	approved := make(map[pgtype.UUID]struct{}, len(confirmations))
+	for _, confirmation := range confirmations {
+		if confirmation.Decision == "approved" {
+			approved[confirmation.MemberID] = struct{}{}
+		}
+	}
+	switch policy {
+	case "member_any":
+		if len(approved) > 0 {
+			return true, nil, nil
+		}
+	case "admin_only":
+		for memberID := range approved {
+			member, memberErr := q.GetMemberByUserAndWorkspace(
+				ctx,
+				db.GetMemberByUserAndWorkspaceParams{
+					UserID: memberID, WorkspaceID: workspaceID,
+				},
+			)
+			if memberErr == nil && roleAllowed(member.Role, "owner", "admin") {
+				return true, nil, nil
+			}
+		}
+	case "owner_any", "owner_all", "member_all":
+		participants, participantErr := q.ListWorkflowNodeParticipants(
+			ctx,
+			db.ListWorkflowNodeParticipantsParams{
+				WorkflowNodeInstanceID: node.ID,
+				WorkspaceID:            workspaceID,
+			},
+		)
+		if participantErr != nil {
+			return false, nil, participantErr
+		}
+		required := make(map[pgtype.UUID]struct{})
+		for _, participant := range participants {
+			if participant.ActorType != "member" {
+				continue
+			}
+			if policy == "owner_any" || policy == "owner_all" {
+				if participant.Role != "owner" {
+					continue
+				}
+			}
+			required[participant.ActorID] = struct{}{}
+		}
+		if policy == "owner_any" {
+			for memberID := range required {
+				if _, exists := approved[memberID]; exists {
+					return true, nil, nil
+				}
+			}
+		} else if len(required) > 0 {
+			allApproved := true
+			for memberID := range required {
+				if _, exists := approved[memberID]; !exists {
+					allApproved = false
+					break
+				}
+			}
+			if allApproved {
+				return true, nil, nil
+			}
+		}
+	}
+	return false, []workflowdomain.WaitingReason{{
+		Code: "confirmation_required", Message: "Waiting for the configured member confirmation",
+	}}, nil
+}
+
+func decodeWorkflowObject(raw []byte) map[string]any {
+	var value map[string]any
+	if json.Unmarshal(raw, &value) != nil || value == nil {
+		return map[string]any{}
+	}
+	return value
+}

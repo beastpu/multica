@@ -11,6 +11,10 @@ export interface IssueFilters {
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
+  workflowTemplateFilter?: string;
+  workflowInstanceFilter?: string;
+  workflowActivityFilter?: string;
+  workflowIssueOnly?: boolean;
   /** Custom-property filters: definition id → selected option ids (OR within
    *  a definition, AND across definitions; checkbox uses "true"/"false"). */
   propertyFilters?: Record<string, string[]>;
@@ -36,6 +40,10 @@ export interface IssueFilterState {
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
+  workflowTemplateFilter?: string;
+  workflowInstanceFilter?: string;
+  workflowActivityFilter?: string;
+  workflowIssueOnly?: boolean;
   propertyFilters?: Record<string, string[]>;
   workingOnly: boolean;
   /** See IssueFilters.showSubIssues — only an explicit `false` hides. */
@@ -111,6 +119,21 @@ export function applyIssueFilters(
 
     if (hideSubIssues && issue.parent_issue_id) return false;
 
+    const workflowContext = issue.workflow_context;
+    if (filters.workflowIssueOnly && !workflowContext) return false;
+    if (
+      filters.workflowTemplateFilter &&
+      workflowContext?.workflow_template_id !== filters.workflowTemplateFilter
+    ) return false;
+    if (
+      filters.workflowInstanceFilter &&
+      workflowContext?.workflow_instance_id !== filters.workflowInstanceFilter
+    ) return false;
+    if (
+      filters.workflowActivityFilter &&
+      workflowContext?.activity_key !== filters.workflowActivityFilter
+    ) return false;
+
     if (statusFilters.length > 0 && !statusFilters.includes(issue.status))
       return false;
 
@@ -178,6 +201,10 @@ export function filterIssues(issues: Issue[], filters: IssueFilters): Issue[] {
       projectFilters: filters.projectFilters,
       includeNoProject: filters.includeNoProject,
       labelFilters: filters.labelFilters,
+      workflowTemplateFilter: filters.workflowTemplateFilter,
+      workflowInstanceFilter: filters.workflowInstanceFilter,
+      workflowActivityFilter: filters.workflowActivityFilter,
+      workflowIssueOnly: filters.workflowIssueOnly,
       propertyFilters: filters.propertyFilters,
       workingOnly: filters.agentRunningFilter === true,
       showSubIssues: filters.showSubIssues,
@@ -201,6 +228,10 @@ export function filterAssigneeGroups(
     agentRunningFilter?: boolean;
     runningIssueIds?: ReadonlySet<string>;
     propertyFilters?: Record<string, string[]>;
+    workflowTemplateFilter?: string;
+    workflowInstanceFilter?: string;
+    workflowActivityFilter?: string;
+    workflowIssueOnly?: boolean;
   },
 ): IssueAssigneeGroup[] | undefined {
   const applyRunning = filters.agentRunningFilter === true;
@@ -208,7 +239,16 @@ export function filterAssigneeGroups(
   const hasPropertyFilters = Object.values(filters.propertyFilters ?? {}).some(
     (selected) => selected.length > 0,
   );
-  if (!groups || (!applyRunning && !hideSubIssues && !hasPropertyFilters)) return groups;
+  const hasWorkflowFilter = Boolean(
+    filters.workflowTemplateFilter ||
+    filters.workflowInstanceFilter ||
+    filters.workflowActivityFilter ||
+    filters.workflowIssueOnly,
+  );
+  if (
+    !groups ||
+    (!applyRunning && !hideSubIssues && !hasPropertyFilters && !hasWorkflowFilter)
+  ) return groups;
 
   const { runningIssueIds } = filters;
   return groups
@@ -219,6 +259,20 @@ export function filterAssigneeGroups(
         if (hideSubIssues && issue.parent_issue_id) return false;
         if (hasPropertyFilters && !issueMatchesPropertyFilters(issue, filters.propertyFilters))
           return false;
+        const context = issue.workflow_context;
+        if (filters.workflowIssueOnly && !context) return false;
+        if (
+          filters.workflowTemplateFilter &&
+          context?.workflow_template_id !== filters.workflowTemplateFilter
+        ) return false;
+        if (
+          filters.workflowInstanceFilter &&
+          context?.workflow_instance_id !== filters.workflowInstanceFilter
+        ) return false;
+        if (
+          filters.workflowActivityFilter &&
+          context?.activity_key !== filters.workflowActivityFilter
+        ) return false;
         return true;
       });
       return { ...group, issues, total: issues.length };

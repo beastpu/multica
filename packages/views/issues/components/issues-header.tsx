@@ -12,6 +12,7 @@ import {
   Filter,
   FolderKanban,
   FolderMinus,
+  GitBranch,
   List,
   SignalHigh,
   SlidersHorizontal,
@@ -53,6 +54,12 @@ import {
 import { StatusIcon, PriorityIcon } from ".";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useFeatureEnabled } from "@multica/core/config";
+import { WORKFLOWS_ACTIVITY_ENGINE_FLAG } from "@multica/core/feature-flags";
+import {
+  workflowInstanceListOptions,
+  workflowTemplateListOptions,
+} from "@multica/core/workflows";
 import { memberListOptions, agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { labelListOptions } from "@multica/core/labels/queries";
@@ -109,6 +116,10 @@ function getActiveFilterCount(state: {
   labelFilters: string[];
   propertyFilters?: Record<string, string[]>;
   dateFilter?: IssueDateFilter | null;
+  workflowTemplateFilter?: string;
+  workflowInstanceFilter?: string;
+  workflowActivityFilter?: string;
+  workflowIssueOnly?: boolean;
 }) {
   let count = 0;
   if (state.statusFilters.length > 0) count++;
@@ -121,6 +132,10 @@ function getActiveFilterCount(state: {
     if (selected.length > 0) count++;
   }
   if (state.dateFilter) count++;
+  if (state.workflowTemplateFilter) count++;
+  if (state.workflowInstanceFilter) count++;
+  if (state.workflowActivityFilter) count++;
+  if (state.workflowIssueOnly) count++;
   return count;
 }
 
@@ -884,6 +899,10 @@ export function IssueDisplayControls({
   const projectFilters = useViewStore((s) => s.projectFilters);
   const includeNoProject = useViewStore((s) => s.includeNoProject);
   const labelFilters = useViewStore((s) => s.labelFilters);
+  const workflowTemplateFilter = useViewStore((s) => s.workflowTemplateFilter);
+  const workflowInstanceFilter = useViewStore((s) => s.workflowInstanceFilter);
+  const workflowActivityFilter = useViewStore((s) => s.workflowActivityFilter);
+  const workflowIssueOnly = useViewStore((s) => s.workflowIssueOnly);
   const propertyFilters = useViewStore((s) => s.propertyFilters);
   const cardPropertyIds = useViewStore((s) => s.cardPropertyIds);
   const sortBy = useViewStore((s) => s.sortBy);
@@ -894,6 +913,31 @@ export function IssueDisplayControls({
   const showSubIssues = useViewStore((s) => s.showSubIssues);
   const act = useViewStoreApi().getState();
   const headerWsId = useWorkspaceId();
+  const workflowsEnabled = useFeatureEnabled(
+    WORKFLOWS_ACTIVITY_ENGINE_FLAG,
+    false,
+  );
+  const { data: workflowTemplateData } = useQuery({
+    ...workflowTemplateListOptions(headerWsId),
+    enabled: workflowsEnabled,
+  });
+  const { data: workflowInstanceData } = useQuery({
+    ...workflowInstanceListOptions(headerWsId, { limit: 100 }),
+    enabled: workflowsEnabled,
+  });
+  const workflowActivityOptions = useMemo(() => {
+    const options = new Map<string, string>();
+    for (const issue of scopedIssues) {
+      const context = issue.workflow_context;
+      if (!context) continue;
+      if (
+        workflowTemplateFilter &&
+        context.workflow_template_id !== workflowTemplateFilter
+      ) continue;
+      options.set(context.activity_key, context.activity_name || context.activity_key);
+    }
+    return [...options].map(([key, name]) => ({ key, name }));
+  }, [scopedIssues, workflowTemplateFilter]);
   // Active custom-property catalog: drives the filter sections, dynamic
   // sort/grouping options, and the card-property toggles below.
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(headerWsId));
@@ -941,6 +985,10 @@ export function IssueDisplayControls({
     includeNoProject,
     labelFilters,
     dateFilter: showDateFilter ? dateFilter : null,
+    workflowTemplateFilter,
+    workflowInstanceFilter,
+    workflowActivityFilter,
+    workflowIssueOnly,
   });
   const hasActiveFilters = activeFilterCount > 0;
 
@@ -1202,6 +1250,117 @@ export function IssueDisplayControls({
                 />
               </DropdownMenuSubContent>
             </DropdownMenuSub>
+
+            {workflowsEnabled && (
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <GitBranch className="size-3.5" />
+                  <span className="flex-1">
+                    {t(($) => $.filters.section_workflow)}
+                  </span>
+                  {(workflowIssueOnly || workflowTemplateFilter ||
+                    workflowInstanceFilter || workflowActivityFilter) && (
+                    <span className="text-xs font-medium text-primary">
+                      {[
+                        workflowIssueOnly,
+                        workflowTemplateFilter,
+                        workflowInstanceFilter,
+                        workflowActivityFilter,
+                      ].filter(Boolean).length}
+                    </span>
+                  )}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="max-h-96 w-72 overflow-y-auto p-1">
+                  <DropdownMenuCheckboxItem
+                    checked={workflowIssueOnly}
+                    onCheckedChange={() => act.toggleWorkflowIssueOnly()}
+                    className={FILTER_ITEM_CLASS}
+                  >
+                    <HoverCheck checked={workflowIssueOnly} />
+                    {t(($) => $.filters.workflow_issues_only)}
+                  </DropdownMenuCheckboxItem>
+
+                  {(workflowTemplateData?.templates.length ?? 0) > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel>
+                        {t(($) => $.filters.workflow_template)}
+                      </DropdownMenuLabel>
+                      {workflowTemplateData!.templates.map((template) => {
+                        const checked = workflowTemplateFilter === template.id;
+                        return (
+                          <DropdownMenuCheckboxItem
+                            key={template.id}
+                            checked={checked}
+                            onCheckedChange={() =>
+                              act.setWorkflowTemplateFilter(checked ? "" : template.id)}
+                            className={FILTER_ITEM_CLASS}
+                          >
+                            <HoverCheck checked={checked} />
+                            <span className="truncate">{template.name}</span>
+                          </DropdownMenuCheckboxItem>
+                        );
+                      })}
+                    </>
+                  )}
+
+                  {(workflowInstanceData?.instances.length ?? 0) > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel>
+                        {t(($) => $.filters.workflow_instance)}
+                      </DropdownMenuLabel>
+                      {workflowInstanceData!.instances
+                        .filter((instance) =>
+                          !workflowTemplateFilter ||
+                          instance.template_id === workflowTemplateFilter
+                        )
+                        .map((instance) => {
+                          const checked = workflowInstanceFilter === instance.id;
+                          return (
+                            <DropdownMenuCheckboxItem
+                              key={instance.id}
+                              checked={checked}
+                              onCheckedChange={() =>
+                                act.setWorkflowInstanceFilter(checked ? "" : instance.id)}
+                              className={FILTER_ITEM_CLASS}
+                            >
+                              <HoverCheck checked={checked} />
+                              <span className="truncate">
+                                {instance.host_issue_identifier || instance.host_issue_title}
+                              </span>
+                            </DropdownMenuCheckboxItem>
+                          );
+                        })}
+                    </>
+                  )}
+
+                  {workflowActivityOptions.length > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel>
+                        {t(($) => $.filters.workflow_activity)}
+                      </DropdownMenuLabel>
+                      {workflowActivityOptions.map((activity) => {
+                        const checked = workflowActivityFilter === activity.key;
+                        return (
+                          <DropdownMenuCheckboxItem
+                            key={activity.key}
+                            checked={checked}
+                            onCheckedChange={() =>
+                              act.setWorkflowActivityFilter(checked ? "" : activity.key)}
+                            className={FILTER_ITEM_CLASS}
+                          >
+                            <HoverCheck checked={checked} />
+                            <span className="truncate">{activity.name}</span>
+                          </DropdownMenuCheckboxItem>
+                        );
+                      })}
+                    </>
+                  )}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            )}
 
             {/* Label */}
             <DropdownMenuSub>

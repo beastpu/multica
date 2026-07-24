@@ -34,6 +34,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/llm"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // randomID returns a random 16-byte hex string used as a request ID for
@@ -173,6 +174,9 @@ type Handler struct {
 	WebhookIPRateLimiter         WebhookRateLimiter
 	WebhookAbsoluteIPRateLimiter WebhookRateLimiter
 	WebhookDeliveryWorker        *WebhookDeliveryWorker
+	WorkflowMaterializer         *WorkflowMaterializer
+	WorkflowReconciler           *WorkflowReconciler
+	WorkflowSweeper              *WorkflowSweeper
 	CloudRuntime                 cloudRuntimeProxy
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
@@ -315,6 +319,14 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg: cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+	h.WorkflowMaterializer = NewWorkflowMaterializer(h)
+	h.WorkflowReconciler = NewWorkflowReconciler(h)
+	h.WorkflowSweeper = NewWorkflowSweeper(h)
+	if bus != nil {
+		bus.Subscribe(protocol.EventIssueUpdated, func(events.Event) {
+			h.WorkflowReconciler.Notify()
+		})
+	}
 	return h
 }
 

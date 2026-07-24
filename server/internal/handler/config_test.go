@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
 func TestGetConfigReportsCdnSignedMode(t *testing.T) {
@@ -393,5 +395,45 @@ func TestGetConfigExposesFrontendFeatureFlags(t *testing.T) {
 	}
 	if !cfg.FeatureFlags["composio_mcp_apps"] {
 		t.Fatalf("composio_mcp_apps: want true with flag enabled, got false")
+	}
+}
+
+func TestGetConfigEvaluatesFrontendFlagsForRequestedWorkspace(t *testing.T) {
+	const allowedWorkspace = "11111111-1111-1111-1111-111111111111"
+	provider := featureflag.NewStaticProvider()
+	provider.Set(featureflags.WorkflowsActivityEngine, featureflag.Rule{
+		Default: false,
+		Allow:   []string{allowedWorkspace},
+		AllowBy: "workspace_id",
+	})
+	h := &Handler{FeatureFlags: featureflag.NewService(provider)}
+
+	fetch := func(workspaceID string) AppConfig {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+		if workspaceID != "" {
+			req.Header.Set("X-Workspace-ID", workspaceID)
+		}
+		w := httptest.NewRecorder()
+		h.GetConfig(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var cfg AppConfig
+		if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
+			t.Fatalf("decode config: %v", err)
+		}
+		return cfg
+	}
+
+	if fetch("").FeatureFlags[featureflags.WorkflowsActivityEngine] {
+		t.Fatal("workspace-targeted flag must remain off without workspace context")
+	}
+	if !fetch(allowedWorkspace).FeatureFlags[featureflags.WorkflowsActivityEngine] {
+		t.Fatal("workspace-targeted flag must be on for the allowlisted workspace")
+	}
+	if fetch("22222222-2222-2222-2222-222222222222").
+		FeatureFlags[featureflags.WorkflowsActivityEngine] {
+		t.Fatal("workspace-targeted flag must remain off outside the allowlist")
 	}
 }

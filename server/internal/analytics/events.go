@@ -92,6 +92,7 @@ const (
 	SourceManual     = "manual"
 	SourceChat       = "chat"
 	SourceAutopilot  = "autopilot"
+	SourceWorkflow   = "workflow"
 	SourceAPI        = "api"
 )
 

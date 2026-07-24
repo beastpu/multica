@@ -32,12 +32,20 @@ export type IssueListFilter = Pick<
   | "project_ids"
   | "include_no_project"
   | "label_ids"
+  | "workflow_template_id"
+  | "workflow_instance_id"
+  | "workflow_activity"
+  | "workflow_issue_only"
 >;
 
 function hasIssueListFilter(filter?: IssueListFilter) {
   if (!filter) return false;
   return Object.values(filter).some((value) =>
-    Array.isArray(value) ? value.length > 0 : value === true,
+    Array.isArray(value)
+      ? value.length > 0
+      : typeof value === "string"
+        ? value.length > 0
+        : value === true,
   );
 }
 
@@ -172,6 +180,10 @@ export type MyIssuesFilter = Pick<
   | "project_ids"
   | "include_no_project"
   | "label_ids"
+  | "workflow_template_id"
+  | "workflow_instance_id"
+  | "workflow_activity"
+  | "workflow_issue_only"
 >;
 
 export type AssigneeGroupedIssuesFilter = Omit<

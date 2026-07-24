@@ -36,6 +36,7 @@ import {
   X,
   Zap,
   Users,
+  Workflow,
 } from "lucide-react";
 import { WorkspaceAvatar } from "../workspace/workspace-avatar";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
@@ -78,7 +79,8 @@ import { countUnreadChatMessages } from "@multica/core/chat/unread";
 import { useChatStore } from "@multica/core/chat";
 import { api, ApiError } from "@multica/core/api";
 import { useModalStore } from "@multica/core/modals";
-import { useConfigStore } from "@multica/core/config";
+import { useConfigStore, useWorkspaceFeatureEnabled } from "@multica/core/config";
+import { WORKFLOWS_ACTIVITY_ENGINE_FLAG } from "@multica/core/feature-flags";
 import { pinListOptions } from "@multica/core/pins/queries";
 import { useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
 import { issueDetailOptions } from "@multica/core/issues/queries";
@@ -121,6 +123,7 @@ type NavKey =
   | "myIssues"
   | "issues"
   | "projects"
+  | "workflows"
   | "autopilots"
   | "agents"
   | "squads"
@@ -137,6 +140,7 @@ type NavLabelKey =
   | "my_issues"
   | "issues"
   | "projects"
+  | "workflows"
   | "autopilots"
   | "agents"
   | "squads"
@@ -155,6 +159,7 @@ const personalNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] 
 const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
   { key: "issues", labelKey: "issues", icon: ListTodo },
   { key: "projects", labelKey: "projects", icon: FolderKanban },
+  { key: "workflows", labelKey: "workflows", icon: Workflow },
   { key: "autopilots", labelKey: "autopilots", icon: Zap },
   { key: "agents", labelKey: "agents", icon: Bot },
   { key: "squads", labelKey: "squads", icon: Users },
@@ -369,8 +374,11 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   const { data: workspaces = EMPTY_WORKSPACES } = useQuery(workspaceListOptions());
   const { data: myInvitations = EMPTY_INVITATIONS } = useQuery(myInvitationListOptions());
   const workspaceCreationDisabled = useConfigStore((s) => s.workspaceCreationDisabled);
-
   const wsId = workspace?.id;
+  const workflowsEnabled = useWorkspaceFeatureEnabled(
+    wsId,
+    WORKFLOWS_ACTIVITY_ENGINE_FLAG,
+  );
   const { data: inboxItems = EMPTY_INBOX } = useQuery({
     queryKey: wsId ? inboxKeys.list(wsId) : ["inbox", "disabled"],
     queryFn: () => api.listInbox(),
@@ -745,6 +753,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
                 {workspaceNav.map((item) => {
+                  if (item.key === "workflows" && !workflowsEnabled) return null;
                   const href = p[item.key]();
                   const isActive = !isActivePinnedRoute && isNavActive(pathname, href);
                   return (

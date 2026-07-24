@@ -66,6 +66,9 @@ import (
 // notification on the side of a successful status update; failing it must
 // not roll back the user's status change.
 func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Issue) {
+	if h.reconcileWorkflowIssueStatus(ctx, issue) {
+		return
+	}
 	if !issue.ParentIssueID.Valid {
 		return
 	}
@@ -164,6 +167,9 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 	var groups []*parentGroup
 	index := map[string]*parentGroup{}
 	for _, c := range completed {
+		if h.reconcileWorkflowIssueStatus(ctx, c) {
+			continue
+		}
 		if !c.ParentIssueID.Valid {
 			continue
 		}
@@ -243,6 +249,32 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 		}
 		h.postChildDoneComment(ctx, parent, rep, children, true, bestStage, batch)
 	}
+}
+
+// reconcileWorkflowIssueStatus is the ownership boundary between the native
+// workflow engine and the legacy parent/stage wake mechanism. A workflow-bound
+// child is reconciled by its Node Instance and never posts the legacy
+// child-done comment or wakes the host assignee.
+func (h *Handler) reconcileWorkflowIssueStatus(ctx context.Context, issue db.Issue) bool {
+	task, err := h.Queries.GetWorkflowNodeTaskByIssue(ctx, db.GetWorkflowNodeTaskByIssueParams{
+		IssueID: issue.ID, WorkspaceID: issue.WorkspaceID,
+	})
+	if err == nil {
+		if _, reconcileErr := h.reconcileWorkflowInstance(
+			ctx, issue.WorkspaceID, task.WorkflowInstanceID, "system", pgtype.UUID{},
+			"issue-status:"+uuidToString(issue.ID)+":"+timestampToString(issue.UpdatedAt),
+		); reconcileErr != nil && reconcileErr != errWorkflowNoop {
+			slog.Warn("workflow issue status reconcile failed",
+				"error", reconcileErr,
+				"issue_id", uuidToString(issue.ID),
+				"workflow_instance_id", uuidToString(task.WorkflowInstanceID))
+		}
+		return true
+	}
+	// The origin stamp is itself authoritative for legacy-wake suppression.
+	// This fail-closed path covers a transient missing/stale binding while the
+	// materializer repairs it.
+	return issue.OriginType.Valid && issue.OriginType.String == "workflow"
 }
 
 // postChildDoneComment builds and posts the parent's child-done system comment

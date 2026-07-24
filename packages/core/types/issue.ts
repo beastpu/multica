@@ -34,6 +34,19 @@ export type IssueMetadataValue = string | number | boolean;
 export type IssueMetadata = Record<string, IssueMetadataValue>;
 export type IssueExternalFields = Record<string, string>;
 
+export interface IssueWorkflowContext {
+  workflow_instance_id: string;
+  workflow_template_id: string;
+  workflow_template_name: string;
+  workflow_node_instance_id: string;
+  activity_key: string;
+  activity_name: string;
+  host_issue_id: string;
+  host_issue_identifier: string;
+  host_issue_title: string;
+  required: boolean;
+}
+
 export interface Issue {
   id: string;
   workspace_id: string;
@@ -61,6 +74,8 @@ export interface Issue {
   due_date: string | null;
   metadata: IssueMetadata;
   external_fields?: IssueExternalFields;
+  /** Present when this Issue was materialized inside a Workflow activity. */
+  workflow_context?: IssueWorkflowContext | null;
   // Custom property values keyed by property definition id. Always present
   // in responses (empty object when unset), mirroring `metadata`.
   properties: IssuePropertyValues;
