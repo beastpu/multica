@@ -1,8 +1,22 @@
 "use client";
 
-import { createContext, useContext, type ReactNode } from "react";
-import type { UpdateIssueRequest } from "@multica/core/types";
+import {
+  createContext,
+  useContext,
+  type ComponentType,
+  type ReactNode,
+} from "react";
+import type { Issue, UpdateIssueRequest } from "@multica/core/types";
 import type { IssueCreateDefaults } from "./types";
+
+export interface IssueSurfaceMenuAction {
+  id: string;
+  label: string;
+  icon?: ComponentType<{ className?: string }>;
+  variant?: "default" | "destructive";
+  isVisible?: (issue: Issue) => boolean;
+  onSelect: (issue: Issue) => void;
+}
 
 export type IssueSurfaceMutationOptions = {
   errorMessage?: string;
@@ -13,6 +27,7 @@ export type IssueSurfaceMutationOptions = {
 
 export interface IssueSurfaceActions {
   isPending: boolean;
+  menuActions?: IssueSurfaceMenuAction[];
   createIssue: (defaults?: IssueCreateDefaults) => void;
   updateIssue: (
     issueId: string,

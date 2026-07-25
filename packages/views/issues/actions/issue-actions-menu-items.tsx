@@ -46,6 +46,7 @@ import {
 import { copyText } from "@multica/ui/lib/clipboard";
 import type { UseIssueActionsResult } from "./use-issue-actions";
 import { useT } from "../../i18n";
+import { useIssueSurfaceActionsOptional } from "../surface/actions-context";
 
 // Both Dropdown and Context menu wrappers expose an API-compatible surface
 // (variant, inset, onClick, etc.). We bundle the primitives we need into a
@@ -98,6 +99,10 @@ export function IssueActionsMenuItems({
   onDeletedNavigateTo,
 }: IssueActionsMenuItemsProps) {
   const { t } = useT("issues");
+  const surfaceActions = useIssueSurfaceActionsOptional();
+  const surfaceMenuActions = (surfaceActions?.menuActions ?? []).filter(
+    (action) => !action.isVisible || action.isVisible(issue),
+  );
   const {
     isPinned,
     updateField,
@@ -248,6 +253,25 @@ export function IssueActionsMenuItems({
           )}
         </P.SubContent>
       </P.Sub>
+
+      {surfaceMenuActions.length > 0 && (
+        <>
+          <P.Separator />
+          {surfaceMenuActions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <P.Item
+                key={action.id}
+                variant={action.variant}
+                onClick={() => action.onSelect(issue)}
+              >
+                {Icon && <Icon className="h-3.5 w-3.5" />}
+                {action.label}
+              </P.Item>
+            );
+          })}
+        </>
+      )}
 
       <P.Separator />
 

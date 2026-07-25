@@ -18,6 +18,15 @@ const myAllKey = issueKeys.myListSorted(WS_ID, "all", {}, sort);
 const involvedKey = issueKeys.myListSorted(WS_ID, "agents", { involves_user_id: "me" }, sort);
 const projectP1Key = issueKeys.myListSorted(WS_ID, "project:p1", { project_id: "p1" }, sort);
 const projectP2Key = issueKeys.myListSorted(WS_ID, "project:p2", { project_id: "p2" }, sort);
+const workflowKey = issueKeys.myListSorted(
+  WS_ID,
+  "workflow:instance-1:all",
+  {
+    workflow_instance_id: "instance-1",
+    workflow_issue_only: true,
+  },
+  sort,
+);
 const membersKey = issueKeys.myListSorted(
   WS_ID,
   "workspace:members",
@@ -170,6 +179,33 @@ describe("applyIssueChange", () => {
     // nothing to reconcile — no stale keys.
     expect(staleHashes).not.toContain(hashKey(projectP2Key));
     expect(staleHashes).not.toContain(hashKey(wsKey));
+  });
+
+  it("does not count a workflow host status change as a workflow child issue", () => {
+    qc.setQueryData<ListIssuesCache>(workflowKey, {
+      byStatus: {
+        in_progress: { issues: [], total: 0 },
+        done: { issues: [], total: 5 },
+      },
+    });
+    const host = makeIssue(1, {
+      status: "in_progress",
+      // Issue update / realtime payloads omit this optional projection for
+      // hosts. The cache must treat membership as unknown and refetch rather
+      // than count the host as a workflow task.
+      workflow_context: undefined,
+    });
+    const patch = { status: "done" as const };
+
+    const result = applyIssueChange(qc, WS_ID, host.id, patch, {
+      changed: issueChangedDims(patch, host),
+      baseIssue: host,
+    });
+
+    const cache = qc.getQueryData<ListIssuesCache>(workflowKey);
+    expect(cache?.byStatus.in_progress?.total).toBe(0);
+    expect(cache?.byStatus.done?.total).toBe(5);
+    expect(result.staleKeys.map(hashKey)).toContain(hashKey(workflowKey));
   });
 
   it("off-window leave: decrements the old status bucket total without a refetch", () => {

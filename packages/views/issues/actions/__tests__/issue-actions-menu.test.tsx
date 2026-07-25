@@ -110,6 +110,7 @@ import {
   IssueActionsContextMenu,
   IssueContextMenuProvider,
 } from "../issue-actions-context-menu";
+import { IssueSurfaceActionsProvider } from "../../surface/actions-context";
 
 const mockIssue: Issue = {
   id: "issue-1",
@@ -252,6 +253,40 @@ describe("IssueActionsDropdown", () => {
       identifier: "TES-1",
       onDeletedNavigateTo: "/test/issues",
     });
+  });
+
+  it("renders surface-specific actions in the shared issue menu", async () => {
+    const onSelect = vi.fn();
+    render(
+      wrap(
+        <IssueSurfaceActionsProvider
+          actions={{
+            isPending: false,
+            menuActions: [{
+              id: "remove-from-activity",
+              label: "Remove from current activity",
+              variant: "destructive",
+              onSelect,
+            }],
+            createIssue: vi.fn(),
+            updateIssue: vi.fn(),
+            moveIssue: vi.fn(),
+            batchUpdate: vi.fn(),
+            batchDelete: vi.fn(),
+          }}
+        >
+          <IssueActionsDropdown
+            issue={mockIssue}
+            trigger={<button data-testid="trigger">Menu</button>}
+          />
+        </IssueSurfaceActionsProvider>,
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId("trigger"));
+    fireEvent.click(await screen.findByText("Remove from current activity"));
+
+    expect(onSelect).toHaveBeenCalledWith(mockIssue);
   });
 });
 

@@ -1,6 +1,7 @@
 import type { IssueScope } from "@multica/core/issues/surface/scope";
 import type { CreateIssueRequest } from "@multica/core/types";
 import type { ViewMode } from "@multica/core/issues/stores/view-store";
+import type { IssueSurfaceMenuAction } from "./actions-context";
 
 export type IssueCreateDefaults = Partial<
   Omit<
@@ -24,4 +25,7 @@ export interface IssueSurfaceProps {
   modes: IssueSurfaceMode[];
   surfaceKey?: string;
   createDefaults?: IssueCreateDefaults;
+  allowCreate?: boolean;
+  onCreateIssue?: (defaults?: IssueCreateDefaults) => void;
+  menuActions?: IssueSurfaceMenuAction[];
 }

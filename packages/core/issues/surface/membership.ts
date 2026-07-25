@@ -127,6 +127,37 @@ export function issueMatchesListFilter(
     // Indirect-assignee predicate (owned agents / squads) — server-only.
     unknown = true;
   }
+  if (filter.workflow_issue_only === true) {
+    if (issue.workflow_context === undefined) unknown = true;
+    else if (issue.workflow_context === null) return false;
+  }
+  if (filter.workflow_template_id !== undefined) {
+    if (issue.workflow_context === undefined) unknown = true;
+    else if (
+      issue.workflow_context === null ||
+      issue.workflow_context.workflow_template_id !== filter.workflow_template_id
+    ) {
+      return false;
+    }
+  }
+  if (filter.workflow_instance_id !== undefined) {
+    if (issue.workflow_context === undefined) unknown = true;
+    else if (
+      issue.workflow_context === null ||
+      issue.workflow_context.workflow_instance_id !== filter.workflow_instance_id
+    ) {
+      return false;
+    }
+  }
+  if (filter.workflow_activity !== undefined) {
+    if (issue.workflow_context === undefined) unknown = true;
+    else if (
+      issue.workflow_context === null ||
+      issue.workflow_context.activity_key !== filter.workflow_activity
+    ) {
+      return false;
+    }
+  }
 
   return unknown ? "unknown" : true;
 }

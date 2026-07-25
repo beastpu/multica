@@ -16,6 +16,11 @@ export type IssueScope =
       actorId: string;
       relation: "assigned" | "created";
     }
+  | {
+      type: "workflow";
+      instanceId: string;
+      activityKey?: string;
+    }
   | { type: "team"; teamId: string };
 
 export class UnsupportedIssueScopeError extends Error {
@@ -35,6 +40,8 @@ export function issueScopeKey(scope: IssueScope): string {
       return `project:${scope.projectId}`;
     case "actor":
       return `actor:${scope.actorType}:${scope.actorId}:${scope.relation}`;
+    case "workflow":
+      return `workflow:${scope.instanceId}:${scope.activityKey ?? "all"}`;
     case "team":
       return `team:${scope.teamId}`;
   }

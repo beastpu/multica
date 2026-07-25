@@ -18,6 +18,16 @@ describe("issue surface scope", () => {
       "project:p1",
     );
     expect(
+      issueScopeKey({ type: "workflow", instanceId: "w1" }),
+    ).toBe("workflow:w1:all");
+    expect(
+      issueScopeKey({
+        type: "workflow",
+        instanceId: "w1",
+        activityKey: "review",
+      }),
+    ).toBe("workflow:w1:review");
+    expect(
       issueScopeKey({
         type: "actor",
         actorType: "agent",
@@ -142,6 +152,47 @@ describe("issue surface scope", () => {
       queryFilter: { assignee_id: "a1" },
       groupedScopeFilter: { assignee_id: "a1" },
       createDefaults: { assignee_type: "agent", assignee_id: "a1" },
+    });
+  });
+
+  it("builds workflow query plans for all issues and one activity", () => {
+    expect(
+      buildIssueSurfaceQueryPlan({
+        type: "workflow",
+        instanceId: "w1",
+      }),
+    ).toMatchObject({
+      scopeKey: "workflow:w1:all",
+      queryScope: "workflow:w1:all",
+      queryFilter: {
+        workflow_instance_id: "w1",
+        workflow_issue_only: true,
+      },
+      groupedScopeFilter: {
+        workflow_instance_id: "w1",
+        workflow_issue_only: true,
+      },
+      createDefaults: {},
+    });
+
+    expect(
+      buildIssueSurfaceQueryPlan({
+        type: "workflow",
+        instanceId: "w1",
+        activityKey: "review",
+      }),
+    ).toMatchObject({
+      scopeKey: "workflow:w1:review",
+      queryFilter: {
+        workflow_instance_id: "w1",
+        workflow_activity: "review",
+        workflow_issue_only: true,
+      },
+      groupedScopeFilter: {
+        workflow_instance_id: "w1",
+        workflow_activity: "review",
+        workflow_issue_only: true,
+      },
     });
   });
 

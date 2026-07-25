@@ -94,6 +94,51 @@ describe("issueMatchesListFilter", () => {
     expect(issueMatchesListFilter(makeIssue(), "all", {})).toBe("unknown");
   });
 
+  it("judges workflow issue, instance, template, and activity filters", () => {
+    const workflowIssue = makeIssue({
+      workflow_context: {
+        workflow_instance_id: "instance-1",
+        workflow_template_id: "template-1",
+        workflow_template_name: "Delivery",
+        workflow_node_instance_id: "node-1",
+        activity_key: "build",
+        activity_name: "Build",
+        host_issue_id: "host-1",
+        host_issue_identifier: "MUL-1",
+        host_issue_title: "Host",
+        required: true,
+      },
+    });
+    const filter = {
+      workflow_issue_only: true,
+      workflow_instance_id: "instance-1",
+      workflow_template_id: "template-1",
+      workflow_activity: "build",
+    } as const;
+
+    expect(issueMatchesListFilter(workflowIssue, "workflow", filter)).toBe(true);
+    expect(
+      issueMatchesListFilter(
+        { ...workflowIssue, workflow_context: null },
+        "workflow",
+        filter,
+      ),
+    ).toBe(false);
+    expect(
+      issueMatchesListFilter(workflowIssue, "workflow", {
+        ...filter,
+        workflow_instance_id: "instance-2",
+      }),
+    ).toBe(false);
+    expect(
+      issueMatchesListFilter(
+        { ...workflowIssue, workflow_context: undefined },
+        "workflow",
+        filter,
+      ),
+    ).toBe("unknown");
+  });
+
   it("ANDs across fields — a definitive miss beats an unknown", () => {
     expect(
       issueMatchesListFilter(

@@ -159,7 +159,6 @@ export function useIssueSurfaceData({
 
   const assigneeGroupFilter = useMemo<AssigneeGroupedIssuesFilter>(
     () => ({
-      ...queryPlan.groupedScopeFilter,
       statuses: statusFilters.length > 0 ? statusFilters : [...ALL_STATUSES],
       priorities: priorityFilters,
       assignee_filters: assigneeFilters,
@@ -172,6 +171,10 @@ export function useIssueSurfaceData({
       workflow_instance_id: workflowInstanceFilter || undefined,
       workflow_activity: workflowActivityFilter || undefined,
       workflow_issue_only: workflowIssueOnly || undefined,
+      // The surface scope is the immutable data boundary. Saved display
+      // filters may narrow it, but must never replace it (most importantly
+      // for workflow instance/activity scopes).
+      ...queryPlan.groupedScopeFilter,
     }),
     [
       assigneeFilters,

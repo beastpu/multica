@@ -2,7 +2,13 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setApiInstance } from "@multica/core/api";
 import type { ApiClient } from "@multica/core/api/client";
@@ -243,5 +249,35 @@ describe("IssueSurface — scope switch loading semantics", () => {
 
     expect(screen.getByTestId("surface-loading")).toBeInTheDocument();
     expect(screen.queryByText("WS1 issue")).not.toBeInTheDocument();
+  });
+
+  it("routes empty-state creation through a surface-specific callback", async () => {
+    const onCreateIssue = vi.fn();
+    setApiInstance({
+      listIssues: vi.fn(() => Promise.resolve({ issues: [], total: 0 })),
+      listGroupedIssues: vi.fn(() => never()),
+      listProjects: vi.fn(() => never()),
+      getAgentTaskSnapshot: vi.fn(() => never<AgentTask[]>()),
+      getChildIssueProgress: vi.fn(() => never()),
+    } as unknown as ApiClient);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <IssueSurface
+          scope={{ type: "project", projectId: "p1" }}
+          modes={["list"]}
+          renderHeader={() => null}
+          onCreateIssue={onCreateIssue}
+          batchToolbar="never"
+        />
+      </QueryClientProvider>,
+    );
+
+    const createButton = await screen.findByRole("button", {
+      name: "translated",
+    });
+    fireEvent.click(createButton);
+
+    expect(onCreateIssue).toHaveBeenCalledOnce();
   });
 });

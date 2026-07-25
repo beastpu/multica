@@ -50,6 +50,9 @@ export function IssueSurface({
   modes,
   surfaceKey,
   createDefaults,
+  allowCreate = true,
+  onCreateIssue,
+  menuActions = [],
   renderHeader,
   renderEmpty,
   renderLoading,
@@ -73,7 +76,6 @@ export function IssueSurface({
   const contentKey = `${wsId}:${issueScopeKey(scope)}`;
   useEffect(() => {
     if (process.env.NODE_ENV !== "production") {
-      // eslint-disable-next-line no-console
       console.warn(`[issue-surface] mount ${contentKey}`);
     }
   }, [contentKey]);
@@ -96,6 +98,9 @@ export function IssueSurface({
         scope={scope}
         modes={modes}
         createDefaults={createDefaults}
+        allowCreate={allowCreate}
+        onCreateIssue={onCreateIssue}
+        menuActions={menuActions}
         renderHeader={renderHeader}
         renderEmpty={renderEmpty}
         renderLoading={renderLoading}
@@ -112,6 +117,9 @@ function IssueSurfaceContent({
   scope,
   modes,
   createDefaults,
+  allowCreate,
+  onCreateIssue,
+  menuActions = [],
   renderHeader,
   renderEmpty,
   renderLoading,
@@ -155,9 +163,22 @@ function IssueSurfaceContent({
   );
   const openCreateIssue = useCallback(
     (defaults?: IssueCreateDefaults) => {
+      if (!allowCreate) return;
+      if (onCreateIssue) {
+        onCreateIssue(defaults);
+        return;
+      }
       controller.openCreateIssue(defaults);
     },
-    [controller],
+    [allowCreate, controller, onCreateIssue],
+  );
+  const surfaceActions = useMemo(
+    () => ({
+      ...controller.actions,
+      createIssue: openCreateIssue,
+      menuActions,
+    }),
+    [controller.actions, menuActions, openCreateIssue],
   );
   // Stable reference for BoardView's issues: the inline flatMap allocated a
   // fresh array every render, defeating BoardView's memo.
@@ -177,110 +198,130 @@ function IssueSurfaceContent({
     (batchToolbar === "always" || controller.viewMode === "list");
 
   return (
-    <IssueSurfaceActionsProvider actions={controller.actions}>
+    <IssueSurfaceActionsProvider actions={surfaceActions}>
       {/* One shared right-click menu for every card/row this surface renders
           — see IssueContextMenuProvider. Inside the actions provider so the
           singleton's useIssueActions routes updates through surface
           actions. */}
       <IssueContextMenuProvider>
-      <IssueSurfaceSelectionProvider selection={controller.selection}>
-        {renderHeader ? (
-          renderHeader(renderContext)
-        ) : (
-          <IssuesHeader
-            scopedIssues={controller.surfaceIssues}
-            workingIssues={workingIssues}
-            allowGantt={controller.allowGantt}
-            isRefreshing={controller.isRefreshing}
-          />
-        )}
-        {controller.isLoading ? (
-          renderLoading ? (
-            renderLoading(renderContext)
+        <IssueSurfaceSelectionProvider selection={controller.selection}>
+          {renderHeader ? (
+            renderHeader(renderContext)
           ) : (
-            <IssueSurfaceSkeleton mode={controller.viewMode} />
-          )
-        ) : controller.isEmpty || shouldShowClientEmpty ? (
-          renderEmpty ? (
-            renderEmpty(renderContext)
+            <IssuesHeader
+              scopedIssues={controller.surfaceIssues}
+              workingIssues={workingIssues}
+              allowGantt={controller.allowGantt}
+              isRefreshing={controller.isRefreshing}
+            />
+          )}
+          {controller.isLoading ? (
+            renderLoading ? (
+              renderLoading(renderContext)
+            ) : (
+              <IssueSurfaceSkeleton mode={controller.viewMode} />
+            )
+          ) : controller.isEmpty || shouldShowClientEmpty ? (
+            renderEmpty ? (
+              renderEmpty(renderContext)
+            ) : (
+              <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-3 text-muted-foreground">
+                <ListTodo className="h-10 w-10 text-muted-foreground/40" />
+                <p className="text-sm">
+                  {t(($) => $.detail.empty_issues_title)}
+                </p>
+                <p className="text-xs">
+                  {t(($) => $.detail.empty_issues_hint)}
+                </p>
+                {allowCreate && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-1"
+                    onClick={() => openCreateIssue()}
+                  >
+                    <Plus className="size-3.5 mr-1.5" />
+                    {t(($) => $.detail.empty_issues_new_button)}
+                  </Button>
+                )}
+              </div>
+            )
           ) : (
-            <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-3 text-muted-foreground">
-              <ListTodo className="h-10 w-10 text-muted-foreground/40" />
-              <p className="text-sm">{t(($) => $.detail.empty_issues_title)}</p>
-              <p className="text-xs">{t(($) => $.detail.empty_issues_hint)}</p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-1"
-                onClick={() => controller.openCreateIssue()}
-              >
-                <Plus className="size-3.5 mr-1.5" />
-                {t(($) => $.detail.empty_issues_new_button)}
-              </Button>
+            <div
+              className={cn("flex flex-col flex-1 min-h-0", contentClassName)}
+            >
+              {controller.viewMode === "board" && (
+                <BoardView
+                  issues={boardIssues}
+                  assigneeGroups={controller.assigneeGroups}
+                  assigneeGroupQueryKey={controller.assigneeGroupQueryKey}
+                  assigneeGroupFilter={controller.assigneeGroupFilter}
+                  visibleStatuses={controller.visibleStatuses}
+                  hiddenStatuses={controller.hiddenStatuses}
+                  onMoveIssue={controller.moveIssue}
+                  childProgressMap={controller.childProgressMap}
+                  projectMap={controller.projectMap}
+                  myIssuesScope={controller.loadMoreScope}
+                  myIssuesFilter={controller.loadMoreFilter}
+                  listFilter={
+                    controller.loadMoreScope
+                      ? undefined
+                      : controller.listFilter
+                  }
+                  sort={controller.sort}
+                  projectId={controller.projectId}
+                  onCreateIssue={allowCreate ? openCreateIssue : undefined}
+                />
+              )}
+              {controller.viewMode === "list" && (
+                <ListView
+                  issues={issues}
+                  visibleStatuses={controller.visibleStatuses}
+                  childProgressMap={controller.childProgressMap}
+                  projectMap={controller.projectMap}
+                  myIssuesScope={controller.loadMoreScope}
+                  myIssuesFilter={controller.loadMoreFilter}
+                  listFilter={
+                    controller.loadMoreScope
+                      ? undefined
+                      : controller.listFilter
+                  }
+                  sort={controller.sort}
+                  projectId={controller.projectId}
+                  onMoveIssue={controller.moveIssue}
+                  onCreateIssue={allowCreate ? openCreateIssue : undefined}
+                />
+              )}
+              {controller.viewMode === "gantt" && (
+                <GanttView issues={controller.filteredGanttIssues} />
+              )}
+              {controller.viewMode === "swimlane" && (
+                <SwimLaneView
+                  issues={issues}
+                  unfilteredIssues={swimlaneIssues}
+                  activeFilters={controller.activeFilters}
+                  visibleStatuses={controller.visibleStatuses}
+                  hiddenStatuses={controller.hiddenStatuses}
+                  onMoveIssue={controller.moveIssue}
+                  childProgressMap={controller.childProgressMap}
+                  projectMap={controller.projectMap}
+                  myIssuesScope={controller.loadMoreScope}
+                  myIssuesFilter={controller.loadMoreFilter}
+                  listFilter={
+                    controller.loadMoreScope
+                      ? undefined
+                      : controller.listFilter
+                  }
+                  sort={controller.sort}
+                  projectId={controller.projectId}
+                  activityByIssueId={controller.activity.activityByIssueId}
+                  onCreateIssue={allowCreate ? openCreateIssue : undefined}
+                />
+              )}
             </div>
-          )
-        ) : (
-          <div className={cn("flex flex-col flex-1 min-h-0", contentClassName)}>
-            {controller.viewMode === "board" && (
-              <BoardView
-                issues={boardIssues}
-                assigneeGroups={controller.assigneeGroups}
-                assigneeGroupQueryKey={controller.assigneeGroupQueryKey}
-                assigneeGroupFilter={controller.assigneeGroupFilter}
-                visibleStatuses={controller.visibleStatuses}
-                hiddenStatuses={controller.hiddenStatuses}
-                onMoveIssue={controller.moveIssue}
-                childProgressMap={controller.childProgressMap}
-                projectMap={controller.projectMap}
-                myIssuesScope={controller.loadMoreScope}
-                myIssuesFilter={controller.loadMoreFilter}
-                listFilter={controller.loadMoreScope ? undefined : controller.listFilter}
-                sort={controller.sort}
-                projectId={controller.projectId}
-                onCreateIssue={openCreateIssue}
-              />
-            )}
-            {controller.viewMode === "list" && (
-              <ListView
-                issues={issues}
-                visibleStatuses={controller.visibleStatuses}
-                childProgressMap={controller.childProgressMap}
-                projectMap={controller.projectMap}
-                myIssuesScope={controller.loadMoreScope}
-                myIssuesFilter={controller.loadMoreFilter}
-                listFilter={controller.loadMoreScope ? undefined : controller.listFilter}
-                sort={controller.sort}
-                projectId={controller.projectId}
-                onMoveIssue={controller.moveIssue}
-                onCreateIssue={openCreateIssue}
-              />
-            )}
-            {controller.viewMode === "gantt" && (
-              <GanttView issues={controller.filteredGanttIssues} />
-            )}
-            {controller.viewMode === "swimlane" && (
-              <SwimLaneView
-                issues={issues}
-                unfilteredIssues={swimlaneIssues}
-                activeFilters={controller.activeFilters}
-                visibleStatuses={controller.visibleStatuses}
-                hiddenStatuses={controller.hiddenStatuses}
-                onMoveIssue={controller.moveIssue}
-                childProgressMap={controller.childProgressMap}
-                projectMap={controller.projectMap}
-                myIssuesScope={controller.loadMoreScope}
-                myIssuesFilter={controller.loadMoreFilter}
-                listFilter={controller.loadMoreScope ? undefined : controller.listFilter}
-                sort={controller.sort}
-                projectId={controller.projectId}
-                activityByIssueId={controller.activity.activityByIssueId}
-                onCreateIssue={openCreateIssue}
-              />
-            )}
-          </div>
-        )}
-        {shouldShowBatchToolbar && <BatchActionToolbar issues={issues} />}
-      </IssueSurfaceSelectionProvider>
+          )}
+          {shouldShowBatchToolbar && <BatchActionToolbar issues={issues} />}
+        </IssueSurfaceSelectionProvider>
       </IssueContextMenuProvider>
     </IssueSurfaceActionsProvider>
   );

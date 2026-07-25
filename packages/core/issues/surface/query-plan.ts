@@ -163,6 +163,24 @@ export function buildIssueSurfaceQueryPlan(
             : {},
       };
     }
+    case "workflow": {
+      const queryFilter: MyIssuesFilter = {
+        workflow_instance_id: scope.instanceId,
+        workflow_activity: scope.activityKey,
+        workflow_issue_only: true,
+      };
+      return {
+        kind: "scoped",
+        scopeKey,
+        queryScope: scopeKey,
+        queryFilter,
+        groupedScopeFilter: queryFilter,
+        loadMoreScope: scopeKey,
+        loadMoreFilter: queryFilter,
+        userId: undefined,
+        createDefaults: {},
+      };
+    }
     case "team":
       throw new UnsupportedIssueScopeError(scope, "issue surface query plan");
   }
