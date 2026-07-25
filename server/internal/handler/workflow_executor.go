@@ -23,6 +23,38 @@ type workflowExecutorDecision struct {
 	Snapshot   []byte
 }
 
+// workflowConditionEvaluator lazily evaluates an executor strategy condition
+// against the running instance. It is only invoked for strategies that
+// actually declare a condition, so the common unconditional path performs no
+// extra queries.
+type workflowConditionEvaluator func(condition json.RawMessage) (bool, error)
+
+func newWorkflowConditionEvaluator(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	instance db.WorkflowInstance,
+) workflowConditionEvaluator {
+	var resolver workflowdomain.ConditionResolver
+	return func(condition json.RawMessage) (bool, error) {
+		if resolver == nil {
+			nodeRows, err := q.ListWorkflowNodeInstances(ctx, db.ListWorkflowNodeInstancesParams{
+				WorkflowInstanceID: instance.ID, WorkspaceID: workspaceID,
+			})
+			if err != nil {
+				return false, fmt.Errorf("list workflow nodes for executor condition: %w", err)
+			}
+			resolver, err = workflowConditionResolver(
+				ctx, q, workspaceID, instance, latestWorkflowNodesByKey(nodeRows),
+			)
+			if err != nil {
+				return false, err
+			}
+		}
+		return workflowdomain.EvaluateCondition(condition, resolver)
+	}
+}
+
 func resolveWorkflowTaskExecutor(
 	ctx context.Context,
 	q *db.Queries,
@@ -31,6 +63,7 @@ func resolveWorkflowTaskExecutor(
 	node workflowdomain.NodeDefinition,
 	task workflowdomain.IssueTemplate,
 	roles map[string]validatedWorkflowRoleAssignment,
+	conditions workflowConditionEvaluator,
 ) (workflowExecutorDecision, error) {
 	if task.AssigneeType != "" && task.AssigneeID != "" {
 		assignment, err := directWorkflowExecutorAssignment(
@@ -80,6 +113,17 @@ func resolveWorkflowTaskExecutor(
 		}
 	}
 	for _, strategy := range node.Executor.Strategies {
+		if workflowdomain.HasCondition(strategy.Condition) {
+			matched, err := conditions(strategy.Condition)
+			if err != nil {
+				return workflowExecutorDecision{}, err
+			}
+			// Unknown or missing data fails closed, matching gateway
+			// semantics: the strategy is skipped, never guessed.
+			if !matched {
+				continue
+			}
+		}
 		switch strategy.Kind {
 		case "fixed_actor":
 			assignment, err := directWorkflowExecutorAssignment(

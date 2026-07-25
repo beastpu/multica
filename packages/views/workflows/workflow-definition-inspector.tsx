@@ -444,7 +444,12 @@ function ExecutorEditor({
               value={strategy.kind}
               disabled={readOnly}
               className="min-h-11 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-sm"
-              onChange={(event) => update(index, { kind: event.target.value })}
+              onChange={(event) => update(index, {
+                kind: event.target.value,
+                // Kind-specific fields reset, but the strategy's gating
+                // condition is kind-independent and must survive the switch.
+                condition: strategy.condition,
+              })}
             >
               {executorKinds.map((kind) => (
                 <option key={kind} value={kind}>{kind}</option>

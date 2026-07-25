@@ -1054,6 +1054,7 @@ func createWorkflowNodeActivationRecords(
 		}
 		decision, err := resolveWorkflowTaskExecutor(
 			ctx, q, workspaceID, instance, nodeDefinition, issueTemplate, roles,
+			newWorkflowConditionEvaluator(ctx, q, workspaceID, instance),
 		)
 		if err != nil {
 			return false, fmt.Errorf("resolve task executor: %w", err)
@@ -1143,6 +1144,7 @@ func ensureWorkflowNodeTasks(
 		repaired = true
 		decision, resolutionErr := resolveWorkflowTaskExecutor(
 			ctx, q, workspaceID, instance, nodeDefinition, issueTemplate, roleMap,
+			newWorkflowConditionEvaluator(ctx, q, workspaceID, instance),
 		)
 		if resolutionErr != nil {
 			return repaired, resolutionErr

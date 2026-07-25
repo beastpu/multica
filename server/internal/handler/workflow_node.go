@@ -2015,7 +2015,7 @@ func (h *Handler) evaluateDeterministicWorkflowVerdict(
 	if err != nil {
 		return "", "", nil, err
 	}
-	resolver, err := h.workflowConditionResolver(
+	resolver, err := workflowConditionResolver(
 		ctx,
 		q,
 		workspaceID,

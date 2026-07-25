@@ -332,7 +332,7 @@ func (h *Handler) selectWorkflowGatewayTarget(
 ) (string, error) {
 	var defaultTarget string
 	matches := make([]string, 0, 1)
-	resolver, err := h.workflowConditionResolver(ctx, q, workspaceID, instance, nodes)
+	resolver, err := workflowConditionResolver(ctx, q, workspaceID, instance, nodes)
 	if err != nil {
 		return "", err
 	}
@@ -361,7 +361,7 @@ func (h *Handler) selectWorkflowGatewayTarget(
 	return defaultTarget, nil
 }
 
-func (h *Handler) workflowConditionResolver(
+func workflowConditionResolver(
 	ctx context.Context,
 	q *db.Queries,
 	workspaceID pgtype.UUID,

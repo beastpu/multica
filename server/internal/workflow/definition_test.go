@@ -172,6 +172,111 @@ func TestValidateDefinitionRequiresExecutorFallback(t *testing.T) {
 	}
 }
 
+func conditionalDeliveryDefinition() Definition {
+	definition := validDefinition()
+	// Give the implementation node an upstream submission the executor
+	// condition can reference: start -> triage -> implementation -> ...
+	triage := NodeDefinition{
+		Key: "triage", Kind: "activity", Name: "Triage", OwnerRole: "owner",
+		IssueTemplates: []IssueTemplate{{
+			Key: "triage_task", Title: "Triage {{host.title}}", Required: true,
+		}},
+		SubmissionSchema: &SubmissionSchema{Fields: []SubmissionField{{
+			Key: "needs_agent", Name: "Needs agent", Type: "boolean", Required: true,
+		}}},
+	}
+	definition.Nodes = []NodeDefinition{
+		definition.Nodes[0], // start
+		triage,
+		definition.Nodes[1], // implementation
+		definition.Nodes[2], // acceptance
+		definition.Nodes[3], // end
+	}
+	definition.Edges = []EdgeDefinition{
+		{From: "start", To: "triage"},
+		{From: "triage", To: "implementation"},
+		{From: "implementation", To: "acceptance"},
+		{From: "acceptance", To: "end"},
+	}
+	return definition
+}
+
+func executorCondition(node, key string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(
+		`{"source":"node_submission","node":%q,"key":%q,"op":"eq","value":true}`,
+		node, key,
+	))
+}
+
+func TestValidateDefinitionAcceptsConditionalExecutorStrategies(t *testing.T) {
+	definition := conditionalDeliveryDefinition()
+	for index, node := range definition.Nodes {
+		if node.Key != "implementation" {
+			continue
+		}
+		definition.Nodes[index].Executor.Strategies = []ExecutorStrategy{
+			{
+				Kind: "fixed_role", Role: "executor",
+				Condition: executorCondition("triage", "needs_agent"),
+			},
+			{Kind: "manual"},
+		}
+	}
+	if err := ValidateDefinition(definition); err != nil {
+		t.Fatalf("ValidateDefinition() error = %v", err)
+	}
+}
+
+func TestValidateDefinitionRejectsAllConditionalExecutorStrategies(t *testing.T) {
+	definition := conditionalDeliveryDefinition()
+	for index, node := range definition.Nodes {
+		if node.Key != "implementation" {
+			continue
+		}
+		definition.Nodes[index].Executor.Strategies = []ExecutorStrategy{
+			{
+				Kind: "fixed_role", Role: "executor",
+				Condition: executorCondition("triage", "needs_agent"),
+			},
+			{
+				Kind:      "manual",
+				Condition: executorCondition("triage", "needs_agent"),
+			},
+		}
+	}
+	if err := ValidateDefinition(definition); err == nil ||
+		!strings.Contains(err.Error(), "fallback") {
+		t.Fatalf("ValidateDefinition() error = %v, want unconditional fallback error", err)
+	}
+}
+
+func TestValidateDefinitionRejectsExecutorConditionOnNonUpstreamNode(t *testing.T) {
+	definition := conditionalDeliveryDefinition()
+	for index, node := range definition.Nodes {
+		switch node.Key {
+		case "implementation":
+			definition.Nodes[index].SubmissionSchema = &SubmissionSchema{
+				Fields: []SubmissionField{{
+					Key: "approved", Name: "Approved", Type: "boolean", Required: true,
+				}},
+			}
+		case "triage":
+			// The triage executor references the downstream implementation node.
+			definition.Nodes[index].Executor.Strategies = []ExecutorStrategy{
+				{
+					Kind: "fixed_role", Role: "executor",
+					Condition: executorCondition("implementation", "approved"),
+				},
+				{Kind: "manual"},
+			}
+		}
+	}
+	if err := ValidateDefinition(definition); err == nil ||
+		!strings.Contains(err.Error(), "upstream") {
+		t.Fatalf("ValidateDefinition() error = %v, want upstream error", err)
+	}
+}
+
 func TestValidateDefinitionAcceptsDirectNodeAndIssueExecutors(t *testing.T) {
 	definition := validDefinition()
 	definition.Nodes[1].Executor.Strategies = []ExecutorStrategy{

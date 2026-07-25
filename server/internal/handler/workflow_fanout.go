@@ -271,6 +271,7 @@ func (h *Handler) ConfirmWorkflowSubmissionTasks(w http.ResponseWriter, r *http.
 			nodeDefinition,
 			taskDefinition,
 			roleMap,
+			newWorkflowConditionEvaluator(r.Context(), qtx, locked.WorkspaceID, locked),
 		)
 		if resolveErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to resolve workflow executor")

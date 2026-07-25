@@ -77,6 +77,16 @@ type ExecutorStrategy struct {
 	Field      string `json:"field,omitempty"`
 	ActorType  string `json:"actor_type,omitempty"`
 	ActorID    string `json:"actor_id,omitempty"`
+	// Condition gates the strategy: when set, the strategy is only
+	// considered while resolving an executor if the condition evaluates to
+	// true against upstream submissions, verdicts, and host fields. It uses
+	// the same structured condition DSL as gateway edges.
+	Condition json.RawMessage `json:"condition,omitempty"`
+}
+
+// HasCondition reports whether a raw condition document carries a value.
+func HasCondition(raw json.RawMessage) bool {
+	return hasJSONValue(raw)
 }
 
 type IssueTemplate struct {
@@ -620,11 +630,13 @@ func validateExecutor(node NodeDefinition, roles map[string]RoleDefinition) erro
 			if _, ok := roles[strategy.Role]; !ok {
 				return fmt.Errorf("activity %q executor references unknown role %q", node.Key, strategy.Role)
 			}
-			if strategy.Kind == "fallback_role" {
+			if strategy.Kind == "fallback_role" && !hasJSONValue(strategy.Condition) {
 				hasFallback = true
 			}
 		case "manual":
-			hasFallback = true
+			if !hasJSONValue(strategy.Condition) {
+				hasFallback = true
+			}
 		case "previous_selected":
 			if !validKey(strategy.Node) || !validKey(strategy.Field) {
 				return fmt.Errorf(
@@ -659,7 +671,10 @@ func validateExecutor(node NodeDefinition, roles map[string]RoleDefinition) erro
 		}
 	}
 	if !hasFallback {
-		return fmt.Errorf("activity %q executor requires fallback_role or manual", node.Key)
+		return fmt.Errorf(
+			"activity %q executor requires an unconditional fallback_role or manual",
+			node.Key,
+		)
 	}
 	return nil
 }
@@ -690,6 +705,36 @@ func validateExecutorReferences(
 ) error {
 	for _, node := range nodeDefinitions {
 		for _, strategy := range node.Executor.Strategies {
+			if hasJSONValue(strategy.Condition) {
+				if err := ValidateCondition(strategy.Condition, nodes); err != nil {
+					return fmt.Errorf(
+						"activity %q executor strategy condition: %w",
+						node.Key,
+						err,
+					)
+				}
+				references, err := ConditionReferences(strategy.Condition)
+				if err != nil {
+					return fmt.Errorf(
+						"activity %q executor strategy condition: %w",
+						node.Key,
+						err,
+					)
+				}
+				for _, reference := range references {
+					// Executor resolution runs when the node activates, so
+					// the node's own submissions and verdicts do not exist
+					// yet; conditions may only read upstream nodes.
+					if reference.Node == node.Key ||
+						!workflowPathExists(reference.Node, node.Key, edges) {
+						return fmt.Errorf(
+							"activity %q executor condition node %q must be upstream",
+							node.Key,
+							reference.Node,
+						)
+					}
+				}
+			}
 			if strategy.Kind != "previous_selected" {
 				continue
 			}

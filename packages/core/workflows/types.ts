@@ -34,6 +34,8 @@ export interface WorkflowExecutorStrategy {
   capability?: string;
   node?: string;
   field?: string;
+  /** Structured condition gating this strategy; same DSL as gateway edges. */
+  condition?: unknown;
 }
 
 export interface WorkflowCompletionDefinition {

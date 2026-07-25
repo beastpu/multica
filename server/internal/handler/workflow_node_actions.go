@@ -186,6 +186,7 @@ func (h *Handler) CreateWorkflowNodeIssue(w http.ResponseWriter, r *http.Request
 		decision, err = resolveWorkflowTaskExecutor(
 			r.Context(), qtx, locked.WorkspaceID, locked,
 			nodeDefinition, taskDefinition, roleMap,
+			newWorkflowConditionEvaluator(r.Context(), qtx, locked.WorkspaceID, locked),
 		)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to resolve workflow executor")
