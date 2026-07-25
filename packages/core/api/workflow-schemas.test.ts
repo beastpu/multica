@@ -172,4 +172,29 @@ describe("workflow response schemas", () => {
       assignee_id: "squad-review",
     });
   });
+
+  it("preserves known completion modes and ignores unknown future modes", () => {
+    const manual = WorkflowNodeDefinitionSchema.parse({
+      key: "review",
+      kind: "activity",
+      name: "Review",
+      completion: {
+        mode: "manual",
+        required_issue_outcome: "done",
+      },
+    });
+    const future = WorkflowNodeDefinitionSchema.parse({
+      key: "review",
+      kind: "activity",
+      name: "Review",
+      completion: {
+        mode: "approval_chain",
+        required_issue_outcome: "done",
+      },
+    });
+
+    expect(manual.completion.mode).toBe("manual");
+    expect(future.completion.mode).toBeUndefined();
+    expect(future.completion.required_issue_outcome).toBe("done");
+  });
 });

@@ -2,13 +2,15 @@
 
 import {
   AlertCircle,
+  ArrowUpRight,
   Check,
-  ChevronRight,
   CircleDot,
   FileCheck2,
   GitBranch,
   History,
   ListChecks,
+  MoreHorizontal,
+  PanelRight,
   Pause,
   Play,
   Plus,
@@ -18,18 +20,22 @@ import {
   ShieldCheck,
   Stethoscope,
   SkipForward,
+  Unlink,
   Undo2,
   UserRoundCheck,
   Users,
   Wrench,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
+import type { Issue } from "@multica/core/types";
 import {
   useCreateWorkflowSubmission,
   useConfirmWorkflowSubmissionTasks,
@@ -52,6 +58,7 @@ import {
   workflowInstanceOptions,
   workflowNodeOptions,
   workflowTemplateOptions,
+  workflowCompletionMode,
   type WorkflowNodeInstance,
   type WorkflowNodeTask,
   type WorkflowDiagnostics,
@@ -70,8 +77,17 @@ import {
   squadListOptions,
 } from "@multica/core/workspace/queries";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
-import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@multica/ui/components/ui/alert-dialog";
 import {
   Card,
   CardContent,
@@ -88,19 +104,46 @@ import {
   TabsTrigger,
 } from "@multica/ui/components/ui/tabs";
 import { Textarea } from "@multica/ui/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@multica/ui/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@multica/ui/components/ui/dropdown-menu";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@multica/ui/components/ui/resizable";
+import { Sheet, SheetContent } from "@multica/ui/components/ui/sheet";
+import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { cn } from "@multica/ui/lib/utils";
 import { AppLink } from "../navigation";
 import { CollectionPageHeader, CollectionPageState } from "../layout/collection-page";
+import {
+  AnimatedRightSidebar,
+  getAnimatedRightSidebarInitialOpen,
+  rightSidebarPanelMotionProps,
+  useAnimatedRightSidebarState,
+} from "../layout/animated-right-sidebar";
 import { useT } from "../i18n";
-import { IssueDetail } from "../issues/components";
-import { StatusIcon } from "../issues/components/status-icon";
+import { IssueDisplayControls } from "../issues/components/issues-header";
+import { IssueSurface } from "../issues/surface/issue-surface";
 import { PriorityIcon } from "../issues/components/priority-icon";
+import { StatusIcon } from "../issues/components/status-icon";
 import { ActorAvatar } from "../common/actor-avatar";
 import { WorkflowCanvas } from "./workflow-canvas";
 import { WorkflowStatusBadge } from "./workflow-status";
 import {
   latestWorkflowAttemptNodes,
-  workflowIssuesForScope,
   type WorkflowIssueScope,
 } from "./workflow-workbench-state";
 
@@ -109,22 +152,25 @@ function SubmissionFieldInput({
   value,
   actorOptions,
   onChange,
+  idPrefix = "submission",
 }: {
   field: WorkflowSubmissionField;
   value: unknown;
   actorOptions: WorkflowActorOption[];
   onChange: (value: unknown) => void;
+  idPrefix?: string;
 }) {
   const { t } = useT("workflows");
+  const inputId = `${idPrefix}-${field.key}`;
   if (field.type === "boolean") {
     return (
       <div className="space-y-1.5">
-        <Label htmlFor={`submission-${field.key}`}>
+        <Label htmlFor={inputId}>
           {field.name}
           {field.required && <span className="ml-0.5 text-destructive">*</span>}
         </Label>
         <select
-          id={`submission-${field.key}`}
+          id={inputId}
           value={typeof value === "boolean" ? String(value) : ""}
           onChange={(event) => onChange(
             event.target.value === "" ? undefined : event.target.value === "true",
@@ -145,12 +191,12 @@ function SubmissionFieldInput({
   ) {
     return (
       <div className="space-y-1.5">
-        <Label htmlFor={`submission-${field.key}`}>
+        <Label htmlFor={inputId}>
           {field.name}
           {field.required && <span className="ml-0.5 text-destructive">*</span>}
         </Label>
         <select
-          id={`submission-${field.key}`}
+          id={inputId}
           value={typeof value === "string" ? value : ""}
           onChange={(event) => onChange(event.target.value || undefined)}
           className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
@@ -167,12 +213,12 @@ function SubmissionFieldInput({
   }
   return (
     <div className="space-y-1.5">
-      <Label htmlFor={`submission-${field.key}`}>
+      <Label htmlFor={inputId}>
         {field.name}
         {field.required && <span className="ml-0.5 text-destructive">*</span>}
       </Label>
       <Input
-        id={`submission-${field.key}`}
+        id={inputId}
         type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
         value={typeof value === "string" || typeof value === "number" ? value : ""}
         className="min-h-11 sm:min-h-8"
@@ -811,7 +857,7 @@ export function WorkflowTaskCard({
         actor.type === resolution.actor_type && actor.id === resolution.actor_id,
     )
     : undefined;
-  const needsExecutor = !task.executor_resolution_id;
+  const needsExecutor = resolution?.status !== "resolved";
   const isRecoverable = task.materialization_status === "failed" ||
     task.materialization_status === "materializing";
 
@@ -902,12 +948,12 @@ export function WorkflowTaskCard({
         </Alert>
       )}
 
-      {canAdmin && (isRecoverable || task.issue_id) && (
+      {canAdmin && isRecoverable && (
         <details className="group">
           <summary className="cursor-pointer text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
             {t(($) => $.workbench.recovery_actions)}
           </summary>
-          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
             <Input
               aria-label={t(($) => $.workbench.action_reason)}
               placeholder={t(($) => $.workbench.action_reason)}
@@ -915,36 +961,19 @@ export function WorkflowTaskCard({
               onChange={(event) => setReason(event.target.value)}
               className="min-h-11"
             />
-            {isRecoverable && (
-              <Button
-                variant="outline"
-                className="min-h-11"
-                disabled={!reason.trim() || changeTask.isPending}
-                onClick={() => changeTask.mutate({
-                  taskId: task.id,
-                  action: "retry",
-                  reason: reason.trim(),
-                })}
-              >
-                <RefreshCw />
-                {t(($) => $.actions.retry)}
-              </Button>
-            )}
-            {task.issue_id && (
-              <Button
-                variant="outline"
-                className="min-h-11"
-                disabled={!reason.trim() || changeTask.isPending}
-                onClick={() => changeTask.mutate({
-                  taskId: task.id,
-                  action: "detach",
-                  reason: reason.trim(),
-                })}
-              >
-                <X />
-                {t(($) => $.actions.detach)}
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              className="min-h-11"
+              disabled={!reason.trim() || changeTask.isPending}
+              onClick={() => changeTask.mutate({
+                taskId: task.id,
+                action: "retry",
+                reason: reason.trim(),
+              })}
+            >
+              <RefreshCw />
+              {t(($) => $.actions.retry)}
+            </Button>
           </div>
         </details>
       )}
@@ -963,11 +992,15 @@ function DynamicIssuePanel({
   node,
   actorOptions,
   canManage,
+  onCreated,
+  showIntro = true,
 }: {
   instanceId: string;
   node: WorkflowNodeInstance;
   actorOptions: WorkflowActorOption[];
   canManage: boolean;
+  onCreated?: () => void;
+  showIntro?: boolean;
 }) {
   const { t } = useT("workflows");
   const [title, setTitle] = useState("");
@@ -988,15 +1021,17 @@ function DynamicIssuePanel({
 
   return (
     <div className="space-y-3 rounded-xl border border-dashed bg-muted/15 p-4">
-      <div>
-        <h3 className="flex items-center gap-2 text-sm font-medium">
-          <Plus className="size-4" />
-          {t(($) => $.workbench.add_dynamic_issue)}
-        </h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {t(($) => $.workbench.add_dynamic_issue_help)}
-        </p>
-      </div>
+      {showIntro && (
+        <div>
+          <h3 className="flex items-center gap-2 text-sm font-medium">
+            <Plus className="size-4" />
+            {t(($) => $.workbench.add_dynamic_issue)}
+          </h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t(($) => $.workbench.add_dynamic_issue_help)}
+          </p>
+        </div>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="workflow-dynamic-issue-title">
@@ -1066,6 +1101,7 @@ function DynamicIssuePanel({
               setDescription("");
               setActorValue("");
               setRequired(false);
+              onCreated?.();
             },
           })}
         >
@@ -1183,113 +1219,315 @@ function ConfirmationPanel({
 function NodeTransitionPanel({
   instanceId,
   node,
+  submissions,
+  actorOptions,
   canManage,
   canAdmin,
   instanceRunning,
 }: {
   instanceId: string;
   node: WorkflowNodeInstance;
+  submissions: WorkflowSubmission[];
+  actorOptions: WorkflowActorOption[];
   canManage: boolean;
   canAdmin: boolean;
   instanceRunning: boolean;
 }) {
   const { t } = useT("workflows");
-  const [reason, setReason] = useState("");
+  const [completeOpen, setCompleteOpen] = useState(false);
+  const [completionNote, setCompletionNote] = useState("");
+  const [completionValues, setCompletionValues] = useState<Record<string, unknown>>({});
+  const [managementAction, setManagementAction] = useState<
+    "complete" | "skip" | "rollback" | null
+  >(null);
+  const [managementReason, setManagementReason] = useState("");
+  const submit = useCreateWorkflowSubmission(instanceId, node.id);
   const transition = useTransitionWorkflowNode(instanceId, node.id);
   const open = node.status === "active" || node.status === "waiting" ||
     node.status === "blocked";
-  const completion = node.definition.completion ?? {};
-  const manualCompletion = node.definition.kind === "activity" &&
-    node.definition.activity_mode !== "acceptance" &&
-    !node.definition.submission_schema &&
-    !node.definition.verdict &&
-    completion.submission_required !== true &&
-    (!completion.verdict_required || completion.verdict_required === "none") &&
-    (!completion.confirmation || completion.confirmation === "none") &&
-    !(node.definition.issue_templates ?? []).some((task) => task.required);
-  const canComplete = open && (
-    (manualCompletion && canManage) || canAdmin
-  );
+  const manualCompletion = workflowCompletionMode(node.definition) === "manual";
+  const canComplete = open && manualCompletion && canManage;
   const canRollback = canManage && instanceRunning &&
     (node.status === "completed" || node.status === "skipped");
-  if (!canComplete && (!canAdmin || !open) && !canRollback) return null;
+  const canOpenManagement = (canAdmin && open) || canRollback;
+  const schema = node.definition.submission_schema;
+  const fields = schema?.fields ?? [];
+  const singleCompletionForm = schema?.policy === "single";
+  const taskScopedCompletionForm = schema?.policy === "per_required_task" ||
+    schema?.policy === "fan_in";
+  const prerequisiteReasons = node.waiting_reasons.filter((reason) =>
+    reason.code !== "manual_completion_required" &&
+    !(singleCompletionForm && reason.code === "valid_submission_required")
+  );
+  const latestSubmission = submissions.find((item) => item.status === "valid");
+  const hasInvalidFields = singleCompletionForm && fields.some((field) =>
+    !submissionFieldValueIsValid(field, completionValues[field.key])
+  );
+
+  useEffect(() => {
+    setCompleteOpen(false);
+    setCompletionNote("");
+    setCompletionValues({});
+    setManagementAction(null);
+    setManagementReason("");
+  }, [node.id]);
+
+  const openCompletionDialog = () => {
+    setCompletionValues(
+      singleCompletionForm
+        ? { ...(latestSubmission?.payload ?? {}) }
+        : {},
+    );
+    setCompleteOpen(true);
+  };
+
+  const runCompletion = async () => {
+    try {
+      if (singleCompletionForm) {
+        await submit.mutateAsync({
+          payload: completionValues,
+          summary: completionNote.trim(),
+        });
+      }
+      await transition.mutateAsync({
+        action: "complete",
+        reason: completionNote.trim(),
+      });
+      setCompleteOpen(false);
+    } catch {
+      return;
+    }
+  };
+
+  const runManagementAction = async () => {
+    if (!managementAction || !managementReason.trim()) return;
+    try {
+      await transition.mutateAsync({
+        action: managementAction,
+        reason: managementReason.trim(),
+      });
+      setManagementAction(null);
+      setManagementReason("");
+    } catch {
+      return;
+    }
+  };
+
+  if (!canComplete && !canOpenManagement) return null;
 
   return (
-    <div className="space-y-3 rounded-xl border bg-muted/15 p-4">
-      <div>
+    <div className="flex items-center justify-between gap-3 rounded-xl border bg-muted/15 p-3">
+      <div className="min-w-0">
         <h3 className="flex items-center gap-2 text-sm font-medium">
-          <Wrench className="size-4" />
-          {manualCompletion
-            ? t(($) => $.workbench.complete_activity)
-            : t(($) => $.workbench.admin_actions)}
+          <Wrench className="size-4 shrink-0" aria-hidden="true" />
+          {t(($) => $.workbench.node_operations)}
         </h3>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">
           {manualCompletion
             ? t(($) => $.workbench.complete_activity_help)
             : t(($) => $.workbench.admin_actions_help)}
         </p>
       </div>
-      <Textarea
-        aria-label={t(($) => $.workbench.action_reason)}
-        placeholder={t(($) => $.workbench.action_reason)}
-        value={reason}
-        onChange={(event) => setReason(event.target.value)}
-        rows={2}
-      />
-      <div className="flex flex-wrap gap-2">
+      <div className="flex shrink-0 items-center gap-1.5">
         {canComplete && (
-          <>
-            <Button
-              className="min-h-11"
-              disabled={!reason.trim() || transition.isPending}
-              onClick={() => transition.mutate({
-                action: "complete",
-                reason: reason.trim(),
-              })}
-            >
-              <Check />
-              {manualCompletion
-                ? t(($) => $.actions.complete)
-                : t(($) => $.actions.force_complete)}
-            </Button>
-          </>
-        )}
-        {canAdmin && open && (
-          <>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              disabled={!reason.trim() || transition.isPending}
-              onClick={() => transition.mutate({
-                action: "skip",
-                reason: reason.trim(),
-              })}
-            >
-              <SkipForward />
-              {t(($) => $.actions.skip)}
-            </Button>
-          </>
-        )}
-        {canRollback && (
           <Button
-            variant="outline"
-            className="min-h-11"
-            disabled={!reason.trim() || transition.isPending}
-            onClick={() => transition.mutate({
-              action: "rollback",
-              reason: reason.trim(),
-            })}
+            size="sm"
+            className="min-h-11 sm:min-h-8"
+            disabled={transition.isPending || submit.isPending}
+            onClick={openCompletionDialog}
           >
-            <Undo2 />
-            {t(($) => $.actions.rollback)}
+            <Check aria-hidden="true" />
+            {t(($) => $.actions.complete)}
           </Button>
         )}
+        {canOpenManagement && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8"
+                  aria-label={t(($) => $.workbench.manage_node)}
+                >
+                  <MoreHorizontal aria-hidden="true" />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end">
+              {canAdmin && open && (
+                <DropdownMenuItem onClick={() => setManagementAction("complete")}>
+                  <Check aria-hidden="true" />
+                  {t(($) => $.actions.force_complete)}
+                </DropdownMenuItem>
+              )}
+              {canAdmin && open && (
+                <DropdownMenuItem onClick={() => setManagementAction("skip")}>
+                  <SkipForward aria-hidden="true" />
+                  {t(($) => $.actions.skip)}
+                </DropdownMenuItem>
+              )}
+              {canRollback && (
+                <DropdownMenuItem onClick={() => setManagementAction("rollback")}>
+                  <Undo2 aria-hidden="true" />
+                  {t(($) => $.actions.rollback)}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
-      {transition.isError && (
-        <p role="alert" className="text-xs text-destructive">
-          {t(($) => $.errors.action_failed)}
-        </p>
-      )}
+
+      <Dialog open={completeOpen} onOpenChange={setCompleteOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t(($) => $.workbench.complete_activity)}</DialogTitle>
+            <DialogDescription>
+              {t(($) => $.workbench.complete_dialog_help)}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {singleCompletionForm && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {fields.map((field) => (
+                  <SubmissionFieldInput
+                    key={field.key}
+                    field={field}
+                    value={completionValues[field.key]}
+                    actorOptions={actorOptions}
+                    idPrefix={`completion-${node.id}`}
+                    onChange={(value) => setCompletionValues((current) => ({
+                      ...current,
+                      [field.key]: value,
+                    }))}
+                  />
+                ))}
+              </div>
+            )}
+            {taskScopedCompletionForm && (
+              <Alert>
+                <AlertCircle aria-hidden="true" />
+                <AlertDescription>
+                  {t(($) => $.workbench.task_scoped_completion_form_help)}
+                </AlertDescription>
+              </Alert>
+            )}
+            {prerequisiteReasons.length > 0 && (
+              <Alert>
+                <AlertCircle aria-hidden="true" />
+                <AlertDescription>
+                  <ul className="list-disc space-y-1 pl-4">
+                    {prerequisiteReasons.map((reason, index) => (
+                      <li key={`${reason.code}-${index}`}>
+                        {reason.message || reason.code}
+                      </li>
+                    ))}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            )}
+            <div className="space-y-1.5">
+              <Label htmlFor={`workflow-completion-note-${node.id}`}>
+                {t(($) => $.workbench.completion_note)}
+              </Label>
+              <Textarea
+                id={`workflow-completion-note-${node.id}`}
+                value={completionNote}
+                onChange={(event) => setCompletionNote(event.target.value)}
+                placeholder={t(($) => $.workbench.completion_note_placeholder)}
+                rows={3}
+              />
+            </div>
+            {(transition.isError || submit.isError) && (
+              <p role="alert" className="text-xs text-destructive">
+                {t(($) => $.errors.action_failed)}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCompleteOpen(false)}
+            >
+              {t(($) => $.start.cancel)}
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                hasInvalidFields ||
+                prerequisiteReasons.length > 0 ||
+                transition.isPending ||
+                submit.isPending
+              }
+              onClick={() => void runCompletion()}
+            >
+              <Check aria-hidden="true" />
+              {t(($) => $.actions.complete)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={managementAction !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setManagementAction(null);
+            setManagementReason("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t(($) => $.workbench.admin_actions)}</DialogTitle>
+            <DialogDescription>
+              {t(($) => $.workbench.admin_actions_help)}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor={`workflow-management-reason-${node.id}`}>
+              {t(($) => $.workbench.action_reason)}
+            </Label>
+            <Textarea
+              id={`workflow-management-reason-${node.id}`}
+              value={managementReason}
+              onChange={(event) => setManagementReason(event.target.value)}
+              rows={3}
+            />
+          </div>
+          {transition.isError && (
+            <p role="alert" className="text-xs text-destructive">
+              {t(($) => $.errors.action_failed)}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setManagementAction(null)}
+            >
+              {t(($) => $.start.cancel)}
+            </Button>
+            <Button
+              type="button"
+              variant={managementAction === "rollback" ? "outline" : "default"}
+              disabled={!managementReason.trim() || transition.isPending}
+              onClick={() => void runManagementAction()}
+            >
+              {managementAction === "rollback" && <Undo2 aria-hidden="true" />}
+              {managementAction === "skip" && <SkipForward aria-hidden="true" />}
+              {managementAction === "complete" && <Check aria-hidden="true" />}
+              {managementAction === "rollback"
+                ? t(($) => $.actions.rollback)
+                : managementAction === "skip"
+                  ? t(($) => $.actions.skip)
+                  : t(($) => $.actions.force_complete)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1582,14 +1820,134 @@ export function AcceptancePanel({
   );
 }
 
+function WorkflowIssueDetachDialog({
+  instanceId,
+  issue,
+  onClose,
+}: {
+  instanceId: string;
+  issue: Issue;
+  onClose: () => void;
+}) {
+  const { t } = useT("workflows");
+  const wsId = useWorkspaceId();
+  const nodeId = issue.workflow_context?.workflow_node_instance_id ?? "";
+  const nodeQuery = useQuery(workflowNodeOptions(wsId, nodeId));
+  const changeTask = useChangeWorkflowNodeTask(instanceId, nodeId);
+  const task = nodeQuery.data?.tasks.find((item) => item.issue_id === issue.id);
+  const activityName = issue.workflow_context?.activity_name ??
+    nodeQuery.data?.node.name ??
+    t(($) => $.workbench.current_issues);
+
+  return (
+    <AlertDialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !changeTask.isPending) onClose();
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {t(($) => $.workbench.detach_issue_title)}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {t(($) => $.workbench.detach_issue_description, {
+              identifier: issue.identifier,
+              activity: activityName,
+            })}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {nodeQuery.isError || (!nodeQuery.isLoading && !task) ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t(($) => $.workbench.detach_issue_unavailable)}
+          </p>
+        ) : null}
+        {changeTask.isError && (
+          <p role="alert" className="text-sm text-destructive">
+            {t(($) => $.errors.action_failed)}
+          </p>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={changeTask.isPending}>
+            {t(($) => $.start.cancel)}
+          </AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={!task || nodeQuery.isLoading || changeTask.isPending}
+            onClick={(event) => {
+              event.preventDefault();
+              if (!task) return;
+              changeTask.mutate(
+                {
+                  taskId: task.id,
+                  action: "detach",
+                  reason: t(($) => $.workbench.detach_issue_audit_reason),
+                },
+                {
+                  onSuccess: () => {
+                    toast.success(t(($) => $.workbench.detach_issue_success));
+                    onClose();
+                  },
+                },
+              );
+            }}
+          >
+            {t(($) => $.workbench.detach_issue_confirm)}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   const { t } = useT("workflows");
+  const { t: issueT } = useT("issues");
   const wsId = useWorkspaceId();
   const p = useWorkspacePaths();
   const userId = useAuthStore((state) => state.user?.id);
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [issueScope, setIssueScope] = useState<WorkflowIssueScope>("current");
-  const [hostDetailsOpen, setHostDetailsOpen] = useState(false);
+  const [createIssueOpen, setCreateIssueOpen] = useState(false);
+  const [detachIssue, setDetachIssue] = useState<Issue | null>(null);
+  const isMobile = useIsMobile();
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
+    id: "multica_workflow_workbench_layout",
+  });
+  const sidebarRef = usePanelRef();
+  const desktopSidebarInitialOpen = getAnimatedRightSidebarInitialOpen(
+    true,
+    defaultLayout,
+  );
+  const {
+    open: desktopSidebarOpen,
+    visualOpen: desktopSidebarVisualOpen,
+    motionEnabled: desktopSidebarMotionEnabled,
+    beginToggle: beginDesktopSidebarToggle,
+    handleResize: handleDesktopSidebarResize,
+  } = useAnimatedRightSidebarState(desktopSidebarInitialOpen);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const sidebarOpen = isMobile ? mobileSidebarOpen : desktopSidebarOpen;
+
+  useEffect(() => {
+    if (isMobile) setMobileSidebarOpen(false);
+  }, [isMobile]);
+
+  const handleToggleSidebar = useCallback(() => {
+    if (isMobile) {
+      setMobileSidebarOpen((open) => !open);
+      return;
+    }
+    const panel = sidebarRef.current;
+    if (!panel) return;
+    const nextOpen = panel.isCollapsed();
+    beginDesktopSidebarToggle(nextOpen);
+    window.requestAnimationFrame(() => {
+      if (nextOpen) panel.expand();
+      else panel.collapse();
+    });
+  }, [beginDesktopSidebarToggle, isMobile, sidebarRef]);
 
   const detailQuery = useQuery(workflowInstanceOptions(wsId, instanceId));
   const instance = detailQuery.data?.instance;
@@ -1608,8 +1966,13 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   }, [nodes, selectedNodeId]);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId);
+  useEffect(() => {
+    setCreateIssueOpen(false);
+  }, [selectedNodeId]);
   const nodeQuery = useQuery(workflowNodeOptions(wsId, selectedNodeId));
-  const issuesQuery = useQuery(workflowInstanceIssuesOptions(wsId, instanceId));
+  const workflowIssuesQuery = useQuery(
+    workflowInstanceIssuesOptions(wsId, instanceId),
+  );
   const acceptancesQuery = useQuery(workflowAcceptancesOptions(wsId, instanceId));
   const templateQuery = useQuery({
     ...workflowTemplateOptions(wsId, instance?.template_id ?? ""),
@@ -1668,11 +2031,14 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   const reconcile = useReconcileWorkflowInstance(instanceId);
   const pause = usePauseWorkflowInstance(instanceId);
   const resume = useResumeWorkflowInstance(instanceId);
-  const visibleIssues = workflowIssuesForScope(
-    issuesQuery.data?.issues ?? [],
-    detailQuery.data?.tasks ?? [],
-    selectedNodeId,
-    issueScope,
+  const issueSurfaceScope = useMemo(
+    () => ({
+      type: "workflow" as const,
+      instanceId,
+      activityKey:
+        issueScope === "current" ? selectedNode?.node_key : undefined,
+    }),
+    [instanceId, issueScope, selectedNode?.node_key],
   );
   const templateVersion = templateQuery.data?.versions.find(
     (version) => version.id === instance?.template_version_id,
@@ -1726,6 +2092,85 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
     selectedNode.definition.submission_schema.policy !== "none",
   );
   const hasVerdictPanel = Boolean(selectedNode?.definition.verdict?.evaluator);
+  const selectedIssuePolicy = selectedNode?.definition.issue_policy ?? "none";
+  const selectedNodeAcceptsIssues = Boolean(
+    selectedNode &&
+      canManageSelectedNode &&
+      (
+        selectedNode.status === "active" ||
+        selectedNode.status === "waiting" ||
+        selectedNode.status === "blocked"
+      ) &&
+      (
+        selectedIssuePolicy === "dynamic" ||
+        selectedIssuePolicy === "fixed_and_dynamic"
+      ),
+  );
+  const selectedNodeIssues = (workflowIssuesQuery.data?.issues ?? []).filter(
+    (issue) =>
+      issue.workflow_context?.workflow_node_instance_id === selectedNode?.id,
+  );
+  const selectedRequiredTasks = (nodeQuery.data?.tasks ?? []).filter(
+    (task) =>
+      task.required && task.materialization_status !== "cancelled",
+  );
+  const selectedIssueById = new Map(
+    selectedNodeIssues.map((issue) => [issue.id, issue]),
+  );
+  const requiredIssueOutcome =
+    selectedNode?.definition.completion?.required_issue_outcome ?? "done";
+  const completedRequiredIssues = selectedRequiredTasks.filter((task) => {
+    if (!task.issue_id) return false;
+    const issue = selectedIssueById.get(task.issue_id);
+    if (!issue) return false;
+    if (requiredIssueOutcome === "terminal") {
+      return issue.status === "done" || issue.status === "cancelled";
+    }
+    return requiredIssueOutcome === "none" || issue.status === "done";
+  }).length;
+  const visibleWaitingReasons = selectedNode?.waiting_reasons.filter(
+    (reason) =>
+      reason.code !== "required_issue_not_done" &&
+      reason.code !== "required_issue_cancelled",
+  ) ?? [];
+  const taskInterventions = (nodeQuery.data?.tasks ?? []).filter((task) => {
+    if (task.materialization_status === "cancelled") return false;
+    const resolution = nodeQuery.data?.executor_resolutions.find(
+      (item) =>
+        item.id === task.executor_resolution_id ||
+        item.workflow_node_task_id === task.id,
+    );
+    return task.materialization_status === "failed" ||
+      (task.materialization_status === "materializing" &&
+        selectedNode?.status === "blocked") ||
+      resolution?.status !== "resolved";
+  });
+  const sidebarDefaultTab = hasSubmissionPanel
+    ? "submission"
+    : hasVerdictPanel
+      ? "verdict"
+      : selectedNode?.definition.activity_mode === "acceptance"
+        ? "acceptance"
+        : "history";
+  const workflowIssueMenuActions = useMemo(() => [{
+    id: "remove-from-workflow-node",
+    label: t(($) => $.workbench.detach_issue_title),
+    icon: Unlink,
+    variant: "destructive" as const,
+    isVisible: (issue: Issue) =>
+      issue.workflow_context?.workflow_instance_id === instanceId,
+    onSelect: (issue: Issue) => setDetachIssue(issue),
+  }], [instanceId, t]);
+  const completedWorkflowNodes = nodes.filter(
+    (node) => node.status === "completed" || node.status === "skipped",
+  ).length;
+  const workflowProgressPercent = nodes.length > 0
+    ? (completedWorkflowNodes / nodes.length) * 100
+    : 0;
+  const hostIssue = hostIssueQuery.data;
+  const hostAssigneeName = hostIssue?.assignee_type && hostIssue.assignee_id
+    ? actorName(hostIssue.assignee_type, hostIssue.assignee_id)
+    : null;
 
   if (detailQuery.isLoading) {
     return (
@@ -1746,6 +2191,446 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
       />
     );
   }
+
+  const nodeSidebarContent = selectedNode && nodeQuery.data ? (
+    <div className="-m-4 min-h-full">
+      <section
+        aria-labelledby="workflow-host-issue-heading"
+        className="space-y-4 border-b bg-muted/15 p-4"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-muted-foreground">
+              {t(($) => $.workbench.parent_issue)}
+            </p>
+            {hostIssue ? (
+              <>
+                <h2
+                  id="workflow-host-issue-heading"
+                  className="mt-1 line-clamp-2 text-sm font-semibold leading-snug"
+                >
+                  {hostIssue.title}
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {hostIssue.identifier}
+                </p>
+              </>
+            ) : (
+              <div className="mt-2 space-y-2" aria-busy="true">
+                <Skeleton className="h-4 w-4/5" />
+                <Skeleton className="h-3 w-20" />
+              </div>
+            )}
+          </div>
+          <AppLink
+            href={p.issueDetail(instance.host_issue_id)}
+            className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
+            aria-label={t(($) => $.workbench.open_parent_issue)}
+          >
+            <span className="hidden min-[400px]:inline">
+              {t(($) => $.workbench.open_parent_issue)}
+            </span>
+            <ArrowUpRight className="size-3.5" />
+          </AppLink>
+        </div>
+
+        {hostIssue?.description && (
+          <p className="line-clamp-3 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+            {hostIssue.description}
+          </p>
+        )}
+
+        {hostIssue && (
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+            <div>
+              <dt className="text-xs text-muted-foreground">
+                {issueT(($) => $.actions.status)}
+              </dt>
+              <dd className="mt-1 flex items-center gap-1.5 text-sm">
+                <StatusIcon status={hostIssue.status} className="size-3.5" />
+                {issueT(($) => $.status[hostIssue.status])}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">
+                {issueT(($) => $.actions.priority)}
+              </dt>
+              <dd className="mt-1 flex items-center gap-1.5 text-sm">
+                <PriorityIcon priority={hostIssue.priority} />
+                {issueT(($) => $.priority[hostIssue.priority])}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">
+                {issueT(($) => $.actions.assignee)}
+              </dt>
+              <dd className="mt-1 flex min-w-0 items-center gap-1.5 text-sm">
+                {hostIssue.assignee_type && hostIssue.assignee_id ? (
+                  <>
+                    <ActorAvatar
+                      actorType={hostIssue.assignee_type}
+                      actorId={hostIssue.assignee_id}
+                      size="sm"
+                    />
+                    <span className="truncate">{hostAssigneeName}</span>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">
+                    {issueT(($) => $.actions.unassigned)}
+                  </span>
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">
+                {t(($) => $.workbench.workflow_progress)}
+              </dt>
+              <dd className="mt-1 text-sm tabular-nums">
+                {completedWorkflowNodes}/{nodes.length}
+              </dd>
+            </div>
+          </dl>
+        )}
+
+        {nodes.length > 0 && (
+          <div
+            className="h-1.5 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-label={t(($) => $.workbench.workflow_progress)}
+            aria-valuemin={0}
+            aria-valuemax={nodes.length}
+            aria-valuenow={completedWorkflowNodes}
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-[width] motion-reduce:transition-none"
+              style={{ width: `${workflowProgressPercent}%` }}
+            />
+          </div>
+        )}
+      </section>
+
+      <section
+        aria-labelledby="workflow-current-node-heading"
+        className="space-y-5 p-4"
+      >
+        <div>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-muted-foreground">
+              {t(($) => $.workbench.current_node)}
+            </p>
+            <h2
+              id="workflow-current-node-heading"
+              className="mt-1 truncate text-base font-semibold"
+            >
+              {selectedNode.name}
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t(($) => $.workbench.attempt, {
+                attempt: selectedNode.attempt,
+              })}
+            </p>
+          </div>
+          <WorkflowStatusBadge status={selectedNode.status} />
+        </div>
+        {selectedNode.definition.description && (
+          <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+            {selectedNode.definition.description}
+          </p>
+        )}
+      </div>
+
+      <div className="space-y-3 border-y py-4">
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">
+            {t(($) => $.workbench.owners)}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {nodeQuery.data.participants
+              .filter((participant) => participant.role === "owner")
+              .map((participant) => (
+                <span
+                  key={participant.id}
+                  className="inline-flex min-w-0 items-center gap-1.5 text-sm"
+                >
+                  <ActorAvatar
+                    actorType={participant.actor_type as "member" | "agent" | "squad"}
+                    actorId={participant.actor_id}
+                    size="sm"
+                  />
+                  <span className="truncate">
+                    {actorName(
+                      participant.actor_type as "member" | "agent" | "squad",
+                      participant.actor_id,
+                    )}
+                  </span>
+                </span>
+              ))}
+            {!nodeQuery.data.participants.some(
+              (participant) => participant.role === "owner",
+            ) && (
+              <span className="text-sm text-muted-foreground">
+                {t(($) => $.runs.none)}
+              </span>
+            )}
+          </div>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">
+            {t(($) => $.workbench.participants)}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2 text-sm">
+            {nodeQuery.data.participants
+              .filter((participant) => participant.role !== "owner")
+              .map((participant) => (
+                <span key={participant.id}>
+                  {actorName(
+                    participant.actor_type as "member" | "agent" | "squad",
+                    participant.actor_id,
+                  )}
+                </span>
+              ))}
+            {!nodeQuery.data.participants.some(
+              (participant) => participant.role !== "owner",
+            ) && (
+              <span className="text-muted-foreground">
+                {t(($) => $.runs.none)}
+              </span>
+            )}
+          </div>
+        </div>
+        {selectedNode.definition.timeout_minutes && (
+          <p className="text-xs text-muted-foreground">
+            {t(($) => $.workbench.timeout, {
+              minutes: selectedNode.definition.timeout_minutes,
+            })}
+          </p>
+        )}
+      </div>
+
+      <section
+        aria-labelledby="workflow-completion-rule"
+        className="space-y-3 rounded-xl border bg-muted/20 p-4"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <h3 id="workflow-completion-rule" className="text-sm font-medium">
+            {t(($) => $.workbench.completion_rule)}
+          </h3>
+          {requiredIssueOutcome !== "none" && (
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {completedRequiredIssues}/{selectedRequiredTasks.length}
+            </span>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {requiredIssueOutcome === "terminal"
+            ? t(($) => $.workbench.completion_rule_terminal)
+            : requiredIssueOutcome === "none"
+              ? t(($) => $.workbench.completion_rule_none)
+              : t(($) => $.workbench.completion_rule_done)}
+        </p>
+        {requiredIssueOutcome !== "none" && selectedRequiredTasks.length > 0 && (
+          <div
+            className="h-1.5 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={selectedRequiredTasks.length}
+            aria-valuenow={completedRequiredIssues}
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-[width] motion-reduce:transition-none"
+              style={{
+                width: `${
+                  (completedRequiredIssues / selectedRequiredTasks.length) * 100
+                }%`,
+              }}
+            />
+          </div>
+        )}
+      </section>
+
+      {visibleWaitingReasons.length > 0 && (
+        <Alert>
+          <AlertCircle />
+          <AlertTitle>{t(($) => $.workbench.waiting)}</AlertTitle>
+          <AlertDescription>
+            <ul className="list-disc space-y-1 pl-4">
+              {visibleWaitingReasons.map((reason, index) => (
+                <li key={`${reason.code}-${index}`}>
+                  {reason.message || reason.code}
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {taskInterventions.length > 0 && (
+        <section className="space-y-2">
+          <h3 className="text-sm font-medium">
+            {t(($) => $.workbench.needs_attention)}
+          </h3>
+          {taskInterventions.map((task) => {
+            const resolution = nodeQuery.data.executor_resolutions.find(
+              (item) =>
+                item.id === task.executor_resolution_id ||
+                item.workflow_node_task_id === task.id,
+            );
+            return (
+              <WorkflowTaskCard
+                key={task.id}
+                instanceId={instanceId}
+                nodeId={selectedNode.id}
+                task={task}
+                resolution={resolution}
+                actorOptions={actorOptions}
+                canManage={canManageSelectedNode}
+                canAdmin={canAdmin}
+              />
+            );
+          })}
+        </section>
+      )}
+
+      <Tabs key={selectedNode.id} defaultValue={sidebarDefaultTab}>
+        <TabsList
+          variant="line"
+          className="w-full justify-start overflow-x-auto border-b"
+        >
+          {hasSubmissionPanel && (
+            <TabsTrigger value="submission">
+              <Send />
+              {t(($) => $.workbench.submission)}
+            </TabsTrigger>
+          )}
+          {hasVerdictPanel && (
+            <TabsTrigger value="verdict">
+              <FileCheck2 />
+              {t(($) => $.workbench.verdict)}
+            </TabsTrigger>
+          )}
+          {selectedNode.definition.activity_mode === "acceptance" && (
+            <TabsTrigger value="acceptance">
+              <Check />
+              {t(($) => $.workbench.acceptance)}
+            </TabsTrigger>
+          )}
+          <TabsTrigger value="history">
+            <History />
+            {t(($) => $.workbench.history)}
+          </TabsTrigger>
+          {canAdmin && (
+            <TabsTrigger value="diagnostics">
+              <Stethoscope />
+              {t(($) => $.workbench.diagnostics)}
+            </TabsTrigger>
+          )}
+        </TabsList>
+        {hasSubmissionPanel && (
+          <TabsContent value="submission" className="pt-4">
+            <SubmissionPanel
+              instanceId={instanceId}
+              node={selectedNode}
+              submissions={nodeQuery.data.submissions}
+              tasks={nodeQuery.data.tasks}
+              actorOptions={actorOptions}
+              canManage={canManageSelectedNode}
+            />
+          </TabsContent>
+        )}
+        {hasVerdictPanel && (
+          <TabsContent value="verdict" className="pt-4">
+            <VerdictPanel
+              instanceId={instanceId}
+              node={selectedNode}
+              verdicts={nodeQuery.data.verdicts}
+              canRecord={canManageSelectedNode}
+            />
+          </TabsContent>
+        )}
+        <TabsContent value="acceptance" className="pt-4">
+          <AcceptancePanel
+            instanceId={instanceId}
+            node={selectedNode}
+            targets={targetItems}
+            pending={latestAcceptance?.status === "pending"}
+            canDecide={canDecideAcceptance}
+          />
+        </TabsContent>
+        <TabsContent value="history" className="pt-4">
+          <WorkflowHistoryPanel
+            events={eventsQuery.data?.events ?? []}
+            loading={eventsQuery.isLoading}
+          />
+        </TabsContent>
+        {canAdmin && (
+          <TabsContent value="diagnostics" className="space-y-5 pt-4">
+            <WorkflowDiagnosticsPanel diagnostics={diagnosticsQuery.data} />
+            <details className="rounded-xl border bg-muted/10">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                {t(($) => $.workbench.internal_tasks)}
+              </summary>
+              <div className="space-y-2 border-t p-3">
+                {nodeQuery.data.tasks.map((task) => {
+                  const resolution =
+                    nodeQuery.data.executor_resolutions.find(
+                      (item) =>
+                        item.id === task.executor_resolution_id ||
+                        item.workflow_node_task_id === task.id,
+                    );
+                  return (
+                    <WorkflowTaskCard
+                      key={task.id}
+                      instanceId={instanceId}
+                      nodeId={selectedNode.id}
+                      task={task}
+                      resolution={resolution}
+                      actorOptions={actorOptions}
+                      canManage={canManageSelectedNode}
+                      canAdmin={canAdmin}
+                    />
+                  );
+                })}
+                {nodeQuery.data.tasks.length === 0 && (
+                  <p className="py-4 text-center text-sm text-muted-foreground">
+                    {t(($) => $.workbench.no_tasks)}
+                  </p>
+                )}
+              </div>
+            </details>
+          </TabsContent>
+        )}
+      </Tabs>
+
+      <ConfirmationPanel
+        instanceId={instanceId}
+        node={selectedNode}
+        confirmations={nodeQuery.data.confirmations}
+        actorName={actorName}
+        canConfirm={canConfirmSelectedNode}
+      />
+      <NodeTransitionPanel
+        instanceId={instanceId}
+        node={selectedNode}
+        submissions={nodeQuery.data.submissions}
+        actorOptions={actorOptions}
+        canManage={canManageSelectedNode}
+        canAdmin={canAdmin}
+        instanceRunning={instance.status === "running"}
+      />
+      {canAdmin && (
+        <WorkflowCancelPanel
+          instanceId={instanceId}
+          status={instance.status}
+        />
+      )}
+      </section>
+    </div>
+  ) : (
+    <p className="py-10 text-center text-sm text-muted-foreground">
+      {t(($) => $.workbench.select_node)}
+    </p>
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
@@ -1820,19 +2705,36 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                 <span className="hidden md:inline">{t(($) => $.actions.resume)}</span>
               </Button>
             )}
+            <Button
+              size="icon-sm"
+              variant={sidebarOpen ? "secondary" : "ghost"}
+              onClick={handleToggleSidebar}
+              aria-label={t(($) => $.workbench.node_details)}
+              title={t(($) => $.workbench.node_details)}
+            >
+              <PanelRight />
+            </Button>
           </>
         )}
       />
       <main
         data-tab-scroll-root="workflow-workbench"
-        className="min-h-0 flex-1 overflow-y-auto"
+        className="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
+        <ResizablePanelGroup
+          orientation="horizontal"
+          className="min-h-0 flex-1"
+          defaultLayout={defaultLayout}
+          onLayoutChanged={onLayoutChanged}
+        >
+          <ResizablePanel id="issues" minSize="50%">
+            <div className="flex h-full min-w-0 flex-col">
         <section
           data-testid="workflow-activity-map"
-          className="border-b bg-muted/15 px-5 py-4"
+          className="shrink-0 border-b bg-muted/15 px-4 py-3"
         >
-          <div className="mx-auto max-w-[90rem]">
-            <h2 className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <div className="mx-auto max-w-[100rem]">
+            <h2 className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
               <CircleDot className="size-3.5" />
               {t(($) => $.workbench.activity_map)}
             </h2>
@@ -1841,12 +2743,13 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               nodes={nodes}
               selectedId={selectedNodeId}
               onSelect={setSelectedNodeId}
+              minHeight={240}
             />
           </div>
         </section>
 
         {instance.status === "needs_setup" && templateVersion && (
-          <section className="mx-auto max-w-7xl px-5 pt-5">
+          <section className="max-h-64 shrink-0 overflow-y-auto border-b px-4 py-3">
             <RoleSetupPanel
               instanceId={instanceId}
               roles={templateVersion.definition.roles}
@@ -1857,384 +2760,161 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
           </section>
         )}
 
-        <div className="mx-auto flex max-w-[90rem] flex-col gap-5 px-5 py-5">
-          <section className="order-2 min-w-0 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-medium">
-                  {selectedNode?.name ?? t(($) => $.workbench.node_details)}
-                </h2>
-                {selectedNode && (
-                <div className="mt-1 flex items-center gap-2">
-                    <WorkflowStatusBadge status={selectedNode.status} />
-                    <span className="text-xs text-muted-foreground">
-                      {t(($) => $.workbench.attempt, {
-                        attempt: selectedNode.attempt,
-                      })}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {selectedNode && nodeQuery.data && (
-              <div className="grid gap-3 rounded-xl border bg-muted/20 p-4 sm:grid-cols-2">
-                {selectedNode.definition.description && (
-                  <p className="text-sm text-muted-foreground sm:col-span-2">
-                    {selectedNode.definition.description}
-                  </p>
-                )}
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground">
-                    {t(($) => $.workbench.owners)}
-                  </p>
-                  <div className="mt-1.5 flex flex-wrap gap-2">
-                    {nodeQuery.data.participants
-                      .filter((participant) => participant.role === "owner")
-                      .map((participant) => (
-                        <span
-                          key={participant.id}
-                          className="inline-flex items-center gap-1.5 text-sm"
-                        >
-                          <ActorAvatar
-                            actorType={participant.actor_type as "member" | "agent" | "squad"}
-                            actorId={participant.actor_id}
-                            size="sm"
-                          />
-                          {actorName(
-                            participant.actor_type as "member" | "agent" | "squad",
-                            participant.actor_id,
-                          )}
-                        </span>
-                      ))}
-                    {!nodeQuery.data.participants.some(
-                      (participant) => participant.role === "owner",
-                    ) && (
-                      <span className="text-sm text-muted-foreground">
-                        {t(($) => $.runs.none)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground">
-                    {t(($) => $.workbench.participants)}
-                  </p>
-                  <div className="mt-1.5 flex flex-wrap gap-2 text-sm">
-                    {nodeQuery.data.participants
-                      .filter((participant) => participant.role !== "owner")
-                      .map((participant) => (
-                        <span key={participant.id}>
-                          {actorName(
-                            participant.actor_type as "member" | "agent" | "squad",
-                            participant.actor_id,
-                          )}
-                        </span>
-                      ))}
-                    {!nodeQuery.data.participants.some(
-                      (participant) => participant.role !== "owner",
-                    ) && (
-                      <span className="text-muted-foreground">
-                        {t(($) => $.runs.none)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {selectedNode.definition.timeout_minutes && (
-                  <p className="text-xs text-muted-foreground sm:col-span-2">
-                    {t(($) => $.workbench.timeout, {
-                      minutes: selectedNode.definition.timeout_minutes,
-                    })}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {selectedNode?.waiting_reasons.length ? (
-              <Alert>
-                <AlertCircle />
-                <AlertTitle>{t(($) => $.workbench.waiting)}</AlertTitle>
-                <AlertDescription>
-                  <ul className="list-disc space-y-1 pl-4">
-                    {selectedNode.waiting_reasons.map((reason, index) => (
-                      <li key={`${reason.code}-${index}`}>
-                        {reason.message || reason.code}
-                      </li>
-                    ))}
-                  </ul>
-                </AlertDescription>
-              </Alert>
-            ) : null}
-
-            {selectedNode && nodeQuery.data ? (
-              <Tabs defaultValue="tasks">
-                <TabsList variant="line" className="w-full justify-start border-b">
-                  <TabsTrigger value="tasks">
-                    <ListChecks />
-                    {t(($) => $.workbench.tasks)}
-                  </TabsTrigger>
-                  {hasSubmissionPanel && (
-                    <TabsTrigger value="submission">
-                      <Send />
-                      {t(($) => $.workbench.submission)}
-                    </TabsTrigger>
-                  )}
-                  {hasVerdictPanel && (
-                    <TabsTrigger value="verdict">
-                      <FileCheck2 />
-                      {t(($) => $.workbench.verdict)}
-                    </TabsTrigger>
-                  )}
-                  {selectedNode.definition.activity_mode === "acceptance" && (
-                    <TabsTrigger value="acceptance">
-                      <Check />
-                      {t(($) => $.workbench.acceptance)}
-                    </TabsTrigger>
-                  )}
-                  <TabsTrigger value="history">
-                    <History />
-                    {t(($) => $.workbench.history)}
-                  </TabsTrigger>
-                  {canAdmin && (
-                    <TabsTrigger value="diagnostics">
-                      <Stethoscope />
-                      {t(($) => $.workbench.diagnostics)}
-                    </TabsTrigger>
-                  )}
-                </TabsList>
-                <TabsContent value="tasks" className="pt-4">
-                  <div className="space-y-2">
-                    {nodeQuery.data.tasks.map((task) => {
-                      const resolution = nodeQuery.data.executor_resolutions.find(
-                        (item) =>
-                          item.id === task.executor_resolution_id ||
-                          (!task.executor_resolution_id &&
-                            item.workflow_node_task_id === task.id),
-                      );
-                      return (
-                        <WorkflowTaskCard
-                          key={task.id}
-                          instanceId={instanceId}
-                          nodeId={selectedNode.id}
-                          task={task}
-                          resolution={resolution}
-                          actorOptions={actorOptions}
-                          canManage={canManageSelectedNode}
-                          canAdmin={canAdmin}
-                        />
-                      );
-                    })}
-                    {nodeQuery.data.tasks.length === 0 && (
-                      <p className="py-6 text-center text-sm text-muted-foreground">
-                        {t(($) => $.workbench.no_tasks)}
-                      </p>
-                    )}
-                    <DynamicIssuePanel
-                      instanceId={instanceId}
-                      node={selectedNode}
-                      actorOptions={actorOptions}
-                      canManage={canManageSelectedNode}
-                    />
-                  </div>
-                </TabsContent>
-                {hasSubmissionPanel && (
-                  <TabsContent value="submission" className="pt-4">
-                    <SubmissionPanel
-                      instanceId={instanceId}
-                      node={selectedNode}
-                      submissions={nodeQuery.data.submissions}
-                      tasks={nodeQuery.data.tasks}
-                      actorOptions={actorOptions}
-                      canManage={canManageSelectedNode}
-                    />
-                  </TabsContent>
-                )}
-                {hasVerdictPanel && (
-                  <TabsContent value="verdict" className="pt-4">
-                    <VerdictPanel
-                      instanceId={instanceId}
-                      node={selectedNode}
-                      verdicts={nodeQuery.data.verdicts}
-                      canRecord={canManageSelectedNode}
-                    />
-                  </TabsContent>
-                )}
-                <TabsContent value="acceptance" className="pt-4">
-                  <AcceptancePanel
-                    instanceId={instanceId}
-                    node={selectedNode}
-                    targets={targetItems}
-                    pending={latestAcceptance?.status === "pending"}
-                    canDecide={canDecideAcceptance}
-                  />
-                </TabsContent>
-                <TabsContent value="history" className="pt-4">
-                  <WorkflowHistoryPanel
-                    events={eventsQuery.data?.events ?? []}
-                    loading={eventsQuery.isLoading}
-                  />
-                </TabsContent>
-                {canAdmin && (
-                  <TabsContent value="diagnostics" className="pt-4">
-                    <WorkflowDiagnosticsPanel diagnostics={diagnosticsQuery.data} />
-                  </TabsContent>
-                )}
-              </Tabs>
-            ) : (
-              <p className="py-10 text-center text-sm text-muted-foreground">
-                {t(($) => $.workbench.select_node)}
-              </p>
-            )}
-
-            {selectedNode && nodeQuery.data && (
-              <>
-                <ConfirmationPanel
-                  instanceId={instanceId}
-                  node={selectedNode}
-                  confirmations={nodeQuery.data.confirmations}
-                  actorName={actorName}
-                  canConfirm={canConfirmSelectedNode}
-                />
-                <NodeTransitionPanel
-                  instanceId={instanceId}
-                  node={selectedNode}
-                  canManage={canManageSelectedNode}
-                  canAdmin={canAdmin}
-                  instanceRunning={instance.status === "running"}
-                />
-                {canAdmin && (
-                  <WorkflowCancelPanel
-                    instanceId={instanceId}
-                    status={instance.status}
-                  />
-                )}
-              </>
-            )}
-          </section>
-
-          <section
-            data-testid="workflow-issue-workspace"
-            className="order-1 min-w-0"
-          >
-            <div className="overflow-hidden rounded-xl border bg-surface">
-              <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
-                <div>
-                  <h2 className="text-sm font-medium">
-                    {t(($) => $.workbench.tasks)}
-                  </h2>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {t(($) => $.workbench.issue_progress, {
-                      done: visibleIssues.filter((issue) => issue.status === "done").length,
-                      total: visibleIssues.length,
-                    })}
-                  </p>
-                </div>
-                <div className="flex rounded-lg bg-muted p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setIssueScope("current")}
-                    className={cn(
-                      "min-h-11 rounded-md px-2 py-1 text-xs text-muted-foreground sm:min-h-8",
-                      issueScope === "current" && "bg-background text-foreground shadow-xs",
-                    )}
-                  >
-                    {t(($) => $.workbench.current_issues)}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIssueScope("all")}
-                    className={cn(
-                      "min-h-11 rounded-md px-2 py-1 text-xs text-muted-foreground sm:min-h-8",
-                      issueScope === "all" && "bg-background text-foreground shadow-xs",
-                    )}
-                  >
-                    {t(($) => $.workbench.all_issues)}
-                  </button>
-                </div>
-              </div>
-              <div className="grid gap-px bg-border md:grid-cols-2 xl:grid-cols-3">
-                {visibleIssues.length === 0 ? (
-                  <p className="bg-surface px-4 py-10 text-center text-sm text-muted-foreground md:col-span-2 xl:col-span-3">
-                    {t(($) => $.workbench.no_issues)}
-                  </p>
-                ) : visibleIssues.map((issue) => (
-                  <AppLink
-                    key={issue.id}
-                    href={p.issueDetail(issue.id)}
-                    className="group flex items-start gap-3 bg-surface px-4 py-3 transition-colors hover:bg-muted/60"
-                  >
-                    <StatusIcon status={issue.status} className="mt-0.5 size-4 shrink-0" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {issue.identifier}
-                      </span>
-                      <span className="mt-0.5 block text-sm">{issue.title}</span>
-                      {issue.workflow_context && (
-                        <span className="mt-1 flex flex-wrap items-center gap-1.5">
-                          <Badge variant="outline" className="h-5 max-w-40 truncate px-1.5 text-[10px]">
-                            {issue.workflow_context.activity_name ||
-                              issue.workflow_context.activity_key}
-                          </Badge>
-                          <span className="text-[10px] text-muted-foreground">
-                            {issue.workflow_context.required
-                              ? t(($) => $.workbench.required)
-                              : t(($) => $.workbench.optional)}
-                          </span>
-                        </span>
-                      )}
-                    </span>
-                    {issue.assignee_type && issue.assignee_id && (
-                      <ActorAvatar
-                        actorType={issue.assignee_type}
-                        actorId={issue.assignee_id}
-                        size="sm"
-                      />
-                    )}
-                    <ChevronRight className="mt-2 size-3.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                  </AppLink>
-                ))}
-              </div>
-            </div>
-          </section>
-        </div>
-        <section className="mx-auto max-w-[90rem] px-5 pb-5">
-          <div className="overflow-hidden rounded-xl border bg-surface">
-            <button
-              type="button"
-              aria-expanded={hostDetailsOpen}
-              aria-controls="workflow-host-issue-details"
-              onClick={() => setHostDetailsOpen((open) => !open)}
-              className="flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none"
+            <section
+              data-testid="workflow-issue-workspace"
+              className="flex min-h-0 min-w-0 flex-1 flex-col"
             >
-              <ChevronRight
-                className={cn(
-                  "size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
-                  hostDetailsOpen && "rotate-90",
+              <IssueSurface
+                scope={issueSurfaceScope}
+                modes={["board", "list", "swimlane"]}
+                surfaceKey={`workflow:${instanceId}`}
+                allowCreate={selectedNodeAcceptsIssues}
+                onCreateIssue={() => setCreateIssueOpen(true)}
+                menuActions={workflowIssueMenuActions}
+                batchToolbar="list"
+                renderHeader={({ controller }) => {
+                  const scopedIssues = controller.surfaceIssues;
+                  const done = scopedIssues.filter(
+                    (issue) => issue.status === "done",
+                  ).length;
+                  return (
+                    <div className="flex h-14 shrink-0 items-center justify-between gap-3 overflow-x-auto border-b px-4">
+                      <div className="flex shrink-0 items-center gap-3">
+                        <div className="flex rounded-lg bg-muted p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setIssueScope("current")}
+                            className={cn(
+                              "min-h-11 rounded-md px-3 py-1 text-xs text-muted-foreground sm:min-h-8",
+                              issueScope === "current" &&
+                                "bg-background text-foreground shadow-xs",
+                            )}
+                          >
+                            {selectedNode?.name ??
+                              t(($) => $.workbench.current_issues)}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setIssueScope("all")}
+                            className={cn(
+                              "min-h-11 rounded-md px-3 py-1 text-xs text-muted-foreground sm:min-h-8",
+                              issueScope === "all" &&
+                                "bg-background text-foreground shadow-xs",
+                            )}
+                          >
+                            {t(($) => $.workbench.all_issues)}
+                          </button>
+                        </div>
+                        <span className="hidden text-xs text-muted-foreground lg:inline">
+                          {t(($) => $.workbench.issue_progress, {
+                            done,
+                            total: scopedIssues.length,
+                          })}
+                        </span>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {selectedNodeAcceptsIssues && (
+                          <Button
+                            size="sm"
+                            onClick={() => setCreateIssueOpen(true)}
+                          >
+                            <Plus />
+                            {t(($) => $.actions.create_issue)}
+                          </Button>
+                        )}
+                        <IssueDisplayControls scopedIssues={scopedIssues} />
+                      </div>
+                    </div>
+                  );
+                }}
+                renderEmpty={() => (
+                  <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+                    <ListChecks className="size-10 opacity-40" />
+                    <p className="text-sm">{t(($) => $.workbench.no_issues)}</p>
+                    {selectedNodeAcceptsIssues && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCreateIssueOpen(true)}
+                      >
+                        <Plus />
+                        {t(($) => $.actions.create_issue)}
+                      </Button>
+                    )}
+                  </div>
                 )}
               />
-              <span>
-                <span className="block text-sm font-medium">
-                  {t(($) => $.workbench.host_details)}
-                </span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">
-                  {t(($) => $.workbench.host_details_description)}
-                </span>
-              </span>
-            </button>
-            {hostDetailsOpen && (
-              <div
-                id="workflow-host-issue-details"
-                className="h-[min(72vh,52rem)] min-h-[32rem] border-t"
+            </section>
+            </div>
+          </ResizablePanel>
+
+          {!isMobile && <ResizableHandle />}
+          {!isMobile && (
+            <ResizablePanel
+              id="sidebar"
+              {...rightSidebarPanelMotionProps}
+              data-right-sidebar-motion={
+                desktopSidebarMotionEnabled ? "enabled" : undefined
+              }
+              defaultSize={desktopSidebarOpen ? 360 : 0}
+              minSize={300}
+              maxSize={480}
+              collapsible
+              groupResizeBehavior="preserve-pixel-size"
+              panelRef={sidebarRef}
+              onResize={handleDesktopSidebarResize}
+            >
+              <AnimatedRightSidebar
+                open={desktopSidebarVisualOpen}
+                motionEnabled={desktopSidebarMotionEnabled}
               >
-                <IssueDetail
-                  issueId={instance.host_issue_id}
-                  defaultSidebarOpen={false}
-                  layoutId={`workflow_host_issue_${instance.id}`}
-                />
-              </div>
+                {nodeSidebarContent}
+              </AnimatedRightSidebar>
+            </ResizablePanel>
+          )}
+        </ResizablePanelGroup>
+
+        {isMobile && (
+          <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
+            <SheetContent
+              side="right"
+              showCloseButton={false}
+              className="w-[min(92vw,24rem)] overflow-y-auto p-4"
+            >
+              {nodeSidebarContent}
+            </SheetContent>
+          </Sheet>
+        )}
+
+        <Dialog open={createIssueOpen} onOpenChange={setCreateIssueOpen}>
+          <DialogContent className="sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>
+                {t(($) => $.workbench.add_dynamic_issue)}
+              </DialogTitle>
+              <DialogDescription>
+                {t(($) => $.workbench.add_dynamic_issue_help)}
+              </DialogDescription>
+            </DialogHeader>
+            {selectedNode && (
+              <DynamicIssuePanel
+                instanceId={instanceId}
+                node={selectedNode}
+                actorOptions={actorOptions}
+                canManage={canManageSelectedNode}
+                showIntro={false}
+                onCreated={() => setCreateIssueOpen(false)}
+              />
             )}
-          </div>
-        </section>
+          </DialogContent>
+        </Dialog>
+        {detachIssue && (
+          <WorkflowIssueDetachDialog
+            instanceId={instanceId}
+            issue={detachIssue}
+            onClose={() => setDetachIssue(null)}
+          />
+        )}
       </main>
     </div>
   );

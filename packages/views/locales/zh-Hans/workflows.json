@@ -151,6 +151,10 @@
     "host_priority": "宿主 issue 优先级：{{priority}}",
     "host_details": "需求内容与评论",
     "host_details_description": "查看需求描述、评论、附件和操作记录",
+    "parent_issue": "工作流 / 父 issue",
+    "open_parent_issue": "打开父 issue",
+    "workflow_progress": "工作流进度",
+    "current_node": "当前节点",
     "owners": "活动负责人",
     "participants": "参与者",
     "role_setup": "完成工作流配置",
@@ -161,8 +165,13 @@
     "current_issues": "当前活动",
     "all_issues": "全部工作流 issue",
     "issue_progress": "已完成 {{done}} / {{total}} 个 issue",
+    "completion_rule": "完成条件",
+    "completion_rule_done": "所有必需 issue 均已完成",
+    "completion_rule_terminal": "所有必需 issue 均进入结束状态",
+    "completion_rule_none": "issue 状态不影响当前节点完成",
+    "needs_attention": "需要处理",
     "tasks": "任务",
-    "submission": "提交结果",
+    "submission": "完成表单",
     "verdict": "检查结果",
     "acceptance": "业务验收",
     "history": "历史",
@@ -199,7 +208,13 @@
     "admin_actions": "受控节点操作",
     "admin_actions_help": "强制完成、跳过和回退都会记录操作人与原因。",
     "complete_activity": "完成人工活动",
-    "complete_activity_help": "完成会写入成员裁决和审计记录，再由工作流引擎推进。",
+    "complete_activity_help": "满足完成条件后结束当前节点。",
+    "complete_dialog_help": "确认完成表单并结束当前节点。",
+    "completion_note": "完成备注（选填）",
+    "completion_note_placeholder": "为下一节点补充说明...",
+    "task_scoped_completion_form_help": "请先在“完成表单”页签中为每个必需 issue 提交表单，再完成当前节点。",
+    "manage_node": "管理节点",
+    "node_operations": "节点操作",
     "agent_suggestion": "智能体建议",
     "official_verdict": "正式裁决",
     "submission_source_task": "来源任务",
@@ -212,6 +227,13 @@
     "proposed_task_title": "建议 issue 标题",
     "confirm_proposed_tasks": "确认并创建任务",
     "diagnostics": "运行诊断",
+    "internal_tasks": "内部编排任务",
+    "detach_issue_title": "从当前节点移除",
+    "detach_issue_description": "不会删除 {{identifier}}，但它将不再属于“{{activity}}”，也不会影响该节点的完成进度。",
+    "detach_issue_unavailable": "该 issue 已不再关联节点任务，请刷新后重试。",
+    "detach_issue_confirm": "移除",
+    "detach_issue_success": "已从当前节点移除 issue",
+    "detach_issue_audit_reason": "在工作流工作台中从当前节点移除",
     "no_events": "还没有操作记录",
     "unknown_time": "未知时间",
     "event_payload": "事件详情",
@@ -305,8 +327,8 @@
     ,"section_basic": "基础"
     ,"section_responsibility": "责任"
     ,"section_work": "工作"
-    ,"section_submission": "提交"
-    ,"section_completion": "准出"
+    ,"section_submission": "完成表单"
+    ,"section_completion": "节点流转"
     ,"node_description": "节点说明"
     ,"node_color": "展示颜色"
     ,"timeout_minutes": "超时时间（分钟）"
@@ -338,6 +360,13 @@
     ,"new_field": "新字段"
     ,"add_submission_field": "新增结果字段"
     ,"required_issue_outcome": "必需 issue 结果"
+    ,"completion_mode": "完成方式"
+    ,"completion_mode_automatic": "自动完成"
+    ,"completion_mode_manual": "人工确认"
+    ,"completion_mode_automatic_help": "所有完成条件满足后，工作流自动进入下一节点。"
+    ,"completion_mode_manual_help": "所有完成条件满足后，由负责人确认完成当前节点。"
+    ,"completion_conditions": "完成条件"
+    ,"advanced_completion_conditions": "高级条件"
     ,"issue_outcome_none": "忽略 issue 状态"
     ,"issue_outcome_done": "全部必需 issue 完成"
     ,"issue_outcome_terminal": "全部必需 issue 进入终态"

@@ -26,12 +26,14 @@ const definition = {
   }],
   nodes: [
     { key: "start", kind: "start", name: "Start" },
+    { key: "review", kind: "activity", name: "Review" },
     { key: "build", kind: "activity", name: "Build" },
     { key: "end", kind: "end", name: "End" },
   ],
   edges: [
     { from: "start", to: "build" },
-    { from: "build", to: "end" },
+    { from: "build", to: "review" },
+    { from: "review", to: "end" },
   ],
   acceptance: {},
 };
@@ -178,6 +180,11 @@ describe("WorkflowStartDialog", () => {
       screen.getByRole("button", { name: "Start from existing issue" }),
     );
     const dialog = await screen.findByRole("dialog");
+    const previewItems = within(dialog).getAllByRole("listitem");
+    expect(previewItems.map((item) => item.textContent)).toEqual([
+      "Build",
+      "→Review",
+    ]);
     const host = within(dialog).getByLabelText("Host issue");
     expect(within(host).getAllByRole("option")).toHaveLength(2);
     await user.selectOptions(host, "host-1");

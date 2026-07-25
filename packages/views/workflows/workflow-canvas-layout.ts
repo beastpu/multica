@@ -4,12 +4,12 @@ import type {
   WorkflowNodeInstance,
 } from "@multica/core/workflows";
 
-export const WORKFLOW_CARD_WIDTH = 184;
-export const WORKFLOW_CARD_HEIGHT = 68;
-export const WORKFLOW_CONTROL_WIDTH = 148;
-export const WORKFLOW_COLUMN_GAP = 128;
-export const WORKFLOW_ROW_GAP = 52;
-export const WORKFLOW_CANVAS_PADDING = 56;
+export const WORKFLOW_CARD_WIDTH = 152;
+export const WORKFLOW_CARD_HEIGHT = 44;
+export const WORKFLOW_CONTROL_WIDTH = 120;
+export const WORKFLOW_COLUMN_GAP = 96;
+export const WORKFLOW_ROW_GAP = 40;
+export const WORKFLOW_CANVAS_PADDING = 48;
 export const WORKFLOW_CANVAS_MIN_WIDTH = 960;
 export const WORKFLOW_CANVAS_MIN_HEIGHT = 420;
 
@@ -203,7 +203,9 @@ function assignLongEdgeLanes(
 export function buildWorkflowCanvasLayout(
   definition: WorkflowDefinition,
   instances: WorkflowNodeInstance[],
+  options: { minHeight?: number } = {},
 ): WorkflowCanvasLayout {
+  const minHeight = options.minHeight ?? WORKFLOW_CANVAS_MIN_HEIGHT;
   const latestByKey = new Map(instances.map((node) => [node.node_key, node]));
   const ranks = topologicalRanks(definition);
   const byRank = new Map<number, WorkflowNodeDefinition[]>();
@@ -236,7 +238,7 @@ export function buildWorkflowCanvasLayout(
   const centeredGridTop = topClearance + Math.max(
     0,
     (
-      WORKFLOW_CANVAS_MIN_HEIGHT -
+      minHeight -
       topClearance -
       bottomClearance -
       gridHeight
@@ -316,7 +318,7 @@ export function buildWorkflowCanvasLayout(
       ),
     ),
     height: Math.max(
-      WORKFLOW_CANVAS_MIN_HEIGHT,
+      minHeight,
       maxNodeBottom + bottomClearance,
     ),
     edgeLanes,

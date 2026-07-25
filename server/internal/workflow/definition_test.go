@@ -264,6 +264,40 @@ func TestValidateDefinitionRejectsInvalidCompletionPolicy(t *testing.T) {
 	}
 }
 
+func TestValidateDefinitionRejectsInvalidCompletionMode(t *testing.T) {
+	definition := validDefinition()
+	definition.Nodes[1].Completion.Mode = "on_demand"
+	if err := ValidateDefinition(definition); err == nil ||
+		!strings.Contains(err.Error(), "completion mode") {
+		t.Fatalf("ValidateDefinition() error = %v, want completion mode error", err)
+	}
+}
+
+func TestRequiresManualCompletionSupportsExplicitModeWithConditions(t *testing.T) {
+	node := validDefinition().Nodes[1]
+	node.Completion.Mode = "manual"
+	node.SubmissionSchema = &SubmissionSchema{
+		Policy: "single",
+		Fields: []SubmissionField{{
+			Key: "summary", Name: "Summary", Type: "text", Required: true,
+		}},
+	}
+	node.Verdict = &VerdictDefinition{
+		Evaluator: "deterministic", RequiredResult: "pass",
+	}
+	if !RequiresManualCompletion(node) {
+		t.Fatal("explicit manual mode must remain manual with completion conditions")
+	}
+
+	node.Completion.Mode = "automatic"
+	node.SubmissionSchema = nil
+	node.Verdict = nil
+	node.IssueTemplates = nil
+	if RequiresManualCompletion(node) {
+		t.Fatal("explicit automatic mode must override the legacy manual heuristic")
+	}
+}
+
 func TestValidateDefinitionRequiresMemberOwnerForOwnerConfirmation(t *testing.T) {
 	definition := validDefinition()
 	definition.Nodes[1].OwnerRole = "executor"

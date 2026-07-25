@@ -93,7 +93,7 @@ function renderCanvas(onSelect = vi.fn()) {
 }
 
 describe("WorkflowCanvas", () => {
-  it("renders serial, parallel, blocked, and skipped states with text labels", () => {
+  it("renders compact nodes with status dots and accessible status labels", () => {
     renderCanvas();
 
     expect(
@@ -107,11 +107,17 @@ describe("WorkflowCanvas", () => {
     const blocked = screen.getByRole("button", {
       name: "Implementation, blocked",
     });
-    expect(within(blocked).getByText("Blocked")).toBeInTheDocument();
+    expect(
+      blocked.querySelector('[data-workflow-status="blocked"]'),
+    ).toBeInTheDocument();
+    expect(within(blocked).queryByText("Blocked")).not.toBeInTheDocument();
     expect(blocked).toHaveAttribute("aria-pressed", "true");
 
     const skipped = screen.getByRole("button", { name: "Analysis, skipped" });
-    expect(within(skipped).getByText("Skipped")).toBeInTheDocument();
+    expect(
+      skipped.querySelector('[data-workflow-status="skipped"]'),
+    ).toBeInTheDocument();
+    expect(within(skipped).queryByText("Skipped")).not.toBeInTheDocument();
   });
 
   it("selects a node without invoking any completion action", () => {

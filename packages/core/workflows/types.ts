@@ -37,6 +37,7 @@ export interface WorkflowExecutorStrategy {
 }
 
 export interface WorkflowCompletionDefinition {
+  mode?: "automatic" | "manual";
   required_issue_outcome?: "done" | "terminal" | "none";
   submission_required?: boolean;
   verdict_required?: "none" | "pass" | "not_blocked";

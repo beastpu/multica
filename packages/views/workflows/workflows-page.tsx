@@ -75,6 +75,7 @@ import {
   workflowStatusForTab,
   type WorkflowTab,
 } from "./workflow-list";
+import { workflowPreviewActivities } from "./workflow-preview";
 
 function defaultWorkflowDefinition(): WorkflowDefinition {
   return {
@@ -108,7 +109,7 @@ function defaultWorkflowDefinition(): WorkflowDefinition {
           required: true,
           initial_status: "todo",
         }],
-        completion: { required_issue_outcome: "done" },
+        completion: { mode: "automatic", required_issue_outcome: "done" },
       },
       {
         key: "acceptance",
@@ -771,8 +772,7 @@ export function NewWorkflowDialog() {
                   {t(($) => $.start.activity_preview)}
                 </h3>
                 <ol className="flex flex-wrap items-center gap-1.5">
-                  {selectedVersion.definition.nodes
-                    .filter((node) => node.kind === "activity")
+                  {workflowPreviewActivities(selectedVersion.definition)
                     .map((node, index) => (
                       <li
                         key={node.key}

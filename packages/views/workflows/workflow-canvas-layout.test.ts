@@ -8,6 +8,8 @@ import {
   buildWorkflowCanvasLayout,
   workflowCanvasEdgeGeometry,
   workflowCanvasEdgeKey,
+  WORKFLOW_CARD_HEIGHT,
+  WORKFLOW_CARD_WIDTH,
   WORKFLOW_CANVAS_MIN_HEIGHT,
   WORKFLOW_CANVAS_MIN_WIDTH,
 } from "./workflow-canvas-layout";
@@ -52,6 +54,29 @@ describe("workflow canvas layout", () => {
         layout.height - 100,
       );
     }
+  });
+
+  it("supports a compact workbench canvas without changing the editor default", () => {
+    const definition = workflow(
+      [node("start", "start"), node("work"), node("end", "end")],
+      [
+        { from: "start", to: "work" },
+        { from: "work", to: "end" },
+      ],
+    );
+
+    const compact = buildWorkflowCanvasLayout(definition, [], {
+      minHeight: 240,
+    });
+    const spacious = buildWorkflowCanvasLayout(definition, []);
+
+    expect(compact.height).toBe(240);
+    expect(WORKFLOW_CARD_HEIGHT).toBe(44);
+    expect(WORKFLOW_CARD_WIDTH).toBe(152);
+    expect(compact.nodes.every((canvasNode) => canvasNode.height === 44)).toBe(
+      true,
+    );
+    expect(spacious.height).toBe(WORKFLOW_CANVAS_MIN_HEIGHT);
   });
 
   it("reorders layers to reduce avoidable edge crossings", () => {

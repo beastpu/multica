@@ -2383,7 +2383,20 @@ func TestWorkflowManualActivityWaitsForExplicitMemberCompletion(t *testing.T) {
 			{Key: "start", Kind: "start", Name: "Start"},
 			{
 				Key: "manual", Kind: "activity", Name: "Manual review",
-				OwnerRole: "owner", IssuePolicy: "none",
+				OwnerRole: "owner", IssuePolicy: "fixed",
+				Executor: workflowdomain.ExecutorDefinition{
+					Strategies: []workflowdomain.ExecutorStrategy{
+						{Kind: "fixed_role", Role: "owner"},
+						{Kind: "manual"},
+					},
+				},
+				IssueTemplates: []workflowdomain.IssueTemplate{{
+					Key: "review", Title: "Review {{host.title}}", Required: true,
+					InitialStatus: "todo", AssigneeRole: "owner",
+				}},
+				Completion: workflowdomain.CompletionDefinition{
+					Mode: "manual", RequiredIssueOutcome: "done",
+				},
 			},
 			{Key: "end", Kind: "end", Name: "End"},
 		},
@@ -2404,12 +2417,42 @@ func TestWorkflowManualActivityWaitsForExplicitMemberCompletion(t *testing.T) {
 		"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
 	}}, "manual-activity-start")
 	manual := findWorkflowNodeResponse(t, started.Nodes, "manual", 1)
+	manualIssueID := workflowTaskIssueForNode(t, started.Tasks, manual.ID)
 
 	reconcileWorkflowForTest(t, started.Instance.ID, "manual-activity-before-complete")
 	waiting := latestWorkflowNodeForTest(t, started.Instance.ID, "manual")
 	if waiting.Status != "waiting" {
 		t.Fatalf("manual node status = %s, want waiting", waiting.Status)
 	}
+	if !strings.Contains(string(waiting.WaitingReasons), "required_issue_not_done") {
+		t.Fatalf("manual prerequisite reasons = %s", waiting.WaitingReasons)
+	}
+
+	earlyRecorder := httptest.NewRecorder()
+	earlyRequest := withURLParam(
+		newRequest(
+			http.MethodPost,
+			"/api/workflow-node-instances/"+manual.ID+"/complete?workspace_id="+testWorkspaceID,
+			map[string]any{
+				"reason":          "",
+				"idempotency_key": "manual-activity-complete-early",
+			},
+		),
+		"nodeInstanceId",
+		manual.ID,
+	)
+	testHandler.CompleteWorkflowNode(earlyRecorder, earlyRequest)
+	if earlyRecorder.Code != http.StatusConflict {
+		t.Fatalf(
+			"early manual complete status = %d, body = %s",
+			earlyRecorder.Code,
+			earlyRecorder.Body.String(),
+		)
+	}
+
+	completeWorkflowIssue(t, manualIssueID)
+	reconcileWorkflowForTest(t, started.Instance.ID, "manual-activity-ready")
+	waiting = latestWorkflowNodeForTest(t, started.Instance.ID, "manual")
 	if !strings.Contains(string(waiting.WaitingReasons), "manual_completion_required") {
 		t.Fatalf("manual waiting reasons = %s", waiting.WaitingReasons)
 	}
@@ -2420,7 +2463,7 @@ func TestWorkflowManualActivityWaitsForExplicitMemberCompletion(t *testing.T) {
 			http.MethodPost,
 			"/api/workflow-node-instances/"+manual.ID+"/complete?workspace_id="+testWorkspaceID,
 			map[string]any{
-				"reason":          "Manual review completed",
+				"reason":          "",
 				"idempotency_key": "manual-activity-complete",
 			},
 		),
@@ -2430,6 +2473,27 @@ func TestWorkflowManualActivityWaitsForExplicitMemberCompletion(t *testing.T) {
 	testHandler.CompleteWorkflowNode(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("manual complete status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	replayRecorder := httptest.NewRecorder()
+	replayRequest := withURLParam(
+		newRequest(
+			http.MethodPost,
+			"/api/workflow-node-instances/"+manual.ID+"/complete?workspace_id="+testWorkspaceID,
+			map[string]any{
+				"reason":          "",
+				"idempotency_key": "manual-activity-complete",
+			},
+		),
+		"nodeInstanceId",
+		manual.ID,
+	)
+	testHandler.CompleteWorkflowNode(replayRecorder, replayRequest)
+	if replayRecorder.Code != http.StatusOK {
+		t.Fatalf(
+			"manual complete replay status = %d, body = %s",
+			replayRecorder.Code,
+			replayRecorder.Body.String(),
+		)
 	}
 	completed, err := testHandler.Queries.GetWorkflowInstanceInWorkspace(
 		ctx,

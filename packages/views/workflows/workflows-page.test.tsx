@@ -35,8 +35,8 @@ const definition = {
   ],
   nodes: [
     { key: "start", kind: "start", name: "Start" },
-    { key: "build", kind: "activity", name: "Build" },
     { key: "review", kind: "activity", name: "QA review" },
+    { key: "build", kind: "activity", name: "Build" },
     { key: "end", kind: "end", name: "End" },
   ],
   edges: [
@@ -167,6 +167,9 @@ describe("NewWorkflowDialog", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Build")).toBeInTheDocument();
     expect(within(dialog).getByText("QA review")).toBeInTheDocument();
+    expect(
+      within(dialog).getAllByRole("listitem").map((item) => item.textContent),
+    ).toEqual(["Build", "→QA review"]);
     expect(
       within(dialog).getByRole("radio", {
         name: /Let workflow manage issue status/,

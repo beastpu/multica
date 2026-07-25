@@ -49,6 +49,23 @@ const WorkflowSubmissionFieldSchema = z.object({
   required: z.boolean().optional().default(false),
 }).loose();
 
+const WorkflowCompletionDefinitionSchema = z.object({
+  mode: z.enum(["automatic", "manual"]).optional().catch(undefined),
+  required_issue_outcome: z.enum(["done", "terminal", "none"])
+    .optional().catch(undefined),
+  submission_required: z.boolean().optional().catch(undefined),
+  verdict_required: z.enum(["none", "pass", "not_blocked"])
+    .optional().catch(undefined),
+  confirmation: z.enum([
+    "none",
+    "owner_any",
+    "owner_all",
+    "member_any",
+    "member_all",
+    "admin_only",
+  ]).optional().catch(undefined),
+}).loose();
+
 export const WorkflowNodeDefinitionSchema = z.object({
   key: z.string(),
   kind: z.string(),
@@ -71,7 +88,7 @@ export const WorkflowNodeDefinitionSchema = z.object({
     required_result: z.string().optional(),
     condition: z.unknown().optional(),
   }).loose().optional(),
-  completion: objectOrEmpty.optional().default({}),
+  completion: WorkflowCompletionDefinitionSchema.optional().default({}),
   executor: z.object({
     strategies: arrayOrEmpty(z.object({
       kind: z.string(),

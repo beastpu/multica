@@ -644,10 +644,6 @@ func (h *Handler) transitionWorkflowNode(
 	}
 	req.Reason = strings.TrimSpace(req.Reason)
 	req.IdempotencyKey = strings.TrimSpace(req.IdempotencyKey)
-	if req.Reason == "" {
-		writeError(w, http.StatusBadRequest, "reason is required")
-		return
-	}
 	if req.IdempotencyKey == "" {
 		writeError(w, http.StatusBadRequest, "idempotency_key is required")
 		return
@@ -671,6 +667,10 @@ func (h *Handler) transitionWorkflowNode(
 	}
 	manualCompletion := action == "complete" &&
 		workflowdomain.RequiresManualCompletion(nodeDefinition)
+	if req.Reason == "" && !manualCompletion {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return
+	}
 	nodeOwnerAction := manualCompletion
 	if nodeOwnerAction {
 		allowed, permissionErr := h.canManageWorkflowNode(
@@ -787,6 +787,26 @@ func (h *Handler) transitionWorkflowNode(
 		}
 		node = latest
 		if manualCompletion {
+			ready, _, _, _, readinessErr := h.evaluateWorkflowNode(
+				r.Context(), qtx, locked.WorkspaceID, locked, node,
+				nodeDefinition, definition, false,
+			)
+			if readinessErr != nil {
+				writeError(
+					w,
+					http.StatusConflict,
+					"failed to evaluate workflow node completion conditions",
+				)
+				return
+			}
+			if !ready {
+				writeError(
+					w,
+					http.StatusConflict,
+					"workflow node completion conditions are not met",
+				)
+				return
+			}
 			revision, revisionErr := qtx.GetNextWorkflowVerdictRevision(
 				r.Context(),
 				db.GetNextWorkflowVerdictRevisionParams{

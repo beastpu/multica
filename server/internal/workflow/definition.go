@@ -110,6 +110,7 @@ type VerdictDefinition struct {
 }
 
 type CompletionDefinition struct {
+	Mode                 string `json:"mode,omitempty"`
 	RequiredIssueOutcome string `json:"required_issue_outcome,omitempty"`
 	SubmissionRequired   bool   `json:"submission_required,omitempty"`
 	VerdictRequired      string `json:"verdict_required,omitempty"`
@@ -446,6 +447,15 @@ func validateActivity(
 			node.Completion.RequiredIssueOutcome,
 		)
 	}
+	switch node.Completion.Mode {
+	case "", "automatic", "manual":
+	default:
+		return fmt.Errorf(
+			"activity %q has invalid completion mode %q",
+			node.Key,
+			node.Completion.Mode,
+		)
+	}
 	switch node.Completion.VerdictRequired {
 	case "", "none":
 	case "pass", "not_blocked":
@@ -567,6 +577,12 @@ func SubmissionPolicy(node NodeDefinition) string {
 
 func RequiresManualCompletion(node NodeDefinition) bool {
 	if node.Kind != "activity" || node.ActivityMode == "acceptance" {
+		return false
+	}
+	switch node.Completion.Mode {
+	case "manual":
+		return true
+	case "automatic":
 		return false
 	}
 	if node.SubmissionSchema != nil || node.Completion.SubmissionRequired ||

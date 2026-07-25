@@ -1399,6 +1399,7 @@ func (h *Handler) reconcileWorkflowInstance(
 			}
 			ready, reasons, submission, verdict, err := h.evaluateWorkflowNode(
 				ctx, qtx, workspaceID, locked, active, nodeDefinition, definition,
+				true,
 			)
 			if err != nil {
 				tx.Rollback(ctx)
@@ -1599,6 +1600,7 @@ func (h *Handler) evaluateWorkflowNode(
 	node db.WorkflowNodeInstance,
 	nodeDefinition workflowdomain.NodeDefinition,
 	definition workflowdomain.Definition,
+	includeManualCompletion bool,
 ) (bool, []workflowdomain.WaitingReason, db.WorkflowNodeSubmission, db.WorkflowNodeVerdict, error) {
 	if workflowdomain.IsAcceptanceActivity(definition, nodeDefinition) && definition.Acceptance.Policy == "member" {
 		acceptance, err := q.GetLatestWorkflowAcceptance(ctx, db.GetLatestWorkflowAcceptanceParams{
@@ -1774,38 +1776,17 @@ func (h *Handler) evaluateWorkflowNode(
 			return false, validation, submission, db.WorkflowNodeVerdict{}, nil
 		}
 	}
-	if workflowdomain.RequiresManualCompletion(nodeDefinition) {
-		verdicts, err := q.ListWorkflowVerdicts(
-			ctx,
-			db.ListWorkflowVerdictsParams{
-				WorkflowNodeInstanceID: node.ID,
-				WorkspaceID:            workspaceID,
-			},
-		)
-		if err != nil {
-			return false, nil, submission, db.WorkflowNodeVerdict{}, err
-		}
-		for _, verdict := range verdicts {
-			if verdict.EvaluatorType != "member" || verdict.Result != "pass" {
-				continue
-			}
-			var basis map[string]any
-			_ = json.Unmarshal(verdict.Basis, &basis)
-			if basis["kind"] != "manual_completion" {
-				continue
-			}
-			return true, nil, submission, verdict, nil
-		}
-		return false, []workflowdomain.WaitingReason{{
-			Code:    "manual_completion_required",
-			Message: "Waiting for the node owner to complete this activity",
-		}}, submission, db.WorkflowNodeVerdict{}, nil
-	}
 	if verdictRequired == "none" {
 		confirmationReady, confirmationReasons, err := h.evaluateWorkflowConfirmation(
 			ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
 		)
-		return confirmationReady, confirmationReasons, submission, db.WorkflowNodeVerdict{}, err
+		if err != nil || !confirmationReady {
+			return confirmationReady, confirmationReasons, submission, db.WorkflowNodeVerdict{}, err
+		}
+		return h.evaluateWorkflowManualCompletion(
+			ctx, q, workspaceID, node, nodeDefinition, submission,
+			db.WorkflowNodeVerdict{}, includeManualCompletion,
+		)
 	}
 	if nodeDefinition.Verdict == nil {
 		return false, []workflowdomain.WaitingReason{{
@@ -1821,7 +1802,8 @@ func (h *Handler) evaluateWorkflowNode(
 		}
 		var verdict db.WorkflowNodeVerdict
 		for _, candidate := range verdicts {
-			if candidate.EvaluatorType == "member" {
+			if candidate.EvaluatorType == "member" &&
+				!workflowVerdictIsManualCompletion(candidate) {
 				verdict = candidate
 				break
 			}
@@ -1839,7 +1821,13 @@ func (h *Handler) evaluateWorkflowNode(
 		confirmationReady, confirmationReasons, err := h.evaluateWorkflowConfirmation(
 			ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
 		)
-		return confirmationReady, confirmationReasons, submission, verdict, err
+		if err != nil || !confirmationReady {
+			return confirmationReady, confirmationReasons, submission, verdict, err
+		}
+		return h.evaluateWorkflowManualCompletion(
+			ctx, q, workspaceID, node, nodeDefinition, submission, verdict,
+			includeManualCompletion,
+		)
 	}
 	verdictResult, verdictReason, verdictBasis, err :=
 		h.evaluateDeterministicWorkflowVerdict(
@@ -1880,7 +1868,13 @@ func (h *Handler) evaluateWorkflowNode(
 				h.evaluateWorkflowConfirmation(
 					ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
 				)
-			return confirmationReady, confirmationReasons, submission, candidate, confirmationErr
+			if confirmationErr != nil || !confirmationReady {
+				return confirmationReady, confirmationReasons, submission, candidate, confirmationErr
+			}
+			return h.evaluateWorkflowManualCompletion(
+				ctx, q, workspaceID, node, nodeDefinition, submission, candidate,
+				includeManualCompletion,
+			)
 		}
 	}
 	revision, err := q.GetNextWorkflowVerdictRevision(ctx, db.GetNextWorkflowVerdictRevisionParams{
@@ -1920,7 +1914,55 @@ func (h *Handler) evaluateWorkflowNode(
 	confirmationReady, confirmationReasons, err := h.evaluateWorkflowConfirmation(
 		ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
 	)
-	return confirmationReady, confirmationReasons, submission, verdict, err
+	if err != nil || !confirmationReady {
+		return confirmationReady, confirmationReasons, submission, verdict, err
+	}
+	return h.evaluateWorkflowManualCompletion(
+		ctx, q, workspaceID, node, nodeDefinition, submission, verdict,
+		includeManualCompletion,
+	)
+}
+
+func (h *Handler) evaluateWorkflowManualCompletion(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	node db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+	submission db.WorkflowNodeSubmission,
+	currentVerdict db.WorkflowNodeVerdict,
+	includeManualCompletion bool,
+) (bool, []workflowdomain.WaitingReason, db.WorkflowNodeSubmission, db.WorkflowNodeVerdict, error) {
+	if !includeManualCompletion ||
+		!workflowdomain.RequiresManualCompletion(nodeDefinition) {
+		return true, nil, submission, currentVerdict, nil
+	}
+	verdicts, err := q.ListWorkflowVerdicts(
+		ctx,
+		db.ListWorkflowVerdictsParams{
+			WorkflowNodeInstanceID: node.ID,
+			WorkspaceID:            workspaceID,
+		},
+	)
+	if err != nil {
+		return false, nil, submission, currentVerdict, err
+	}
+	for _, verdict := range verdicts {
+		if verdict.EvaluatorType == "member" && verdict.Result == "pass" &&
+			workflowVerdictIsManualCompletion(verdict) {
+			return true, nil, submission, verdict, nil
+		}
+	}
+	return false, []workflowdomain.WaitingReason{{
+		Code:    "manual_completion_required",
+		Message: "Waiting for the node owner to complete this activity",
+	}}, submission, currentVerdict, nil
+}
+
+func workflowVerdictIsManualCompletion(verdict db.WorkflowNodeVerdict) bool {
+	var basis map[string]any
+	_ = json.Unmarshal(verdict.Basis, &basis)
+	return basis["kind"] == "manual_completion"
 }
 
 func workflowWaitingReasonsBlockNode(

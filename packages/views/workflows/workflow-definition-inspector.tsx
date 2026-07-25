@@ -10,6 +10,7 @@ import type {
   WorkflowRoleDefinition,
   WorkflowSubmissionField,
 } from "@multica/core/workflows";
+import { workflowCompletionMode } from "@multica/core/workflows";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
@@ -832,7 +833,7 @@ function SubmissionEditor({
                 ...(node.completion ?? {}),
                 submission_required: nextPolicy === "none"
                   ? false
-                  : node.completion?.submission_required,
+                  : (node.completion?.submission_required ?? true),
               },
             });
           }}
@@ -944,6 +945,7 @@ function CompletionEditor({
 }) {
   const { t } = useT("workflows");
   const completion = node.completion ?? {};
+  const completionMode = workflowCompletionMode(node);
   const evaluator = node.verdict?.evaluator ?? "none";
   const confirmation = completion.confirmation ?? "none";
   const ownerRole = roles.find((role) => role.key === node.owner_role);
@@ -953,8 +955,46 @@ function CompletionEditor({
   return (
     <div className="space-y-4">
       <div className="space-y-1.5">
-        <Label>{t(($) => $.editor.required_issue_outcome)}</Label>
+        <Label htmlFor={`completion-mode-${node.key}`}>
+          {t(($) => $.editor.completion_mode)}
+        </Label>
         <select
+          id={`completion-mode-${node.key}`}
+          value={completionMode}
+          disabled={readOnly}
+          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+          onChange={(event) => onChange({
+            ...node,
+            completion: {
+              ...completion,
+              mode: event.target.value as "automatic" | "manual",
+            },
+          })}
+        >
+          <option value="automatic">
+            {t(($) => $.editor.completion_mode_automatic)}
+          </option>
+          <option value="manual">
+            {t(($) => $.editor.completion_mode_manual)}
+          </option>
+        </select>
+        <p className="text-xs text-muted-foreground">
+          {completionMode === "automatic"
+            ? t(($) => $.editor.completion_mode_automatic_help)
+            : t(($) => $.editor.completion_mode_manual_help)}
+        </p>
+      </div>
+      <div className="border-t pt-4">
+        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {t(($) => $.editor.completion_conditions)}
+        </p>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`required-issue-outcome-${node.key}`}>
+          {t(($) => $.editor.required_issue_outcome)}
+        </Label>
+        <select
+          id={`required-issue-outcome-${node.key}`}
           value={completion.required_issue_outcome ?? "none"}
           disabled={readOnly}
           className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
@@ -971,125 +1011,129 @@ function CompletionEditor({
           <option value="terminal">{t(($) => $.editor.issue_outcome_terminal)}</option>
         </select>
       </div>
-      <label className="flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm">
-        <input
-          type="checkbox"
-          checked={completion.submission_required ?? false}
-          disabled={readOnly || !node.submission_schema}
-          onChange={(event) => onChange({
-            ...node,
-            completion: { ...completion, submission_required: event.target.checked },
-          })}
-        />
-        {t(($) => $.editor.submission_required)}
-      </label>
-      <div className="space-y-1.5">
-        <Label>{t(($) => $.editor.verdict_evaluator)}</Label>
-        <select
-          value={evaluator}
-          disabled={readOnly}
-          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
-          onChange={(event) => {
-            const nextEvaluator = event.target.value;
-            onChange({
-              ...node,
-              verdict: nextEvaluator === "none"
-                ? undefined
-                : {
-                    evaluator: nextEvaluator,
-                    required_result: node.verdict?.required_result ?? "pass",
-                    condition: nextEvaluator === "deterministic"
-                      ? node.verdict?.condition
-                      : undefined,
-                  },
-              completion: {
-                ...completion,
-                verdict_required: nextEvaluator === "none"
-                  ? "none"
-                  : completion.verdict_required,
-              },
-            });
-          }}
-        >
-          <option value="none">{t(($) => $.editor.verdict_none)}</option>
-          <option value="deterministic">{t(($) => $.editor.verdict_deterministic)}</option>
-          <option value="member">{t(($) => $.editor.verdict_member)}</option>
-        </select>
-      </div>
-      {evaluator !== "none" && (
-        <>
+      <details className="rounded-lg border bg-muted/10">
+        <summary className="min-h-11 cursor-pointer select-none px-3 py-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {t(($) => $.editor.advanced_completion_conditions)}
+        </summary>
+        <div className="space-y-4 border-t p-3">
           <div className="space-y-1.5">
-            <Label>{t(($) => $.editor.required_verdict)}</Label>
+            <Label htmlFor={`verdict-evaluator-${node.key}`}>
+              {t(($) => $.editor.verdict_evaluator)}
+            </Label>
             <select
-              value={completion.verdict_required ?? "none"}
+              id={`verdict-evaluator-${node.key}`}
+              value={evaluator}
+              disabled={readOnly}
+              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              onChange={(event) => {
+                const nextEvaluator = event.target.value;
+                onChange({
+                  ...node,
+                  verdict: nextEvaluator === "none"
+                    ? undefined
+                    : {
+                        evaluator: nextEvaluator,
+                        required_result: node.verdict?.required_result ?? "pass",
+                        condition: nextEvaluator === "deterministic"
+                          ? node.verdict?.condition
+                          : undefined,
+                      },
+                  completion: {
+                    ...completion,
+                    verdict_required: nextEvaluator === "none"
+                      ? "none"
+                      : completion.verdict_required,
+                  },
+                });
+              }}
+            >
+              <option value="none">{t(($) => $.editor.verdict_none)}</option>
+              <option value="deterministic">{t(($) => $.editor.verdict_deterministic)}</option>
+              <option value="member">{t(($) => $.editor.verdict_member)}</option>
+            </select>
+          </div>
+          {evaluator !== "none" && (
+            <>
+              <div className="space-y-1.5">
+                <Label htmlFor={`required-verdict-${node.key}`}>
+                  {t(($) => $.editor.required_verdict)}
+                </Label>
+                <select
+                  id={`required-verdict-${node.key}`}
+                  value={completion.verdict_required ?? "none"}
+                  disabled={readOnly}
+                  className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                  onChange={(event) => onChange({
+                    ...node,
+                    verdict: {
+                      ...node.verdict!,
+                      required_result: event.target.value === "none"
+                        ? undefined
+                        : event.target.value,
+                    },
+                    completion: {
+                      ...completion,
+                      verdict_required: event.target.value as "none" | "pass" | "not_blocked",
+                    },
+                  })}
+                >
+                  <option value="none">{t(($) => $.editor.verdict_none)}</option>
+                  <option value="pass">{t(($) => $.editor.verdict_pass)}</option>
+                  <option value="not_blocked">
+                    {t(($) => $.editor.verdict_not_blocked)}
+                  </option>
+                </select>
+              </div>
+              {evaluator === "deterministic" && (
+                <JsonObjectEditor
+                  label={t(($) => $.editor.verdict_condition)}
+                  value={node.verdict?.condition}
+                  readOnly={readOnly}
+                  placeholder={'{"source":"node_submission","node":"review","key":"approved","op":"eq","value":true}'}
+                  onChange={(condition) => onChange({
+                    ...node,
+                    verdict: { ...node.verdict!, condition },
+                  })}
+                />
+              )}
+            </>
+          )}
+          <div className="space-y-1.5">
+            <Label htmlFor={`confirmation-${node.key}`}>
+              {t(($) => $.editor.confirmation)}
+            </Label>
+            <select
+              id={`confirmation-${node.key}`}
+              value={confirmation}
               disabled={readOnly}
               className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
               onChange={(event) => onChange({
                 ...node,
-                verdict: {
-                  ...node.verdict!,
-                  required_result: event.target.value === "none"
-                    ? undefined
-                    : event.target.value,
-                },
                 completion: {
                   ...completion,
-                  verdict_required: event.target.value as "none" | "pass" | "not_blocked",
+                  confirmation: event.target.value as typeof confirmation,
                 },
               })}
             >
-              <option value="none">{t(($) => $.editor.verdict_none)}</option>
-              <option value="pass">{t(($) => $.editor.verdict_pass)}</option>
-              <option value="not_blocked">
-                {t(($) => $.editor.verdict_not_blocked)}
+              <option value="none">{t(($) => $.editor.confirmation_none)}</option>
+              <option value="owner_any" disabled={!ownerCanConfirm}>
+                {t(($) => $.editor.confirmation_owner_any)}
               </option>
+              <option value="owner_all" disabled={!ownerCanConfirm}>
+                {t(($) => $.editor.confirmation_owner_all)}
+              </option>
+              <option value="member_any">{t(($) => $.editor.confirmation_member_any)}</option>
+              <option value="member_all">{t(($) => $.editor.confirmation_member_all)}</option>
+              <option value="admin_only">{t(($) => $.editor.confirmation_admin)}</option>
             </select>
+            {!ownerCanConfirm && (
+              <p className="text-xs text-muted-foreground">
+                {t(($) => $.editor.owner_confirmation_member_only)}
+              </p>
+            )}
           </div>
-          {evaluator === "deterministic" && (
-            <JsonObjectEditor
-              label={t(($) => $.editor.verdict_condition)}
-              value={node.verdict?.condition}
-              readOnly={readOnly}
-              placeholder={'{"source":"node_submission","node":"review","key":"approved","op":"eq","value":true}'}
-              onChange={(condition) => onChange({
-                ...node,
-                verdict: { ...node.verdict!, condition },
-              })}
-            />
-          )}
-        </>
-      )}
-      <div className="space-y-1.5">
-        <Label>{t(($) => $.editor.confirmation)}</Label>
-        <select
-          value={confirmation}
-          disabled={readOnly}
-          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
-          onChange={(event) => onChange({
-            ...node,
-            completion: {
-              ...completion,
-              confirmation: event.target.value as typeof confirmation,
-            },
-          })}
-        >
-          <option value="none">{t(($) => $.editor.confirmation_none)}</option>
-          <option value="owner_any" disabled={!ownerCanConfirm}>
-            {t(($) => $.editor.confirmation_owner_any)}
-          </option>
-          <option value="owner_all" disabled={!ownerCanConfirm}>
-            {t(($) => $.editor.confirmation_owner_all)}
-          </option>
-          <option value="member_any">{t(($) => $.editor.confirmation_member_any)}</option>
-          <option value="member_all">{t(($) => $.editor.confirmation_member_all)}</option>
-          <option value="admin_only">{t(($) => $.editor.confirmation_admin)}</option>
-        </select>
-        {!ownerCanConfirm && (
-          <p className="text-xs text-muted-foreground">
-            {t(($) => $.editor.owner_confirmation_member_only)}
-          </p>
-        )}
-      </div>
+        </div>
+      </details>
     </div>
   );
 }
@@ -1270,6 +1314,20 @@ export function WorkflowNodeDefinitionInspector({
               onChange={onChange}
             />
           </InspectorSection>
+          <InspectorSection
+            title={t(($) => $.editor.section_completion)}
+            open
+          >
+            <CompletionEditor
+              node={node}
+              roles={definition.roles}
+              readOnly={readOnly}
+              onChange={onChange}
+            />
+          </InspectorSection>
+          <InspectorSection title={t(($) => $.editor.section_submission)}>
+            <SubmissionEditor node={node} readOnly={readOnly} onChange={onChange} />
+          </InspectorSection>
           <InspectorSection title={t(($) => $.editor.section_work)}>
             <div className="space-y-1.5">
               <Label>{t(($) => $.editor.issue_policy)}</Label>
@@ -1298,17 +1356,6 @@ export function WorkflowNodeDefinitionInspector({
               node={node}
               roles={definition.roles}
               actorOptions={actorOptions}
-              readOnly={readOnly}
-              onChange={onChange}
-            />
-          </InspectorSection>
-          <InspectorSection title={t(($) => $.editor.section_submission)}>
-            <SubmissionEditor node={node} readOnly={readOnly} onChange={onChange} />
-          </InspectorSection>
-          <InspectorSection title={t(($) => $.editor.section_completion)}>
-            <CompletionEditor
-              node={node}
-              roles={definition.roles}
               readOnly={readOnly}
               onChange={onChange}
             />

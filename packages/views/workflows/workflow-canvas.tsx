@@ -2,7 +2,6 @@
 
 import {
   CheckCircle2,
-  CircleDashed,
   Diamond,
   GitFork,
   Link2,
@@ -42,7 +41,7 @@ import {
   workflowConnectionTargets,
   workflowNodeCanAddOutgoing,
 } from "./workflow-graph-editor";
-import { WorkflowStatusBadge } from "./workflow-status";
+import { WorkflowStatusDot } from "./workflow-status";
 
 export type {
   WorkflowCanvasBranchKind,
@@ -90,6 +89,7 @@ export function WorkflowCanvas({
   onRemoveEdge,
   onAddBranch,
   onConnectNode,
+  minHeight,
 }: {
   definition?: WorkflowDefinition;
   nodes: WorkflowNodeInstance[];
@@ -104,13 +104,14 @@ export function WorkflowCanvas({
   onRemoveEdge?: (target: WorkflowCanvasEdgeTarget) => void;
   onAddBranch?: (kind: WorkflowCanvasBranchKind, from: string) => void;
   onConnectNode?: (target: WorkflowCanvasEdgeTarget) => void;
+  minHeight?: number;
 }) {
   const { t } = useT("workflows");
   const markerId = `workflow-arrow-${useId().replaceAll(":", "")}`;
   const resolvedDefinition = definition ?? fallbackDefinition(nodes);
   const layout = useMemo(
-    () => buildWorkflowCanvasLayout(resolvedDefinition, nodes),
-    [resolvedDefinition, nodes],
+    () => buildWorkflowCanvasLayout(resolvedDefinition, nodes, { minHeight }),
+    [resolvedDefinition, nodes, minHeight],
   );
   const byKey = useMemo(
     () => new Map(layout.nodes.map((node) => [node.definition.key, node])),
@@ -291,7 +292,6 @@ export function WorkflowCanvas({
         <ol aria-label={t(($) => $.workbench.activity_map)}>
           {layout.nodes.map((canvasNode) => {
             const { definition: node, instance } = canvasNode;
-            const Icon = nodeKindIcon(node.kind);
             const selectable = Boolean(instance && onSelect) || Boolean(onSelectKey);
             const selected = instance
               ? instance.id === selectedId
@@ -348,43 +348,20 @@ export function WorkflowCanvas({
                     else onSelectKey?.(node.key);
                   }}
                   className={cn(
-                    "flex size-full min-h-11 items-center gap-2.5 rounded-xl border bg-background px-3 text-left shadow-xs outline-none transition-[border-color,box-shadow,background-color] hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-reduce:transition-none",
-                    node.kind !== "activity" && "rounded-full bg-muted/30",
+                    "flex size-full min-h-11 items-center gap-2 rounded-full border bg-background px-3 text-left shadow-xs outline-none transition-[border-color,box-shadow,background-color] hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-reduce:transition-none",
                     selected &&
                       "border-brand bg-brand/5 ring-2 ring-brand/15",
                     !selectable && "cursor-default opacity-75",
                   )}
                 >
                   <span
-                    className={cn(
-                      "grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground",
-                      node.kind !== "activity" && "rounded-full",
-                    )}
+                    data-workflow-status={instance?.status ?? "draft"}
+                    className="grid size-3 shrink-0 place-items-center"
                   >
-                    <Icon className="size-4" aria-hidden="true" />
+                    <WorkflowStatusDot status={instance?.status ?? "unknown"} />
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">
-                      {node.name || node.key}
-                    </span>
-                    <span className="mt-1 flex items-center gap-1.5">
-                      {instance ? (
-                        <WorkflowStatusBadge
-                          status={instance.status}
-                          className="h-5 max-w-full truncate px-1.5 text-[10px]"
-                        />
-                      ) : (
-                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                          <CircleDashed className="size-3" />
-                          {node.kind}
-                        </span>
-                      )}
-                      {instance && instance.attempt > 1 && (
-                        <span className="text-[10px] text-muted-foreground">
-                          ×{instance.attempt}
-                        </span>
-                      )}
-                    </span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                    {node.name || node.key}
                   </span>
                 </button>
                 {showNodeActions && (

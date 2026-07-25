@@ -222,7 +222,7 @@ function newActivity(definition: WorkflowDefinition): WorkflowNodeDefinition {
       required: true,
       initial_status: "todo",
     }],
-    completion: { required_issue_outcome: "done" },
+    completion: { mode: "automatic", required_issue_outcome: "done" },
   };
 }
 

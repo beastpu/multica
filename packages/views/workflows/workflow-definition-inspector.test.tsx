@@ -122,4 +122,22 @@ describe("WorkflowNodeDefinitionInspector", () => {
       })],
     }));
   });
+
+  it("shows the legacy completion behavior and stores an explicit manual mode", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderInspector(onChange);
+
+    expect(screen.getByLabelText("Completion method")).toHaveValue("automatic");
+    expect(screen.getByText("Completion form")).toBeInTheDocument();
+
+    await user.selectOptions(
+      screen.getByLabelText("Completion method"),
+      "manual",
+    );
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      completion: expect.objectContaining({ mode: "manual" }),
+    }));
+  });
 });
