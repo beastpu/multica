@@ -1129,8 +1129,22 @@ Workbench，不复制第二套详情页面。
 
 - 大卡片：Activity；
 - 小菱形：Condition；
-- 紧凑横条：Parallel split/join；
 - 圆点：Start/End。
+
+画布用两个位置明确区分编排语义：
+
+- 在线段中点添加节点，表示插入串行步骤，原连线被替换为两段连线；
+- 在节点右侧的连接起点添加节点或连接已有节点，表示新增并行分支；Activity 和 Start
+  直接拥有多条出边，不额外生成或展示 `parallel_split`。
+- 多条分支可直接连接到 Activity 或 End，自动等待全部已选择前序完成；画布不创建或展示
+  额外的汇聚节点。
+- 模板编辑器不提供 `parallel_split` / `parallel_join`。底层定义继续读取这两类控制节点，
+  仅用于兼容已有模板；所有新并行和汇聚都由连线拓扑自动表达。
+- “连接到”只展示合法目标：排除自身、已有直连、上游节点和已经可达的下游节点，避免
+  环、重复边和跨越中间节点的冗余捷径。
+- 节点不可拖动。画布按拓扑层级自动分列，并通过双向重排减少连线交叉；相邻层连线只走
+  列间空隙，跨越多层的连线自动进入画布上方或下方的独立通道，连线中点操作也跟随通道，
+  不覆盖节点。
 
 点击节点后，在画布下方打开 Selected Node Definition Panel；它与运行页面的节点面板
 保持相同空间结构，减少管理员在“定义”和“运行”之间的认知切换：
@@ -1185,14 +1199,15 @@ Workbench，不复制第二套详情页面。
 - 顶部显示 Workflow 名称、版本、总体状态和操作菜单。
 - “查看模板 vN”只读；管理员可点击“基于此版本新建 Draft”，不会就地修改运行实例。
 
-Node Panel 保持节点概览常驻，并用四个明确 Tab 组织细节：
+节点摘要保持常驻，并用渐进展开的详情区组织高级能力：
 
-- `任务`：必需/可选 Issue、实际 Executor、当前节点/全部 Workflow Issue 范围切换；
 - `提交`：Submission revisions、结构化字段、evidence 和提交者；
 - `准出`：当前 Verdict、reason、confidence、未满足条件和重新求值；
 - `记录`：Activity history、路由决策、重试、跳过、回退和系统修复。
 
-节点概览同时展示说明、Owner、参与者、排期、当前状态及最重要的等待原因。选中显式
+节点摘要展示说明、Owner、参与者、估时、当前状态、issue 进度及最重要的等待原因。
+节点下方是独立的 Workflow Issue 工作区，不再把 issue 压缩在右侧栏或节点详情 Tab 内。
+选中显式
 验收 Activity 时，Node Panel 显示 Acceptance：验收人可批准，或填写原因并选择模板
 允许的返工节点。到达 End 前验收始终可见，不出现“画布全部完成但流程仍在等待”的状态。
 
@@ -1221,8 +1236,9 @@ Node Panel 保持节点概览常驻，并用四个明确 Tab 组织细节：
 
 ### 10.6 Workflow-scoped Issues
 
-Selected Node Panel 内的 Issue 列表不是全局 Issues 页的嵌入，而是 Workflow Context
-Query。默认范围为当前选中节点，并可切换到“全部工作流 Issue”。
+Workflow 工作台采用“上方流程、下方 issue”的两层结构。上方回答“流程走到哪、谁负责”，
+下方回答“这一阶段有哪些具体工作、完成了多少、卡在哪里”。Issue 区域使用 Workflow
+Context Query，默认范围为当前选中节点，并可切换到“全部工作流 issue”。
 
 范围规则：
 
@@ -1232,6 +1248,8 @@ Query。默认范围为当前选中节点，并可切换到“全部工作流 Is
 - 在节点内新增 Issue 时，自动绑定当前 Node Instance，并以宿主 Issue 为父；
 - 列表显示 Node、Required/Optional、Assignee、Status 等 Workflow 相关列；
 - 点击 Issue 继续打开现有 Issue Detail/Inspector，评论和 Agent Run 能力不复制。
+- Canvas 与 issue 区域支持独立滚动；桌面端允许放大 Canvas 或收起节点高级详情，
+  但 issue 始终作为工作台的主要工作面，而不是辅助侧栏。
 
 Workflow Issue 同时仍可出现在全局 Issues 列表，增加可选显示字段：
 
@@ -1378,6 +1396,7 @@ paused_at nullable
 completed_at nullable
 cancelled_at nullable
 last_reconciled_at nullable
+reconcile_after nullable
 created_at
 updated_at
 ```
@@ -2387,3 +2406,108 @@ ID、节点 ID 或同步状态，也不提供双向映射。对已有飞书同�
 - 不做运行中模板迁移、任意循环、BPMN、外部系统同步和 Agent 冒充人工确认；
 - Mobile 第一版只读；模板管理、节点操作与业务验收在 Web/Desktop 完成；
 - 本记录证明代码、数据库与自动化检查完成，不替代内部真实需求的灰度价值验证。
+
+## 27. 下一阶段目标：Workflow 驱动原有 issue 与智能体能力
+
+### 27.1 产品目标
+
+下一阶段不新增一套节点任务或 Agent Runtime，而是让 Workflow 真正编排 Multica
+已有的 issue、智能体、小队、项目和 Agent Run：
+
+```text
+宿主 Issue（总需求）
+└── Workflow Instance
+    └── Node Instance（业务活动）
+        └── Node Task -> 子 issue -> 现有 Agent/Squad Run
+```
+
+用户心智固定为：
+
+> 一个父 issue 对应一个工作流；节点代表业务阶段；节点下的子 issue 是具体工作；
+> 人员、智能体或小队执行 issue；issue 与交付物满足条件后推动节点流转。
+
+### 27.2 责任边界
+
+| 对象 | 负责什么 |
+| --- | --- |
+| 宿主 issue | 完整需求、问题背景、附件、评论和父子 issue 层级 |
+| Node Definition / Instance | 当前业务阶段、节点目标、负责人、估时、完成规则和交付物 |
+| 子 issue | 一次可独立协作、分配和执行的具体工作 |
+| 智能体配置 | Prompt、skill、MCP、模型、运行时和工具权限 |
+| 项目 | 仓库、默认分支和长期交付上下文 |
+| Agent Run | 对一个子 issue 的实际执行尝试和运行记录 |
+
+节点负责人是节点内 issue 的默认执行者。实例化 issue 时自动继承负责人，用户可以对
+单个 issue 覆盖负责人。节点不直接创建第二套 Agent Run；执行仍由现有 Issue Service
+按 `assignee_type + assignee_id` 触发。
+
+### 27.3 智能体执行上下文
+
+智能体处理 Workflow 子 issue 时必须能确定性读取：
+
+1. 当前子 issue：本次具体任务；
+2. 宿主 issue：总需求与问题背景；
+3. 当前 Node Instance：业务阶段、目标、完成规则和交付物；
+4. 同节点 issue 和前置节点交付物；
+5. 宿主 issue 关联项目及其仓库上下文；
+6. 智能体自身 Prompt、skill、MCP 和运行时配置。
+
+系统不得要求智能体从自然语言中猜测当前节点或仓库。仓库以项目结构化绑定为事实来源；
+Prompt 只描述工作规则，不作为仓库绑定的唯一来源。
+
+### 27.4 模板与运行时默认值
+
+- Activity 节点可配置人员、智能体、小队或角色作为默认负责人；
+- 子 issue 模板默认继承节点负责人，允许按模板或运行实例覆盖；
+- Agent/Squad 节点至少需要一个执行 issue；没有预置模板时，激活后创建与节点同名的
+  默认 issue；
+- Human 节点允许没有 issue，并使用手动完成；
+- Agent 节点默认完成条件为：全部 required issue 完成且必需交付物齐全；
+- Human 节点默认完成条件为手动确认，也可选择全部 issue 完成后自动完成；
+- 同一子 issue 只能归属一个当前 Node Instance，避免多个节点同时等待同一完成事实。
+
+### 27.5 运行工作台
+
+桌面端和 Web 共用以下布局：
+
+```text
+┌──────────────────────────────────────┐
+│ 宿主 issue 标题、状态、负责人          │
+├──────────────────────────────────────┤
+│ Workflow Canvas                      │
+├──────────────────────────────────────┤
+│ 当前节点摘要：负责人、进度、等待原因    │
+├──────────────────────────────────────┤
+│ 当前节点 / 全部工作流 issue 列表        │
+├──────────────────────────────────────┤
+│ 提交、准出、验收、记录等渐进详情         │
+└──────────────────────────────────────┘
+```
+
+- 点击 Canvas 节点立即筛选下方 issue；
+- 切换“全部工作流”展示宿主 issue 下所有已物化 Workflow issue；
+- issue 区域复用现有状态、负责人、优先级、Agent 状态和详情入口；
+- 节点进度由绑定 issue 聚合，并与 Canvas 状态实时联动；
+- Agent 日志、代码变更和评论继续保留在 issue 详情，节点只展示汇总与入口。
+
+### 27.6 下一阶段验收标准
+
+1. 模板编辑器可以直接选择人员、智能体或小队作为节点默认负责人；
+2. 节点激活后，预置子 issue 直接继承该负责人并触发现有执行链路；
+3. 单个子 issue 可以覆盖节点默认负责人；
+4. 工作台使用上方 Canvas、下方 issue 的布局；
+5. 点击节点时，下方只显示该 Node Instance 绑定的 issue；
+6. “全部工作流”显示实例内所有 issue，并保留 Activity、Required、负责人和状态信息；
+7. 智能体可从当前 issue 确定宿主 issue、节点和 Workflow Instance；
+8. 项目继续作为代码仓库上下文来源，不在 Workflow 中重复配置仓库；
+9. Human 节点可手动完成，Agent/Squad 节点可按 required issue 完成事实自动推进；
+10. Web 与 Desktop 复用同一套 Core/View 实现，不复制业务逻辑。
+
+### 27.7 本阶段非目标
+
+- 飞书项目同步；
+- 在 Workflow 内重复配置智能体的 skill、MCP、模型或运行时；
+- 节点级第二套 Agent Run；
+- 跨工作区、跨多个仓库的事务编排；
+- 运行中实例迁移到新模板版本；
+- 任意脚本和完整 BPMN。

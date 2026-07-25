@@ -75,21 +75,45 @@ export function useFeatureEnabled(key: string, defaultValue = false): boolean {
   );
 }
 
+export type WorkspaceFeatureState = "loading" | "enabled" | "disabled";
+
+export function resolveWorkspaceFeatureState(
+  workspaceId: string | null | undefined,
+  flags: Readonly<Record<string, boolean>> | undefined,
+  isPending: boolean,
+  key: string,
+): WorkspaceFeatureState {
+  if (!workspaceId || isPending) return "loading";
+  return flags?.[key] === true ? "enabled" : "disabled";
+}
+
 /**
  * Re-evaluates a public feature flag with the active workspace header.
  * The initial unauthenticated `/api/config` bootstrap has no tenant context,
  * so it cannot represent workspace allowlists. Workspace surfaces must use
  * this hook; a missing/legacy response fails closed.
  */
-export function useWorkspaceFeatureEnabled(
+export function useWorkspaceFeatureState(
   workspaceId: string | null | undefined,
   key: string,
-): boolean {
+): WorkspaceFeatureState {
   const query = useQuery({
     queryKey: ["app-config", "workspace", workspaceId] as const,
     queryFn: () => getApi().getConfig(),
     enabled: Boolean(workspaceId),
     staleTime: Number.POSITIVE_INFINITY,
   });
-  return query.data?.feature_flags?.[key] ?? false;
+  return resolveWorkspaceFeatureState(
+    workspaceId,
+    query.data?.feature_flags,
+    query.isPending,
+    key,
+  );
+}
+
+export function useWorkspaceFeatureEnabled(
+  workspaceId: string | null | undefined,
+  key: string,
+): boolean {
+  return useWorkspaceFeatureState(workspaceId, key) === "enabled";
 }

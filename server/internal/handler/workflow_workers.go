@@ -22,6 +22,7 @@ const (
 	workflowMaterializerPollInterval = time.Second
 	workflowMaterializerMaxAttempts  = 5
 	workflowReconcilerPollInterval   = 2 * time.Second
+	workflowReconcilerDeferInterval  = 30 * time.Second
 	workflowSweeperInterval          = 30 * time.Second
 	workflowStaleClaimAfter          = 2 * time.Minute
 )
@@ -231,15 +232,30 @@ func (w *WorkflowReconciler) ProcessNext(ctx context.Context) (bool, error) {
 	if !featureflags.WorkflowsActivityEngineEnabledForWorkspace(
 		ctx, w.h.FeatureFlags, workspaceID,
 	) || featureflags.WorkflowProgressionPaused(ctx, w.h.FeatureFlags, workspaceID) {
-		_, releaseErr := w.h.Queries.MarkWorkflowInstanceReconcilePending(
+		_, releaseErr := w.h.Queries.DeferWorkflowInstanceReconcile(
 			ctx,
-			db.MarkWorkflowInstanceReconcilePendingParams{
+			db.DeferWorkflowInstanceReconcileParams{
 				ID: instance.ID, WorkspaceID: instance.WorkspaceID,
+				DeferSeconds: workflowReconcilerDeferInterval.Seconds(),
 			},
 		)
 		// Preserve the pending reconcile signal while progression is paused and
-		// wait before polling again, rather than consuming it permanently.
-		return false, releaseErr
+		// defer this instance so other workspaces can make progress. A successful
+		// deferral counts as work so the loop immediately claims the next due row.
+		return releaseErr == nil, releaseErr
+	}
+	if instance.Status == "completed" {
+		if err := w.h.updateManagedWorkflowHostStatus(ctx, instance, "done"); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+	if err := w.h.updateManagedWorkflowHostStatus(
+		ctx,
+		instance,
+		"in_progress",
+	); err != nil {
+		return true, err
 	}
 	updated, reconcileErr := w.h.reconcileWorkflowInstance(
 		ctx, instance.WorkspaceID, instance.ID, "system", pgtype.UUID{},

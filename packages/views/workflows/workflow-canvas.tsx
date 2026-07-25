@@ -5,171 +5,50 @@ import {
   CircleDashed,
   Diamond,
   GitFork,
+  Link2,
+  Plus,
   PlayCircle,
   Signpost,
+  Trash2,
 } from "lucide-react";
 import { useId, useMemo } from "react";
 import type {
   WorkflowDefinition,
-  WorkflowNodeDefinition,
   WorkflowNodeInstance,
 } from "@multica/core/workflows";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@multica/ui/components/ui/dropdown-menu";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../i18n";
+import {
+  buildWorkflowCanvasLayout,
+  workflowCanvasEdgeGeometry,
+  workflowCanvasEdgeKey,
+} from "./workflow-canvas-layout";
+import {
+  type WorkflowCanvasBranchKind,
+  type WorkflowCanvasEdgeTarget,
+  type WorkflowCanvasInsertKind,
+  workflowConnectionTargets,
+  workflowNodeCanAddOutgoing,
+} from "./workflow-graph-editor";
 import { WorkflowStatusBadge } from "./workflow-status";
 
-const CARD_WIDTH = 184;
-const CARD_HEIGHT = 68;
-const CONTROL_WIDTH = 148;
-const COLUMN_GAP = 92;
-const ROW_GAP = 28;
-const CANVAS_PADDING = 32;
-
-interface CanvasNode {
-  definition: WorkflowNodeDefinition;
-  instance?: WorkflowNodeInstance;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-interface LayoutPoint {
-  x: number;
-  y: number;
-}
-
-function isLayoutPoint(value: unknown): value is LayoutPoint {
-  if (!value || typeof value !== "object") return false;
-  const point = value as Partial<LayoutPoint>;
-  return Number.isFinite(point.x) && Number.isFinite(point.y);
-}
-
-function explicitLayout(definition: WorkflowDefinition) {
-  if (!definition.layout || typeof definition.layout !== "object") return null;
-  const nodes = (definition.layout as { nodes?: unknown }).nodes;
-  if (!nodes || typeof nodes !== "object" || Array.isArray(nodes)) return null;
-  return nodes as Record<string, unknown>;
-}
-
-function topologicalRanks(definition: WorkflowDefinition) {
-  const nodeKeys = new Set(definition.nodes.map((node) => node.key));
-  const incoming = new Map<string, string[]>();
-  const outgoing = new Map<string, string[]>();
-  for (const key of nodeKeys) {
-    incoming.set(key, []);
-    outgoing.set(key, []);
-  }
-  for (const edge of definition.edges) {
-    if (!nodeKeys.has(edge.from) || !nodeKeys.has(edge.to)) continue;
-    incoming.get(edge.to)!.push(edge.from);
-    outgoing.get(edge.from)!.push(edge.to);
-  }
-
-  const rank = new Map<string, number>();
-  const indegree = new Map(
-    [...nodeKeys].map((key) => [key, incoming.get(key)!.length]),
-  );
-  const queue = [...nodeKeys].filter((key) => indegree.get(key) === 0);
-  for (const key of queue) rank.set(key, 0);
-
-  for (let index = 0; index < queue.length; index += 1) {
-    const key = queue[index]!;
-    for (const next of outgoing.get(key) ?? []) {
-      rank.set(next, Math.max(rank.get(next) ?? 0, (rank.get(key) ?? 0) + 1));
-      const remaining = (indegree.get(next) ?? 1) - 1;
-      indegree.set(next, remaining);
-      if (remaining === 0) queue.push(next);
-    }
-  }
-
-  // A published definition is a DAG. Keeping unreachable/malformed draft
-  // nodes visible makes the editor and defensive runtime rendering useful.
-  let fallbackRank = Math.max(0, ...rank.values()) + 1;
-  for (const node of definition.nodes) {
-    if (!rank.has(node.key)) {
-      rank.set(node.key, fallbackRank);
-      fallbackRank += 1;
-    }
-  }
-  return rank;
-}
-
-function buildCanvasNodes(
-  definition: WorkflowDefinition,
-  instances: WorkflowNodeInstance[],
-) {
-  const latestByKey = new Map(instances.map((node) => [node.node_key, node]));
-  const ranks = topologicalRanks(definition);
-  const byRank = new Map<number, WorkflowNodeDefinition[]>();
-  for (const node of definition.nodes) {
-    const nodeRank = ranks.get(node.key) ?? 0;
-    const bucket = byRank.get(nodeRank) ?? [];
-    bucket.push(node);
-    byRank.set(nodeRank, bucket);
-  }
-
-  const explicit = explicitLayout(definition);
-  const useExplicit = Boolean(
-    explicit &&
-      definition.nodes.length > 0 &&
-      definition.nodes.every((node) => isLayoutPoint(explicit[node.key])),
-  );
-  const rows = Math.max(1, ...[...byRank.values()].map((nodes) => nodes.length));
-  const gridHeight = rows * CARD_HEIGHT + (rows - 1) * ROW_GAP;
-
-  const nodes = definition.nodes.map((node) => {
-    const width = node.kind === "activity" ? CARD_WIDTH : CONTROL_WIDTH;
-    const explicitPoint = explicit?.[node.key];
-    if (useExplicit && isLayoutPoint(explicitPoint)) {
-      return {
-        definition: node,
-        instance: latestByKey.get(node.key),
-        x: explicitPoint.x,
-        y: explicitPoint.y,
-        width,
-        height: CARD_HEIGHT,
-      };
-    }
-    const rank = ranks.get(node.key) ?? 0;
-    const siblings = byRank.get(rank) ?? [node];
-    const row = siblings.findIndex((candidate) => candidate.key === node.key);
-    const siblingsHeight =
-      siblings.length * CARD_HEIGHT + (siblings.length - 1) * ROW_GAP;
-    return {
-      definition: node,
-      instance: latestByKey.get(node.key),
-      x: CANVAS_PADDING + rank * (CARD_WIDTH + COLUMN_GAP),
-      y: CANVAS_PADDING + (gridHeight - siblingsHeight) / 2 +
-        row * (CARD_HEIGHT + ROW_GAP),
-      width,
-      height: CARD_HEIGHT,
-    };
-  });
-
-  const minX = Math.min(0, ...nodes.map((node) => node.x));
-  const minY = Math.min(0, ...nodes.map((node) => node.y));
-  if (minX < CANVAS_PADDING || minY < CANVAS_PADDING) {
-    const offsetX = CANVAS_PADDING - minX;
-    const offsetY = CANVAS_PADDING - minY;
-    for (const node of nodes) {
-      node.x += offsetX;
-      node.y += offsetY;
-    }
-  }
-
-  return {
-    nodes,
-    width: Math.max(
-      680,
-      ...nodes.map((node) => node.x + node.width + CANVAS_PADDING),
-    ),
-    height: Math.max(
-      164,
-      ...nodes.map((node) => node.y + node.height + CANVAS_PADDING),
-    ),
-  };
-}
+export type {
+  WorkflowCanvasBranchKind,
+  WorkflowCanvasEdgeTarget,
+  WorkflowCanvasInsertKind,
+} from "./workflow-graph-editor";
 
 function fallbackDefinition(instances: WorkflowNodeInstance[]): WorkflowDefinition {
   const sorted = [...instances].sort((a, b) => a.display_order - b.display_order);
@@ -200,15 +79,6 @@ function nodeKindIcon(kind: string) {
   }
 }
 
-function edgePath(from: CanvasNode, to: CanvasNode) {
-  const startX = from.x + from.width;
-  const startY = from.y + from.height / 2;
-  const endX = to.x;
-  const endY = to.y + to.height / 2;
-  const bend = Math.max(32, (endX - startX) / 2);
-  return `M ${startX} ${startY} C ${startX + bend} ${startY}, ${endX - bend} ${endY}, ${endX} ${endY}`;
-}
-
 export function WorkflowCanvas({
   definition,
   nodes,
@@ -216,6 +86,10 @@ export function WorkflowCanvas({
   selectedKey,
   onSelect,
   onSelectKey,
+  onInsertNode,
+  onRemoveEdge,
+  onAddBranch,
+  onConnectNode,
 }: {
   definition?: WorkflowDefinition;
   nodes: WorkflowNodeInstance[];
@@ -223,12 +97,19 @@ export function WorkflowCanvas({
   selectedKey?: string;
   onSelect?: (id: string) => void;
   onSelectKey?: (key: string) => void;
+  onInsertNode?: (
+    kind: WorkflowCanvasInsertKind,
+    target: WorkflowCanvasEdgeTarget,
+  ) => void;
+  onRemoveEdge?: (target: WorkflowCanvasEdgeTarget) => void;
+  onAddBranch?: (kind: WorkflowCanvasBranchKind, from: string) => void;
+  onConnectNode?: (target: WorkflowCanvasEdgeTarget) => void;
 }) {
   const { t } = useT("workflows");
   const markerId = `workflow-arrow-${useId().replaceAll(":", "")}`;
   const resolvedDefinition = definition ?? fallbackDefinition(nodes);
   const layout = useMemo(
-    () => buildCanvasNodes(resolvedDefinition, nodes),
+    () => buildWorkflowCanvasLayout(resolvedDefinition, nodes),
     [resolvedDefinition, nodes],
   );
   const byKey = useMemo(
@@ -277,12 +158,19 @@ export function WorkflowCanvas({
             const from = byKey.get(edge.from);
             const to = byKey.get(edge.to);
             if (!from || !to) return null;
+            const geometry = workflowCanvasEdgeGeometry(
+              from,
+              to,
+              layout.edgeLanes.get(
+                workflowCanvasEdgeKey(edge.from, edge.to),
+              ),
+            );
             const traversed = from.instance?.status === "completed" ||
               from.instance?.status === "skipped";
             return (
               <path
                 key={`${edge.from}-${edge.to}-${index}`}
-                d={edgePath(from, to)}
+                d={geometry.path}
                 fill="none"
                 markerEnd={`url(#${markerId})`}
                 className={cn(
@@ -296,6 +184,110 @@ export function WorkflowCanvas({
           })}
         </svg>
 
+        {(onInsertNode || onRemoveEdge) &&
+          resolvedDefinition.edges.map((edge, index) => {
+            const from = byKey.get(edge.from);
+            const to = byKey.get(edge.to);
+            if (!from || !to) return null;
+            const geometry = workflowCanvasEdgeGeometry(
+              from,
+              to,
+              layout.edgeLanes.get(
+                workflowCanvasEdgeKey(edge.from, edge.to),
+              ),
+            );
+            const fromName = from.definition.name || from.definition.key;
+            const toName = to.definition.name || to.definition.key;
+            const target = { from: edge.from, to: edge.to };
+            const insertOptions: Array<{
+              kind: WorkflowCanvasInsertKind;
+              label: string;
+              icon: typeof Signpost;
+            }> = [
+              {
+                kind: "activity",
+                label: t(($) => $.editor.node_activity),
+                icon: Signpost,
+              },
+              {
+                kind: "gateway",
+                label: t(($) => $.editor.node_gateway),
+                icon: Diamond,
+              },
+            ];
+
+            return (
+              <div
+                key={`control-${edge.from}-${edge.to}-${index}`}
+                className="absolute z-20 -translate-x-1/2 -translate-y-1/2"
+                style={{
+                  left: geometry.control.x,
+                  top: geometry.control.y,
+                }}
+              >
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={t(($) => $.editor.insert_on_connection, {
+                          from: fromName,
+                          to: toName,
+                        })}
+                        className="group grid size-7 place-items-center rounded-full border border-border/80 bg-background text-muted-foreground shadow-sm outline-none transition-[transform,border-color,background-color,color,box-shadow] hover:scale-110 hover:border-brand hover:bg-brand hover:text-white hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-reduce:transition-none"
+                      >
+                        <Plus
+                          className="size-3.5 transition-transform group-data-popup-open:rotate-45 motion-reduce:transition-none"
+                          aria-hidden="true"
+                        />
+                      </button>
+                    }
+                  />
+                  <DropdownMenuContent
+                    align="center"
+                    side="bottom"
+                    sideOffset={8}
+                    className="w-48 p-1.5"
+                  >
+                    {onInsertNode && (
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>
+                          {t(($) => $.editor.insert_serial_node)}
+                        </DropdownMenuLabel>
+                        {insertOptions.map((option) => {
+                          const Icon = option.icon;
+                          return (
+                            <DropdownMenuItem
+                              key={option.kind}
+                              className="min-h-9 gap-2 px-2"
+                              onClick={() => onInsertNode(option.kind, target)}
+                            >
+                              <span className="grid size-6 place-items-center rounded-md bg-muted text-muted-foreground">
+                                <Icon className="size-3.5" aria-hidden="true" />
+                              </span>
+                              {option.label}
+                            </DropdownMenuItem>
+                          );
+                        })}
+                      </DropdownMenuGroup>
+                    )}
+                    {onInsertNode && onRemoveEdge && <DropdownMenuSeparator />}
+                    {onRemoveEdge && (
+                      <DropdownMenuItem
+                        variant="destructive"
+                        className="min-h-9 gap-2 px-2"
+                        onClick={() => onRemoveEdge(target)}
+                      >
+                        <Trash2 aria-hidden="true" />
+                        {t(($) => $.actions.remove_connection)}
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            );
+          })}
+
         <ol aria-label={t(($) => $.workbench.activity_map)}>
           {layout.nodes.map((canvasNode) => {
             const { definition: node, instance } = canvasNode;
@@ -304,6 +296,37 @@ export function WorkflowCanvas({
             const selected = instance
               ? instance.id === selectedId
               : node.key === selectedKey;
+            const canAddBranch = workflowNodeCanAddOutgoing(
+              resolvedDefinition,
+              node.key,
+            );
+            const connectionTargets = canAddBranch
+              ? workflowConnectionTargets(resolvedDefinition, node.key)
+              : [];
+            const showNodeActions = selected &&
+              canAddBranch &&
+              (Boolean(onAddBranch) || Boolean(onConnectNode));
+            const addOptions: Array<{
+              kind: WorkflowCanvasBranchKind;
+              label: string;
+              icon: typeof Signpost;
+            }> = [
+              {
+                kind: "activity",
+                label: t(($) => $.editor.node_activity),
+                icon: Signpost,
+              },
+              {
+                kind: "gateway",
+                label: t(($) => $.editor.node_gateway),
+                icon: Diamond,
+              },
+              {
+                kind: "end",
+                label: t(($) => $.editor.node_end),
+                icon: CheckCircle2,
+              },
+            ];
             return (
               <li
                 key={node.key}
@@ -364,6 +387,113 @@ export function WorkflowCanvas({
                     </span>
                   </span>
                 </button>
+                {showNodeActions && (
+                  <div className="absolute top-1/2 -right-3 z-30 -translate-y-1/2">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-label={t(($) => $.editor.node_actions, {
+                              node: node.name || node.key,
+                            })}
+                            className="grid size-7 place-items-center rounded-full border border-brand/50 bg-background text-brand shadow-sm outline-none transition-[transform,background-color,color,box-shadow] hover:scale-110 hover:bg-brand hover:text-white hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-reduce:transition-none"
+                          >
+                            <GitFork className="size-3.5" aria-hidden="true" />
+                          </button>
+                        }
+                      />
+                      <DropdownMenuContent
+                        align="start"
+                        side="bottom"
+                        sideOffset={8}
+                        className="w-52 p-1.5"
+                      >
+                        <DropdownMenuGroup>
+                          <DropdownMenuLabel>
+                            {t(($) => $.editor.add_parallel_branch)}
+                          </DropdownMenuLabel>
+                          {onAddBranch && (
+                            <DropdownMenuSub>
+                              <DropdownMenuSubTrigger className="min-h-9 gap-2 px-2">
+                                <Plus
+                                  className="size-4 text-muted-foreground"
+                                  aria-hidden="true"
+                                />
+                                {t(($) => $.actions.add_node)}
+                              </DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent className="w-52 p-1.5">
+                                {addOptions.map((option) => {
+                                  const OptionIcon = option.icon;
+                                  return (
+                                    <DropdownMenuItem
+                                      key={option.kind}
+                                      className="min-h-9 gap-2 px-2"
+                                      onClick={() =>
+                                        onAddBranch(option.kind, node.key)}
+                                    >
+                                      <OptionIcon
+                                        className="size-4 text-muted-foreground"
+                                        aria-hidden="true"
+                                      />
+                                      {option.label}
+                                    </DropdownMenuItem>
+                                  );
+                                })}
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
+                          )}
+                        </DropdownMenuGroup>
+                        {onAddBranch && onConnectNode && (
+                          <DropdownMenuSeparator />
+                        )}
+                        {onConnectNode && (
+                          <DropdownMenuSub>
+                            <DropdownMenuSubTrigger className="min-h-9 gap-2 px-2">
+                              <Link2
+                                className="size-4 text-muted-foreground"
+                                aria-hidden="true"
+                              />
+                              {t(($) => $.editor.connect_to)}
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent className="max-h-72 w-52 overflow-y-auto p-1.5">
+                              {connectionTargets.length === 0
+                                ? (
+                                  <DropdownMenuItem
+                                    disabled
+                                    className="min-h-9 px-2 text-muted-foreground"
+                                  >
+                                    {t(($) => $.editor.no_connection_targets)}
+                                  </DropdownMenuItem>
+                                )
+                                : connectionTargets.map((target) => {
+                                  const TargetIcon = nodeKindIcon(target.kind);
+                                  return (
+                                    <DropdownMenuItem
+                                      key={target.key}
+                                      className="min-h-9 gap-2 px-2"
+                                      onClick={() => onConnectNode({
+                                        from: node.key,
+                                        to: target.key,
+                                      })}
+                                    >
+                                      <TargetIcon
+                                        className="size-4 text-muted-foreground"
+                                        aria-hidden="true"
+                                      />
+                                      <span className="truncate">
+                                        {target.name || target.key}
+                                      </span>
+                                    </DropdownMenuItem>
+                                  );
+                                })}
+                            </DropdownMenuSubContent>
+                          </DropdownMenuSub>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                )}
               </li>
             );
           })}

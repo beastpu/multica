@@ -30,7 +30,11 @@ import {
   type WorkflowNodeDefinition,
   type WorkflowTemplate,
 } from "@multica/core/workflows";
-import { memberListOptions } from "@multica/core/workspace/queries";
+import {
+  agentListOptions,
+  memberListOptions,
+  squadListOptions,
+} from "@multica/core/workspace/queries";
 import { Alert, AlertTitle } from "@multica/ui/components/ui/alert";
 import {
   AlertDialog,
@@ -62,6 +66,17 @@ import { cn } from "@multica/ui/lib/utils";
 import { CollectionPageHeader, CollectionPageState } from "../layout/collection-page";
 import { useT } from "../i18n";
 import { WorkflowCanvas } from "./workflow-canvas";
+import {
+  addWorkflowBranch,
+  connectWorkflowNodes,
+  type WorkflowCanvasBranchKind,
+  type WorkflowCanvasEdgeTarget,
+  type WorkflowCanvasInsertKind,
+  insertWorkflowNodeOnEdge,
+  nextWorkflowNodeKey,
+  removeWorkflowEdge,
+  removeWorkflowNode,
+} from "./workflow-graph-editor";
 import {
   WorkflowDefinitionInspector,
   WorkflowNodeDefinitionInspector,
@@ -185,8 +200,8 @@ function TemplateMetadataDialog({
   );
 }
 
-function newActivity(): WorkflowNodeDefinition {
-  const key = `activity_${Date.now().toString(36)}`;
+function newActivity(definition: WorkflowDefinition): WorkflowNodeDefinition {
+  const key = nextWorkflowNodeKey(definition, "activity");
   return {
     key,
     kind: "activity",
@@ -211,19 +226,19 @@ function newActivity(): WorkflowNodeDefinition {
   };
 }
 
-function newControlNode(kind: string): WorkflowNodeDefinition {
-  const key = `${kind}_${Date.now().toString(36)}`;
+function newControlNode(
+  definition: WorkflowDefinition,
+  kind: WorkflowCanvasInsertKind | "end",
+): WorkflowNodeDefinition {
+  const key = nextWorkflowNodeKey(definition, kind);
   const names: Record<string, string> = {
     gateway: "Decision",
-    parallel_split: "Parallel split",
-    parallel_join: "Parallel join",
     end: "End",
   };
   return {
     key,
     kind,
     name: names[kind] ?? "Control node",
-    ...(kind === "parallel_join" ? { join_mode: "all" } : {}),
   };
 }
 
@@ -338,21 +353,10 @@ function WorkflowEdgeInspector({
   onChange: (definition: WorkflowDefinition) => void;
 }) {
   const { t } = useT("workflows");
-  const [targetKey, setTargetKey] = useState("");
   const outgoing = definition.edges.filter((edge) => edge.from === nodeKey);
   const incoming = definition.edges.filter((edge) => edge.to === nodeKey);
-  const availableTargets = definition.nodes.filter((node) =>
-    node.key !== nodeKey &&
-    !outgoing.some((edge) => edge.to === node.key)
-  );
   const nodeName = (key: string) =>
     definition.nodes.find((node) => node.key === key)?.name || key;
-
-  useEffect(() => {
-    if (targetKey && !availableTargets.some((node) => node.key === targetKey)) {
-      setTargetKey("");
-    }
-  }, [availableTargets, targetKey]);
 
   return (
     <div className="space-y-4 border-t pt-5">
@@ -365,6 +369,11 @@ function WorkflowEdgeInspector({
           <p className="mt-1 text-xs text-muted-foreground">
             {t(($) => $.editor.incoming_from)}:{" "}
             {incoming.map((edge) => nodeName(edge.from)).join(", ")}
+          </p>
+        )}
+        {!readOnly && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t(($) => $.editor.connections_help)}
           </p>
         )}
       </div>
@@ -397,39 +406,6 @@ function WorkflowEdgeInspector({
           </p>
         )}
       </div>
-      {!readOnly && availableTargets.length > 0 && (
-        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-          <select
-            aria-label={t(($) => $.editor.connection_target)}
-            value={targetKey}
-            onChange={(event) => setTargetKey(event.target.value)}
-            className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
-          >
-            <option value="">{t(($) => $.editor.connection_target)}</option>
-            {availableTargets.map((node) => (
-              <option key={node.key} value={node.key}>
-                {node.name || node.key}
-              </option>
-            ))}
-          </select>
-          <Button
-            className="min-h-11"
-            variant="outline"
-            disabled={!targetKey}
-            onClick={() => {
-              if (!targetKey) return;
-              onChange({
-                ...definition,
-                edges: [...definition.edges, { from: nodeKey, to: targetKey }],
-              });
-              setTargetKey("");
-            }}
-          >
-            <GitBranch />
-            {t(($) => $.actions.connect)}
-          </Button>
-        </div>
-      )}
     </div>
   );
 }
@@ -442,6 +418,25 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
   const userId = useAuthStore((state) => state.user?.id);
   const detailQuery = useQuery(workflowTemplateOptions(wsId, templateId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const { data: squads = [] } = useQuery(squadListOptions(wsId));
+  const actorOptions = useMemo(() => [
+    ...members.map((member) => ({
+      type: "member" as const,
+      id: member.user_id,
+      name: member.name || member.email,
+    })),
+    ...agents.filter((agent) => !agent.archived_at).map((agent) => ({
+      type: "agent" as const,
+      id: agent.id,
+      name: agent.name,
+    })),
+    ...squads.filter((squad) => !squad.archived_at).map((squad) => ({
+      type: "squad" as const,
+      id: squad.id,
+      name: squad.name,
+    })),
+  ], [agents, members, squads]);
   const currentMember = members.find((member) => member.user_id === userId);
   const canManage = currentMember?.role === "owner" ||
     currentMember?.role === "admin";
@@ -462,7 +457,6 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [changeSummary, setChangeSummary] = useState("");
-  const [newNodeKind, setNewNodeKind] = useState("activity");
   const updateDraft = useUpdateWorkflowTemplateDraft(templateId);
   const createDraft = useCreateWorkflowTemplateDraft(templateId);
   const publish = usePublishWorkflowTemplate(templateId);
@@ -557,40 +551,45 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
       },
     });
   };
-  const addNode = () => {
+  const insertNode = (
+    kind: WorkflowCanvasInsertKind,
+    target: WorkflowCanvasEdgeTarget,
+  ) => {
     if (!definition) return;
-    const node = newNodeKind === "activity"
-      ? newActivity()
-      : newControlNode(newNodeKind);
-    changeDefinition({
-      ...definition,
-      nodes: [...definition.nodes, node],
-    });
+    const node = kind === "activity"
+      ? newActivity(definition)
+      : newControlNode(definition, kind);
+    const next = insertWorkflowNodeOnEdge(definition, node, target);
+    if (!next) return;
+    changeDefinition(next);
     setSelectedKey(node.key);
+  };
+  const removeEdge = (target: WorkflowCanvasEdgeTarget) => {
+    if (!definition) return;
+    const next = removeWorkflowEdge(definition, target);
+    if (next) changeDefinition(next);
+  };
+  const addBranch = (kind: WorkflowCanvasBranchKind, from: string) => {
+    if (!definition) return;
+    const node = kind === "activity"
+      ? newActivity(definition)
+      : newControlNode(definition, kind);
+    const next = addWorkflowBranch(definition, node, from);
+    if (!next) return;
+    changeDefinition(next);
+    setSelectedKey(node.key);
+  };
+  const connectNode = (target: WorkflowCanvasEdgeTarget) => {
+    if (!definition) return;
+    const next = connectWorkflowNodes(definition, target);
+    if (next) changeDefinition(next);
   };
   const removeSelected = () => {
     if (!definition || !selectedNode || selectedNode.kind === "start") return;
-    const nodes = definition.nodes.filter((node) => node.key !== selectedNode.key);
-    changeDefinition({
-      ...definition,
-      nodes,
-      edges: definition.edges.filter(
-        (edge) => edge.from !== selectedNode.key && edge.to !== selectedNode.key,
-      ),
-      acceptance: {
-        ...definition.acceptance,
-        policy: definition.acceptance.node_key === selectedNode.key
-          ? undefined
-          : definition.acceptance.policy,
-        node_key: definition.acceptance.node_key === selectedNode.key
-          ? undefined
-          : definition.acceptance.node_key,
-        rework_targets: definition.acceptance.rework_targets?.filter(
-          (key) => key !== selectedNode.key,
-        ),
-      },
-    });
-    setSelectedKey(nodes[0]?.key ?? "");
+    const next = removeWorkflowNode(definition, selectedNode.key);
+    if (!next) return;
+    changeDefinition(next);
+    setSelectedKey(next.nodes[0]?.key ?? "");
   };
 
   if (detailQuery.isLoading) {
@@ -789,22 +788,6 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
                       <CheckCircle2 />
                       {t(($) => $.actions.validate)}
                     </Button>
-                    <select
-                      aria-label={t(($) => $.editor.new_node_kind)}
-                      value={newNodeKind}
-                      onChange={(event) => setNewNodeKind(event.target.value)}
-                      className="min-h-9 rounded-lg border border-input bg-background px-3 text-sm"
-                    >
-                      <option value="activity">{t(($) => $.editor.node_activity)}</option>
-                      <option value="gateway">{t(($) => $.editor.node_gateway)}</option>
-                      <option value="parallel_split">{t(($) => $.editor.node_parallel_split)}</option>
-                      <option value="parallel_join">{t(($) => $.editor.node_parallel_join)}</option>
-                      <option value="end">{t(($) => $.editor.node_end)}</option>
-                    </select>
-                    <Button size="sm" variant="outline" onClick={addNode}>
-                      <Plus />
-                      {t(($) => $.actions.add_node)}
-                    </Button>
                   </div>
                 )}
               </div>
@@ -842,6 +825,10 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
                     nodes={[]}
                     selectedKey={selectedKey}
                     onSelectKey={setSelectedKey}
+                    onInsertNode={canEdit ? insertNode : undefined}
+                    onRemoveEdge={canEdit ? removeEdge : undefined}
+                    onAddBranch={canEdit ? addBranch : undefined}
+                    onConnectNode={canEdit ? connectNode : undefined}
                   />
                   {canEdit && selectedNode && selectedNode.kind !== "start" && (
                     <div className="flex justify-end border-t pt-4">
@@ -867,6 +854,7 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
                       <WorkflowNodeDefinitionInspector
                         node={selectedNode}
                         definition={definition}
+                        actorOptions={actorOptions}
                         readOnly={!canEdit}
                         onChange={changeNode}
                       />

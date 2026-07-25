@@ -426,7 +426,7 @@ func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Re
 		)
 	} else {
 		allowed, permissionErr = h.canSubmitWorkflowNode(
-			r.Context(), instance, nodeDefinition, actorID,
+			r.Context(), instance, node, nodeDefinition, actorID,
 		)
 	}
 	if permissionErr != nil {
@@ -561,10 +561,33 @@ func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Re
 func (h *Handler) canSubmitWorkflowNode(
 	ctx context.Context,
 	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
 	nodeDefinition workflowdomain.NodeDefinition,
 	userID pgtype.UUID,
 ) (bool, error) {
 	if nodeDefinition.OwnerRole == "" {
+		participants, err := h.Queries.ListWorkflowNodeParticipants(
+			ctx,
+			db.ListWorkflowNodeParticipantsParams{
+				WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+			},
+		)
+		if err != nil {
+			return false, err
+		}
+		hasOwner := false
+		for _, participant := range participants {
+			if participant.Role != "owner" {
+				continue
+			}
+			hasOwner = true
+			if participant.ActorType == "member" && participant.ActorID == userID {
+				return true, nil
+			}
+		}
+		if hasOwner {
+			return false, nil
+		}
 		return instance.StartedByType == "member" && instance.StartedByID == userID, nil
 	}
 	assignments, err := h.Queries.ListWorkflowRoleAssignments(ctx, db.ListWorkflowRoleAssignmentsParams{
@@ -774,7 +797,7 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		allowed, err = h.canSubmitWorkflowNode(
-			r.Context(), instance, nodeDefinition, actorID,
+			r.Context(), instance, node, nodeDefinition, actorID,
 		)
 		if err == nil && !allowed {
 			member, memberErr := h.Queries.GetMemberByUserAndWorkspace(

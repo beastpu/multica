@@ -83,10 +83,21 @@ vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey?: unknown[] }) => {
     if (options.queryKey?.includes("members")) {
       return {
-        data: [{ user_id: "user-1", role: "admin" }],
+        data: [{
+          user_id: "user-1",
+          role: "admin",
+          name: "Ada",
+          email: "ada@example.com",
+        }],
         isLoading: false,
         isError: false,
       };
+    }
+    if (options.queryKey?.includes("agents")) {
+      return { data: [], isLoading: false, isError: false };
+    }
+    if (options.queryKey?.includes("squads")) {
+      return { data: [], isLoading: false, isError: false };
     }
     return { data: detail, isLoading: false, isError: false };
   },
@@ -104,6 +115,8 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("@multica/core/workspace/queries", () => ({
   memberListOptions: () => ({ queryKey: ["members"] }),
+  agentListOptions: () => ({ queryKey: ["agents"] }),
+  squadListOptions: () => ({ queryKey: ["squads"] }),
 }));
 
 vi.mock("@multica/core/workflows", () => ({
@@ -180,12 +193,36 @@ vi.mock("../layout/collection-page", () => ({
 vi.mock("./workflow-canvas", () => ({
   WorkflowCanvas: ({
     onSelectKey,
+    onInsertNode,
+    onAddBranch,
   }: {
     onSelectKey?: (key: string) => void;
+    onInsertNode?: (
+      kind: "activity",
+      target: { from: string; to: string },
+    ) => void;
+    onAddBranch?: (kind: "activity", from: string) => void;
   }) => (
-    <button type="button" onClick={() => onSelectKey?.("work")}>
-      Work node
-    </button>
+    <>
+      <button type="button" onClick={() => onSelectKey?.("work")}>
+        Work node
+      </button>
+      <button
+        type="button"
+        onClick={() => onInsertNode?.("activity", {
+          from: "work",
+          to: "end",
+        })}
+      >
+        Insert activity between Work and End
+      </button>
+      <button
+        type="button"
+        onClick={() => onAddBranch?.("activity", "work")}
+      >
+        Add parallel activity from Work
+      </button>
+    </>
   ),
 }));
 
@@ -266,5 +303,70 @@ describe("WorkflowTemplatePage", () => {
     const dialog = await screen.findByRole("alertdialog");
     await user.click(within(dialog).getByRole("button", { name: "Archive" }));
     await waitFor(() => expect(mocks.archive).toHaveBeenCalledTimes(1));
+  });
+
+  it("inserts a connected node from the graph instead of creating an orphan", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(screen.queryByLabelText("New node kind")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Choose a downstream node"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", {
+      name: "Insert activity between Work and End",
+    }));
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+
+    const input = mocks.updateDraft.mock.calls[0]![0] as {
+      definition: typeof definition;
+    };
+    const inserted = input.definition.nodes.find(
+      (candidate) => candidate.key !== "start" &&
+        candidate.key !== "work" &&
+        candidate.key !== "end",
+    );
+    expect(inserted).toMatchObject({
+      kind: "activity",
+      name: "New activity",
+    });
+    expect(input.definition.edges).toEqual([
+      { from: "start", to: "work" },
+      { from: "work", to: inserted?.key },
+      { from: inserted?.key, to: "end" },
+    ]);
+  });
+
+  it("adds a direct parallel edge from the node handle without a split node", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", {
+      name: "Add parallel activity from Work",
+    }));
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+
+    const input = mocks.updateDraft.mock.calls[0]![0] as {
+      definition: typeof definition;
+    };
+    const branch = input.definition.nodes.find(
+      (candidate) => candidate.kind === "activity" &&
+        candidate.key !== "work",
+    );
+    expect(
+      input.definition.nodes.some(
+        (candidate) => candidate.kind === "parallel_split",
+      ),
+    ).toBe(false);
+    expect(branch).toMatchObject({
+      kind: "activity",
+      name: "New activity",
+    });
+    expect(input.definition.edges).toEqual([
+      { from: "start", to: "work" },
+      { from: "work", to: "end" },
+      { from: "work", to: branch?.key },
+    ]);
   });
 });

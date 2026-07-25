@@ -125,6 +125,7 @@ func (h *Handler) ConfirmWorkflowSubmissionTasks(w http.ResponseWriter, r *http.
 	allowed, err := h.canManageWorkflowNode(
 		r.Context(),
 		instance,
+		node,
 		nodeDefinition,
 		userUUID,
 	)

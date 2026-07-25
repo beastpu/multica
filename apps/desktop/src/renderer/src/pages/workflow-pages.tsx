@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Navigate, useParams } from "react-router-dom";
-import { useWorkspaceFeatureEnabled } from "@multica/core/config";
+import { useWorkspaceFeatureState } from "@multica/core/config";
 import { WORKFLOWS_ACTIVITY_ENGINE_FLAG } from "@multica/core/feature-flags";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -13,12 +13,15 @@ import { useDocumentTitle } from "@/hooks/use-document-title";
 
 function WorkflowRouteGate({ children }: { children: ReactNode }) {
   const wsId = useWorkspaceId();
-  const enabled = useWorkspaceFeatureEnabled(
+  const featureState = useWorkspaceFeatureState(
     wsId,
     WORKFLOWS_ACTIVITY_ENGINE_FLAG,
   );
   const paths = useWorkspacePaths();
-  return enabled ? children : <Navigate to={paths.issues()} replace />;
+  if (featureState === "loading") return null;
+  return featureState === "enabled"
+    ? children
+    : <Navigate to={paths.issues()} replace />;
 }
 
 export function WorkflowsRoute() {

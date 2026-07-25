@@ -391,22 +391,67 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 	reconcileWorked, reconcileErr := NewWorkflowReconciler(testHandler).
 		ProcessNext(ctx)
 	testHandler.FeatureFlags = previousFlags
-	if reconcileErr != nil || reconcileWorked {
+	if reconcileErr != nil || !reconcileWorked {
 		t.Fatalf(
-			"paused reconciler worked=%v err=%v, want false and nil",
+			"paused reconciler worked=%v err=%v, want true and nil",
 			reconcileWorked,
 			reconcileErr,
 		)
 	}
 	var reconcileStillPending bool
+	var reconcileDeferred bool
 	if err := testPool.QueryRow(
 		ctx,
-		`SELECT last_reconciled_at IS NULL FROM workflow_instance WHERE id = $1`,
+		`SELECT last_reconciled_at IS NULL, reconcile_after > now()
+		 FROM workflow_instance WHERE id = $1`,
 		instanceID,
-	).Scan(&reconcileStillPending); err != nil || !reconcileStillPending {
+	).Scan(&reconcileStillPending, &reconcileDeferred); err != nil ||
+		!reconcileStillPending || !reconcileDeferred {
 		t.Fatalf(
-			"paused reconcile consumed pending signal: pending=%v err=%v",
+			"paused reconcile was not deferred: pending=%v deferred=%v err=%v",
 			reconcileStillPending,
+			reconcileDeferred,
+			err,
+		)
+	}
+	fairnessHostID := createWorkflowHostForTest(t, "Workflow fairness host")
+	fairnessWorkflow := startWorkflowForTest(
+		t,
+		fairnessHostID,
+		templateID,
+		[]map[string]any{{
+			"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
+		}},
+		"runtime-test-fairness-start",
+	)
+	if _, err := testPool.Exec(
+		ctx,
+		`UPDATE workflow_instance
+		 SET last_reconciled_at = NULL, reconcile_after = NULL
+		 WHERE id = $1`,
+		fairnessWorkflow.Instance.ID,
+	); err != nil {
+		t.Fatalf("mark fairness workflow pending: %v", err)
+	}
+	fairnessWorked, fairnessErr := NewWorkflowReconciler(testHandler).
+		ProcessNext(ctx)
+	if fairnessErr != nil || !fairnessWorked {
+		t.Fatalf(
+			"eligible workflow behind deferred workflow worked=%v err=%v",
+			fairnessWorked,
+			fairnessErr,
+		)
+	}
+	var fairnessReconciled bool
+	if err := testPool.QueryRow(
+		ctx,
+		`SELECT last_reconciled_at IS NOT NULL
+		 FROM workflow_instance WHERE id = $1`,
+		fairnessWorkflow.Instance.ID,
+	).Scan(&fairnessReconciled); err != nil || !fairnessReconciled {
+		t.Fatalf(
+			"eligible workflow behind deferred workflow was not reconciled: reconciled=%v err=%v",
+			fairnessReconciled,
 			err,
 		)
 	}
@@ -547,7 +592,9 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 		)
 	}
 	if _, err := testPool.Exec(ctx, `
-		UPDATE workflow_instance SET last_reconciled_at = NULL WHERE id = $1
+		UPDATE workflow_instance
+		SET last_reconciled_at = NULL, reconcile_after = NULL
+		WHERE id = $1
 	`, instanceID); err != nil {
 		t.Fatalf("make workflow eligible for reconcile worker: %v", err)
 	}
@@ -1321,7 +1368,6 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 		}},
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
-			{Key: "split", Kind: "parallel_split", Name: "Parallel work"},
 			{
 				Key: "analysis", Kind: "activity", Name: "Analysis", OwnerRole: "owner",
 				Executor: ownerExecutor, IssuePolicy: "fixed",
@@ -1357,9 +1403,8 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 			{Key: "direct_end", Kind: "end", Name: "Direct end"},
 		},
 		Edges: []workflowdomain.EdgeDefinition{
-			{From: "start", To: "split"},
-			{From: "split", To: "analysis"},
-			{From: "split", To: "implementation"},
+			{From: "start", To: "analysis"},
+			{From: "start", To: "implementation"},
 			{From: "analysis", To: "join"},
 			{From: "implementation", To: "join"},
 			{From: "join", To: "route"},
@@ -1464,6 +1509,41 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 	}
 	if managedHostStatus != "done" {
 		t.Fatalf("managed workflow host status after completion = %q, want done", managedHostStatus)
+	}
+	if _, err := testPool.Exec(
+		ctx,
+		`UPDATE issue SET status = 'in_progress', updated_at = now() WHERE id = $1`,
+		hostID,
+	); err != nil {
+		t.Fatalf("drift managed workflow host status: %v", err)
+	}
+	if _, err := testPool.Exec(
+		ctx,
+		`UPDATE workflow_instance
+		 SET last_reconciled_at = now() - interval '1 minute'
+		 WHERE id = $1`,
+		instanceID,
+	); err != nil {
+		t.Fatalf("make managed workflow repair due: %v", err)
+	}
+	repaired, repairErr := NewWorkflowReconciler(testHandler).ProcessNext(ctx)
+	if repairErr != nil || !repaired {
+		t.Fatalf(
+			"repair completed workflow host worked=%v err=%v",
+			repaired,
+			repairErr,
+		)
+	}
+	if err := testPool.QueryRow(
+		ctx,
+		`SELECT status FROM issue WHERE id = $1`,
+		hostID,
+	).Scan(&managedHostStatus); err != nil || managedHostStatus != "done" {
+		t.Fatalf(
+			"repaired managed workflow host status = %q, want done, err=%v",
+			managedHostStatus,
+			err,
+		)
 	}
 	reviewEnd := latestWorkflowNodeForTest(t, instanceID, "review_end")
 	directEnd := latestWorkflowNodeForTest(t, instanceID, "direct_end")
@@ -1920,6 +2000,117 @@ func TestWorkflowCapabilityMatchUsesStructuredEnabledSkill(t *testing.T) {
 	if assigneeType == nil || *assigneeType != "agent" ||
 		assigneeID == nil || *assigneeID != agentID {
 		t.Fatalf("capability issue assignee = %v/%v", assigneeType, assigneeID)
+	}
+}
+
+func TestWorkflowDirectExecutorDefaultsAndIssueOverrides(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+	defaultAgentID := createHandlerTestAgent(t, "workflow-default-agent", nil)
+	overrideAgentID := createHandlerTestAgent(t, "workflow-override-agent", nil)
+
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Direct executor",
+		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "work", Kind: "activity", Name: "Backend development",
+				IssuePolicy: "fixed",
+				Executor: workflowdomain.ExecutorDefinition{
+					Strategies: []workflowdomain.ExecutorStrategy{
+						{
+							Kind: "fixed_actor", ActorType: "agent",
+							ActorID: defaultAgentID,
+						},
+						{Kind: "manual"},
+					},
+				},
+				IssueTemplates: []workflowdomain.IssueTemplate{
+					{
+						Key: "implementation", Title: "Implement {{host.title}}",
+						Required: true,
+					},
+					{
+						Key: "verification", Title: "Verify {{host.title}}",
+						AssigneeType: "agent", AssigneeID: overrideAgentID,
+						Required: true,
+					},
+				},
+				Completion: workflowdomain.CompletionDefinition{
+					RequiredIssueOutcome: "done",
+				},
+			},
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "work"},
+			{From: "work", To: "end"},
+		},
+	}
+	if err := workflowdomain.ValidateDefinition(definition); err != nil {
+		t.Fatalf("direct executor definition invalid: %v", err)
+	}
+	templateID := createPublishedWorkflowTemplateForTest(
+		t,
+		"Direct executor template",
+		definition,
+	)
+	hostID := createWorkflowHostForTest(t, "Workflow direct executor host")
+	started := startWorkflowForTest(
+		t,
+		hostID,
+		templateID,
+		nil,
+		"direct-executor-start",
+	)
+	if started.Instance.Status != "running" || len(started.Tasks) != 2 {
+		t.Fatalf("direct executor workflow start = %#v", started)
+	}
+	workNode := findWorkflowNodeResponse(t, started.Nodes, "work", 1)
+	participants, err := testHandler.Queries.ListWorkflowNodeParticipants(
+		ctx,
+		db.ListWorkflowNodeParticipantsParams{
+			WorkflowNodeInstanceID: parseUUID(workNode.ID),
+			WorkspaceID:            parseUUID(testWorkspaceID),
+		},
+	)
+	if err != nil || len(participants) != 1 ||
+		participants[0].Role != "owner" ||
+		participants[0].ActorType != "agent" ||
+		uuidToString(participants[0].ActorID) != defaultAgentID {
+		t.Fatalf("direct node owner participants = %#v, err=%v", participants, err)
+	}
+
+	expected := map[string]string{
+		"implementation": defaultAgentID,
+		"verification":   overrideAgentID,
+	}
+	for _, task := range started.Tasks {
+		if task.IssueID == nil {
+			t.Fatalf("task %s was not materialized: %#v", task.TaskKey, task)
+		}
+		var assigneeType *string
+		var assigneeID *string
+		if err := testPool.QueryRow(ctx, `
+			SELECT assignee_type, assignee_id::text
+			FROM issue
+			WHERE id = $1
+		`, *task.IssueID).Scan(&assigneeType, &assigneeID); err != nil {
+			t.Fatalf("load direct executor issue: %v", err)
+		}
+		if assigneeType == nil || *assigneeType != "agent" ||
+			assigneeID == nil || *assigneeID != expected[task.TaskKey] {
+			t.Fatalf(
+				"task %s assignee = %v/%v, want agent/%s",
+				task.TaskKey,
+				assigneeType,
+				assigneeID,
+				expected[task.TaskKey],
+			)
+		}
 	}
 }
 
@@ -3221,7 +3412,7 @@ func TestWorkflowMissingRoleCreatesInboxAction(t *testing.T) {
 	}
 }
 
-func TestWorkflowNodeOwnerCanCompleteAndRollback(t *testing.T) {
+func TestWorkflowNodeOwnerCanCompleteButOnlyAdminCanRollback(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
 	ctx := context.Background()
@@ -3343,9 +3534,31 @@ func TestWorkflowNodeOwnerCanCompleteAndRollback(t *testing.T) {
 	)
 	rollbackRequest.Header.Set("X-User-ID", ownerID)
 	testHandler.RollbackWorkflowNode(rollback, rollbackRequest)
+	if rollback.Code != http.StatusForbidden {
+		t.Fatalf(
+			"node owner rollback status = %d, want forbidden, body = %s",
+			rollback.Code,
+			rollback.Body.String(),
+		)
+	}
+	rollback = httptest.NewRecorder()
+	rollbackRequest = withURLParam(
+		newRequest(
+			http.MethodPost,
+			"/api/workflow-node-instances/"+work.ID+
+				"/rollback?workspace_id="+testWorkspaceID,
+			map[string]any{
+				"reason":          "Admin approved rework",
+				"idempotency_key": "admin-rollback-work",
+			},
+		),
+		"nodeInstanceId",
+		work.ID,
+	)
+	testHandler.RollbackWorkflowNode(rollback, rollbackRequest)
 	if rollback.Code != http.StatusOK {
 		t.Fatalf(
-			"node owner rollback status = %d, body = %s",
+			"workspace admin rollback status = %d, body = %s",
 			rollback.Code,
 			rollback.Body.String(),
 		)
@@ -3858,7 +4071,7 @@ func cleanupWorkflowRuntimeTest(t *testing.T) {
 				t.Fatalf("cleanup %s: %v", table, err)
 			}
 		}
-		if _, err := testPool.Exec(ctx, `DELETE FROM issue WHERE workspace_id = $1 AND (title IN ('Workflow runtime host', 'Atomic workflow host', 'Workflow guard host', 'Workflow required child', 'Workflow optional child', 'Workflow DAG host', 'Workflow any join host', 'Workflow needs setup host', 'Workflow owner rollback host', 'Dynamic investigation', 'Retry investigation') OR title LIKE 'Workflow executor %' OR origin_type = 'workflow')`, testWorkspaceID); err != nil {
+		if _, err := testPool.Exec(ctx, `DELETE FROM issue WHERE workspace_id = $1 AND (title IN ('Workflow runtime host', 'Atomic workflow host', 'Workflow guard host', 'Workflow required child', 'Workflow optional child', 'Workflow DAG host', 'Workflow any join host', 'Workflow needs setup host', 'Workflow owner rollback host', 'Workflow fairness host', 'Dynamic investigation', 'Retry investigation') OR title LIKE 'Workflow executor %' OR origin_type = 'workflow')`, testWorkspaceID); err != nil {
 			t.Fatalf("cleanup workflow issues: %v", err)
 		}
 	}

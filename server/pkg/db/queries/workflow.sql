@@ -1322,43 +1322,87 @@ RETURNING task.*;
 WITH candidate AS (
     SELECT instance.id
     FROM workflow_instance instance
-    WHERE instance.status = 'running'
-      AND (
-        instance.last_reconciled_at IS NULL
-        OR instance.last_reconciled_at < now() - make_interval(secs => @minimum_interval_seconds)
+    WHERE (
+        instance.reconcile_after IS NULL
+        OR instance.reconcile_after <= now()
       )
-      AND EXISTS (
-        SELECT 1
-        FROM workflow_node_instance node
-        LEFT JOIN workflow_node_task task
-          ON task.workflow_node_instance_id = node.id
-         AND task.workspace_id = node.workspace_id
-        LEFT JOIN issue bound_issue
-          ON bound_issue.id = task.issue_id
-         AND bound_issue.workspace_id = task.workspace_id
-        WHERE node.workflow_instance_id = instance.id
-          AND node.workspace_id = instance.workspace_id
-          AND node.status IN ('active', 'waiting', 'blocked')
+      AND (
+        (
+          instance.status = 'running'
           AND (
             instance.last_reconciled_at IS NULL
-            OR node.updated_at > instance.last_reconciled_at
-            OR task.updated_at > instance.last_reconciled_at
-            OR bound_issue.updated_at > instance.last_reconciled_at
+            OR instance.last_reconciled_at < now() - make_interval(secs => @minimum_interval_seconds)
           )
+          AND (
+            (
+              instance.host_status_mode = 'managed'
+              AND EXISTS (
+                SELECT 1
+                FROM issue host
+                WHERE host.id = instance.host_issue_id
+                  AND host.workspace_id = instance.workspace_id
+                  AND host.status <> 'in_progress'
+              )
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM workflow_node_instance node
+              LEFT JOIN workflow_node_task task
+                ON task.workflow_node_instance_id = node.id
+               AND task.workspace_id = node.workspace_id
+              LEFT JOIN issue bound_issue
+                ON bound_issue.id = task.issue_id
+               AND bound_issue.workspace_id = task.workspace_id
+              WHERE node.workflow_instance_id = instance.id
+                AND node.workspace_id = instance.workspace_id
+                AND node.status IN ('active', 'waiting', 'blocked')
+                AND (
+                  instance.last_reconciled_at IS NULL
+                  OR node.updated_at > instance.last_reconciled_at
+                  OR task.updated_at > instance.last_reconciled_at
+                  OR bound_issue.updated_at > instance.last_reconciled_at
+                )
+            )
+          )
+        )
+        OR (
+          instance.status = 'completed'
+          AND instance.host_status_mode = 'managed'
+          AND (
+            instance.last_reconciled_at IS NULL
+            OR instance.last_reconciled_at < now() - make_interval(secs => @minimum_interval_seconds)
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM issue host
+            WHERE host.id = instance.host_issue_id
+              AND host.workspace_id = instance.workspace_id
+              AND host.status <> 'done'
+          )
+        )
       )
     ORDER BY instance.last_reconciled_at NULLS FIRST, instance.updated_at, instance.id
     FOR UPDATE OF instance SKIP LOCKED
     LIMIT 1
 )
 UPDATE workflow_instance instance
-SET last_reconciled_at = now()
+SET last_reconciled_at = now(),
+    reconcile_after = NULL
 FROM candidate
 WHERE instance.id = candidate.id
 RETURNING instance.*;
 
 -- name: MarkWorkflowInstanceReconcilePending :one
 UPDATE workflow_instance
-SET last_reconciled_at = NULL
+SET last_reconciled_at = NULL,
+    reconcile_after = NULL
+WHERE id = @id AND workspace_id = @workspace_id
+RETURNING *;
+
+-- name: DeferWorkflowInstanceReconcile :one
+UPDATE workflow_instance
+SET last_reconciled_at = NULL,
+    reconcile_after = now() + make_interval(secs => @defer_seconds)
 WHERE id = @id AND workspace_id = @workspace_id
 RETURNING *;
 

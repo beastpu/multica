@@ -32,6 +32,43 @@ func resolveWorkflowTaskExecutor(
 	task workflowdomain.IssueTemplate,
 	roles map[string]validatedWorkflowRoleAssignment,
 ) (workflowExecutorDecision, error) {
+	if task.AssigneeType != "" && task.AssigneeID != "" {
+		assignment, err := directWorkflowExecutorAssignment(
+			task.AssigneeType,
+			task.AssigneeID,
+		)
+		if err != nil {
+			return workflowExecutorDecision{}, err
+		}
+		if err := validateWorkflowExecutorActor(
+			ctx,
+			q,
+			workspaceID,
+			assignment,
+		); err == nil {
+			return workflowExecutorDecision{
+				Assignment: &assignment,
+				Strategy:   "fixed_actor",
+				Candidates: workflowExecutorCandidates(assignment),
+				Reason:     "Resolved from the issue template direct assignee",
+				Snapshot: workflowDirectActorSnapshot(
+					"fixed_actor",
+					task.AssigneeType,
+					task.AssigneeID,
+				),
+			}, nil
+		}
+		return workflowExecutorDecision{
+			Strategy:   "manual",
+			Candidates: workflowExecutorCandidates(assignment),
+			Reason:     "The issue template direct assignee is unavailable",
+			Snapshot: workflowDirectActorSnapshot(
+				"fixed_actor",
+				task.AssigneeType,
+				task.AssigneeID,
+			),
+		}, nil
+	}
 	if task.AssigneeRole != "" {
 		if assignment, ok := roles[task.AssigneeRole]; ok {
 			return workflowExecutorDecision{
@@ -44,6 +81,32 @@ func resolveWorkflowTaskExecutor(
 	}
 	for _, strategy := range node.Executor.Strategies {
 		switch strategy.Kind {
+		case "fixed_actor":
+			assignment, err := directWorkflowExecutorAssignment(
+				strategy.ActorType,
+				strategy.ActorID,
+			)
+			if err != nil {
+				return workflowExecutorDecision{}, err
+			}
+			if err := validateWorkflowExecutorActor(
+				ctx,
+				q,
+				workspaceID,
+				assignment,
+			); err == nil {
+				return workflowExecutorDecision{
+					Assignment: &assignment,
+					Strategy:   strategy.Kind,
+					Candidates: workflowExecutorCandidates(assignment),
+					Reason:     "Resolved from the node direct executor",
+					Snapshot: workflowDirectActorSnapshot(
+						strategy.Kind,
+						strategy.ActorType,
+						strategy.ActorID,
+					),
+				}, nil
+			}
 		case "fixed_role", "fallback_role":
 			if assignment, ok := roles[strategy.Role]; ok {
 				return workflowExecutorDecision{
@@ -99,6 +162,21 @@ func resolveWorkflowTaskExecutor(
 		Strategy: "manual", Candidates: []byte("[]"),
 		Reason:   "No executor strategy resolved; manual selection is required",
 		Snapshot: workflowExecutorSnapshot("manual", "", "", "", ""),
+	}, nil
+}
+
+func directWorkflowExecutorAssignment(
+	actorType string,
+	actorID string,
+) (validatedWorkflowRoleAssignment, error) {
+	parsedActorID, err := util.ParseUUID(actorID)
+	if err != nil {
+		return validatedWorkflowRoleAssignment{}, err
+	}
+	return validatedWorkflowRoleAssignment{
+		ActorType: actorType,
+		ActorID:   parsedActorID,
+		Source:    "template",
 	}, nil
 }
 
@@ -285,6 +363,15 @@ func workflowExecutorSnapshot(strategy, role, capability, node, field string) []
 	encoded, _ := json.Marshal(map[string]any{
 		"strategy": strategy, "role": role, "capability": capability,
 		"node": node, "field": field,
+	})
+	return encoded
+}
+
+func workflowDirectActorSnapshot(strategy, actorType, actorID string) []byte {
+	encoded, _ := json.Marshal(map[string]any{
+		"strategy":   strategy,
+		"actor_type": actorType,
+		"actor_id":   actorID,
 	})
 	return encoded
 }

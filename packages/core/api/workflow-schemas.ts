@@ -35,6 +35,8 @@ const WorkflowIssueTemplateSchema = z.object({
   title: z.string(),
   description: z.string().optional(),
   assignee_role: z.string().optional(),
+  assignee_type: z.enum(["member", "agent", "squad"]).optional(),
+  assignee_id: z.string().optional(),
   required: z.boolean().optional().default(false),
   initial_status: z.string().optional(),
   priority: z.string().optional(),
@@ -74,6 +76,8 @@ export const WorkflowNodeDefinitionSchema = z.object({
     strategies: arrayOrEmpty(z.object({
       kind: z.string(),
       role: z.string().optional(),
+      actor_type: z.enum(["member", "agent", "squad"]).optional(),
+      actor_id: z.string().optional(),
       capability: z.string().optional(),
       node: z.string().optional(),
       field: z.string().optional(),

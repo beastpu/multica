@@ -3,6 +3,7 @@ import { parseWithFallback } from "./schema";
 import {
   EMPTY_WORKFLOW_INSTANCE_DETAIL,
   WorkflowInstanceDetailSchema,
+  WorkflowNodeDefinitionSchema,
   WorkflowNodeDetailSchema,
   WorkflowSubmissionSchema,
 } from "./workflow-schemas";
@@ -136,5 +137,39 @@ describe("workflow response schemas", () => {
     expect(valid.proposed_tasks).toHaveLength(1);
     expect(valid.proposed_tasks[0]?.key).toBe("investigate");
     expect(malformed.proposed_tasks).toEqual([]);
+  });
+
+  it("preserves direct node executors and child issue overrides", () => {
+    const parsed = WorkflowNodeDefinitionSchema.parse({
+      key: "backend",
+      kind: "activity",
+      name: "Backend development",
+      executor: {
+        strategies: [{
+          kind: "fixed_actor",
+          actor_type: "agent",
+          actor_id: "agent-default",
+        }, {
+          kind: "manual",
+        }],
+      },
+      issue_templates: [{
+        key: "verify",
+        title: "Verify implementation",
+        assignee_type: "squad",
+        assignee_id: "squad-review",
+        required: true,
+      }],
+    });
+
+    expect(parsed.executor?.strategies[0]).toMatchObject({
+      kind: "fixed_actor",
+      actor_type: "agent",
+      actor_id: "agent-default",
+    });
+    expect(parsed.issue_templates[0]).toMatchObject({
+      assignee_type: "squad",
+      assignee_id: "squad-review",
+    });
   });
 });

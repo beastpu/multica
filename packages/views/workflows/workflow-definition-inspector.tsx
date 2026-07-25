@@ -27,12 +27,32 @@ const fieldTypes = [
   "squad",
 ] as const;
 const executorKinds = [
+  "fixed_actor",
   "fixed_role",
   "fallback_role",
   "previous_selected",
   "capability_match",
   "manual",
 ] as const;
+
+export interface WorkflowActorOption {
+  type: "member" | "agent" | "squad";
+  id: string;
+  name: string;
+}
+
+function actorOptionValue(actor: Pick<WorkflowActorOption, "type" | "id">) {
+  return `${actor.type}:${actor.id}`;
+}
+
+function parseActorOption(value: string) {
+  const separator = value.indexOf(":");
+  if (separator < 1) return null;
+  return {
+    type: value.slice(0, separator) as WorkflowActorOption["type"],
+    id: value.slice(separator + 1),
+  };
+}
 
 function stableKey(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -395,11 +415,13 @@ export function WorkflowDefinitionInspector({
 function ExecutorEditor({
   node,
   definition,
+  actorOptions,
   readOnly,
   onChange,
 }: {
   node: WorkflowNodeDefinition;
   definition: WorkflowDefinition;
+  actorOptions: WorkflowActorOption[];
   readOnly: boolean;
   onChange: (node: WorkflowNodeDefinition) => void;
 }) {
@@ -455,6 +477,40 @@ function ExecutorEditor({
                 <option value="">—</option>
                 {definition.roles.map((role) => (
                   <option key={role.key} value={role.key}>{role.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {strategy.kind === "fixed_actor" && (
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.direct_executor)}</Label>
+              <select
+                aria-label={t(($) => $.editor.direct_executor)}
+                value={strategy.actor_type && strategy.actor_id
+                  ? actorOptionValue({
+                      type: strategy.actor_type,
+                      id: strategy.actor_id,
+                    })
+                  : ""}
+                disabled={readOnly}
+                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                onChange={(event) => {
+                  const actor = parseActorOption(event.target.value);
+                  update(index, {
+                    kind: "fixed_actor",
+                    actor_type: actor?.type,
+                    actor_id: actor?.id,
+                  });
+                }}
+              >
+                <option value="">—</option>
+                {actorOptions.map((actor) => (
+                  <option
+                    key={actorOptionValue(actor)}
+                    value={actorOptionValue(actor)}
+                  >
+                    {actor.name} · {actor.type}
+                  </option>
                 ))}
               </select>
             </div>
@@ -542,11 +598,13 @@ function ExecutorEditor({
 function IssueTemplateEditor({
   node,
   roles,
+  actorOptions,
   readOnly,
   onChange,
 }: {
   node: WorkflowNodeDefinition;
   roles: WorkflowRoleDefinition[];
+  actorOptions: WorkflowActorOption[];
   readOnly: boolean;
   onChange: (node: WorkflowNodeDefinition) => void;
 }) {
@@ -609,11 +667,48 @@ function IssueTemplateEditor({
                 onChange={(event) => update(index, {
                   ...template,
                   assignee_role: event.target.value || undefined,
+                  assignee_type: undefined,
+                  assignee_id: undefined,
                 })}
               >
                 <option value="">—</option>
                 {roles.map((role) => (
                   <option key={role.key} value={role.key}>{role.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.direct_assignee)}</Label>
+              <select
+                aria-label={t(($) => $.editor.direct_assignee)}
+                value={template.assignee_type && template.assignee_id
+                  ? actorOptionValue({
+                      type: template.assignee_type,
+                      id: template.assignee_id,
+                    })
+                  : ""}
+                disabled={readOnly}
+                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                onChange={(event) => {
+                  const actor = parseActorOption(event.target.value);
+                  update(index, {
+                    ...template,
+                    assignee_role: undefined,
+                    assignee_type: actor?.type,
+                    assignee_id: actor?.id,
+                  });
+                }}
+              >
+                <option value="">
+                  {t(($) => $.editor.inherit_node_executor)}
+                </option>
+                {actorOptions.map((actor) => (
+                  <option
+                    key={actorOptionValue(actor)}
+                    value={actorOptionValue(actor)}
+                  >
+                    {actor.name} · {actor.type}
+                  </option>
                 ))}
               </select>
             </div>
@@ -1002,11 +1097,13 @@ function CompletionEditor({
 export function WorkflowNodeDefinitionInspector({
   node,
   definition,
+  actorOptions = [],
   readOnly,
   onChange,
 }: {
   node: WorkflowNodeDefinition;
   definition: WorkflowDefinition;
+  actorOptions?: WorkflowActorOption[];
   readOnly: boolean;
   onChange: (node: WorkflowNodeDefinition) => void;
 }) {
@@ -1168,6 +1265,7 @@ export function WorkflowNodeDefinitionInspector({
             <ExecutorEditor
               node={node}
               definition={definition}
+              actorOptions={actorOptions}
               readOnly={readOnly}
               onChange={onChange}
             />
@@ -1199,6 +1297,7 @@ export function WorkflowNodeDefinitionInspector({
             <IssueTemplateEditor
               node={node}
               roles={definition.roles}
+              actorOptions={actorOptions}
               readOnly={readOnly}
               onChange={onChange}
             />

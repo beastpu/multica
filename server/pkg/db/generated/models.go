@@ -1365,6 +1365,7 @@ type WorkflowInstance struct {
 	LastReconciledAt  pgtype.Timestamptz `json:"last_reconciled_at"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	ReconcileAfter    pgtype.Timestamptz `json:"reconcile_after"`
 }
 
 type WorkflowInstanceRoleAssignment struct {

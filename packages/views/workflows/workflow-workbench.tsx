@@ -1827,8 +1827,11 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         data-tab-scroll-root="workflow-workbench"
         className="min-h-0 flex-1 overflow-y-auto"
       >
-        <section className="border-b bg-muted/15 px-5 py-4">
-          <div className="mx-auto max-w-7xl">
+        <section
+          data-testid="workflow-activity-map"
+          className="border-b bg-muted/15 px-5 py-4"
+        >
+          <div className="mx-auto max-w-[90rem]">
             <h2 className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               <CircleDot className="size-3.5" />
               {t(($) => $.workbench.activity_map)}
@@ -1854,8 +1857,8 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
           </section>
         )}
 
-        <div className="mx-auto grid max-w-7xl gap-5 px-5 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.42fr)]">
-          <section className="min-w-0 space-y-4">
+        <div className="mx-auto flex max-w-[90rem] flex-col gap-5 px-5 py-5">
+          <section className="order-2 min-w-0 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-medium">
@@ -2109,10 +2112,23 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             )}
           </section>
 
-          <aside className="min-w-0">
-            <div className="sticky top-5 overflow-hidden rounded-xl border bg-surface">
+          <section
+            data-testid="workflow-issue-workspace"
+            className="order-1 min-w-0"
+          >
+            <div className="overflow-hidden rounded-xl border bg-surface">
               <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
-                <h2 className="text-sm font-medium">{t(($) => $.workbench.tasks)}</h2>
+                <div>
+                  <h2 className="text-sm font-medium">
+                    {t(($) => $.workbench.tasks)}
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {t(($) => $.workbench.issue_progress, {
+                      done: visibleIssues.filter((issue) => issue.status === "done").length,
+                      total: visibleIssues.length,
+                    })}
+                  </p>
+                </div>
                 <div className="flex rounded-lg bg-muted p-0.5">
                   <button
                     type="button"
@@ -2136,16 +2152,16 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                   </button>
                 </div>
               </div>
-              <div className="divide-y">
+              <div className="grid gap-px bg-border md:grid-cols-2 xl:grid-cols-3">
                 {visibleIssues.length === 0 ? (
-                  <p className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  <p className="bg-surface px-4 py-10 text-center text-sm text-muted-foreground md:col-span-2 xl:col-span-3">
                     {t(($) => $.workbench.no_issues)}
                   </p>
                 ) : visibleIssues.map((issue) => (
                   <AppLink
                     key={issue.id}
                     href={p.issueDetail(issue.id)}
-                    className="group flex items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/60"
+                    className="group flex items-start gap-3 bg-surface px-4 py-3 transition-colors hover:bg-muted/60"
                   >
                     <StatusIcon status={issue.status} className="mt-0.5 size-4 shrink-0" />
                     <span className="min-w-0 flex-1">
@@ -2179,9 +2195,9 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                 ))}
               </div>
             </div>
-          </aside>
+          </section>
         </div>
-        <section className="mx-auto max-w-7xl px-5 pb-5">
+        <section className="mx-auto max-w-[90rem] px-5 pb-5">
           <div className="overflow-hidden rounded-xl border bg-surface">
             <button
               type="button"

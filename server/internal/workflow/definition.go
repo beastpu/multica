@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 const DefinitionSchemaVersion = 1
@@ -73,6 +75,8 @@ type ExecutorStrategy struct {
 	Capability string `json:"capability,omitempty"`
 	Node       string `json:"node,omitempty"`
 	Field      string `json:"field,omitempty"`
+	ActorType  string `json:"actor_type,omitempty"`
+	ActorID    string `json:"actor_id,omitempty"`
 }
 
 type IssueTemplate struct {
@@ -80,6 +84,8 @@ type IssueTemplate struct {
 	Title         string `json:"title"`
 	Description   string `json:"description,omitempty"`
 	AssigneeRole  string `json:"assignee_role,omitempty"`
+	AssigneeType  string `json:"assignee_type,omitempty"`
+	AssigneeID    string `json:"assignee_id,omitempty"`
 	Required      bool   `json:"required"`
 	InitialStatus string `json:"initial_status,omitempty"`
 	Priority      string `json:"priority,omitempty"`
@@ -349,6 +355,17 @@ func validateActivity(
 				return fmt.Errorf("activity %q task %q references unknown assignee role %q", node.Key, task.Key, task.AssigneeRole)
 			}
 		}
+		if task.AssigneeRole != "" &&
+			(task.AssigneeType != "" || task.AssigneeID != "") {
+			return fmt.Errorf(
+				"activity %q task %q cannot declare both assignee_role and a direct assignee",
+				node.Key,
+				task.Key,
+			)
+		}
+		if err := validateDirectActor(task.AssigneeType, task.AssigneeID); err != nil {
+			return fmt.Errorf("activity %q task %q: %w", node.Key, task.Key, err)
+		}
 		switch task.InitialStatus {
 		case "", "backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled":
 		default:
@@ -484,6 +501,8 @@ func NormalizeProposedTasks(tasks []IssueTemplate) ([]IssueTemplate, error) {
 		task.Title = strings.TrimSpace(task.Title)
 		task.Description = strings.TrimSpace(task.Description)
 		task.AssigneeRole = strings.TrimSpace(task.AssigneeRole)
+		task.AssigneeType = strings.TrimSpace(task.AssigneeType)
+		task.AssigneeID = strings.TrimSpace(task.AssigneeID)
 		if !validKey(task.Key) {
 			return nil, fmt.Errorf("proposed task has invalid key %q", task.Key)
 		}
@@ -495,6 +514,16 @@ func NormalizeProposedTasks(tasks []IssueTemplate) ([]IssueTemplate, error) {
 			return nil, fmt.Errorf("proposed task %q title is required", task.Key)
 		}
 		if err := validateIssueTitleTemplate(task.Title); err != nil {
+			return nil, fmt.Errorf("proposed task %q: %w", task.Key, err)
+		}
+		if task.AssigneeRole != "" &&
+			(task.AssigneeType != "" || task.AssigneeID != "") {
+			return nil, fmt.Errorf(
+				"proposed task %q cannot declare both assignee_role and a direct assignee",
+				task.Key,
+			)
+		}
+		if err := validateDirectActor(task.AssigneeType, task.AssigneeID); err != nil {
 			return nil, fmt.Errorf("proposed task %q: %w", task.Key, err)
 		}
 		if task.InitialStatus == "" {
@@ -567,6 +596,10 @@ func validateExecutor(node NodeDefinition, roles map[string]RoleDefinition) erro
 	hasFallback := false
 	for _, strategy := range node.Executor.Strategies {
 		switch strategy.Kind {
+		case "fixed_actor":
+			if err := validateDirectActor(strategy.ActorType, strategy.ActorID); err != nil {
+				return fmt.Errorf("activity %q executor: %w", node.Key, err)
+			}
 		case "fixed_role", "fallback_role":
 			if _, ok := roles[strategy.Role]; !ok {
 				return fmt.Errorf("activity %q executor references unknown role %q", node.Key, strategy.Role)
@@ -611,6 +644,24 @@ func validateExecutor(node NodeDefinition, roles map[string]RoleDefinition) erro
 	}
 	if !hasFallback {
 		return fmt.Errorf("activity %q executor requires fallback_role or manual", node.Key)
+	}
+	return nil
+}
+
+func validateDirectActor(actorType, actorID string) error {
+	if actorType == "" && actorID == "" {
+		return nil
+	}
+	if actorType == "" || actorID == "" {
+		return errors.New("assignee_type and assignee_id must be declared together")
+	}
+	switch actorType {
+	case "member", "agent", "squad":
+	default:
+		return fmt.Errorf("invalid actor type %q", actorType)
+	}
+	if _, err := uuid.Parse(actorID); err != nil {
+		return fmt.Errorf("invalid actor id %q", actorID)
 	}
 	return nil
 }
@@ -804,12 +855,17 @@ func validateGraph(nodes map[string]NodeDefinition, startKey string, edges []Edg
 			if len(outgoing[key]) != 1 {
 				return fmt.Errorf("parallel join %q requires exactly one outgoing edge", key)
 			}
+		case "start", "activity":
+			// Multiple plain outgoing edges are an implicit parallel split.
 		default:
 			if len(outgoing[key]) > 1 {
 				return fmt.Errorf("node %q requires a gateway or parallel_split for multiple outgoing edges", key)
 			}
 		}
-		if node.Kind != "parallel_join" && len(incoming[key]) > 1 {
+		if node.Kind != "activity" &&
+			node.Kind != "end" &&
+			node.Kind != "parallel_join" &&
+			len(incoming[key]) > 1 {
 			return fmt.Errorf("node %q requires a parallel_join for multiple incoming edges", key)
 		}
 		if node.Kind != "gateway" {

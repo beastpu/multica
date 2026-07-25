@@ -1011,6 +1011,35 @@ func createWorkflowNodeActivationRecords(
 			return false, fmt.Errorf("create participant: %w", err)
 		}
 	}
+	if nodeDefinition.OwnerRole == "" {
+		for _, strategy := range nodeDefinition.Executor.Strategies {
+			if strategy.Kind != "fixed_actor" {
+				continue
+			}
+			assignment, err := directWorkflowExecutorAssignment(
+				strategy.ActorType,
+				strategy.ActorID,
+			)
+			if err != nil {
+				return false, fmt.Errorf("resolve direct node owner: %w", err)
+			}
+			if err := validateWorkflowExecutorActor(
+				ctx,
+				q,
+				workspaceID,
+				assignment,
+			); err != nil {
+				break
+			}
+			if _, err := q.CreateWorkflowNodeParticipant(ctx, db.CreateWorkflowNodeParticipantParams{
+				WorkspaceID: workspaceID, WorkflowNodeInstanceID: node.ID, Role: "owner",
+				ActorType: assignment.ActorType, ActorID: assignment.ActorID,
+			}); err != nil {
+				return false, fmt.Errorf("create direct node owner: %w", err)
+			}
+			break
+		}
+	}
 	needsSetup := false
 	for _, issueTemplate := range nodeDefinition.IssueTemplates {
 		snapshot, _ := json.Marshal(issueTemplate)

@@ -52,6 +52,62 @@ func TestValidateDefinition(t *testing.T) {
 	}
 }
 
+func TestValidateDefinitionAcceptsImplicitParallelOutgoingEdges(t *testing.T) {
+	activity := func(key string) NodeDefinition {
+		return NodeDefinition{Key: key, Kind: "activity", Name: key, OwnerRole: "owner"}
+	}
+	for _, test := range []struct {
+		name  string
+		nodes []NodeDefinition
+		edges []EdgeDefinition
+	}{
+		{
+			name: "start",
+			nodes: []NodeDefinition{
+				{Key: "start", Kind: "start", Name: "Start"},
+				activity("left"),
+				activity("right"),
+				activity("target"),
+				{Key: "end", Kind: "end", Name: "End"},
+			},
+			edges: []EdgeDefinition{
+				{From: "start", To: "left"},
+				{From: "start", To: "right"},
+				{From: "left", To: "target"},
+				{From: "right", To: "target"},
+				{From: "target", To: "end"},
+			},
+		},
+		{
+			name: "activity",
+			nodes: []NodeDefinition{
+				{Key: "start", Kind: "start", Name: "Start"},
+				activity("source"),
+				activity("left"),
+				activity("right"),
+				{Key: "end", Kind: "end", Name: "End"},
+			},
+			edges: []EdgeDefinition{
+				{From: "start", To: "source"},
+				{From: "source", To: "left"},
+				{From: "source", To: "right"},
+				{From: "left", To: "end"},
+				{From: "right", To: "end"},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			definition := validDefinition()
+			definition.Nodes = test.nodes
+			definition.Edges = test.edges
+			definition.Acceptance = AcceptanceDefinition{}
+			if err := ValidateDefinition(definition); err != nil {
+				t.Fatalf("ValidateDefinition() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateDefinitionRejectsCycle(t *testing.T) {
 	definition := validDefinition()
 	definition.Edges = append(definition.Edges, EdgeDefinition{From: "acceptance", To: "implementation"})
@@ -113,6 +169,90 @@ func TestValidateDefinitionRequiresExecutorFallback(t *testing.T) {
 	definition.Nodes[1].Executor.Strategies = []ExecutorStrategy{{Kind: "fixed_role", Role: "executor"}}
 	if err := ValidateDefinition(definition); err == nil || !strings.Contains(err.Error(), "fallback") {
 		t.Fatalf("ValidateDefinition() error = %v, want fallback error", err)
+	}
+}
+
+func TestValidateDefinitionAcceptsDirectNodeAndIssueExecutors(t *testing.T) {
+	definition := validDefinition()
+	definition.Nodes[1].Executor.Strategies = []ExecutorStrategy{
+		{
+			Kind:      "fixed_actor",
+			ActorType: "agent",
+			ActorID:   "550e8400-e29b-41d4-a716-446655440000",
+		},
+		{Kind: "manual"},
+	}
+	definition.Nodes[1].IssueTemplates[0].AssigneeType = "squad"
+	definition.Nodes[1].IssueTemplates[0].AssigneeID =
+		"550e8400-e29b-41d4-a716-446655440001"
+	definition.Nodes[1].IssueTemplates[0].AssigneeRole = ""
+
+	if err := ValidateDefinition(definition); err != nil {
+		t.Fatalf("ValidateDefinition() error = %v", err)
+	}
+}
+
+func TestValidateDefinitionRejectsInvalidDirectExecutor(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Definition)
+		want   string
+	}{
+		{
+			name: "node actor type",
+			mutate: func(definition *Definition) {
+				definition.Nodes[1].Executor.Strategies = []ExecutorStrategy{
+					{
+						Kind:      "fixed_actor",
+						ActorType: "robot",
+						ActorID:   "550e8400-e29b-41d4-a716-446655440000",
+					},
+					{Kind: "manual"},
+				}
+			},
+			want: "invalid actor type",
+		},
+		{
+			name: "node actor id",
+			mutate: func(definition *Definition) {
+				definition.Nodes[1].Executor.Strategies = []ExecutorStrategy{
+					{
+						Kind:      "fixed_actor",
+						ActorType: "agent",
+						ActorID:   "not-a-uuid",
+					},
+					{Kind: "manual"},
+				}
+			},
+			want: "invalid actor id",
+		},
+		{
+			name: "issue actor pair",
+			mutate: func(definition *Definition) {
+				definition.Nodes[1].IssueTemplates[0].AssigneeType = "agent"
+			},
+			want: "assignee_type and assignee_id",
+		},
+		{
+			name: "issue actor and role",
+			mutate: func(definition *Definition) {
+				definition.Nodes[1].IssueTemplates[0].AssigneeRole = "executor"
+				definition.Nodes[1].IssueTemplates[0].AssigneeType = "agent"
+				definition.Nodes[1].IssueTemplates[0].AssigneeID =
+					"550e8400-e29b-41d4-a716-446655440000"
+			},
+			want: "cannot declare both",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			definition := validDefinition()
+			test.mutate(&definition)
+			err := ValidateDefinition(definition)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateDefinition() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

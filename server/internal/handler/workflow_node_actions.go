@@ -86,7 +86,9 @@ func (h *Handler) CreateWorkflowNodeIssue(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	allowed, err := h.canManageWorkflowNode(r.Context(), instance, nodeDefinition, userUUID)
+	allowed, err := h.canManageWorkflowNode(
+		r.Context(), instance, node, nodeDefinition, userUUID,
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to verify workflow node permission")
 		return
@@ -394,7 +396,9 @@ func (h *Handler) ResolveWorkflowNodeExecutor(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	allowed, err := h.canManageWorkflowNode(r.Context(), instance, nodeDefinition, userUUID)
+	allowed, err := h.canManageWorkflowNode(
+		r.Context(), instance, node, nodeDefinition, userUUID,
+	)
 	if err != nil || !allowed {
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to verify workflow node permission")
@@ -667,10 +671,10 @@ func (h *Handler) transitionWorkflowNode(
 	}
 	manualCompletion := action == "complete" &&
 		workflowdomain.RequiresManualCompletion(nodeDefinition)
-	nodeOwnerAction := manualCompletion || action == "rollback"
+	nodeOwnerAction := manualCompletion
 	if nodeOwnerAction {
 		allowed, permissionErr := h.canManageWorkflowNode(
-			r.Context(), instance, nodeDefinition, userUUID,
+			r.Context(), instance, node, nodeDefinition, userUUID,
 		)
 		if permissionErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to verify workflow node permission")
@@ -1288,10 +1292,13 @@ func workflowTaskReplay(
 func (h *Handler) canManageWorkflowNode(
 	ctx context.Context,
 	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
 	nodeDefinition workflowdomain.NodeDefinition,
 	userID pgtype.UUID,
 ) (bool, error) {
-	allowed, err := h.canSubmitWorkflowNode(ctx, instance, nodeDefinition, userID)
+	allowed, err := h.canSubmitWorkflowNode(
+		ctx, instance, node, nodeDefinition, userID,
+	)
 	if err != nil || allowed {
 		return allowed, err
 	}

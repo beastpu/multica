@@ -19,6 +19,8 @@ export interface WorkflowIssueTemplate {
   title: string;
   description?: string;
   assignee_role?: string;
+  assignee_type?: "member" | "agent" | "squad";
+  assignee_id?: string;
   required: boolean;
   initial_status?: string;
   priority?: string;
@@ -27,6 +29,8 @@ export interface WorkflowIssueTemplate {
 export interface WorkflowExecutorStrategy {
   kind: string;
   role?: string;
+  actor_type?: "member" | "agent" | "squad";
+  actor_id?: string;
   capability?: string;
   node?: string;
   field?: string;

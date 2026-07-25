@@ -160,6 +160,7 @@
     "node_details": "活动细节",
     "current_issues": "当前活动",
     "all_issues": "全部工作流 issue",
+    "issue_progress": "已完成 {{done}} / {{total}} 个 issue",
     "tasks": "任务",
     "submission": "提交结果",
     "verdict": "检查结果",
@@ -248,6 +249,14 @@
     ,"version_option": "版本 {{version}} · {{status}}"
     ,"graph": "流程图"
     ,"graph_help": "节点是活动容器或控制节点；连线决定实际推进路径。"
+    ,"insert_node": "插入节点"
+    ,"insert_serial_node": "串行插入"
+    ,"insert_on_connection": "在 {{from}} 与 {{to}} 之间插入节点"
+    ,"connections_help": "使用连线中点的「＋」串行插入，或使用节点右侧的分支按钮新增并行路径；此处仅配置分支规则。"
+    ,"node_actions": "{{node}} 的节点操作"
+    ,"add_parallel_branch": "新增并行分支"
+    ,"connect_to": "连接到"
+    ,"no_connection_targets": "没有可连接的节点"
     ,"new_node_kind": "新增节点类型"
     ,"node_activity": "活动"
     ,"node_gateway": "条件网关"
@@ -303,6 +312,7 @@
     ,"timeout_minutes": "超时时间（分钟）"
     ,"participant_roles": "参与角色"
     ,"executor_strategy": "执行者策略"
+    ,"direct_executor": "节点默认负责人"
     ,"executor_role": "执行者或候选池角色"
     ,"capability": "所需 Skill"
     ,"source_node": "上游选择活动"
@@ -310,6 +320,8 @@
     ,"add_executor_strategy": "新增执行者回退策略"
     ,"issue_description": "issue 描述"
     ,"assignee_role": "负责人角色"
+    ,"direct_assignee": "直接指定负责人"
+    ,"inherit_node_executor": "使用节点默认负责人"
     ,"initial_status": "初始状态"
     ,"priority": "优先级"
     ,"required_task": "必需任务"
