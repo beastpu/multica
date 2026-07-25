@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "name": "产品需求研发",
+  "applies_to": {"kind": "issue"},
+  "roles": [
+    {"key": "product_owner", "name": "产品负责人", "required": true, "allowed_actor_types": ["member"]},
+    {"key": "developer", "name": "开发执行者", "required": true, "allowed_actor_types": ["member", "agent", "squad"]},
+    {"key": "approver", "name": "验收人", "required": true, "allowed_actor_types": ["member"]}
+  ],
+  "nodes": [
+    {"key": "start", "kind": "start", "name": "开始"},
+    {
+      "key": "review",
+      "kind": "activity",
+      "name": "需求评审",
+      "description": "确认需求范围、优先级和验收标准。",
+      "owner_role": "product_owner",
+      "issue_policy": "fixed",
+      "issue_templates": [
+        {
+          "key": "review_requirement",
+          "title": "需求评审：{{host.title}}",
+          "assignee_role": "product_owner",
+          "required": true,
+          "initial_status": "todo"
+        }
+      ],
+      "completion": {"mode": "automatic", "required_issue_outcome": "done"}
+    },
+    {
+      "key": "plan",
+      "kind": "activity",
+      "name": "方案设计",
+      "description": "产出技术方案，由产品负责人确认后进入实施。",
+      "owner_role": "product_owner",
+      "executor": {
+        "strategies": [
+          {"kind": "fixed_role", "role": "developer"},
+          {"kind": "manual"}
+        ]
+      },
+      "issue_policy": "fixed",
+      "issue_templates": [
+        {
+          "key": "design_solution",
+          "title": "方案设计：{{host.title}}",
+          "assignee_role": "developer",
+          "required": true,
+          "initial_status": "todo"
+        }
+      ],
+      "submission_schema": {
+        "policy": "single",
+        "fields": [
+          {"key": "design_summary", "name": "方案摘要", "type": "text", "required": true}
+        ]
+      },
+      "completion": {
+        "mode": "automatic",
+        "required_issue_outcome": "done",
+        "submission_required": true,
+        "confirmation": "owner_any"
+      }
+    },
+    {
+      "key": "implement",
+      "kind": "activity",
+      "name": "代码实施",
+      "description": "按方案实现，支持在节点内继续拆分子任务。",
+      "owner_role": "developer",
+      "executor": {
+        "strategies": [
+          {"kind": "fixed_role", "role": "developer"},
+          {"kind": "manual"}
+        ]
+      },
+      "issue_policy": "fixed_and_dynamic",
+      "issue_templates": [
+        {
+          "key": "implement_solution",
+          "title": "实现：{{host.title}}",
+          "assignee_role": "developer",
+          "required": true,
+          "initial_status": "todo"
+        }
+      ],
+      "completion": {"mode": "automatic", "required_issue_outcome": "done"}
+    },
+    {
+      "key": "acceptance",
+      "kind": "activity",
+      "activity_mode": "acceptance",
+      "name": "验收",
+      "description": "验收人确认业务结果，不通过可退回方案设计或代码实施。",
+      "owner_role": "approver"
+    },
+    {"key": "end", "kind": "end", "name": "完成"}
+  ],
+  "edges": [
+    {"from": "start", "to": "review"},
+    {"from": "review", "to": "plan"},
+    {"from": "plan", "to": "implement"},
+    {"from": "implement", "to": "acceptance"},
+    {"from": "acceptance", "to": "end"}
+  ],
+  "acceptance": {
+    "policy": "member",
+    "approver_role": "approver",
+    "node_key": "acceptance",
+    "rework_targets": ["plan", "implement"]
+  }
+}

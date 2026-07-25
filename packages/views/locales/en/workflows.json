@@ -142,7 +142,11 @@
     "applies_to_placeholder": "Leave blank to apply to any issue type",
     "archive_title": "Archive this template?",
     "archive_description": "Archived templates remain visible in history and existing runs, but cannot start new workflows.",
-    "archived_help": "This template is archived and read-only. Existing runs and published versions remain available."
+    "archived_help": "This template is archived and read-only. Existing runs and published versions remain available.",
+    "use_builtin": "Use built-in template",
+    "builtin_title": "Built-in templates",
+    "builtin_description": "Ready-to-use delivery flows shipped with Multica. Create one to start immediately, or edit it afterwards.",
+    "builtin_create": "Create"
   },
   "workbench": {
     "title": "Workflow workbench",

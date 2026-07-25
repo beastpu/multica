@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "name": "缺陷修复",
+  "applies_to": {"kind": "issue"},
+  "roles": [
+    {"key": "qa", "name": "测试负责人", "required": true, "allowed_actor_types": ["member"]},
+    {"key": "fixer", "name": "修复执行者", "required": true, "allowed_actor_types": ["member", "agent", "squad"]}
+  ],
+  "nodes": [
+    {"key": "start", "kind": "start", "name": "开始"},
+    {
+      "key": "triage",
+      "kind": "activity",
+      "name": "问题分诊",
+      "description": "确认缺陷可复现，明确影响范围和修复优先级。",
+      "owner_role": "qa",
+      "issue_policy": "fixed",
+      "issue_templates": [
+        {
+          "key": "triage_bug",
+          "title": "问题分诊：{{host.title}}",
+          "assignee_role": "qa",
+          "required": true,
+          "initial_status": "todo"
+        }
+      ],
+      "completion": {"mode": "automatic", "required_issue_outcome": "done"}
+    },
+    {
+      "key": "fix",
+      "kind": "activity",
+      "name": "缺陷修复",
+      "description": "定位根因并修复，支持在节点内继续拆分子任务。",
+      "owner_role": "fixer",
+      "executor": {
+        "strategies": [
+          {"kind": "fixed_role", "role": "fixer"},
+          {"kind": "manual"}
+        ]
+      },
+      "issue_policy": "fixed_and_dynamic",
+      "issue_templates": [
+        {
+          "key": "fix_bug",
+          "title": "修复：{{host.title}}",
+          "assignee_role": "fixer",
+          "required": true,
+          "initial_status": "todo"
+        }
+      ],
+      "completion": {"mode": "automatic", "required_issue_outcome": "done"}
+    },
+    {
+      "key": "regression",
+      "kind": "activity",
+      "name": "回归验证",
+      "description": "测试负责人验证修复效果并确认通过。",
+      "owner_role": "qa",
+      "issue_policy": "fixed",
+      "issue_templates": [
+        {
+          "key": "verify_fix",
+          "title": "回归验证：{{host.title}}",
+          "assignee_role": "qa",
+          "required": true,
+          "initial_status": "todo"
+        }
+      ],
+      "completion": {
+        "mode": "automatic",
+        "required_issue_outcome": "done",
+        "confirmation": "owner_any"
+      }
+    },
+    {
+      "key": "acceptance",
+      "kind": "activity",
+      "activity_mode": "acceptance",
+      "name": "验收",
+      "description": "确认缺陷闭环，不通过可退回缺陷修复。",
+      "owner_role": "qa"
+    },
+    {"key": "end", "kind": "end", "name": "完成"}
+  ],
+  "edges": [
+    {"from": "start", "to": "triage"},
+    {"from": "triage", "to": "fix"},
+    {"from": "fix", "to": "regression"},
+    {"from": "regression", "to": "acceptance"},
+    {"from": "acceptance", "to": "end"}
+  ],
+  "acceptance": {
+    "policy": "member",
+    "approver_role": "qa",
+    "node_key": "acceptance",
+    "rework_targets": ["fix"]
+  }
+}

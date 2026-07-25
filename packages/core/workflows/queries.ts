@@ -44,6 +44,8 @@ export const workflowKeys = {
     [...workflowKeys.templates(wsId), "list", filters] as const,
   template: (wsId: string, templateId: string) =>
     [...workflowKeys.templates(wsId), "detail", templateId] as const,
+  builtinTemplates: (wsId: string) =>
+    [...workflowKeys.templates(wsId), "builtin"] as const,
 };
 
 export function workflowInstanceListOptions(
@@ -147,6 +149,13 @@ export function workflowTemplateListOptions(
   return queryOptions({
     queryKey: workflowKeys.templateList(wsId, filters),
     queryFn: () => api.listWorkflowTemplates(filters),
+  });
+}
+
+export function workflowBuiltinTemplateListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: workflowKeys.builtinTemplates(wsId),
+    queryFn: () => api.listBuiltinWorkflowTemplates(),
   });
 }
 

@@ -1221,12 +1221,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// independently gated by the release flag in the handlers.
 			r.Route("/api/workflow-templates", func(r chi.Router) {
 				r.Get("/", h.ListWorkflowTemplates)
+				r.Get("/builtin", h.ListBuiltinWorkflowTemplates)
 				r.Get("/{id}", h.GetWorkflowTemplate)
 				r.Get("/{id}/versions", h.ListWorkflowTemplateVersions)
 				r.Get("/{id}/versions/{version}", h.GetWorkflowTemplateVersion)
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRole(queries, "owner", "admin"))
 					r.Post("/", h.CreateWorkflowTemplate)
+					r.Post("/from-builtin", h.CreateWorkflowTemplateFromBuiltin)
 					r.Patch("/{id}", h.UpdateWorkflowTemplateMetadata)
 					r.Post("/{id}/draft", h.CreateWorkflowTemplateDraft)
 					r.Post("/{id}/validate", h.ValidateWorkflowTemplateDefinition)

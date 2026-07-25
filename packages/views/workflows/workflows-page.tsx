@@ -19,8 +19,10 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import { projectListOptions } from "@multica/core/projects";
 import {
   useCreateWorkflowTemplate,
+  useCreateWorkflowTemplateFromBuiltin,
   useCopyWorkflowTemplate,
   useCreateWorkflow,
+  workflowBuiltinTemplateListOptions,
   workflowInstanceInfiniteListOptions,
   workflowTemplateListOptions,
   workflowTemplateOptions,
@@ -367,6 +369,21 @@ function TemplatesPanel({
   );
   const createTemplate = useCreateWorkflowTemplate();
   const copyTemplate = useCopyWorkflowTemplate();
+  const createFromBuiltin = useCreateWorkflowTemplateFromBuiltin();
+  const [builtinOpen, setBuiltinOpen] = useState(false);
+  const builtinTemplates = useQuery({
+    ...workflowBuiltinTemplateListOptions(wsId),
+    enabled: builtinOpen,
+  });
+
+  const createBuiltin = (key: string) => {
+    createFromBuiltin.mutate(key, {
+      onSuccess: ({ template }) => {
+        setBuiltinOpen(false);
+        if (template.id) navigation.push(p.workflowTemplate(template.id));
+      },
+    });
+  };
 
   const create = () => {
     const definition = defaultWorkflowDefinition();
@@ -403,16 +420,74 @@ function TemplatesPanel({
           )}
         </div>
         {canManage && (
-          <Button
-            size="sm"
-            onClick={create}
-            disabled={createTemplate.isPending}
-          >
-            <Plus />
-            {t(($) => $.actions.new_template)}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setBuiltinOpen(true)}
+            >
+              <LayoutTemplate />
+              {t(($) => $.templates.use_builtin)}
+            </Button>
+            <Button
+              size="sm"
+              onClick={create}
+              disabled={createTemplate.isPending}
+            >
+              <Plus />
+              {t(($) => $.actions.new_template)}
+            </Button>
+          </div>
         )}
       </div>
+      <Dialog open={builtinOpen} onOpenChange={setBuiltinOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t(($) => $.templates.builtin_title)}</DialogTitle>
+            <DialogDescription>
+              {t(($) => $.templates.builtin_description)}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            {builtinTemplates.isLoading ? (
+              <>
+                <Skeleton className="h-16 rounded-lg" />
+                <Skeleton className="h-16 rounded-lg" />
+              </>
+            ) : (
+              (builtinTemplates.data?.templates ?? []).map((builtin) => (
+                <div
+                  key={builtin.key}
+                  className="flex items-start justify-between gap-3 rounded-lg border p-3"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                      {builtin.name}
+                    </p>
+                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                      {builtin.description}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    disabled={createFromBuiltin.isPending}
+                    onClick={() => createBuiltin(builtin.key)}
+                  >
+                    {t(($) => $.templates.builtin_create)}
+                  </Button>
+                </div>
+              ))
+            )}
+            {createFromBuiltin.isError && (
+              <p className="text-xs text-destructive" role="alert">
+                {createFromBuiltin.error instanceof Error
+                  ? createFromBuiltin.error.message
+                  : t(($) => $.errors.load)}
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
       {isLoading ? (
         <div className="grid gap-3 md:grid-cols-2">
           <Skeleton className="h-32 rounded-xl" />
@@ -521,10 +596,20 @@ function TemplatesPanel({
           title={t(($) => $.templates.empty_title)}
           description={t(($) => $.templates.empty_description)}
           actions={canManage ? (
-            <Button onClick={create} disabled={createTemplate.isPending}>
-              <Plus />
-              {t(($) => $.actions.new_template)}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => setBuiltinOpen(true)}>
+                <LayoutTemplate />
+                {t(($) => $.templates.use_builtin)}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={create}
+                disabled={createTemplate.isPending}
+              >
+                <Plus />
+                {t(($) => $.actions.new_template)}
+              </Button>
+            </div>
           ) : undefined}
         />
       )}

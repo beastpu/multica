@@ -142,7 +142,11 @@
     "applies_to_placeholder": "비워 두면 모든 Issue 유형에 적용",
     "archive_title": "이 템플릿을 보관할까요?",
     "archive_description": "기록과 기존 실행에는 남지만 새 워크플로를 시작할 수 없습니다.",
-    "archived_help": "이 템플릿은 보관되어 읽기 전용입니다. 기존 실행과 게시된 버전은 계속 사용할 수 있습니다."
+    "archived_help": "이 템플릿은 보관되어 읽기 전용입니다. 기존 실행과 게시된 버전은 계속 사용할 수 있습니다.",
+    "use_builtin": "기본 제공 템플릿 사용",
+    "builtin_title": "기본 제공 템플릿",
+    "builtin_description": "바로 사용할 수 있는 표준 개발 플로우입니다. 생성 후 즉시 사용하거나 나중에 편집할 수 있습니다.",
+    "builtin_create": "생성"
   },
   "workbench": {
     "title": "워크플로 작업대",

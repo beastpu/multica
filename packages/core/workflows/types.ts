@@ -94,6 +94,12 @@ export interface WorkflowDefinition {
   layout?: unknown;
 }
 
+export interface BuiltinWorkflowTemplate {
+  key: string;
+  name: string;
+  description: string;
+}
+
 export interface WorkflowTemplate {
   id: string;
   workspace_id: string;

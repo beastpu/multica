@@ -192,6 +192,7 @@ import type {
   WorkflowIssueTemplate,
   WorkflowConfirmation,
   WorkflowExecutorResolution,
+  BuiltinWorkflowTemplate,
   WorkflowNodeDetail,
   WorkflowNodeTask,
   WorkflowSubmission,
@@ -344,6 +345,7 @@ import {
   EMPTY_WORKFLOW_TEMPLATE_DETAIL,
   EMPTY_WORKFLOW_TEMPLATE_VERSION,
   EMPTY_WORKFLOW_ACCEPTANCES,
+  ListBuiltinWorkflowTemplatesResponseSchema,
   ListWorkflowInstancesResponseSchema,
   ListWorkflowTemplatesResponseSchema,
   WorkflowAcceptanceMutationResponseSchema,
@@ -3633,6 +3635,34 @@ export class ApiClient {
     return parseWithFallback(raw, ListWorkflowTemplatesResponseSchema, EMPTY_LIST_WORKFLOW_TEMPLATES, {
       endpoint: "GET /api/workflow-templates",
     });
+  }
+
+  async listBuiltinWorkflowTemplates(): Promise<{ templates: BuiltinWorkflowTemplate[] }> {
+    const raw = await this.fetch<unknown>("/api/workflow-templates/builtin");
+    return parseWithFallback(
+      raw,
+      ListBuiltinWorkflowTemplatesResponseSchema,
+      { templates: [] },
+      { endpoint: "GET /api/workflow-templates/builtin" },
+    );
+  }
+
+  async createWorkflowTemplateFromBuiltin(
+    key: string,
+  ): Promise<{ template: WorkflowTemplate; version: WorkflowTemplateVersion }> {
+    const raw = await this.fetch<unknown>("/api/workflow-templates/from-builtin", {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    });
+    return parseWithFallback(
+      raw,
+      WorkflowTemplatePublishResponseSchema,
+      {
+        template: EMPTY_WORKFLOW_TEMPLATE_DETAIL.template,
+        version: { ...EMPTY_WORKFLOW_TEMPLATE_VERSION },
+      },
+      { endpoint: "POST /api/workflow-templates/from-builtin" },
+    );
   }
 
   async getWorkflowTemplate(id: string): Promise<WorkflowTemplateDetail> {

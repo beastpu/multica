@@ -374,6 +374,16 @@ export const ListWorkflowTemplatesResponseSchema = z.object({
   total: z.number().optional().default(0),
 }).loose();
 
+export const BuiltinWorkflowTemplateSchema = z.object({
+  key: z.string(),
+  name: z.string().optional().default(""),
+  description: z.string().optional().default(""),
+}).loose();
+
+export const ListBuiltinWorkflowTemplatesResponseSchema = z.object({
+  templates: arrayOrEmpty(BuiltinWorkflowTemplateSchema),
+}).loose();
+
 export const WorkflowTemplateDetailSchema = z.object({
   template: WorkflowTemplateSchema,
   versions: arrayOrEmpty(WorkflowTemplateVersionSchema),

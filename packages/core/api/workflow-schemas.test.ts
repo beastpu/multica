@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseWithFallback } from "./schema";
 import {
   EMPTY_WORKFLOW_INSTANCE_DETAIL,
+  ListBuiltinWorkflowTemplatesResponseSchema,
   WorkflowInstanceDetailSchema,
   WorkflowNodeDefinitionSchema,
   WorkflowNodeDetailSchema,
@@ -196,5 +197,21 @@ describe("workflow response schemas", () => {
     expect(manual.completion.mode).toBe("manual");
     expect(future.completion.mode).toBeUndefined();
     expect(future.completion.required_issue_outcome).toBe("done");
+  });
+
+  it("falls back on malformed builtin template lists and defaults entry fields", () => {
+    const malformed = parseWithFallback(
+      { templates: { not: "an array" } },
+      ListBuiltinWorkflowTemplatesResponseSchema,
+      { templates: [] },
+      { endpoint: "GET /api/workflow-templates/builtin" },
+    );
+    expect(malformed.templates).toEqual([]);
+
+    const partial = ListBuiltinWorkflowTemplatesResponseSchema.parse({
+      templates: [{ key: "bug_fix" }],
+    });
+    expect(partial.templates[0]?.name).toBe("");
+    expect(partial.templates[0]?.description).toBe("");
   });
 });

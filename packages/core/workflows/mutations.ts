@@ -518,6 +518,16 @@ export function useCreateWorkflowTemplate() {
   });
 }
 
+export function useCreateWorkflowTemplateFromBuiltin() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (key: string) => api.createWorkflowTemplateFromBuiltin(key),
+    onSettled: () =>
+      qc.invalidateQueries({ queryKey: workflowKeys.templates(wsId) }),
+  });
+}
+
 export function useUpdateWorkflowTemplate(templateId: string) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
