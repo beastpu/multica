@@ -97,7 +97,7 @@ function HostStatusActionSelect({
         aria-label={label}
         value={current}
         disabled={readOnly}
-        className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+        className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
         onChange={(event) => {
           // Preserve action kinds this select does not manage.
           const others = (actions ?? []).filter(
@@ -157,10 +157,10 @@ function InspectorSection({
 }) {
   return (
     <details open={open} className="group rounded-lg border bg-background">
-      <summary className="min-h-11 cursor-pointer select-none px-3 py-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <summary className="min-h-9 cursor-pointer select-none px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         {title}
       </summary>
-      <div className="space-y-4 border-t p-3">{children}</div>
+      <div className="space-y-3 border-t p-2.5">{children}</div>
     </details>
   );
 }
@@ -263,7 +263,7 @@ function RoleEditor({
   return (
     <div className="space-y-3">
       {roles.map((role, index) => (
-        <div key={role.key} className="space-y-3 rounded-lg border p-3">
+        <div key={role.key} className="space-y-3 rounded-lg border p-2.5">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1 space-y-1.5">
               <Label htmlFor={`workflow-role-name-${role.key}`}>
@@ -273,7 +273,7 @@ function RoleEditor({
                 id={`workflow-role-name-${role.key}`}
                 value={role.name}
                 disabled={readOnly}
-                className="min-h-11"
+                className="min-h-9"
                 onChange={(event) => {
                   const next = [...roles];
                   next[index] = { ...role, name: event.target.value };
@@ -288,7 +288,7 @@ function RoleEditor({
               onClick={() => onChange(roles.filter((item) => item.key !== role.key))}
             />
           </div>
-          <label className="flex min-h-11 items-center gap-2 text-sm">
+          <label className="flex min-h-9 items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={role.required}
@@ -309,7 +309,7 @@ function RoleEditor({
               {actorTypes.map((actorType) => (
                 <label
                   key={actorType}
-                  className="flex min-h-11 items-center gap-1.5 rounded-md border px-2 text-xs"
+                  className="flex min-h-9 items-center gap-1.5 rounded-md border px-2 text-xs"
                 >
                   <input
                     type="checkbox"
@@ -340,7 +340,7 @@ function RoleEditor({
                   })
                 : ""}
               disabled={readOnly}
-              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
               onChange={(event) => {
                 const actor = parseActorOption(event.target.value);
                 const next = [...roles];
@@ -374,7 +374,7 @@ function RoleEditor({
         <Button
           type="button"
           variant="outline"
-          className="min-h-11 w-full"
+          className="min-h-9 w-full"
           onClick={() => {
             const key = stableKey("role");
             onChange([
@@ -406,7 +406,7 @@ function AcceptanceEditor({
   const policy = acceptance.policy ?? "none";
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="space-y-1.5">
         <Label htmlFor="workflow-acceptance-policy">
           {t(($) => $.editor.acceptance_policy)}
@@ -415,7 +415,7 @@ function AcceptanceEditor({
           id="workflow-acceptance-policy"
           value={policy}
           disabled={readOnly}
-          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+          className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
           onChange={(event) => onChange({
             ...definition,
             acceptance: event.target.value === "none"
@@ -438,7 +438,7 @@ function AcceptanceEditor({
               id="workflow-acceptance-node"
               value={acceptance.node_key ?? ""}
               disabled={readOnly}
-              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
               onChange={(event) => onChange({
                 ...definition,
                 acceptance: { ...acceptance, node_key: event.target.value || undefined },
@@ -459,7 +459,7 @@ function AcceptanceEditor({
                 id="workflow-acceptance-role"
                 value={acceptance.approver_role ?? ""}
                 disabled={readOnly}
-                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
                 onChange={(event) => onChange({
                   ...definition,
                   acceptance: {
@@ -483,7 +483,7 @@ function AcceptanceEditor({
               {activityNodes.map((node) => (
                 <label
                   key={node.key}
-                  className="flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm"
+                  className="flex min-h-9 items-center gap-2 rounded-md border px-3 text-sm"
                 >
                   <input
                     type="checkbox"
@@ -608,7 +608,7 @@ function ExecutorEditor({
     <div className="space-y-2">
       <button
         type="button"
-        className="flex min-h-11 w-full items-center justify-between rounded-lg border px-3 text-sm font-medium"
+        className="flex min-h-9 w-full items-center justify-between rounded-lg border px-3 text-sm font-medium"
         aria-expanded={advancedOpen}
         onClick={() => setAdvancedOpen((open) => !open)}
       >
@@ -623,13 +623,13 @@ function ExecutorEditor({
       {advancedOpen && (
         <div className="space-y-3">
       {strategies.map((strategy, index) => (
-        <div key={`${index}-${strategy.kind}`} className="space-y-3 rounded-lg border p-3">
+        <div key={`${index}-${strategy.kind}`} className="space-y-3 rounded-lg border p-2.5">
           <div className="flex items-center gap-2">
             <select
               aria-label={t(($) => $.editor.executor_strategy)}
               value={strategy.kind}
               disabled={readOnly}
-              className="min-h-11 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-sm"
+              className="min-h-9 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-sm"
               onChange={(event) => update(index, {
                 kind: event.target.value,
                 // Kind-specific fields reset, but the strategy's gating
@@ -665,7 +665,7 @@ function ExecutorEditor({
               <select
                 value={strategy.role ?? ""}
                 disabled={readOnly}
-                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
                 onChange={(event) => update(index, {
                   ...strategy,
                   role: event.target.value || undefined,
@@ -690,7 +690,7 @@ function ExecutorEditor({
                     })
                   : ""}
                 disabled={readOnly}
-                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
                 onChange={(event) => {
                   const actor = parseActorOption(event.target.value);
                   update(index, {
@@ -718,7 +718,7 @@ function ExecutorEditor({
               <Input
                 value={strategy.capability ?? ""}
                 disabled={readOnly}
-                className="min-h-11"
+                className="min-h-9"
                 onChange={(event) => update(index, {
                   ...strategy,
                   capability: event.target.value,
@@ -733,7 +733,7 @@ function ExecutorEditor({
                 <select
                   value={strategy.node ?? ""}
                   disabled={readOnly}
-                  className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                  className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
                   onChange={(event) => update(index, {
                     ...strategy,
                     node: event.target.value || undefined,
@@ -753,7 +753,7 @@ function ExecutorEditor({
                 <select
                   value={strategy.field ?? ""}
                   disabled={readOnly || !strategy.node}
-                  className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                  className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
                   onChange={(event) => update(index, {
                     ...strategy,
                     field: event.target.value || undefined,
@@ -776,7 +776,7 @@ function ExecutorEditor({
         <Button
           type="button"
           variant="outline"
-          className="min-h-11 w-full"
+          className="min-h-9 w-full"
           onClick={() => onChange({
             ...node,
             executor: {
@@ -820,14 +820,14 @@ function IssueTemplateEditor({
   return (
     <div className="space-y-3">
       {templates.map((template, index) => (
-        <div key={template.key} className="space-y-3 rounded-lg border p-3">
+        <div key={template.key} className="space-y-3 rounded-lg border p-2.5">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1 space-y-1.5">
               <Label>{t(($) => $.editor.issue_title)}</Label>
               <Input
                 value={template.title}
                 disabled={readOnly}
-                className="min-h-11"
+                className="min-h-9"
                 onChange={(event) => update(index, {
                   ...template,
                   title: event.target.value,
@@ -862,7 +862,7 @@ function IssueTemplateEditor({
               <select
                 value={template.assignee_role ?? ""}
                 disabled={readOnly}
-                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
                 onChange={(event) => update(index, {
                   ...template,
                   assignee_role: event.target.value || undefined,
@@ -887,7 +887,7 @@ function IssueTemplateEditor({
                     })
                   : ""}
                 disabled={readOnly}
-                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
                 onChange={(event) => {
                   const actor = parseActorOption(event.target.value);
                   update(index, {
@@ -916,7 +916,7 @@ function IssueTemplateEditor({
               <select
                 value={template.initial_status ?? "todo"}
                 disabled={readOnly}
-                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
                 onChange={(event) => update(index, {
                   ...template,
                   initial_status: event.target.value,
@@ -932,7 +932,7 @@ function IssueTemplateEditor({
               <select
                 value={template.priority ?? "none"}
                 disabled={readOnly}
-                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
                 onChange={(event) => update(index, {
                   ...template,
                   priority: event.target.value,
@@ -943,7 +943,7 @@ function IssueTemplateEditor({
                 ))}
               </select>
             </div>
-            <label className="flex min-h-11 items-center gap-2 pt-5 text-sm">
+            <label className="flex min-h-9 items-center gap-2 pt-5 text-sm">
               <input
                 type="checkbox"
                 checked={template.required}
@@ -967,7 +967,7 @@ function IssueTemplateEditor({
         <Button
           type="button"
           variant="outline"
-          className="min-h-11 w-full"
+          className="min-h-9 w-full"
           onClick={() => {
             const key = stableKey("task");
             onChange({
@@ -1033,13 +1033,13 @@ function SubmissionEditor({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="space-y-1.5">
         <Label>{t(($) => $.editor.submission_policy)}</Label>
         <select
           value={policy}
           disabled={readOnly}
-          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+          className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
           onChange={(event) => {
             const nextPolicy = event.target.value as "none" | "single" | "per_required_task" | "fan_in";
             onChange({
@@ -1065,14 +1065,14 @@ function SubmissionEditor({
       {policy !== "none" && (
         <>
           {fields.map((field, index) => (
-            <div key={field.key} className="space-y-3 rounded-lg border p-3">
+            <div key={field.key} className="space-y-3 rounded-lg border p-2.5">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1 space-y-1.5">
                   <Label>{t(($) => $.editor.field_name)}</Label>
                   <Input
                     value={field.name}
                     disabled={readOnly}
-                    className="min-h-11"
+                    className="min-h-9"
                     onChange={(event) => updateField(index, {
                       ...field,
                       name: event.target.value,
@@ -1098,7 +1098,7 @@ function SubmissionEditor({
                   <select
                     value={field.type}
                     disabled={readOnly}
-                    className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                    className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
                     onChange={(event) => updateField(index, {
                       ...field,
                       type: event.target.value,
@@ -1109,7 +1109,7 @@ function SubmissionEditor({
                     ))}
                   </select>
                 </div>
-                <label className="flex min-h-11 items-center gap-2 pt-5 text-sm">
+                <label className="flex min-h-9 items-center gap-2 pt-5 text-sm">
                   <input
                     type="checkbox"
                     checked={field.required}
@@ -1128,7 +1128,7 @@ function SubmissionEditor({
             <Button
               type="button"
               variant="outline"
-              className="min-h-11 w-full"
+              className="min-h-9 w-full"
               onClick={() => {
                 const key = stableKey("field");
                 onChange({
@@ -1227,7 +1227,7 @@ function CompletionEditor({
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <fieldset className="space-y-2">
         <legend className="mb-1.5 text-xs font-medium">
           {t(($) => $.editor.completion_mode)}
@@ -1269,7 +1269,7 @@ function CompletionEditor({
             {roles.map((role) => (
               <label
                 key={role.key}
-                className="flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm"
+                className="flex min-h-9 items-center gap-2 rounded-md border px-3 text-sm"
               >
                 <input
                   type="checkbox"
@@ -1298,7 +1298,7 @@ function CompletionEditor({
           </p>
         </fieldset>
       )}
-      <div className="border-t pt-4">
+      <div className="border-t pt-3">
         <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {t(($) => $.editor.completion_conditions)}
         </p>
@@ -1311,7 +1311,7 @@ function CompletionEditor({
           id={`required-issue-outcome-${node.key}`}
           value={completion.required_issue_outcome ?? "none"}
           disabled={readOnly}
-          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+          className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
           onChange={(event) => onChange({
             ...node,
             completion: {
@@ -1326,10 +1326,10 @@ function CompletionEditor({
         </select>
       </div>
       <details className="rounded-lg border bg-muted/10">
-        <summary className="min-h-11 cursor-pointer select-none px-3 py-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <summary className="min-h-9 cursor-pointer select-none px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
           {t(($) => $.editor.advanced_completion_conditions)}
         </summary>
-        <div className="space-y-4 border-t p-3">
+        <div className="space-y-3 border-t p-2.5">
           <div className="space-y-1.5">
             <Label htmlFor={`completion-mode-${node.key}`}>
               {t(($) => $.editor.completion_mode_advanced)}
@@ -1338,7 +1338,7 @@ function CompletionEditor({
               id={`completion-mode-${node.key}`}
               value={completionMode}
               disabled={readOnly}
-              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
               onChange={(event) => onChange({
                 ...node,
                 completion: {
@@ -1368,7 +1368,7 @@ function CompletionEditor({
               id={`verdict-evaluator-${node.key}`}
               value={evaluator}
               disabled={readOnly}
-              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
               onChange={(event) => {
                 const nextEvaluator = event.target.value;
                 onChange({
@@ -1406,7 +1406,7 @@ function CompletionEditor({
                   id={`required-verdict-${node.key}`}
                   value={completion.verdict_required ?? "none"}
                   disabled={readOnly}
-                  className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                  className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
                   onChange={(event) => onChange({
                     ...node,
                     verdict: {
@@ -1450,7 +1450,7 @@ function CompletionEditor({
               id={`confirmation-${node.key}`}
               value={confirmation}
               disabled={readOnly}
-              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
               onChange={(event) => onChange({
                 ...node,
                 completion: {
@@ -1506,7 +1506,7 @@ export function WorkflowNodeDefinitionInspector({
           id="workflow-node-name"
           value={node.name}
           disabled={readOnly}
-          className="min-h-11"
+          className="min-h-9"
           onChange={(event) => onChange({ ...node, name: event.target.value })}
         />
       </div>
@@ -1518,7 +1518,7 @@ export function WorkflowNodeDefinitionInspector({
           id="workflow-node-description"
           value={node.description ?? ""}
           disabled={readOnly}
-          rows={3}
+          rows={2}
           onChange={(event) => onChange({
             ...node,
             description: event.target.value || undefined,
@@ -1535,7 +1535,7 @@ export function WorkflowNodeDefinitionInspector({
                 value={node.color ?? ""}
                 disabled={readOnly}
                 placeholder="#6366f1"
-                className="min-h-11"
+                className="min-h-9"
                 onChange={(event) => onChange({
                   ...node,
                   color: event.target.value || undefined,
@@ -1547,7 +1547,7 @@ export function WorkflowNodeDefinitionInspector({
               aria-label={t(($) => $.editor.node_color)}
               value={node.color?.match(/^#[0-9a-fA-F]{6}$/) ? node.color : "#6366f1"}
               disabled={readOnly}
-              className="mt-6 size-11 rounded-md border bg-background p-1"
+              className="mt-5 size-9 rounded-md border bg-background p-1"
               onChange={(event) => onChange({ ...node, color: event.target.value })}
             />
           </div>
@@ -1560,7 +1560,7 @@ export function WorkflowNodeDefinitionInspector({
               max={525600}
               value={node.timeout_minutes ?? 0}
               disabled={readOnly}
-              className="min-h-11"
+              className="min-h-9"
               onChange={(event) => onChange({
                 ...node,
                 timeout_minutes: Number(event.target.value) || undefined,
@@ -1575,7 +1575,7 @@ export function WorkflowNodeDefinitionInspector({
             <select
               value={node.activity_mode ?? "work"}
               disabled={readOnly}
-              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
               onChange={(event) => onChange({ ...node, activity_mode: event.target.value })}
             >
               <option value="work">{t(($) => $.editor.work_activity)}</option>
@@ -1590,7 +1590,7 @@ export function WorkflowNodeDefinitionInspector({
           <select
             value={node.join_mode ?? "all"}
             disabled={readOnly}
-            className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+            className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
             onChange={(event) => onChange({ ...node, join_mode: event.target.value })}
           >
             <option value="all">{t(($) => $.editor.join_all)}</option>
@@ -1629,9 +1629,9 @@ export function WorkflowNodeDefinitionInspector({
             {t(($) => $.editor.tab_transition)}
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="info" className="space-y-4">
+        <TabsContent value="info" className="space-y-3">
           {basicFields}
-          <div className="space-y-4 border-t pt-4">
+          <div className="space-y-3 border-t pt-3">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t(($) => $.editor.section_responsibility)}
             </p>
@@ -1640,7 +1640,7 @@ export function WorkflowNodeDefinitionInspector({
               <select
                 value={node.owner_role ?? ""}
                 disabled={readOnly}
-                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
                 onChange={(event) => onChange({
                   ...node,
                   owner_role: event.target.value || undefined,
@@ -1660,7 +1660,7 @@ export function WorkflowNodeDefinitionInspector({
                 {definition.roles.map((role) => (
                   <label
                     key={role.key}
-                    className="flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm"
+                    className="flex min-h-9 items-center gap-2 rounded-md border px-3 text-sm"
                   >
                     <input
                       type="checkbox"
@@ -1690,7 +1690,7 @@ export function WorkflowNodeDefinitionInspector({
               onChange={onChange}
             />
           </div>
-          <div className="space-y-3 border-t pt-4">
+          <div className="space-y-3 border-t pt-3">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t(($) => $.editor.section_flow)}
             </p>
@@ -1712,13 +1712,13 @@ export function WorkflowNodeDefinitionInspector({
             />
           </div>
         </TabsContent>
-        <TabsContent value="work" className="space-y-4">
+        <TabsContent value="work" className="space-y-3">
           <div className="space-y-1.5">
             <Label>{t(($) => $.editor.issue_policy)}</Label>
             <select
               value={node.issue_policy ?? "none"}
               disabled={readOnly}
-              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              className="min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
               onChange={(event) => {
                 const policy = event.target.value;
                 onChange({
@@ -1744,20 +1744,20 @@ export function WorkflowNodeDefinitionInspector({
             onChange={onChange}
           />
         </TabsContent>
-        <TabsContent value="transition" className="space-y-4">
+        <TabsContent value="transition" className="space-y-3">
           <CompletionEditor
             node={node}
             roles={definition.roles}
             readOnly={readOnly}
             onChange={onChange}
           />
-          <div className="space-y-4 border-t pt-4">
+          <div className="space-y-3 border-t pt-3">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t(($) => $.editor.section_submission)}
             </p>
             <SubmissionEditor node={node} readOnly={readOnly} onChange={onChange} />
           </div>
-          <div className="space-y-4 border-t pt-4">
+          <div className="space-y-3 border-t pt-3">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t(($) => $.editor.section_node_events)}
             </p>
