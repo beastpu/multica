@@ -397,7 +397,15 @@
     "executor_kind_capability_match": "능력 매칭",
     "executor_kind_capability_match_hint": "역할이 허용하는 에이전트/스쿼드 풀에서 자동으로 매칭합니다.",
     "executor_kind_manual": "수동 선택",
-    "executor_kind_manual_hint": "자동으로 해결되지 않으면 멤버가 직접 지정합니다."
+    "executor_kind_manual_hint": "자동으로 해결되지 않으면 멤버가 직접 지정합니다.",
+    "timeout_minutes_hint": "시간 초과 시 알림과 표시만 생성되며 노드가 자동으로 실패, 건너뛰기, 되돌리기 되지 않습니다. 0은 시간 제한 없음을 의미합니다.",
+    "field_type_text": "텍스트",
+    "field_type_number": "숫자",
+    "field_type_boolean": "예 / 아니요",
+    "field_type_date": "날짜",
+    "field_type_member": "멤버",
+    "field_type_agent": "에이전트",
+    "field_type_squad": "스쿼드"
   },
   "status": {
     "needs_setup": "설정 필요",

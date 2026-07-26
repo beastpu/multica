@@ -80,6 +80,21 @@ function renderInspector(onChange: (value: WorkflowNodeDefinition) => void) {
 }
 
 describe("WorkflowNodeDefinitionInspector", () => {
+  it("orders sections as who, what, deliverable, then transition", () => {
+    const { container } = renderInspector(vi.fn());
+
+    const titles = Array.from(container.querySelectorAll("summary")).map(
+      (summary) => summary.textContent,
+    );
+    expect(titles.slice(0, 5)).toEqual([
+      enWorkflows.editor.section_basic,
+      enWorkflows.editor.section_responsibility,
+      enWorkflows.editor.section_work,
+      enWorkflows.editor.section_submission,
+      enWorkflows.editor.section_completion,
+    ]);
+  });
+
   it("shows humanized executor strategy labels instead of engine enums", () => {
     renderInspector(vi.fn());
 

@@ -397,7 +397,15 @@
     "executor_kind_capability_match": "Capability match",
     "executor_kind_capability_match_hint": "Auto-match from the agents or squads this role allows.",
     "executor_kind_manual": "Manual pick",
-    "executor_kind_manual_hint": "A member picks the executor when nothing resolves automatically."
+    "executor_kind_manual_hint": "A member picks the executor when nothing resolves automatically.",
+    "timeout_minutes_hint": "A timeout only raises a reminder and marker; the node is never failed, skipped, or rolled back automatically. 0 disables the timeout.",
+    "field_type_text": "Text",
+    "field_type_number": "Number",
+    "field_type_boolean": "Yes / No",
+    "field_type_date": "Date",
+    "field_type_member": "Member",
+    "field_type_agent": "Agent",
+    "field_type_squad": "Squad"
   },
   "status": {
     "needs_setup": "Needs setup",

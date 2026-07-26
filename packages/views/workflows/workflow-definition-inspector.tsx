@@ -875,6 +875,26 @@ function SubmissionEditor({
   const schema = node.submission_schema;
   const policy = schema?.policy ?? (schema ? "single" : "none");
   const fields = schema?.fields ?? [];
+  const fieldTypeLabel = (type: string) => {
+    switch (type) {
+      case "text":
+        return t(($) => $.editor.field_type_text);
+      case "number":
+        return t(($) => $.editor.field_type_number);
+      case "boolean":
+        return t(($) => $.editor.field_type_boolean);
+      case "date":
+        return t(($) => $.editor.field_type_date);
+      case "member":
+        return t(($) => $.editor.field_type_member);
+      case "agent":
+        return t(($) => $.editor.field_type_agent);
+      case "squad":
+        return t(($) => $.editor.field_type_squad);
+      default:
+        return type;
+    }
+  };
   const updateField = (index: number, field: WorkflowSubmissionField) => {
     const next = [...fields];
     next[index] = field;
@@ -954,7 +974,7 @@ function SubmissionEditor({
                     })}
                   >
                     {fieldTypes.map((type) => (
-                      <option key={type} value={type}>{type}</option>
+                      <option key={type} value={type}>{fieldTypeLabel(type)}</option>
                     ))}
                   </select>
                 </div>
@@ -1294,6 +1314,9 @@ export function WorkflowNodeDefinitionInspector({
                   timeout_minutes: Number(event.target.value) || undefined,
                 })}
               />
+              <p className="text-xs text-muted-foreground">
+                {t(($) => $.editor.timeout_minutes_hint)}
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label>{t(($) => $.editor.activity_mode)}</Label>
@@ -1382,21 +1405,7 @@ export function WorkflowNodeDefinitionInspector({
               onChange={onChange}
             />
           </InspectorSection>
-          <InspectorSection
-            title={t(($) => $.editor.section_completion)}
-            open
-          >
-            <CompletionEditor
-              node={node}
-              roles={definition.roles}
-              readOnly={readOnly}
-              onChange={onChange}
-            />
-          </InspectorSection>
-          <InspectorSection title={t(($) => $.editor.section_submission)}>
-            <SubmissionEditor node={node} readOnly={readOnly} onChange={onChange} />
-          </InspectorSection>
-          <InspectorSection title={t(($) => $.editor.section_work)}>
+          <InspectorSection title={t(($) => $.editor.section_work)} open>
             <div className="space-y-1.5">
               <Label>{t(($) => $.editor.issue_policy)}</Label>
               <select
@@ -1424,6 +1433,17 @@ export function WorkflowNodeDefinitionInspector({
               node={node}
               roles={definition.roles}
               actorOptions={actorOptions}
+              readOnly={readOnly}
+              onChange={onChange}
+            />
+          </InspectorSection>
+          <InspectorSection title={t(($) => $.editor.section_submission)}>
+            <SubmissionEditor node={node} readOnly={readOnly} onChange={onChange} />
+          </InspectorSection>
+          <InspectorSection title={t(($) => $.editor.section_completion)}>
+            <CompletionEditor
+              node={node}
+              roles={definition.roles}
               readOnly={readOnly}
               onChange={onChange}
             />

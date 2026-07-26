@@ -397,7 +397,15 @@
     "executor_kind_capability_match": "能力マッチング",
     "executor_kind_capability_match_hint": "ロールが許可するエージェント・スクワッドから自動でマッチングします。",
     "executor_kind_manual": "手動選択",
-    "executor_kind_manual_hint": "自動解決できない場合、メンバーが手動で指定します。"
+    "executor_kind_manual_hint": "自動解決できない場合、メンバーが手動で指定します。",
+    "timeout_minutes_hint": "タイムアウトはリマインドとマークのみで、ノードが自動的に失敗・スキップ・差し戻しされることはありません。0 で無効になります。",
+    "field_type_text": "テキスト",
+    "field_type_number": "数値",
+    "field_type_boolean": "はい / いいえ",
+    "field_type_date": "日付",
+    "field_type_member": "メンバー",
+    "field_type_agent": "エージェント",
+    "field_type_squad": "スクワッド"
   },
   "status": {
     "needs_setup": "設定が必要",
