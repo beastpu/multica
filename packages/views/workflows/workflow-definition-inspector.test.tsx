@@ -80,18 +80,14 @@ function renderInspector(onChange: (value: WorkflowNodeDefinition) => void) {
 }
 
 describe("WorkflowNodeDefinitionInspector", () => {
-  it("orders sections as who, what, deliverable, then transition", () => {
-    const { container } = renderInspector(vi.fn());
+  it("splits the activity config into info, work, and transition tabs", () => {
+    renderInspector(vi.fn());
 
-    const titles = Array.from(container.querySelectorAll("summary")).map(
-      (summary) => summary.textContent,
-    );
-    expect(titles.slice(0, 5)).toEqual([
-      enWorkflows.editor.section_basic,
-      enWorkflows.editor.section_responsibility,
-      enWorkflows.editor.section_work,
-      enWorkflows.editor.section_submission,
-      enWorkflows.editor.section_completion,
+    const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
+    expect(tabs).toEqual([
+      enWorkflows.editor.tab_info,
+      enWorkflows.editor.tab_work,
+      enWorkflows.editor.tab_transition,
     ]);
   });
 
@@ -164,6 +160,9 @@ describe("WorkflowNodeDefinitionInspector", () => {
     const onChange = vi.fn();
     renderInspector(onChange);
 
+    await user.click(
+      screen.getByRole("tab", { name: enWorkflows.editor.tab_work }),
+    );
     await user.selectOptions(
       screen.getByLabelText("Direct assignee override"),
       "squad:squad-review",
@@ -184,6 +183,9 @@ describe("WorkflowNodeDefinitionInspector", () => {
     const onChange = vi.fn();
     renderInspector(onChange);
 
+    await user.click(
+      screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
+    );
     expect(screen.getByLabelText("Completion method")).toHaveValue("automatic");
     expect(screen.getByText("Completion form")).toBeInTheDocument();
 

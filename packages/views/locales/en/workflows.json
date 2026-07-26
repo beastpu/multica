@@ -405,7 +405,10 @@
     "field_type_date": "Date",
     "field_type_member": "Member",
     "field_type_agent": "Agent",
-    "field_type_squad": "Squad"
+    "field_type_squad": "Squad",
+    "tab_info": "Node info",
+    "tab_work": "Node tasks",
+    "tab_transition": "Node transition"
   },
   "status": {
     "needs_setup": "Needs setup",

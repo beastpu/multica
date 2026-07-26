@@ -14,6 +14,12 @@ import { workflowCompletionMode } from "@multica/core/workflows";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@multica/ui/components/ui/tabs";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { useT } from "../i18n";
 
@@ -1241,115 +1247,143 @@ export function WorkflowNodeDefinitionInspector({
   const { t } = useT("workflows");
   const activity = node.kind === "activity";
 
+  const basicFields = (
+    <>
+      <div className="space-y-1.5">
+        <Label htmlFor="workflow-node-name">{t(($) => $.editor.activity_name)}</Label>
+        <Input
+          id="workflow-node-name"
+          value={node.name}
+          disabled={readOnly}
+          className="min-h-11"
+          onChange={(event) => onChange({ ...node, name: event.target.value })}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="workflow-node-description">
+          {t(($) => $.editor.node_description)}
+        </Label>
+        <Textarea
+          id="workflow-node-description"
+          value={node.description ?? ""}
+          disabled={readOnly}
+          rows={3}
+          onChange={(event) => onChange({
+            ...node,
+            description: event.target.value || undefined,
+          })}
+        />
+      </div>
+      {activity && (
+        <>
+          <div className="grid grid-cols-[minmax(0,1fr)_3rem] gap-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="workflow-node-color">{t(($) => $.editor.node_color)}</Label>
+              <Input
+                id="workflow-node-color"
+                value={node.color ?? ""}
+                disabled={readOnly}
+                placeholder="#6366f1"
+                className="min-h-11"
+                onChange={(event) => onChange({
+                  ...node,
+                  color: event.target.value || undefined,
+                })}
+              />
+            </div>
+            <input
+              type="color"
+              aria-label={t(($) => $.editor.node_color)}
+              value={node.color?.match(/^#[0-9a-fA-F]{6}$/) ? node.color : "#6366f1"}
+              disabled={readOnly}
+              className="mt-6 size-11 rounded-md border bg-background p-1"
+              onChange={(event) => onChange({ ...node, color: event.target.value })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="workflow-node-timeout">{t(($) => $.editor.timeout_minutes)}</Label>
+            <Input
+              id="workflow-node-timeout"
+              type="number"
+              min={0}
+              max={525600}
+              value={node.timeout_minutes ?? 0}
+              disabled={readOnly}
+              className="min-h-11"
+              onChange={(event) => onChange({
+                ...node,
+                timeout_minutes: Number(event.target.value) || undefined,
+              })}
+            />
+            <p className="text-xs text-muted-foreground">
+              {t(($) => $.editor.timeout_minutes_hint)}
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t(($) => $.editor.activity_mode)}</Label>
+            <select
+              value={node.activity_mode ?? "work"}
+              disabled={readOnly}
+              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              onChange={(event) => onChange({ ...node, activity_mode: event.target.value })}
+            >
+              <option value="work">{t(($) => $.editor.work_activity)}</option>
+              <option value="acceptance">{t(($) => $.editor.acceptance_activity)}</option>
+            </select>
+          </div>
+        </>
+      )}
+      {node.kind === "parallel_join" && (
+        <div className="space-y-1.5">
+          <Label>{t(($) => $.editor.join_mode)}</Label>
+          <select
+            value={node.join_mode ?? "all"}
+            disabled={readOnly}
+            className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+            onChange={(event) => onChange({ ...node, join_mode: event.target.value })}
+          >
+            <option value="all">{t(($) => $.editor.join_all)}</option>
+            <option value="any">{t(($) => $.editor.join_any)}</option>
+          </select>
+        </div>
+      )}
+    </>
+  );
+
+  if (!activity) {
+    return (
+      <div className="space-y-3">
+        <div>
+          <h2 className="text-sm font-medium">{node.name}</h2>
+          <p className="mt-1 font-mono text-xs text-muted-foreground">{node.key}</p>
+        </div>
+        <InspectorSection title={t(($) => $.editor.section_basic)} open>
+          {basicFields}
+        </InspectorSection>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       <div>
         <h2 className="text-sm font-medium">{node.name}</h2>
         <p className="mt-1 font-mono text-xs text-muted-foreground">{node.key}</p>
       </div>
-      <InspectorSection title={t(($) => $.editor.section_basic)} open>
-        <div className="space-y-1.5">
-          <Label htmlFor="workflow-node-name">{t(($) => $.editor.activity_name)}</Label>
-          <Input
-            id="workflow-node-name"
-            value={node.name}
-            disabled={readOnly}
-            className="min-h-11"
-            onChange={(event) => onChange({ ...node, name: event.target.value })}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="workflow-node-description">
-            {t(($) => $.editor.node_description)}
-          </Label>
-          <Textarea
-            id="workflow-node-description"
-            value={node.description ?? ""}
-            disabled={readOnly}
-            rows={3}
-            onChange={(event) => onChange({
-              ...node,
-              description: event.target.value || undefined,
-            })}
-          />
-        </div>
-        {activity && (
-          <>
-            <div className="grid grid-cols-[minmax(0,1fr)_3rem] gap-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="workflow-node-color">{t(($) => $.editor.node_color)}</Label>
-                <Input
-                  id="workflow-node-color"
-                  value={node.color ?? ""}
-                  disabled={readOnly}
-                  placeholder="#6366f1"
-                  className="min-h-11"
-                  onChange={(event) => onChange({
-                    ...node,
-                    color: event.target.value || undefined,
-                  })}
-                />
-              </div>
-              <input
-                type="color"
-                aria-label={t(($) => $.editor.node_color)}
-                value={node.color?.match(/^#[0-9a-fA-F]{6}$/) ? node.color : "#6366f1"}
-                disabled={readOnly}
-                className="mt-6 size-11 rounded-md border bg-background p-1"
-                onChange={(event) => onChange({ ...node, color: event.target.value })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="workflow-node-timeout">{t(($) => $.editor.timeout_minutes)}</Label>
-              <Input
-                id="workflow-node-timeout"
-                type="number"
-                min={0}
-                max={525600}
-                value={node.timeout_minutes ?? 0}
-                disabled={readOnly}
-                className="min-h-11"
-                onChange={(event) => onChange({
-                  ...node,
-                  timeout_minutes: Number(event.target.value) || undefined,
-                })}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t(($) => $.editor.timeout_minutes_hint)}
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <Label>{t(($) => $.editor.activity_mode)}</Label>
-              <select
-                value={node.activity_mode ?? "work"}
-                disabled={readOnly}
-                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                onChange={(event) => onChange({ ...node, activity_mode: event.target.value })}
-              >
-                <option value="work">{t(($) => $.editor.work_activity)}</option>
-                <option value="acceptance">{t(($) => $.editor.acceptance_activity)}</option>
-              </select>
-            </div>
-          </>
-        )}
-        {node.kind === "parallel_join" && (
-          <div className="space-y-1.5">
-            <Label>{t(($) => $.editor.join_mode)}</Label>
-            <select
-              value={node.join_mode ?? "all"}
-              disabled={readOnly}
-              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
-              onChange={(event) => onChange({ ...node, join_mode: event.target.value })}
-            >
-              <option value="all">{t(($) => $.editor.join_all)}</option>
-              <option value="any">{t(($) => $.editor.join_any)}</option>
-            </select>
-          </div>
-        )}
-      </InspectorSection>
-      {activity && (
-        <>
-          <InspectorSection title={t(($) => $.editor.section_responsibility)}>
+      <Tabs key={node.key} defaultValue="info" className="gap-3">
+        <TabsList variant="line" className="w-full justify-start">
+          <TabsTrigger value="info">{t(($) => $.editor.tab_info)}</TabsTrigger>
+          <TabsTrigger value="work">{t(($) => $.editor.tab_work)}</TabsTrigger>
+          <TabsTrigger value="transition">
+            {t(($) => $.editor.tab_transition)}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="info" className="space-y-4">
+          {basicFields}
+          <div className="space-y-4 border-t pt-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t(($) => $.editor.section_responsibility)}
+            </p>
             <div className="space-y-1.5">
               <Label>{t(($) => $.editor.owner_role)}</Label>
               <select
@@ -1404,52 +1438,55 @@ export function WorkflowNodeDefinitionInspector({
               readOnly={readOnly}
               onChange={onChange}
             />
-          </InspectorSection>
-          <InspectorSection title={t(($) => $.editor.section_work)} open>
-            <div className="space-y-1.5">
-              <Label>{t(($) => $.editor.issue_policy)}</Label>
-              <select
-                value={node.issue_policy ?? "none"}
-                disabled={readOnly}
-                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                onChange={(event) => {
-                  const policy = event.target.value;
-                  onChange({
-                    ...node,
-                    issue_policy: policy,
-                    issue_templates: policy === "none" || policy === "dynamic"
-                      ? []
-                      : node.issue_templates,
-                  });
-                }}
-              >
-                <option value="none">{t(($) => $.editor.issue_policy_none)}</option>
-                <option value="fixed">{t(($) => $.editor.issue_policy_fixed)}</option>
-                <option value="dynamic">{t(($) => $.editor.issue_policy_dynamic)}</option>
-                <option value="fixed_and_dynamic">{t(($) => $.editor.issue_policy_both)}</option>
-              </select>
-            </div>
-            <IssueTemplateEditor
-              node={node}
-              roles={definition.roles}
-              actorOptions={actorOptions}
-              readOnly={readOnly}
-              onChange={onChange}
-            />
-          </InspectorSection>
-          <InspectorSection title={t(($) => $.editor.section_submission)}>
+          </div>
+        </TabsContent>
+        <TabsContent value="work" className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>{t(($) => $.editor.issue_policy)}</Label>
+            <select
+              value={node.issue_policy ?? "none"}
+              disabled={readOnly}
+              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              onChange={(event) => {
+                const policy = event.target.value;
+                onChange({
+                  ...node,
+                  issue_policy: policy,
+                  issue_templates: policy === "none" || policy === "dynamic"
+                    ? []
+                    : node.issue_templates,
+                });
+              }}
+            >
+              <option value="none">{t(($) => $.editor.issue_policy_none)}</option>
+              <option value="fixed">{t(($) => $.editor.issue_policy_fixed)}</option>
+              <option value="dynamic">{t(($) => $.editor.issue_policy_dynamic)}</option>
+              <option value="fixed_and_dynamic">{t(($) => $.editor.issue_policy_both)}</option>
+            </select>
+          </div>
+          <IssueTemplateEditor
+            node={node}
+            roles={definition.roles}
+            actorOptions={actorOptions}
+            readOnly={readOnly}
+            onChange={onChange}
+          />
+        </TabsContent>
+        <TabsContent value="transition" className="space-y-4">
+          <CompletionEditor
+            node={node}
+            roles={definition.roles}
+            readOnly={readOnly}
+            onChange={onChange}
+          />
+          <div className="space-y-4 border-t pt-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t(($) => $.editor.section_submission)}
+            </p>
             <SubmissionEditor node={node} readOnly={readOnly} onChange={onChange} />
-          </InspectorSection>
-          <InspectorSection title={t(($) => $.editor.section_completion)}>
-            <CompletionEditor
-              node={node}
-              roles={definition.roles}
-              readOnly={readOnly}
-              onChange={onChange}
-            />
-          </InspectorSection>
-        </>
-      )}
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

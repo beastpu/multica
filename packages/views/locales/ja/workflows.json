@@ -405,7 +405,10 @@
     "field_type_date": "日付",
     "field_type_member": "メンバー",
     "field_type_agent": "エージェント",
-    "field_type_squad": "スクワッド"
+    "field_type_squad": "スクワッド",
+    "tab_info": "ノード情報",
+    "tab_work": "ノードタスク",
+    "tab_transition": "ノードフロー"
   },
   "status": {
     "needs_setup": "設定が必要",

@@ -405,7 +405,10 @@
     "field_type_date": "날짜",
     "field_type_member": "멤버",
     "field_type_agent": "에이전트",
-    "field_type_squad": "스쿼드"
+    "field_type_squad": "스쿼드",
+    "tab_info": "노드 정보",
+    "tab_work": "노드 작업",
+    "tab_transition": "노드 전환"
   },
   "status": {
     "needs_setup": "설정 필요",
