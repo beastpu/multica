@@ -91,6 +91,15 @@ describe("WorkflowNodeDefinitionInspector", () => {
     ]);
   });
 
+  it("shows predecessors and successors from the graph edges", () => {
+    renderInspector(vi.fn());
+
+    expect(screen.getByText(enWorkflows.editor.flow_predecessors))
+      .toBeInTheDocument();
+    expect(screen.getByText("Start")).toBeInTheDocument();
+    expect(screen.getByText("End")).toBeInTheDocument();
+  });
+
   it("shows humanized executor strategy labels instead of engine enums", () => {
     renderInspector(vi.fn());
 
@@ -186,16 +195,60 @@ describe("WorkflowNodeDefinitionInspector", () => {
     await user.click(
       screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
     );
-    expect(screen.getByLabelText("Completion method")).toHaveValue("automatic");
+    expect(screen.getByLabelText("Completion trigger")).toHaveValue("automatic");
     expect(screen.getByText("Completion form")).toBeInTheDocument();
 
     await user.selectOptions(
-      screen.getByLabelText("Completion method"),
+      screen.getByLabelText("Completion trigger"),
       "manual",
     );
 
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
       completion: expect.objectContaining({ mode: "manual" }),
+    }));
+  });
+
+  it("applies the single-confirmation completion preset", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const memberOwnerDefinition: WorkflowDefinition = {
+      ...definition,
+      roles: [{
+        key: "owner",
+        name: "Owner",
+        required: true,
+        allowed_actor_types: ["member"],
+      }],
+    };
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{ en: { workflows: enWorkflows } }}
+      >
+        <WorkflowNodeDefinitionInspector
+          node={{ ...node, owner_role: "owner" }}
+          definition={memberOwnerDefinition}
+          actorOptions={actorOptions}
+          readOnly={false}
+          onChange={onChange}
+        />
+      </I18nProvider>,
+    );
+
+    await user.click(
+      screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
+    );
+    await user.click(
+      screen.getByRole("radio", {
+        name: new RegExp(enWorkflows.editor.completion_preset_single),
+      }),
+    );
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      completion: expect.objectContaining({
+        mode: "automatic",
+        confirmation: "owner_any",
+      }),
     }));
   });
 });

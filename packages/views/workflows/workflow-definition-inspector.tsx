@@ -65,6 +65,34 @@ function stableKey(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
+function NodeNeighborList({
+  label,
+  nodes,
+}: {
+  label: string;
+  nodes: WorkflowNodeDefinition[];
+}) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-medium">{label}</p>
+      {nodes.length === 0 ? (
+        <p className="text-xs text-muted-foreground">—</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {nodes.map((item) => (
+            <span
+              key={item.key}
+              className="rounded-md border bg-muted/40 px-2 py-1 text-xs"
+            >
+              {item.name}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InspectorSection({
   title,
   children,
@@ -169,10 +197,12 @@ function JsonObjectEditor({
 
 function RoleEditor({
   roles,
+  actorOptions = [],
   readOnly,
   onChange,
 }: {
   roles: WorkflowRoleDefinition[];
+  actorOptions?: WorkflowActorOption[];
   readOnly: boolean;
   onChange: (roles: WorkflowRoleDefinition[]) => void;
 }) {
@@ -246,6 +276,45 @@ function RoleEditor({
               ))}
             </div>
           </fieldset>
+          <div className="space-y-1.5">
+            <Label>{t(($) => $.editor.role_default_actor)}</Label>
+            <select
+              aria-label={`${t(($) => $.editor.role_default_actor)} ${role.name}`}
+              value={role.default_actor_type && role.default_actor_id
+                ? actorOptionValue({
+                    type: role.default_actor_type,
+                    id: role.default_actor_id,
+                  })
+                : ""}
+              disabled={readOnly}
+              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              onChange={(event) => {
+                const actor = parseActorOption(event.target.value);
+                const next = [...roles];
+                next[index] = {
+                  ...role,
+                  default_actor_type: actor?.type,
+                  default_actor_id: actor?.id,
+                };
+                onChange(next);
+              }}
+            >
+              <option value="">{t(($) => $.editor.role_default_actor_none)}</option>
+              {actorOptions
+                .filter((actor) => role.allowed_actor_types.includes(actor.type))
+                .map((actor) => (
+                  <option
+                    key={actorOptionValue(actor)}
+                    value={actorOptionValue(actor)}
+                  >
+                    {actor.name} · {actor.type}
+                  </option>
+                ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              {t(($) => $.editor.role_default_actor_hint)}
+            </p>
+          </div>
         </div>
       ))}
       {!readOnly && (
@@ -391,10 +460,12 @@ function AcceptanceEditor({
 
 export function WorkflowDefinitionInspector({
   definition,
+  actorOptions = [],
   readOnly,
   onChange,
 }: {
   definition: WorkflowDefinition;
+  actorOptions?: WorkflowActorOption[];
   readOnly: boolean;
   onChange: (definition: WorkflowDefinition) => void;
 }) {
@@ -404,6 +475,7 @@ export function WorkflowDefinitionInspector({
       <InspectorSection title={t(($) => $.editor.workflow_roles)}>
         <RoleEditor
           roles={definition.roles}
+          actorOptions={actorOptions}
           readOnly={readOnly}
           onChange={(roles) => onChange({ ...definition, roles })}
         />
@@ -1045,38 +1117,96 @@ function CompletionEditor({
   const ownerCanConfirm = ownerRole?.allowed_actor_types.length === 1 &&
     ownerRole.allowed_actor_types[0] === "member";
 
+  // The three presets cover the common Feishu-style choices; anything else
+  // (manual mode, member/admin confirmations) is a custom combination
+  // reachable through the advanced conditions below.
+  const preset = (() => {
+    if (completionMode !== "automatic") return "custom";
+    if (confirmation === "none") return "automatic";
+    if (confirmation === "owner_any") return "single";
+    if (confirmation === "owner_all") return "multi";
+    return "custom";
+  })();
+  const applyPreset = (
+    value: "automatic" | "single" | "multi",
+  ) => {
+    const presetConfirmation = value === "automatic"
+      ? "none"
+      : value === "single"
+        ? "owner_any"
+        : "owner_all";
+    onChange({
+      ...node,
+      completion: {
+        ...completion,
+        mode: "automatic",
+        confirmation: presetConfirmation,
+      },
+    });
+  };
+  const presetOption = (
+    value: "automatic" | "single" | "multi",
+    label: string,
+    description: string,
+    disabled = false,
+  ) => (
+    <label
+      className={`flex items-start gap-2 rounded-lg border p-2.5 text-sm ${
+        preset === value ? "border-primary bg-primary/5" : ""
+      } ${disabled ? "opacity-50" : ""}`}
+    >
+      <input
+        type="radio"
+        name={`completion-preset-${node.key}`}
+        value={value}
+        checked={preset === value}
+        disabled={readOnly || disabled}
+        className="mt-1"
+        onChange={() => applyPreset(value)}
+      />
+      <span className="min-w-0">
+        <span className="block font-medium">{label}</span>
+        <span className="block text-xs text-muted-foreground">
+          {description}
+        </span>
+      </span>
+    </label>
+  );
+
   return (
     <div className="space-y-4">
-      <div className="space-y-1.5">
-        <Label htmlFor={`completion-mode-${node.key}`}>
+      <fieldset className="space-y-2">
+        <legend className="mb-1.5 text-xs font-medium">
           {t(($) => $.editor.completion_mode)}
-        </Label>
-        <select
-          id={`completion-mode-${node.key}`}
-          value={completionMode}
-          disabled={readOnly}
-          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
-          onChange={(event) => onChange({
-            ...node,
-            completion: {
-              ...completion,
-              mode: event.target.value as "automatic" | "manual",
-            },
-          })}
-        >
-          <option value="automatic">
-            {t(($) => $.editor.completion_mode_automatic)}
-          </option>
-          <option value="manual">
-            {t(($) => $.editor.completion_mode_manual)}
-          </option>
-        </select>
-        <p className="text-xs text-muted-foreground">
-          {completionMode === "automatic"
-            ? t(($) => $.editor.completion_mode_automatic_help)
-            : t(($) => $.editor.completion_mode_manual_help)}
-        </p>
-      </div>
+        </legend>
+        {presetOption(
+          "automatic",
+          t(($) => $.editor.completion_mode_automatic),
+          t(($) => $.editor.completion_mode_automatic_help),
+        )}
+        {presetOption(
+          "single",
+          t(($) => $.editor.completion_preset_single),
+          t(($) => $.editor.completion_preset_single_desc),
+          !ownerCanConfirm,
+        )}
+        {presetOption(
+          "multi",
+          t(($) => $.editor.completion_preset_multi),
+          t(($) => $.editor.completion_preset_multi_desc),
+          !ownerCanConfirm,
+        )}
+        {!ownerCanConfirm && (
+          <p className="text-xs text-muted-foreground">
+            {t(($) => $.editor.owner_confirmation_member_only)}
+          </p>
+        )}
+        {preset === "custom" && (
+          <p className="text-xs text-muted-foreground">
+            {t(($) => $.editor.completion_preset_custom_note)}
+          </p>
+        )}
+      </fieldset>
       <div className="border-t pt-4">
         <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {t(($) => $.editor.completion_conditions)}
@@ -1109,6 +1239,36 @@ function CompletionEditor({
           {t(($) => $.editor.advanced_completion_conditions)}
         </summary>
         <div className="space-y-4 border-t p-3">
+          <div className="space-y-1.5">
+            <Label htmlFor={`completion-mode-${node.key}`}>
+              {t(($) => $.editor.completion_mode_advanced)}
+            </Label>
+            <select
+              id={`completion-mode-${node.key}`}
+              value={completionMode}
+              disabled={readOnly}
+              className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              onChange={(event) => onChange({
+                ...node,
+                completion: {
+                  ...completion,
+                  mode: event.target.value as "automatic" | "manual",
+                },
+              })}
+            >
+              <option value="automatic">
+                {t(($) => $.editor.completion_mode_automatic)}
+              </option>
+              <option value="manual">
+                {t(($) => $.editor.completion_mode_manual)}
+              </option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              {completionMode === "automatic"
+                ? t(($) => $.editor.completion_mode_automatic_help)
+                : t(($) => $.editor.completion_mode_manual_help)}
+            </p>
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor={`verdict-evaluator-${node.key}`}>
               {t(($) => $.editor.verdict_evaluator)}
@@ -1437,6 +1597,27 @@ export function WorkflowNodeDefinitionInspector({
               actorOptions={actorOptions}
               readOnly={readOnly}
               onChange={onChange}
+            />
+          </div>
+          <div className="space-y-3 border-t pt-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t(($) => $.editor.section_flow)}
+            </p>
+            <NodeNeighborList
+              label={t(($) => $.editor.flow_predecessors)}
+              nodes={definition.nodes.filter((item) =>
+                definition.edges.some(
+                  (edge) => edge.to === node.key && edge.from === item.key,
+                ),
+              )}
+            />
+            <NodeNeighborList
+              label={t(($) => $.editor.flow_successors)}
+              nodes={definition.nodes.filter((item) =>
+                definition.edges.some(
+                  (edge) => edge.from === node.key && edge.to === item.key,
+                ),
+              )}
             />
           </div>
         </TabsContent>

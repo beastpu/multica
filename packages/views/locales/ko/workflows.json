@@ -408,7 +408,19 @@
     "field_type_squad": "스쿼드",
     "tab_info": "노드 정보",
     "tab_work": "노드 작업",
-    "tab_transition": "노드 전환"
+    "tab_transition": "노드 전환",
+    "completion_preset_single": "단일 확인 완료",
+    "completion_preset_single_desc": "조건 충족 후 노드 담당자 중 한 명이 확인하면 완료됩니다.",
+    "completion_preset_multi": "다중 확인 완료",
+    "completion_preset_multi_desc": "조건 충족 후 모든 노드 담당자가 확인해야 완료됩니다.",
+    "completion_preset_custom_note": "이 노드는 사용자 지정 조합입니다. 아래 고급 조건에서 조정하세요.",
+    "completion_mode_advanced": "완료 트리거",
+    "section_flow": "의존 관계",
+    "flow_predecessors": "이전 노드",
+    "flow_successors": "다음 노드",
+    "role_default_actor": "기본 담당자",
+    "role_default_actor_none": "기본값 없음",
+    "role_default_actor_hint": "워크플로 시작 시 이 역할에 자동으로 채워지며, 시작 시 변경할 수 있습니다."
   },
   "status": {
     "needs_setup": "설정 필요",

@@ -408,7 +408,19 @@
     "field_type_squad": "スクワッド",
     "tab_info": "ノード情報",
     "tab_work": "ノードタスク",
-    "tab_transition": "ノードフロー"
+    "tab_transition": "ノードフロー",
+    "completion_preset_single": "単独確認で完了",
+    "completion_preset_single_desc": "条件を満たした後、いずれかのノード担当者が確認すると完了します。",
+    "completion_preset_multi": "全員確認で完了",
+    "completion_preset_multi_desc": "条件を満たした後、すべてのノード担当者が確認すると完了します。",
+    "completion_preset_custom_note": "このノードはカスタム設定です。下の高度な条件で調整できます。",
+    "completion_mode_advanced": "完了トリガー",
+    "section_flow": "依存関係",
+    "flow_predecessors": "前のノード",
+    "flow_successors": "次のノード",
+    "role_default_actor": "デフォルト担当者",
+    "role_default_actor_none": "デフォルトなし",
+    "role_default_actor_hint": "ワークフロー開始時にこのロールへ自動で設定されます。開始時に変更できます。"
   },
   "status": {
     "needs_setup": "設定が必要",

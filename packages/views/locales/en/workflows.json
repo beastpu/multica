@@ -408,7 +408,19 @@
     "field_type_squad": "Squad",
     "tab_info": "Node info",
     "tab_work": "Node tasks",
-    "tab_transition": "Node transition"
+    "tab_transition": "Node transition",
+    "completion_preset_single": "Single confirmation",
+    "completion_preset_single_desc": "After the conditions are met, any node owner can confirm to complete.",
+    "completion_preset_multi": "Multi confirmation",
+    "completion_preset_multi_desc": "After the conditions are met, every node owner must confirm before completion.",
+    "completion_preset_custom_note": "This node uses a custom combination; adjust it in the advanced conditions below.",
+    "completion_mode_advanced": "Completion trigger",
+    "section_flow": "Dependencies",
+    "flow_predecessors": "Previous nodes",
+    "flow_successors": "Next nodes",
+    "role_default_actor": "Default assignee",
+    "role_default_actor_none": "No default",
+    "role_default_actor_hint": "Pre-filled for this role when starting a workflow; can be changed at start time."
   },
   "status": {
     "needs_setup": "Needs setup",
