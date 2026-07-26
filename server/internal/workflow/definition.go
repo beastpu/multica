@@ -140,6 +140,11 @@ type CompletionDefinition struct {
 	SubmissionRequired   bool   `json:"submission_required,omitempty"`
 	VerdictRequired      string `json:"verdict_required,omitempty"`
 	Confirmation         string `json:"confirmation,omitempty"`
+	// AuthorizedRoles lists workflow roles whose resolved member actors may
+	// force-complete, skip, or roll back this node in addition to the
+	// defaults (workspace admins always; the node owner for manual
+	// completion).
+	AuthorizedRoles []string `json:"authorized_roles,omitempty"`
 }
 
 type EdgeDefinition struct {
@@ -518,6 +523,15 @@ func validateActivity(
 			node.Key,
 			node.Completion.VerdictRequired,
 		)
+	}
+	for _, roleKey := range node.Completion.AuthorizedRoles {
+		if _, ok := roles[roleKey]; !ok {
+			return fmt.Errorf(
+				"activity %q completion references unknown authorized role %q",
+				node.Key,
+				roleKey,
+			)
+		}
 	}
 	switch node.Completion.Confirmation {
 	case "", "none", "member_any", "member_all", "admin_only":

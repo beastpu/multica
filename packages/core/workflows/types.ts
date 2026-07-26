@@ -58,6 +58,8 @@ export interface WorkflowCompletionDefinition {
     | "member_any"
     | "member_all"
     | "admin_only";
+  /** Workflow roles additionally allowed to complete/skip/rollback. */
+  authorized_roles?: string[];
 }
 
 export interface WorkflowNodeDefinition {

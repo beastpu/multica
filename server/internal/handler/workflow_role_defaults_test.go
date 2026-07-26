@@ -4,7 +4,30 @@ import (
 	"testing"
 
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestWorkflowRoleAuthorizes(t *testing.T) {
+	member := parseUUID("11111111-1111-1111-1111-111111111111")
+	other := parseUUID("22222222-2222-2222-2222-222222222222")
+	assignments := []db.WorkflowInstanceRoleAssignment{
+		{RoleKey: "pm", ActorType: "member", ActorID: member},
+		{RoleKey: "fixer", ActorType: "agent", ActorID: member},
+	}
+
+	if !workflowRoleAuthorizes(assignments, []string{"pm"}, member) {
+		t.Fatal("member resolved from an authorized role must be allowed")
+	}
+	if workflowRoleAuthorizes(assignments, []string{"pm"}, other) {
+		t.Fatal("a different member must not be allowed")
+	}
+	if workflowRoleAuthorizes(assignments, []string{"fixer"}, member) {
+		t.Fatal("agent assignments must never authorize an HTTP action")
+	}
+	if workflowRoleAuthorizes(assignments, nil, member) {
+		t.Fatal("empty authorized roles must not allow anyone")
+	}
+}
 
 func TestApplyWorkflowRoleDefaults(t *testing.T) {
 	definition := workflowdomain.Definition{

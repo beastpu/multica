@@ -424,7 +424,9 @@
     "section_node_events": "Node events",
     "on_enter_host_status": "Set host status on arrival",
     "on_complete_host_status": "Set host status on completion",
-    "node_events_hint": "Automatically updates the host issue status when the node activates or completes; leave empty to skip. Applies regardless of the host status mode as an explicit template instruction."
+    "node_events_hint": "Automatically updates the host issue status when the node activates or completes; leave empty to skip. Applies regardless of the host status mode as an explicit template instruction.",
+    "completion_authorized_roles": "Roles authorized to complete/rollback",
+    "completion_authorized_roles_hint": "Workspace admins and the node owner can always operate; members resolved from the checked roles may also force-complete, skip, or roll back this node."
   },
   "status": {
     "needs_setup": "Needs setup",

@@ -672,26 +672,51 @@ func (h *Handler) transitionWorkflowNode(
 		writeError(w, http.StatusBadRequest, "reason is required")
 		return
 	}
-	nodeOwnerAction := manualCompletion
-	if nodeOwnerAction {
-		allowed, permissionErr := h.canManageWorkflowNode(
+	allowed := false
+	if manualCompletion {
+		manageAllowed, permissionErr := h.canManageWorkflowNode(
 			r.Context(), instance, node, nodeDefinition, userUUID,
 		)
 		if permissionErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to verify workflow node permission")
 			return
 		}
-		if !allowed {
-			writeError(
-				w,
-				http.StatusForbidden,
-				"only the node owner or a workspace admin can perform this action",
-			)
+		allowed = manageAllowed
+	}
+	if !allowed {
+		member, memberErr := h.Queries.GetMemberByUserAndWorkspace(
+			r.Context(),
+			db.GetMemberByUserAndWorkspaceParams{
+				UserID: userUUID, WorkspaceID: instance.WorkspaceID,
+			},
+		)
+		if memberErr != nil {
+			writeError(w, http.StatusNotFound, "workspace not found")
 			return
 		}
-	} else if _, roleOK := h.requireWorkspaceRole(
-		w, r, h.resolveWorkspaceID(r), "workspace not found", "owner", "admin",
-	); !roleOK {
+		allowed = roleAllowed(member.Role, "owner", "admin")
+	}
+	if !allowed && len(nodeDefinition.Completion.AuthorizedRoles) > 0 {
+		assignments, assignmentsErr := h.Queries.ListWorkflowRoleAssignments(
+			r.Context(),
+			db.ListWorkflowRoleAssignmentsParams{
+				WorkflowInstanceID: instance.ID, WorkspaceID: instance.WorkspaceID,
+			},
+		)
+		if assignmentsErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load workflow role assignments")
+			return
+		}
+		allowed = workflowRoleAuthorizes(
+			assignments, nodeDefinition.Completion.AuthorizedRoles, userUUID,
+		)
+	}
+	if !allowed {
+		writeError(
+			w,
+			http.StatusForbidden,
+			"only the node owner, a workspace admin, or an authorized role can perform this action",
+		)
 		return
 	}
 
@@ -1311,6 +1336,29 @@ func workflowTaskReplay(
 		return db.WorkflowNodeTask{}, true
 	}
 	return task, true
+}
+
+// workflowRoleAuthorizes reports whether the user is the resolved member
+// actor of any of the node's authorized workflow roles. Only member actors
+// can authorize an HTTP action; agent or squad assignments never do.
+func workflowRoleAuthorizes(
+	assignments []db.WorkflowInstanceRoleAssignment,
+	authorizedRoles []string,
+	userID pgtype.UUID,
+) bool {
+	roleSet := make(map[string]struct{}, len(authorizedRoles))
+	for _, roleKey := range authorizedRoles {
+		roleSet[roleKey] = struct{}{}
+	}
+	for _, assignment := range assignments {
+		if _, ok := roleSet[assignment.RoleKey]; !ok {
+			continue
+		}
+		if assignment.ActorType == "member" && assignment.ActorID == userID {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) canManageWorkflowNode(

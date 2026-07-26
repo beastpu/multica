@@ -1260,6 +1260,44 @@ function CompletionEditor({
           </p>
         )}
       </fieldset>
+      {roles.length > 0 && (
+        <fieldset>
+          <legend className="mb-1.5 text-xs font-medium">
+            {t(($) => $.editor.completion_authorized_roles)}
+          </legend>
+          <div className="space-y-1">
+            {roles.map((role) => (
+              <label
+                key={role.key}
+                className="flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm"
+              >
+                <input
+                  type="checkbox"
+                  checked={completion.authorized_roles?.includes(role.key) ?? false}
+                  disabled={readOnly}
+                  onChange={(event) => {
+                    const current = completion.authorized_roles ?? [];
+                    const next = event.target.checked
+                      ? [...current, role.key]
+                      : current.filter((key) => key !== role.key);
+                    onChange({
+                      ...node,
+                      completion: {
+                        ...completion,
+                        authorized_roles: next.length > 0 ? next : undefined,
+                      },
+                    });
+                  }}
+                />
+                {role.name}
+              </label>
+            ))}
+          </div>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            {t(($) => $.editor.completion_authorized_roles_hint)}
+          </p>
+        </fieldset>
+      )}
       <div className="border-t pt-4">
         <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {t(($) => $.editor.completion_conditions)}

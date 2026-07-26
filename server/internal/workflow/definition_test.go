@@ -208,6 +208,21 @@ func executorCondition(node, key string) json.RawMessage {
 	))
 }
 
+func TestValidateDefinitionCompletionAuthorizedRoles(t *testing.T) {
+	valid := validDefinition()
+	valid.Nodes[1].Completion.AuthorizedRoles = []string{"owner"}
+	if err := ValidateDefinition(valid); err != nil {
+		t.Fatalf("ValidateDefinition() error = %v", err)
+	}
+
+	unknown := validDefinition()
+	unknown.Nodes[1].Completion.AuthorizedRoles = []string{"pm"}
+	if err := ValidateDefinition(unknown); err == nil ||
+		!strings.Contains(err.Error(), "authorized role") {
+		t.Fatalf("ValidateDefinition() error = %v, want authorized role error", err)
+	}
+}
+
 func TestValidateDefinitionNodeActions(t *testing.T) {
 	valid := validDefinition()
 	valid.Nodes[1].OnEnter = []NodeActionDefinition{{
