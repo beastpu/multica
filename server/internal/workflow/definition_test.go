@@ -208,6 +208,30 @@ func executorCondition(node, key string) json.RawMessage {
 	))
 }
 
+func TestValidateDefinitionRoleDefaultActor(t *testing.T) {
+	valid := validDefinition()
+	valid.Roles[0].DefaultActorType = "member"
+	valid.Roles[0].DefaultActorID = "33333333-3333-3333-3333-333333333333"
+	if err := ValidateDefinition(valid); err != nil {
+		t.Fatalf("ValidateDefinition() error = %v", err)
+	}
+
+	typeNotAllowed := validDefinition()
+	// Role "owner" only allows member actors.
+	typeNotAllowed.Roles[0].DefaultActorType = "agent"
+	typeNotAllowed.Roles[0].DefaultActorID = "33333333-3333-3333-3333-333333333333"
+	if err := ValidateDefinition(typeNotAllowed); err == nil ||
+		!strings.Contains(err.Error(), "default actor") {
+		t.Fatalf("ValidateDefinition() error = %v, want default actor type error", err)
+	}
+
+	half := validDefinition()
+	half.Roles[0].DefaultActorType = "member"
+	if err := ValidateDefinition(half); err == nil {
+		t.Fatal("ValidateDefinition() accepted default actor type without id")
+	}
+}
+
 func TestValidateDefinitionAcceptsConditionalExecutorStrategies(t *testing.T) {
 	definition := conditionalDeliveryDefinition()
 	for index, node := range definition.Nodes {

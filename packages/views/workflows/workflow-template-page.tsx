@@ -846,6 +846,7 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
                 <aside className="max-h-[46rem] overflow-y-auto bg-muted/10 p-5">
                   <WorkflowDefinitionInspector
                     definition={definition}
+                    actorOptions={actorOptions}
                     readOnly={!canEdit}
                     onChange={changeDefinition}
                   />

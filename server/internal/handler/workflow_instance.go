@@ -645,6 +645,7 @@ func (h *Handler) StartIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	req.RoleAssignments = applyWorkflowRoleDefaults(definition, req.RoleAssignments)
 	assignments, missingRoles, ok := h.validateWorkflowRoleAssignments(w, r, wsUUID, workspaceID, definition, req.RoleAssignments)
 	if !ok {
 		return
@@ -889,6 +890,32 @@ type validatedWorkflowRoleAssignment struct {
 	ActorType string
 	ActorID   pgtype.UUID
 	Source    string
+}
+
+// applyWorkflowRoleDefaults appends template-level default actors for roles
+// the caller left unassigned, so API starts get the same defaults as the
+// start dialog. Explicit assignments always win over the template default.
+func applyWorkflowRoleDefaults(
+	definition workflowdomain.Definition,
+	inputs []workflowRoleAssignmentInput,
+) []workflowRoleAssignmentInput {
+	assigned := make(map[string]struct{}, len(inputs))
+	for _, input := range inputs {
+		assigned[input.RoleKey] = struct{}{}
+	}
+	for _, role := range definition.Roles {
+		if role.DefaultActorType == "" || role.DefaultActorID == "" {
+			continue
+		}
+		if _, exists := assigned[role.Key]; exists {
+			continue
+		}
+		inputs = append(inputs, workflowRoleAssignmentInput{
+			RoleKey: role.Key, ActorType: role.DefaultActorType,
+			ActorID: role.DefaultActorID, Source: "fixed",
+		})
+	}
+	return inputs
 }
 
 func (h *Handler) validateWorkflowRoleAssignments(

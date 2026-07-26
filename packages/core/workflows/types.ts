@@ -5,6 +5,9 @@ export interface WorkflowRoleDefinition {
   name: string;
   required: boolean;
   allowed_actor_types: string[];
+  /** Optional template-level default assignee, pre-filled when starting. */
+  default_actor_type?: "member" | "agent" | "squad";
+  default_actor_id?: string;
 }
 
 export interface WorkflowSubmissionField {

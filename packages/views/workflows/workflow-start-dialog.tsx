@@ -60,15 +60,27 @@ function parseAssignment(value: string): {
   return actorId ? { actorType, actorId } : null;
 }
 
-function defaultAssignments(
+export function defaultAssignments(
   roles: WorkflowRoleDefinition[],
   userId: string | undefined,
 ): Record<string, string> {
-  if (!userId) return {};
+  const assignments: Record<string, string> = {};
+  for (const role of roles) {
+    if (role.default_actor_type && role.default_actor_id) {
+      assignments[role.key] = assignmentKey(
+        role.default_actor_type,
+        role.default_actor_id,
+      );
+    }
+  }
+  if (!userId) return assignments;
   const owner = roles.find((role) =>
     role.key === "owner" && role.allowed_actor_types.includes("member")
   );
-  return owner ? { owner: assignmentKey("member", userId) } : {};
+  if (owner && !assignments.owner) {
+    assignments.owner = assignmentKey("member", userId);
+  }
+  return assignments;
 }
 
 export function WorkflowStartDialog({ issueId }: { issueId?: string }) {

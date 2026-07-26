@@ -44,6 +44,11 @@ type RoleDefinition struct {
 	Name              string   `json:"name"`
 	Required          bool     `json:"required"`
 	AllowedActorTypes []string `json:"allowed_actor_types"`
+	// DefaultActorType/DefaultActorID optionally pin a template-level default
+	// assignee for the role. Starting an instance pre-fills the role with this
+	// actor (source "fixed") unless the caller assigns someone else.
+	DefaultActorType string `json:"default_actor_type,omitempty"`
+	DefaultActorID   string `json:"default_actor_id,omitempty"`
 }
 
 type NodeDefinition struct {
@@ -245,6 +250,18 @@ func validateRoles(definitions []RoleDefinition) (map[string]RoleDefinition, err
 				return nil, fmt.Errorf("role %q has duplicate actor type %q", role.Key, actorType)
 			}
 			actorTypes[actorType] = struct{}{}
+		}
+		if err := validateDirectActor(role.DefaultActorType, role.DefaultActorID); err != nil {
+			return nil, fmt.Errorf("role %q default actor: %w", role.Key, err)
+		}
+		if role.DefaultActorType != "" {
+			if _, allowed := actorTypes[role.DefaultActorType]; !allowed {
+				return nil, fmt.Errorf(
+					"role %q default actor type %q is not in allowed_actor_types",
+					role.Key,
+					role.DefaultActorType,
+				)
+			}
 		}
 		roles[role.Key] = role
 	}
