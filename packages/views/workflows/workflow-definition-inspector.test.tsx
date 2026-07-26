@@ -208,6 +208,24 @@ describe("WorkflowNodeDefinitionInspector", () => {
     }));
   });
 
+  it("stores host-status node events from the transition tab", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderInspector(onChange);
+
+    await user.click(
+      screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
+    );
+    await user.selectOptions(
+      screen.getByLabelText(enWorkflows.editor.on_complete_host_status),
+      "in_review",
+    );
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      on_complete: [{ kind: "set_host_status", status: "in_review" }],
+    }));
+  });
+
   it("applies the single-confirmation completion preset", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

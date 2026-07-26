@@ -41,6 +41,11 @@ export interface WorkflowExecutorStrategy {
   condition?: unknown;
 }
 
+export interface WorkflowNodeAction {
+  kind: string;
+  status?: string;
+}
+
 export interface WorkflowCompletionDefinition {
   mode?: "automatic" | "manual";
   required_issue_outcome?: "done" | "terminal" | "none";
@@ -81,6 +86,9 @@ export interface WorkflowNodeDefinition {
   executor?: {
     strategies: WorkflowExecutorStrategy[];
   };
+  /** Controlled side effects when the activity activates / completes. */
+  on_enter?: WorkflowNodeAction[];
+  on_complete?: WorkflowNodeAction[];
 }
 
 export interface WorkflowDefinition {

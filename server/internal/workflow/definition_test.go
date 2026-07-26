@@ -208,6 +208,43 @@ func executorCondition(node, key string) json.RawMessage {
 	))
 }
 
+func TestValidateDefinitionNodeActions(t *testing.T) {
+	valid := validDefinition()
+	valid.Nodes[1].OnEnter = []NodeActionDefinition{{
+		Kind: "set_host_status", Status: "in_progress",
+	}}
+	valid.Nodes[1].OnComplete = []NodeActionDefinition{{
+		Kind: "set_host_status", Status: "in_review",
+	}}
+	if err := ValidateDefinition(valid); err != nil {
+		t.Fatalf("ValidateDefinition() error = %v", err)
+	}
+
+	badKind := validDefinition()
+	badKind.Nodes[1].OnComplete = []NodeActionDefinition{{Kind: "launch_missiles"}}
+	if err := ValidateDefinition(badKind); err == nil ||
+		!strings.Contains(err.Error(), "action") {
+		t.Fatalf("ValidateDefinition() error = %v, want action kind error", err)
+	}
+
+	badStatus := validDefinition()
+	badStatus.Nodes[1].OnComplete = []NodeActionDefinition{{
+		Kind: "set_host_status", Status: "shipped",
+	}}
+	if err := ValidateDefinition(badStatus); err == nil ||
+		!strings.Contains(err.Error(), "status") {
+		t.Fatalf("ValidateDefinition() error = %v, want status error", err)
+	}
+
+	onControl := validDefinition()
+	onControl.Nodes[0].OnEnter = []NodeActionDefinition{{
+		Kind: "set_host_status", Status: "todo",
+	}}
+	if err := ValidateDefinition(onControl); err == nil {
+		t.Fatal("ValidateDefinition() accepted actions on a control node")
+	}
+}
+
 func TestValidateDefinitionRoleDefaultActor(t *testing.T) {
 	valid := validDefinition()
 	valid.Roles[0].DefaultActorType = "member"

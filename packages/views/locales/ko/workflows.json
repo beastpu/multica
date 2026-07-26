@@ -420,7 +420,11 @@
     "flow_successors": "다음 노드",
     "role_default_actor": "기본 담당자",
     "role_default_actor_none": "기본값 없음",
-    "role_default_actor_hint": "워크플로 시작 시 이 역할에 자동으로 채워지며, 시작 시 변경할 수 있습니다."
+    "role_default_actor_hint": "워크플로 시작 시 이 역할에 자동으로 채워지며, 시작 시 변경할 수 있습니다.",
+    "section_node_events": "노드 이벤트",
+    "on_enter_host_status": "도착 시 호스트 상태 설정",
+    "on_complete_host_status": "완료 시 호스트 상태 설정",
+    "node_events_hint": "노드가 활성화되거나 완료될 때 호스트 이슈 상태를 자동으로 변경합니다. 비워 두면 변경하지 않습니다. 호스트 상태 모드와 무관하게 템플릿의 명시적 설정으로 적용됩니다."
   },
   "status": {
     "needs_setup": "설정 필요",

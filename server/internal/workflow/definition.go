@@ -68,6 +68,16 @@ type NodeDefinition struct {
 	SubmissionSchema *SubmissionSchema    `json:"submission_schema,omitempty"`
 	Verdict          *VerdictDefinition   `json:"verdict,omitempty"`
 	Completion       CompletionDefinition `json:"completion,omitempty"`
+	// OnEnter/OnComplete run controlled side effects when an activity
+	// activates or completes. Only white-listed action kinds are allowed;
+	// notifications and integrations stay in their own subsystems.
+	OnEnter    []NodeActionDefinition `json:"on_enter,omitempty"`
+	OnComplete []NodeActionDefinition `json:"on_complete,omitempty"`
+}
+
+type NodeActionDefinition struct {
+	Kind   string `json:"kind"`
+	Status string `json:"status,omitempty"`
 }
 
 type ExecutorDefinition struct {
@@ -301,6 +311,13 @@ func validateNodes(definitions []NodeDefinition, roles map[string]RoleDefinition
 		default:
 			return nil, "", 0, 0, fmt.Errorf("node %q has invalid kind %q", node.Key, node.Kind)
 		}
+		if node.Kind != "activity" &&
+			(len(node.OnEnter) > 0 || len(node.OnComplete) > 0) {
+			return nil, "", 0, 0, fmt.Errorf(
+				"node %q cannot declare actions; only activities run side effects",
+				node.Key,
+			)
+		}
 		taskCount += len(node.IssueTemplates)
 		if node.SubmissionSchema != nil {
 			submissionFieldCount += len(node.SubmissionSchema.Fields)
@@ -341,6 +358,12 @@ func validateActivity(
 		}
 	}
 	if err := validateExecutor(node, roles); err != nil {
+		return err
+	}
+	if err := validateNodeActions(node.Key, "on_enter", node.OnEnter); err != nil {
+		return err
+	}
+	if err := validateNodeActions(node.Key, "on_complete", node.OnComplete); err != nil {
 		return err
 	}
 	switch node.IssuePolicy {
@@ -515,6 +538,42 @@ func validateActivity(
 			node.Key,
 			node.Completion.Confirmation,
 		)
+	}
+	return nil
+}
+
+const maxNodeActions = 8
+
+func validateNodeActions(nodeKey, phase string, actions []NodeActionDefinition) error {
+	if len(actions) > maxNodeActions {
+		return fmt.Errorf(
+			"activity %q %s actions exceed limit %d",
+			nodeKey,
+			phase,
+			maxNodeActions,
+		)
+	}
+	for _, action := range actions {
+		switch action.Kind {
+		case "set_host_status":
+			switch action.Status {
+			case "backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled":
+			default:
+				return fmt.Errorf(
+					"activity %q %s action has invalid status %q",
+					nodeKey,
+					phase,
+					action.Status,
+				)
+			}
+		default:
+			return fmt.Errorf(
+				"activity %q %s has invalid action kind %q",
+				nodeKey,
+				phase,
+				action.Kind,
+			)
+		}
 	}
 	return nil
 }

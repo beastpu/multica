@@ -418,6 +418,7 @@ func (h *Handler) UpdateWorkflowInstanceRoles(w http.ResponseWriter, r *http.Req
 		uuidToString(updated.WorkspaceID), "member", userID,
 		uuidToString(updated.ID), firstWorkflowNodeID(activeNodes),
 	)
+	h.applyWorkflowNodeEnterActions(r.Context(), updated, definition, activeNodes)
 	for _, activeNode := range activeNodes {
 		h.publishWorkflowNodeUpdated(
 			uuidToString(updated.WorkspaceID), "member", userID,

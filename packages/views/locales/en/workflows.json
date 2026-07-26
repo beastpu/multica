@@ -420,7 +420,11 @@
     "flow_successors": "Next nodes",
     "role_default_actor": "Default assignee",
     "role_default_actor_none": "No default",
-    "role_default_actor_hint": "Pre-filled for this role when starting a workflow; can be changed at start time."
+    "role_default_actor_hint": "Pre-filled for this role when starting a workflow; can be changed at start time.",
+    "section_node_events": "Node events",
+    "on_enter_host_status": "Set host status on arrival",
+    "on_complete_host_status": "Set host status on completion",
+    "node_events_hint": "Automatically updates the host issue status when the node activates or completes; leave empty to skip. Applies regardless of the host status mode as an explicit template instruction."
   },
   "status": {
     "needs_setup": "Needs setup",

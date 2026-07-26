@@ -1049,6 +1049,9 @@ func (h *Handler) transitionWorkflowNode(
 		activatedNodes = append(activatedNodes, activatedNode)
 	}
 	h.recordWorkflowNodesActivated(r.Context(), activatedNodes)
+	h.applyWorkflowNodeEnterActions(
+		r.Context(), updated, definition, activatedNodes,
+	)
 	for _, activated := range activatedNodes {
 		h.materializeWorkflowNodeTasks(
 			r.Context(), locked.WorkspaceID, updated, activated,
