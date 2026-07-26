@@ -80,6 +80,47 @@ function renderInspector(onChange: (value: WorkflowNodeDefinition) => void) {
 }
 
 describe("WorkflowNodeDefinitionInspector", () => {
+  it("shows humanized executor strategy labels instead of engine enums", () => {
+    renderInspector(vi.fn());
+
+    expect(screen.getAllByRole("option", { name: "By role" }).length)
+      .toBeGreaterThan(0);
+    expect(screen.queryByRole("option", { name: "fixed_role" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "manual" })).toBeNull();
+  });
+
+  it("collapses executor resolution behind an advanced toggle when unconfigured", async () => {
+    const user = userEvent.setup();
+    const bareNode: WorkflowNodeDefinition = {
+      key: "backend",
+      kind: "activity",
+      activity_mode: "work",
+      name: "Backend development",
+      issue_policy: "fixed",
+      issue_templates: node.issue_templates,
+    };
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{ en: { workflows: enWorkflows } }}
+      >
+        <WorkflowNodeDefinitionInspector
+          node={bareNode}
+          definition={definition}
+          actorOptions={actorOptions}
+          readOnly={false}
+          onChange={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.queryByText("Add resolution strategy")).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: /Executor resolution/ }),
+    );
+    expect(screen.getByText("Add resolution strategy")).toBeInTheDocument();
+  });
+
   it("assigns a concrete node executor", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

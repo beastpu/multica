@@ -428,14 +428,69 @@ function ExecutorEditor({
 }) {
   const { t } = useT("workflows");
   const strategies = node.executor?.strategies ?? [];
+  // Resolution strategies only apply to tasks without their own assignee,
+  // so the chain stays behind an advanced toggle unless already configured.
+  const [advancedOpen, setAdvancedOpen] = useState(strategies.length > 0);
   const update = (index: number, strategy: WorkflowExecutorStrategy) => {
     const next = [...strategies];
     next[index] = strategy;
     onChange({ ...node, executor: { strategies: next } });
   };
+  const kindLabel = (kind: string) => {
+    switch (kind) {
+      case "fixed_actor":
+        return t(($) => $.editor.executor_kind_fixed_actor);
+      case "fixed_role":
+        return t(($) => $.editor.executor_kind_fixed_role);
+      case "fallback_role":
+        return t(($) => $.editor.executor_kind_fallback_role);
+      case "previous_selected":
+        return t(($) => $.editor.executor_kind_previous_selected);
+      case "capability_match":
+        return t(($) => $.editor.executor_kind_capability_match);
+      case "manual":
+        return t(($) => $.editor.executor_kind_manual);
+      default:
+        return kind;
+    }
+  };
+  const kindHint = (kind: string) => {
+    switch (kind) {
+      case "fixed_actor":
+        return t(($) => $.editor.executor_kind_fixed_actor_hint);
+      case "fixed_role":
+        return t(($) => $.editor.executor_kind_fixed_role_hint);
+      case "fallback_role":
+        return t(($) => $.editor.executor_kind_fallback_role_hint);
+      case "previous_selected":
+        return t(($) => $.editor.executor_kind_previous_selected_hint);
+      case "capability_match":
+        return t(($) => $.editor.executor_kind_capability_match_hint);
+      case "manual":
+        return t(($) => $.editor.executor_kind_manual_hint);
+      default:
+        return "";
+    }
+  };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
+      <button
+        type="button"
+        className="flex min-h-11 w-full items-center justify-between rounded-lg border px-3 text-sm font-medium"
+        aria-expanded={advancedOpen}
+        onClick={() => setAdvancedOpen((open) => !open)}
+      >
+        {t(($) => $.editor.executor_advanced)}
+        <span aria-hidden="true" className="text-muted-foreground">
+          {advancedOpen ? "−" : "+"}
+        </span>
+      </button>
+      <p className="text-xs text-muted-foreground">
+        {t(($) => $.editor.executor_advanced_hint)}
+      </p>
+      {advancedOpen && (
+        <div className="space-y-3">
       {strategies.map((strategy, index) => (
         <div key={`${index}-${strategy.kind}`} className="space-y-3 rounded-lg border p-3">
           <div className="flex items-center gap-2">
@@ -452,7 +507,7 @@ function ExecutorEditor({
               })}
             >
               {executorKinds.map((kind) => (
-                <option key={kind} value={kind}>{kind}</option>
+                <option key={kind} value={kind}>{kindLabel(kind)}</option>
               ))}
             </select>
             <RemoveButton
@@ -466,6 +521,11 @@ function ExecutorEditor({
               })}
             />
           </div>
+          {kindHint(strategy.kind) !== "" && (
+            <p className="text-xs text-muted-foreground">
+              {kindHint(strategy.kind)}
+            </p>
+          )}
           {(strategy.kind === "fixed_role" ||
             strategy.kind === "fallback_role" ||
             strategy.kind === "capability_match") && (
@@ -596,6 +656,8 @@ function ExecutorEditor({
           <Plus />
           {t(($) => $.editor.add_executor_strategy)}
         </Button>
+      )}
+        </div>
       )}
     </div>
   );
@@ -1312,6 +1374,7 @@ export function WorkflowNodeDefinitionInspector({
               </div>
             </fieldset>
             <ExecutorEditor
+              key={node.key}
               node={node}
               definition={definition}
               actorOptions={actorOptions}
