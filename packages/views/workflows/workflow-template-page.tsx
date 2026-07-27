@@ -46,7 +46,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
-import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,
@@ -527,7 +526,7 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
       acceptance,
     });
   };
-  const save = () => {
+  const save = (onSaved?: () => void) => {
     if (!definition || !draft || selectedVersion?.id !== draft.id) return;
     updateDraft.mutate({
       definition,
@@ -541,6 +540,7 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
         setChangeSummary(saved.change_summary);
         setDirty(false);
         setSaveError("");
+        onSaved?.();
       },
       onError: (error) => {
         setSaveError(
@@ -550,6 +550,26 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
         );
       },
     });
+  };
+  // Publish is the single "make it live" action: it validates first and only
+  // opens the confirmation once the definition is known to be publishable.
+  const startPublish = () => {
+    if (!definition) return;
+    validate.mutate(definition, {
+      onSuccess: (result) => {
+        if (result.valid) setPublishOpen(true);
+      },
+    });
+  };
+  const confirmPublish = () => {
+    const publishNow = () => publish.mutate(undefined, {
+      onSuccess: () => setPublishOpen(false),
+    });
+    if (dirty || changeSummary.trim() !== (draft?.change_summary ?? "")) {
+      save(publishNow);
+      return;
+    }
+    publishNow();
   };
   const insertNode = (
     kind: WorkflowCanvasInsertKind,
@@ -633,7 +653,7 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={save}
+                  onClick={() => save()}
                   disabled={!dirty || updateDraft.isPending}
                 >
                   <Save />
@@ -641,11 +661,14 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
                 </Button>
                 <Button
                   size="sm"
-                  onClick={() => setPublishOpen(true)}
-                  disabled={dirty || publish.isPending || !validate.data?.valid}
+                  onClick={startPublish}
+                  disabled={publish.isPending || updateDraft.isPending ||
+                    validate.isPending}
                 >
                   <Send />
-                  {t(($) => $.actions.publish)}
+                  {published.length === 0
+                    ? t(($) => $.actions.publish_first)
+                    : t(($) => $.actions.publish)}
                 </Button>
               </>
             )}
@@ -747,18 +770,6 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
             <>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline">
-                    {t(($) => $.templates.version, {
-                      version: selectedVersion.version,
-                    })}
-                  </Badge>
-                  {selectedVersion.status === "draft" && (
-                    <Badge variant="outline">
-                      {t(($) => $.templates.revision, {
-                        revision: selectedVersion.revision,
-                      })}
-                    </Badge>
-                  )}
                   <select
                     aria-label={t(($) => $.editor.version_selector)}
                     value={selectedVersion.id}
@@ -793,24 +804,6 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
               </div>
               <div className="grid min-h-[34rem] overflow-hidden rounded-xl border bg-surface lg:grid-cols-[minmax(0,1fr)_360px]">
                 <section className="min-w-0 space-y-4 border-b p-5 lg:border-r lg:border-b-0">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="workflow-change-summary">
-                      {t(($) => $.editor.change_summary)}
-                    </Label>
-                    <Textarea
-                      id="workflow-change-summary"
-                      value={changeSummary}
-                      disabled={!canEdit}
-                      rows={2}
-                      placeholder={t(($) => $.editor.change_summary_placeholder)}
-                      onChange={(event) => {
-                        setChangeSummary(event.target.value);
-                        setDirty(true);
-                        setSaveError("");
-                        validate.reset();
-                      }}
-                    />
-                  </div>
                   <div>
                     <h2 className="flex items-center gap-2 text-sm font-medium">
                       <GitFork className="size-4" />
@@ -884,15 +877,26 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
               {t(($) => $.editor.active_runs_unchanged)}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="workflow-change-summary">
+              {t(($) => $.editor.change_summary)}
+            </Label>
+            <Textarea
+              id="workflow-change-summary"
+              value={changeSummary}
+              rows={2}
+              placeholder={t(($) => $.editor.change_summary_placeholder)}
+              onChange={(event) => setChangeSummary(event.target.value)}
+            />
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={publish.isPending}>
               {commonT(($) => $.cancel)}
             </AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => publish.mutate(undefined, {
-                onSuccess: () => setPublishOpen(false),
-              })}
-              disabled={publish.isPending || !changeSummary.trim()}
+              onClick={confirmPublish}
+              disabled={publish.isPending || updateDraft.isPending ||
+                (published.length > 0 && !changeSummary.trim())}
             >
               {t(($) => $.actions.publish)}
             </AlertDialogAction>

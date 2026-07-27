@@ -133,7 +133,17 @@ vi.mock("@multica/core/workflows", () => ({
   }),
   useUpdateWorkflowTemplateDraft: () => ({
     isPending: false,
-    mutate: mocks.updateDraft,
+    mutate: (
+      input: { definition: unknown; change_summary?: string },
+      options?: { onSuccess?: (saved: unknown) => void },
+    ) => {
+      mocks.updateDraft(input);
+      options?.onSuccess?.({
+        ...detail.versions[0],
+        definition: input.definition,
+        change_summary: input.change_summary ?? "",
+      });
+    },
   }),
   useCreateWorkflowTemplateDraft: () => ({
     isPending: false,
@@ -162,7 +172,13 @@ vi.mock("@multica/core/workflows", () => ({
   useValidateWorkflowTemplateDefinition: () => ({
     data: mocks.validation,
     isPending: false,
-    mutate: mocks.validate,
+    mutate: (
+      input: unknown,
+      options?: { onSuccess?: (result: typeof mocks.validation) => void },
+    ) => {
+      mocks.validate(input);
+      options?.onSuccess?.(mocks.validation);
+    },
     reset: mocks.validateReset,
   }),
 }));
@@ -251,14 +267,14 @@ describe("WorkflowTemplatePage", () => {
     mocks.validation.errors = [];
   });
 
-  it("validates the current definition and requires explicit publish confirmation", async () => {
+  it("validates from the publish action and requires explicit confirmation", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "Validate" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Create and enable" }),
+    );
     expect(mocks.validate).toHaveBeenCalledWith(definition);
-
-    await user.click(screen.getByRole("button", { name: "Publish" }));
     expect(mocks.publish).not.toHaveBeenCalled();
 
     const dialog = await screen.findByRole("alertdialog");
@@ -269,6 +285,43 @@ describe("WorkflowTemplatePage", () => {
 
     await user.click(within(dialog).getByRole("button", { name: "Publish" }));
     await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not open the publish confirmation when validation fails", async () => {
+    mocks.validation.valid = false;
+    mocks.validation.errors = ['node "work" has no outgoing edge'];
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Create and enable" }),
+    );
+
+    expect(mocks.validate).toHaveBeenCalledWith(definition);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("The workflow definition is invalid"),
+    ).toBeInTheDocument();
+  });
+
+  it("saves pending draft edits before publishing them", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", {
+      name: "Insert activity between Work and End",
+    }));
+    await user.click(screen.getByRole("button", { name: "Create and enable" }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1));
+    expect(mocks.updateDraft).toHaveBeenCalledTimes(1);
+    const input = mocks.updateDraft.mock.calls[0]![0] as {
+      definition: typeof definition;
+    };
+    expect(input.definition.nodes).toHaveLength(4);
   });
 
   it("updates template metadata through the dedicated details dialog", async () => {
