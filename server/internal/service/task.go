@@ -676,12 +676,14 @@ func (s *TaskService) captureTaskCancelled(ctx context.Context, task db.AgentTas
 	}
 }
 
-func (s *TaskService) CaptureTaskUsage(ctx context.Context, task db.AgentTaskQueue, provider, model string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) {
+// costUSDTicks is the provider's own price for this usage in 1e-10 USD, or 0
+// when it reported none — the metrics layer prefers it over its rate table.
+func (s *TaskService) CaptureTaskUsage(ctx context.Context, task db.AgentTaskQueue, provider, model string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUSDTicks int64) {
 	if s.Metrics == nil {
 		return
 	}
 	source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
-	s.Metrics.RecordLLMUsage(source, runtimeMode, provider, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens)
+	s.Metrics.RecordLLMUsage(source, runtimeMode, provider, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUSDTicks)
 }
 
 func (s *TaskService) CaptureQueuedExpiredTasks(ctx context.Context, tasks []db.AgentTaskQueue) {
@@ -1427,8 +1429,10 @@ var ErrChatTaskAgentArchived = errors.New("chat task: agent archived")
 // path returns a task row, not this error.
 var ErrChatTaskAgentNoRuntime = errors.New("chat task: agent has no runtime")
 
-// EnqueueChatTask creates a queued task for a chat session.
-// Unlike issue tasks, chat tasks have no issue_id.
+// EnqueueChatTask creates a task-owned input batch for a chat session. Channel
+// media makes the task deferred until binding completes or its durable fallback
+// deadline expires; other chat tasks are queued immediately. Unlike issue
+// tasks, chat tasks have no issue_id.
 //
 // Errors split into two layers:
 //
@@ -1480,12 +1484,28 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 	}
 	attrSource, _, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
 	runtimeMCPOverlay := s.buildRuntimeMCPOverlay(ctx, initiatorUserID, agent)
-	task, err := s.Queries.CreateChatTask(ctx, db.CreateChatTaskParams{
+
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("begin chat task enqueue: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.Queries.WithTx(tx)
+	mediaPendingUntil, err := qtx.GetChannelMediaPendingUntil(ctx, chatSession.ID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		slog.Error("chat task enqueue failed", "chat_session_id", util.UUIDToString(chatSession.ID), "error", err)
+		return db.AgentTaskQueue{}, fmt.Errorf("load channel media pending deadline: %w", err)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		mediaPendingUntil = pgtype.Timestamptz{}
+	}
+	task, err := qtx.CreateChatTask(ctx, db.CreateChatTaskParams{
 		AgentID:           chatSession.AgentID,
 		RuntimeID:         agent.RuntimeID,
 		Priority:          2, // medium priority for chat
 		ChatSessionID:     chatSession.ID,
 		InitiatorUserID:   initiatorUserID,
+		FireAt:            mediaPendingUntil,
 		OriginatorUserID:  initiatorUserID,
 		AccountableUserID: attr.AccountableUserID,
 		ForceFreshSession: pgtype.Bool{
@@ -1502,12 +1522,79 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 		slog.Error("chat task enqueue failed", "chat_session_id", util.UUIDToString(chatSession.ID), "error", err)
 		return db.AgentTaskQueue{}, fmt.Errorf("create chat task: %w", err)
 	}
+	task, err = qtx.SetChatTaskInputOwnerSelf(ctx, task.ID)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("set channel chat task input owner: %w", err)
+	}
+	if err := qtx.LinkUnownedChannelChatMessagesToTask(ctx, db.LinkUnownedChannelChatMessagesToTaskParams{
+		TaskID:        task.ID,
+		ChatSessionID: chatSession.ID,
+	}); err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("seal channel chat task input: %w", err)
+	}
+	// The deadline read above ran before the seal; under READ COMMITTED a media
+	// message committed between the two statements is sealed into this task
+	// without deferring it, and the daemon could claim it before its media
+	// binds. Re-derive the deferral from the sealed batch itself.
+	switch corrected, err := qtx.DeferChatTaskForSealedPendingMedia(ctx, task.ID); {
+	case err == nil:
+		task = corrected
+	case !errors.Is(err, pgx.ErrNoRows):
+		return db.AgentTaskQueue{}, fmt.Errorf("defer chat task for sealed pending media: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("commit chat task enqueue: %w", err)
+	}
+
+	if task.Status == "deferred" {
+		slog.Info("chat task deferred for channel media",
+			"task_id", util.UUIDToString(task.ID),
+			"chat_session_id", util.UUIDToString(chatSession.ID),
+			"agent_id", util.UUIDToString(chatSession.AgentID),
+			"fire_at", task.FireAt.Time,
+		)
+		// Fence the clear-vs-create race: media completion may have found no
+		// committed task after our deadline read. Re-check after commit so the
+		// task is promoted immediately when the marker has already cleared.
+		// The task is already durably committed, so a fence failure must not
+		// surface as an enqueue failure — the router would treat it as "no
+		// task" and clear the typing indicator while the run still happens.
+		// The claim-path deferred promoter re-queues it at fire_at regardless.
+		if err := s.PromoteChannelChatTasksIfMediaReady(ctx, chatSession.ID); err != nil {
+			slog.Warn("chat task media-ready fence failed; deferred task falls back to its deadline",
+				"task_id", util.UUIDToString(task.ID),
+				"chat_session_id", util.UUIDToString(chatSession.ID),
+				"error", err)
+		}
+		return task, nil
+	}
 
 	slog.Info("chat task enqueued", "task_id", util.UUIDToString(task.ID), "chat_session_id", util.UUIDToString(chatSession.ID), "agent_id", util.UUIDToString(chatSession.AgentID))
 	// See EnqueueTaskForIssue for ordering rationale.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
 	return task, nil
+}
+
+// PromoteChannelChatTasksIfMediaReady queues channel tasks as soon as every
+// unexpired media marker in the session has been cleared. If the process dies
+// first, the normal deferred-task promoter queues them at their persisted
+// fire_at deadline, preserving the placeholder fallback across restarts.
+func (s *TaskService) PromoteChannelChatTasksIfMediaReady(ctx context.Context, sessionID pgtype.UUID) error {
+	tasks, err := s.Queries.PromoteChannelChatTasksIfMediaReady(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("promote channel chat tasks after media: %w", err)
+	}
+	for _, task := range tasks {
+		slog.Info("channel media-ready chat task promoted",
+			"task_id", util.UUIDToString(task.ID),
+			"chat_session_id", util.UUIDToString(sessionID),
+			"agent_id", util.UUIDToString(task.AgentID),
+		)
+		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
+		s.NotifyTaskEnqueued(ctx, task)
+	}
+	return nil
 }
 
 // DirectChatSendResult carries the rows a transactional direct-chat send
@@ -1529,7 +1616,8 @@ type DirectChatSendResult struct {
 //
 // The caller must have already gated the session and preflighted the agent
 // (archived / no-runtime), passing the loaded agent in; this method trusts those
-// checks and does no further agent validation.
+// permission checks. It does NOT trust the agent's runtime_id: that field is
+// re-read inside the transaction (see below).
 func (s *TaskService) SendDirectChatMessage(ctx context.Context, session db.ChatSession, agent db.Agent, initiatorUserID pgtype.UUID, content string, attachmentIDs []pgtype.UUID, uploaderType string, uploaderID pgtype.UUID) (*DirectChatSendResult, error) {
 	// Build the per-task Composio overlay before the transaction — it can do
 	// network I/O and must not run with a DB transaction open.
@@ -1549,9 +1637,28 @@ func (s *TaskService) SendDirectChatMessage(ctx context.Context, session db.Chat
 
 	var out DirectChatSendResult
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		// Serialise this send against a concurrent runtime rebind of the same
+		// session (MUL-5163). The lock must be taken first and the agent re-read
+		// under it: the runtime_id the caller loaded can already be stale by the
+		// time we get here, and a send blocked behind a rebind would otherwise
+		// resume and stamp its task with the runtime the switch just moved away
+		// from — leaving the user with a "switched" confirmation and a reply
+		// running on the old runtime. Locking chat_session first also matches the
+		// delete path's lock order, so the two cannot deadlock.
+		if _, err := qtx.LockChatSessionForRuntimeBind(ctx, session.ID); err != nil {
+			return fmt.Errorf("lock chat session: %w", err)
+		}
+		carrier, err := qtx.GetAgent(ctx, session.AgentID)
+		if err != nil {
+			return fmt.Errorf("reload chat agent: %w", err)
+		}
+		if !carrier.RuntimeID.Valid {
+			return ErrChatTaskAgentNoRuntime
+		}
+
 		task, err := qtx.CreateChatTask(ctx, db.CreateChatTaskParams{
 			AgentID:              session.AgentID,
-			RuntimeID:            agent.RuntimeID,
+			RuntimeID:            carrier.RuntimeID,
 			Priority:             2, // medium priority for chat; matches EnqueueChatTask
 			ChatSessionID:        session.ID,
 			InitiatorUserID:      initiatorUserID,
@@ -1788,6 +1895,17 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 	}, nil
 }
 
+// chatInputOwnerID resolves the id the task's user-message input batch is
+// keyed on: chat_input_task_id when set (auto-retry clones inherit their
+// parent's, so provenance checks reach the parent's sealed messages), falling
+// back to the task's own id for legacy rows.
+func chatInputOwnerID(task db.AgentTaskQueue) pgtype.UUID {
+	if task.ChatInputTaskID.Valid {
+		return task.ChatInputTaskID
+	}
+	return task.ID
+}
+
 func (s *TaskService) finalizeCancelledChatMessage(ctx context.Context, task db.AgentTaskQueue, opts CancelTaskOptions) *CancelledChatMessageResult {
 	if !task.ChatSessionID.Valid {
 		return nil
@@ -1798,7 +1916,25 @@ func (s *TaskService) finalizeCancelledChatMessage(ctx context.Context, task db.
 		if err != nil {
 			return fmt.Errorf("list cancelled chat task messages: %w", err)
 		}
-		if len(messages) == 0 && task.StartedAt.Valid && opts.ClientSupportsDraftRestore {
+		restorable := len(messages) == 0
+		if restorable {
+			// Channel-ingested user messages are the durable record of what
+			// the platform sender wrote — the sender has no Multica composer
+			// to restore a draft into. The gate is the immutable per-message
+			// channel_ingested stamp, NOT the channel_chat_session_binding
+			// row: archiving a session or rebinding an installation deletes
+			// the binding while the messages (and a still-cancellable task)
+			// remain. Keyed by the input-batch owner id so an auto-retry
+			// clone (which inherits chat_input_task_id) reaches the same
+			// verdict as its parent. A channel task settles as "Stopped."
+			// below instead of deleting its sealed input batch.
+			channelIngested, err := qtx.TaskHasChannelIngestedMessages(ctx, chatInputOwnerID(task))
+			if err != nil {
+				return fmt.Errorf("check cancelled chat channel provenance: %w", err)
+			}
+			restorable = !channelIngested
+		}
+		if restorable && task.StartedAt.Valid && opts.ClientSupportsDraftRestore {
 			// A started task's daemon learns of the cancellation by polling
 			// and may still be flushing its transcript tail, so "empty" is
 			// not trustworthy yet. Defer the judgment until the daemon acks
@@ -1818,7 +1954,7 @@ func (s *TaskService) finalizeCancelledChatMessage(ctx context.Context, task db.
 			}
 			return nil
 		}
-		if len(messages) == 0 {
+		if restorable {
 			// Detach attachments BEFORE deleting the user message — the
 			// attachment FK is ON DELETE CASCADE, so deleting first would
 			// destroy rows the restored draft needs to re-bind.
@@ -1925,7 +2061,19 @@ func (s *TaskService) FinalizeDeferredCancelledChat(ctx context.Context, taskID 
 		if err != nil {
 			return fmt.Errorf("list cancelled chat task messages: %w", err)
 		}
-		if len(messages) == 0 {
+		restorable := len(messages) == 0
+		if restorable {
+			// Same immutable-provenance guard as finalizeCancelledChatMessage:
+			// channel tasks never restore-delete their sealed input. The sync
+			// path no longer defers such tasks; this covers markers created by
+			// an older replica during a rolling deploy.
+			channelIngested, err := qtx.TaskHasChannelIngestedMessages(ctx, chatInputOwnerID(claimed))
+			if err != nil {
+				return fmt.Errorf("check cancelled chat channel provenance: %w", err)
+			}
+			restorable = !channelIngested
+		}
+		if restorable {
 			// The transcript stayed empty through the daemon flush: same
 			// outcome as the synchronous empty branch, but the cancel HTTP
 			// response is long gone and the broadcast is best-effort. The
@@ -2803,19 +2951,22 @@ const chatNoResponseFallback = "The agent finished this turn without a text repl
 // completed chat task inside the caller's completion transaction, returning the
 // row (nil when none is written).
 //
-// Task-owned direct (web/mobile) tasks — chat_input_task_id set — get the
-// explicit single-outcome contract: a non-empty final output becomes an ordinary
-// assistant message, and an empty/whitespace output becomes a visible
-// no_response outcome carrying a non-empty English fallback body. It never
-// auto-retries: an empty output is a legitimate terminal result (a tool-only
-// turn) and re-running it would repeat side effects already performed.
+// Direct (web/mobile) tasks get the explicit single-outcome contract: a
+// non-empty final output becomes an ordinary assistant message, and an
+// empty/whitespace output becomes a visible no_response outcome carrying a
+// non-empty English fallback body. It never auto-retries: an empty output is a
+// legitimate terminal result (a tool-only turn) and re-running it would repeat
+// side effects already performed.
 //
-// Legacy and channel (Slack/Lark) tasks — chat_input_task_id NULL — keep the
-// prior behavior: a non-empty output writes an ordinary assistant message, but
-// an EMPTY output writes NO row, so chat:done carries empty content and the
-// channel outbound silently drops it. This preserves Slack/Lark empty-completion
-// semantics unchanged (MUL-4351 review): the no_response fallback body must never
-// be pushed to an external channel.
+// Channel (Slack/Lark) and legacy tasks keep the prior behavior: a non-empty
+// output writes an ordinary assistant message, but an EMPTY output writes NO
+// row, so chat:done carries empty content and the channel outbound silently
+// drops it (MUL-4351 review): the no_response fallback body must never be
+// pushed to an external channel. Channel tasks now own a sealed input batch
+// (chat_input_task_id set) just like direct tasks, so the discriminator is the
+// immutable channel_ingested stamp on the owned batch — keyed by the batch
+// owner id so an auto-retry clone (which inherits chat_input_task_id) reaches
+// the same verdict as its parent — while a NULL owner marks a legacy task.
 func (s *TaskService) writeChatCompletionOutcome(ctx context.Context, qtx *db.Queries, task db.AgentTaskQueue, result []byte) (*db.ChatMessage, error) {
 	// result is the daemon request re-marshalled by the handler, so it is always
 	// valid JSON; an empty Output is the only case this branch cares about.
@@ -2851,10 +3002,21 @@ func (s *TaskService) writeChatCompletionOutcome(ctx context.Context, qtx *db.Qu
 
 	// Channel/legacy empty completion with nothing to show: emit no assistant
 	// row, only an empty chat:done for typing/lifecycle. Keeps the Slack/Lark
-	// silent-drop path. Attachments still force a row — the agent produced a
-	// deliverable the user must see.
-	if isEmpty && pendingAttachments == 0 && !task.ChatInputTaskID.Valid {
-		return nil, nil
+	// silent-drop path — the outbound patcher forwards any non-empty content
+	// verbatim, so the fallback body must never be written for a channel task.
+	// Attachments still force a row — the agent produced a deliverable the
+	// user must see.
+	if isEmpty && pendingAttachments == 0 {
+		if !task.ChatInputTaskID.Valid {
+			return nil, nil // legacy task
+		}
+		channelIngested, err := qtx.TaskHasChannelIngestedMessages(ctx, task.ChatInputTaskID)
+		if err != nil {
+			return nil, fmt.Errorf("check chat completion channel provenance: %w", err)
+		}
+		if channelIngested {
+			return nil, nil // channel task
+		}
 	}
 
 	params := db.CreateChatMessageParams{

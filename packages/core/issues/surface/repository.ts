@@ -1,12 +1,15 @@
 import type { UseQueryOptions } from "@tanstack/react-query";
 import {
   issueAssigneeGroupsOptions,
+  issueFlatExportOptions,
+  issueFlatListOptions,
   issueListOptions,
   myIssueAssigneeGroupsOptions,
   myIssueListOptions,
   projectGanttIssuesOptions,
   type AssigneeGroupedIssuesFilter,
   type IssueListFilter,
+  type IssueFlatFilter,
   type IssueSortParam,
   type MyIssuesFilter,
 } from "../queries";
@@ -46,6 +49,38 @@ export function issueSurfaceListOptions(
       ? issueListOptions(wsId, sort, filter)
       : myIssueListOptions(wsId, plan.queryScope, scopedFilter, plan.userId, sort)
   ) as UseQueryOptions<ListIssuesCache, Error, Issue[]>;
+}
+
+/** Flat cross-status window — feeds the table mode with offset pagination. */
+export function issueSurfaceFlatOptions(
+  wsId: string,
+  plan: IssueSurfaceQueryPlan,
+  sort?: IssueSortParam,
+  facets: IssueFlatFilter = {},
+) {
+  return issueFlatListOptions(
+    wsId,
+    plan.queryScope ?? plan.scopeKey,
+    { ...plan.queryFilter, ...facets },
+    plan.userId,
+    sort,
+  );
+}
+
+/** Fully materialized flat window used only for an explicit CSV export. */
+export function issueSurfaceFlatExportOptions(
+  wsId: string,
+  plan: IssueSurfaceQueryPlan,
+  sort?: IssueSortParam,
+  facets: IssueFlatFilter = {},
+) {
+  return issueFlatExportOptions(
+    wsId,
+    plan.queryScope ?? plan.scopeKey,
+    { ...plan.queryFilter, ...facets },
+    plan.userId,
+    sort,
+  );
 }
 
 /** Assignee-grouped list — feeds the board's group-by-assignee mode. */
