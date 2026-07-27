@@ -245,6 +245,7 @@ func (b *traecliBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
+		promptCaps := extractACPPromptCapabilities(initResult)
 
 		// Drop MCP entries whose remote transport the runtime didn't advertise
 		// (traecli advertises mcpCapabilities {http, sse}). See hermes.go for
@@ -344,9 +345,7 @@ func (b *traecliBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 		streamingCurrentTurn.Store(true)
 		_, err = c.request(runCtx, "session/prompt", map[string]any{
 			"sessionId": sessionID,
-			"prompt": []map[string]any{
-				{"type": "text", "text": userText},
-			},
+			"prompt":    acpPromptBlocks(userText, opts.InputImages, promptCaps),
 		})
 		if err != nil {
 			if runCtx.Err() == context.DeadlineExceeded {

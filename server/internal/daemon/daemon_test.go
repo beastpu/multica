@@ -391,6 +391,58 @@ func TestTaskScopedAuthToken(t *testing.T) {
 	}
 }
 
+func TestNativeChatImagesForTaskDownloadsWithTaskToken(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/attachments/att-image/download" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte{0x89, 'P', 'N', 'G'})
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewClient(srv.URL)
+	task := Task{
+		ChatMessageAttachments: []ChatAttachmentMeta{
+			{ID: "att-image", Filename: "shot.png", ContentType: "image/png"},
+			{ID: "att-text", Filename: "notes.txt", ContentType: "text/plain"},
+		},
+	}
+
+	images := nativeChatImagesForTask(context.Background(), client, &task, "mat_task_token", slog.Default())
+	if len(images) != 1 {
+		t.Fatalf("native images = %d, want 1", len(images))
+	}
+	if gotAuth != "Bearer mat_task_token" {
+		t.Fatalf("Authorization = %q, want task token", gotAuth)
+	}
+	if images[0].MimeType != "image/png" || string(images[0].Data) != string([]byte{0x89, 'P', 'N', 'G'}) {
+		t.Fatalf("unexpected image input: %+v", images[0])
+	}
+	if !task.ChatMessageAttachments[0].IncludedAsNativeImage {
+		t.Fatal("image attachment was not marked as native input candidate")
+	}
+	if task.ChatMessageAttachments[1].IncludedAsNativeImage {
+		t.Fatal("non-image attachment must not be marked as native input candidate")
+	}
+}
+
+func TestNativePromptImageContentTypeExcludesSVG(t *testing.T) {
+	t.Parallel()
+
+	if !nativePromptImageContentType("image/png; charset=binary") {
+		t.Fatal("png should be eligible for native image input")
+	}
+	if nativePromptImageContentType("image/svg+xml") {
+		t.Fatal("svg must not be eligible for native image input")
+	}
+	if nativePromptImageContentType("text/plain") {
+		t.Fatal("text must not be eligible for native image input")
+	}
+}
+
 // When `brew --prefix` is unavailable but the executable path is under a
 // known Cellar root, triggerRestart must recover the prefix from the
 // known-prefix list and target <prefix>/bin/multica.
