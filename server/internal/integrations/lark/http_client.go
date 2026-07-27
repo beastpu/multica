@@ -34,6 +34,11 @@ import (
 // honoring Lark's `expire` field minus a safety margin so callers
 // never present a token that's about to lapse mid-flight.
 
+// DefaultResourceDownloadTimeout is the default cap on one message-resource
+// download. Exported so the channel-media settle invariant test can assert
+// the reconciler's settle delay dwarfs every pipeline budget.
+const DefaultResourceDownloadTimeout = 45 * time.Second
+
 const (
 	// defaultLarkBaseURL is the mainland 飞书 open-platform host. It is the
 	// fallback host for an installation whose region is feishu (or unset);
@@ -59,12 +64,12 @@ const (
 	// RPCs. Keep it below the inbound dedup stale-claim window (60s), so a
 	// slow download does not invite a second replica to reclaim the same
 	// message before this one can append and mark it processed.
-	defaultResourceDownloadTimeout = 45 * time.Second
+	defaultResourceDownloadTimeout = DefaultResourceDownloadTimeout
 
-	// Keep inbound Feishu media small enough for the synchronous ACK path.
-	// Larger resources degrade to a visible placeholder instead of blocking ACKs
-	// or letting large videos consume storage and bandwidth unexpectedly.
-	maxMessageResourceBytes = 20 << 20
+	// Feishu caps message resources at 100 MiB. Keep the local transport guard
+	// aligned with that contract; detached media processing keeps large
+	// transfers off the connector ACK path.
+	maxMessageResourceBytes = 100 << 20
 
 	// Lark's "invalid tenant_access_token" / "tenant_access_token
 	// expired" error codes. When we see either, drop the cached token
@@ -256,14 +261,16 @@ func (c *httpAPIClient) invalidateToken(appID string) {
 	c.mu.Unlock()
 }
 
-// outboundMessageRequest builds the (path, body) the send methods share.
-// When target.IsSet() the message is routed through Lark's reply
+// outboundMessageRequest builds the (path, body) the three send methods
+// share. When target.IsSet() the message is routed through Lark's reply
 // endpoint (POST /im/v1/messages/{message_id}/reply) so it threads back
 // into the originating 话题 — reply_in_thread carries the target's
 // InThread flag (Lark also keeps the reply in-thread automatically when
 // the parent message already belongs to a thread). Otherwise the message
-// goes to the chat-level send endpoint keyed by receive_id_type.
-func outboundMessageRequest(receiveIDType, receiveID, msgType, content string, target ReplyTarget) (string, map[string]any) {
+// goes to the chat-level send endpoint keyed by receive_id=chat_id, the
+// historical behavior. Body is map[string]any (not map[string]string)
+// because reply_in_thread is a bool.
+func outboundMessageRequest(chatID ChatID, msgType, content string, target ReplyTarget) (string, map[string]any) {
 	if target.IsSet() {
 		return "/open-apis/im/v1/messages/" + url.PathEscape(target.MessageID) + "/reply", map[string]any{
 			"msg_type":        msgType,
@@ -272,9 +279,9 @@ func outboundMessageRequest(receiveIDType, receiveID, msgType, content string, t
 		}
 	}
 	q := url.Values{}
-	q.Set("receive_id_type", receiveIDType)
+	q.Set("receive_id_type", "chat_id")
 	return "/open-apis/im/v1/messages?" + q.Encode(), map[string]any{
-		"receive_id": receiveID,
+		"receive_id": string(chatID),
 		"msg_type":   msgType,
 		"content":    content,
 	}
@@ -290,7 +297,28 @@ func (c *httpAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParam
 	if p.CardJSON == "" {
 		return "", errors.New("lark http client: missing card json")
 	}
-	return c.sendMessage(ctx, p.InstallationID, "chat_id", string(p.ChatID), "interactive", p.CardJSON, p.ReplyTarget, "send interactive card")
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	if err != nil {
+		return "", err
+	}
+	path, body := outboundMessageRequest(p.ChatID, "interactive", p.CardJSON, p.ReplyTarget)
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			MessageID string `json:"message_id"`
+		} `json:"data"`
+	}
+	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, path, token, body, &resp); err != nil {
+		return "", fmt.Errorf("lark http client: send interactive card: %w", err)
+	}
+	if resp.Code != 0 || resp.Data.MessageID == "" {
+		if isTokenError(resp.Code) {
+			c.invalidateToken(p.InstallationID.AppID)
+		}
+		return "", &APIError{Op: "send interactive card", Code: resp.Code, Msg: resp.Msg}
+	}
+	return resp.Data.MessageID, nil
 }
 
 func (c *httpAPIClient) SendDirectInteractiveCard(ctx context.Context, p SendDirectCardParams) (string, error) {
@@ -300,15 +328,17 @@ func (c *httpAPIClient) SendDirectInteractiveCard(ctx context.Context, p SendDir
 	if p.CardJSON == "" {
 		return "", errors.New("lark http client: missing card json")
 	}
-	return c.sendMessage(ctx, p.InstallationID, "open_id", string(p.OpenID), "interactive", p.CardJSON, ReplyTarget{}, "send interactive card")
-}
-
-func (c *httpAPIClient) sendMessage(ctx context.Context, creds InstallationCredentials, receiveIDType, receiveID, msgType, content string, target ReplyTarget, op string) (string, error) {
-	token, err := c.tenantAccessToken(ctx, creds)
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
 	if err != nil {
 		return "", err
 	}
-	path, body := outboundMessageRequest(receiveIDType, receiveID, msgType, content, target)
+	q := url.Values{}
+	q.Set("receive_id_type", "open_id")
+	body := map[string]string{
+		"receive_id": string(p.OpenID),
+		"msg_type":   "interactive",
+		"content":    p.CardJSON,
+	}
 	var resp struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
@@ -316,14 +346,15 @@ func (c *httpAPIClient) sendMessage(ctx context.Context, creds InstallationCrede
 			MessageID string `json:"message_id"`
 		} `json:"data"`
 	}
-	if err := c.doJSON(ctx, c.resolveBaseURL(creds), http.MethodPost, path, token, body, &resp); err != nil {
-		return "", fmt.Errorf("lark http client: %s: %w", op, err)
+	path := "/open-apis/im/v1/messages?" + q.Encode()
+	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, path, token, body, &resp); err != nil {
+		return "", fmt.Errorf("lark http client: send interactive card: %w", err)
 	}
 	if resp.Code != 0 || resp.Data.MessageID == "" {
 		if isTokenError(resp.Code) {
-			c.invalidateToken(creds.AppID)
+			c.invalidateToken(p.InstallationID.AppID)
 		}
-		return "", &APIError{Op: op, Code: resp.Code, Msg: resp.Msg}
+		return "", &APIError{Op: "send interactive card", Code: resp.Code, Msg: resp.Msg}
 	}
 	return resp.Data.MessageID, nil
 }
@@ -341,7 +372,35 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	if p.Text == "" {
 		return "", errors.New("lark http client: missing text")
 	}
-	return c.sendText(ctx, p.InstallationID, "chat_id", string(p.ChatID), p.Text, p.ReplyTarget)
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	if err != nil {
+		return "", err
+	}
+	// Lark's `text` msg_type expects content = JSON-encoded {"text": "..."}.
+	// json.Marshal handles the escape of newlines / quotes / unicode so
+	// the agent's reply round-trips intact.
+	contentBytes, err := json.Marshal(map[string]string{"text": p.Text})
+	if err != nil {
+		return "", fmt.Errorf("lark http client: encode text content: %w", err)
+	}
+	path, body := outboundMessageRequest(p.ChatID, "text", string(contentBytes), p.ReplyTarget)
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			MessageID string `json:"message_id"`
+		} `json:"data"`
+	}
+	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, path, token, body, &resp); err != nil {
+		return "", fmt.Errorf("lark http client: send text message: %w", err)
+	}
+	if resp.Code != 0 || resp.Data.MessageID == "" {
+		if isTokenError(resp.Code) {
+			c.invalidateToken(p.InstallationID.AppID)
+		}
+		return "", &APIError{Op: "send text message", Code: resp.Code, Msg: resp.Msg}
+	}
+	return resp.Data.MessageID, nil
 }
 
 func (c *httpAPIClient) SendDirectTextMessage(ctx context.Context, p SendDirectTextParams) (string, error) {
@@ -351,18 +410,39 @@ func (c *httpAPIClient) SendDirectTextMessage(ctx context.Context, p SendDirectT
 	if p.Text == "" {
 		return "", errors.New("lark http client: missing text")
 	}
-	return c.sendText(ctx, p.InstallationID, "open_id", string(p.OpenID), p.Text, ReplyTarget{})
-}
-
-func (c *httpAPIClient) sendText(ctx context.Context, creds InstallationCredentials, receiveIDType, receiveID, text string, target ReplyTarget) (string, error) {
-	// Lark's `text` msg_type expects content = JSON-encoded {"text": "..."}.
-	// json.Marshal handles the escape of newlines / quotes / unicode so
-	// the agent's reply round-trips intact.
-	contentBytes, err := json.Marshal(map[string]string{"text": text})
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	if err != nil {
+		return "", err
+	}
+	contentBytes, err := json.Marshal(map[string]string{"text": p.Text})
 	if err != nil {
 		return "", fmt.Errorf("lark http client: encode text content: %w", err)
 	}
-	return c.sendMessage(ctx, creds, receiveIDType, receiveID, "text", string(contentBytes), target, "send text message")
+	q := url.Values{}
+	q.Set("receive_id_type", "open_id")
+	body := map[string]string{
+		"receive_id": string(p.OpenID),
+		"msg_type":   "text",
+		"content":    string(contentBytes),
+	}
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			MessageID string `json:"message_id"`
+		} `json:"data"`
+	}
+	path := "/open-apis/im/v1/messages?" + q.Encode()
+	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, path, token, body, &resp); err != nil {
+		return "", fmt.Errorf("lark http client: send text message: %w", err)
+	}
+	if resp.Code != 0 || resp.Data.MessageID == "" {
+		if isTokenError(resp.Code) {
+			c.invalidateToken(p.InstallationID.AppID)
+		}
+		return "", &APIError{Op: "send text message", Code: resp.Code, Msg: resp.Msg}
+	}
+	return resp.Data.MessageID, nil
 }
 
 // SendMarkdownCard posts the agent's reply as an interactive card
@@ -408,7 +488,7 @@ func (c *httpAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCard
 	if err != nil {
 		return "", fmt.Errorf("lark http client: encode markdown card: %w", err)
 	}
-	path, body := outboundMessageRequest("chat_id", string(p.ChatID), "interactive", string(cardBytes), p.ReplyTarget)
+	path, body := outboundMessageRequest(p.ChatID, "interactive", string(cardBytes), p.ReplyTarget)
 	var resp struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
@@ -876,15 +956,6 @@ func (r *cancelReadCloser) Close() error {
 	err := r.ReadCloser.Close()
 	r.cancel()
 	return err
-}
-
-func looksLikeJSON(contentType string, body []byte) bool {
-	contentType = strings.ToLower(contentType)
-	if strings.Contains(contentType, "json") {
-		return true
-	}
-	trimmed := strings.TrimSpace(string(body))
-	return strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, `"code"`)
 }
 
 func filenameFromContentDisposition(raw string) string {
