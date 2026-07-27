@@ -428,9 +428,9 @@
     "completion_authorized_roles": "Roles authorized to complete/rollback",
     "completion_authorized_roles_hint": "Workspace admins and the node owner can always operate; members resolved from the checked roles may also force-complete, skip, or roll back this node.",
     "node_owner": "Node owner",
-    "node_owner_by_role": "Linked to a workflow role",
+    "node_owner_by_role": "By workflow role (chosen at start)",
     "node_owner_by_actor": "Specific member or agent",
-    "node_owner_hint": "The owner decides who can confirm this node. A role resolves per instance at start time; a pinned member is the confirmer directly."
+    "node_owner_hint": "The owner decides who can confirm this node. With a role, whoever starts the workflow picks the actor for that role; a pinned member is the confirmer in every instance."
   },
   "status": {
     "needs_setup": "Needs setup",
