@@ -282,6 +282,7 @@ func (b *grokBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
+		promptCaps := extractACPPromptCapabilities(initResult)
 
 		// Grok's ACP surface requires an explicit auth handshake between
 		// `initialize` and any session operation: read the advertised
@@ -407,9 +408,7 @@ func (b *grokBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		streamingCurrentTurn.Store(true)
 		_, err = c.request(runCtx, "session/prompt", map[string]any{
 			"sessionId": sessionID,
-			"prompt": []map[string]any{
-				{"type": "text", "text": userText},
-			},
+			"prompt":    acpPromptBlocks(userText, opts.InputImages, promptCaps),
 		})
 		if err != nil {
 			if runCtx.Err() == context.DeadlineExceeded {
