@@ -1,0 +1,322 @@
+id: source.github.pr.5580
+repo: multica-ai/multica
+pr_number: 5580
+url: https://github.com/multica-ai/multica/pull/5580
+state: merged
+title: "fix(lark): ingest inbound images and videos as chat attachments (MUL-4934)"
+author: beastpu
+base_ref: main
+head_ref: codex/fix-lark-inbound-media
+merged_at: 2026-07-27T07:44:40Z
+closed_at: 2026-07-27T07:44:40Z
+merge_commit: 60048172a7d636c632ab46128824014c56e386e3
+linked_issues:
+  - MUL-4934
+changed_files:
+  - path: server/cmd/server/channel_media_invariant_test.go
+    additions: 28
+    deletions: 0
+    change_type: ADDED
+  - path: server/cmd/server/main.go
+    additions: 15
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/cmd/server/router.go
+    additions: 17
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/handler/chat_input_ownership_test.go
+    additions: 96
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon.go
+    additions: 25
+    deletions: 11
+    change_type: MODIFIED
+  - path: server/internal/handler/daemon_chat_prompt_test.go
+    additions: 27
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/file_test.go
+    additions: 7
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/handler/handler.go
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/channel/engine/provenance.go
+    additions: 34
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/integrations/channel/engine/resolvers.go
+    additions: 101
+    deletions: 5
+    change_type: MODIFIED
+  - path: server/internal/integrations/channel/engine/router.go
+    additions: 221
+    deletions: 15
+    change_type: MODIFIED
+  - path: server/internal/integrations/channel/engine/router_test.go
+    additions: 563
+    deletions: 20
+    change_type: MODIFIED
+  - path: server/internal/integrations/channel/engine/session.go
+    additions: 208
+    deletions: 17
+    change_type: MODIFIED
+  - path: server/internal/integrations/channel/engine/session_db_test.go
+    additions: 525
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/integrations/channel/engine/session_test.go
+    additions: 104
+    deletions: 10
+    change_type: MODIFIED
+  - path: server/internal/integrations/channel/message.go
+    additions: 9
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/client.go
+    additions: 32
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/content_flatten.go
+    additions: 13
+    deletions: 7
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/content_flatten_test.go
+    additions: 1
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/feishu_channel.go
+    additions: 10
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/feishu_channel_test.go
+    additions: 556
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/feishu_resolvers.go
+    additions: 24
+    deletions: 9
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/feishu_resolvers_test.go
+    additions: 25
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/feishu_types.go
+    additions: 5
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/http_client.go
+    additions: 222
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/http_client_test.go
+    additions: 198
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/inbound_enricher_test.go
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/media_dedup_test.go
+    additions: 57
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/integrations/lark/media_ingest.go
+    additions: 421
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/integrations/lark/outbound.go
+    additions: 10
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/outbound_test.go
+    additions: 52
+    deletions: 17
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/outcome_replier_test.go
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/typing_indicator_test.go
+    additions: 3
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/ws_endpoint.go
+    additions: 1
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/ws_frame_decoder.go
+    additions: 9
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/internal/integrations/lark/ws_frame_decoder_test.go
+    additions: 6
+    deletions: 3
+    change_type: MODIFIED
+  - path: server/internal/integrations/slack/outbound.go
+    additions: 11
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/integrations/slack/outbound_test.go
+    additions: 34
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/internal/integrations/slack/resolvers.go
+    additions: 15
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/metrics/channel_media.go
+    additions: 66
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/metrics/registry.go
+    additions: 12
+    deletions: 7
+    change_type: MODIFIED
+  - path: server/internal/service/attribution_stamp_test.go
+    additions: 85
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/channel_media_reconciler.go
+    additions: 372
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/channel_media_reconciler_test.go
+    additions: 718
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/service/task.go
+    additions: 162
+    deletions: 22
+    change_type: MODIFIED
+  - path: server/internal/service/task_cancel_finalize_test.go
+    additions: 101
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/service/task_channel_media_race_test.go
+    additions: 137
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/storage/local.go
+    additions: 126
+    deletions: 18
+    change_type: MODIFIED
+  - path: server/internal/storage/local_atomic_test.go
+    additions: 196
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/storage/s3.go
+    additions: 46
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/storage/s3_test.go
+    additions: 64
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/storage/storage.go
+    additions: 7
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/migrations/225_chat_message_channel_media_pending.down.sql
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/225_chat_message_channel_media_pending.up.sql
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/226_chat_message_channel_ingested.down.sql
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/226_chat_message_channel_ingested.up.sql
+    additions: 7
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/227_channel_media_pending_object.down.sql
+    additions: 1
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/227_channel_media_pending_object.up.sql
+    additions: 52
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/228_channel_media_pending_object_key_index.down.sql
+    additions: 1
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/228_channel_media_pending_object_key_index.up.sql
+    additions: 6
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/229_channel_media_pending_object_primary_key.down.sql
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/229_channel_media_pending_object_primary_key.up.sql
+    additions: 2
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/230_channel_media_pending_object_claim_index.down.sql
+    additions: 1
+    deletions: 0
+    change_type: ADDED
+  - path: server/migrations/230_channel_media_pending_object_claim_index.up.sql
+    additions: 6
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/db/generated/channel.sql.go
+    additions: 355
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/chat.sql.go
+    additions: 335
+    deletions: 39
+    change_type: MODIFIED
+  - path: server/pkg/db/generated/models.go
+    additions: 27
+    deletions: 9
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/channel.sql
+    additions: 154
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/pkg/db/queries/chat.sql
+    additions: 120
+    deletions: 9
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/server/channel_media_invariant_test.go
+  - path: server/internal/handler/chat_input_ownership_test.go
+  - path: server/internal/handler/daemon_chat_prompt_test.go
+  - path: server/internal/handler/file_test.go
+  - path: server/internal/integrations/channel/engine/router_test.go
+  - path: server/internal/integrations/channel/engine/session_db_test.go
+  - path: server/internal/integrations/channel/engine/session_test.go
+  - path: server/internal/integrations/lark/content_flatten_test.go
+  - path: server/internal/integrations/lark/feishu_channel_test.go
+  - path: server/internal/integrations/lark/feishu_resolvers_test.go
+  - path: server/internal/integrations/lark/http_client_test.go
+  - path: server/internal/integrations/lark/inbound_enricher_test.go
+  - path: server/internal/integrations/lark/media_dedup_test.go
+  - path: server/internal/integrations/lark/outbound_test.go
+  - path: server/internal/integrations/lark/outcome_replier_test.go
+  - path: server/internal/integrations/lark/typing_indicator_test.go
+  - path: server/internal/integrations/lark/ws_frame_decoder_test.go
+  - path: server/internal/integrations/slack/outbound_test.go
+  - path: server/internal/service/attribution_stamp_test.go
+  - path: server/internal/service/channel_media_reconciler_test.go
+  - path: server/internal/service/task_cancel_finalize_test.go
+  - path: server/internal/service/task_channel_media_race_test.go
+  - path: server/internal/storage/local_atomic_test.go
+  - path: server/internal/storage/s3_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"

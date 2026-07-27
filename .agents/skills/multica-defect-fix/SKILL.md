@@ -87,6 +87,33 @@ tests that merely exercise changed code. For non-trivial fixes, use these rules:
 - Name tests after the regression or invariant they protect. A future revert
   should fail for the right reason.
 
+## Multi-Round Review Discipline
+
+Long review threads on this repo are usually structural, not a run of
+oversights. These rules come from a fix that took eight rounds:
+
+- If two consecutive rounds each close the identified race and reveal a
+  narrower one behind it, stop patching. Name the structural problem and
+  propose the design — with the open questions you actually need answered —
+  in a comment before implementing it. Asking first saved a round; guessing
+  cost several.
+- Re-review your own new code with the same lens you would apply to someone
+  else's, before pushing. Disclose what that pass found instead of shipping it
+  silently; two of the defects in that thread were caught this way.
+- Do not silently reverse a decision the reviewer already approved. If new
+  evidence contradicts it, say so and let them decide.
+- When a later change invalidates something you asserted in an earlier PR
+  comment, correct it explicitly in the next comment.
+- Keep formatting and import churn out of files the change does not otherwise
+  touch. A repo-wide `gofmt` or format-on-save sweep dragged six unrelated
+  files into that PR and the maintainer had to strip them before merge.
+- Re-check migration numbering against upstream `main` immediately before
+  merge, not only when the branch was created; the number you took can be
+  claimed while the PR is in review.
+- State the verification you actually ran (commands, database state, which
+  failures pre-exist on `main`). Do not report a check as passing on a
+  different revision than the one you pushed.
+
 ## PR Shape
 
 When reporting or opening a PR, include:
