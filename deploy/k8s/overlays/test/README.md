@@ -72,45 +72,85 @@ automated by the kustomization.
    `REDIS_URL` is what makes multi-pod WS fanout safe if you later raise the
    server replica count above 1.
 
-5. **Cloud runtime (kubefleet) prerequisites.** The `cloud-runtime-patch.yaml`
-   + `../../cloud-runtime` RBAC in this overlay turn on the in-process k8s
-   fleet (one namespace per workspace, one StatefulSet per node). Two things
-   are NOT in the kustomization:
+5. **Cloud runtime (Fleet) prerequisites.** Node provisioning + mcn_ token
+   authority live in the standalone **Fleet** service (`fleet.yaml` in this
+   overlay); `cloud-runtime-patch.yaml` points the server at it. Fleet
+   provisions nodes into the dedicated **external** cloud-runtime cluster via a
+   mounted kubeconfig; the node daemons there reach the server over the public
+   URL. Three things are NOT in the kustomization:
 
-   a. **Two secret keys** — add them to the `multica-secrets` created above
-      (they flow into the server via the base `envFrom`):
-
-      ```bash
-      kubectl -n multica-test patch secret multica-secrets --type=merge -p "{
-        \"stringData\": {
-          \"MULTICA_CLOUD_RUNTIME_SECRET_KEY\": \"$(openssl rand -hex 32)\",
-          \"MULTICA_CLOUD_RUNTIME_PULL_SECRET_DOCKERCONFIGJSON\": \"$(kubectl -n multica-test get secret regcred -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d)\"
-        }
-      }"
-      ```
-
-      `SECRET_KEY` is the secretbox master key encrypting per-workspace LLM
-      keys at rest — **do not rotate it** once workspaces have saved keys, or
-      those keys become undecryptable. `PULL_SECRET_DOCKERCONFIGJSON` here
-      reuses the same registry creds as `regcred` so node namespaces can pull
-      the private runtime image.
-
-   b. **The web image must be built with the cloud-runtime flag on.** The
-      `/runtimes` cloud tab is gated by `NEXT_PUBLIC_ENABLE_CLOUD_RUNTIME`,
-      which `Dockerfile.web` bakes at build time (not read at runtime):
+   a. **The `multica-fleet` Secret** — the shared server↔Fleet token and Fleet's
+      env-sealing key:
 
       ```bash
-      docker build -f Dockerfile.web \
-        --build-arg NEXT_PUBLIC_ENABLE_CLOUD_RUNTIME=true \
-        -t lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web:<tag> .
+      kubectl -n multica-test create secret generic multica-fleet \
+        --from-literal=MULTICA_FLEET_SERVICE_TOKEN="mfs_$(openssl rand -hex 24)" \
+        --from-literal=MULTICA_CLOUD_RUNTIME_SECRET_KEY="$(openssl rand -base64 32)"
       ```
 
-      Point `images:` in `kustomization.yaml` at that tag. A web image built
-      without the flag deploys fine but hides the cloud runtime UI entirely.
+      `MULTICA_FLEET_SERVICE_TOKEN` is the pre-shared secret the server presents
+      to Fleet (`Authorization: Bearer`) — both read it from this Secret.
+      `MULTICA_CLOUD_RUNTIME_SECRET_KEY` is Fleet's AES-256 key encrypting
+      per-workspace LLM keys at rest — **do not rotate it** once workspaces have
+      saved keys, or those keys become undecryptable. Fleet reuses `DATABASE_URL`
+      from `multica-secrets` (it creates `fleet_*` tables in the public schema —
+      the app role cannot create schemas) and the registry pull creds directly
+      from `regcred`.
 
-   The runtime **node** image (`MULTICA_CLOUD_RUNTIME_IMAGE` in
-   `cloud-runtime-patch.yaml`) is ops-built and versioned independently of the
-   server/web images — bump it there when a new runtime image ships.
+   b. **The `fleet-cr-kubeconfig` Secret** — the kubeconfig for the external
+      cloud-runtime cluster Fleet provisions into (key `kubeconfig`, mounted at
+      `/etc/fleet/kubeconfig`):
+
+      ```bash
+      kubectl -n multica-test create secret generic fleet-cr-kubeconfig \
+        --from-file=kubeconfig=/path/to/cloud-runtime-cluster.kubeconfig
+      ```
+
+      The identity in it needs cluster-wide namespace/statefulset/secret/
+      resourcequota create + pod delete. To keep Fleet in-cluster instead (nodes
+      in this cluster), drop this secret + the `MULTICA_CLOUD_RUNTIME_KUBECONFIG`
+      env and set `MULTICA_CLOUD_RUNTIME_SERVER_URL` to the in-cluster FQDN.
+
+   c. **Whitelist the runtime cluster on the test ALB ACL.** The external
+      cluster's node daemons reach the server over the public URL, which sits
+      behind the IP-restricted test ALB ACL. Add the cluster's egress IP (find
+      it with `curl checkip.amazonaws.com` from a pod there):
+
+      ```bash
+      aliyun alb AddEntriesToAcl --AclId <test-acl-id> --region cn-shanghai \
+        --AclEntries.1.Entry "<cluster-egress-ip>/32" \
+        --AclEntries.1.Description "cloud-runtime-cluster-egress" --force
+      ```
+
+   d. **Grant access per workspace.** Cloud Runtime is denied by default in
+      both the UI and API. Add approved workspace UUIDs to
+      `feature-flags.yaml`:
+
+      ```yaml
+      cloud_runtime:
+        default: false
+        allow_by: workspace_id
+        allow:
+          - "<approved-workspace-uuid>"
+      ```
+
+      Apply the overlay and restart only the server so it reloads the flag
+      file. The web image does not need to be rebuilt:
+
+      ```bash
+      kubectl apply -k deploy/k8s/overlays/test
+      kubectl -n multica-test rollout restart deployment/multica-server
+      kubectl -n multica-test rollout status deployment/multica-server
+      ```
+
+      Removing a UUID and restarting revokes the entry and makes every Cloud
+      Runtime fleet endpoint return 403 for that workspace. Existing nodes are
+      not deleted automatically; remove them before revoking if they should no
+      longer consume resources.
+
+   The runtime **node** image (`MULTICA_CLOUD_RUNTIME_IMAGE` in `fleet.yaml`)
+   and the Fleet service image are ops-built and versioned independently of the
+   server/web images — bump them in `fleet.yaml` when a new image ships.
 
 ## First deploy
 

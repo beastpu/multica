@@ -3,6 +3,8 @@ package lark
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -10,7 +12,6 @@ import (
 	"path"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -19,10 +20,14 @@ import (
 
 type mediaStorage interface {
 	Upload(ctx context.Context, key string, data []byte, contentType string, filename string) (string, error)
+	// ObjectURL is the URL a successful upload of key returns — a pure
+	// function of configuration, so the intent ledger can persist it BEFORE
+	// the PUT.
+	ObjectURL(key string) string
 }
 
 type mediaStreamStorage interface {
-	UploadStream(ctx context.Context, key string, data io.Reader, contentType string, filename string) (string, error)
+	UploadStream(ctx context.Context, key string, data io.Reader, sizeBytes int64, contentType string, filename string) (string, error)
 }
 
 type messageResourceStreamer interface {
@@ -33,20 +38,29 @@ type feishuMediaResolver struct {
 	api     APIClient
 	creds   CredentialsResolver
 	storage mediaStorage
+	ledger  engine.MediaIntentLedger
 	logger  *slog.Logger
 }
 
-func NewFeishuMediaResolver(api APIClient, creds CredentialsResolver, storage mediaStorage, logger *slog.Logger) engine.MediaResolver {
+func NewFeishuMediaResolver(api APIClient, creds CredentialsResolver, storage mediaStorage, ledger engine.MediaIntentLedger, logger *slog.Logger) engine.MediaResolver {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &feishuMediaResolver{api: api, creds: creds, storage: storage, logger: logger}
+	return &feishuMediaResolver{api: api, creds: creds, storage: storage, ledger: ledger, logger: logger}
 }
 
-func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.ResolvedInstallation, _ engine.ResolvedIdentity, _ pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage {
-	if len(msg.MediaRefs) > 0 {
-		return msg
+// HasMedia reports whether the message carries downloadable Feishu resources
+// (standalone image/video or post-embedded img/media spans). Pure in-memory
+// decode of the already-received payload — it runs on the connector ACK path.
+func (r *feishuMediaResolver) HasMedia(msg channel.InboundMessage) bool {
+	lm, err := larkMsgFromRaw(msg)
+	if err != nil {
+		return false
 	}
+	return len(mediaResourcesFromMessage(lm)) > 0
+}
+
+func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.ResolvedInstallation, _ engine.ResolvedIdentity, _ pgtype.UUID, chatMessageID pgtype.UUID, msg channel.InboundMessage) channel.InboundMessage {
 	lm, err := larkMsgFromRaw(msg)
 	if err != nil {
 		r.logMediaWarn("lark media ingest skipped: raw decode failed", InboundMessage{MessageID: msg.MessageID}, err)
@@ -56,7 +70,7 @@ func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.Reso
 	if len(resources) == 0 {
 		return msg
 	}
-	if r.api == nil || r.creds == nil || r.storage == nil {
+	if r.api == nil || r.creds == nil || r.storage == nil || r.ledger == nil {
 		r.logMediaWarn("lark media ingest skipped: missing dependency", lm, nil)
 		return msg
 	}
@@ -71,6 +85,29 @@ func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.Reso
 		return msg
 	}
 	for _, res := range resources {
+		key := mediaObjectKey(inst, res)
+		link := r.storage.ObjectURL(key)
+		// Persist the upload intent BEFORE any write can happen. Every
+		// failure from here on — download error, upload error (even one the
+		// store may still be processing), resolve deadline, crash — simply
+		// leaves this row for the reconciler; nothing is ever deleted inline.
+		ok, err := r.ledger.RecordPendingMediaObject(ctx, engine.RecordPendingMediaObjectParams{
+			StorageKey:     key,
+			WorkspaceID:    inst.WorkspaceID,
+			ChatMessageID:  chatMessageID,
+			StorageURL:     link,
+			InstallationID: inst.ID,
+		})
+		if err != nil {
+			// No durable intent, no upload — fail-safe direction.
+			r.logMediaWarn("lark media ingest skipped: intent record failed", lm, err)
+			continue
+		}
+		if !ok {
+			// The reconciler owns this key ('deleting'); never resurrect it.
+			r.logMediaWarn("lark media ingest skipped: key owned by reconciler", lm, nil)
+			continue
+		}
 		got, err := r.downloadResource(ctx, creds, DownloadResourceParams{
 			MessageID: res.messageID,
 			FileKey:   res.key,
@@ -88,14 +125,11 @@ func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.Reso
 			contentType = "application/octet-stream"
 		}
 		filename := mediaFilename(lm, res, got, contentType)
-		id, err := uuid.NewV7()
+		uploadedBytes, err := r.uploadResource(ctx, key, got.Body, got.SizeBytes, contentType, filename)
 		if err != nil {
-			r.logMediaWarn("lark media attachment id failed", lm, err)
-			continue
-		}
-		key := path.Join("workspaces", uuidString(inst.WorkspaceID), "lark", id.String()+path.Ext(filename))
-		link, uploadedBytes, err := r.uploadResource(ctx, key, got.Body, contentType, filename)
-		if err != nil {
+			// The store may still be processing the PUT — deleting here
+			// could reorder with it. The intent row (written above) covers
+			// the object either way; the reconciler settles it.
 			r.logMediaWarn("lark media upload failed", lm, err)
 			continue
 		}
@@ -115,6 +149,17 @@ func (r *feishuMediaResolver) ResolveMedia(ctx context.Context, inst engine.Reso
 	return msg
 }
 
+func mediaObjectKey(inst engine.ResolvedInstallation, res larkMediaResource) string {
+	sum := sha256.Sum256([]byte(res.messageID + "\x00" + res.fetchType + "\x00" + res.key))
+	return path.Join(
+		"workspaces",
+		uuidString(inst.WorkspaceID),
+		"lark",
+		uuidString(inst.ID),
+		hex.EncodeToString(sum[:]),
+	)
+}
+
 func (r *feishuMediaResolver) downloadResource(ctx context.Context, creds InstallationCredentials, p DownloadResourceParams) (DownloadedResourceStream, error) {
 	if streamer, ok := r.api.(messageResourceStreamer); ok {
 		return streamer.DownloadMessageResourceStream(ctx, creds, p)
@@ -131,19 +176,22 @@ func (r *feishuMediaResolver) downloadResource(ctx context.Context, creds Instal
 	}, nil
 }
 
-func (r *feishuMediaResolver) uploadResource(ctx context.Context, key string, body io.ReadCloser, contentType string, filename string) (string, int64, error) {
+func (r *feishuMediaResolver) uploadResource(ctx context.Context, key string, body io.ReadCloser, sizeBytes int64, contentType string, filename string) (int64, error) {
 	defer body.Close()
 	counter := &countingReader{r: body}
-	if streamStorage, ok := r.storage.(mediaStreamStorage); ok {
-		link, err := streamStorage.UploadStream(ctx, key, counter, contentType, filename)
-		return link, counter.n, err
+	if streamStorage, ok := r.storage.(mediaStreamStorage); ok && sizeBytes > 0 {
+		_, err := streamStorage.UploadStream(ctx, key, counter, sizeBytes, contentType, filename)
+		return counter.n, err
 	}
+	// Unknown-length HTTP bodies cannot be sent through S3 PutObject as a
+	// non-seekable stream. The transport already enforces the 100 MiB resource
+	// cap, so buffer this uncommon fallback and use the seekable Upload path.
 	data, err := io.ReadAll(counter)
 	if err != nil {
-		return "", counter.n, err
+		return counter.n, err
 	}
-	link, err := r.storage.Upload(ctx, key, data, contentType, filename)
-	return link, int64(len(data)), err
+	_, err = r.storage.Upload(ctx, key, data, contentType, filename)
+	return int64(len(data)), err
 }
 
 type countingReader struct {
@@ -241,13 +289,21 @@ func mediaResourcesFromPost(lm InboundMessage) []larkMediaResource {
 		return nil
 	}
 	var out []larkMediaResource
+	// A post may reference the same image_key/file_key in more than one span.
+	// The object key is derived from (message, type, key), so duplicates would
+	// upload to the SAME key twice: a later failed attempt could destroy the
+	// object an earlier success already produced (dangling attachment), and a
+	// later success would yield two attachment rows for one object. Collapse
+	// them here, before any upload.
+	seen := make(map[string]bool)
 	for _, para := range doc.Content {
 		for _, span := range para {
 			switch span.Tag {
 			case "img":
-				if span.ImageKey == "" {
+				if span.ImageKey == "" || seen["image\x00"+span.ImageKey] {
 					continue
 				}
+				seen["image\x00"+span.ImageKey] = true
 				out = append(out, larkMediaResource{
 					key:       span.ImageKey,
 					kind:      channel.MsgTypeImage,
@@ -257,9 +313,10 @@ func mediaResourcesFromPost(lm InboundMessage) []larkMediaResource {
 					messageID: lm.MessageID,
 				})
 			case "media":
-				if span.FileKey == "" {
+				if span.FileKey == "" || seen["file\x00"+span.FileKey] {
 					continue
 				}
+				seen["file\x00"+span.FileKey] = true
 				out = append(out, larkMediaResource{
 					key:       span.FileKey,
 					kind:      channel.MsgTypeVideo,

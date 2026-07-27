@@ -156,6 +156,15 @@ func setupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) (string, s
 }
 
 func cleanupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) error {
+	var hasClientUsageTable bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('client_usage_daily') IS NOT NULL`).Scan(&hasClientUsageTable); err != nil {
+		return err
+	}
+	if hasClientUsageTable {
+		if _, err := pool.Exec(ctx, `DELETE FROM client_usage_daily WHERE user_id IN (SELECT id FROM "user" WHERE email = $1)`, handlerTestEmail); err != nil {
+			return err
+		}
+	}
 	if _, err := pool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, handlerTestWorkspaceSlug); err != nil {
 		return err
 	}
@@ -2143,6 +2152,38 @@ func TestGetIssueGCCheckRejectsMalformedIssueID(t *testing.T) {
 	testHandler.GetIssueGCCheck(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("GetIssueGCCheck: expected 400 for malformed issueId, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBatchIssueGCCheckRejectsInvalidRequests(t *testing.T) {
+	h := &Handler{}
+	workspaceID := "00000000-0000-0000-0000-000000000001"
+	tooMany := make([]string, maxIssueGCBatchSize+1)
+	for i := range tooMany {
+		tooMany[i] = "00000000-0000-0000-0000-000000000002"
+	}
+
+	tests := []struct {
+		name        string
+		workspaceID string
+		body        any
+	}{
+		{name: "malformed workspace", workspaceID: "not-a-uuid", body: map[string]any{"issue_ids": []string{}}},
+		{name: "malformed issue", workspaceID: workspaceID, body: map[string]any{"issue_ids": []string{"not-a-uuid"}}},
+		{name: "too many issues", workspaceID: workspaceID, body: map[string]any{"issue_ids": tooMany}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := newDaemonTokenRequest("POST", "/api/daemon/workspaces/"+tt.workspaceID+"/issues/gc-check", tt.body,
+				tt.workspaceID, "test-daemon")
+			req = withURLParam(req, "workspaceId", tt.workspaceID)
+			h.BatchIssueGCCheck(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			}
+		})
 	}
 }
 

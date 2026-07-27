@@ -8,11 +8,16 @@ namespace: multica-test
 
 resources:
   - ../../base
-  # Cloud runtime (kubefleet) RBAC: SA `multica-server` + ClusterRole/Binding
-  # granting namespace/statefulset/secret create in-cluster. The `namespace:`
-  # field above retargets the SA to multica-test and rewrites the binding's
-  # subject namespace to match. Test-only for now — prod enables it separately.
+  - feature-flags.yaml
+  # Cloud runtime RBAC: SA `multica-server` + ClusterRole/Binding granting
+  # namespace/statefulset/secret create in-cluster. The standalone Fleet
+  # service (fleet.yaml) runs as this SA to provision nodes; the server no
+  # longer needs it. The `namespace:` field above retargets the SA to
+  # multica-test and rewrites the binding's subject namespace to match.
   - ../../cloud-runtime
+  # Standalone Fleet service (node provisioning + mcn_ token authority +
+  # workspace env). The server proxies to it — see cloud-runtime-patch.yaml.
+  - fleet.yaml
 
 commonAnnotations:
   multica.lilithgames.com/environment: "test"
@@ -24,9 +29,6 @@ commonAnnotations:
 images:
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server
     newTag: "test-20260717-a837f9125-kubefleet"
-  # The web image MUST be built with --build-arg NEXT_PUBLIC_ENABLE_CLOUD_RUNTIME=true
-  # (Dockerfile.web) or the /runtimes cloud tab is compiled out — the flag is
-  # baked at build time, not read at runtime. See this overlay's README.
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web
     newTag: "test-20260717-d519bc9cb-kubefleet"
 
@@ -145,7 +147,7 @@ patches:
       kind: Job
       name: multica-migrate
 
-  # Cloud runtime (kubefleet): serviceAccountName + provider env on the server.
+  # Cloud runtime: point the server at the in-cluster Fleet service.
   - path: cloud-runtime-patch.yaml
     target:
       kind: Deployment

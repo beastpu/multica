@@ -69,6 +69,42 @@ func TestClientDoForwardsFleetRequest(t *testing.T) {
 	}
 }
 
+func TestClientDoStampsServiceToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer mfs_secret" {
+			t.Fatalf("Authorization = %q, want Bearer mfs_secret", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewClient(Config{BaseURL: srv.URL, ServiceToken: "mfs_secret"})
+	// A caller-supplied Authorization header must NOT override the service
+	// token — it is authoritative.
+	if _, err := client.Do(context.Background(), Request{
+		Method:  http.MethodGet,
+		Path:    "/api/v1/nodes",
+		Headers: http.Header{"Authorization": []string{"Bearer attacker"}},
+	}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+}
+
+func TestClientDoNoServiceTokenNoAuthHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q, want empty when no service token", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewClient(Config{BaseURL: srv.URL})
+	if _, err := client.Do(context.Background(), Request{Method: http.MethodGet, Path: "/api/v1/nodes"}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+}
+
 func TestClientDoDisabled(t *testing.T) {
 	client := NewClient(Config{})
 	_, err := client.Do(context.Background(), Request{Method: http.MethodGet, Path: "/healthz"})

@@ -1,16 +1,10 @@
-# Enables the in-process k8s cloud runtime (kubefleet) on the test
-# environment. Pairs with `../../cloud-runtime/rbac.yaml` in this overlay's
-# `resources:` — that manifest creates the `multica-server` ServiceAccount and
-# the ClusterRole/Binding kubefleet needs to create per-workspace namespaces,
-# StatefulSets and Secrets in-cluster.
+# Points multica-server at the standalone Fleet service (deploy fleet.yaml in
+# this overlay). Node provisioning + mcn_ token authority live in Fleet now, so
+# the server needs no cloud-runtime RBAC — it just proxies to Fleet over the
+# in-cluster network with a shared service token.
 #
-# Non-secret provider config lives here (inline env). The two SECRETS it needs —
-# MULTICA_CLOUD_RUNTIME_SECRET_KEY (secretbox master key for workspace LLM keys)
-# and MULTICA_CLOUD_RUNTIME_PULL_SECRET_DOCKERCONFIGJSON (registry creds copied
-# into each node namespace so the runtime image can be pulled) — arrive via the
-# `envFrom: secretRef: multica-secrets` the base deployment already declares.
-# Add them to the out-of-band Secret (see this overlay's README, cloud-runtime
-# section). Both empty ⇒ feature reports not-configured; it does not crash.
+# The shared server↔Fleet secret MULTICA_FLEET_SERVICE_TOKEN arrives via the
+# out-of-band `multica-fleet` Secret (see README, cloud-runtime section).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,23 +12,25 @@ metadata:
 spec:
   template:
     spec:
-      # Binds the pod to the SA that carries the cloud-runtime ClusterRole.
-      # Without this the server runs as `default` and every node create 403s.
-      serviceAccountName: multica-server
       containers:
         - name: server
           env:
-            - name: MULTICA_CLOUD_RUNTIME_PROVIDER
-              value: k8s
-            # Runtime node image (ops-built, decoupled entrypoint). Bump when a
-            # new runtime image ships; independent of the server/web tags.
-            - name: MULTICA_CLOUD_RUNTIME_IMAGE
-              value: lilith-registry.cn-shanghai.cr.aliyuncs.com/yunwei/multica:decoupled-f3f51eb
-            # In-cluster Service DNS — node pods poll the server over the
-            # cluster network, not the public ingress.
-            - name: MULTICA_CLOUD_RUNTIME_SERVER_URL
-              value: http://multica-server:8080
-            # Namespace prefix (default mrt-) and per-workspace node cap
-            # (default 3) are left at their code defaults. Storage class is
-            # left empty ⇒ the cluster's default StorageClass provisions node
-            # volumes. Set MULTICA_CLOUD_RUNTIME_STORAGE_CLASS to override.
+            - name: MULTICA_FEATURE_FLAGS_FILE
+              value: /etc/multica/feature-flags/feature-flags.yaml
+            # In-cluster Fleet Service (fleet.yaml). Enables the remote
+            # cloud-runtime client + the remote mcn_ PAT verifier.
+            - name: MULTICA_CLOUD_FLEET_URL
+              value: http://multica-fleet:8090
+            - name: MULTICA_FLEET_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: multica-fleet
+                  key: MULTICA_FLEET_SERVICE_TOKEN
+          volumeMounts:
+            - name: feature-flags
+              mountPath: /etc/multica/feature-flags
+              readOnly: true
+      volumes:
+        - name: feature-flags
+          configMap:
+            name: multica-feature-flags

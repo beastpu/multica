@@ -171,13 +171,8 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "only personal access tokens can be renewed")
 		return
 	}
-	// Cloud node PATs (mcn_) renew against cloud_node_token, so a long-lived
-	// runtime node stays authenticated past its 180-day mint without any user
-	// action — the daemon's existing renewal loop just works, no noise.
-	if strings.HasPrefix(rawToken, auth.CloudPATPrefix) {
-		h.renewCloudNodeToken(w, r, rawToken, userID)
-		return
-	}
+	// Cloud node PATs (mcn_) are owned by the standalone Fleet service, which
+	// manages their lifecycle (mint/rotate) — they are not renewable here.
 	if !strings.HasPrefix(rawToken, "mul_") {
 		writeError(w, http.StatusBadRequest, "only personal access tokens can be renewed")
 		return
@@ -258,55 +253,6 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 			ExpiresAt: timestampToString(current.ExpiresAt),
 			Renewed:   false,
 		})
-	default:
-		writeError(w, http.StatusInternalServerError, "failed to renew token")
-	}
-}
-
-// CloudNodeTokenRenewExtension is how far a renewed cloud node PAT's expiry is
-// pushed out — mirrors the 180-day mint TTL in kubefleet.
-const CloudNodeTokenRenewExtension = 180 * 24 * time.Hour
-
-// renewCloudNodeToken extends a cloud node PAT (mcn_) in place. Same renewal
-// threshold as PATs; extends by the mint TTL so a node never expires while
-// it's running. Ownership is checked against the caller's resolved user id.
-func (h *Handler) renewCloudNodeToken(w http.ResponseWriter, r *http.Request, rawToken, userID string) {
-	hash := auth.HashToken(rawToken)
-	row, err := h.Queries.GetCloudNodeTokenByHash(r.Context(), hash)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusUnauthorized, "token is no longer valid")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to look up token")
-		return
-	}
-	if uuidToString(row.OwnerID) != userID {
-		writeError(w, http.StatusUnauthorized, "token does not belong to caller")
-		return
-	}
-
-	now := time.Now()
-	if row.ExpiresAt.Time.Sub(now) > PATRenewThreshold {
-		writeJSON(w, http.StatusOK, RenewPATResponse{ExpiresAt: timestampToString(row.ExpiresAt), Renewed: false})
-		return
-	}
-	updated, err := h.Queries.ExtendCloudNodeTokenExpiry(r.Context(), db.ExtendCloudNodeTokenExpiryParams{
-		TokenHash:        hash,
-		NewExpiresAt:     pgtype.Timestamptz{Time: now.Add(CloudNodeTokenRenewExtension), Valid: true},
-		RenewThresholdAt: pgtype.Timestamptz{Time: now.Add(PATRenewThreshold), Valid: true},
-	})
-	switch {
-	case err == nil:
-		writeJSON(w, http.StatusOK, RenewPATResponse{ExpiresAt: timestampToString(updated), Renewed: true})
-	case errors.Is(err, pgx.ErrNoRows):
-		// A concurrent renewer already bumped it past the threshold.
-		current, gerr := h.Queries.GetCloudNodeTokenByHash(r.Context(), hash)
-		if gerr != nil {
-			writeError(w, http.StatusUnauthorized, "token is no longer valid")
-			return
-		}
-		writeJSON(w, http.StatusOK, RenewPATResponse{ExpiresAt: timestampToString(current.ExpiresAt), Renewed: false})
 	default:
 		writeError(w, http.StatusInternalServerError, "failed to renew token")
 	}
