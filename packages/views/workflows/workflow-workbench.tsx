@@ -693,12 +693,15 @@ export function RoleSetupPanel({
   currentAssignments,
   actorOptions,
   canConfigure,
+  variant = "setup",
 }: {
   instanceId: string;
   roles: WorkflowRoleDefinition[];
   currentAssignments: WorkflowRoleAssignment[];
   actorOptions: WorkflowActorOption[];
   canConfigure: boolean;
+  /** "setup" blocks the run and stays open; "reassign" is a routine edit. */
+  variant?: "setup" | "reassign";
 }) {
   const { t } = useT("workflows");
   const [assignments, setAssignments] = useState<Record<string, string>>({});
@@ -735,25 +738,30 @@ export function RoleSetupPanel({
     !selectedAssignments.some((assignment) => assignment.role_key === role.key)
   );
 
-  return (
-    <section
-      aria-labelledby="workflow-role-setup-title"
-      className="space-y-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4"
-    >
-      <div>
-        <h2
-          id="workflow-role-setup-title"
-          className="flex items-center gap-2 text-sm font-medium"
-        >
-          <Users className="size-4 text-amber-600" />
-          {t(($) => $.workbench.role_setup)}
-        </h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {canConfigure
-            ? t(($) => $.workbench.role_setup_help)
-            : t(($) => $.workbench.role_setup_waiting)}
+  const reassign = variant === "reassign";
+  const body = (
+    <>
+      {!reassign && (
+        <div>
+          <h2
+            id="workflow-role-setup-title"
+            className="flex items-center gap-2 text-sm font-medium"
+          >
+            <Users className="size-4 text-amber-600" />
+            {t(($) => $.workbench.role_setup)}
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {canConfigure
+              ? t(($) => $.workbench.role_setup_help)
+              : t(($) => $.workbench.role_setup_waiting)}
+          </p>
+        </div>
+      )}
+      {reassign && (
+        <p className="text-xs text-muted-foreground">
+          {t(($) => $.workbench.role_reassign_help)}
         </p>
-      </div>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
         {roles.map((role) => {
           const options = actorOptions.filter((actor) =>
@@ -821,6 +829,26 @@ export function RoleSetupPanel({
           {t(($) => $.errors.action_failed)}
         </p>
       )}
+    </>
+  );
+
+  if (reassign) {
+    return (
+      <details className="rounded-xl border bg-background">
+        <summary className="min-h-9 cursor-pointer select-none px-3 py-2 text-sm font-medium">
+          {t(($) => $.workbench.role_reassign)}
+        </summary>
+        <div className="space-y-4 border-t p-3">{body}</div>
+      </details>
+    );
+  }
+
+  return (
+    <section
+      aria-labelledby="workflow-role-setup-title"
+      className="space-y-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4"
+    >
+      {body}
     </section>
   );
 }
@@ -2748,7 +2776,10 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
           </div>
         </section>
 
-        {instance.status === "needs_setup" && templateVersion && (
+        {templateVersion &&
+          (instance.status === "needs_setup" ||
+            instance.status === "running" ||
+            instance.status === "paused") && (
           <section className="max-h-64 shrink-0 overflow-y-auto border-b px-4 py-3">
             <RoleSetupPanel
               instanceId={instanceId}
@@ -2756,6 +2787,9 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               currentAssignments={detailQuery.data?.role_assignments ?? []}
               actorOptions={actorOptions}
               canConfigure={canConfigureRoles}
+              variant={
+                instance.status === "needs_setup" ? "setup" : "reassign"
+              }
             />
           </section>
         )}

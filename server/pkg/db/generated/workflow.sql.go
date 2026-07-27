@@ -1466,6 +1466,22 @@ func (q *Queries) DeleteWorkflowInstancesByHost(ctx context.Context, arg DeleteW
 	return err
 }
 
+const deleteWorkflowNodeParticipants = `-- name: DeleteWorkflowNodeParticipants :exec
+DELETE FROM workflow_node_participant
+WHERE workflow_node_instance_id = $1
+  AND workspace_id = $2
+`
+
+type DeleteWorkflowNodeParticipantsParams struct {
+	WorkflowNodeInstanceID pgtype.UUID `json:"workflow_node_instance_id"`
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) DeleteWorkflowNodeParticipants(ctx context.Context, arg DeleteWorkflowNodeParticipantsParams) error {
+	_, err := q.db.Exec(ctx, deleteWorkflowNodeParticipants, arg.WorkflowNodeInstanceID, arg.WorkspaceID)
+	return err
+}
+
 const deleteWorkflowNodeParticipantsByHost = `-- name: DeleteWorkflowNodeParticipantsByHost :exec
 DELETE FROM workflow_node_participant participant
 WHERE participant.workspace_id = $1

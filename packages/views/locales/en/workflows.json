@@ -252,7 +252,9 @@
     "reason": "Reason",
     "rework_target": "Return to activity",
     "select_node": "Select an activity to inspect its work and evidence.",
-    "attempt": "Attempt {{attempt}}"
+    "attempt": "Attempt {{attempt}}",
+    "role_reassign": "Reassign roles",
+    "role_reassign_help": "Owners of nodes still in flight update with the change; assignees of issues already created stay as they are — reassign those separately if needed."
   },
   "editor": {
     "title": "Workflow template",

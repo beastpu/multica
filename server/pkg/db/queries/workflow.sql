@@ -1126,6 +1126,11 @@ WHERE workflow_node_instance_id = @workflow_node_instance_id
   AND workspace_id = @workspace_id
 ORDER BY role, created_at, id;
 
+-- name: DeleteWorkflowNodeParticipants :exec
+DELETE FROM workflow_node_participant
+WHERE workflow_node_instance_id = @workflow_node_instance_id
+  AND workspace_id = @workspace_id;
+
 -- name: CreateWorkflowExecutorResolution :one
 INSERT INTO workflow_executor_resolution (
     workspace_id, workflow_instance_id, workflow_node_instance_id,

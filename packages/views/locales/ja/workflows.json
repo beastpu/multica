@@ -252,7 +252,9 @@
     "reason": "理由",
     "rework_target": "戻るアクティビティ",
     "select_node": "アクティビティを選択して詳細を確認します。",
-    "attempt": "試行 {{attempt}}"
+    "attempt": "試行 {{attempt}}",
+    "role_reassign": "ロール担当者を変更",
+    "role_reassign_help": "変更すると、未完了ノードの担当者は同期して更新されます。作成済み issue の担当者は変わらないため、必要に応じて個別に変更してください。"
   },
   "editor": {
     "title": "ワークフローテンプレート",

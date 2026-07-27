@@ -249,6 +249,18 @@ func (h *Handler) UpdateWorkflowInstanceRoles(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
+	// Roles stay editable while the run can still act on them; a terminal
+	// instance is history and must not be rewritten.
+	switch instance.Status {
+	case "needs_setup", "running", "paused":
+	default:
+		writeError(
+			w,
+			http.StatusConflict,
+			"workflow roles cannot be changed after the workflow ends",
+		)
+		return
+	}
 	if instance.Status != "needs_setup" {
 		if event, eventErr := h.Queries.GetWorkflowEventByIdempotencyKey(
 			r.Context(),
@@ -267,12 +279,6 @@ func (h *Handler) UpdateWorkflowInstanceRoles(w http.ResponseWriter, r *http.Req
 			)
 			return
 		}
-		writeError(
-			w,
-			http.StatusConflict,
-			"workflow roles can only be configured while setup is required",
-		)
-		return
 	}
 	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(r.Context(), db.GetWorkflowTemplateVersionInWorkspaceParams{
 		ID: instance.TemplateVersionID, WorkspaceID: instance.WorkspaceID,
@@ -303,7 +309,13 @@ func (h *Handler) UpdateWorkflowInstanceRoles(w http.ResponseWriter, r *http.Req
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 	locked, err := qtx.LockWorkflowInstance(r.Context(), db.LockWorkflowInstanceParams{ID: instance.ID, WorkspaceID: instance.WorkspaceID})
-	if err != nil || locked.Status != "needs_setup" {
+	if err != nil {
+		writeError(w, http.StatusConflict, "workflow setup changed; refresh and try again")
+		return
+	}
+	switch locked.Status {
+	case "needs_setup", "running", "paused":
+	default:
 		writeError(w, http.StatusConflict, "workflow setup changed; refresh and try again")
 		return
 	}
@@ -339,7 +351,23 @@ func (h *Handler) UpdateWorkflowInstanceRoles(w http.ResponseWriter, r *http.Req
 	}
 	var activeNodes []db.WorkflowNodeInstance
 	updated := locked
-	if len(missing) == 0 {
+	if locked.Status != "needs_setup" {
+		// The run already started: keep its state and only re-resolve the
+		// participants of attempts that can still act on the new assignment.
+		nodes, err := qtx.ListWorkflowNodeInstances(r.Context(), db.ListWorkflowNodeInstancesParams{
+			WorkflowInstanceID: locked.ID, WorkspaceID: locked.WorkspaceID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load workflow nodes")
+			return
+		}
+		if err := refreshWorkflowNodeParticipants(
+			r.Context(), qtx, locked.WorkspaceID, nodes, definition, plan, roleMap,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update workflow participants")
+			return
+		}
+	} else if len(missing) == 0 {
 		nodes, err := qtx.ListWorkflowNodeInstances(r.Context(), db.ListWorkflowNodeInstancesParams{
 			WorkflowInstanceID: locked.ID, WorkspaceID: locked.WorkspaceID,
 		})
@@ -401,7 +429,9 @@ func (h *Handler) UpdateWorkflowInstanceRoles(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to commit workflow roles")
 		return
 	}
-	if len(missing) == 0 {
+	if locked.Status != "needs_setup" {
+		h.Metrics.RecordWorkflowOperation("role_reassignment", "applied")
+	} else if len(missing) == 0 {
 		h.Metrics.RecordWorkflowOperation("role_resolution", "resolved")
 		h.recordWorkflowInstanceStatusTransition(locked.Status, updated.Status)
 		h.recordWorkflowNodesActivated(r.Context(), activeNodes)

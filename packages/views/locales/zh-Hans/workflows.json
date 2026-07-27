@@ -252,7 +252,9 @@
     "reason": "返工原因",
     "rework_target": "返回活动",
     "select_node": "选择一个活动，查看其中的任务、产出和检查结果。",
-    "attempt": "第 {{attempt}} 次"
+    "attempt": "第 {{attempt}} 次",
+    "role_reassign": "调整角色负责人",
+    "role_reassign_help": "更换后，尚未结束的节点负责人会同步更新；已创建的 issue 负责人不变，需要时请单独改派。"
   },
   "editor": {
     "title": "工作流模板",

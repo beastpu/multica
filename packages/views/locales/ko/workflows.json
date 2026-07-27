@@ -252,7 +252,9 @@
     "reason": "이유",
     "rework_target": "돌아갈 활동",
     "select_node": "활동을 선택해 작업과 근거를 확인하세요.",
-    "attempt": "시도 {{attempt}}"
+    "attempt": "시도 {{attempt}}",
+    "role_reassign": "역할 담당자 변경",
+    "role_reassign_help": "변경하면 아직 진행 중인 노드의 담당자가 함께 갱신됩니다. 이미 생성된 이슈의 담당자는 그대로이므로 필요하면 따로 변경하세요."
   },
   "editor": {
     "title": "워크플로 템플릿",

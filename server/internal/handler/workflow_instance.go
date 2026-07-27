@@ -995,6 +995,129 @@ func workflowRoleMap(assignments []validatedWorkflowRoleAssignment) map[string]v
 	return result
 }
 
+type workflowParticipantRole struct {
+	key  string
+	role string
+}
+
+// workflowNodeParticipantRoles lists the role slots a node materializes as
+// participants: its owner, its declared participants, and — on the acceptance
+// activity — the approver.
+func workflowNodeParticipantRoles(
+	nodeDefinition workflowdomain.NodeDefinition,
+	definition workflowdomain.Definition,
+) []workflowParticipantRole {
+	roles := make([]workflowParticipantRole, 0, len(nodeDefinition.ParticipantRoles)+2)
+	if nodeDefinition.OwnerRole != "" {
+		roles = append(roles, workflowParticipantRole{nodeDefinition.OwnerRole, "owner"})
+	}
+	for _, key := range nodeDefinition.ParticipantRoles {
+		roles = append(roles, workflowParticipantRole{key, "participant"})
+	}
+	if workflowdomain.IsAcceptanceActivity(definition, nodeDefinition) &&
+		definition.Acceptance.ApproverRole != "" {
+		roles = append(
+			roles,
+			workflowParticipantRole{definition.Acceptance.ApproverRole, "approver"},
+		)
+	}
+	return roles
+}
+
+// writeWorkflowNodeParticipants resolves the node's role slots into
+// participant rows. A node without an owner role falls back to the pinned
+// fixed_actor executor, which is what makes a directly assigned member the
+// node owner.
+func writeWorkflowNodeParticipants(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	node db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+	participantRoles []workflowParticipantRole,
+	roles map[string]validatedWorkflowRoleAssignment,
+) error {
+	for _, participant := range participantRoles {
+		assignment, exists := roles[participant.key]
+		if !exists {
+			continue
+		}
+		if _, err := q.CreateWorkflowNodeParticipant(ctx, db.CreateWorkflowNodeParticipantParams{
+			WorkspaceID: workspaceID, WorkflowNodeInstanceID: node.ID, Role: participant.role,
+			ActorType: assignment.ActorType, ActorID: assignment.ActorID,
+		}); err != nil {
+			return fmt.Errorf("create participant: %w", err)
+		}
+	}
+	if nodeDefinition.OwnerRole != "" {
+		return nil
+	}
+	for _, strategy := range nodeDefinition.Executor.Strategies {
+		if strategy.Kind != "fixed_actor" {
+			continue
+		}
+		assignment, err := directWorkflowExecutorAssignment(
+			strategy.ActorType,
+			strategy.ActorID,
+		)
+		if err != nil {
+			return fmt.Errorf("resolve direct node owner: %w", err)
+		}
+		if err := validateWorkflowExecutorActor(ctx, q, workspaceID, assignment); err != nil {
+			break
+		}
+		if _, err := q.CreateWorkflowNodeParticipant(ctx, db.CreateWorkflowNodeParticipantParams{
+			WorkspaceID: workspaceID, WorkflowNodeInstanceID: node.ID, Role: "owner",
+			ActorType: assignment.ActorType, ActorID: assignment.ActorID,
+		}); err != nil {
+			return fmt.Errorf("create direct node owner: %w", err)
+		}
+		break
+	}
+	return nil
+}
+
+// refreshWorkflowNodeParticipants re-resolves participants for node attempts
+// that have not reached a terminal state, so a role reassignment reaches the
+// work already in flight. Materialized issue assignees are deliberately left
+// alone: reassigning an issue is its own explicit action.
+func refreshWorkflowNodeParticipants(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	nodes []db.WorkflowNodeInstance,
+	definition workflowdomain.Definition,
+	plan workflowdomain.GraphPlan,
+	roles map[string]validatedWorkflowRoleAssignment,
+) error {
+	for _, node := range nodes {
+		switch node.Status {
+		case "pending", "ready", "active", "waiting", "blocked":
+		default:
+			continue
+		}
+		nodeDefinition, ok := plan.Node(node.NodeKey)
+		if !ok || nodeDefinition.Kind != "activity" {
+			continue
+		}
+		if err := q.DeleteWorkflowNodeParticipants(
+			ctx,
+			db.DeleteWorkflowNodeParticipantsParams{
+				WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+			},
+		); err != nil {
+			return fmt.Errorf("clear participants: %w", err)
+		}
+		if err := writeWorkflowNodeParticipants(
+			ctx, q, workspaceID, node, nodeDefinition,
+			workflowNodeParticipantRoles(nodeDefinition, definition), roles,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func createWorkflowNodeActivationRecords(
 	ctx context.Context,
 	q *db.Queries,
@@ -1005,68 +1128,11 @@ func createWorkflowNodeActivationRecords(
 	definition workflowdomain.Definition,
 	roles map[string]validatedWorkflowRoleAssignment,
 ) (bool, error) {
-	participantRoles := make([]struct {
-		key  string
-		role string
-	}, 0, len(nodeDefinition.ParticipantRoles)+2)
-	if nodeDefinition.OwnerRole != "" {
-		participantRoles = append(participantRoles, struct {
-			key  string
-			role string
-		}{nodeDefinition.OwnerRole, "owner"})
-	}
-	for _, key := range nodeDefinition.ParticipantRoles {
-		participantRoles = append(participantRoles, struct {
-			key  string
-			role string
-		}{key, "participant"})
-	}
-	if workflowdomain.IsAcceptanceActivity(definition, nodeDefinition) && definition.Acceptance.ApproverRole != "" {
-		participantRoles = append(participantRoles, struct {
-			key  string
-			role string
-		}{definition.Acceptance.ApproverRole, "approver"})
-	}
-	for _, participant := range participantRoles {
-		assignment, exists := roles[participant.key]
-		if !exists {
-			continue
-		}
-		if _, err := q.CreateWorkflowNodeParticipant(ctx, db.CreateWorkflowNodeParticipantParams{
-			WorkspaceID: workspaceID, WorkflowNodeInstanceID: node.ID, Role: participant.role,
-			ActorType: assignment.ActorType, ActorID: assignment.ActorID,
-		}); err != nil {
-			return false, fmt.Errorf("create participant: %w", err)
-		}
-	}
-	if nodeDefinition.OwnerRole == "" {
-		for _, strategy := range nodeDefinition.Executor.Strategies {
-			if strategy.Kind != "fixed_actor" {
-				continue
-			}
-			assignment, err := directWorkflowExecutorAssignment(
-				strategy.ActorType,
-				strategy.ActorID,
-			)
-			if err != nil {
-				return false, fmt.Errorf("resolve direct node owner: %w", err)
-			}
-			if err := validateWorkflowExecutorActor(
-				ctx,
-				q,
-				workspaceID,
-				assignment,
-			); err != nil {
-				break
-			}
-			if _, err := q.CreateWorkflowNodeParticipant(ctx, db.CreateWorkflowNodeParticipantParams{
-				WorkspaceID: workspaceID, WorkflowNodeInstanceID: node.ID, Role: "owner",
-				ActorType: assignment.ActorType, ActorID: assignment.ActorID,
-			}); err != nil {
-				return false, fmt.Errorf("create direct node owner: %w", err)
-			}
-			break
-		}
+	participantRoles := workflowNodeParticipantRoles(nodeDefinition, definition)
+	if err := writeWorkflowNodeParticipants(
+		ctx, q, workspaceID, node, nodeDefinition, participantRoles, roles,
+	); err != nil {
+		return false, err
 	}
 	needsSetup := false
 	for _, issueTemplate := range nodeDefinition.IssueTemplates {
