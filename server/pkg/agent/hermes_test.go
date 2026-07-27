@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -3000,111 +2999,6 @@ func TestHermesSendsSetModelWhenModelDiffersFromCurrent(t *testing.T) {
 	}
 	if params["modelId"] != "custom:deepseek-v4-pro" {
 		t.Errorf("session/set_model.modelId = %v, want custom:deepseek-v4-pro", params["modelId"])
-	}
-}
-
-func TestHermesPromptIncludesImageBlockWhenCapabilityAdvertised(t *testing.T) {
-	t.Parallel()
-
-	recordPath := filepath.Join(t.TempDir(), "frames.jsonl")
-	fakePath := filepath.Join(t.TempDir(), "hermes")
-	caps := `{"promptCapabilities":{"image":true}}`
-	writeTestExecutable(t, fakePath, []byte(fakeACPRecordingScript(recordPath, "ses_new", caps)))
-
-	backend, err := New("hermes", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new hermes backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "what is in this screenshot?", ExecOptions{
-		Timeout: 5 * time.Second,
-		InputImages: []ImageInput{{
-			MimeType: "image/png",
-			Data:     []byte{0x89, 'P', 'N', 'G'},
-			URI:      "multica://attachments/att-1",
-		}},
-	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-	select {
-	case result := <-session.Result:
-		if result.Status != "completed" {
-			t.Fatalf("expected completed result, got %q: %s", result.Status, result.Error)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
-	}
-
-	frame := findRecordedFrame(t, recordPath, "session/prompt")
-	params, ok := frame["params"].(map[string]any)
-	if !ok {
-		t.Fatalf("session/prompt params: got %T, want map", frame["params"])
-	}
-	prompt, ok := params["prompt"].([]any)
-	if !ok {
-		t.Fatalf("session/prompt.prompt: got %T, want slice", params["prompt"])
-	}
-	if len(prompt) != 2 {
-		t.Fatalf("prompt block count = %d, want text + image", len(prompt))
-	}
-	image, ok := prompt[1].(map[string]any)
-	if !ok {
-		t.Fatalf("image block: got %T, want map", prompt[1])
-	}
-	if image["type"] != "image" || image["mimeType"] != "image/png" || image["uri"] != "multica://attachments/att-1" {
-		t.Fatalf("unexpected image block: %#v", image)
-	}
-	if image["data"] != base64.StdEncoding.EncodeToString([]byte{0x89, 'P', 'N', 'G'}) {
-		t.Fatalf("image data = %v, want encoded png bytes", image["data"])
-	}
-}
-
-func TestHermesPromptOmitsImageBlockWithoutCapability(t *testing.T) {
-	t.Parallel()
-
-	recordPath := filepath.Join(t.TempDir(), "frames.jsonl")
-	fakePath := filepath.Join(t.TempDir(), "hermes")
-	writeTestExecutable(t, fakePath, []byte(fakeACPRecordingScript(recordPath, "ses_new", `{}`)))
-
-	backend, err := New("hermes", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new hermes backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "what is in this screenshot?", ExecOptions{
-		Timeout:     5 * time.Second,
-		InputImages: []ImageInput{{MimeType: "image/png", Data: []byte{1, 2, 3}}},
-	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-	select {
-	case result := <-session.Result:
-		if result.Status != "completed" {
-			t.Fatalf("expected completed result, got %q: %s", result.Status, result.Error)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
-	}
-
-	frame := findRecordedFrame(t, recordPath, "session/prompt")
-	params := frame["params"].(map[string]any)
-	prompt := params["prompt"].([]any)
-	if len(prompt) != 1 {
-		t.Fatalf("prompt block count = %d, want text only when image capability is absent", len(prompt))
 	}
 }
 

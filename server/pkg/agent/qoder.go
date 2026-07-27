@@ -228,7 +228,6 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
-		promptCaps := extractACPPromptCapabilities(initResult)
 
 		// Drop MCP entries whose remote transport the runtime didn't
 		// advertise. See the matching comment in hermes.go for why
@@ -333,7 +332,9 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		streamingCurrentTurn.Store(true)
 		_, err = c.request(runCtx, "session/prompt", map[string]any{
 			"sessionId": sessionID,
-			"prompt":    acpPromptBlocks(userText, opts.InputImages, promptCaps),
+			"prompt": []map[string]any{
+				{"type": "text", "text": userText},
+			},
 		})
 		if err != nil {
 			if runCtx.Err() == context.DeadlineExceeded {

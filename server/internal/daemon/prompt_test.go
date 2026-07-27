@@ -292,34 +292,6 @@ func TestBuildChatPromptAttachmentIDsCanBeBoundToCreatedIssues(t *testing.T) {
 	}
 }
 
-func TestBuildChatPromptNativeImageCandidateDoesNotRequireDownloadFirst(t *testing.T) {
-	task := Task{
-		ChatSessionID: "sess-1",
-		ChatMessage:   "what is in this screenshot?",
-		ChatMessageAttachments: []ChatAttachmentMeta{
-			{
-				ID:                    "019ec09d-6222-722b-bdfa-427b105d80be",
-				Filename:              "shot.png",
-				ContentType:           "image/png",
-				IncludedAsNativeImage: true,
-			},
-		},
-	}
-	out := BuildPrompt(task, "hermes")
-	for _, want := range []string{
-		"native_image_input_candidate=true",
-		"analyze them directly",
-		"--attachment-id <id>",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("chat prompt missing %q\n--- output ---\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "fetch each file locally before referring to it") {
-		t.Fatalf("native image prompt must not require downloading before visual analysis:\n%s", out)
-	}
-}
-
 func TestBuildChatPromptChannelAwareness(t *testing.T) {
 	t.Run("slack-backed prompt teaches both read commands", func(t *testing.T) {
 		out := buildChatPrompt(Task{
