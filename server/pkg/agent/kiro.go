@@ -240,6 +240,7 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
+		promptCaps := extractACPPromptCapabilities(initResult)
 
 		// Drop MCP entries whose remote transport the runtime didn't
 		// advertise. See the matching comment in hermes.go for why
@@ -347,9 +348,7 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			userText = opts.SystemPrompt + "\n\n---\n\n" + prompt
 		}
 
-		promptBlocks := []map[string]any{
-			{"type": "text", "text": userText},
-		}
+		promptBlocks := acpPromptBlocks(userText, opts.InputImages, promptCaps)
 		// Kiro's published docs use `content`, while Kiro CLI 2.1.1 still
 		// requires the standard ACP `prompt` field. Send both so either wire
 		// shape can drive the turn.

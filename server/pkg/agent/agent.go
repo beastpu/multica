@@ -25,6 +25,10 @@ type Backend interface {
 type ExecOptions struct {
 	Cwd   string
 	Model string
+	// InputImages carries native image content for providers/protocols that
+	// advertise image prompt support. Backends that cannot pass images ignore it
+	// and rely on the text prompt's attachment instructions instead.
+	InputImages []ImageInput
 	// SystemPrompt is consumed only by providers that can pass or safely inline
 	// developer/system instructions. Hermes ACP intentionally ignores it and
 	// relies on cwd-scoped context files such as AGENTS.md instead.
@@ -84,6 +88,14 @@ type ExecOptions struct {
 	// through Claude Code's --settings flag. It currently carries restrictive
 	// runtime-skill overrides only; other providers ignore it.
 	ClaudeSettingsPath string
+}
+
+// ImageInput is an image content block the caller wants to pass to a
+// multimodal-capable backend as part of the user prompt.
+type ImageInput struct {
+	MimeType string
+	Data     []byte
+	URI      string
 }
 
 // runContext derives the execution context for an agent subprocess from the

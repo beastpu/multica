@@ -92,7 +92,7 @@ type Task struct {
 	ChatInThread             bool                   `json:"chat_in_thread,omitempty"`              // true when the latest @mention was a thread reply; selects which read command the prompt tells the agent to start with
 	ChatAskSupported         bool                   `json:"chat_ask_supported,omitempty"`          // true when the session's channel renders `multica chat ask`; gates the ask contract block in the chat prompt
 	ChatMessage              string                 `json:"chat_message,omitempty"`                // user message content for chat tasks
-	ChatMessageAttachments   []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`    // attachments linked to the chat message; agent uses these to `multica attachment download <id>`
+	ChatMessageAttachments   []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`    // attachments linked to the chat message; native-image prompt input when possible, CLI download fallback otherwise
 	ChatIntro                bool                   `json:"chat_intro,omitempty"`                  // true for the agent's proactive self-introduction chat (no user message); selects the self-introduction prompt in buildChatPrompt
 	AutopilotRunID           string                 `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot run_only tasks
 	AutopilotID              string                 `json:"autopilot_id,omitempty"`                // autopilot that spawned this run
@@ -145,13 +145,14 @@ type Task struct {
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon
 // hands to the agent for chat tasks. We pass id + filename + content_type
-// so the chat prompt can list them explicitly and instruct the agent to
-// run `multica attachment download <id>` instead of guessing from a
-// signed CDN URL (which expires).
+// so the chat prompt can list them explicitly. Image attachments may also be
+// passed to capable ACP runtimes as native image prompt blocks; download stays
+// the fallback and the path for original file bytes.
 type ChatAttachmentMeta struct {
-	ID          string `json:"id"`
-	Filename    string `json:"filename"`
-	ContentType string `json:"content_type,omitempty"`
+	ID                    string `json:"id"`
+	Filename              string `json:"filename"`
+	ContentType           string `json:"content_type,omitempty"`
+	IncludedAsNativeImage bool   `json:"-"`
 }
 
 // CoalescedCommentData mirrors the server-side struct (handler.CoalescedCommentData):
