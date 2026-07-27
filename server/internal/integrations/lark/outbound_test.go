@@ -291,6 +291,79 @@ func TestPatcherSendsPlainTextOnChatDone(t *testing.T) {
 	}
 }
 
+// TestPatcherRoutesConfirmationPromptToActionCard pins the Patcher-level
+// contract: explicit confirmation prompts in a channel reply render a Lark
+// interactive card with buttons, not the normal text/markdown reply path.
+func TestPatcherRoutesConfirmationPromptToActionCard(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		wantMessage string
+	}{
+		{
+			name:        "quoted confirm",
+			content:     "项目：`Satanpit`\n流水线：`私服更新重启-main`\n\n请回复“确认执行”，我再触发。",
+			wantMessage: confirmationMessageConfirm,
+		},
+		{
+			name:        "standalone dynamic confirm",
+			content:     "项目：`测试`\n流水线：`测试后端发布`\n\n确认发布",
+			wantMessage: "确认发布",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, q, api := newTestPatcher(t)
+			taskID := uuidFromString(t, "ee888888-ee88-ee88-ee88-eeeeeeeeeeee")
+			requesterID := uuidFromString(t, "99999999-9999-9999-9999-999999999999")
+			q.task = db.AgentTaskQueue{ID: taskID, ChatInputTaskID: taskID, InitiatorUserID: requesterID}
+			q.taskChannelIngested = true
+			q.bindings = []InboxNotificationBinding{
+				{
+					UserBinding: UserBinding{
+						MulticaUserID:  requesterID,
+						InstallationID: q.installation.ID,
+						ChannelUserID:  "ou_requester",
+					},
+					Installation: q.installation,
+				},
+			}
+
+			p.handleEvent(events.Event{
+				Type:          protocol.EventChatDone,
+				TaskID:        uuidString(taskID),
+				ChatSessionID: uuidString(q.binding.ChatSessionID),
+				Payload: protocol.ChatDonePayload{
+					TaskID:        uuidString(taskID),
+					ChatSessionID: uuidString(q.binding.ChatSessionID),
+					Content:       tt.content,
+				},
+			})
+
+			api.mu.Lock()
+			defer api.mu.Unlock()
+			if len(api.sent) != 1 {
+				t.Fatalf("expected one confirmation card; got %d", len(api.sent))
+			}
+			if len(api.textSent) != 0 || len(api.mdCardSent) != 0 {
+				t.Fatalf("confirmation prompt must not also send text/markdown; text=%d markdown=%d",
+					len(api.textSent), len(api.mdCardSent))
+			}
+			var card map[string]any
+			if err := json.Unmarshal([]byte(api.sent[0].CardJSON), &card); err != nil {
+				t.Fatalf("decode card json: %v", err)
+			}
+			raw, _ := json.Marshal(card)
+			cardText := string(raw)
+			for _, want := range []string{confirmationCardActionKind, tt.wantMessage, uuidString(taskID), "ou_requester", q.binding.ChannelChatID} {
+				if !strings.Contains(cardText, want) {
+					t.Errorf("confirmation card missing %q: %s", want, cardText)
+				}
+			}
+		})
+	}
+}
+
 // TestPatcherRoutesMarkdownReplyToCard pins the two-path chat reply:
 // when the agent's body contains markdown syntax, the Patcher MUST
 // route to SendMarkdownCard (schema-2.0 interactive card with a
