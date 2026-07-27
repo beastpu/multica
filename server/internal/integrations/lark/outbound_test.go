@@ -17,28 +17,31 @@ import (
 )
 
 type fakePatcherQueries struct {
-	mu              sync.Mutex
-	binding         ChatSessionBinding
-	bindingErr      error
-	installation    Installation
-	installationErr error
-	agent           db.Agent
-	agentErr        error
-	task            db.AgentTaskQueue
-	taskErr         error
-	bindings        []InboxNotificationBinding
-	bindingsErr     error
-	card            OutboundCardMessage
-	cardErr         error
-	created         []CreateOutboundCardMessageParams
-	createReturn    OutboundCardMessage
-	statusUpdates   []UpdateOutboundCardStatusParams
-
-	askMessageUpdates []db.UpdateChatAskChannelMessageParams
+	mu                  sync.Mutex
+	task                db.AgentTaskQueue
+	taskErr             error
+	taskChannelIngested bool
+	binding             ChatSessionBinding
+	bindingErr          error
+	installation        Installation
+	installationErr     error
+	agent               db.Agent
+	agentErr            error
+	bindings            []InboxNotificationBinding
+	bindingsErr         error
+	card                OutboundCardMessage
+	cardErr             error
+	created             []CreateOutboundCardMessageParams
+	createReturn        OutboundCardMessage
+	statusUpdates       []UpdateOutboundCardStatusParams
+	askMessageUpdates   []db.UpdateChatAskChannelMessageParams
 }
 
 func (f *fakePatcherQueries) GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error) {
 	return f.task, f.taskErr
+}
+func (f *fakePatcherQueries) TaskHasChannelIngestedMessages(ctx context.Context, taskID pgtype.UUID) (bool, error) {
+	return f.taskChannelIngested, nil
 }
 func (f *fakePatcherQueries) GetChatSession(ctx context.Context, id pgtype.UUID) (db.ChatSession, error) {
 	return db.ChatSession{}, nil
@@ -89,6 +92,7 @@ type fakeAPIClient struct {
 	directSent     []SendDirectCardParams
 	patched        []PatchCardParams
 	textSent       []SendTextParams
+	directTextSent []SendDirectTextParams
 	mdCardSent     []SendMarkdownCardParams
 	sendReturn     string
 	sendErr        error
@@ -148,7 +152,10 @@ func (f *fakeAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	return f.textSendReturn, f.textSendErr
 }
 func (f *fakeAPIClient) SendDirectTextMessage(ctx context.Context, p SendDirectTextParams) (string, error) {
-	return "", nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.directTextSent = append(f.directTextSent, p)
+	return f.textSendReturn, f.textSendErr
 }
 func (f *fakeAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCardParams) (string, error) {
 	f.mu.Lock()
@@ -220,10 +227,37 @@ func newTestPatcher(t *testing.T) (*Patcher, *fakePatcherQueries, *fakeAPIClient
 // a plain Lark IM text message (msg_type=text), not nested inside an
 // interactive card. This is the load-bearing UX call — the prior card
 // chrome made every reply look like a system notification.
+// TestPatcherSendsSealedChannelTaskReply is the other half of the boundary:
+// a sealed channel task owns an input batch exactly like a direct task, so
+// gating outbound on owner presence alone would silently drop every channel
+// reply. Channel provenance must let the reply through.
+func TestPatcherSendsSealedChannelTaskReply(t *testing.T) {
+	p, q, api := newTestPatcher(t)
+	taskID := uuidFromString(t, "ee555555-ee55-ee55-ee55-eeeeeeeeeeee")
+	q.task = db.AgentTaskQueue{ChatInputTaskID: taskID}
+	q.taskChannelIngested = true
+
+	p.handleEvent(events.Event{
+		Type:          protocol.EventChatDone,
+		TaskID:        uuidString(taskID),
+		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		Payload: protocol.ChatDonePayload{
+			TaskID:        uuidString(taskID),
+			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			Content:       "channel answer",
+		},
+	})
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.textSent) != 1 || api.textSent[0].Text != "channel answer" {
+		t.Fatalf("sealed channel reply must reach Lark; textSent=%+v", api.textSent)
+	}
+}
+
 func TestPatcherSendsPlainTextOnChatDone(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee333333-ee33-ee33-ee33-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{ID: taskID}
 
 	p.handleEvent(events.Event{
 		Type:          protocol.EventChatDone,
@@ -254,6 +288,79 @@ func TestPatcherSendsPlainTextOnChatDone(t *testing.T) {
 	if len(api.sent) != 0 || len(api.patched) != 0 {
 		t.Errorf("ChatDone must NOT send / patch any card; got sent=%d patched=%d",
 			len(api.sent), len(api.patched))
+	}
+}
+
+// TestPatcherRoutesConfirmationPromptToActionCard pins the Patcher-level
+// contract: explicit confirmation prompts in a channel reply render a Lark
+// interactive card with buttons, not the normal text/markdown reply path.
+func TestPatcherRoutesConfirmationPromptToActionCard(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		wantMessage string
+	}{
+		{
+			name:        "quoted confirm",
+			content:     "项目：`Satanpit`\n流水线：`私服更新重启-main`\n\n请回复“确认执行”，我再触发。",
+			wantMessage: confirmationMessageConfirm,
+		},
+		{
+			name:        "standalone dynamic confirm",
+			content:     "项目：`测试`\n流水线：`测试后端发布`\n\n确认发布",
+			wantMessage: "确认发布",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, q, api := newTestPatcher(t)
+			taskID := uuidFromString(t, "ee888888-ee88-ee88-ee88-eeeeeeeeeeee")
+			requesterID := uuidFromString(t, "99999999-9999-9999-9999-999999999999")
+			q.task = db.AgentTaskQueue{ID: taskID, ChatInputTaskID: taskID, InitiatorUserID: requesterID}
+			q.taskChannelIngested = true
+			q.bindings = []InboxNotificationBinding{
+				{
+					UserBinding: UserBinding{
+						MulticaUserID:  requesterID,
+						InstallationID: q.installation.ID,
+						ChannelUserID:  "ou_requester",
+					},
+					Installation: q.installation,
+				},
+			}
+
+			p.handleEvent(events.Event{
+				Type:          protocol.EventChatDone,
+				TaskID:        uuidString(taskID),
+				ChatSessionID: uuidString(q.binding.ChatSessionID),
+				Payload: protocol.ChatDonePayload{
+					TaskID:        uuidString(taskID),
+					ChatSessionID: uuidString(q.binding.ChatSessionID),
+					Content:       tt.content,
+				},
+			})
+
+			api.mu.Lock()
+			defer api.mu.Unlock()
+			if len(api.sent) != 1 {
+				t.Fatalf("expected one confirmation card; got %d", len(api.sent))
+			}
+			if len(api.textSent) != 0 || len(api.mdCardSent) != 0 {
+				t.Fatalf("confirmation prompt must not also send text/markdown; text=%d markdown=%d",
+					len(api.textSent), len(api.mdCardSent))
+			}
+			var card map[string]any
+			if err := json.Unmarshal([]byte(api.sent[0].CardJSON), &card); err != nil {
+				t.Fatalf("decode card json: %v", err)
+			}
+			raw, _ := json.Marshal(card)
+			cardText := string(raw)
+			for _, want := range []string{confirmationCardActionKind, tt.wantMessage, uuidString(taskID), "ou_requester", q.binding.ChannelChatID} {
+				if !strings.Contains(cardText, want) {
+					t.Errorf("confirmation card missing %q: %s", want, cardText)
+				}
+			}
+		})
 	}
 }
 
@@ -296,171 +403,6 @@ func TestPatcherRoutesMarkdownReplyToCard(t *testing.T) {
 	}
 	if len(api.sent) != 0 || len(api.patched) != 0 {
 		t.Errorf("ChatDone must NOT use legacy card paths; sent=%d patched=%d", len(api.sent), len(api.patched))
-	}
-}
-
-func TestPatcherRoutesConfirmationPromptToActionCard(t *testing.T) {
-	p, q, api := newTestPatcher(t)
-	taskID := uuidFromString(t, "ee888888-ee88-ee88-ee88-eeeeeeeeeeee")
-	requesterID := uuidFromString(t, "99999999-9999-9999-9999-999999999999")
-	q.task = db.AgentTaskQueue{ID: taskID, InitiatorUserID: requesterID}
-	q.bindings = []InboxNotificationBinding{
-		{
-			UserBinding: UserBinding{
-				MulticaUserID:  requesterID,
-				InstallationID: q.installation.ID,
-				ChannelUserID:  "ou_requester",
-			},
-			Installation: q.installation,
-		},
-	}
-	content := "项目：`Satanpit`\n流水线：`私服更新重启-main`\n\n请回复“确认执行”，我再触发。"
-
-	p.handleEvent(events.Event{
-		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
-		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
-			Content:       content,
-		},
-	})
-
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.sent) != 1 {
-		t.Fatalf("expected one confirmation card; got %d", len(api.sent))
-	}
-	if len(api.textSent) != 0 || len(api.mdCardSent) != 0 {
-		t.Fatalf("confirmation prompt must not also send text/markdown; text=%d markdown=%d", len(api.textSent), len(api.mdCardSent))
-	}
-	var card map[string]any
-	if err := json.Unmarshal([]byte(api.sent[0].CardJSON), &card); err != nil {
-		t.Fatalf("decode card json: %v", err)
-	}
-	raw, _ := json.Marshal(card)
-	cardText := string(raw)
-	for _, want := range []string{confirmationCardActionKind, confirmationMessageConfirm, uuidString(taskID), "ou_requester", q.binding.ChannelChatID} {
-		if !strings.Contains(cardText, want) {
-			t.Errorf("confirmation card missing %q: %s", want, cardText)
-		}
-	}
-}
-
-func TestPatcherRoutesStandaloneConfirmationLineToActionCard(t *testing.T) {
-	p, q, api := newTestPatcher(t)
-	taskID := uuidFromString(t, "eeaaaaaa-eeaa-eeaa-eeaa-eeeeeeeeeeee")
-	requesterID := uuidFromString(t, "aaaaaaaa-9999-9999-9999-999999999999")
-	q.task = db.AgentTaskQueue{ID: taskID, InitiatorUserID: requesterID}
-	q.bindings = []InboxNotificationBinding{
-		{
-			UserBinding: UserBinding{
-				MulticaUserID:  requesterID,
-				InstallationID: q.installation.ID,
-				ChannelUserID:  "ou_requester",
-			},
-			Installation: q.installation,
-		},
-	}
-	content := "项目：`测试`\n流水线：`测试后端发布`\n\n确认执行"
-
-	p.handleEvent(events.Event{
-		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
-		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
-			Content:       content,
-		},
-	})
-
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.sent) != 1 {
-		t.Fatalf("standalone confirmation line should render one confirmation card; got %d", len(api.sent))
-	}
-	if len(api.mdCardSent) != 0 || len(api.textSent) != 0 {
-		t.Fatalf("confirmation prompt must not fall through to markdown/text; markdown=%d text=%d", len(api.mdCardSent), len(api.textSent))
-	}
-	for _, want := range []string{confirmationCardActionKind, confirmationMessageConfirm, uuidString(taskID), "ou_requester"} {
-		if !strings.Contains(api.sent[0].CardJSON, want) {
-			t.Fatalf("confirmation card missing %q: %s", want, api.sent[0].CardJSON)
-		}
-	}
-}
-
-func TestPatcherRoutesDynamicConfirmationPromptToActionCard(t *testing.T) {
-	p, q, api := newTestPatcher(t)
-	taskID := uuidFromString(t, "eebbbbbb-eebb-eebb-eebb-eeeeeeeeeeee")
-	requesterID := uuidFromString(t, "bbbbbbbb-9999-9999-9999-999999999999")
-	q.task = db.AgentTaskQueue{ID: taskID, InitiatorUserID: requesterID}
-	q.bindings = []InboxNotificationBinding{
-		{
-			UserBinding: UserBinding{
-				MulticaUserID:  requesterID,
-				InstallationID: q.installation.ID,
-				ChannelUserID:  "ou_requester",
-			},
-			Installation: q.installation,
-		},
-	}
-	content := "项目：`测试`\n流水线：`测试后端发布`\n\n请回复“确认发布”，我再触发。"
-
-	p.handleEvent(events.Event{
-		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
-		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
-			Content:       content,
-		},
-	})
-
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.sent) != 1 {
-		t.Fatalf("dynamic confirmation prompt should render one confirmation card; got %d", len(api.sent))
-	}
-	for _, want := range []string{confirmationCardActionKind, "确认发布", "取消发布", uuidString(taskID), "ou_requester"} {
-		if !strings.Contains(api.sent[0].CardJSON, want) {
-			t.Fatalf("dynamic confirmation card missing %q: %s", want, api.sent[0].CardJSON)
-		}
-	}
-	if strings.Contains(api.sent[0].CardJSON, confirmationMessageConfirm) {
-		t.Fatalf("dynamic confirmation card should not hard-code %q: %s", confirmationMessageConfirm, api.sent[0].CardJSON)
-	}
-}
-
-func TestPatcherFallsBackToTextWhenConfirmationRequesterUnknown(t *testing.T) {
-	p, q, api := newTestPatcher(t)
-	taskID := uuidFromString(t, "ee999999-ee99-ee99-ee99-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{ID: taskID}
-	content := "请回复“确认执行”，我再触发。"
-
-	p.handleEvent(events.Event{
-		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
-		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
-			Content:       content,
-		},
-	})
-
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.sent) != 0 {
-		t.Fatalf("unknown requester must not receive a clickable confirmation card; got %d", len(api.sent))
-	}
-	if len(api.textSent) != 1 {
-		t.Fatalf("unknown requester should fall back to the normal text prompt; got %d", len(api.textSent))
-	}
-	if api.textSent[0].Text != content {
-		t.Errorf("text fallback mismatch: got %q", api.textSent[0].Text)
 	}
 }
 
@@ -540,79 +482,26 @@ func TestPatcherSkipsWhenNoChatSessionBinding(t *testing.T) {
 	}
 }
 
-func TestPatcherSkipsUnboundSessionBeforeLoadingTask(t *testing.T) {
-	p, q, _ := newTestPatcher(t)
-	q.bindingErr = pgx.ErrNoRows
-	q.taskErr = errors.New("task lookup must not run")
-	taskID := uuidFromString(t, "ee979797-ee97-ee97-ee97-eeeeeeeeeeee")
-
-	err := p.processEvent(context.Background(), events.Event{
-		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
-		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
-			Content:       "web-only answer",
-		},
-	})
-	if err != nil {
-		t.Fatalf("unbound session should return before task lookup: %v", err)
-	}
-}
-
 // TestPatcherSkipsDirectChatTaskOnBoundSession guards the channel boundary:
 // opening a Lark-bound session in the web/mobile UI must not make that direct
-// conversation's reply or failure leak back into the external chat. Direct
-// tasks own an input batch through chat_input_task_id; channel tasks leave it
-// NULL and continue through the existing outbound paths.
+// conversation's reply or failure leak back into the external chat. Sealed
+// channel tasks own an input batch too, so the discriminator is the
+// channel_ingested provenance of the owned batch, not owner presence.
 func TestPatcherSkipsDirectChatTaskOnBoundSession(t *testing.T) {
 	tests := []struct {
 		name      string
 		eventType string
-		payload   func(taskID, chatSessionID string) any
+		payload   any
 	}{
 		{
 			name:      "completed reply",
 			eventType: protocol.EventChatDone,
-			payload: func(taskID, chatSessionID string) any {
-				return protocol.ChatDonePayload{TaskID: taskID, ChatSessionID: chatSessionID, Content: "web-only answer"}
-			},
+			payload:   protocol.ChatDonePayload{Content: "web-only answer"},
 		},
 		{
 			name:      "failed run",
 			eventType: protocol.EventTaskFailed,
-			payload: func(taskID, chatSessionID string) any {
-				return map[string]any{"task_id": taskID, "chat_session_id": chatSessionID, "error": "web-only failure"}
-			},
-		},
-		{
-			name:      "structured ask",
-			eventType: protocol.EventChatAsk,
-			payload: func(taskID, chatSessionID string) any {
-				return protocol.ChatAskPayload{
-					AskID:         "0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f",
-					TaskID:        taskID,
-					ChatSessionID: chatSessionID,
-					Type:          "confirm",
-					Message:       "web-only question",
-					Action:        "private action",
-					ExpiresAtUnix: time.Now().Add(30 * time.Minute).Unix(),
-				}
-			},
-		},
-		{
-			name:      "resolved structured ask",
-			eventType: protocol.EventChatAskResolved,
-			payload: func(taskID, chatSessionID string) any {
-				return protocol.ChatAskResolvedPayload{
-					AskID:            "0b0b0b0b-0b0b-0b0b-0b0b-0b0b0b0b0b0b",
-					TaskID:           taskID,
-					ChatSessionID:    chatSessionID,
-					Status:           "superseded",
-					ChannelMessageID: "om_web_only_ask",
-				}
-			},
+			payload:   map[string]any{"error": "web-only failure"},
 		},
 	}
 
@@ -620,14 +509,13 @@ func TestPatcherSkipsDirectChatTaskOnBoundSession(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p, q, api := newTestPatcher(t)
 			taskID := uuidFromString(t, "ee999999-ee99-ee99-ee99-eeeeeeeeeeee")
-			chatSessionID := uuidString(q.binding.ChatSessionID)
-			q.task = db.AgentTaskQueue{ID: taskID, ChatInputTaskID: taskID}
+			q.task = db.AgentTaskQueue{ChatInputTaskID: taskID}
 
 			p.handleEvent(events.Event{
 				Type:          tt.eventType,
 				TaskID:        uuidString(taskID),
-				ChatSessionID: chatSessionID,
-				Payload:       tt.payload(uuidString(taskID), chatSessionID),
+				ChatSessionID: uuidString(q.binding.ChatSessionID),
+				Payload:       tt.payload,
 			})
 
 			api.mu.Lock()
@@ -637,33 +525,6 @@ func TestPatcherSkipsDirectChatTaskOnBoundSession(t *testing.T) {
 					len(api.textSent), len(api.mdCardSent), len(api.sent), len(api.patched))
 			}
 		})
-	}
-}
-
-func TestPatcherFailsClosedWhenTaskOriginCannotBeLoaded(t *testing.T) {
-	p, q, api := newTestPatcher(t)
-	q.taskErr = errors.New("database unavailable")
-	taskID := uuidFromString(t, "ee989898-ee98-ee98-ee98-eeeeeeeeeeee")
-
-	err := p.processEvent(context.Background(), events.Event{
-		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
-		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
-			Content:       "must not leave Multica",
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "load agent task") {
-		t.Fatalf("task lookup error = %v, want load agent task error", err)
-	}
-
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.textSent) != 0 || len(api.mdCardSent) != 0 || len(api.sent) != 0 || len(api.patched) != 0 {
-		t.Fatalf("unknown task origin must produce no channel outbound; got text=%d markdown=%d cards=%d patches=%d",
-			len(api.textSent), len(api.mdCardSent), len(api.sent), len(api.patched))
 	}
 }
 

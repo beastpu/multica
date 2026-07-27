@@ -220,6 +220,10 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		finalStatus := "completed"
 		var finalError string
 		var sessionID string
+		// Set when the ACP runtime refuses the session we asked to
+		// resume. Only that is curable by starting a fresh session, so
+		// handshake/network failures below must leave it false.
+		var resumeRejected bool
 		effectiveModel := strings.TrimSpace(opts.Model)
 
 		initResult, err := c.request(runCtx, "initialize", map[string]any{
@@ -236,6 +240,7 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
+		promptCaps := extractACPPromptCapabilities(initResult)
 
 		// Drop MCP entries whose remote transport the runtime didn't
 		// advertise. See the matching comment in hermes.go for why
@@ -324,12 +329,14 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 						"session_id", sessionID,
 					)
 					sessionID = ""
+					resumeRejected = true
 				}
 				resCh <- Result{
-					Status:     finalStatus,
-					Error:      finalError,
-					DurationMs: time.Since(startTime).Milliseconds(),
-					SessionID:  sessionID,
+					Status:         finalStatus,
+					Error:          finalError,
+					DurationMs:     time.Since(startTime).Milliseconds(),
+					SessionID:      sessionID,
+					ResumeRejected: resumeRejected,
 				}
 				return
 			}
@@ -341,9 +348,7 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			userText = opts.SystemPrompt + "\n\n---\n\n" + prompt
 		}
 
-		promptBlocks := []map[string]any{
-			{"type": "text", "text": userText},
-		}
+		promptBlocks := acpPromptBlocks(userText, opts.InputImages, promptCaps)
 		// Kiro's published docs use `content`, while Kiro CLI 2.1.1 still
 		// requires the standard ACP `prompt` field. Send both so either wire
 		// shape can drive the turn.
@@ -390,6 +395,7 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 						"session_id", sessionID,
 					)
 					sessionID = ""
+					resumeRejected = true
 				}
 			}
 		} else {
@@ -446,12 +452,13 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		}
 
 		resCh <- Result{
-			Status:     finalStatus,
-			Output:     finalOutput,
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionID,
-			Usage:      usageMap,
+			Status:         finalStatus,
+			Output:         finalOutput,
+			Error:          finalError,
+			DurationMs:     duration.Milliseconds(),
+			SessionID:      sessionID,
+			ResumeRejected: resumeRejected,
+			Usage:          usageMap,
 		}
 	}()
 

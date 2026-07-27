@@ -71,7 +71,7 @@ type Task struct {
 	Agent                    *AgentData             `json:"agent,omitempty"`
 	ConnectedApps            []ConnectedAppData     `json:"connected_apps,omitempty"` // per-run app capabilities mounted through runtime MCP overlays
 	Repos                    []RepoData             `json:"repos,omitempty"`
-	ProjectID                string                 `json:"project_id,omitempty"`                  // issue's project, when present
+	ProjectID                string                 `json:"project_id,omitempty"`                  // active project for this task, when present
 	ProjectTitle             string                 `json:"project_title,omitempty"`               // human-readable project title for context injection
 	ProjectDescription       string                 `json:"project_description,omitempty"`         // durable project-level context injected into the brief
 	ProjectResources         []ProjectResourceData  `json:"project_resources,omitempty"`           // project-scoped resources to expose to the agent
@@ -92,7 +92,7 @@ type Task struct {
 	ChatInThread             bool                   `json:"chat_in_thread,omitempty"`              // true when the latest @mention was a thread reply; selects which read command the prompt tells the agent to start with
 	ChatAskSupported         bool                   `json:"chat_ask_supported,omitempty"`          // true when the session's channel renders `multica chat ask`; gates the ask contract block in the chat prompt
 	ChatMessage              string                 `json:"chat_message,omitempty"`                // user message content for chat tasks
-	ChatMessageAttachments   []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`    // attachments linked to the chat message; agent uses these to `multica attachment download <id>`
+	ChatMessageAttachments   []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`    // attachments linked to the chat message; native-image prompt input when possible, CLI download fallback otherwise
 	ChatIntro                bool                   `json:"chat_intro,omitempty"`                  // true for the agent's proactive self-introduction chat (no user message); selects the self-introduction prompt in buildChatPrompt
 	AutopilotRunID           string                 `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot run_only tasks
 	AutopilotID              string                 `json:"autopilot_id,omitempty"`                // autopilot that spawned this run
@@ -145,13 +145,14 @@ type Task struct {
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon
 // hands to the agent for chat tasks. We pass id + filename + content_type
-// so the chat prompt can list them explicitly and instruct the agent to
-// run `multica attachment download <id>` instead of guessing from a
-// signed CDN URL (which expires).
+// so the chat prompt can list them explicitly. Image attachments may also be
+// passed to capable ACP runtimes as native image prompt blocks; download stays
+// the fallback and the path for original file bytes.
 type ChatAttachmentMeta struct {
-	ID          string `json:"id"`
-	Filename    string `json:"filename"`
-	ContentType string `json:"content_type,omitempty"`
+	ID                    string `json:"id"`
+	Filename              string `json:"filename"`
+	ContentType           string `json:"content_type,omitempty"`
+	IncludedAsNativeImage bool   `json:"-"`
 }
 
 // CoalescedCommentData mirrors the server-side struct (handler.CoalescedCommentData):
@@ -169,21 +170,34 @@ type CoalescedCommentData struct {
 
 // AgentData holds agent details returned by the claim endpoint.
 type AgentData struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	Instructions  string            `json:"instructions"`
-	Skills        []SkillData       `json:"skills,omitempty"`
-	SkillRefs     []SkillRefData    `json:"skill_refs,omitempty"`
-	CustomEnv     map[string]string `json:"custom_env,omitempty"`
-	CustomArgs    []string          `json:"custom_args,omitempty"`
-	McpConfig     json.RawMessage   `json:"mcp_config,omitempty"`
-	Model         string            `json:"model,omitempty"`
-	ThinkingLevel string            `json:"thinking_level,omitempty"`
+	ID                    string                     `json:"id"`
+	Name                  string                     `json:"name"`
+	Instructions          string                     `json:"instructions"`
+	Skills                []SkillData                `json:"skills,omitempty"`
+	SkillRefs             []SkillRefData             `json:"skill_refs,omitempty"`
+	CustomEnv             map[string]string          `json:"custom_env,omitempty"`
+	CustomArgs            []string                   `json:"custom_args,omitempty"`
+	McpConfig             json.RawMessage            `json:"mcp_config,omitempty"`
+	Model                 string                     `json:"model,omitempty"`
+	ThinkingLevel         string                     `json:"thinking_level,omitempty"`
+	ServiceTier           string                     `json:"service_tier,omitempty"`
+	DisabledRuntimeSkills []DisabledRuntimeSkillData `json:"disabled_runtime_skills,omitempty"`
 	// RuntimeConfig is the per-provider runtime_config JSON as stored on
 	// the agent record, forwarded verbatim by the claim endpoint. The
 	// daemon decodes provider-specific fields (e.g. openclaw mode +
 	// gateway endpoint, see issue #3260); other backends ignore it.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
+}
+
+// DisabledRuntimeSkillData is the task-wire identity of one runtime-local
+// skill that must be hidden from this agent's provider process.
+type DisabledRuntimeSkillData struct {
+	RuntimeID string `json:"runtime_id"`
+	Provider  string `json:"provider"`
+	Root      string `json:"root"`
+	Key       string `json:"key"`
+	Name      string `json:"name,omitempty"`
+	Plugin    string `json:"plugin,omitempty"`
 }
 
 // SkillData represents a structured skill for task execution.
@@ -231,6 +245,11 @@ type TaskUsageEntry struct {
 	OutputTokens     int64  `json:"output_tokens"`
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	// CostUSDTicks is the provider's own price for this usage, in 1e-10 USD.
+	// Omitted when the agent reports no cost, which is the common case — the
+	// server then leaves the column NULL and the client estimates from the
+	// pricing table instead. See agent.TokenUsage.CostUSDTicks.
+	CostUSDTicks int64 `json:"cost_usd_ticks,omitempty"`
 }
 
 // TaskResult is the outcome of executing a task.

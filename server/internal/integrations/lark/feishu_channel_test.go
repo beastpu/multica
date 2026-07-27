@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -17,10 +18,13 @@ import (
 // SendTextMessage — the single method feishuChannel.Send calls.
 type fakeSender struct {
 	APIClient
-	last          SendTextParams
-	msgID         string
-	downloadCalls []DownloadResourceParams
-	downloaded    DownloadedResource
+	last             SendTextParams
+	msgID            string
+	downloadCalls    []DownloadResourceParams
+	downloaded       DownloadedResource
+	downloadErr      error
+	downloadedByKey  map[string]DownloadedResource
+	downloadErrByKey map[string]error
 }
 
 func (f *fakeSender) SendTextMessage(_ context.Context, p SendTextParams) (string, error) {
@@ -29,68 +33,112 @@ func (f *fakeSender) SendTextMessage(_ context.Context, p SendTextParams) (strin
 }
 
 func (f *fakeSender) DownloadMessageResource(_ context.Context, _ InstallationCredentials, p DownloadResourceParams) (DownloadedResource, error) {
-	f.downloadCalls = append(f.downloadCalls, p)
-	return f.downloaded, nil
+	return f.download(p)
 }
 
 func (f *fakeSender) DownloadMessageResourceStream(_ context.Context, _ InstallationCredentials, p DownloadResourceParams) (DownloadedResourceStream, error) {
-	f.downloadCalls = append(f.downloadCalls, p)
+	got, err := f.download(p)
+	if err != nil {
+		return DownloadedResourceStream{}, err
+	}
 	return DownloadedResourceStream{
-		Body:        io.NopCloser(bytes.NewReader(f.downloaded.Data)),
-		ContentType: f.downloaded.ContentType,
-		Filename:    f.downloaded.Filename,
-		SizeBytes:   f.downloaded.SizeBytes,
+		Body:        io.NopCloser(bytes.NewReader(got.Data)),
+		ContentType: got.ContentType,
+		Filename:    got.Filename,
+		SizeBytes:   got.SizeBytes,
 	}, nil
+}
+
+func (f *fakeSender) download(p DownloadResourceParams) (DownloadedResource, error) {
+	f.downloadCalls = append(f.downloadCalls, p)
+	if err := f.downloadErrByKey[p.FileKey]; err != nil {
+		return DownloadedResource{}, err
+	}
+	if got, ok := f.downloadedByKey[p.FileKey]; ok {
+		return got, nil
+	}
+	return f.downloaded, f.downloadErr
 }
 
 type fakeMediaStorage struct {
 	uploads []fakeMediaUpload
+	deleted []string
+	err     error
+}
+
+func (s *fakeMediaStorage) Delete(_ context.Context, key string) {
+	s.deleted = append(s.deleted, key)
+}
+
+func (s *fakeMediaStorage) ObjectURL(key string) string {
+	return "https://cdn.example.test/" + key
 }
 
 type fakeMediaUpload struct {
 	key         string
 	data        []byte
+	sizeBytes   int64
+	streamed    bool
 	contentType string
 	filename    string
 }
 
 func (s *fakeMediaStorage) Upload(_ context.Context, key string, data []byte, contentType string, filename string) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
 	s.uploads = append(s.uploads, fakeMediaUpload{key: key, data: append([]byte(nil), data...), contentType: contentType, filename: filename})
 	return "https://cdn.example.test/" + key, nil
 }
 
-func (s *fakeMediaStorage) UploadStream(_ context.Context, key string, data io.Reader, contentType string, filename string) (string, error) {
+func (s *fakeMediaStorage) UploadStream(_ context.Context, key string, data io.Reader, sizeBytes int64, contentType string, filename string) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
 	body, err := io.ReadAll(data)
 	if err != nil {
 		return "", err
 	}
-	s.uploads = append(s.uploads, fakeMediaUpload{key: key, data: body, contentType: contentType, filename: filename})
+	s.uploads = append(s.uploads, fakeMediaUpload{key: key, data: body, sizeBytes: sizeBytes, streamed: true, contentType: contentType, filename: filename})
 	return "https://cdn.example.test/" + key, nil
+}
+
+// fakeMediaLedger records intent rows. ownedKeys marks keys the reconciler
+// owns ('deleting'): the resolver must skip them entirely.
+type fakeMediaLedger struct {
+	records   []engine.RecordPendingMediaObjectParams
+	ownedKeys map[string]bool
+	ownAll    bool
+	err       error
+}
+
+func (l *fakeMediaLedger) RecordPendingMediaObject(_ context.Context, p engine.RecordPendingMediaObjectParams) (bool, error) {
+	if l.err != nil {
+		return false, l.err
+	}
+	l.records = append(l.records, p)
+	if l.ownAll || l.ownedKeys[p.StorageKey] {
+		return false, nil
+	}
+	return true, nil
+}
+
+func ownAllKeys(l *fakeMediaLedger) map[string]bool {
+	l.ownAll = true
+	return l.ownedKeys
 }
 
 type fakeCreds struct{ secret string }
 
 func (f fakeCreds) DecryptAppSecret(_ Installation) (string, error) { return f.secret, nil }
 
-type emitOnceConnector struct {
-	msg InboundMessage
-}
-
-func (c emitOnceConnector) Run(ctx context.Context, inst Installation, emit EventEmitter) error {
-	_, err := emit(ctx, c.msg)
-	return err
-}
-
-type recordingCardActionHandler struct {
-	calls    int
-	msg      InboundMessage
-	response DispatchResult
-}
-
-func (h *recordingCardActionHandler) HandleLarkCardAction(_ context.Context, msg InboundMessage) (DispatchResult, error) {
-	h.calls++
-	h.msg = msg
-	return h.response, nil
+func testMediaInstallation(t *testing.T) engine.ResolvedInstallation {
+	t.Helper()
+	return engine.ResolvedInstallation{
+		ID:          uuidFromString(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+		WorkspaceID: uuidFromString(t, "11111111-1111-1111-1111-111111111111"),
+		Platform:    Installation{AppID: "cli_app", Region: "feishu"},
+	}
 }
 
 // feishuConfigJSON builds a channel_installation.config blob like migration 124
@@ -199,187 +247,89 @@ func TestFeishuChannel_SendMapsTextAndReplyTarget(t *testing.T) {
 	}
 }
 
-func TestFeishuChannel_RoutesCardActionOutsideChatHandler(t *testing.T) {
-	cardHandler := &recordingCardActionHandler{}
-	chatCalls := 0
-	msg := InboundMessage{
-		EventID:      "evt-card",
-		AppID:        "cli",
-		ChatID:       "oc_dm",
-		ChatType:     ChatTypeP2P,
-		MessageID:    "card_action:multica.issue.confirmation:comment:ou_user",
-		SenderOpenID: "ou_user",
-		MessageType:  "interactive",
-		CardAction: &InboundCardAction{
-			IssueConfirmation: &IssueConfirmationCardAction{
-				Action:          confirmationActionConfirm,
-				Message:         confirmationMessageConfirm,
-				WorkspaceID:     "11111111-1111-1111-1111-111111111111",
-				IssueID:         "22222222-2222-2222-2222-222222222222",
-				ParentCommentID: "33333333-3333-3333-3333-333333333333",
-				RecipientID:     "44444444-4444-4444-4444-444444444444",
-				AllowedOpenID:   "ou_user",
-			},
-		},
+func TestFeishuMediaResolver_HasMedia(t *testing.T) {
+	resolver := NewFeishuMediaResolver(&fakeSender{}, fakeCreds{secret: "plain"}, &fakeMediaStorage{}, &fakeMediaLedger{}, newDiscardLogger())
+	cases := []struct {
+		name string
+		lm   InboundMessage
+		want bool
+	}{
+		{"text", InboundMessage{MessageID: "om_t", MessageType: "text", Body: "hello", Content: `{"text":"hello"}`}, false},
+		{"image", InboundMessage{MessageID: "om_i", MessageType: "image", Body: "[Image]", Content: `{"image_key":"img_k"}`}, true},
+		{"video", InboundMessage{MessageID: "om_v", MessageType: "media", Body: "[Video]", Content: `{"file_key":"file_k"}`}, true},
+		{"post with image", InboundMessage{MessageID: "om_p", MessageType: "post",
+			Content: `{"content":[[{"tag":"img","image_key":"img_post"}]]}`}, true},
+		{"post text only", InboundMessage{MessageID: "om_pt", MessageType: "post",
+			Content: `{"content":[[{"tag":"text","text":"plain"}]]}`}, false},
+		{"image missing key", InboundMessage{MessageID: "om_bad", MessageType: "image", Content: `{}`}, false},
 	}
-	fc := &feishuChannel{
-		inst:        Installation{AppID: "cli", Region: "feishu"},
-		conn:        emitOnceConnector{msg: msg},
-		cardActions: cardHandler,
-		handler: func(context.Context, channel.InboundMessage) error {
-			chatCalls++
-			return nil
-		},
-	}
-
-	if err := fc.Connect(context.Background()); err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
-	if cardHandler.calls != 1 {
-		t.Fatalf("card action handler calls = %d, want 1", cardHandler.calls)
-	}
-	if chatCalls != 0 {
-		t.Fatalf("chat handler should not receive card actions, got %d calls", chatCalls)
-	}
-	if cardHandler.msg.MessageID != msg.MessageID {
-		t.Fatalf("card handler message mismatch: %+v", cardHandler.msg)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolver.HasMedia(channelMessageFromLark(tc.lm)); got != tc.want {
+				t.Fatalf("HasMedia = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
-// resultCapturingConnector records the DispatchResult the channel returns
-// for one emitted message — the value the WS connector would place in the
-// card.action.trigger ACK.
-type resultCapturingConnector struct {
-	msg InboundMessage
-	res DispatchResult
-	err error
-}
-
-func (c *resultCapturingConnector) Run(ctx context.Context, inst Installation, emit EventEmitter) error {
-	c.res, c.err = emit(ctx, c.msg)
-	return nil
-}
-
-// TestFeishuChannel_ChatAskClickDispatchesAnswer: a valid ask click first
-// runs the card handler (state machine + receipt ACK), then dispatches the
-// answer text through the ordinary chat handler. A stale click (handler says
-// DispatchAsChatText=false) must not reach the chat handler.
-func TestFeishuChannel_ChatAskClickDispatchesAnswer(t *testing.T) {
-	msg := InboundMessage{
-		EventID:      "evt-ask-click",
-		AppID:        "cli",
-		ChatID:       "oc_group",
-		ChatType:     ChatTypeGroup,
-		MessageID:    "chat_ask:ask-1:evt-ask-click",
-		SenderOpenID: "ou_requester",
-		Body:         "确认：触发流水线 X",
-		MessageType:  "text",
-		CardAction: &InboundCardAction{
-			CardMessageID: "om_ask_card",
-			ChatAsk: &ChatAskCardAction{
-				AskID:         "ask-1",
-				Choice:        chatAskChoiceApprove,
-				Reply:         "确认：触发流水线 X",
-				AllowedOpenID: "ou_requester",
-			},
-		},
+// TestFeishuMediaResolver_RecordsIntentBeforeUpload pins the ledger ordering:
+// the pending row is durable BEFORE the PUT, carries the URL the attachment
+// will hold, and identifies the message the reconciler checks against.
+func TestFeishuMediaResolver_RecordsIntentBeforeUpload(t *testing.T) {
+	sender := &fakeSender{downloaded: DownloadedResource{Data: []byte{1}, ContentType: "image/png", SizeBytes: 1}}
+	storage := &fakeMediaStorage{}
+	ledger := &fakeMediaLedger{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, ledger, newDiscardLogger())
+	lm := InboundMessage{
+		MessageID:   "om_intent",
+		MessageType: "image",
+		Body:        "[Image]",
+		Content:     `{"image_key":"img_intent"}`,
 	}
-
-	cardHandler := &recordingCardActionHandler{response: DispatchResult{
-		CardActionResponseJSON: `{"card":{"type":"raw","data":{}}}`,
-		DispatchAsChatText:     true,
-	}}
-	var dispatched []channel.InboundMessage
-	conn := &resultCapturingConnector{msg: msg}
-	fc := &feishuChannel{
-		inst:        Installation{AppID: "cli", Region: "feishu"},
-		conn:        conn,
-		cardActions: cardHandler,
-		handler: func(_ context.Context, m channel.InboundMessage) error {
-			dispatched = append(dispatched, m)
-			return nil
-		},
+	messageID := uuidFromString(t, "33333333-3333-4333-8333-333333333333")
+	got := resolver.ResolveMedia(context.Background(), testMediaInstallation(t), engine.ResolvedIdentity{},
+		uuidFromString(t, "22222222-2222-2222-2222-222222222222"), messageID, channelMessageFromLark(lm))
+	if len(ledger.records) != 1 || len(storage.uploads) != 1 || len(got.MediaRefs) != 1 {
+		t.Fatalf("records=%d uploads=%d refs=%d, want 1/1/1", len(ledger.records), len(storage.uploads), len(got.MediaRefs))
 	}
-	if err := fc.Connect(context.Background()); err != nil {
-		t.Fatalf("Connect: %v", err)
+	rec := ledger.records[0]
+	if rec.StorageKey != storage.uploads[0].key {
+		t.Fatalf("intent key %q != uploaded key %q", rec.StorageKey, storage.uploads[0].key)
 	}
-	if conn.err != nil {
-		t.Fatalf("emit: %v", conn.err)
+	if rec.StorageURL != got.MediaRefs[0].StorageURL || rec.StorageURL != storage.ObjectURL(rec.StorageKey) {
+		t.Fatalf("intent url %q must match the ref/attachment url %q", rec.StorageURL, got.MediaRefs[0].StorageURL)
 	}
-	if cardHandler.calls != 1 {
-		t.Fatalf("card handler calls = %d", cardHandler.calls)
+	if rec.ChatMessageID != messageID {
+		t.Fatalf("intent message id = %v, want %v", rec.ChatMessageID, messageID)
 	}
-	if len(dispatched) != 1 || dispatched[0].Text != "确认：触发流水线 X" {
-		t.Fatalf("answer text not dispatched: %+v", dispatched)
-	}
-	if conn.res.CardActionResponseJSON == "" {
-		t.Fatal("receipt ACK lost on dispatch")
-	}
-
-	// Stale click: no dispatch.
-	cardHandler = &recordingCardActionHandler{response: DispatchResult{
-		CardActionResponseJSON: `{"card":{"type":"raw","data":{}}}`,
-	}}
-	dispatched = nil
-	conn = &resultCapturingConnector{msg: msg}
-	fc.conn = conn
-	fc.cardActions = cardHandler
-	if err := fc.Connect(context.Background()); err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
-	if len(dispatched) != 0 {
-		t.Fatalf("stale click must not dispatch: %+v", dispatched)
-	}
-	if conn.res.CardActionResponseJSON == "" {
-		t.Fatal("stale click still needs its receipt ACK")
+	if !rec.WorkspaceID.Valid || !rec.InstallationID.Valid {
+		t.Fatalf("intent must carry workspace and installation ids: %+v", rec)
 	}
 }
 
-// TestFeishuChannel_ChatConfirmationClickThreadsAckResponse: a chat
-// confirmation click is dispatched as ordinary chat text, but its
-// resolved-card ACK must still reach the connector so the card updates.
-func TestFeishuChannel_ChatConfirmationClickThreadsAckResponse(t *testing.T) {
-	msg := InboundMessage{
-		EventID:                "evt-chat-card",
-		AppID:                  "cli",
-		ChatID:                 "oc_group",
-		ChatType:               ChatTypeGroup,
-		MessageID:              "om_card_1",
-		SenderOpenID:           "ou_requester",
-		Body:                   "确认执行",
-		MessageType:            "text",
-		CardActionResponseJSON: `{"card":{"type":"raw","data":{}}}`,
+// A key the reconciler owns must not be uploaded at all — the state-guarded
+// upsert refuses to resurrect it and the resolver skips the resource.
+func TestFeishuMediaResolver_ReconcilerOwnedKeySkipsUpload(t *testing.T) {
+	sender := &fakeSender{downloaded: DownloadedResource{Data: []byte{1}, ContentType: "image/png", SizeBytes: 1}}
+	storage := &fakeMediaStorage{}
+	ledger := &fakeMediaLedger{ownedKeys: map[string]bool{}}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, ledger, newDiscardLogger())
+	lm := InboundMessage{
+		MessageID:   "om_owned",
+		MessageType: "image",
+		Body:        "[Image]",
+		Content:     `{"image_key":"img_owned"}`,
 	}
+	// Every key is owned by the reconciler in this fake.
+	ledger.ownedKeys = ownAllKeys(ledger)
 
-	conn := &resultCapturingConnector{msg: msg}
-	fc := &feishuChannel{
-		inst:    Installation{AppID: "cli", Region: "feishu"},
-		conn:    conn,
-		handler: func(context.Context, channel.InboundMessage) error { return nil },
+	got := resolver.ResolveMedia(context.Background(), testMediaInstallation(t), engine.ResolvedIdentity{},
+		uuidFromString(t, "22222222-2222-2222-2222-222222222222"), uuidFromString(t, "33333333-3333-4333-8333-333333333333"), channelMessageFromLark(lm))
+	if len(storage.uploads) != 0 || len(sender.downloadCalls) != 0 {
+		t.Fatalf("owned key must skip download+upload entirely: uploads=%d downloads=%d", len(storage.uploads), len(sender.downloadCalls))
 	}
-	if err := fc.Connect(context.Background()); err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
-	if conn.err != nil {
-		t.Fatalf("emit: %v", conn.err)
-	}
-	if conn.res.CardActionResponseJSON != msg.CardActionResponseJSON {
-		t.Fatalf("ACK response not threaded: %+v", conn.res)
-	}
-
-	// A failed dispatch must NOT confirm the card: the connector NACKs on
-	// error and Lark retries, so no resolved-card response may leak out.
-	conn = &resultCapturingConnector{msg: msg}
-	fc.conn = conn
-	fc.handler = func(context.Context, channel.InboundMessage) error { return context.DeadlineExceeded }
-	if err := fc.Connect(context.Background()); err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
-	if conn.err == nil {
-		t.Fatal("handler error must propagate to the connector")
-	}
-	if conn.res.CardActionResponseJSON != "" {
-		t.Fatalf("failed dispatch must not return a resolved card: %+v", conn.res)
+	if len(got.MediaRefs) != 0 {
+		t.Fatalf("owned key must yield no refs: %+v", got.MediaRefs)
 	}
 }
 
@@ -391,7 +341,8 @@ func TestFeishuMediaResolver_AttachesImageMediaRef(t *testing.T) {
 		SizeBytes:   3,
 	}}
 	storage := &fakeMediaStorage{}
-	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, newDiscardLogger())
+	ledger := &fakeMediaLedger{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, ledger, newDiscardLogger())
 	lm := InboundMessage{
 		EventID:      "evt-image",
 		AppID:        "cli_app",
@@ -403,10 +354,8 @@ func TestFeishuMediaResolver_AttachesImageMediaRef(t *testing.T) {
 		Body:         "[Image]",
 		Content:      `{"image_key":"img_v3_key"}`,
 	}
-	got := resolver.ResolveMedia(context.Background(), engine.ResolvedInstallation{
-		WorkspaceID: uuidFromString(t, "11111111-1111-1111-1111-111111111111"),
-		Platform:    Installation{AppID: "cli_app", Region: "feishu"},
-	}, engine.ResolvedIdentity{}, uuidFromString(t, "22222222-2222-2222-2222-222222222222"), channelMessageFromLark(lm))
+	got := resolver.ResolveMedia(context.Background(), testMediaInstallation(t), engine.ResolvedIdentity{},
+		uuidFromString(t, "22222222-2222-2222-2222-222222222222"), uuidFromString(t, "33333333-3333-4333-8333-333333333333"), channelMessageFromLark(lm))
 	if len(sender.downloadCalls) != 1 {
 		t.Fatalf("download calls = %d, want 1", len(sender.downloadCalls))
 	}
@@ -421,7 +370,10 @@ func TestFeishuMediaResolver_AttachesImageMediaRef(t *testing.T) {
 	if up.contentType != "image/png" || up.filename != "from-header.png" || string(up.data) != string([]byte{1, 2, 3}) {
 		t.Fatalf("upload metadata wrong: %+v", up)
 	}
-	if !strings.Contains(up.key, "workspaces/11111111-1111-1111-1111-111111111111/lark/") {
+	if !up.streamed || up.sizeBytes != 3 {
+		t.Fatalf("known-length resource did not stream with its declared size: %+v", up)
+	}
+	if !strings.Contains(up.key, "workspaces/11111111-1111-1111-1111-111111111111/lark/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/") {
 		t.Fatalf("upload key should be workspace-scoped, got %q", up.key)
 	}
 	if len(got.MediaRefs) != 1 {
@@ -434,6 +386,31 @@ func TestFeishuMediaResolver_AttachesImageMediaRef(t *testing.T) {
 	}
 }
 
+func TestFeishuMediaResolver_UnknownLengthUsesBufferedUpload(t *testing.T) {
+	sender := &fakeSender{downloaded: DownloadedResource{
+		Data:        []byte{1, 2, 3},
+		ContentType: "image/png",
+		SizeBytes:   0,
+	}}
+	storage := &fakeMediaStorage{}
+	ledger := &fakeMediaLedger{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, ledger, newDiscardLogger())
+	lm := InboundMessage{
+		MessageID:   "om_unknown_length",
+		MessageType: "image",
+		Body:        "[Image]",
+		Content:     `{"image_key":"img_unknown_length"}`,
+	}
+	got := resolver.ResolveMedia(context.Background(), testMediaInstallation(t), engine.ResolvedIdentity{},
+		uuidFromString(t, "22222222-2222-2222-2222-222222222222"), uuidFromString(t, "33333333-3333-4333-8333-333333333333"), channelMessageFromLark(lm))
+	if len(storage.uploads) != 1 || storage.uploads[0].streamed {
+		t.Fatalf("unknown-length resource must use buffered Upload: %+v", storage.uploads)
+	}
+	if len(got.MediaRefs) != 1 || got.MediaRefs[0].SizeBytes != 3 {
+		t.Fatalf("buffered upload size not recorded: %+v", got.MediaRefs)
+	}
+}
+
 func TestFeishuMediaResolver_AttachesPostEmbeddedImageMediaRef(t *testing.T) {
 	sender := &fakeSender{downloaded: DownloadedResource{
 		Data:        []byte{4, 5, 6},
@@ -442,7 +419,8 @@ func TestFeishuMediaResolver_AttachesPostEmbeddedImageMediaRef(t *testing.T) {
 		SizeBytes:   3,
 	}}
 	storage := &fakeMediaStorage{}
-	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, newDiscardLogger())
+	ledger := &fakeMediaLedger{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, ledger, newDiscardLogger())
 	rawPost := `{"content":[[{"tag":"img","image_key":"img_post_key"}],[{"tag":"text","text":"识别一下图片"}]]}`
 	lm := InboundMessage{
 		EventID:      "evt-post-image",
@@ -455,10 +433,8 @@ func TestFeishuMediaResolver_AttachesPostEmbeddedImageMediaRef(t *testing.T) {
 		Body:         flattenPostContent(rawPost),
 		Content:      rawPost,
 	}
-	got := resolver.ResolveMedia(context.Background(), engine.ResolvedInstallation{
-		WorkspaceID: uuidFromString(t, "11111111-1111-1111-1111-111111111111"),
-		Platform:    Installation{AppID: "cli_app", Region: "feishu"},
-	}, engine.ResolvedIdentity{}, uuidFromString(t, "22222222-2222-2222-2222-222222222222"), channelMessageFromLark(lm))
+	got := resolver.ResolveMedia(context.Background(), testMediaInstallation(t), engine.ResolvedIdentity{},
+		uuidFromString(t, "22222222-2222-2222-2222-222222222222"), uuidFromString(t, "33333333-3333-4333-8333-333333333333"), channelMessageFromLark(lm))
 	if got.Text != "[Image]\n识别一下图片" {
 		t.Fatalf("message text = %q, want post placeholder plus text", got.Text)
 	}
@@ -490,7 +466,8 @@ func TestFeishuMediaResolver_AttachesPostEmbeddedVideoMediaRef(t *testing.T) {
 		SizeBytes:   3,
 	}}
 	storage := &fakeMediaStorage{}
-	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, newDiscardLogger())
+	ledger := &fakeMediaLedger{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, ledger, newDiscardLogger())
 	rawPost := `{"content":[[{"tag":"text","text":"看一下视频"},{"tag":"media","file_key":"file_post_key","file_name":"demo.mp4"}]]}`
 	lm := InboundMessage{
 		EventID:      "evt-post-video",
@@ -503,10 +480,8 @@ func TestFeishuMediaResolver_AttachesPostEmbeddedVideoMediaRef(t *testing.T) {
 		Body:         flattenPostContent(rawPost),
 		Content:      rawPost,
 	}
-	got := resolver.ResolveMedia(context.Background(), engine.ResolvedInstallation{
-		WorkspaceID: uuidFromString(t, "11111111-1111-1111-1111-111111111111"),
-		Platform:    Installation{AppID: "cli_app", Region: "feishu"},
-	}, engine.ResolvedIdentity{}, uuidFromString(t, "22222222-2222-2222-2222-222222222222"), channelMessageFromLark(lm))
+	got := resolver.ResolveMedia(context.Background(), testMediaInstallation(t), engine.ResolvedIdentity{},
+		uuidFromString(t, "22222222-2222-2222-2222-222222222222"), uuidFromString(t, "33333333-3333-4333-8333-333333333333"), channelMessageFromLark(lm))
 	if len(sender.downloadCalls) != 1 {
 		t.Fatalf("download calls = %d, want 1", len(sender.downloadCalls))
 	}
@@ -526,7 +501,8 @@ func TestFeishuMediaResolver_AttachesVideoMediaRef(t *testing.T) {
 		SizeBytes:   3,
 	}}
 	storage := &fakeMediaStorage{}
-	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, newDiscardLogger())
+	ledger := &fakeMediaLedger{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, ledger, newDiscardLogger())
 	lm := InboundMessage{
 		EventID:      "evt-video",
 		AppID:        "cli_app",
@@ -538,10 +514,8 @@ func TestFeishuMediaResolver_AttachesVideoMediaRef(t *testing.T) {
 		Body:         "[Video]",
 		Content:      `{"file_key":"file_v3_key","file_name":"clip.mp4"}`,
 	}
-	got := resolver.ResolveMedia(context.Background(), engine.ResolvedInstallation{
-		WorkspaceID: uuidFromString(t, "11111111-1111-1111-1111-111111111111"),
-		Platform:    Installation{AppID: "cli_app", Region: "feishu"},
-	}, engine.ResolvedIdentity{}, uuidFromString(t, "22222222-2222-2222-2222-222222222222"), channelMessageFromLark(lm))
+	got := resolver.ResolveMedia(context.Background(), testMediaInstallation(t), engine.ResolvedIdentity{},
+		uuidFromString(t, "22222222-2222-2222-2222-222222222222"), uuidFromString(t, "33333333-3333-4333-8333-333333333333"), channelMessageFromLark(lm))
 	if len(sender.downloadCalls) != 1 {
 		t.Fatalf("download calls = %d, want 1", len(sender.downloadCalls))
 	}
@@ -551,6 +525,121 @@ func TestFeishuMediaResolver_AttachesVideoMediaRef(t *testing.T) {
 	}
 	if len(got.MediaRefs) != 1 || got.MediaRefs[0].Type != channel.MsgTypeVideo || got.MediaRefs[0].Filename != "clip.mp4" {
 		t.Fatalf("video ref wrong: %+v", got.MediaRefs)
+	}
+}
+
+func TestFeishuMediaResolver_RetryReusesObjectKey(t *testing.T) {
+	sender := &fakeSender{downloaded: DownloadedResource{
+		Data:        []byte{1, 2, 3},
+		ContentType: "image/png",
+		Filename:    "shot.png",
+	}}
+	storage := &fakeMediaStorage{}
+	ledger := &fakeMediaLedger{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, ledger, newDiscardLogger())
+	lm := InboundMessage{
+		MessageID:   "om_retry",
+		MessageType: "image",
+		Body:        "[Image]",
+		Content:     `{"image_key":"img_retry"}`,
+	}
+
+	for range 2 {
+		got := resolver.ResolveMedia(context.Background(), testMediaInstallation(t), engine.ResolvedIdentity{},
+			uuidFromString(t, "22222222-2222-2222-2222-222222222222"), uuidFromString(t, "33333333-3333-4333-8333-333333333333"), channelMessageFromLark(lm))
+		if len(got.MediaRefs) != 1 {
+			t.Fatalf("media refs = %+v, want 1", got.MediaRefs)
+		}
+	}
+	if len(storage.uploads) != 2 {
+		t.Fatalf("uploads = %d, want 2 retry attempts", len(storage.uploads))
+	}
+	if storage.uploads[0].key != storage.uploads[1].key {
+		t.Fatalf("retry object keys differ: %q vs %q", storage.uploads[0].key, storage.uploads[1].key)
+	}
+}
+
+func TestFeishuMediaResolver_DownloadFailurePreservesMessage(t *testing.T) {
+	sender := &fakeSender{downloadErr: errors.New("download unavailable")}
+	storage := &fakeMediaStorage{}
+	ledger := &fakeMediaLedger{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, ledger, newDiscardLogger())
+	lm := InboundMessage{
+		MessageID:   "om_download_failure",
+		MessageType: "image",
+		Body:        "[Image]",
+		Content:     `{"image_key":"img_failure"}`,
+	}
+	before := channelMessageFromLark(lm)
+
+	got := resolver.ResolveMedia(context.Background(), testMediaInstallation(t), engine.ResolvedIdentity{},
+		uuidFromString(t, "22222222-2222-2222-2222-222222222222"), uuidFromString(t, "33333333-3333-4333-8333-333333333333"), before)
+	if got.Text != before.Text || len(got.MediaRefs) != 0 {
+		t.Fatalf("download failure changed message: before=%+v after=%+v", before, got)
+	}
+	if len(storage.uploads) != 0 {
+		t.Fatalf("download failure uploaded %d objects", len(storage.uploads))
+	}
+}
+
+func TestFeishuMediaResolver_UploadFailurePreservesMessage(t *testing.T) {
+	sender := &fakeSender{downloaded: DownloadedResource{Data: []byte{1}, ContentType: "image/png"}}
+	storage := &fakeMediaStorage{err: errors.New("storage unavailable")}
+	ledger := &fakeMediaLedger{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, ledger, newDiscardLogger())
+	lm := InboundMessage{
+		MessageID:   "om_upload_failure",
+		MessageType: "image",
+		Body:        "[Image]",
+		Content:     `{"image_key":"img_failure"}`,
+	}
+	before := channelMessageFromLark(lm)
+
+	got := resolver.ResolveMedia(context.Background(), testMediaInstallation(t), engine.ResolvedIdentity{},
+		uuidFromString(t, "22222222-2222-2222-2222-222222222222"), uuidFromString(t, "33333333-3333-4333-8333-333333333333"), before)
+	if got.Text != before.Text || len(got.MediaRefs) != 0 {
+		t.Fatalf("upload failure changed message: before=%+v after=%+v", before, got)
+	}
+	// NO inline delete: the store may still be processing the PUT, and a
+	// DELETE issued now could reorder with it. The intent row (recorded
+	// before the upload) is the reclaim path — the reconciler settles it.
+	if len(storage.deleted) != 0 {
+		t.Fatalf("upload failure must not delete inline, got %v", storage.deleted)
+	}
+	if len(ledger.records) != 1 {
+		t.Fatalf("intent must be recorded before the failed upload, records=%d", len(ledger.records))
+	}
+}
+
+func TestFeishuMediaResolver_PostPartialFailureKeepsTextAndSuccessfulMedia(t *testing.T) {
+	sender := &fakeSender{
+		downloadedByKey: map[string]DownloadedResource{
+			"img_ok": {Data: []byte{1}, ContentType: "image/png", Filename: "ok.png"},
+		},
+		downloadErrByKey: map[string]error{"video_failed": errors.New("video unavailable")},
+	}
+	storage := &fakeMediaStorage{}
+	ledger := &fakeMediaLedger{}
+	resolver := NewFeishuMediaResolver(sender, fakeCreds{secret: "plain"}, storage, ledger, newDiscardLogger())
+	rawPost := `{"content":[[{"tag":"text","text":"inspect"},{"tag":"img","image_key":"img_ok"},{"tag":"media","file_key":"video_failed","file_name":"failed.mp4"}]]}`
+	lm := InboundMessage{
+		MessageID:   "om_partial",
+		MessageType: "post",
+		Body:        flattenPostContent(rawPost),
+		Content:     rawPost,
+	}
+	before := channelMessageFromLark(lm)
+
+	got := resolver.ResolveMedia(context.Background(), testMediaInstallation(t), engine.ResolvedIdentity{},
+		uuidFromString(t, "22222222-2222-2222-2222-222222222222"), uuidFromString(t, "33333333-3333-4333-8333-333333333333"), before)
+	if got.Text != before.Text {
+		t.Fatalf("partial failure changed text: got %q want %q", got.Text, before.Text)
+	}
+	if len(sender.downloadCalls) != 2 || len(storage.uploads) != 1 || len(got.MediaRefs) != 1 {
+		t.Fatalf("partial failure result: downloads=%d uploads=%d refs=%+v", len(sender.downloadCalls), len(storage.uploads), got.MediaRefs)
+	}
+	if got.MediaRefs[0].Type != channel.MsgTypeImage || got.MediaRefs[0].Filename != "ok.png" {
+		t.Fatalf("successful media ref lost: %+v", got.MediaRefs[0])
 	}
 }
 

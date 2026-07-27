@@ -229,6 +229,10 @@ vi.mock("./slack-tab", () => ({
   SlackTab: () => <div data-testid="slack-tab" />,
 }));
 
+vi.mock("./vcs-tab", () => ({
+  VCSTab: () => <div data-testid="vcs-tab" />,
+}));
+
 import { IntegrationsTab } from "./integrations-tab";
 
 const STR = enSettings.integrations;
@@ -483,5 +487,11 @@ describe("IntegrationsTab (Feishu Project panel)", () => {
     render(<IntegrationsTab />, { wrapper: I18nWrapper });
 
     expect(screen.queryByTestId("composio-tab")).toBeNull();
+  });
+
+  it("mounts the self-hosted VCS integration section", () => {
+    render(<IntegrationsTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByTestId("vcs-tab")).toBeTruthy();
   });
 });
