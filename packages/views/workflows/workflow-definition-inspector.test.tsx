@@ -208,6 +208,83 @@ describe("WorkflowNodeDefinitionInspector", () => {
     }));
   });
 
+  it("pins a workspace member as the node owner", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{ en: { workflows: enWorkflows } }}
+      >
+        <WorkflowNodeDefinitionInspector
+          node={{ ...node, executor: undefined }}
+          definition={definition}
+          actorOptions={[
+            ...actorOptions,
+            { type: "member" as const, id: "member-1", name: "Ada" },
+          ]}
+          readOnly={false}
+          onChange={onChange}
+        />
+      </I18nProvider>,
+    );
+
+    await user.selectOptions(
+      screen.getByLabelText(enWorkflows.editor.node_owner_by_actor),
+      "member:member-1",
+    );
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      owner_role: undefined,
+      executor: {
+        strategies: [
+          { kind: "fixed_actor", actor_type: "member", actor_id: "member-1" },
+          { kind: "manual" },
+        ],
+      },
+    }));
+  });
+
+  it("enables owner confirmation presets for a pinned member owner", async () => {
+    const user = userEvent.setup();
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{ en: { workflows: enWorkflows } }}
+      >
+        <WorkflowNodeDefinitionInspector
+          node={{
+            ...node,
+            owner_role: undefined,
+            executor: {
+              strategies: [
+                {
+                  kind: "fixed_actor",
+                  actor_type: "member",
+                  actor_id: "member-1",
+                },
+                { kind: "manual" },
+              ],
+            },
+          }}
+          definition={definition}
+          actorOptions={actorOptions}
+          readOnly={false}
+          onChange={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    await user.click(
+      screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
+    );
+    expect(
+      screen.getByRole("radio", {
+        name: new RegExp(enWorkflows.editor.completion_preset_single),
+      }),
+    ).toBeEnabled();
+  });
+
   it("stores host-status node events from the transition tab", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

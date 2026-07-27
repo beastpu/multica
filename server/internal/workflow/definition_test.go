@@ -208,6 +208,46 @@ func executorCondition(node, key string) json.RawMessage {
 	))
 }
 
+func TestValidateDefinitionOwnerConfirmationWithPinnedMember(t *testing.T) {
+	// A node that pins a concrete member owner instead of using a role can
+	// still require owner confirmation: the runtime resolves owners from
+	// node participants, which the pinned actor creates.
+	pinned := validDefinition()
+	pinned.Nodes[1].OwnerRole = ""
+	pinned.Nodes[1].Executor.Strategies = []ExecutorStrategy{
+		{
+			Kind: "fixed_actor", ActorType: "member",
+			ActorID: "33333333-3333-3333-3333-333333333333",
+		},
+		{Kind: "manual"},
+	}
+	pinned.Nodes[1].Completion.Confirmation = "owner_any"
+	if err := ValidateDefinition(pinned); err != nil {
+		t.Fatalf("ValidateDefinition() error = %v", err)
+	}
+
+	pinnedAgent := validDefinition()
+	pinnedAgent.Nodes[1].OwnerRole = ""
+	pinnedAgent.Nodes[1].Executor.Strategies = []ExecutorStrategy{
+		{
+			Kind: "fixed_actor", ActorType: "agent",
+			ActorID: "33333333-3333-3333-3333-333333333333",
+		},
+		{Kind: "manual"},
+	}
+	pinnedAgent.Nodes[1].Completion.Confirmation = "owner_any"
+	if err := ValidateDefinition(pinnedAgent); err == nil {
+		t.Fatal("ValidateDefinition() accepted owner confirmation pinned to an agent")
+	}
+
+	noOwner := validDefinition()
+	noOwner.Nodes[1].OwnerRole = ""
+	noOwner.Nodes[1].Completion.Confirmation = "owner_any"
+	if err := ValidateDefinition(noOwner); err == nil {
+		t.Fatal("ValidateDefinition() accepted owner confirmation without any owner")
+	}
+}
+
 func TestValidateDefinitionCompletionAuthorizedRoles(t *testing.T) {
 	valid := validDefinition()
 	valid.Nodes[1].Completion.AuthorizedRoles = []string{"owner"}

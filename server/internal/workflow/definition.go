@@ -536,6 +536,18 @@ func validateActivity(
 	switch node.Completion.Confirmation {
 	case "", "none", "member_any", "member_all", "admin_only":
 	case "owner_any", "owner_all":
+		// Owners come from node participants at runtime, so either a
+		// member-only owner role or a directly pinned member owner can carry
+		// the confirmation.
+		if node.OwnerRole == "" {
+			if !PinsMemberOwner(node) {
+				return fmt.Errorf(
+					"activity %q owner confirmation requires an owner role or a pinned member owner",
+					node.Key,
+				)
+			}
+			break
+		}
 		role, ok := roles[node.OwnerRole]
 		if !ok {
 			return fmt.Errorf("activity %q owner confirmation requires owner_role", node.Key)
@@ -1152,6 +1164,22 @@ func validKey(value string) bool {
 		return false
 	}
 	return true
+}
+
+// PinsMemberOwner reports whether the node designates a concrete member as
+// its owner through a fixed_actor executor strategy. Activation turns that
+// actor into the node's "owner" participant, which is what owner
+// confirmations and node-owner permissions read.
+func PinsMemberOwner(node NodeDefinition) bool {
+	if node.OwnerRole != "" {
+		return false
+	}
+	for _, strategy := range node.Executor.Strategies {
+		if strategy.Kind == "fixed_actor" && strategy.ActorType == "member" {
+			return true
+		}
+	}
+	return false
 }
 
 func roleResolvesOnlyToMember(role RoleDefinition) bool {
