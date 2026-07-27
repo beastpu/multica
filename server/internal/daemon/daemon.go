@@ -58,7 +58,6 @@ var errTaskPrepareTimeout = errors.New("task preparation timed out")
 const (
 	taskSlotWaitTimeout      = 2 * time.Second
 	taskSlotCapacityBackoff  = 5 * time.Second
-	maxNativeChatImageBytes  = 8 << 20
 	repoCheckoutModeEnv      = "MULTICA_REPO_CHECKOUT_MODE"
 	repoCheckoutModeIsolated = "isolated"
 	// defaultTaskPrepareTimeout is a hard liveness bound for everything after
@@ -90,43 +89,6 @@ func taskScopedAuthToken(task Task) (string, error) {
 		return "", errors.New("server provided non-task-scoped auth token")
 	}
 	return token, nil
-}
-
-func nativeChatImagesForTask(ctx context.Context, client *Client, task *Task, token string, logger *slog.Logger) []agent.ImageInput {
-	if client == nil || task == nil || len(task.ChatMessageAttachments) == 0 {
-		return nil
-	}
-	images := make([]agent.ImageInput, 0, len(task.ChatMessageAttachments))
-	for i := range task.ChatMessageAttachments {
-		att := &task.ChatMessageAttachments[i]
-		contentType := strings.ToLower(strings.TrimSpace(att.ContentType))
-		if !nativePromptImageContentType(contentType) {
-			continue
-		}
-		body, err := client.DownloadAttachmentBytes(ctx, att.ID, token, maxNativeChatImageBytes)
-		if err != nil {
-			if logger != nil {
-				logger.Warn("chat image attachment: native prompt download failed; falling back to attachment instructions",
-					"attachment_id", att.ID,
-					"content_type", att.ContentType,
-					"error", err,
-				)
-			}
-			continue
-		}
-		att.IncludedAsNativeImage = true
-		images = append(images, agent.ImageInput{
-			MimeType: att.ContentType,
-			Data:     body,
-			URI:      "multica://attachments/" + att.ID,
-		})
-	}
-	return images
-}
-
-func nativePromptImageContentType(contentType string) bool {
-	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
-	return strings.HasPrefix(contentType, "image/") && contentType != "image/svg+xml"
 }
 
 // taskRunner executes a single agent task and returns the result.
@@ -3773,15 +3735,6 @@ func providerNeedsInlineSystemPrompt(provider string) bool {
 	}
 }
 
-func providerSupportsNativeInputImages(provider string) bool {
-	switch provider {
-	case "hermes", "kimi", "kiro", "qoder", "traecli", "grok":
-		return true
-	default:
-		return false
-	}
-}
-
 // gateResumeToReusedWorkdir clears the task's prior session unless the task
 // runs in the exact workdir the session was recorded against, and reports
 // whether that workdir was reused. CLI backends key their session stores to
@@ -4506,6 +4459,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}()
 	}
 
+	prompt := BuildPrompt(task, provider)
+
 	// Pass task-scoped auth credentials and context so the spawned agent CLI
 	// can call the Multica API and the local daemon (e.g. `multica repo checkout`).
 	// MULTICA_TASK_SLOT is allocated from the daemon-wide concurrency pool, not
@@ -4519,11 +4474,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		taskLog.Error("task auth token invalid; refusing to start agent", "error", err)
 		return TaskResult{}, err
 	}
-	var inputImages []agent.ImageInput
-	if providerSupportsNativeInputImages(provider) {
-		inputImages = nativeChatImagesForTask(ctx, d.client, &task, agentToken, taskLog)
-	}
-	prompt := BuildPrompt(task, provider)
 	agentEnv := map[string]string{
 		"MULTICA_TOKEN":        agentToken,
 		"MULTICA_SERVER_URL":   d.cfg.ServerBaseURL,
@@ -4763,7 +4713,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ServiceTier:        serviceTier,
 		OpenclawMode:       openclawMode,
 		ClaudeSettingsPath: env.ClaudeSettingsPath,
-		InputImages:        inputImages,
 	}
 	// Some providers do not reliably load the per-task runtime config files we
 	// write into the task workdir:
@@ -4798,7 +4747,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"custom_args", len(customArgs),
 		"extra_args", len(extraArgs),
 		"mcp_config", len(mcpConfig) > 0,
-		"native_input_images", len(inputImages),
 		"inline_system_prompt", execOpts.SystemPrompt != "",
 		"resume_session", execOpts.ResumeSessionID != "",
 		"timeout", execOpts.Timeout,

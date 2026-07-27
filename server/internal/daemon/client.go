@@ -351,39 +351,6 @@ func (c *Client) AckTaskCancelled(ctx context.Context, taskID string) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/cancel-ack", taskID), map[string]any{}, nil)
 }
 
-func (c *Client) DownloadAttachmentBytes(ctx context.Context, attachmentID, token string, maxBytes int64) ([]byte, error) {
-	path := fmt.Sprintf("/api/attachments/%s/download", attachmentID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	if token = strings.TrimSpace(token); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	} else if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	c.setIdentityHeaders(req)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(body)) > maxBytes {
-		return nil, fmt.Errorf("attachment exceeds native image prompt limit of %d bytes", maxBytes)
-	}
-	return body, nil
-}
-
 func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, step, total int) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/progress", taskID), map[string]any{
 		"summary": summary,

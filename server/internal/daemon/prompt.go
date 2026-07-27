@@ -426,30 +426,14 @@ func buildChatPrompt(task Task) string {
 	// time and is the only reliable path.
 	if len(task.ChatMessageAttachments) > 0 {
 		b.WriteString("\nAttachments on this message:\n")
-		hasNativeImage := false
-		hasDownloadOnly := false
 		for _, a := range task.ChatMessageAttachments {
-			status := ""
-			if a.IncludedAsNativeImage {
-				status = " native_image_input_candidate=true"
-				hasNativeImage = true
-			} else {
-				hasDownloadOnly = true
-			}
 			if a.ContentType != "" {
-				fmt.Fprintf(&b, "- id=%s filename=%q content_type=%s%s\n", a.ID, a.Filename, a.ContentType, status)
+				fmt.Fprintf(&b, "- id=%s filename=%q content_type=%s\n", a.ID, a.Filename, a.ContentType)
 			} else {
-				fmt.Fprintf(&b, "- id=%s filename=%q%s\n", a.ID, a.Filename, status)
+				fmt.Fprintf(&b, "- id=%s filename=%q\n", a.ID, a.Filename)
 			}
 		}
-		switch {
-		case hasNativeImage && hasDownloadOnly:
-			b.WriteString("Attachments marked native_image_input_candidate=true were prepared for native visual input when this runtime supports image prompts. If you can see them directly, analyze them directly; otherwise use `multica attachment download <id>`. Use download for the other files before referring to them.\n")
-		case hasNativeImage:
-			b.WriteString("These image attachments were prepared for native visual input when this runtime supports image prompts. If you can see them directly, analyze them directly; otherwise use `multica attachment download <id>`. Use download only if you need the original file bytes.\n")
-		default:
-			b.WriteString("Use `multica attachment download <id>` to fetch each file locally before referring to it.\n")
-		}
+		b.WriteString("Use `multica attachment download <id>` to fetch each file locally before referring to it.\n")
 		b.WriteString("When creating an issue that should preserve one of these attachments, pass `--attachment-id <id>` to `multica issue create` in addition to keeping the attachment markdown inline.\n")
 	}
 	// Outbound attachments: how the agent puts an image/file INTO its reply.

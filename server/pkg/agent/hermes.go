@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -369,8 +368,6 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			return
 		}
 
-		promptCaps := extractACPPromptCapabilities(initResult)
-
 		// Drop MCP entries whose remote transport the runtime didn't
 		// advertise. ACP requires the client to honour
 		// agentCapabilities.mcpCapabilities; sending an http/sse entry to
@@ -505,7 +502,9 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		streamingCurrentTurn.Store(true)
 		_, err = c.request(runCtx, "session/prompt", map[string]any{
 			"sessionId": sessionID,
-			"prompt":    acpPromptBlocks(prompt, opts.InputImages, promptCaps),
+			"prompt": []map[string]any{
+				{"type": "text", "text": prompt},
+			},
 		})
 		if err != nil {
 			// If the request itself failed (not just context cancelled),
@@ -2015,49 +2014,6 @@ func sortedStringMapKeys(m map[string]string) []string {
 type acpMcpTransportCapabilities struct {
 	HTTP bool
 	SSE  bool
-}
-
-type acpPromptCapabilities struct {
-	Image bool
-}
-
-// extractACPPromptCapabilities reads `agentCapabilities.promptCapabilities`
-// from an ACP initialize response. Missing or malformed capability data
-// degrades to no optional prompt content, matching the spec defaults.
-func extractACPPromptCapabilities(result json.RawMessage) acpPromptCapabilities {
-	var r struct {
-		AgentCapabilities struct {
-			PromptCapabilities struct {
-				Image bool `json:"image"`
-			} `json:"promptCapabilities"`
-		} `json:"agentCapabilities"`
-	}
-	if err := json.Unmarshal(result, &r); err != nil {
-		return acpPromptCapabilities{}
-	}
-	return acpPromptCapabilities{Image: r.AgentCapabilities.PromptCapabilities.Image}
-}
-
-func acpPromptBlocks(text string, images []ImageInput, caps acpPromptCapabilities) []map[string]any {
-	blocks := []map[string]any{{"type": "text", "text": text}}
-	if !caps.Image {
-		return blocks
-	}
-	for _, image := range images {
-		if len(image.Data) == 0 || !strings.HasPrefix(strings.ToLower(image.MimeType), "image/") {
-			continue
-		}
-		block := map[string]any{
-			"type":     "image",
-			"mimeType": image.MimeType,
-			"data":     base64.StdEncoding.EncodeToString(image.Data),
-		}
-		if image.URI != "" {
-			block["uri"] = image.URI
-		}
-		blocks = append(blocks, block)
-	}
-	return blocks
 }
 
 // extractACPMcpCapabilities reads `agentCapabilities.mcpCapabilities.http`
