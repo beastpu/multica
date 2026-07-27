@@ -50,12 +50,19 @@
     "pattern.runtimes.clear_incompatible_model_on_switch",
     "pattern.runtimes.custom_runtime_args_registration_errors"
   ],
+  "consistency": [
+    "antipattern.storage.inline_compensation_on_uncertain_write"
+  ],
   "daemon": [
     "pattern.cli.daemon_task_token_fallback_guard",
     "pattern.daemon.autopilot_workdir_gc_terminal",
     "pattern.daemon.claim_slow_log_observability",
     "pattern.runtimes.custom_runtime_args_registration_errors",
     "pattern.runtimes.profile_drift_sync"
+  ],
+  "data-lifecycle": [
+    "antipattern.storage.inline_compensation_on_uncertain_write",
+    "pattern.channel.media_object_intent_ledger"
   ],
   "drag": [
     "pattern.issues.swimlane_drag_settle_lock"
@@ -74,6 +81,9 @@
   "github": [
     "pattern.github.webhook_route_by_repo_registry",
     "pattern.skills.private_github_raw_download_auth"
+  ],
+  "idempotency": [
+    "pattern.channel.media_object_intent_ledger"
   ],
   "integrations": [
     "pattern.lark.originating_thread_reply"
@@ -141,6 +151,10 @@
     "pattern.projects.delete_requires_admin",
     "pattern.runtimes.custom_runtime_profile_delete"
   ],
+  "postgres": [
+    "antipattern.storage.inline_compensation_on_uncertain_write",
+    "pattern.channel.media_object_intent_ledger"
+  ],
   "profile-drift": [
     "pattern.runtimes.profile_drift_sync"
   ],
@@ -157,6 +171,9 @@
   "realtime": [
     "pattern.realtime.ws_frame_type_guard",
     "pattern.transcript.live_task_messages_shared_cache"
+  ],
+  "reconciler": [
+    "pattern.channel.media_object_intent_ledger"
   ],
   "revert-followup": [
     "pattern.daemon.claim_slow_log_observability"
@@ -179,12 +196,14 @@
     "pattern.workspace.deployment_host_url_prefix"
   ],
   "server": [
+    "antipattern.storage.inline_compensation_on_uncertain_write",
     "pattern.agent.antigravity_print_timeout",
     "pattern.agent.assignment_comment_catch_up",
     "pattern.agent.chat_output_context_boundary",
     "pattern.agent.codex_app_server_exit_fail_fast",
     "pattern.agent.codex_permission_auto_grant_observability",
     "pattern.agent.sub_issue_stages_runtime_brief",
+    "pattern.channel.media_object_intent_ledger",
     "pattern.cli.daemon_task_token_fallback_guard",
     "pattern.cli.remote_setup_callback_host",
     "pattern.comments.resolve_aware_agent_reads",
@@ -210,6 +229,10 @@
   "stages": [
     "pattern.agent.sub_issue_stages_runtime_brief",
     "pattern.issues.sub_issue_stage_barrier"
+  ],
+  "storage": [
+    "antipattern.storage.inline_compensation_on_uncertain_write",
+    "pattern.channel.media_object_intent_ledger"
   ],
   "sub-issues": [
     "pattern.issues.sub_issue_stage_barrier"
