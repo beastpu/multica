@@ -17,6 +17,8 @@ import {
   invalidateIssueDerivatives,
   invalidateStaleListKeys,
   rollbackIssueChange,
+  type IssueFlatCache,
+  type IssueTableRowCache,
 } from "./cache-coordinator";
 import { issueChangedDims } from "./surface/membership";
 import {
@@ -39,8 +41,9 @@ import { useRecentIssuesStore } from "./stores";
 import type { GroupedIssuesResponse, InboxItem, Issue, IssueAssigneeGroup, IssueReaction, IssueStatus } from "../types";
 import type {
   CreateIssueRequest,
-  UpdateIssueRequest,
   ListIssuesCache,
+  MoveIssueRequest,
+  UpdateIssueRequest,
 } from "../types";
 import type { TimelineEntry, IssueSubscriber, Reaction } from "../types";
 import { sortTimelineEntriesAsc } from "./timeline-sort";
@@ -73,6 +76,15 @@ export type ToggleIssueReactionVars = {
   emoji: string;
   existing: IssueReaction | undefined;
 };
+
+export type UpdateIssueMutationInput = {
+  id: string;
+  /**
+   * Present only for drag/drop. `position` remains in the optimistic patch,
+   * while the request sent to the server contains relative anchors instead.
+   */
+  move_intent?: Pick<MoveIssueRequest, "before_id" | "after_id">;
+} & UpdateIssueRequest;
 
 // ---------------------------------------------------------------------------
 // Per-status pagination
@@ -223,6 +235,8 @@ export function useCreateIssue() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: issueKeys.list(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.flatAll(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.assigneeGroupsAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
@@ -235,9 +249,12 @@ export function useUpdateIssue() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: ({ id, ...data }: { id: string } & UpdateIssueRequest) =>
-      api.updateIssue(id, data),
-    onMutate: ({ id, ...data }) => {
+    mutationFn: ({ id, move_intent: moveIntent, ...data }: UpdateIssueMutationInput) => {
+      if (!moveIntent) return api.updateIssue(id, data);
+      const { position: _optimisticPosition, ...target } = data;
+      return api.moveIssue(id, { ...target, ...moveIntent });
+    },
+    onMutate: ({ id, move_intent: _moveIntent, ...data }) => {
       // suppress_run / handoff_note are write-time control fields, not Issue
       // columns — they steer enqueue/injection on the server and must never be
       // written into the query cache (MUL-3375). Strip them from the patch; the
@@ -249,6 +266,8 @@ export function useUpdateIssue() {
       // before the optimistic update lands.
       qc.cancelQueries({ queryKey: issueKeys.list(wsId) });
       qc.cancelQueries({ queryKey: issueKeys.myAll(wsId) });
+      qc.cancelQueries({ queryKey: issueKeys.flatAll(wsId) });
+      qc.cancelQueries({ queryKey: issueKeys.tableAll(wsId) });
       if (patch.status !== undefined) {
         qc.cancelQueries({ queryKey: inboxKeys.list(wsId) });
       }
@@ -333,7 +352,13 @@ export function useUpdateIssue() {
       // optimistically; against the post-write entity the changed dims come
       // out false unless the server coerced a different value, so this pass
       // is the plain surgical patch it always was.
-      const { suppress_run: _suppressRun, handoff_note: _handoffNote, id: _id, ...intent } = vars;
+      const {
+        suppress_run: _suppressRun,
+        handoff_note: _handoffNote,
+        move_intent: _moveIntent,
+        id: _id,
+        ...intent
+      } = vars;
       // Drop `properties` from the reconcile payload: the bag is owned by the
       // property mutation pipeline (single-key atomic writes + its own
       // optimistic state). An UpdateIssue snapshot taken before a concurrent
@@ -363,6 +388,7 @@ export function useUpdateIssue() {
           vars.status !== undefined ||
           Object.prototype.hasOwnProperty.call(vars, "project_id"),
       });
+      qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
       if (ctx) {
         invalidateStaleListKeys(qc, ctx.change.staleKeys);
       }
@@ -413,6 +439,7 @@ export function useDeleteIssue() {
       await Promise.all([
         qc.cancelQueries({ queryKey: issueKeys.list(wsId) }),
         qc.cancelQueries({ queryKey: issueKeys.myAll(wsId) }),
+        qc.cancelQueries({ queryKey: issueKeys.flatAll(wsId) }),
       ]);
       const metadata = collectDeletedIssueCacheMetadata(qc, wsId, id);
       await Promise.all(
@@ -423,6 +450,9 @@ export function useDeleteIssue() {
       const prevLists = qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) });
       const prevMyLists = qc.getQueriesData<ListIssuesCache>({
         queryKey: issueKeys.myAll(wsId),
+      });
+      const prevFlatLists = qc.getQueriesData<IssueFlatCache>({
+        queryKey: issueKeys.flatAll(wsId),
       });
       const prevDetail = qc.getQueryData<Issue>(issueKeys.detail(wsId, id));
       const prevChildren = new Map<string, Issue[] | undefined>();
@@ -436,7 +466,15 @@ export function useDeleteIssue() {
       pruneDeletedIssueFromListCaches(qc, wsId, id);
       pruneDeletedIssueFromParentChildrenCaches(qc, wsId, id, metadata);
       qc.removeQueries({ queryKey: issueKeys.detail(wsId, id) });
-      return { id, metadata, prevLists, prevMyLists, prevDetail, prevChildren };
+      return {
+        id,
+        metadata,
+        prevLists,
+        prevMyLists,
+        prevFlatLists,
+        prevDetail,
+        prevChildren,
+      };
     },
     onError: (_err, _id, ctx) => {
       if (ctx?.prevLists) {
@@ -446,6 +484,11 @@ export function useDeleteIssue() {
       }
       if (ctx?.prevMyLists) {
         for (const [key, snapshot] of ctx.prevMyLists) {
+          qc.setQueryData(key, snapshot);
+        }
+      }
+      if (ctx?.prevFlatLists) {
+        for (const [key, snapshot] of ctx.prevFlatLists) {
           qc.setQueryData(key, snapshot);
         }
       }
@@ -464,6 +507,8 @@ export function useDeleteIssue() {
     },
     onSettled: (_data, _err, _id, ctx) => {
       qc.invalidateQueries({ queryKey: issueKeys.list(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.flatAll(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.assigneeGroupsAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
@@ -490,6 +535,8 @@ export function useBatchUpdateIssues() {
       const { suppress_run: _suppressRun, handoff_note: _handoffNote, ...patch } = updates;
       await qc.cancelQueries({ queryKey: issueKeys.list(wsId) });
       await qc.cancelQueries({ queryKey: issueKeys.myAll(wsId) });
+      await qc.cancelQueries({ queryKey: issueKeys.flatAll(wsId) });
+      await qc.cancelQueries({ queryKey: issueKeys.tableAll(wsId) });
       if (patch.status !== undefined) {
         await qc.cancelQueries({ queryKey: inboxKeys.list(wsId) });
       }
@@ -501,6 +548,11 @@ export function useBatchUpdateIssues() {
       // application a cache already carries partial patches, so only the
       // first snapshot per key is pristine for rollback.
       const prevListByHash = new Map<string, [QueryKey, ListIssuesCache]>();
+      const prevFlatListByHash = new Map<string, [QueryKey, IssueFlatCache]>();
+      const prevTableRowByHash = new Map<
+        string,
+        [QueryKey, IssueTableRowCache]
+      >();
       const prevDetailById = new Map<string, Issue>();
       let prevInboxList: InboxItem[] | undefined;
       const staleKeys: QueryKey[] = [];
@@ -513,6 +565,18 @@ export function useBatchUpdateIssues() {
         for (const [key, snapshot] of change.prevLists) {
           const hash = hashKey(key);
           if (!prevListByHash.has(hash)) prevListByHash.set(hash, [key, snapshot]);
+        }
+        for (const [key, snapshot] of change.prevFlatLists) {
+          const hash = hashKey(key);
+          if (!prevFlatListByHash.has(hash)) {
+            prevFlatListByHash.set(hash, [key, snapshot]);
+          }
+        }
+        for (const [key, snapshot] of change.prevTableRows) {
+          const hash = hashKey(key);
+          if (!prevTableRowByHash.has(hash)) {
+            prevTableRowByHash.set(hash, [key, snapshot]);
+          }
         }
         if (change.prevDetail) prevDetailById.set(id, change.prevDetail);
         if (prevInboxList === undefined && change.prevInboxList !== undefined) {
@@ -542,6 +606,8 @@ export function useBatchUpdateIssues() {
 
       return {
         prevLists: [...prevListByHash.values()],
+        prevFlatLists: [...prevFlatListByHash.values()],
+        prevTableRows: [...prevTableRowByHash.values()],
         prevDetailById,
         prevInboxList,
         staleKeys,
@@ -552,6 +618,16 @@ export function useBatchUpdateIssues() {
     onError: (_err, _vars, ctx) => {
       if (ctx?.prevLists) {
         for (const [key, snapshot] of ctx.prevLists) {
+          qc.setQueryData(key, snapshot);
+        }
+      }
+      if (ctx?.prevFlatLists) {
+        for (const [key, snapshot] of ctx.prevFlatLists) {
+          qc.setQueryData(key, snapshot);
+        }
+      }
+      if (ctx?.prevTableRows) {
+        for (const [key, snapshot] of ctx.prevTableRows) {
           qc.setQueryData(key, snapshot);
         }
       }
@@ -583,6 +659,7 @@ export function useBatchUpdateIssues() {
           _vars.updates.status !== undefined ||
           Object.prototype.hasOwnProperty.call(_vars.updates, "project_id"),
       });
+      qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
       if (ctx) {
         invalidateStaleListKeys(qc, ctx.staleKeys);
       }
@@ -610,6 +687,7 @@ export function useBatchDeleteIssues() {
       await Promise.all([
         qc.cancelQueries({ queryKey: issueKeys.list(wsId) }),
         qc.cancelQueries({ queryKey: issueKeys.myAll(wsId) }),
+        qc.cancelQueries({ queryKey: issueKeys.flatAll(wsId) }),
       ]);
       const metadataById = new Map(
         ids.map((id) => [
@@ -632,6 +710,9 @@ export function useBatchDeleteIssues() {
       const prevMyLists = qc.getQueriesData<ListIssuesCache>({
         queryKey: issueKeys.myAll(wsId),
       });
+      const prevFlatLists = qc.getQueriesData<IssueFlatCache>({
+        queryKey: issueKeys.flatAll(wsId),
+      });
       const prevChildren = new Map<string, Issue[] | undefined>();
       for (const parentId of parentIssueIds) {
         prevChildren.set(
@@ -647,7 +728,14 @@ export function useBatchDeleteIssues() {
           pruneDeletedIssueFromParentChildrenCaches(qc, wsId, id, metadata);
         }
       }
-      return { prevLists, prevMyLists, prevChildren, parentIssueIds, metadataById };
+      return {
+        prevLists,
+        prevMyLists,
+        prevFlatLists,
+        prevChildren,
+        parentIssueIds,
+        metadataById,
+      };
     },
     onError: (_err, _ids, ctx) => {
       if (ctx?.prevLists) {
@@ -657,6 +745,11 @@ export function useBatchDeleteIssues() {
       }
       if (ctx?.prevMyLists) {
         for (const [key, snapshot] of ctx.prevMyLists) {
+          qc.setQueryData(key, snapshot);
+        }
+      }
+      if (ctx?.prevFlatLists) {
+        for (const [key, snapshot] of ctx.prevFlatLists) {
           qc.setQueryData(key, snapshot);
         }
       }
@@ -686,6 +779,11 @@ export function useBatchDeleteIssues() {
           qc.setQueryData(key, snapshot);
         }
       }
+      if (ctx?.prevFlatLists) {
+        for (const [key, snapshot] of ctx.prevFlatLists) {
+          qc.setQueryData(key, snapshot);
+        }
+      }
       if (ctx?.prevChildren) {
         for (const [parentId, snapshot] of ctx.prevChildren) {
           qc.setQueryData(issueKeys.children(wsId, parentId), snapshot);
@@ -699,6 +797,8 @@ export function useBatchDeleteIssues() {
     },
     onSettled: (_data, _err, _ids, ctx) => {
       qc.invalidateQueries({ queryKey: issueKeys.list(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.flatAll(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.assigneeGroupsAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });

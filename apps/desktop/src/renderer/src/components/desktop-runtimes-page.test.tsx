@@ -32,6 +32,7 @@ describe("DesktopRuntimesPage", () => {
       localMachineName: "Jiayuan's MacBook",
       hasLocalMachine: true,
       bootstrapping: false,
+      cloudRuntimeEnabled: true,
     });
   });
 });

@@ -61,6 +61,7 @@ import type {
 import { LarkTab } from "./lark-tab";
 import { ComposioTab } from "./composio-tab";
 import { SlackTab } from "./slack-tab";
+import { VCSTab } from "./vcs-tab";
 import { AssessmentCapabilitySection } from "./assessment-capability-section";
 import { useT } from "../../i18n";
 import { FeishuProjectRoutingSection, type RouteRow } from "./feishu-project-routing-section";
@@ -882,6 +883,7 @@ export function IntegrationsTab() {
       <SettingsSection title={t(($) => $.slack.section_title)}>
         <SlackTab />
       </SettingsSection>
+      <VCSTab />
     </SettingsTab>
   );
 }

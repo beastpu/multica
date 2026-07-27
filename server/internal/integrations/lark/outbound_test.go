@@ -18,14 +18,14 @@ import (
 
 type fakePatcherQueries struct {
 	mu              sync.Mutex
+	task            db.AgentTaskQueue
+	taskErr         error
 	binding         ChatSessionBinding
 	bindingErr      error
 	installation    Installation
 	installationErr error
 	agent           db.Agent
 	agentErr        error
-	task            db.AgentTaskQueue
-	taskErr         error
 	bindings        []InboxNotificationBinding
 	bindingsErr     error
 	card            OutboundCardMessage

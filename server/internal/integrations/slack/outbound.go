@@ -97,21 +97,20 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 	if content == "" {
 		return nil // nothing to say (empty completion)
 	}
+	// Only bound, non-empty completions reach here, so classify the task origin
+	// before loading credentials or sending. Web/mobile direct-chat tasks can
+	// reuse a session that originated in Slack, but their replies belong only in
+	// Multica. Outbound delivery fails closed when the origin cannot be
+	// established; channel-created tasks leave chat_input_task_id NULL and send.
 	taskID, ok := chatDoneTaskID(e)
 	if !ok {
 		return nil
 	}
 	task, err := o.q.GetAgentTask(ctx, taskID)
 	if err != nil {
-		// Fail closed at the channel boundary. The in-process bus has no retry,
-		// so a transient lookup failure drops this reply rather than risking a
-		// private Multica turn being sent to Slack.
 		return fmt.Errorf("load agent task: %w", err)
 	}
 	if task.ChatInputTaskID.Valid {
-		// Web/mobile direct-chat tasks can reuse a session that originated in
-		// Slack, but their replies belong only in Multica. Channel-created tasks
-		// leave chat_input_task_id NULL and continue to the bound chat below.
 		return nil
 	}
 	inst, err := o.q.GetChannelInstallation(ctx, db.GetChannelInstallationParams{
