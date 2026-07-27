@@ -14,6 +14,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -23,6 +24,7 @@ import (
 // subscriber needs. *db.Queries satisfies it.
 type outboundQueries interface {
 	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
+	TaskHasChannelIngestedMessages(ctx context.Context, taskID pgtype.UUID) (bool, error)
 	GetChannelChatSessionBindingBySession(ctx context.Context, arg db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error)
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
 }
@@ -97,21 +99,27 @@ func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 	if content == "" {
 		return nil // nothing to say (empty completion)
 	}
+	// Only bound, non-empty completions reach here, so classify the task origin
+	// before loading credentials or sending. Web/mobile direct-chat tasks can
+	// reuse a session that originated in Slack, but their replies belong only in
+	// Multica. Outbound delivery fails closed when the origin cannot be
+	// established. Sealed channel tasks own an input batch just like direct
+	// tasks, so the discriminator is the immutable channel_ingested provenance
+	// of that batch, not chat_input_task_id presence (which #5645 originally
+	// used).
 	taskID, ok := chatDoneTaskID(e)
 	if !ok {
 		return nil
 	}
 	task, err := o.q.GetAgentTask(ctx, taskID)
 	if err != nil {
-		// Fail closed at the channel boundary. The in-process bus has no retry,
-		// so a transient lookup failure drops this reply rather than risking a
-		// private Multica turn being sent to Slack.
 		return fmt.Errorf("load agent task: %w", err)
 	}
-	if task.ChatInputTaskID.Valid {
-		// Web/mobile direct-chat tasks can reuse a session that originated in
-		// Slack, but their replies belong only in Multica. Channel-created tasks
-		// leave chat_input_task_id NULL and continue to the bound chat below.
+	deliver, err := engine.TaskInputIsChannelIngested(ctx, o.q, task)
+	if err != nil {
+		return fmt.Errorf("classify task input origin: %w", err)
+	}
+	if !deliver {
 		return nil
 	}
 	inst, err := o.q.GetChannelInstallation(ctx, db.GetChannelInstallationParams{

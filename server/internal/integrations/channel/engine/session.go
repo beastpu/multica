@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -43,8 +44,10 @@ type SessionQueries interface {
 	CreateChatSession(ctx context.Context, arg db.CreateChatSessionParams) (db.ChatSession, error)
 	CreateChannelChatSessionBinding(ctx context.Context, arg db.CreateChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error)
 	CreateChatMessage(ctx context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error)
+	ClearChatMessageChannelMediaPending(ctx context.Context, arg db.ClearChatMessageChannelMediaPendingParams) error
 	CreateAttachment(ctx context.Context, arg db.CreateAttachmentParams) (db.Attachment, error)
 	LinkAttachmentsToChatMessage(ctx context.Context, arg db.LinkAttachmentsToChatMessageParams) ([]pgtype.UUID, error)
+	ClaimChannelMediaPendingObjectsForBind(ctx context.Context, arg db.ClaimChannelMediaPendingObjectsForBindParams) ([]string, error)
 	TouchChatSession(ctx context.Context, id pgtype.UUID) error
 	GetMostRecentUserChatMessage(ctx context.Context, chatSessionID pgtype.UUID) (db.ChatMessage, error)
 	UpdateChannelChatSessionBindingReplyTarget(ctx context.Context, arg db.UpdateChannelChatSessionBindingReplyTargetParams) error
@@ -74,11 +77,17 @@ func (a dbSessionQueries) CreateChannelChatSessionBinding(ctx context.Context, a
 func (a dbSessionQueries) CreateChatMessage(ctx context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error) {
 	return a.q.CreateChatMessage(ctx, arg)
 }
+func (a dbSessionQueries) ClearChatMessageChannelMediaPending(ctx context.Context, arg db.ClearChatMessageChannelMediaPendingParams) error {
+	return a.q.ClearChatMessageChannelMediaPending(ctx, arg)
+}
 func (a dbSessionQueries) CreateAttachment(ctx context.Context, arg db.CreateAttachmentParams) (db.Attachment, error) {
 	return a.q.CreateAttachment(ctx, arg)
 }
 func (a dbSessionQueries) LinkAttachmentsToChatMessage(ctx context.Context, arg db.LinkAttachmentsToChatMessageParams) ([]pgtype.UUID, error) {
 	return a.q.LinkAttachmentsToChatMessage(ctx, arg)
+}
+func (a dbSessionQueries) ClaimChannelMediaPendingObjectsForBind(ctx context.Context, arg db.ClaimChannelMediaPendingObjectsForBindParams) ([]string, error) {
+	return a.q.ClaimChannelMediaPendingObjectsForBind(ctx, arg)
 }
 func (a dbSessionQueries) TouchChatSession(ctx context.Context, id pgtype.UUID) error {
 	return a.q.TouchChatSession(ctx, id)
@@ -250,23 +259,34 @@ func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSess
 // its own binding row, recording the real thread here per session does not clash
 // across sibling threads.
 type AppendInput struct {
-	SessionID      pgtype.UUID
-	Sender         pgtype.UUID
-	InstallationID pgtype.UUID
-	WorkspaceID    pgtype.UUID
-	Body           string
-	CommandText    string
-	MessageID      string
-	ThreadID       string
-	MediaRefs      []channel.MediaRef
-	ClaimToken     pgtype.UUID
+	SessionID           pgtype.UUID
+	Sender              pgtype.UUID
+	InstallationID      pgtype.UUID
+	Body                string
+	CommandText         string
+	MessageID           string
+	ThreadID            string
+	ClaimToken          pgtype.UUID
+	MediaPendingSeconds float64
+}
+
+// BindMediaInput links already-uploaded media to a durable chat message in a
+// short database-only transaction. Remote downloads/uploads happen before
+// this call and outside the connector ACK path.
+type BindMediaInput struct {
+	MessageID   pgtype.UUID
+	SessionID   pgtype.UUID
+	WorkspaceID pgtype.UUID
+	Sender      pgtype.UUID
+	MediaRefs   []channel.MediaRef
 }
 
 // AppendUserMessage writes the user message into the chat_session (touching it
 // and recording the reply target), runs the in-tx dedup Mark when a claim token
-// is supplied, and returns the parsed `/issue` command when present. Returns
-// ErrClaimLost when a concurrent reclaim rotated the dedup token mid-flight, in
-// which case the whole transaction rolls back (no chat_message lands).
+// is supplied, and returns the durable message id plus the parsed `/issue`
+// command when present. Returns ErrClaimLost when a concurrent reclaim rotated
+// the dedup token mid-flight, in which case the whole transaction rolls back
+// (no chat_message lands).
 func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (AppendResult, error) {
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
@@ -291,18 +311,18 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		}
 	}
 
+	// channel_ingested is the immutable provenance the cancel path gates on:
+	// it must be stamped in the same transaction as the message so no later
+	// binding deletion (archive, installation rebind) can strip it.
 	msg, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
-		ChatSessionID: in.SessionID,
-		Role:          "user",
-		Content:       in.Body,
+		ChatSessionID:           in.SessionID,
+		Role:                    "user",
+		Content:                 in.Body,
+		ChannelMediaPendingSecs: pgtype.Float8{Float64: in.MediaPendingSeconds, Valid: in.MediaPendingSeconds > 0},
+		ChannelIngested:         pgtype.Bool{Bool: true, Valid: true},
 	})
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("create chat message: %w", err)
-	}
-	if len(in.MediaRefs) > 0 {
-		if err := s.bindMediaRefs(ctx, qtx, in, msg.ID); err != nil {
-			return AppendResult{}, err
-		}
 	}
 	if err := qtx.TouchChatSession(ctx, in.SessionID); err != nil {
 		return AppendResult{}, fmt.Errorf("touch chat session: %w", err)
@@ -341,17 +361,90 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	if err := tx.Commit(ctx); err != nil {
 		return AppendResult{}, fmt.Errorf("commit: %w", err)
 	}
-	return AppendResult{IssueCommand: cmd, DedupMarked: markedInTx}, nil
+	return AppendResult{MessageID: msg.ID, IssueCommand: cmd, DedupMarked: markedInTx}, nil
 }
 
-func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in AppendInput, messageID pgtype.UUID) error {
+// BindMediaRefs creates attachment rows, links them to an existing durable chat
+// message, and clears its media-pending marker. A link failure rolls back the
+// attachment rows, then clears the marker separately so the placeholder can be
+// promoted immediately for graceful degradation.
+func (s *ChatSession) BindMediaRefs(ctx context.Context, in BindMediaInput) error {
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin media tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.q.WithTx(tx)
+	if len(in.MediaRefs) > 0 {
+		if err := s.bindMediaRefs(ctx, qtx, in); err != nil {
+			_ = tx.Rollback(ctx)
+			if clearErr := s.clearMediaPending(ctx, s.q, in); clearErr != nil {
+				return errors.Join(err, clearErr)
+			}
+			return err
+		}
+	}
+	if err := s.clearMediaPending(ctx, qtx, in); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		// An ambiguous commit needs no adjudication: the intent-ledger rows
+		// were deleted in this same transaction, so commit landed ⇔ intents
+		// gone, atomically. Either way the reconciler settles the objects.
+		return fmt.Errorf("commit media: %w", err)
+	}
+	return nil
+}
+
+func (s *ChatSession) clearMediaPending(ctx context.Context, q SessionQueries, in BindMediaInput) error {
+	if err := q.ClearChatMessageChannelMediaPending(ctx, db.ClearChatMessageChannelMediaPendingParams{
+		ID:            in.MessageID,
+		ChatSessionID: in.SessionID,
+	}); err != nil {
+		return fmt.Errorf("clear chat message media pending: %w", err)
+	}
+	return nil
+}
+
+func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in BindMediaInput) error {
 	if !in.WorkspaceID.Valid {
 		return errors.New("bind media refs: workspace_id is required")
 	}
-	ids := make([]pgtype.UUID, 0, len(in.MediaRefs))
+	if !in.MessageID.Valid {
+		return errors.New("bind media refs: message_id is required")
+	}
+	keys := make([]string, 0, len(in.MediaRefs))
 	for _, ref := range in.MediaRefs {
 		if ref.StorageURL == "" {
 			return errors.New("bind media refs: storage_url is required")
+		}
+		if ref.StorageKey == "" {
+			return errors.New("bind media refs: storage_key is required")
+		}
+		keys = append(keys, ref.StorageKey)
+	}
+	// Claim the intent-ledger rows inside this same transaction: commit
+	// landed <=> intents gone, atomically, so an ambiguous COMMIT never needs
+	// adjudication. A key the reconciler already moved to 'deleting' is not
+	// returned and its ref must NOT attach — the object is being deleted and
+	// the placeholder stays.
+	claimedKeys, err := qtx.ClaimChannelMediaPendingObjectsForBind(ctx, db.ClaimChannelMediaPendingObjectsForBindParams{
+		StorageKeys: keys,
+		WorkspaceID: in.WorkspaceID,
+	})
+	if err != nil {
+		return fmt.Errorf("claim media intents: %w", err)
+	}
+	claimed := make(map[string]bool, len(claimedKeys))
+	for _, k := range claimedKeys {
+		claimed[k] = true
+	}
+	ids := make([]pgtype.UUID, 0, len(in.MediaRefs))
+	for _, ref := range in.MediaRefs {
+		if !claimed[ref.StorageKey] {
+			slog.Warn("channel media: intent claimed by reconciler; skipping attach",
+				"storage_key", ref.StorageKey)
+			continue
 		}
 		id, err := uuid.NewV7()
 		if err != nil {
@@ -385,7 +478,7 @@ func (s *ChatSession) bindMediaRefs(ctx context.Context, qtx SessionQueries, in 
 		return nil
 	}
 	if _, err := qtx.LinkAttachmentsToChatMessage(ctx, db.LinkAttachmentsToChatMessageParams{
-		ChatMessageID: messageID,
+		ChatMessageID: in.MessageID,
 		ChatSessionID: in.SessionID,
 		WorkspaceID:   in.WorkspaceID,
 		UploaderType:  "member",

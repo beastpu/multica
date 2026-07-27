@@ -208,6 +208,10 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		finalStatus := "completed"
 		var finalError string
 		var sessionID string
+		// Set when the ACP runtime refuses the session we asked to
+		// resume. Only that is curable by starting a fresh session, so
+		// handshake/network failures below must leave it false.
+		var resumeRejected bool
 		effectiveModel := strings.TrimSpace(opts.Model)
 
 		initResult, err := c.request(runCtx, "initialize", map[string]any{
@@ -224,6 +228,7 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
+		promptCaps := extractACPPromptCapabilities(initResult)
 
 		// Drop MCP entries whose remote transport the runtime didn't
 		// advertise. See the matching comment in hermes.go for why
@@ -304,12 +309,14 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 						"session_id", sessionID,
 					)
 					sessionID = ""
+					resumeRejected = true
 				}
 				resCh <- Result{
-					Status:     finalStatus,
-					Error:      finalError,
-					DurationMs: time.Since(startTime).Milliseconds(),
-					SessionID:  sessionID,
+					Status:         finalStatus,
+					Error:          finalError,
+					DurationMs:     time.Since(startTime).Milliseconds(),
+					SessionID:      sessionID,
+					ResumeRejected: resumeRejected,
 				}
 				return
 			}
@@ -326,9 +333,7 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		streamingCurrentTurn.Store(true)
 		_, err = c.request(runCtx, "session/prompt", map[string]any{
 			"sessionId": sessionID,
-			"prompt": []map[string]any{
-				{"type": "text", "text": userText},
-			},
+			"prompt":    acpPromptBlocks(userText, opts.InputImages, promptCaps),
 		})
 		if err != nil {
 			if runCtx.Err() == context.DeadlineExceeded {
@@ -350,6 +355,7 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 						"session_id", sessionID,
 					)
 					sessionID = ""
+					resumeRejected = true
 				}
 			}
 		} else {
@@ -423,12 +429,13 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		}
 
 		resCh <- Result{
-			Status:     finalStatus,
-			Output:     finalOutput,
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionID,
-			Usage:      usageMap,
+			Status:         finalStatus,
+			Output:         finalOutput,
+			Error:          finalError,
+			DurationMs:     duration.Milliseconds(),
+			SessionID:      sessionID,
+			ResumeRejected: resumeRejected,
+			Usage:          usageMap,
 		}
 	}()
 

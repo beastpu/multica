@@ -19,6 +19,41 @@ func TestLoad_RealTemplates(t *testing.T) {
 	}
 }
 
+func TestReleaseNotesTemplate_ReviewAndPublishGuardrails(t *testing.T) {
+	reg, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+
+	tmpl, ok := reg.Get("release-notes")
+	if !ok {
+		t.Fatal("expected release-notes template")
+	}
+
+	required := []string{
+		"actual previous announcement",
+		"same audience and channel",
+		"fixed Feishu Wiki parent",
+		"Never leave the release document in personal Drive space",
+		"For every headline feature, give a detailed explanation",
+		"Every headline feature with an applicable UI must have at least one screenshot",
+		"prepare the updated canonical document and the exact notification or card together before asking for review",
+		"exact rendered notification or card preview into one review bundle",
+		"Never publish to the target group before the named reviewer explicitly approves the review bundle",
+		"exact recipient or target group",
+		"message format",
+		"sending identity and profile",
+		"exact target group using the exact designated bot",
+		"Do not switch identity after a failure",
+		"idempotency key",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(tmpl.Instructions, phrase) {
+			t.Errorf("release-notes instructions missing guardrail %q", phrase)
+		}
+	}
+}
+
 func TestLoadFromFS_Valid(t *testing.T) {
 	fsys := fstest.MapFS{
 		"templates/alpha.json": &fstest.MapFile{Data: []byte(`{
