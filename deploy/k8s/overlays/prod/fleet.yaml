@@ -45,7 +45,7 @@ spec:
               valueFrom:
                 secretKeyRef: { name: multica-fleet, key: MULTICA_CLOUD_RUNTIME_SECRET_KEY }
             - name: MULTICA_CLOUD_RUNTIME_IMAGE
-              value: lilith-registry.cn-shanghai.cr.aliyuncs.com/yunwei/multica:decoupled-f3f51eb
+              value: lilith-registry.cn-shanghai.cr.aliyuncs.com/yunwei/multica:decoupled-683fc3a
             - name: MULTICA_CLOUD_RUNTIME_KUBECONFIG
               value: /etc/fleet/kubeconfig
             - name: MULTICA_CLOUD_RUNTIME_SERVER_URL
