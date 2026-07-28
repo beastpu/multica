@@ -9,3 +9,8 @@ data:
       allow_by: workspace_id
       allow:
         - "bed314a3-0eaf-498f-959b-7c6c8fb6c3d8" # w3-test
+    # The workflow engine gates every workflow write and the whole surface. It
+    # is on here because test is where the feature is exercised; prod keeps its
+    # own file and is unaffected by this.
+    workflows_activity_engine:
+      default: true
