@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1392,8 +1393,61 @@ func (h *Handler) materializeWorkflowTask(
 	})
 	if err == nil {
 		materializationOutcome = "success"
+		h.stampWorkflowIssueMetadata(ctx, workspaceID, result.Issue, instance, node, host)
 	}
 	return err
+}
+
+// workflowIssueMetadataKey is the reserved namespace under issue.metadata that
+// carries a node child issue's workflow coordinates.
+const workflowIssueMetadataKey = "workflow"
+
+// workflowIssueMetadata builds the navigation payload stamped onto a node child
+// issue. It carries invariants only — the workflow run, the node it belongs to,
+// and the host issue. Anything that changes while the workflow runs (upstream
+// and downstream nodes, handoff summaries, artifacts) is deliberately absent:
+// this is a snapshot taken at creation, while the graph is live, so a stored
+// edge list would silently go stale the moment a template is republished or a
+// node is skipped or rolled back. Callers read the live shape from the API.
+func workflowIssueMetadata(instanceID, nodeKey, hostIssue string) ([]byte, error) {
+	return json.Marshal(map[string]string{
+		"instance_id": instanceID,
+		"node_key":    nodeKey,
+		"host_issue":  hostIssue,
+	})
+}
+
+// stampWorkflowIssueMetadata records the workflow coordinates on a freshly
+// materialized node child issue. Provenance is already authoritative via
+// origin_type/origin_id, so this is a convenience index for agents and the UI:
+// a failure leaves the issue correct but harder to navigate from, and must not
+// fail a materialization that already succeeded.
+func (h *Handler) stampWorkflowIssueMetadata(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	issue db.Issue,
+	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
+	host db.Issue,
+) {
+	hostIssue := h.getIssuePrefix(ctx, workspaceID) + "-" + strconv.Itoa(int(host.Number))
+	value, err := workflowIssueMetadata(
+		uuidToString(instance.ID), node.NodeKey, hostIssue,
+	)
+	if err != nil {
+		return
+	}
+	if _, err := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+		ID: issue.ID, WorkspaceID: workspaceID,
+		Key: workflowIssueMetadataKey, Value: value,
+	}); err != nil {
+		slog.Warn("workflow: failed to stamp issue metadata",
+			"issue_id", uuidToString(issue.ID),
+			"workflow_instance_id", uuidToString(instance.ID),
+			"node_key", node.NodeKey,
+			"error", err,
+		)
+	}
 }
 
 func (h *Handler) failWorkflowTaskMaterialization(ctx context.Context, workspaceID, taskID pgtype.UUID, message string) error {
