@@ -1013,3 +1013,27 @@ func TestBuildCommentPromptSameThreadKeepsSingleReply(t *testing.T) {
 		t.Errorf("same-thread run must keep the single --parent=trigger reply cookbook, got:\n%s", out)
 	}
 }
+
+// The workflow section must carry no identifier. Writing one into the prompt is
+// how a copy goes stale — the same failure the issue reference exists to avoid.
+func TestWorkflowPromptSectionTakesNoIdentifiers(t *testing.T) {
+	task := Task{IssueID: "issue-abc-123"}
+	prompt := BuildPrompt(task, "claude")
+
+	section := workflowPromptSection()
+	if !strings.Contains(prompt, section) {
+		t.Fatal("BuildPrompt() dropped the workflow section")
+	}
+	for _, command := range []string{
+		"multica workflow current",
+		"multica workflow upstream",
+		"multica workflow submit --summary",
+	} {
+		if !strings.Contains(section, command) {
+			t.Errorf("workflow section is missing %q", command)
+		}
+	}
+	if strings.Contains(section, task.IssueID) {
+		t.Error("workflow section embedded an issue id; the commands resolve it themselves")
+	}
+}

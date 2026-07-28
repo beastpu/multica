@@ -42,7 +42,30 @@ func BuildPrompt(task Task, provider string) string {
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Start with `multica issue comment list %s --recent 10 --output json` to read the 10 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. Resolved threads come back folded — `--full` to expand. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
+	b.WriteString(workflowPromptSection())
 	return b.String()
+}
+
+// workflowPromptSection points an agent at its workflow context.
+//
+// The commands take no identifier: they resolve the issue from the daemon's
+// task marker. That is deliberate — writing ids into a prompt is how a copy
+// goes stale, which is the same reason the issue itself is referenced rather
+// than transcribed.
+//
+// The section is unconditional because the daemon cannot tell a workflow node
+// issue from an ordinary one without asking the server, and `workflow current`
+// answers "not part of a workflow" cheaply. Paying one command on ordinary
+// issues is a better trade than an extra round trip on every dispatch.
+func workflowPromptSection() string {
+	return "\nIf this issue is a workflow node, `multica workflow current` tells you " +
+		"which run and node you are in, and `multica workflow upstream` gives you each " +
+		"direct predecessor's handoff summary plus an index of what it produced. Read an " +
+		"artifact only when you need it: `multica workflow artifact get <artifact-id>`.\n" +
+		"Before you finish, hand off with `multica workflow submit --summary \"<conclusion, " +
+		"risks, what the next node should watch for>\"`, and attach any artifact the node " +
+		"requires with `--artifact <key> --file <path>`. A node that owes an artifact or a " +
+		"summary will not advance without them.\n"
 }
 
 func isP4AssessmentTask(task Task) bool {
