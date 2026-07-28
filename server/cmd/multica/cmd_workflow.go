@@ -137,13 +137,29 @@ type workflowIssueMetadataEnvelope struct {
 	} `json:"metadata"`
 }
 
+// workflowArtifactRequirement is what a node declares it owes. An agent needs
+// these keys to submit anything at all — the submit endpoint only accepts a key
+// the node declared — so they have to be discoverable, not guessed.
+type workflowArtifactRequirement struct {
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Kind        string `json:"kind"`
+	Required    bool   `json:"required"`
+}
+
+type workflowNodeDefinition struct {
+	Artifacts []workflowArtifactRequirement `json:"artifacts"`
+}
+
 type workflowNodeSummary struct {
-	ID       string `json:"id"`
-	NodeKey  string `json:"node_key"`
-	NodeKind string `json:"node_kind"`
-	Name     string `json:"name_snapshot"`
-	Status   string `json:"status"`
-	Attempt  int32  `json:"attempt"`
+	ID         string                 `json:"id"`
+	NodeKey    string                 `json:"node_key"`
+	NodeKind   string                 `json:"node_kind"`
+	Name       string                 `json:"name_snapshot"`
+	Status     string                 `json:"status"`
+	Attempt    int32                  `json:"attempt"`
+	Definition workflowNodeDefinition `json:"definition"`
 }
 
 type workflowInstanceSummary struct {
@@ -230,6 +246,34 @@ func runWorkflowCurrent(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stdout, "current node: %s (%s, attempt %d)\n",
 				node.Name, node.Status, node.Attempt)
 		}
+	}
+	if node, ok := currentNode(detail, nodeKey); ok && len(node.Definition.Artifacts) > 0 {
+		delivered, _ := fetchWorkflowArtifacts(client, detail.Instance.ID)
+		done := map[string]string{}
+		for _, artifact := range delivered {
+			if artifact.ArtifactKey != "" {
+				done[artifact.ArtifactKey] = artifact.ReviewStatus
+			}
+		}
+		fmt.Fprintln(os.Stdout, "\nartifacts this node owes:")
+		for _, requirement := range node.Definition.Artifacts {
+			state := "not submitted"
+			if status, exists := done[requirement.Key]; exists {
+				state = status
+			}
+			necessity := "optional"
+			if requirement.Required {
+				necessity = "required"
+			}
+			kind := requirement.Kind
+			if kind == "" {
+				kind = "document"
+			}
+			fmt.Fprintf(os.Stdout, "  %-20s %-10s %-9s %-14s %s\n",
+				requirement.Key, kind, necessity, state, requirement.Name)
+		}
+		fmt.Fprintln(os.Stdout,
+			"\nSubmit one with: multica workflow submit --artifact <key> --file <path>")
 	}
 	fmt.Fprintln(os.Stdout, "\nnodes:")
 	for _, node := range detail.Nodes {

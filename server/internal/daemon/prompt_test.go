@@ -1037,3 +1037,21 @@ func TestWorkflowPromptSectionTakesNoIdentifiers(t *testing.T) {
 		t.Error("workflow section embedded an issue id; the commands resolve it themselves")
 	}
 }
+
+// The submit endpoint only accepts an artifact key the node declared, so the
+// prompt has to send the agent to look them up. Telling it to submit without
+// telling it where the keys come from leaves it guessing at a 400.
+func TestWorkflowPromptSectionPointsAtKeyDiscovery(t *testing.T) {
+	section := workflowPromptSection()
+	if !strings.Contains(section, "multica workflow current") {
+		t.Error("prompt must send the agent to workflow current")
+	}
+	if !strings.Contains(section, "--artifact <key>") {
+		t.Error("prompt must show the artifact submit form")
+	}
+	for _, phrase := range []string{"owes", "fixed by the template"} {
+		if !strings.Contains(section, phrase) {
+			t.Errorf("prompt should explain where keys come from; missing %q", phrase)
+		}
+	}
+}

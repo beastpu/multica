@@ -58,14 +58,19 @@ func BuildPrompt(task Task, provider string) string {
 // answers "not part of a workflow" cheaply. Paying one command on ordinary
 // issues is a better trade than an extra round trip on every dispatch.
 func workflowPromptSection() string {
-	return "\nIf this issue is a workflow node, `multica workflow current` tells you " +
-		"which run and node you are in, and `multica workflow upstream` gives you each " +
-		"direct predecessor's handoff summary plus an index of what it produced. Read an " +
-		"artifact only when you need it: `multica workflow artifact get <artifact-id>`.\n" +
-		"Before you finish, hand off with `multica workflow submit --summary \"<conclusion, " +
-		"risks, what the next node should watch for>\"`, and attach any artifact the node " +
-		"requires with `--artifact <key> --file <path>`. A node that owes an artifact or a " +
-		"summary will not advance without them.\n"
+	return "\nIf this issue is a workflow node, run `multica workflow current` first. It " +
+		"names the run and node you are in and lists the artifacts this node owes, with " +
+		"the key each one is submitted under — those keys are fixed by the template, so " +
+		"read them rather than inventing one. `multica workflow upstream` gives you each " +
+		"direct predecessor's handoff summary plus an index of what it produced; read a " +
+		"body only when you need it, with `multica workflow artifact get <artifact-id>`.\n" +
+		"Before you finish, submit each artifact the node owes and hand off:\n" +
+		"  multica workflow submit --artifact <key> --file <path-to-your-document>\n" +
+		"  multica workflow submit --summary \"<conclusion, decisions, open risks, what " +
+		"the next node should watch for>\"\n" +
+		"Write the document to a file and submit that file — the summary is the short " +
+		"conclusion the next node reads first, not a copy of the document. A node that " +
+		"owes an artifact or a summary will not advance without them.\n"
 }
 
 func isP4AssessmentTask(task Task) bool {
