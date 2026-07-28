@@ -1345,10 +1345,13 @@ func (h *Handler) materializeWorkflowTask(
 	if err := json.Unmarshal(claimed.DefinitionSnapshot, &template); err != nil {
 		return h.failWorkflowTaskMaterialization(ctx, workspaceID, task.ID, "invalid task definition")
 	}
+	var nodeDefinition workflowdomain.NodeDefinition
+	_ = json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition)
 	host, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: instance.HostIssueID, WorkspaceID: workspaceID})
 	if err != nil {
 		return h.failWorkflowTaskMaterialization(ctx, workspaceID, task.ID, "host issue not found")
 	}
+	hostIdentifier := h.getIssuePrefix(ctx, workspaceID) + "-" + strconv.Itoa(int(host.Number))
 	title := strings.ReplaceAll(template.Title, "{{host.title}}", host.Title)
 	status := template.InitialStatus
 	if status == "" {
@@ -1360,9 +1363,11 @@ func (h *Handler) materializeWorkflowTask(
 	}
 	result, err := h.IssueService.Create(ctx, service.IssueCreateParams{
 		WorkspaceID: workspaceID, Title: title,
-		Description: pgtype.Text{
-			String: template.Description, Valid: strings.TrimSpace(template.Description) != "",
-		},
+		Description: workflowTaskIssueDescription(
+			template.Description,
+			nodeDefinition.Description,
+			hostIdentifier,
+		),
 		Status: status, Priority: priority,
 		AssigneeType: resolution.ActorType, AssigneeID: resolution.ActorID,
 		CreatorType: "member", CreatorID: instance.StartedByID,
@@ -1396,6 +1401,44 @@ func (h *Handler) materializeWorkflowTask(
 		h.stampWorkflowIssueMetadata(ctx, workspaceID, result.Issue, instance, node, host)
 	}
 	return err
+}
+
+// workflowHostReferencePrefix opens the blockquote line that points a node
+// child issue back at the requirement the workflow runs for.
+const workflowHostReferencePrefix = "> Parent requirement: "
+
+// workflowTaskIssueDescription composes a node child issue's description from
+// the task instructions and a reference to the host issue.
+//
+// The reference carries the bare identifier and nothing else. The frontend
+// already autolinks identifiers into an issue mention card that renders the
+// title and status, so repeating them here would only create a second copy to
+// drift. Copying the host description itself would be worse: every node child
+// issue would hold its own snapshot of the requirement, and none of them would
+// follow an edit to the original.
+//
+// English matches the rest of the server's generated content; there is no i18n
+// layer on this side.
+func workflowTaskIssueDescription(
+	templateDescription string,
+	nodeDescription string,
+	hostIdentifier string,
+) pgtype.Text {
+	instructions := strings.TrimSpace(templateDescription)
+	if instructions == "" {
+		instructions = strings.TrimSpace(nodeDescription)
+	}
+	parts := make([]string, 0, 2)
+	if instructions != "" {
+		parts = append(parts, instructions)
+	}
+	if reference := strings.TrimSpace(hostIdentifier); reference != "" {
+		parts = append(parts, workflowHostReferencePrefix+reference)
+	}
+	if len(parts) == 0 {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: strings.Join(parts, "\n\n"), Valid: true}
 }
 
 // workflowIssueMetadataKey is the reserved namespace under issue.metadata that
