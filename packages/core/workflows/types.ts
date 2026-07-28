@@ -10,13 +10,6 @@ export interface WorkflowRoleDefinition {
   default_actor_id?: string;
 }
 
-export interface WorkflowSubmissionField {
-  key: string;
-  name: string;
-  type: string;
-  required: boolean;
-}
-
 export interface WorkflowIssueTemplate {
   key: string;
   title: string;
@@ -77,7 +70,6 @@ export interface WorkflowNodeDefinition {
   issue_templates?: WorkflowIssueTemplate[];
   submission_schema?: {
     policy?: "none" | "single" | "per_required_task" | "fan_in";
-    fields: WorkflowSubmissionField[];
   };
   verdict?: {
     evaluator: string;

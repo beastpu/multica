@@ -184,42 +184,6 @@ describe("SubmissionPanel", () => {
     vi.clearAllMocks();
   });
 
-  it("validates required schema fields and submits typed actor values", async () => {
-    const user = userEvent.setup();
-    renderSubmissionPanel();
-
-    const submit = screen.getByRole("button", { name: "Submit result" });
-    expect(submit).toBeDisabled();
-    expect(screen.queryByRole("option", { name: "Build Agent" }))
-      .not.toBeInTheDocument();
-
-    await user.type(
-      screen.getAllByRole("textbox", { name: /Summary/ })[0]!,
-      "Ready",
-    );
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: /Approved/ }),
-      "false",
-    );
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: /Reviewer/ }),
-      "member-1",
-    );
-    expect(submit).toBeEnabled();
-    await user.click(submit);
-
-    expect(mocks.submit).toHaveBeenCalledWith({
-      payload: {
-        summary: "Ready",
-        approved: false,
-        reviewer: "member-1",
-      },
-      summary: "",
-      source_issue_id: undefined,
-      proposed_tasks: [],
-    }, expect.any(Object));
-  });
-
   it("keeps all submission revisions visible", () => {
     const revisions = [2, 1].map((revision) => ({
       id: `submission-${revision}`,

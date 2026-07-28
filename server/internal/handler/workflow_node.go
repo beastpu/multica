@@ -398,7 +398,10 @@ func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Re
 		))
 		return
 	}
-	reasons := workflowdomain.ValidateSubmissionPayload(nodeDefinition.SubmissionSchema, req.Payload)
+	// With user-defined fields gone there is nothing left to validate a payload
+	// against; what a node owes is now expressed as artifacts, a handoff summary
+	// and a choice, each checked on its own terms.
+	var reasons []workflowdomain.WaitingReason
 	status := "valid"
 	if len(reasons) > 0 {
 		status = "invalid"
@@ -1843,14 +1846,6 @@ func (h *Handler) evaluateWorkflowNode(
 			Code: "valid_submission_required", Message: "A valid structured submission is required",
 		}}, submission, db.WorkflowNodeVerdict{}, nil
 	}
-	if submission.ID.Valid {
-		if validation := workflowdomain.ValidateSubmissionPayload(
-			nodeDefinition.SubmissionSchema,
-			decodeWorkflowObject(submission.Payload),
-		); len(validation) > 0 {
-			return false, validation, submission, db.WorkflowNodeVerdict{}, nil
-		}
-	}
 	// The handoff summary is what the next node reads first, so a node that
 	// owes one is not finished without it. Checked against the live submission
 	// rather than any submission: an earlier revision's conclusion described
@@ -2256,9 +2251,19 @@ func (h *Handler) workflowNodeChoiceTargets(
 	if err != nil {
 		return nil, err
 	}
-	targets := make(map[string]struct{}, len(plan.Outgoing[node.NodeKey]))
-	for _, edge := range plan.Outgoing[node.NodeKey] {
-		targets[edge.To] = struct{}{}
+	// A choice names a branch, but the branch usually belongs to a gateway
+	// downstream rather than to the deciding node itself — a node with one
+	// outgoing edge still decides, and a gateway routes on what it decided.
+	// The range is therefore everything reachable from this node: still fixed
+	// by the graph, wide enough for the shape branching actually takes.
+	targets := map[string]struct{}{}
+	for _, candidate := range plan.Ordered {
+		if candidate.Key == node.NodeKey {
+			continue
+		}
+		if workflowdomain.PathExists(plan, node.NodeKey, candidate.Key) {
+			targets[candidate.Key] = struct{}{}
+		}
 	}
 	return targets, nil
 }

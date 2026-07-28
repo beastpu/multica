@@ -1,14 +1,43 @@
 {
   "schema_version": 1,
   "name": "产品需求研发",
-  "applies_to": {"kind": "issue"},
+  "applies_to": {
+    "kind": "issue"
+  },
   "roles": [
-    {"key": "product_owner", "name": "产品负责人", "required": true, "allowed_actor_types": ["member"]},
-    {"key": "developer", "name": "开发执行者", "required": true, "allowed_actor_types": ["member", "agent", "squad"]},
-    {"key": "approver", "name": "验收人", "required": true, "allowed_actor_types": ["member"]}
+    {
+      "key": "product_owner",
+      "name": "产品负责人",
+      "required": true,
+      "allowed_actor_types": [
+        "member"
+      ]
+    },
+    {
+      "key": "developer",
+      "name": "开发执行者",
+      "required": true,
+      "allowed_actor_types": [
+        "member",
+        "agent",
+        "squad"
+      ]
+    },
+    {
+      "key": "approver",
+      "name": "验收人",
+      "required": true,
+      "allowed_actor_types": [
+        "member"
+      ]
+    }
   ],
   "nodes": [
-    {"key": "start", "kind": "start", "name": "开始"},
+    {
+      "key": "start",
+      "kind": "start",
+      "name": "开始"
+    },
     {
       "key": "review",
       "kind": "activity",
@@ -25,7 +54,10 @@
           "initial_status": "todo"
         }
       ],
-      "completion": {"mode": "automatic", "required_issue_outcome": "done"}
+      "completion": {
+        "mode": "automatic",
+        "required_issue_outcome": "done"
+      }
     },
     {
       "key": "plan",
@@ -35,8 +67,13 @@
       "owner_role": "product_owner",
       "executor": {
         "strategies": [
-          {"kind": "fixed_role", "role": "developer"},
-          {"kind": "manual"}
+          {
+            "kind": "fixed_role",
+            "role": "developer"
+          },
+          {
+            "kind": "manual"
+          }
         ]
       },
       "issue_policy": "fixed",
@@ -49,18 +86,21 @@
           "initial_status": "todo"
         }
       ],
-      "submission_schema": {
-        "policy": "single",
-        "fields": [
-          {"key": "design_summary", "name": "方案摘要", "type": "text", "required": true}
-        ]
-      },
       "completion": {
         "mode": "automatic",
         "required_issue_outcome": "done",
-        "submission_required": true,
-        "confirmation": "owner_any"
-      }
+        "confirmation": "owner_any",
+        "handoff_required": true
+      },
+      "artifacts": [
+        {
+          "key": "design_doc",
+          "name": "技术方案",
+          "description": "覆盖实现路径、影响范围与验证方式",
+          "kind": "document",
+          "required": true
+        }
+      ]
     },
     {
       "key": "implement",
@@ -70,8 +110,13 @@
       "owner_role": "developer",
       "executor": {
         "strategies": [
-          {"kind": "fixed_role", "role": "developer"},
-          {"kind": "manual"}
+          {
+            "kind": "fixed_role",
+            "role": "developer"
+          },
+          {
+            "kind": "manual"
+          }
         ]
       },
       "issue_policy": "fixed_and_dynamic",
@@ -84,7 +129,10 @@
           "initial_status": "todo"
         }
       ],
-      "completion": {"mode": "automatic", "required_issue_outcome": "done"}
+      "completion": {
+        "mode": "automatic",
+        "required_issue_outcome": "done"
+      }
     },
     {
       "key": "acceptance",
@@ -94,19 +142,41 @@
       "description": "验收人确认业务结果，不通过可退回方案设计或代码实施。",
       "owner_role": "approver"
     },
-    {"key": "end", "kind": "end", "name": "完成"}
+    {
+      "key": "end",
+      "kind": "end",
+      "name": "完成"
+    }
   ],
   "edges": [
-    {"from": "start", "to": "review"},
-    {"from": "review", "to": "plan"},
-    {"from": "plan", "to": "implement"},
-    {"from": "implement", "to": "acceptance"},
-    {"from": "acceptance", "to": "end"}
+    {
+      "from": "start",
+      "to": "review"
+    },
+    {
+      "from": "review",
+      "to": "plan"
+    },
+    {
+      "from": "plan",
+      "to": "implement"
+    },
+    {
+      "from": "implement",
+      "to": "acceptance"
+    },
+    {
+      "from": "acceptance",
+      "to": "end"
+    }
   ],
   "acceptance": {
     "policy": "member",
     "approver_role": "approver",
     "node_key": "acceptance",
-    "rework_targets": ["plan", "implement"]
+    "rework_targets": [
+      "plan",
+      "implement"
+    ]
   }
 }

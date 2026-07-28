@@ -9,7 +9,6 @@ import type {
   WorkflowNodeAction,
   WorkflowNodeDefinition,
   WorkflowRoleDefinition,
-  WorkflowSubmissionField,
 } from "@multica/core/workflows";
 import { workflowCompletionMode } from "@multica/core/workflows";
 import { Button } from "@multica/ui/components/ui/button";
@@ -32,20 +31,10 @@ function Label({ className, ...props }: React.ComponentProps<typeof UILabel>) {
 }
 
 const actorTypes = ["member", "agent", "squad"] as const;
-const fieldTypes = [
-  "text",
-  "number",
-  "boolean",
-  "date",
-  "member",
-  "agent",
-  "squad",
-] as const;
 const executorKinds = [
   "fixed_actor",
   "fixed_role",
   "fallback_role",
-  "previous_selected",
   "capability_match",
   "manual",
 ] as const;
@@ -702,8 +691,6 @@ function ExecutorEditor({
         return t(($) => $.editor.executor_kind_fixed_role);
       case "fallback_role":
         return t(($) => $.editor.executor_kind_fallback_role);
-      case "previous_selected":
-        return t(($) => $.editor.executor_kind_previous_selected);
       case "capability_match":
         return t(($) => $.editor.executor_kind_capability_match);
       case "manual":
@@ -720,8 +707,6 @@ function ExecutorEditor({
         return t(($) => $.editor.executor_kind_fixed_role_hint);
       case "fallback_role":
         return t(($) => $.editor.executor_kind_fallback_role_hint);
-      case "previous_selected":
-        return t(($) => $.editor.executor_kind_previous_selected_hint);
       case "capability_match":
         return t(($) => $.editor.executor_kind_capability_match_hint);
       case "manual":
@@ -852,50 +837,6 @@ function ExecutorEditor({
                 })}
               />
             </div>
-          )}
-          {strategy.kind === "previous_selected" && (
-            <>
-              <div className="space-y-1.5">
-                <Label>{t(($) => $.editor.source_node)}</Label>
-                <select
-                  value={strategy.node ?? ""}
-                  disabled={readOnly}
-                  className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-                  onChange={(event) => update(index, {
-                    ...strategy,
-                    node: event.target.value || undefined,
-                    field: undefined,
-                  })}
-                >
-                  <option value="">—</option>
-                  {definition.nodes.filter((item) =>
-                    item.kind === "activity" && item.key !== node.key
-                  ).map((item) => (
-                    <option key={item.key} value={item.key}>{item.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>{t(($) => $.editor.source_field)}</Label>
-                <select
-                  value={strategy.field ?? ""}
-                  disabled={readOnly || !strategy.node}
-                  className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-                  onChange={(event) => update(index, {
-                    ...strategy,
-                    field: event.target.value || undefined,
-                  })}
-                >
-                  <option value="">—</option>
-                  {definition.nodes.find((item) => item.key === strategy.node)
-                    ?.submission_schema?.fields.filter((field) =>
-                      actorTypes.includes(field.type as typeof actorTypes[number])
-                    ).map((field) => (
-                      <option key={field.key} value={field.key}>{field.name}</option>
-                    ))}
-                </select>
-              </div>
-            </>
           )}
         </div>
       ))}
@@ -1130,149 +1071,43 @@ function SubmissionEditor({
   onChange: (node: WorkflowNodeDefinition) => void;
 }) {
   const { t } = useT("workflows");
-  const schema = node.submission_schema;
-  const policy = schema?.policy ?? (schema ? "single" : "none");
-  const fields = schema?.fields ?? [];
-  const fieldTypeLabel = (type: string) => {
-    switch (type) {
-      case "text":
-        return t(($) => $.editor.field_type_text);
-      case "number":
-        return t(($) => $.editor.field_type_number);
-      case "boolean":
-        return t(($) => $.editor.field_type_boolean);
-      case "date":
-        return t(($) => $.editor.field_type_date);
-      case "member":
-        return t(($) => $.editor.field_type_member);
-      case "agent":
-        return t(($) => $.editor.field_type_agent);
-      case "squad":
-        return t(($) => $.editor.field_type_squad);
-      default:
-        return type;
-    }
-  };
-  const updateField = (index: number, field: WorkflowSubmissionField) => {
-    const next = [...fields];
-    next[index] = field;
-    onChange({ ...node, submission_schema: { policy: policy === "none" ? "single" : policy, fields: next } });
-  };
+  const policy = node.submission_schema?.policy ?? "none";
 
+  // Only how many results a node submits is configurable. What a node produces
+  // is declared as an artifact, its conclusion is the handoff summary, and its
+  // branch is a node choice — three fixed shapes, so there is no form to build.
   return (
-    <div className="space-y-3">
-      <div className="space-y-1.5">
-        <Label>{t(($) => $.editor.submission_policy)}</Label>
-        <select
-          value={policy}
-          disabled={readOnly}
-          className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-          onChange={(event) => {
-            const nextPolicy = event.target.value as "none" | "single" | "per_required_task" | "fan_in";
-            onChange({
-              ...node,
-              submission_schema: nextPolicy === "none"
-                ? undefined
-                : { policy: nextPolicy, fields },
-              completion: {
-                ...(node.completion ?? {}),
-                submission_required: nextPolicy === "none"
-                  ? false
-                  : (node.completion?.submission_required ?? true),
-              },
-            });
-          }}
-        >
-          <option value="none">{t(($) => $.editor.submission_none)}</option>
-          <option value="single">{t(($) => $.editor.submission_single)}</option>
-          <option value="per_required_task">{t(($) => $.editor.submission_per_task)}</option>
-          <option value="fan_in">{t(($) => $.editor.submission_fan_in)}</option>
-        </select>
-      </div>
-      {policy !== "none" && (
-        <>
-          {fields.map((field, index) => (
-            <div key={field.key} className="space-y-3 rounded-lg border p-2.5">
-              <div className="flex items-start gap-2">
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  <Label>{t(($) => $.editor.field_name)}</Label>
-                  <Input
-                    value={field.name}
-                    disabled={readOnly}
-                    className="min-h-9 text-xs"
-                    onChange={(event) => updateField(index, {
-                      ...field,
-                      name: event.target.value,
-                    })}
-                  />
-                  <p className="font-mono text-xs text-muted-foreground">{field.key}</p>
-                </div>
-                <RemoveButton
-                  label={t(($) => $.actions.remove)}
-                  disabled={readOnly}
-                  onClick={() => onChange({
-                    ...node,
-                    submission_schema: {
-                      policy: policy as "single" | "per_required_task" | "fan_in",
-                      fields: fields.filter((item) => item.key !== field.key),
-                    },
-                  })}
-                />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label>{t(($) => $.editor.field_type)}</Label>
-                  <select
-                    value={field.type}
-                    disabled={readOnly}
-                    className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-                    onChange={(event) => updateField(index, {
-                      ...field,
-                      type: event.target.value,
-                    })}
-                  >
-                    {fieldTypes.map((type) => (
-                      <option key={type} value={type}>{fieldTypeLabel(type)}</option>
-                    ))}
-                  </select>
-                </div>
-                <label className="flex min-h-9 items-center gap-2 pt-5 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={field.required}
-                    disabled={readOnly}
-                    onChange={(event) => updateField(index, {
-                      ...field,
-                      required: event.target.checked,
-                    })}
-                  />
-                  {t(($) => $.editor.field_required)}
-                </label>
-              </div>
-            </div>
-          ))}
-          {!readOnly && (
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-9 w-full"
-              onClick={() => {
-                const key = stableKey("field");
-                onChange({
-                  ...node,
-                  submission_schema: {
-                    policy: policy as "single" | "per_required_task" | "fan_in",
-                    fields: [...fields, { key, name: t(($) => $.editor.new_field), type: "text", required: true }],
-                  },
-                });
-              }}
-            >
-              <Plus />
-              {t(($) => $.editor.add_submission_field)}
-            </Button>
-          )}
-        </>
-      )}
+    <div className="space-y-1.5">
+      <Label>{t(($) => $.editor.submission_policy)}</Label>
+      <select
+        value={policy}
+        disabled={readOnly}
+        className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
+        onChange={(event) => {
+          const nextPolicy = event.target.value as
+            | "none"
+            | "single"
+            | "per_required_task"
+            | "fan_in";
+          onChange({
+            ...node,
+            submission_schema: nextPolicy === "none"
+              ? undefined
+              : { policy: nextPolicy },
+            completion: {
+              ...(node.completion ?? {}),
+              submission_required: nextPolicy === "none"
+                ? false
+                : (node.completion?.submission_required ?? true),
+            },
+          });
+        }}
+      >
+        <option value="none">{t(($) => $.editor.submission_none)}</option>
+        <option value="single">{t(($) => $.editor.submission_single)}</option>
+        <option value="per_required_task">{t(($) => $.editor.submission_per_task)}</option>
+        <option value="fan_in">{t(($) => $.editor.submission_fan_in)}</option>
+      </select>
     </div>
   );
 }

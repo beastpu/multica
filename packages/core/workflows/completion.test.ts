@@ -31,10 +31,7 @@ describe("workflowCompletionMode", () => {
   it("preserves legacy implicit manual and automatic behavior", () => {
     expect(workflowCompletionMode(activity())).toBe("manual");
     expect(workflowCompletionMode(activity({
-      submission_schema: {
-        policy: "single",
-        fields: [],
-      },
+      submission_schema: { policy: "single" },
     }))).toBe("automatic");
     expect(workflowCompletionMode(activity({
       issue_templates: [{

@@ -50,10 +50,8 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 				IssueTemplates: []workflowdomain.IssueTemplate{{
 					Key: "implementation", Title: "Implement {{host.title}}", AssigneeRole: "owner", Required: true,
 				}},
-				SubmissionSchema: &workflowdomain.SubmissionSchema{Fields: []workflowdomain.SubmissionField{{
-					Key: "result", Name: "Result", Type: "text", Required: true,
-				}}},
-				Verdict: &workflowdomain.VerdictDefinition{Evaluator: "member", RequiredResult: "pass"},
+				SubmissionSchema: &workflowdomain.SubmissionSchema{},
+				Verdict:          &workflowdomain.VerdictDefinition{Evaluator: "member", RequiredResult: "pass"},
 				Completion: workflowdomain.CompletionDefinition{
 					RequiredIssueOutcome: "done", SubmissionRequired: true,
 					VerdictRequired: "pass", Confirmation: "owner_any",
@@ -1371,10 +1369,8 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 			{
 				Key: "analysis", Kind: "activity", Name: "Analysis", OwnerRole: "owner",
 				Executor: ownerExecutor, IssuePolicy: "fixed",
-				IssueTemplates: requiredIssue("analysis_issue", "Analyze {{host.title}}"),
-				SubmissionSchema: &workflowdomain.SubmissionSchema{Fields: []workflowdomain.SubmissionField{{
-					Key: "needs_review", Name: "Needs review", Type: "boolean", Required: true,
-				}}},
+				IssueTemplates:   requiredIssue("analysis_issue", "Analyze {{host.title}}"),
+				SubmissionSchema: &workflowdomain.SubmissionSchema{},
 				Completion: workflowdomain.CompletionDefinition{
 					RequiredIssueOutcome: "done", SubmissionRequired: true,
 				},
@@ -1411,11 +1407,11 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 			{
 				From: "route", To: "review",
 				Condition: json.RawMessage(`{
-					"source":"node_submission",
+					"source":"node_choice",
 					"node":"analysis",
-					"key":"needs_review",
+					"key":"choice",
 					"op":"eq",
-					"value":true
+					"value":"review"
 				}`),
 			},
 			{From: "route", To: "direct", Default: true},
@@ -1465,9 +1461,9 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 	analysisIssueID := workflowTaskIssueForNode(t, started.Tasks, analysisNode.ID)
 	implementationIssueID := workflowTaskIssueForNode(t, started.Tasks, implementationNode.ID)
 
-	postWorkflowSubmissionPayload(t, analysisNode.ID, "dag-analysis-submission", map[string]any{
-		"needs_review": true,
-	})
+	postWorkflowSubmissionChoice(
+		t, analysisNode.ID, "dag-analysis-submission", map[string]any{}, "review",
+	)
 	completeWorkflowIssue(t, analysisIssueID)
 	reconcileWorkflowForTest(t, instanceID, "dag-after-analysis")
 	analysisAfter := latestWorkflowNodeForTest(t, instanceID, "analysis")
@@ -1815,108 +1811,6 @@ func TestWorkflowManualExecutorPausesAndResumesSetup(t *testing.T) {
 	}
 }
 
-func TestWorkflowPreviousSelectedExecutorUsesValidatedSubmission(t *testing.T) {
-	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
-	cleanupWorkflowRuntimeTest(t)
-	ctx := context.Background()
-	agentID := createHandlerTestAgent(t, "workflow-previous-selected-agent", nil)
-
-	definition := workflowdomain.Definition{
-		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
-		Name:          "Previous selected executor",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
-		Roles: []workflowdomain.RoleDefinition{{
-			Key: "owner", Name: "Owner", Required: true,
-			AllowedActorTypes: []string{"member"},
-		}},
-		Nodes: []workflowdomain.NodeDefinition{
-			{Key: "start", Kind: "start", Name: "Start"},
-			{
-				Key: "select", Kind: "activity", Name: "Select executor",
-				OwnerRole: "owner", IssuePolicy: "none",
-				SubmissionSchema: &workflowdomain.SubmissionSchema{
-					Fields: []workflowdomain.SubmissionField{{
-						Key: "selected_agent", Name: "Selected agent",
-						Type: "agent", Required: true,
-					}},
-				},
-				Completion: workflowdomain.CompletionDefinition{SubmissionRequired: true},
-			},
-			{
-				Key: "work", Kind: "activity", Name: "Selected work",
-				OwnerRole: "owner", IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{Strategies: []workflowdomain.ExecutorStrategy{
-					{
-						Kind: "previous_selected", Node: "select",
-						Field: "selected_agent",
-					},
-					{Kind: "fallback_role", Role: "owner"},
-				}},
-				IssueTemplates: []workflowdomain.IssueTemplate{{
-					Key: "selected_task", Title: "Selected {{host.title}}", Required: true,
-				}},
-				Completion: workflowdomain.CompletionDefinition{
-					RequiredIssueOutcome: "done",
-				},
-			},
-			{Key: "end", Kind: "end", Name: "End"},
-		},
-		Edges: []workflowdomain.EdgeDefinition{
-			{From: "start", To: "select"}, {From: "select", To: "work"},
-			{From: "work", To: "end"},
-		},
-	}
-	if err := workflowdomain.ValidateDefinition(definition); err != nil {
-		t.Fatalf("previous selected definition invalid: %v", err)
-	}
-	templateID := createPublishedWorkflowTemplateForTest(
-		t, "Previous selected executor template", definition,
-	)
-	hostID := createWorkflowHostForTest(t, "Workflow executor previous host")
-	started := startWorkflowForTest(t, hostID, templateID, []map[string]any{{
-		"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
-	}}, "previous-executor-start")
-	selectNode := findWorkflowNodeResponse(t, started.Nodes, "select", 1)
-	postWorkflowSubmissionPayload(
-		t, selectNode.ID, "previous-executor-submission",
-		map[string]any{"selected_agent": agentID},
-	)
-	reconcileWorkflowForTest(t, started.Instance.ID, "previous-executor-reconcile")
-
-	workNode := latestWorkflowNodeForTest(t, started.Instance.ID, "work")
-	tasks, err := testHandler.Queries.ListWorkflowNodeTasks(
-		ctx,
-		db.ListWorkflowNodeTasksParams{
-			WorkflowNodeInstanceID: workNode.ID,
-			WorkspaceID:            parseUUID(testWorkspaceID),
-		},
-	)
-	if err != nil || len(tasks) != 1 || !tasks[0].IssueID.Valid {
-		t.Fatalf("previous-selected task = %#v, err=%v", tasks, err)
-	}
-	resolution, err := testHandler.Queries.GetWorkflowExecutorResolutionInWorkspace(
-		ctx,
-		db.GetWorkflowExecutorResolutionInWorkspaceParams{
-			ID: tasks[0].ExecutorResolutionID, WorkspaceID: parseUUID(testWorkspaceID),
-		},
-	)
-	if err != nil || resolution.Strategy != "previous_selected" ||
-		resolution.Status != "resolved" || uuidToString(resolution.ActorID) != agentID {
-		t.Fatalf("previous-selected resolution = %#v, err=%v", resolution, err)
-	}
-	var assigneeType *string
-	var assigneeID *string
-	if err := testPool.QueryRow(ctx, `
-		SELECT assignee_type, assignee_id::text FROM issue WHERE id = $1
-	`, tasks[0].IssueID).Scan(&assigneeType, &assigneeID); err != nil {
-		t.Fatalf("load previous-selected issue: %v", err)
-	}
-	if assigneeType == nil || *assigneeType != "agent" ||
-		assigneeID == nil || *assigneeID != agentID {
-		t.Fatalf("previous-selected issue assignee = %v/%v", assigneeType, assigneeID)
-	}
-}
-
 func TestWorkflowCapabilityMatchUsesStructuredEnabledSkill(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
@@ -2243,11 +2137,7 @@ func TestWorkflowAgentSubmissionAndVerdictRemainControlledSuggestion(t *testing.
 					Key: "agent_task", Title: "Agent {{host.title}}",
 					AssigneeRole: "worker", Required: true,
 				}},
-				SubmissionSchema: &workflowdomain.SubmissionSchema{
-					Fields: []workflowdomain.SubmissionField{{
-						Key: "result", Name: "Result", Type: "text", Required: true,
-					}},
-				},
+				SubmissionSchema: &workflowdomain.SubmissionSchema{},
 				Verdict: &workflowdomain.VerdictDefinition{
 					Evaluator: "member", RequiredResult: "pass",
 				},
@@ -2536,16 +2426,11 @@ func TestWorkflowDeterministicVerdictReevaluatesStructuredCondition(t *testing.T
 			{
 				Key: "decision", Kind: "activity", Name: "Decision",
 				OwnerRole: "owner", IssuePolicy: "none",
-				SubmissionSchema: &workflowdomain.SubmissionSchema{
-					Policy: "single",
-					Fields: []workflowdomain.SubmissionField{{
-						Key: "approved", Name: "Approved", Type: "boolean", Required: true,
-					}},
-				},
+				SubmissionSchema: &workflowdomain.SubmissionSchema{Policy: "single"},
 				Verdict: &workflowdomain.VerdictDefinition{
 					Evaluator: "deterministic", RequiredResult: "pass",
 					Condition: json.RawMessage(
-						`{"source":"node_submission","node":"decision","key":"approved","op":"eq","value":true}`,
+						`{"source":"node_choice","node":"decision","key":"choice","op":"eq","value":"end"}`,
 					),
 				},
 				Completion: workflowdomain.CompletionDefinition{
@@ -2570,11 +2455,8 @@ func TestWorkflowDeterministicVerdictReevaluatesStructuredCondition(t *testing.T
 	}}, "deterministic-verdict-start")
 	decision := findWorkflowNodeResponse(t, started.Nodes, "decision", 1)
 
-	postWorkflowSubmissionPayload(
-		t,
-		decision.ID,
-		"deterministic-verdict-fail",
-		map[string]any{"approved": false},
+	postWorkflowSubmissionChoice(
+		t, decision.ID, "deterministic-verdict-fail", map[string]any{}, "",
 	)
 	reconcileWorkflowForTest(t, started.Instance.ID, "deterministic-verdict-fail-reconcile")
 	waiting := latestWorkflowNodeForTest(t, started.Instance.ID, "decision")
@@ -2583,11 +2465,8 @@ func TestWorkflowDeterministicVerdictReevaluatesStructuredCondition(t *testing.T
 		t.Fatalf("deterministic fail node = %#v", waiting)
 	}
 
-	postWorkflowSubmissionPayload(
-		t,
-		decision.ID,
-		"deterministic-verdict-pass",
-		map[string]any{"approved": true},
+	postWorkflowSubmissionChoice(
+		t, decision.ID, "deterministic-verdict-pass", map[string]any{}, "end",
 	)
 	reconcileWorkflowForTest(t, started.Instance.ID, "deterministic-verdict-pass-reconcile")
 	instance, err := testHandler.Queries.GetWorkflowInstanceInWorkspace(
@@ -2763,12 +2642,7 @@ func TestWorkflowBlockedVerdictBlocksNodeUntilPassingRevision(t *testing.T) {
 			{
 				Key: "review", Kind: "activity", Name: "Review",
 				OwnerRole: "owner", IssuePolicy: "none",
-				SubmissionSchema: &workflowdomain.SubmissionSchema{
-					Policy: "single",
-					Fields: []workflowdomain.SubmissionField{{
-						Key: "result", Name: "Result", Type: "text", Required: true,
-					}},
-				},
+				SubmissionSchema: &workflowdomain.SubmissionSchema{Policy: "single"},
 				Verdict: &workflowdomain.VerdictDefinition{
 					Evaluator: "member", RequiredResult: "pass",
 				},
@@ -2875,12 +2749,7 @@ func TestWorkflowSubmissionReplayAfterNodeCompletion(t *testing.T) {
 			{
 				Key: "submit", Kind: "activity", Name: "Submit",
 				OwnerRole: "owner", IssuePolicy: "none",
-				SubmissionSchema: &workflowdomain.SubmissionSchema{
-					Policy: "single",
-					Fields: []workflowdomain.SubmissionField{{
-						Key: "result", Name: "Result", Type: "text", Required: true,
-					}},
-				},
+				SubmissionSchema: &workflowdomain.SubmissionSchema{Policy: "single"},
 				Completion: workflowdomain.CompletionDefinition{
 					SubmissionRequired: true,
 				},
@@ -2990,12 +2859,7 @@ func TestWorkflowInstanceListPersonalizesInterventionsAndCursorOrder(t *testing.
 			{
 				Key: "work", Kind: "activity", Name: "Work",
 				OwnerRole: "owner", IssuePolicy: "none",
-				SubmissionSchema: &workflowdomain.SubmissionSchema{
-					Policy: "single",
-					Fields: []workflowdomain.SubmissionField{{
-						Key: "result", Name: "Result", Type: "text", Required: true,
-					}},
-				},
+				SubmissionSchema: &workflowdomain.SubmissionSchema{Policy: "single"},
 				Completion: workflowdomain.CompletionDefinition{
 					SubmissionRequired: true,
 				},
@@ -3275,12 +3139,7 @@ func TestWorkflowPerRequiredTaskSubmissionPolicy(t *testing.T) {
 					{Key: "first", Title: "First {{host.title}}", Required: true},
 					{Key: "second", Title: "Second {{host.title}}", Required: true},
 				},
-				SubmissionSchema: &workflowdomain.SubmissionSchema{
-					Policy: "per_required_task",
-					Fields: []workflowdomain.SubmissionField{{
-						Key: "result", Name: "Result", Type: "text", Required: true,
-					}},
-				},
+				SubmissionSchema: &workflowdomain.SubmissionSchema{Policy: "per_required_task"},
 				Completion: workflowdomain.CompletionDefinition{
 					RequiredIssueOutcome: "done", SubmissionRequired: true,
 				},
@@ -3766,10 +3625,26 @@ func postWorkflowSubmissionPayload(
 	payload map[string]any,
 ) {
 	t.Helper()
-	recorder := httptest.NewRecorder()
-	request := withURLParam(newRequest(http.MethodPost, "/api/workflow-node-instances/"+nodeID+"/submissions?workspace_id="+testWorkspaceID, map[string]any{
+	postWorkflowSubmissionChoice(t, nodeID, idempotencyKey, payload, "")
+}
+
+// postWorkflowSubmissionChoice submits a node's result together with the branch
+// it picked. Branching reads the choice, not the payload.
+func postWorkflowSubmissionChoice(
+	t *testing.T,
+	nodeID, idempotencyKey string,
+	payload map[string]any,
+	choice string,
+) {
+	t.Helper()
+	body := map[string]any{
 		"payload": payload, "summary": "DAG result", "idempotency_key": idempotencyKey,
-	}), "nodeInstanceId", nodeID)
+	}
+	if choice != "" {
+		body["choice"] = choice
+	}
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(http.MethodPost, "/api/workflow-node-instances/"+nodeID+"/submissions?workspace_id="+testWorkspaceID, body), "nodeInstanceId", nodeID)
 	testHandler.CreateWorkflowNodeSubmission(recorder, request)
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("CreateWorkflowNodeSubmission DAG status = %d, body = %s", recorder.Code, recorder.Body.String())

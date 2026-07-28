@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
@@ -162,22 +161,6 @@ func resolveWorkflowTaskExecutor(
 					),
 				}, nil
 			}
-		case "previous_selected":
-			assignment, candidates, reason, err := resolvePreviousSelectedExecutor(
-				ctx, q, workspaceID, instance, strategy,
-			)
-			if err != nil {
-				return workflowExecutorDecision{}, err
-			}
-			if assignment != nil {
-				return workflowExecutorDecision{
-					Assignment: assignment, Strategy: strategy.Kind,
-					Candidates: candidates, Reason: reason,
-					Snapshot: workflowExecutorSnapshot(
-						strategy.Kind, "", "", strategy.Node, strategy.Field,
-					),
-				}, nil
-			}
 		case "capability_match":
 			assignment, candidates, reason, err := resolveCapabilityExecutor(
 				ctx, q, workspaceID, roles[strategy.Role], strategy.Capability,
@@ -222,64 +205,6 @@ func directWorkflowExecutorAssignment(
 		ActorID:   parsedActorID,
 		Source:    "template",
 	}, nil
-}
-
-func resolvePreviousSelectedExecutor(
-	ctx context.Context,
-	q *db.Queries,
-	workspaceID pgtype.UUID,
-	instance db.WorkflowInstance,
-	strategy workflowdomain.ExecutorStrategy,
-) (*validatedWorkflowRoleAssignment, []byte, string, error) {
-	sourceNode, err := q.GetLatestWorkflowNodeAttempt(ctx, db.GetLatestWorkflowNodeAttemptParams{
-		WorkflowInstanceID: instance.ID, WorkspaceID: workspaceID, NodeKey: strategy.Node,
-	})
-	if errors.Is(err, pgx.ErrNoRows) || !sourceNode.LatestSubmissionID.Valid {
-		return nil, []byte("[]"), "Upstream submission has no selected actor", nil
-	}
-	if err != nil {
-		return nil, nil, "", err
-	}
-	submission, err := q.GetWorkflowSubmissionInWorkspace(ctx, db.GetWorkflowSubmissionInWorkspaceParams{
-		ID: sourceNode.LatestSubmissionID, WorkspaceID: workspaceID,
-	})
-	if err != nil || submission.Status != "valid" {
-		return nil, []byte("[]"), "Upstream submission is not valid", nil
-	}
-	payload := map[string]any{}
-	if json.Unmarshal(submission.Payload, &payload) != nil {
-		return nil, []byte("[]"), "Upstream submission payload is invalid", nil
-	}
-	actorIDText, ok := payload[strategy.Field].(string)
-	if !ok || strings.TrimSpace(actorIDText) == "" {
-		return nil, []byte("[]"), "Upstream submission did not select an actor", nil
-	}
-	actorID, err := util.ParseUUID(actorIDText)
-	if err != nil {
-		return nil, []byte("[]"), "Upstream submission selected an invalid actor", nil
-	}
-	var sourceDefinition workflowdomain.NodeDefinition
-	if json.Unmarshal(sourceNode.DefinitionSnapshot, &sourceDefinition) != nil ||
-		sourceDefinition.SubmissionSchema == nil {
-		return nil, nil, "", errors.New("upstream workflow node definition is invalid")
-	}
-	actorType := ""
-	for _, field := range sourceDefinition.SubmissionSchema.Fields {
-		if field.Key == strategy.Field {
-			actorType = field.Type
-			break
-		}
-	}
-	assignment := validatedWorkflowRoleAssignment{
-		ActorType: actorType, ActorID: actorID, Source: "copied",
-	}
-	if err := validateWorkflowExecutorActor(ctx, q, workspaceID, assignment); err != nil {
-		return nil, workflowExecutorCandidates(assignment),
-			"Upstream selected actor is unavailable", nil
-	}
-	return &assignment, workflowExecutorCandidates(assignment),
-		"Resolved from validated upstream submission " + strategy.Node + "." + strategy.Field,
-		nil
 }
 
 func resolveCapabilityExecutor(

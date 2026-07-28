@@ -49,22 +49,6 @@ func ValidateCondition(raw json.RawMessage, nodes map[string]NodeDefinition) err
 			if !validKey(expression.Key) {
 				return fmt.Errorf("invalid host_property key %q", expression.Key)
 			}
-		case "node_submission":
-			node, ok := nodes[expression.Node]
-			if !ok || node.Kind != "activity" || node.SubmissionSchema == nil {
-				return fmt.Errorf("node_submission references unknown submission node %q", expression.Node)
-			}
-			found := false
-			for _, field := range node.SubmissionSchema.Fields {
-				found = found || field.Key == expression.Key
-			}
-			if !found {
-				return fmt.Errorf(
-					"node_submission references unknown field %q on node %q",
-					expression.Key,
-					expression.Node,
-				)
-			}
 		case "node_choice":
 			// The value is the key of an outgoing node, so validity is a graph
 			// question, not a schema one: the referenced node must exist, and

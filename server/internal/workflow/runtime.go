@@ -114,35 +114,6 @@ func IsAcceptanceActivity(definition Definition, node NodeDefinition) bool {
 		(node.ActivityMode == "acceptance" || definition.Acceptance.NodeKey == node.Key)
 }
 
-// ValidateSubmissionPayload validates the transport-neutral payload against
-// the node's published schema. Unknown fields are retained for forward
-// compatibility, while every declared field is type checked.
-func ValidateSubmissionPayload(schema *SubmissionSchema, payload map[string]any) []WaitingReason {
-	if schema == nil {
-		return nil
-	}
-	reasons := make([]WaitingReason, 0)
-	for _, field := range schema.Fields {
-		value, exists := payload[field.Key]
-		if !exists || value == nil {
-			if field.Required {
-				reasons = append(reasons, WaitingReason{
-					Code: "submission_required_field_missing", Field: field.Key,
-					Message: fmt.Sprintf("%s is required", field.Name),
-				})
-			}
-			continue
-		}
-		if !submissionValueMatches(field.Type, value) {
-			reasons = append(reasons, WaitingReason{
-				Code: "submission_field_type_invalid", Field: field.Key,
-				Message: fmt.Sprintf("%s must be %s", field.Name, field.Type),
-			})
-		}
-	}
-	return reasons
-}
-
 func submissionValueMatches(fieldType string, value any) bool {
 	switch fieldType {
 	case "text", "member", "agent", "squad":

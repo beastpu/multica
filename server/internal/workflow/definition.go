@@ -151,16 +151,13 @@ func RequiredArtifacts(node NodeDefinition) []ArtifactRequirement {
 	return required
 }
 
+// SubmissionSchema carries only how many results a node submits. The
+// user-defined field list is gone: a node's business output is an artifact, its
+// conclusion is the handoff summary, and its branch decision is a node choice —
+// three system-defined shapes that cover what fields were used for, without
+// asking a template author to design a form per node.
 type SubmissionSchema struct {
-	Policy string            `json:"policy,omitempty"`
-	Fields []SubmissionField `json:"fields"`
-}
-
-type SubmissionField struct {
-	Key      string `json:"key"`
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Required bool   `json:"required"`
+	Policy string `json:"policy,omitempty"`
 }
 
 type VerdictDefinition struct {
@@ -282,6 +279,9 @@ func ValidateDefinition(definition Definition) error {
 	if err := validateGraph(nodes, startKey, definition.Edges); err != nil {
 		return err
 	}
+	if err := validateVerdictConditions(definition.Nodes, nodes, definition.Edges); err != nil {
+		return err
+	}
 	if err := validateExecutorReferences(definition.Nodes, nodes, roles, definition.Edges); err != nil {
 		return err
 	}
@@ -383,7 +383,6 @@ func validateNodes(definitions []NodeDefinition, roles map[string]RoleDefinition
 		}
 		taskCount += len(node.IssueTemplates)
 		if node.SubmissionSchema != nil {
-			submissionFieldCount += len(node.SubmissionSchema.Fields)
 		}
 		nodes[node.Key] = node
 	}
@@ -520,40 +519,12 @@ func validateActivity(
 		switch policy {
 		case "single", "per_required_task", "fan_in":
 		case "none":
-			if len(node.SubmissionSchema.Fields) > 0 {
-				return fmt.Errorf(
-					"activity %q submission policy none cannot declare fields",
-					node.Key,
-				)
-			}
 		default:
 			return fmt.Errorf(
 				"activity %q has invalid submission policy %q",
 				node.Key,
 				node.SubmissionSchema.Policy,
 			)
-		}
-		fieldKeys := map[string]struct{}{}
-		for _, field := range node.SubmissionSchema.Fields {
-			if !validKey(field.Key) {
-				return fmt.Errorf("activity %q has invalid submission field key %q", node.Key, field.Key)
-			}
-			if _, exists := fieldKeys[field.Key]; exists {
-				return fmt.Errorf("activity %q has duplicate submission field key %q", node.Key, field.Key)
-			}
-			fieldKeys[field.Key] = struct{}{}
-			if strings.TrimSpace(field.Name) == "" {
-				return fmt.Errorf(
-					"activity %q submission field %q name is required",
-					node.Key,
-					field.Key,
-				)
-			}
-			switch field.Type {
-			case "text", "number", "boolean", "date", "member", "agent", "squad":
-			default:
-				return fmt.Errorf("activity %q field %q has invalid type %q", node.Key, field.Key, field.Type)
-			}
 		}
 	}
 	if node.Verdict != nil {
@@ -829,13 +800,6 @@ func validateExecutor(node NodeDefinition, roles map[string]RoleDefinition) erro
 			if !hasJSONValue(strategy.Condition) {
 				hasFallback = true
 			}
-		case "previous_selected":
-			if !validKey(strategy.Node) || !validKey(strategy.Field) {
-				return fmt.Errorf(
-					"activity %q previous_selected requires node and field",
-					node.Key,
-				)
-			}
 		case "capability_match":
 			if strings.TrimSpace(strategy.Capability) == "" {
 				return fmt.Errorf("activity %q capability_match requires capability", node.Key)
@@ -927,41 +891,17 @@ func validateExecutorReferences(
 					}
 				}
 			}
-			if strategy.Kind != "previous_selected" {
-				continue
-			}
-			source, ok := nodes[strategy.Node]
-			if !ok || source.Kind != "activity" || source.SubmissionSchema == nil {
-				return fmt.Errorf(
-					"activity %q previous_selected references unknown submission node %q",
-					node.Key,
-					strategy.Node,
-				)
-			}
-			fieldType := ""
-			for _, field := range source.SubmissionSchema.Fields {
-				if field.Key == strategy.Field {
-					fieldType = field.Type
-					break
-				}
-			}
-			switch fieldType {
-			case "member", "agent", "squad":
-			default:
-				return fmt.Errorf(
-					"activity %q previous_selected field %q must be member, agent, or squad",
-					node.Key,
-					strategy.Field,
-				)
-			}
-			if !workflowPathExists(strategy.Node, node.Key, edges) {
-				return fmt.Errorf(
-					"activity %q previous_selected node %q must be upstream",
-					node.Key,
-					strategy.Node,
-				)
-			}
 		}
+	}
+	return nil
+}
+
+func validateVerdictConditions(
+	nodeDefinitions []NodeDefinition,
+	nodes map[string]NodeDefinition,
+	edges []EdgeDefinition,
+) error {
+	for _, node := range nodeDefinitions {
 		if node.Verdict == nil || !hasJSONValue(node.Verdict.Condition) {
 			continue
 		}
@@ -1304,4 +1244,15 @@ func validateVerdictAPIURL(nodeKey, raw string) error {
 		return fmt.Errorf("activity %q api_url is missing a host", nodeKey)
 	}
 	return nil
+}
+
+// PathExists reports whether the graph can reach `to` from `from`. Exported so
+// callers can bound a value by what the graph allows rather than by a list they
+// maintain separately.
+func PathExists(plan GraphPlan, from, to string) bool {
+	edges := make([]EdgeDefinition, 0)
+	for _, outgoing := range plan.Outgoing {
+		edges = append(edges, outgoing...)
+	}
+	return workflowPathExists(from, to, edges)
 }

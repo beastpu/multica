@@ -17,7 +17,7 @@ func conditionalExecutorNode() workflowdomain.NodeDefinition {
 			{
 				Kind: "fixed_role", Role: "agent_role",
 				Condition: json.RawMessage(
-					`{"source":"node_submission","node":"triage","key":"needs_agent","op":"eq","value":true}`,
+					`{"source":"node_choice","node":"triage","key":"choice","op":"eq","value":"review"}`,
 				),
 			},
 			{Kind: "fixed_role", Role: "human_role"},

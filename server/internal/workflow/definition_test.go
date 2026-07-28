@@ -181,9 +181,6 @@ func conditionalDeliveryDefinition() Definition {
 		IssueTemplates: []IssueTemplate{{
 			Key: "triage_task", Title: "Triage {{host.title}}", Required: true,
 		}},
-		SubmissionSchema: &SubmissionSchema{Fields: []SubmissionField{{
-			Key: "needs_agent", Name: "Needs agent", Type: "boolean", Required: true,
-		}}},
 	}
 	definition.Nodes = []NodeDefinition{
 		definition.Nodes[0], // start
@@ -201,10 +198,12 @@ func conditionalDeliveryDefinition() Definition {
 	return definition
 }
 
-func executorCondition(node, key string) json.RawMessage {
+// executorCondition gates an executor strategy on an upstream node's branch
+// choice. The key is always "choice" — a node carries exactly one.
+func executorCondition(node, value string) json.RawMessage {
 	return json.RawMessage(fmt.Sprintf(
-		`{"source":"node_submission","node":%q,"key":%q,"op":"eq","value":true}`,
-		node, key,
+		`{"source":"node_choice","node":%q,"key":"choice","op":"eq","value":%q}`,
+		node, value,
 	))
 }
 
@@ -371,11 +370,6 @@ func TestValidateDefinitionRejectsExecutorConditionOnNonUpstreamNode(t *testing.
 	for index, node := range definition.Nodes {
 		switch node.Key {
 		case "implementation":
-			definition.Nodes[index].SubmissionSchema = &SubmissionSchema{
-				Fields: []SubmissionField{{
-					Key: "approved", Name: "Approved", Type: "boolean", Required: true,
-				}},
-			}
 		case "triage":
 			// The triage executor references the downstream implementation node.
 			definition.Nodes[index].Executor.Strategies = []ExecutorStrategy{
@@ -497,12 +491,7 @@ func TestValidateDefinitionRejectsInvalidCompletionMode(t *testing.T) {
 func TestRequiresManualCompletionSupportsExplicitModeWithConditions(t *testing.T) {
 	node := validDefinition().Nodes[1]
 	node.Completion.Mode = "manual"
-	node.SubmissionSchema = &SubmissionSchema{
-		Policy: "single",
-		Fields: []SubmissionField{{
-			Key: "summary", Name: "Summary", Type: "text", Required: true,
-		}},
-	}
+	node.SubmissionSchema = &SubmissionSchema{Policy: "single"}
 	node.Verdict = &VerdictDefinition{
 		Evaluator: "deterministic", RequiredResult: "pass",
 	}
@@ -561,57 +550,19 @@ func TestValidateDefinitionRejectsUnknownTitleTemplateVariable(t *testing.T) {
 
 func TestValidateDefinitionRejectsInvalidSubmissionPolicy(t *testing.T) {
 	definition := validDefinition()
-	definition.Nodes[1].SubmissionSchema = &SubmissionSchema{
-		Policy: "arbitrary",
-		Fields: []SubmissionField{{
-			Key: "summary", Name: "Summary", Type: "text", Required: true,
-		}},
-	}
+	definition.Nodes[1].SubmissionSchema = &SubmissionSchema{Policy: "arbitrary"}
 	err := ValidateDefinition(definition)
 	if err == nil || !strings.Contains(err.Error(), "submission policy") {
 		t.Fatalf("ValidateDefinition() error = %v, want submission policy error", err)
 	}
 }
 
-func TestValidateDefinitionRejectsDuplicateSubmissionField(t *testing.T) {
-	definition := validDefinition()
-	definition.Nodes[1].SubmissionSchema = &SubmissionSchema{
-		Fields: []SubmissionField{
-			{Key: "summary", Name: "Summary", Type: "text"},
-			{Key: "summary", Name: "Summary again", Type: "text"},
-		},
-	}
-	err := ValidateDefinition(definition)
-	if err == nil || !strings.Contains(err.Error(), "duplicate submission field") {
-		t.Fatalf("ValidateDefinition() error = %v, want duplicate field error", err)
-	}
-}
-
-func TestValidateDefinitionRejectsUnknownSubmissionFieldType(t *testing.T) {
-	definition := validDefinition()
-	definition.Nodes[1].SubmissionSchema = &SubmissionSchema{
-		Fields: []SubmissionField{{
-			Key: "payload", Name: "Payload", Type: "object",
-		}},
-	}
-	err := ValidateDefinition(definition)
-	if err == nil || !strings.Contains(err.Error(), "invalid type") {
-		t.Fatalf("ValidateDefinition() error = %v, want field type error", err)
-	}
-}
-
 func TestValidateDefinitionAcceptsStructuredDeterministicVerdict(t *testing.T) {
 	definition := validDefinition()
-	definition.Nodes[1].SubmissionSchema = &SubmissionSchema{
-		Policy: "single",
-		Fields: []SubmissionField{{
-			Key: "approved", Name: "Approved", Type: "boolean", Required: true,
-		}},
-	}
 	definition.Nodes[1].Verdict = &VerdictDefinition{
 		Evaluator: "deterministic", RequiredResult: "pass",
 		Condition: json.RawMessage(
-			`{"source":"node_submission","node":"implementation","key":"approved","op":"eq","value":true}`,
+			`{"source":"host_issue","key":"status","op":"eq","value":"done"}`,
 		),
 	}
 	if err := ValidateDefinition(definition); err != nil {
@@ -621,39 +572,15 @@ func TestValidateDefinitionAcceptsStructuredDeterministicVerdict(t *testing.T) {
 
 func TestValidateDefinitionRejectsDownstreamConditionReference(t *testing.T) {
 	definition := validDefinition()
-	definition.Nodes[2].SubmissionSchema = &SubmissionSchema{
-		Fields: []SubmissionField{{
-			Key: "approved", Name: "Approved", Type: "boolean", Required: true,
-		}},
-	}
 	definition.Nodes[1].Verdict = &VerdictDefinition{
 		Evaluator: "deterministic",
 		Condition: json.RawMessage(
-			`{"source":"node_submission","node":"acceptance","key":"approved","op":"eq","value":true}`,
+			`{"source":"node_choice","node":"acceptance","key":"choice","op":"eq","value":"end"}`,
 		),
 	}
 	err := ValidateDefinition(definition)
 	if err == nil || !strings.Contains(err.Error(), "must be upstream") {
 		t.Fatalf("ValidateDefinition() error = %v, want upstream reference error", err)
-	}
-}
-
-func TestValidateDefinitionRejectsUnknownVerdictSubmissionField(t *testing.T) {
-	definition := validDefinition()
-	definition.Nodes[1].SubmissionSchema = &SubmissionSchema{
-		Fields: []SubmissionField{{
-			Key: "approved", Name: "Approved", Type: "boolean", Required: true,
-		}},
-	}
-	definition.Nodes[1].Verdict = &VerdictDefinition{
-		Evaluator: "deterministic",
-		Condition: json.RawMessage(
-			`{"source":"node_submission","node":"implementation","key":"missing","op":"eq","value":true}`,
-		),
-	}
-	err := ValidateDefinition(definition)
-	if err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("ValidateDefinition() error = %v, want unknown submission field error", err)
 	}
 }
 
@@ -758,9 +685,6 @@ func TestValidateDefinitionAcceptsParallelGatewayDAG(t *testing.T) {
 		{Key: "split", Kind: "parallel_split", Name: "Split"},
 		{
 			Key: "analysis", Kind: "activity", Name: "Analysis", OwnerRole: "owner",
-			SubmissionSchema: &SubmissionSchema{Fields: []SubmissionField{{
-				Key: "needs_review", Name: "Needs review", Type: "boolean", Required: true,
-			}}},
 		},
 		{Key: "implementation", Kind: "activity", Name: "Implementation", OwnerRole: "owner"},
 		{Key: "join", Kind: "parallel_join", JoinMode: "all", Name: "Join"},
@@ -780,11 +704,11 @@ func TestValidateDefinitionAcceptsParallelGatewayDAG(t *testing.T) {
 		{
 			From: "route", To: "review",
 			Condition: json.RawMessage(`{
-				"source":"node_submission",
+				"source":"node_choice",
 				"node":"analysis",
-				"key":"needs_review",
+				"key":"choice",
 				"op":"eq",
-				"value":true
+				"value":"review"
 			}`),
 		},
 		{From: "route", To: "direct", Default: true},
@@ -880,8 +804,8 @@ func TestValidateDefinitionRejectsUnknownConditionOperator(t *testing.T) {
 func TestEvaluateConditionCompositionsAndMissingFailClosed(t *testing.T) {
 	resolver := func(source, node, key string) (any, bool) {
 		values := map[string]any{
-			"host_issue.priority":           "high",
-			"node_submission.analysis.risk": float64(8),
+			"host_issue.priority":         "high",
+			"node_choice.analysis.choice": "review",
 		}
 		lookup := source + "." + key
 		if node != "" {
@@ -893,7 +817,7 @@ func TestEvaluateConditionCompositionsAndMissingFailClosed(t *testing.T) {
 	raw := json.RawMessage(`{
 		"all":[
 			{"source":"host_issue","key":"priority","op":"in","value":["high","urgent"]},
-			{"not":{"source":"node_submission","node":"analysis","key":"risk","op":"lt","value":5}}
+			{"not":{"source":"node_choice","node":"analysis","key":"choice","op":"eq","value":"direct"}}
 		]
 	}`)
 	matches, err := EvaluateCondition(raw, resolver)

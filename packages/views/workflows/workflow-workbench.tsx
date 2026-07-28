@@ -66,7 +66,6 @@ import {
   type WorkflowEvent,
   type WorkflowSubmission,
   type WorkflowVerdict,
-  type WorkflowSubmissionField,
   type WorkflowIssueTemplate,
   type WorkflowRoleAssignment,
   type WorkflowRoleDefinition,
@@ -147,120 +146,11 @@ import {
   type WorkflowIssueScope,
 } from "./workflow-workbench-state";
 
-function SubmissionFieldInput({
-  field,
-  value,
-  actorOptions,
-  onChange,
-  idPrefix = "submission",
-}: {
-  field: WorkflowSubmissionField;
-  value: unknown;
-  actorOptions: WorkflowActorOption[];
-  onChange: (value: unknown) => void;
-  idPrefix?: string;
-}) {
-  const { t } = useT("workflows");
-  const inputId = `${idPrefix}-${field.key}`;
-  if (field.type === "boolean") {
-    return (
-      <div className="space-y-1.5">
-        <Label htmlFor={inputId}>
-          {field.name}
-          {field.required && <span className="ml-0.5 text-destructive">*</span>}
-        </Label>
-        <select
-          id={inputId}
-          value={typeof value === "boolean" ? String(value) : ""}
-          onChange={(event) => onChange(
-            event.target.value === "" ? undefined : event.target.value === "true",
-          )}
-          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
-        >
-          <option value="">—</option>
-          <option value="true">{t(($) => $.workbench.boolean_true)}</option>
-          <option value="false">{t(($) => $.workbench.boolean_false)}</option>
-        </select>
-      </div>
-    );
-  }
-  if (
-    field.type === "member" ||
-    field.type === "agent" ||
-    field.type === "squad"
-  ) {
-    return (
-      <div className="space-y-1.5">
-        <Label htmlFor={inputId}>
-          {field.name}
-          {field.required && <span className="ml-0.5 text-destructive">*</span>}
-        </Label>
-        <select
-          id={inputId}
-          value={typeof value === "string" ? value : ""}
-          onChange={(event) => onChange(event.target.value || undefined)}
-          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
-        >
-          <option value="">—</option>
-          {actorOptions
-            .filter((actor) => actor.type === field.type)
-            .map((actor) => (
-              <option key={actor.id} value={actor.id}>{actor.name}</option>
-            ))}
-        </select>
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-1.5">
-      <Label htmlFor={inputId}>
-        {field.name}
-        {field.required && <span className="ml-0.5 text-destructive">*</span>}
-      </Label>
-      <Input
-        id={inputId}
-        type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
-        value={typeof value === "string" || typeof value === "number" ? value : ""}
-        className="min-h-11 sm:min-h-8"
-        onChange={(event) => {
-          if (field.type === "number") {
-            onChange(event.target.value === "" ? undefined : Number(event.target.value));
-          } else {
-            onChange(event.target.value);
-          }
-        }}
-      />
-    </div>
-  );
-}
-
-function submissionFieldValueIsValid(
-  field: WorkflowSubmissionField,
-  value: unknown,
-) {
-  if (value === undefined || value === null) return !field.required;
-  switch (field.type) {
-    case "number":
-      return typeof value === "number" && Number.isFinite(value);
-    case "boolean":
-      return typeof value === "boolean";
-    case "text":
-    case "date":
-    case "member":
-    case "agent":
-    case "squad":
-      return typeof value === "string" && value.trim() !== "";
-    default:
-      return false;
-  }
-}
-
 export function SubmissionPanel({
   instanceId,
   node,
   submissions,
   tasks,
-  actorOptions,
   canManage,
 }: {
   instanceId: string;
@@ -279,16 +169,12 @@ export function SubmissionPanel({
   const [proposedTasks, setProposedTasks] = useState<WorkflowIssueTemplate[]>([]);
   const submit = useCreateWorkflowSubmission(instanceId, node.id);
   const confirmTasks = useConfirmWorkflowSubmissionTasks(instanceId, node.id);
-  const fields = node.definition.submission_schema?.fields ?? [];
   const submissionPolicy = node.definition.submission_schema?.policy ?? "single";
   const taskScoped = submissionPolicy === "per_required_task" ||
     submissionPolicy === "fan_in";
   const sourceTasks = tasks.filter((task) => task.issue_id);
   const allowsFanOut = node.definition.issue_policy === "dynamic" ||
     node.definition.issue_policy === "fixed_and_dynamic";
-  const hasInvalidFields = fields.some((field) =>
-    !submissionFieldValueIsValid(field, values[field.key])
-  );
 
   useEffect(() => {
     setValues({});
@@ -305,18 +191,6 @@ export function SubmissionPanel({
         (node.status === "active" || node.status === "waiting" ||
           node.status === "blocked") && (
         <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            {fields.map((field) => (
-              <SubmissionFieldInput
-                key={field.key}
-                field={field}
-                value={values[field.key]}
-                actorOptions={actorOptions}
-                onChange={(value) =>
-                  setValues((current) => ({ ...current, [field.key]: value }))}
-              />
-            ))}
-          </div>
           {taskScoped && (
             <div className="space-y-1.5">
               <Label htmlFor="workflow-submission-source">
@@ -449,18 +323,12 @@ export function SubmissionPanel({
             })}
             disabled={
               submit.isPending ||
-              hasInvalidFields ||
               (taskScoped && !sourceIssueId)
             }
           >
             <Send />
             {t(($) => $.actions.submit)}
           </Button>
-          {hasInvalidFields && (
-            <p className="text-xs text-muted-foreground">
-              {t(($) => $.workbench.submission_required_fields)}
-            </p>
-          )}
           {submit.isError && (
             <p role="alert" className="text-xs text-destructive">
               {t(($) => $.errors.action_failed)}
@@ -1248,7 +1116,6 @@ function NodeTransitionPanel({
   instanceId,
   node,
   submissions,
-  actorOptions,
   canManage,
   canAdmin,
   instanceRunning,
@@ -1256,7 +1123,6 @@ function NodeTransitionPanel({
   instanceId: string;
   node: WorkflowNodeInstance;
   submissions: WorkflowSubmission[];
-  actorOptions: WorkflowActorOption[];
   canManage: boolean;
   canAdmin: boolean;
   instanceRunning: boolean;
@@ -1279,7 +1145,6 @@ function NodeTransitionPanel({
     (node.status === "completed" || node.status === "skipped");
   const canOpenManagement = (canAdmin && open) || canRollback;
   const schema = node.definition.submission_schema;
-  const fields = schema?.fields ?? [];
   const singleCompletionForm = schema?.policy === "single";
   const taskScopedCompletionForm = schema?.policy === "per_required_task" ||
     schema?.policy === "fan_in";
@@ -1288,9 +1153,6 @@ function NodeTransitionPanel({
     !(singleCompletionForm && reason.code === "valid_submission_required")
   );
   const latestSubmission = submissions.find((item) => item.status === "valid");
-  const hasInvalidFields = singleCompletionForm && fields.some((field) =>
-    !submissionFieldValueIsValid(field, completionValues[field.key])
-  );
 
   useEffect(() => {
     setCompleteOpen(false);
@@ -1416,23 +1278,6 @@ function NodeTransitionPanel({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            {singleCompletionForm && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {fields.map((field) => (
-                  <SubmissionFieldInput
-                    key={field.key}
-                    field={field}
-                    value={completionValues[field.key]}
-                    actorOptions={actorOptions}
-                    idPrefix={`completion-${node.id}`}
-                    onChange={(value) => setCompletionValues((current) => ({
-                      ...current,
-                      [field.key]: value,
-                    }))}
-                  />
-                ))}
-              </div>
-            )}
             {taskScopedCompletionForm && (
               <Alert>
                 <AlertCircle aria-hidden="true" />
@@ -1484,7 +1329,6 @@ function NodeTransitionPanel({
             <Button
               type="button"
               disabled={
-                hasInvalidFields ||
                 prerequisiteReasons.length > 0 ||
                 transition.isPending ||
                 submit.isPending
@@ -2641,7 +2485,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         instanceId={instanceId}
         node={selectedNode}
         submissions={nodeQuery.data.submissions}
-        actorOptions={actorOptions}
         canManage={canManageSelectedNode}
         canAdmin={canAdmin}
         instanceRunning={instance.status === "running"}
