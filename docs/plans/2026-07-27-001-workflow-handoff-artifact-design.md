@@ -919,11 +919,24 @@ stateDiagram-v2
 - 第 4 步和第 5 步倒序会导致条件分支断档，不可调换。
 - `api` 审核方式必须与 `node_choice` 同批交付。只上 `node_choice` 就移除字段，会出现一段时间内流程中完全没有客观判据（见 §10.6）。
 
-### 21.1 第 3 步的剩余项
+### 21.1 第 5 步的实际范围
+
+移除 `submission_schema.fields` 比原估计大。试做一遍后确认它连带三件文档未记录的事：
+
+- **`previous_selected` 执行者策略一并停用。** 该策略从上游节点的提交字段里取出一个 member/agent/squad 作为本节点执行者（`internal/handler/workflow_executor.go`）。字段移除后它没有数据源，而替代字段的三种形态——制品、交接摘要、`node_choice`——没有一种指向人。保留它只会解析到空并让节点无声卡住，因此应显式拒绝并提示改用 `fixed_actor` 或按角色解析。这是本方案第一次真正**减少**能力，需要单独确认是否接受。
+- **`ValidateSubmissionPayload` 整体退场。** 没有字段就没有可校验的载荷，函数与其两处调用点一并移除。
+- **约 40 处测试断言需要语义迁移**，横跨 `definition_test.go`、`runtime_test.go`、`workflow_runtime_test.go`、`workflow_executor_test.go`。其中一部分（如 `TestValidateDefinitionRejectsDuplicateSubmissionField`）测的就是被移除的能力，应当删除；另一部分只是把提交字段当作夹具来测别的东西，需要改写为 `node_choice`。
+- **前端表单构建器**（`workflow-definition-inspector.tsx` 约 7 处）与 4 个语言的相关 i18n 键需同步移除。
+
+内置模板 `requirement_delivery.json` 的迁移已经验证过方向是对的：它那个 `design_summary` 字段本质就是交接摘要，改为 `handoff_required: true` 加一份 `technical design` 制品后语义更准确。
+
+因此第 5 步应作为独立一次改动推进，而不是接在第 4 步后面顺手做完。
+
+### 21.2 第 3 步的剩余项
 
 已落地：制品实体（三种类型、append-only 存储、验收状态）、提交与评审接口、必需制品的完成门禁、`multica workflow` 的 `current` / `artifacts` / `artifact get` / `submit`。
 
-尚未落地，且都依赖同一块前置工作——**交接摘要本身还没有写入路径**：
+第 3、4 步已完成，交接摘要的写入、门禁、`upstream` 端点与命令、提示词引导均已落地。剩余：
 
 - **`multica workflow upstream`**（§13.3）。它要返回直接前置节点的交接摘要与制品索引。制品索引已经可查，但摘要没有任何代码写入 `workflow_node_submission.summary`，所以该命令目前只能返回一半。等摘要写入落地后一并交付。
 - **`--recursive`**（§13.4）。跨父子运行树的查询，依赖运行树的层级检索。
