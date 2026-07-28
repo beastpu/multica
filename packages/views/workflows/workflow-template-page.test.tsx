@@ -383,7 +383,12 @@ describe("WorkflowTemplatePage", () => {
     expect(inserted).toMatchObject({
       kind: "activity",
       name: "New activity",
+      // A new activity produces no issues until the author opts in, and it
+      // completes manually so it does not self-complete on activation.
+      issue_policy: "none",
+      completion: { mode: "manual", required_issue_outcome: "none" },
     });
+    expect(inserted).not.toHaveProperty("issue_templates");
     expect(input.definition.edges).toEqual([
       { from: "start", to: "work" },
       { from: "work", to: inserted?.key },

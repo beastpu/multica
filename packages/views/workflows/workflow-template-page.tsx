@@ -207,21 +207,20 @@ function newActivity(definition: WorkflowDefinition): WorkflowNodeDefinition {
     activity_mode: "work",
     name: "New activity",
     owner_role: "owner",
-    issue_policy: "fixed_and_dynamic",
+    // A new activity is a process step first. Producing issues is an explicit
+    // opt-in, so building a flow does not fill the issue list with steps the
+    // author has not decided to track as work items yet.
+    issue_policy: "none",
     executor: {
       strategies: [
         { kind: "fixed_role", role: "owner" },
         { kind: "manual" },
       ],
     },
-    issue_templates: [{
-      key: `${key}_issue`,
-      title: "Complete {{host.title}}",
-      assignee_role: "owner",
-      required: true,
-      initial_status: "todo",
-    }],
-    completion: { mode: "automatic", required_issue_outcome: "done" },
+    // Without issues there is nothing to observe, so the owner completes the
+    // activity explicitly. An automatic node here would satisfy its (empty)
+    // issue condition immediately and complete the moment it activates.
+    completion: { mode: "manual", required_issue_outcome: "none" },
   };
 }
 
