@@ -159,6 +159,8 @@
     "host_details_description": "Description, comments, attachments, and activity history",
     "parent_issue": "Workflow / parent issue",
     "open_parent_issue": "Open parent issue",
+    "node_issues": "Issues",
+    "open_issue": "Open issue",
     "workflow_progress": "Workflow progress",
     "current_node": "Current activity",
     "owners": "Activity owners",

@@ -140,6 +140,7 @@ import { IssueDisplayControls } from "../issues/components/issues-header";
 import { IssueSurface } from "../issues/surface/issue-surface";
 import { PriorityIcon } from "../issues/components/priority-icon";
 import { StatusIcon } from "../issues/components/status-icon";
+import { WorkflowNodeIssues } from "./workflow-node-issues";
 import { ActorAvatar } from "../common/actor-avatar";
 import { WorkflowCanvas } from "./workflow-canvas";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -2567,6 +2568,17 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
           })}
         </section>
       )}
+
+      {/*
+        The node's own issues sit above the tabs, not inside one. Moving an
+        issue to done is the most frequent action on this surface, and a tab
+        would put the run's main work object one click behind panels that are
+        consulted far less often.
+      */}
+      <WorkflowNodeIssues
+        issues={selectedNodeIssues}
+        canManage={canManageSelectedNode}
+      />
 
       <Tabs key={selectedNode.id} defaultValue={sidebarDefaultTab}>
         <TabsList

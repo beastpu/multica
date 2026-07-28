@@ -159,6 +159,8 @@
     "host_details_description": "查看需求描述、评论、附件和操作记录",
     "parent_issue": "工作流 / 父 issue",
     "open_parent_issue": "打开父 issue",
+    "node_issues": "节点 issue",
+    "open_issue": "打开 issue",
     "workflow_progress": "工作流进度",
     "current_node": "当前节点",
     "owners": "活动负责人",

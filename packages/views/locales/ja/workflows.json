@@ -159,6 +159,8 @@
     "host_details_description": "説明、コメント、添付ファイル、操作履歴を表示",
     "parent_issue": "ワークフロー / 親 issue",
     "open_parent_issue": "親 issue を開く",
+    "node_issues": "ノードの issue",
+    "open_issue": "issue を開く",
     "workflow_progress": "ワークフローの進捗",
     "current_node": "現在のノード",
     "owners": "アクティビティ担当者",

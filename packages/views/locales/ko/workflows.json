@@ -159,6 +159,8 @@
     "host_details_description": "설명, 댓글, 첨부 파일 및 활동 기록 보기",
     "parent_issue": "워크플로 / 상위 issue",
     "open_parent_issue": "상위 issue 열기",
+    "node_issues": "노드 issue",
+    "open_issue": "issue 열기",
     "workflow_progress": "워크플로 진행률",
     "current_node": "현재 노드",
     "owners": "활동 담당자",
