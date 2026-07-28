@@ -42,22 +42,47 @@ func BuildPrompt(task Task, provider string) string {
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Start with `multica issue comment list %s --recent 10 --output json` to read the 10 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. Resolved threads come back folded — `--full` to expand. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
-	b.WriteString(workflowPromptSection())
+	b.WriteString(workflowPromptSection(task))
 	return b.String()
 }
 
-// workflowPromptSection points an agent at its workflow context.
+// workflowPromptSection points an agent at its workflow obligations.
 //
-// The commands take no identifier: they resolve the issue from the daemon's
-// task marker. That is deliberate — writing ids into a prompt is how a copy
-// goes stale, which is the same reason the issue itself is referenced rather
-// than transcribed.
+// When the server pushed the node protocol with the claim, the prompt names the
+// node and defers to the brief, which holds the full protocol — upstream
+// conclusions, the artifact keys this node owes, and the exact submit commands.
+// Restating all of it here would create a second copy to drift, and the brief
+// is the copy that survives a runtime whose CLI has no workflow subcommand.
 //
-// The section is unconditional because the daemon cannot tell a workflow node
-// issue from an ordinary one without asking the server, and `workflow current`
-// answers "not part of a workflow" cheaply. Paying one command on ordinary
-// issues is a better trade than an extra round trip on every dispatch.
-func workflowPromptSection() string {
+// The self-discovery text is kept for the other case only: a server predating
+// the pushed block sends nothing, and `workflow current` is then the agent's
+// only way in. It answers "not part of a workflow" cheaply on ordinary issues.
+func workflowPromptSection(task Task) string {
+	if workflow := task.Workflow; workflow != nil && workflow.NodeKey != "" {
+		name := workflow.NodeName
+		if name == "" {
+			name = workflow.NodeKey
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "\nThis issue is node %q of a workflow run. Your obligations as "+
+			"that node — what upstream handed you, which artifacts you owe and under "+
+			"which keys, and the exact commands to submit them — are in the "+
+			"\"Workflow Protocol\" section of your issue context file. Read it before "+
+			"you start and satisfy it before you finish; the run stays blocked "+
+			"otherwise.\n", name)
+		if pending := workflow.PendingRequiredArtifacts(); len(pending) > 0 {
+			keys := make([]string, 0, len(pending))
+			for _, duty := range pending {
+				keys = append(keys, duty.Key)
+			}
+			fmt.Fprintf(&b, "Required artifacts still outstanding: %s.\n",
+				strings.Join(keys, ", "))
+		}
+		if workflow.HandoffRequired {
+			b.WriteString("This node also owes a handoff summary before it can complete.\n")
+		}
+		return b.String()
+	}
 	return "\nIf this issue is a workflow node, run `multica workflow current` first. It " +
 		"names the run and node you are in and lists the artifacts this node owes, with " +
 		"the key each one is submitted under — those keys are fixed by the template, so " +

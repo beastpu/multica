@@ -1732,6 +1732,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.WorkspaceID = uuidToString(issue.WorkspaceID)
 			resp.ThreadName = issue.Title
 
+			// Workflow node protocol. nil for every ordinary issue, so this is
+			// a no-op outside workflow runs.
+			resp.Workflow = h.workflowTaskContext(r.Context(), issue)
+
 			// Squad-leader briefing injection: keyed off the task being a
 			// leader-task (is_leader_task) carrying a squad_id — NOT off the
 			// issue being assigned to a squad. The task flag is stamped at

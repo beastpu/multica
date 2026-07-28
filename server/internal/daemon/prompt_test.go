@@ -1020,7 +1020,7 @@ func TestWorkflowPromptSectionTakesNoIdentifiers(t *testing.T) {
 	task := Task{IssueID: "issue-abc-123"}
 	prompt := BuildPrompt(task, "claude")
 
-	section := workflowPromptSection()
+	section := workflowPromptSection(task)
 	if !strings.Contains(prompt, section) {
 		t.Fatal("BuildPrompt() dropped the workflow section")
 	}
@@ -1042,7 +1042,7 @@ func TestWorkflowPromptSectionTakesNoIdentifiers(t *testing.T) {
 // prompt has to send the agent to look them up. Telling it to submit without
 // telling it where the keys come from leaves it guessing at a 400.
 func TestWorkflowPromptSectionPointsAtKeyDiscovery(t *testing.T) {
-	section := workflowPromptSection()
+	section := workflowPromptSection(Task{})
 	if !strings.Contains(section, "multica workflow current") {
 		t.Error("prompt must send the agent to workflow current")
 	}
@@ -1053,5 +1053,41 @@ func TestWorkflowPromptSectionPointsAtKeyDiscovery(t *testing.T) {
 		if !strings.Contains(section, phrase) {
 			t.Errorf("prompt should explain where keys come from; missing %q", phrase)
 		}
+	}
+}
+
+// When the server pushes the node protocol, the prompt must name the node and
+// send the agent to the brief rather than restating the protocol. Two copies
+// of the obligations is how one of them goes stale.
+func TestWorkflowPromptSectionUsesPushedContext(t *testing.T) {
+	task := Task{IssueID: "issue-abc-123", Workflow: &execenv.WorkflowTaskContext{
+		NodeKey: "implement", NodeName: "代码实施", HandoffRequired: true,
+		Artifacts: []execenv.WorkflowArtifactDuty{
+			{Key: "impl_notes", Required: true},
+			{Key: "done_already", Required: true, Delivered: true, ReviewStatus: "approved"},
+		},
+	}}
+	section := workflowPromptSection(task)
+
+	for _, want := range []string{"代码实施", "Workflow Protocol", "impl_notes", "handoff summary"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("pushed-context section is missing %q:\n%s", want, section)
+		}
+	}
+	if strings.Contains(section, "done_already") {
+		t.Error("a delivered artifact must not be listed as outstanding")
+	}
+	// The self-discovery fallback belongs to the no-context path only.
+	if strings.Contains(section, "multica workflow current") {
+		t.Errorf("pushed context must not fall back to self-discovery:\n%s", section)
+	}
+}
+
+// A server predating the pushed block sends nothing, and `workflow current` is
+// then the agent's only way in — that path has to survive.
+func TestWorkflowPromptSectionFallsBackWithoutContext(t *testing.T) {
+	section := workflowPromptSection(Task{IssueID: "issue-abc-123"})
+	if !strings.Contains(section, "multica workflow current") {
+		t.Errorf("missing self-discovery fallback:\n%s", section)
 	}
 }

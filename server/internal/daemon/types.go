@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
 )
 
@@ -105,6 +106,11 @@ type Task struct {
 	QuickCreateDueDate       string                 `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
 	QuickCreateAttachmentIDs []string               `json:"quick_create_attachment_ids,omitempty"` // attachments uploaded in the quick-create prompt and bound by issue create
 	HandoffNote              string                 `json:"handoff_note,omitempty"`                // assignment handoff instruction; rendered into the opening prompt + issue_context.md
+	// Workflow is the node protocol for a workflow node issue — what this node
+	// owes and what its predecessors concluded — pushed by the server instead
+	// of discovered via `multica workflow`. nil for ordinary issues and for
+	// servers predating the block.
+	Workflow *execenv.WorkflowTaskContext `json:"workflow,omitempty"`
 
 	SquadID               string `json:"squad_id,omitempty"`                // when the picker was a squad, the squad's UUID; Agent is still the resolved leader
 	SquadName             string `json:"squad_name,omitempty"`              // display name for the picker squad, used in prompt text

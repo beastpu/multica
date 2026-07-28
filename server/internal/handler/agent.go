@@ -343,6 +343,12 @@ type AgentTaskResponse struct {
 	QuickCreateDueDate       string                 `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
 	QuickCreateAttachmentIDs []string               `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
 	HandoffNote              string                 `json:"handoff_note,omitempty"`                // assignment handoff instruction; rendered into the run's opening prompt + issue_context.md (omitempty so old daemons ignore it)
+	// Workflow carries the node protocol for a workflow node issue: what this
+	// node owes and what its predecessors concluded. Pushed rather than left
+	// for `multica workflow current` to discover, so a runtime on an older CLI
+	// — which has no workflow subcommand at all — still gets the context.
+	// omitempty keeps ordinary issues and old daemons unaffected.
+	Workflow *WorkflowTaskContext `json:"workflow,omitempty"`
 	SquadID                  string                 `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
 	SquadName                string                 `json:"squad_name,omitempty"`                  // display name for the picker squad
 	ParentIssueID            string                 `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under

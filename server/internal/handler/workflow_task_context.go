@@ -1,0 +1,290 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/multica-ai/multica/server/internal/util"
+	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+)
+
+// WorkflowTaskContext is the workflow protocol handed to an agent working a
+// node issue. It is pushed with the claim rather than left for the agent to
+// discover, because discovery costs a CLI round-trip the agent has to remember
+// to make — and an agent running an older CLI cannot make it at all. What the
+// node owes and what its predecessors concluded decide whether the run
+// advances, so neither may depend on the agent's initiative.
+//
+// Artifact bodies are deliberately absent: the index says what exists and what
+// it is called, and `multica workflow artifact get <id>` fetches a body when
+// one is actually needed. Pushing every upstream document would make each node
+// pay for prose it may never read.
+type WorkflowTaskContext struct {
+	InstanceID string `json:"instance_id"`
+	// NodeInstanceID addresses the live attempt. Submissions are scoped to it,
+	// so an agent that cached an earlier attempt's id would write to work that
+	// has since been redone.
+	NodeInstanceID  string                    `json:"node_instance_id"`
+	NodeKey         string                    `json:"node_key"`
+	NodeName        string                    `json:"node_name,omitempty"`
+	HostIssue       string                    `json:"host_issue,omitempty"`
+	HandoffRequired bool                      `json:"handoff_required,omitempty"`
+	Artifacts       []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
+	Upstream        []WorkflowUpstreamContext `json:"upstream,omitempty"`
+}
+
+// WorkflowArtifactDuty is one artifact the node owes, paired with whether it
+// has been delivered. The key is what `multica workflow submit --artifact`
+// accepts; the server rejects any key the node did not declare, so it has to
+// travel with the task instead of being guessed.
+type WorkflowArtifactDuty struct {
+	Key          string `json:"key"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	Kind         string `json:"kind"`
+	Required     bool   `json:"required"`
+	Delivered    bool   `json:"delivered"`
+	ReviewStatus string `json:"review_status,omitempty"`
+}
+
+// WorkflowUpstreamContext carries one direct predecessor's conclusion.
+type WorkflowUpstreamContext struct {
+	NodeKey   string                     `json:"node_key"`
+	Name      string                     `json:"name,omitempty"`
+	Status    string                     `json:"status,omitempty"`
+	Summary   string                     `json:"summary,omitempty"`
+	Artifacts []WorkflowUpstreamArtifact `json:"artifacts,omitempty"`
+}
+
+// WorkflowUpstreamArtifact is the index form: enough to decide whether to read
+// the body, without carrying it.
+type WorkflowUpstreamArtifact struct {
+	ID          string `json:"id"`
+	ArtifactKey string `json:"artifact_key"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+}
+
+// workflowIssueCoordinates is the shape stamped onto a node child issue's
+// metadata when the task was materialized.
+type workflowIssueCoordinates struct {
+	InstanceID string `json:"instance_id"`
+	NodeKey    string `json:"node_key"`
+	HostIssue  string `json:"host_issue"`
+}
+
+// readWorkflowIssueCoordinates pulls the workflow coordinates off an issue.
+// A missing or malformed block means "not a workflow node issue", which is the
+// common case — every ordinary issue takes this path — so it returns cleanly
+// rather than erroring.
+func readWorkflowIssueCoordinates(metadata []byte) (workflowIssueCoordinates, bool) {
+	if len(metadata) == 0 {
+		return workflowIssueCoordinates{}, false
+	}
+	var envelope struct {
+		Workflow workflowIssueCoordinates `json:"workflow"`
+	}
+	if err := json.Unmarshal(metadata, &envelope); err != nil {
+		return workflowIssueCoordinates{}, false
+	}
+	coordinates := envelope.Workflow
+	if strings.TrimSpace(coordinates.InstanceID) == "" ||
+		strings.TrimSpace(coordinates.NodeKey) == "" {
+		return workflowIssueCoordinates{}, false
+	}
+	return coordinates, true
+}
+
+// workflowTaskContext builds the protocol block for a claimed task. It returns
+// nil for any issue that is not a live workflow node issue, and for every
+// failure along the way: a claim must not fail because workflow context could
+// not be assembled, since the agent can still do the work and the run is only
+// blocked at completion time, where the waiting reasons say exactly what is
+// missing.
+func (h *Handler) workflowTaskContext(
+	ctx context.Context,
+	issue db.Issue,
+) *WorkflowTaskContext {
+	coordinates, ok := readWorkflowIssueCoordinates(issue.Metadata)
+	if !ok {
+		return nil
+	}
+	instanceID, err := util.ParseUUID(coordinates.InstanceID)
+	if err != nil {
+		return nil
+	}
+	instance, err := h.Queries.GetWorkflowInstanceInWorkspace(
+		ctx,
+		db.GetWorkflowInstanceInWorkspaceParams{
+			ID: instanceID, WorkspaceID: issue.WorkspaceID,
+		},
+	)
+	if err != nil {
+		return nil
+	}
+	nodes, err := h.Queries.ListWorkflowNodeInstances(
+		ctx,
+		db.ListWorkflowNodeInstancesParams{
+			WorkflowInstanceID: instance.ID, WorkspaceID: instance.WorkspaceID,
+		},
+	)
+	if err != nil || len(nodes) == 0 {
+		return nil
+	}
+	// Several attempts of the same node can exist after a rework. The live one
+	// is the highest attempt; writing to an earlier one would attach work to an
+	// attempt the run has already moved past.
+	live := map[string]db.WorkflowNodeInstance{}
+	for _, candidate := range nodes {
+		if existing, seen := live[candidate.NodeKey]; !seen ||
+			candidate.Attempt > existing.Attempt {
+			live[candidate.NodeKey] = candidate
+		}
+	}
+	node, exists := live[coordinates.NodeKey]
+	if !exists {
+		return nil
+	}
+	var nodeDefinition workflowdomain.NodeDefinition
+	if err := json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition); err != nil {
+		return nil
+	}
+	result := &WorkflowTaskContext{
+		InstanceID:      uuidToString(instance.ID),
+		NodeInstanceID:  uuidToString(node.ID),
+		NodeKey:         node.NodeKey,
+		NodeName:        node.NameSnapshot,
+		HostIssue:       coordinates.HostIssue,
+		HandoffRequired: nodeDefinition.Completion.HandoffRequired,
+	}
+	result.Artifacts = h.workflowArtifactDuties(ctx, instance.WorkspaceID, node, nodeDefinition)
+	result.Upstream = h.workflowUpstreamContext(ctx, instance, node, live)
+	return result
+}
+
+// workflowArtifactDuties pairs each declared artifact with what the node has
+// actually delivered, so the agent can tell "still owed" from "already there"
+// without a second call — the distinction that decides whether it should write
+// a document at all on a rerun.
+func (h *Handler) workflowArtifactDuties(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	node db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+) []WorkflowArtifactDuty {
+	if len(nodeDefinition.Artifacts) == 0 {
+		return nil
+	}
+	delivered := map[string]db.WorkflowArtifact{}
+	if artifacts, err := h.Queries.ListWorkflowNodeArtifacts(
+		ctx,
+		db.ListWorkflowNodeArtifactsParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+		},
+	); err == nil {
+		for _, artifact := range artifacts {
+			delivered[artifact.ArtifactKey] = artifact
+		}
+	}
+	duties := make([]WorkflowArtifactDuty, 0, len(nodeDefinition.Artifacts))
+	for _, requirement := range nodeDefinition.Artifacts {
+		duty := WorkflowArtifactDuty{
+			Key:         requirement.Key,
+			Name:        requirement.Name,
+			Description: requirement.Description,
+			Kind:        workflowdomain.ArtifactKind(requirement),
+			Required:    requirement.Required,
+		}
+		if artifact, exists := delivered[requirement.Key]; exists {
+			duty.Delivered = true
+			duty.ReviewStatus = artifact.ReviewStatus
+		}
+		duties = append(duties, duty)
+	}
+	return duties
+}
+
+// workflowUpstreamContext returns each direct predecessor's conclusion.
+//
+// Direct predecessors only, matching GET /api/workflow-node-instances/{id}/upstream:
+// that is what the graph says this node depends on, and walking further back
+// would pull in parallel branches this node never waited for.
+func (h *Handler) workflowUpstreamContext(
+	ctx context.Context,
+	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
+	live map[string]db.WorkflowNodeInstance,
+) []WorkflowUpstreamContext {
+	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(
+		ctx,
+		db.GetWorkflowTemplateVersionInWorkspaceParams{
+			ID: instance.TemplateVersionID, WorkspaceID: instance.WorkspaceID,
+		},
+	)
+	if err != nil {
+		return nil
+	}
+	definition, err := workflowdomain.ParseDefinition(version.Definition)
+	if err != nil {
+		return nil
+	}
+	plan, err := workflowdomain.BuildGraphPlan(definition)
+	if err != nil {
+		return nil
+	}
+	predecessors := map[string]struct{}{}
+	for _, edge := range plan.Incoming[node.NodeKey] {
+		predecessors[edge.From] = struct{}{}
+	}
+	if len(predecessors) == 0 {
+		return nil
+	}
+	upstream := make([]WorkflowUpstreamContext, 0, len(predecessors))
+	// Ordered by the graph plan so the agent reads predecessors in execution
+	// order rather than map order, which would shuffle between claims.
+	for _, definitionNode := range plan.Ordered {
+		if _, wanted := predecessors[definitionNode.Key]; !wanted {
+			continue
+		}
+		candidate, exists := live[definitionNode.Key]
+		if !exists {
+			continue
+		}
+		entry := WorkflowUpstreamContext{
+			NodeKey: candidate.NodeKey,
+			Name:    candidate.NameSnapshot,
+			Status:  candidate.Status,
+		}
+		if candidate.LatestSubmissionID.Valid {
+			if submission, err := h.Queries.GetWorkflowSubmissionInWorkspace(
+				ctx,
+				db.GetWorkflowSubmissionInWorkspaceParams{
+					ID: candidate.LatestSubmissionID, WorkspaceID: instance.WorkspaceID,
+				},
+			); err == nil {
+				entry.Summary = submission.Summary
+			}
+		}
+		if artifacts, err := h.Queries.ListWorkflowNodeArtifacts(
+			ctx,
+			db.ListWorkflowNodeArtifactsParams{
+				WorkflowNodeInstanceID: candidate.ID, WorkspaceID: instance.WorkspaceID,
+			},
+		); err == nil {
+			for _, artifact := range artifacts {
+				entry.Artifacts = append(entry.Artifacts, WorkflowUpstreamArtifact{
+					ID:          uuidToString(artifact.ID),
+					ArtifactKey: artifact.ArtifactKey,
+					Kind:        artifact.Kind,
+					Name:        artifact.Name,
+				})
+			}
+		}
+		upstream = append(upstream, entry)
+	}
+	return upstream
+}

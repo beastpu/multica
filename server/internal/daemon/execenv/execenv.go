@@ -136,6 +136,10 @@ type TaskContextForEnv struct {
 	AutopilotTriggerPayload string
 	QuickCreatePrompt       string // non-empty for quick-create tasks
 	HandoffNote             string // assignment handoff instruction; rendered into issue_context.md (MUL-3375)
+	// Workflow is the node protocol for a workflow node issue, pushed by the
+	// server with the claim. nil for ordinary issues and for servers that
+	// predate the field.
+	Workflow *WorkflowTaskContext
 	IsSquadLeader           bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
 	// WorkspaceContext is the workspace-level system prompt (workspace.context
 	// in the DB). Rendered into the brief as `## Workspace Context` when

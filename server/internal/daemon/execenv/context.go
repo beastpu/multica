@@ -690,6 +690,12 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 		fmt.Fprintf(&b, "> %s\n\n", ctx.HandoffNote)
 	}
 
+	// Workflow node protocol (pushed with the claim). Placed before Quick Start
+	// because what the node owes frames everything the agent does here — an
+	// agent that reads the issue first and the obligations last has already
+	// chosen how to work.
+	renderWorkflowProtocol(&b, ctx.Workflow)
+
 	b.WriteString("## Quick Start\n\n")
 	fmt.Fprintf(&b, "Run `multica issue get %s --output json` to fetch the full issue details.\n\n", ctx.IssueID)
 
