@@ -71,6 +71,7 @@ func init() {
 	apiCmd.GroupID = groupAdditional
 
 	rootCmd.AddCommand(issueCmd)
+	rootCmd.AddCommand(workflowCmd)
 	rootCmd.AddCommand(projectCmd)
 	rootCmd.AddCommand(labelCmd)
 	rootCmd.AddCommand(propertyCmd)
