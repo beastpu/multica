@@ -128,6 +128,7 @@ import { Sheet, SheetContent } from "@multica/ui/components/ui/sheet";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { cn } from "@multica/ui/lib/utils";
 import { AppLink } from "../navigation";
+import { IssueOpenProvider } from "../issues/surface/issue-open-context";
 import { CollectionPageHeader, CollectionPageState } from "../layout/collection-page";
 import {
   AnimatedRightSidebar,
@@ -140,6 +141,7 @@ import { IssueDisplayControls } from "../issues/components/issues-header";
 import { IssueSurface } from "../issues/surface/issue-surface";
 import { PriorityIcon } from "../issues/components/priority-icon";
 import { StatusIcon } from "../issues/components/status-icon";
+import { WorkflowIssuePanel } from "./workflow-issue-panel";
 import { WorkflowNodeIssues } from "./workflow-node-issues";
 import { ActorAvatar } from "../common/actor-avatar";
 import { WorkflowCanvas } from "./workflow-canvas";
@@ -1987,6 +1989,9 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [issueScope, setIssueScope] = useState<WorkflowIssueScope>("current");
   const [createIssueOpen, setCreateIssueOpen] = useState(false);
+  // The issue being read inside the run. Null means the sidebar shows the
+  // node, which is the resting state.
+  const [openIssueId, setOpenIssueId] = useState<string | null>(null);
   const [detachIssue, setDetachIssue] = useState<Issue | null>(null);
   const isMobile = useIsMobile();
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -2731,6 +2736,20 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
     </p>
   );
 
+  // While an issue is open it takes over the sidebar rather than stacking a
+  // third column: the board keeps the rest of the width, and the comment
+  // thread gets a column wide enough to actually read.
+  const sidebarContent = openIssueId
+    ? (
+      <WorkflowIssuePanel
+        issueId={openIssueId}
+        issues={selectedNodeIssues}
+        onClose={() => setOpenIssueId(null)}
+        onNavigate={setOpenIssueId}
+      />
+    )
+    : nodeSidebarContent;
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <CollectionPageHeader
@@ -2869,6 +2888,12 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               data-testid="workflow-issue-workspace"
               className="flex min-h-0 min-w-0 flex-1 flex-col"
             >
+              {/*
+                Cards stay real links — modified clicks still open a tab — but
+                a plain click reads the issue in the sidebar so the board and
+                the user's place in it survive.
+              */}
+              <IssueOpenProvider onOpenIssue={setOpenIssueId}>
               <IssueSurface
                 scope={issueSurfaceScope}
                 modes={["board", "list", "swimlane"]}
@@ -2949,6 +2974,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                   </div>
                 )}
               />
+              </IssueOpenProvider>
             </section>
             </div>
           </ResizablePanel>
@@ -2973,7 +2999,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                 open={desktopSidebarVisualOpen}
                 motionEnabled={desktopSidebarMotionEnabled}
               >
-                {nodeSidebarContent}
+                {sidebarContent}
               </AnimatedRightSidebar>
             </ResizablePanel>
           )}
@@ -2986,7 +3012,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               showCloseButton={false}
               className="w-[min(92vw,24rem)] overflow-y-auto p-4"
             >
-              {nodeSidebarContent}
+              {sidebarContent}
             </SheetContent>
           </Sheet>
         )}
