@@ -107,6 +107,35 @@ func startArtifactWorkflow(t *testing.T, key string) (string, string) {
 	return started.Instance.ID, node.ID
 }
 
+// startLinkArtifactWorkflow boots a node whose required artifact is a link.
+func startLinkArtifactWorkflow(t *testing.T, key string) (string, string) {
+	t.Helper()
+	instanceID, nodeID := startArtifactWorkflow(t, "link-"+key)
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE workflow_node_instance
+		SET definition_snapshot = jsonb_set(
+			definition_snapshot::jsonb,
+			'{artifacts}',
+			'[{"key":"review_pr","name":"Review PR","kind":"link","required":true}]'::jsonb
+		)::text::bytea
+		WHERE id = $1
+	`, nodeID); err != nil {
+		// definition_snapshot is stored as jsonb in this schema; fall back to a
+		// direct assignment when the cast above does not apply.
+		if _, err2 := testPool.Exec(context.Background(), `
+			UPDATE workflow_node_instance
+			SET definition_snapshot = jsonb_set(
+				definition_snapshot, '{artifacts}',
+				'[{"key":"review_pr","name":"Review PR","kind":"link","required":true}]'::jsonb
+			)
+			WHERE id = $1
+		`, nodeID); err2 != nil {
+			t.Fatalf("rewrite node artifacts: %v / %v", err, err2)
+		}
+	}
+	return instanceID, nodeID
+}
+
 func submitArtifact(t *testing.T, nodeID string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	recorder := httptest.NewRecorder()
@@ -495,5 +524,147 @@ func TestWorkflowUpstreamReturnsPredecessorHandoff(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), `"content"`) {
 		t.Error("upstream index must not carry artifact bodies")
+	}
+}
+
+// A node needing a verdict but declaring no schema gets a submission
+// synthesised for it, carrying a canned summary. That record must not satisfy
+// the handoff gate: downstream would inherit a conclusion the platform wrote,
+// which is exactly what requiring a handoff is meant to prevent.
+func TestWorkflowHandoffGateRejectsSystemAuthoredSummary(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	_, reviewID, _ := startHandoffWorkflow(t, "system-summary")
+
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO workflow_node_submission (
+			workspace_id, workflow_instance_id, workflow_node_instance_id,
+			revision, status, payload, summary, evidence, submitted_by_type,
+			schema_version
+		)
+		SELECT workspace_id, workflow_instance_id, id, 1, 'valid', '{}'::jsonb,
+		       'All required issues are done', '[]'::jsonb, 'system', 1
+		FROM workflow_node_instance WHERE id = $1
+	`, reviewID); err != nil {
+		t.Fatalf("insert system submission: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE workflow_node_instance SET latest_submission_id = (
+			SELECT id FROM workflow_node_submission
+			WHERE workflow_node_instance_id = $1 ORDER BY revision DESC LIMIT 1
+		) WHERE id = $1
+	`, reviewID); err != nil {
+		t.Fatalf("link system submission: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(
+		http.MethodPost,
+		"/api/workflow-node-instances/"+reviewID+"/complete?workspace_id="+testWorkspaceID,
+		map[string]any{"idempotency_key": "handoff-system-summary"},
+	), "nodeInstanceId", reviewID)
+	testHandler.CompleteWorkflowNode(recorder, request)
+	if recorder.Code == http.StatusOK {
+		t.Fatal("node completed on a summary the platform wrote for it")
+	}
+}
+
+// A link artifact is agent-submitted and later rendered as a clickable
+// address, so its scheme is an injection boundary.
+func TestWorkflowArtifactRejectsNonBrowsableLink(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	_, nodeID := startLinkArtifactWorkflow(t, "scheme")
+
+	for _, hostile := range []string{
+		"javascript:alert(1)",
+		"data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+		"file:///etc/passwd",
+		"not a url at all",
+	} {
+		recorder := submitArtifact(t, nodeID, map[string]any{
+			"artifact_key": "review_pr", "url": hostile,
+		})
+		if recorder.Code != http.StatusBadRequest {
+			t.Errorf("url %q accepted with status %d", hostile, recorder.Code)
+		}
+	}
+	if recorder := submitArtifact(t, nodeID, map[string]any{
+		"artifact_key": "review_pr", "url": "https://git.example.com/pr/7",
+	}); recorder.Code != http.StatusOK {
+		t.Fatalf("https link rejected: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// An api verdict must fail closed. An endpoint that times out, errors, or
+// answers in an unrecognised shape has approved nothing, and treating silence
+// as approval would let an unreachable check wave work through.
+func TestAPIWorkflowVerdictFailsClosed(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		want    string
+	}{
+		{
+			name: "a clean pass is honoured",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"result":"pass","reason":"CI green"}`))
+			},
+			want: "pass",
+		},
+		{
+			name: "an explicit fail is honoured",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"result":"fail","reason":"coverage dropped"}`))
+			},
+			want: "fail",
+		},
+		{
+			name: "a server error blocks",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+			want: "blocked",
+		},
+		{
+			name: "an unreadable body blocks",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte("not json"))
+			},
+			want: "blocked",
+		},
+		{
+			name: "an unknown result blocks",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"result":"maybe"}`))
+			},
+			want: "blocked",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(test.handler)
+			defer server.Close()
+			got, reason := testHandler.evaluateAPIWorkflowVerdict(
+				context.Background(), server.URL,
+			)
+			if got != test.want {
+				t.Errorf("evaluateAPIWorkflowVerdict() = %q (%s), want %q", got, reason, test.want)
+			}
+			if reason == "" {
+				t.Error("a verdict must carry a reason")
+			}
+		})
+	}
+}
+
+func TestAPIWorkflowVerdictBlocksOnUnreachableEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := server.URL
+	server.Close() // Nothing is listening now.
+
+	got, reason := testHandler.evaluateAPIWorkflowVerdict(context.Background(), url)
+	if got != "blocked" {
+		t.Errorf("evaluateAPIWorkflowVerdict() = %q (%s), want blocked", got, reason)
 	}
 }

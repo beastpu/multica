@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -1850,8 +1852,14 @@ func (h *Handler) evaluateWorkflowNode(
 	// owes one is not finished without it. Checked against the live submission
 	// rather than any submission: an earlier revision's conclusion described
 	// work that has since changed.
+	// The summary must come from whoever did the work. A node that needs a
+	// verdict but declares no schema gets a submission synthesised for it, and
+	// that record carries a canned summary — letting it satisfy the gate would
+	// hand downstream a conclusion the platform wrote, which the design
+	// deliberately prevents.
 	if nodeDefinition.Completion.HandoffRequired &&
-		strings.TrimSpace(submission.Summary) == "" {
+		(submission.SubmittedByType == "system" ||
+			strings.TrimSpace(submission.Summary) == "") {
 		return false, []workflowdomain.WaitingReason{{
 			Code:    "handoff_summary_required",
 			Message: "A handoff summary is required before this node can complete",
@@ -1908,6 +1916,24 @@ func (h *Handler) evaluateWorkflowNode(
 		return h.evaluateWorkflowManualCompletion(
 			ctx, q, workspaceID, node, nodeDefinition, submission, verdict,
 			includeManualCompletion,
+		)
+	}
+	if nodeDefinition.Verdict.Evaluator == "api" {
+		result, reason := h.evaluateAPIWorkflowVerdict(ctx, nodeDefinition.Verdict.APIURL)
+		if !workflowVerdictSatisfies(result, verdictRequired) {
+			return false, []workflowdomain.WaitingReason{{
+				Code: "api_verdict_not_passed", Message: reason,
+			}}, submission, db.WorkflowNodeVerdict{}, nil
+		}
+		confirmationReady, confirmationReasons, err := h.evaluateWorkflowConfirmation(
+			ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
+		)
+		if err != nil || !confirmationReady {
+			return confirmationReady, confirmationReasons, submission, db.WorkflowNodeVerdict{}, err
+		}
+		return h.evaluateWorkflowManualCompletion(
+			ctx, q, workspaceID, node, nodeDefinition, submission,
+			db.WorkflowNodeVerdict{}, includeManualCompletion,
 		)
 	}
 	verdictResult, verdictReason, verdictBasis, err :=
@@ -2256,14 +2282,54 @@ func (h *Handler) workflowNodeChoiceTargets(
 	// outgoing edge still decides, and a gateway routes on what it decided.
 	// The range is therefore everything reachable from this node: still fixed
 	// by the graph, wide enough for the shape branching actually takes.
-	targets := map[string]struct{}{}
-	for _, candidate := range plan.Ordered {
-		if candidate.Key == node.NodeKey {
-			continue
-		}
-		if workflowdomain.PathExists(plan, node.NodeKey, candidate.Key) {
-			targets[candidate.Key] = struct{}{}
-		}
+	return workflowdomain.ReachableFrom(plan, node.NodeKey), nil
+}
+
+// workflowAPIVerdictTimeout bounds the external call. A check that has not
+// answered by now is indistinguishable from one that never will, and a node
+// waiting on it blocks the run.
+const workflowAPIVerdictTimeout = 10 * time.Second
+
+// evaluateAPIWorkflowVerdict asks an external endpoint whether the node passes.
+//
+// Anything other than a clean "pass" is treated as blocked, never as approval:
+// a check that times out, errors, or answers in a shape we do not recognise has
+// not approved anything, and defaulting the other way would let an unreachable
+// endpoint wave work through.
+func (h *Handler) evaluateAPIWorkflowVerdict(
+	ctx context.Context,
+	apiURL string,
+) (string, string) {
+	requestCtx, cancel := context.WithTimeout(ctx, workflowAPIVerdictTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return "blocked", "Check endpoint address is invalid"
 	}
-	return targets, nil
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return "blocked", "Check endpoint is unreachable"
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "blocked", fmt.Sprintf("Check endpoint returned %d", response.StatusCode)
+	}
+	var payload struct {
+		Result string `json:"result"`
+		Reason string `json:"reason"`
+	}
+	// Bound the body: an endpoint streaming megabytes is a fault, not a verdict.
+	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&payload); err != nil {
+		return "blocked", "Check endpoint returned an unreadable body"
+	}
+	switch payload.Result {
+	case "pass", "fail", "blocked":
+	default:
+		return "blocked", "Check endpoint returned an unknown result"
+	}
+	reason := strings.TrimSpace(payload.Reason)
+	if reason == "" {
+		reason = "Check result: " + payload.Result
+	}
+	return payload.Result, reason
 }

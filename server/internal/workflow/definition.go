@@ -1246,13 +1246,25 @@ func validateVerdictAPIURL(nodeKey, raw string) error {
 	return nil
 }
 
-// PathExists reports whether the graph can reach `to` from `from`. Exported so
-// callers can bound a value by what the graph allows rather than by a list they
-// maintain separately.
-func PathExists(plan GraphPlan, from, to string) bool {
-	edges := make([]EdgeDefinition, 0)
-	for _, outgoing := range plan.Outgoing {
-		edges = append(edges, outgoing...)
+// ReachableFrom returns every node the graph can reach from `from`, excluding
+// `from` itself. Exported so callers can bound a value by what the graph allows
+// rather than by a list they maintain separately.
+//
+// One traversal rather than one per candidate: the caller wants the whole set,
+// and asking "can I reach X" node by node walks the graph again for each.
+func ReachableFrom(plan GraphPlan, from string) map[string]struct{} {
+	reachable := map[string]struct{}{}
+	queue := []string{from}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, edge := range plan.Outgoing[current] {
+			if _, seen := reachable[edge.To]; seen || edge.To == from {
+				continue
+			}
+			reachable[edge.To] = struct{}{}
+			queue = append(queue, edge.To)
+		}
 	}
-	return workflowPathExists(from, to, edges)
+	return reachable
 }

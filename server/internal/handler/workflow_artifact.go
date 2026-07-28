@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	neturl "net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -225,6 +226,14 @@ func (h *Handler) SubmitWorkflowArtifact(w http.ResponseWriter, r *http.Request)
 	case "link":
 		if url == "" {
 			writeError(w, http.StatusBadRequest, "url is required for a link artifact")
+			return
+		}
+		// A link artifact is submitted by an agent and later rendered as a
+		// clickable address, so the scheme is an injection boundary: anything
+		// but http(s) — javascript:, data:, file: — turns a stored artifact
+		// into code that runs when someone opens it.
+		if !isBrowsableArtifactURL(url) {
+			writeError(w, http.StatusBadRequest, "url must be an http or https address")
 			return
 		}
 		if strings.TrimSpace(req.Content) != "" || req.AttachmentID != nil {
@@ -503,4 +512,16 @@ func (h *Handler) GetWorkflowNodeUpstream(w http.ResponseWriter, r *http.Request
 		upstream = append(upstream, entry)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"upstream": upstream})
+}
+
+// isBrowsableArtifactURL accepts only the schemes safe to hand a browser.
+func isBrowsableArtifactURL(raw string) bool {
+	parsed, err := neturl.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	return parsed.Host != ""
 }
