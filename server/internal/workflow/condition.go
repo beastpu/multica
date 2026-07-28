@@ -65,6 +65,22 @@ func ValidateCondition(raw json.RawMessage, nodes map[string]NodeDefinition) err
 					expression.Node,
 				)
 			}
+		case "node_choice":
+			// The value is the key of an outgoing node, so validity is a graph
+			// question, not a schema one: the referenced node must exist, and
+			// the compared value must be somewhere it can actually branch to.
+			node, ok := nodes[expression.Node]
+			if !ok || node.Kind == "start" {
+				return fmt.Errorf("node_choice references unknown node %q", expression.Node)
+			}
+			// A node carries exactly one choice, so the key is fixed rather
+			// than free. Spelling it out keeps the condition readable and
+			// stops a template inventing a field that will never be read.
+			if expression.Key != "choice" {
+				return fmt.Errorf(
+					"node_choice key must be \"choice\", got %q", expression.Key,
+				)
+			}
 		case "node_verdict":
 			node, ok := nodes[expression.Node]
 			if !ok || node.Kind != "activity" || node.Verdict == nil {

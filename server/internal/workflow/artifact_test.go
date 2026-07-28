@@ -133,3 +133,109 @@ func TestRequiredArtifactsFiltersOptionalOnes(t *testing.T) {
 		}
 	}
 }
+
+func definitionWithVerdict(verdict string) []byte {
+	return []byte(`{
+	  "schema_version": 1,
+	  "name": "t",
+	  "applies_to": {"kind": "issue"},
+	  "roles": [{"key": "owner", "name": "Owner", "allowed_actor_types": ["member"]}],
+	  "nodes": [
+	    {"key":"start","kind":"start","name":"Start"},
+	    {"key":"check","kind":"activity","activity_mode":"work","name":"Check",
+	     "owner_role":"owner","issue_policy":"none",
+	     "completion":{"mode":"manual","required_issue_outcome":"none","verdict_required":"pass"},
+	     "verdict": ` + verdict + `},
+	    {"key":"end","kind":"end","name":"End"}
+	  ],
+	  "edges": [{"from":"start","to":"check"},{"from":"check","to":"end"}],
+	  "acceptance": {"policy":"none","rework_targets":[]}
+	}`)
+}
+
+// An api verdict is what replaces the objective signal lost when user-defined
+// fields go away, so its address has to be trustworthy: https only, and only
+// ever from the template.
+func TestAPIVerdictEvaluatorValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		verdict string
+		wantErr bool
+	}{
+		{
+			name:    "https endpoint is accepted",
+			verdict: `{"evaluator":"api","required_result":"pass","api_url":"https://ci.example.com/verdict"}`,
+		},
+		{
+			name:    "plaintext http is rejected",
+			verdict: `{"evaluator":"api","required_result":"pass","api_url":"http://ci.example.com/verdict"}`,
+			wantErr: true,
+		},
+		{
+			name:    "api without a url is rejected",
+			verdict: `{"evaluator":"api","required_result":"pass"}`,
+			wantErr: true,
+		},
+		{
+			name:    "a non-api evaluator may not carry a url",
+			verdict: `{"evaluator":"member","required_result":"pass","api_url":"https://ci.example.com"}`,
+			wantErr: true,
+		},
+		{
+			name:    "member evaluator still works",
+			verdict: `{"evaluator":"member","required_result":"pass"}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			definition, err := ParseDefinition(definitionWithVerdict(test.verdict))
+			if err != nil {
+				if !test.wantErr {
+					t.Fatalf("ParseDefinition() error = %v", err)
+				}
+				return
+			}
+			err = ValidateDefinition(definition)
+			if test.wantErr && err == nil {
+				t.Fatal("ValidateDefinition() = nil, want an error")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("ValidateDefinition() error = %v", err)
+			}
+		})
+	}
+}
+
+// node_choice replaces branching on a user-defined field. Its range comes from
+// the graph, so validation only has to know the node exists.
+func TestNodeChoiceConditionSource(t *testing.T) {
+	raw := []byte(`{
+	  "schema_version": 1,
+	  "name": "t",
+	  "applies_to": {"kind": "issue"},
+	  "roles": [{"key": "owner", "name": "Owner", "allowed_actor_types": ["member"]}],
+	  "nodes": [
+	    {"key":"start","kind":"start","name":"Start"},
+	    {"key":"triage","kind":"activity","activity_mode":"work","name":"Triage",
+	     "owner_role":"owner","issue_policy":"none",
+	     "completion":{"mode":"manual","required_issue_outcome":"none"}},
+	    {"key":"gate","kind":"gateway","name":"Gate"},
+	    {"key":"fix","kind":"end","name":"Fix"},
+	    {"key":"reject","kind":"end","name":"Reject"}
+	  ],
+	  "edges": [
+	    {"from":"start","to":"triage"},
+	    {"from":"triage","to":"gate"},
+	    {"from":"gate","to":"fix","condition":{"source":"node_choice","node":"triage","key":"choice","op":"eq","value":"fix"}},
+	    {"from":"gate","to":"reject","default":true}
+	  ],
+	  "acceptance": {"policy":"none","rework_targets":[]}
+	}`)
+	definition, err := ParseDefinition(raw)
+	if err != nil {
+		t.Fatalf("ParseDefinition() error = %v", err)
+	}
+	if err := ValidateDefinition(definition); err != nil {
+		t.Fatalf("ValidateDefinition() error = %v", err)
+	}
+}

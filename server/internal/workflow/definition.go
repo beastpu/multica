@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
@@ -166,6 +167,11 @@ type VerdictDefinition struct {
 	Evaluator      string          `json:"evaluator"`
 	RequiredResult string          `json:"required_result,omitempty"`
 	Condition      json.RawMessage `json:"condition,omitempty"`
+	// APIURL is the endpoint an "api" evaluator calls. It is workspace
+	// configuration, never taken from a submission or an agent, because an
+	// address supplied by the thing under review would let it choose its own
+	// judge — and would make the server a request forwarder.
+	APIURL string `json:"api_url,omitempty"`
 }
 
 type CompletionDefinition struct {
@@ -551,8 +557,19 @@ func validateActivity(
 		}
 	}
 	if node.Verdict != nil {
-		if node.Verdict.Evaluator != "deterministic" && node.Verdict.Evaluator != "member" {
+		switch node.Verdict.Evaluator {
+		case "deterministic", "member", "api":
+		default:
 			return fmt.Errorf("activity %q has invalid verdict evaluator %q", node.Key, node.Verdict.Evaluator)
+		}
+		if node.Verdict.Evaluator == "api" {
+			if err := validateVerdictAPIURL(node.Key, node.Verdict.APIURL); err != nil {
+				return err
+			}
+		} else if strings.TrimSpace(node.Verdict.APIURL) != "" {
+			return fmt.Errorf(
+				"activity %q only an api verdict can declare api_url", node.Key,
+			)
 		}
 		if node.Verdict.RequiredResult != "" && node.Verdict.RequiredResult != "pass" &&
 			node.Verdict.RequiredResult != "not_blocked" {
@@ -1264,6 +1281,27 @@ func validateIssueTitleTemplate(title string) error {
 	remainder := strings.ReplaceAll(title, "{{host.title}}", "")
 	if strings.Contains(remainder, "{{") || strings.Contains(remainder, "}}") {
 		return errors.New("title template only supports {{host.title}}")
+	}
+	return nil
+}
+
+// validateVerdictAPIURL keeps an api verdict pointed at a real external
+// endpoint. The scheme check is the meaningful one: anything but https would
+// send the workflow's state over a channel the workspace cannot vouch for.
+func validateVerdictAPIURL(nodeKey, raw string) error {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return fmt.Errorf("activity %q api verdict requires api_url", nodeKey)
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return fmt.Errorf("activity %q has invalid api_url: %w", nodeKey, err)
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("activity %q api_url must use https", nodeKey)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("activity %q api_url is missing a host", nodeKey)
 	}
 	return nil
 }

@@ -378,6 +378,7 @@ func workflowConditionResolver(
 	_ = json.Unmarshal(host.Properties, &properties)
 
 	submissions := map[string]map[string]any{}
+	choices := map[string]string{}
 	verdicts := map[string]map[string]any{}
 	for key, node := range nodes {
 		if node.LatestSubmissionID.Valid {
@@ -389,6 +390,7 @@ func workflowConditionResolver(
 				if json.Unmarshal(submission.Payload, &payload) == nil {
 					submissions[key] = payload
 				}
+				choices[key] = submission.Choice
 			}
 		}
 		if node.LatestVerdictID.Valid {
@@ -431,6 +433,15 @@ func workflowConditionResolver(
 		case "node_submission":
 			value, ok := submissions[node][key]
 			return value, ok
+		case "node_choice":
+			// The choice is a single value, so the condition's key is ignored
+			// rather than indexed into. An unset choice reports absent, which
+			// keeps an unanswered branch from matching by accident.
+			choice, exists := choices[node]
+			if !exists || choice == "" {
+				return nil, false
+			}
+			return choice, true
 		case "node_verdict":
 			value, ok := verdicts[node][key]
 			return value, ok

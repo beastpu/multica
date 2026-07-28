@@ -24,6 +24,7 @@ type workflowSubmissionResponse struct {
 	Status                 string                         `json:"status"`
 	Payload                json.RawMessage                `json:"payload"`
 	Summary                string                         `json:"summary"`
+	Choice                 string                         `json:"choice,omitempty"`
 	Evidence               json.RawMessage                `json:"evidence"`
 	SubmittedByType        string                         `json:"submitted_by_type"`
 	SubmittedByID          *string                        `json:"submitted_by_id"`
@@ -87,7 +88,7 @@ func workflowSubmissionToResponse(row db.WorkflowNodeSubmission) workflowSubmiss
 	return workflowSubmissionResponse{
 		ID: uuidToString(row.ID), WorkflowNodeInstanceID: uuidToString(row.WorkflowNodeInstanceID),
 		Revision: row.Revision, Status: row.Status, Payload: payload,
-		Summary: row.Summary, Evidence: json.RawMessage(row.Evidence),
+		Summary: row.Summary, Choice: row.Choice, Evidence: json.RawMessage(row.Evidence),
 		SubmittedByType: row.SubmittedByType, SubmittedByID: uuidToPtr(row.SubmittedByID),
 		SourceIssueID: uuidToPtr(row.SourceIssueID), SourceAgentRunID: uuidToPtr(row.SourceAgentRunID),
 		ProposedTasks: proposedTasks,
@@ -308,6 +309,7 @@ func (h *Handler) ListWorkflowNodeSubmissions(w http.ResponseWriter, r *http.Req
 type createWorkflowSubmissionRequest struct {
 	Payload          map[string]any                 `json:"payload"`
 	Summary          string                         `json:"summary"`
+	Choice           string                         `json:"choice,omitempty"`
 	Evidence         json.RawMessage                `json:"evidence,omitempty"`
 	SourceIssueID    string                         `json:"source_issue_id,omitempty"`
 	SourceAgentRunID string                         `json:"source_agent_run_id,omitempty"`
@@ -370,6 +372,22 @@ func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Re
 			"workflow node does not allow proposed dynamic tasks",
 		)
 		return
+	}
+	// A choice names the branch the node picked, so it has to be one of the
+	// node's own outgoing targets. The graph fixes the range — that is the
+	// whole reason a system-defined choice replaces a user-defined field.
+	if choice := strings.TrimSpace(req.Choice); choice != "" {
+		allowed, err := h.workflowNodeChoiceTargets(r.Context(), instance, node)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load workflow graph")
+			return
+		}
+		if _, ok := allowed[choice]; !ok {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf(
+				"choice %q is not an outgoing branch of this node", choice,
+			))
+			return
+		}
 	}
 	// A summary longer than the cap defeats its purpose: downstream is meant to
 	// read it whole without deciding whether to. Reject at the boundary so the
@@ -519,6 +537,7 @@ func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Re
 	submission, err := qtx.CreateWorkflowSubmission(r.Context(), db.CreateWorkflowSubmissionParams{
 		WorkspaceID: node.WorkspaceID, WorkflowInstanceID: instance.ID, WorkflowNodeInstanceID: node.ID,
 		Revision: revision, Status: status, Payload: payload, Summary: strings.TrimSpace(req.Summary),
+		Choice:   strings.TrimSpace(req.Choice),
 		Evidence: evidence, SubmittedByType: actorType, SubmittedByID: actorID,
 		SourceIssueID: sourceIssueID, SourceAgentRunID: sourceAgentRunID, SchemaVersion: 1,
 	})
@@ -2212,4 +2231,34 @@ func decodeWorkflowObject(raw []byte) map[string]any {
 		return map[string]any{}
 	}
 	return value
+}
+
+// workflowNodeChoiceTargets returns the node keys this node may branch to.
+func (h *Handler) workflowNodeChoiceTargets(
+	ctx context.Context,
+	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
+) (map[string]struct{}, error) {
+	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(
+		ctx,
+		db.GetWorkflowTemplateVersionInWorkspaceParams{
+			ID: instance.TemplateVersionID, WorkspaceID: instance.WorkspaceID,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	definition, err := workflowdomain.ParseDefinition(version.Definition)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := workflowdomain.BuildGraphPlan(definition)
+	if err != nil {
+		return nil, err
+	}
+	targets := make(map[string]struct{}, len(plan.Outgoing[node.NodeKey]))
+	for _, edge := range plan.Outgoing[node.NodeKey] {
+		targets[edge.To] = struct{}{}
+	}
+	return targets, nil
 }
