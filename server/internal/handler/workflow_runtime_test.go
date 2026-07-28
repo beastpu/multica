@@ -4001,7 +4001,8 @@ func cleanupWorkflowRuntimeTest(t *testing.T) {
 		ctx := context.Background()
 		for _, table := range []string{
 			"workflow_event", "workflow_acceptance", "workflow_node_confirmation",
-			"workflow_node_verdict", "workflow_node_submission", "workflow_executor_resolution",
+			"workflow_node_verdict", "workflow_node_submission", "workflow_artifact",
+			"workflow_executor_resolution",
 			"workflow_node_task", "workflow_node_participant", "workflow_node_instance",
 			"workflow_instance_role_assignment", "workflow_instance",
 			"workflow_template_version", "workflow_template",
@@ -4009,6 +4010,22 @@ func cleanupWorkflowRuntimeTest(t *testing.T) {
 			if _, err := testPool.Exec(ctx, "DELETE FROM "+table+" WHERE workspace_id = $1", testWorkspaceID); err != nil {
 				t.Fatalf("cleanup %s: %v", table, err)
 			}
+		}
+		// Tests that need a second member create one under a fixed address, so
+		// the rows have to go too. Without this the suite passes once and then
+		// fails on the unique email — a false regression that costs more to
+		// diagnose than the delete costs to run.
+		if _, err := testPool.Exec(ctx, `
+			DELETE FROM member WHERE workspace_id = $1 AND user_id IN (
+				SELECT id FROM "user" WHERE email LIKE 'workflow-%@multica.ai'
+			)
+		`, testWorkspaceID); err != nil {
+			t.Fatalf("cleanup workflow members: %v", err)
+		}
+		if _, err := testPool.Exec(ctx, `
+			DELETE FROM "user" WHERE email LIKE 'workflow-%@multica.ai'
+		`); err != nil {
+			t.Fatalf("cleanup workflow users: %v", err)
 		}
 		if _, err := testPool.Exec(ctx, `DELETE FROM issue WHERE workspace_id = $1 AND (title IN ('Workflow runtime host', 'Atomic workflow host', 'Workflow guard host', 'Workflow required child', 'Workflow optional child', 'Workflow DAG host', 'Workflow any join host', 'Workflow needs setup host', 'Workflow owner rollback host', 'Workflow fairness host', 'Dynamic investigation', 'Retry investigation') OR title LIKE 'Workflow executor %' OR origin_type = 'workflow')`, testWorkspaceID); err != nil {
 			t.Fatalf("cleanup workflow issues: %v", err)

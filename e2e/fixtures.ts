@@ -24,6 +24,7 @@ export class TestApiClient {
   private workspaceSlug: string | null = null;
   private workspaceId: string | null = null;
   private email: string | null = null;
+  private createdWorkflowTemplateIds: string[] = [];
   private createdIssueIds: string[] = [];
 
   async login(email: string, name: string) {
@@ -167,6 +168,54 @@ export class TestApiClient {
     return issue;
   }
 
+  /**
+   * Publish a workflow template in one call. Templates are created as a draft
+   * and only a published version can start a run, so a test that skipped the
+   * publish would fail on a state the product never lets a user reach.
+   */
+  async publishWorkflowTemplate(name: string, definition: Record<string, unknown>) {
+    const created = await (await this.authedFetch("/api/workflow-templates", {
+      method: "POST",
+      body: JSON.stringify({ name, description: "", definition }),
+    })).json();
+    const templateId = created.template?.id ?? created.id;
+    this.createdWorkflowTemplateIds.push(templateId);
+    await this.authedFetch(`/api/workflow-templates/${templateId}/draft`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        definition,
+        change_summary: "e2e",
+        revision: created.version?.revision ?? 1,
+      }),
+    });
+    await this.authedFetch(`/api/workflow-templates/${templateId}/publish`, {
+      method: "POST",
+    });
+    return templateId;
+  }
+
+  async startWorkflow(issueId: string, templateId: string, roleAssignments: unknown[]) {
+    const res = await this.authedFetch(`/api/issues/${issueId}/workflow`, {
+      method: "POST",
+      body: JSON.stringify({
+        template_id: templateId,
+        role_assignments: roleAssignments,
+        idempotency_key: `e2e-${issueId}`,
+      }),
+    });
+    return res.json();
+  }
+
+  async submitWorkflowArtifact(
+    nodeInstanceId: string,
+    body: Record<string, unknown>,
+  ) {
+    return (await this.authedFetch(
+      `/api/workflow-node-instances/${nodeInstanceId}/artifacts`,
+      { method: "POST", body: JSON.stringify(body) },
+    )).json();
+  }
+
   async deleteIssue(id: string) {
     await this.authedFetch(`/api/issues/${id}`, { method: "DELETE" });
   }
@@ -181,6 +230,22 @@ export class TestApiClient {
       }
     }
     this.createdIssueIds = [];
+    for (const id of this.createdWorkflowTemplateIds) {
+      try {
+        await this.authedFetch(`/api/workflow-templates/${id}/archive`, {
+          method: "POST",
+        });
+      } catch {
+        /* ignore — may already be archived */
+      }
+    }
+    this.createdWorkflowTemplateIds = [];
+  }
+
+  /** The logged-in user's id, needed wherever a member has to be named. */
+  async getUserId(): Promise<string> {
+    const me = await (await this.authedFetch("/api/me")).json();
+    return me.id ?? me.user?.id;
   }
 
   getToken() {

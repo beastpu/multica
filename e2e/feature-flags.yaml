@@ -1,0 +1,5 @@
+# Feature flags for the E2E run. The workflow engine is gated off by default,
+# and the server enforces that gate independently of the browser, so a spec
+# that only stubbed the client config would still be refused by the API.
+workflows_activity_engine:
+  default: true

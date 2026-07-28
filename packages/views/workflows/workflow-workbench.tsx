@@ -2163,10 +2163,10 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
     label: nodes.find((node) => node.node_key === key)?.name ?? key,
   }));
   const latestAcceptance = acceptancesQuery.data?.acceptances[0];
-  const hasSubmissionPanel = Boolean(
-    selectedNode?.definition.submission_schema &&
-    selectedNode.definition.submission_schema.policy !== "none",
-  );
+  // Every activity can hand off, so every activity gets the tab. Gating it on a
+  // schema hid it from the default node shape — which declares none — leaving
+  // the panel inside reachable only by URL.
+  const hasSubmissionPanel = selectedNode?.node_kind === "activity";
   const hasVerdictPanel = Boolean(selectedNode?.definition.verdict?.evaluator);
   const selectedIssuePolicy = selectedNode?.definition.issue_policy ?? "none";
   const selectedNodeAcceptsIssues = Boolean(
