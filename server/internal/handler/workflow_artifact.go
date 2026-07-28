@@ -1,0 +1,380 @@
+package handler
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
+)
+
+// maxWorkflowArtifactContentBytes mirrors the database CHECK. Rejecting here
+// turns an oversized document into a 400 that names the limit, instead of a
+// constraint violation surfacing as a 500.
+const maxWorkflowArtifactContentBytes = 1 << 20
+
+type workflowArtifactResponse struct {
+	ID                     string  `json:"id"`
+	WorkflowInstanceID     string  `json:"workflow_instance_id"`
+	WorkflowNodeInstanceID string  `json:"workflow_node_instance_id"`
+	ArtifactKey            string  `json:"artifact_key"`
+	Attempt                int32   `json:"attempt"`
+	Kind                   string  `json:"kind"`
+	Name                   string  `json:"name"`
+	Description            string  `json:"description"`
+	Content                string  `json:"content,omitempty"`
+	AttachmentID           *string `json:"attachment_id,omitempty"`
+	URL                    string  `json:"url,omitempty"`
+	ReviewStatus           string  `json:"review_status"`
+	ReviewComment          string  `json:"review_comment,omitempty"`
+	ReviewedBy             *string `json:"reviewed_by,omitempty"`
+	ReviewedAt             *string `json:"reviewed_at,omitempty"`
+	SubmittedByType        string  `json:"submitted_by_type"`
+	SubmittedByID          *string `json:"submitted_by_id,omitempty"`
+	CreatedAt              string  `json:"created_at"`
+	UpdatedAt              string  `json:"updated_at"`
+}
+
+func workflowArtifactToResponse(row db.WorkflowArtifact) workflowArtifactResponse {
+	return workflowArtifactResponse{
+		ID:                     uuidToString(row.ID),
+		WorkflowInstanceID:     uuidToString(row.WorkflowInstanceID),
+		WorkflowNodeInstanceID: uuidToString(row.WorkflowNodeInstanceID),
+		ArtifactKey:            row.ArtifactKey,
+		Attempt:                row.Attempt,
+		Kind:                   row.Kind,
+		Name:                   row.Name,
+		Description:            row.Description,
+		Content:                row.Content,
+		AttachmentID:           uuidToPtr(row.AttachmentID),
+		URL:                    row.Url,
+		ReviewStatus:           row.ReviewStatus,
+		ReviewComment:          row.ReviewComment,
+		ReviewedBy:             uuidToPtr(row.ReviewedBy),
+		ReviewedAt:             timestampToPtr(row.ReviewedAt),
+		SubmittedByType:        row.SubmittedByType,
+		SubmittedByID:          uuidToPtr(row.SubmittedByID),
+		CreatedAt:              timestampToString(row.CreatedAt),
+		UpdatedAt:              timestampToString(row.UpdatedAt),
+	}
+}
+
+func workflowArtifactsResponse(rows []db.WorkflowArtifact) []workflowArtifactResponse {
+	items := make([]workflowArtifactResponse, len(rows))
+	for index, row := range rows {
+		items[index] = workflowArtifactToResponse(row)
+	}
+	return items
+}
+
+type submitWorkflowArtifactRequest struct {
+	ArtifactKey  string  `json:"artifact_key"`
+	Content      string  `json:"content,omitempty"`
+	AttachmentID *string `json:"attachment_id,omitempty"`
+	URL          string  `json:"url,omitempty"`
+}
+
+// findArtifactRequirement locates the declaration an incoming artifact claims
+// to satisfy. Submissions are only accepted against a declared requirement:
+// the node definition is what tells the downstream index what an artifact is
+// called and what it should cover, and an undeclared one would have neither.
+func findArtifactRequirement(
+	nodeDefinition workflowdomain.NodeDefinition,
+	key string,
+) (workflowdomain.ArtifactRequirement, bool) {
+	for _, requirement := range nodeDefinition.Artifacts {
+		if requirement.Key == key {
+			return requirement, true
+		}
+	}
+	return workflowdomain.ArtifactRequirement{}, false
+}
+
+// ListWorkflowNodeArtifacts returns the live artifacts of one node instance.
+func (h *Handler) ListWorkflowNodeArtifacts(w http.ResponseWriter, r *http.Request) {
+	node, _, ok := h.loadWorkflowNode(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.Queries.ListWorkflowNodeArtifacts(r.Context(), db.ListWorkflowNodeArtifactsParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow artifacts")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"artifacts": workflowArtifactsResponse(rows),
+	})
+}
+
+// ListWorkflowInstanceArtifacts returns every live artifact in one run. This is
+// the "queryable but not auto-injected" half of artifact sharing: any node may
+// look the whole run up, while prompts only carry the direct predecessors'.
+func (h *Handler) ListWorkflowInstanceArtifacts(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.loadWorkflowInstance(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.Queries.ListWorkflowInstanceArtifacts(
+		r.Context(),
+		db.ListWorkflowInstanceArtifactsParams{
+			WorkflowInstanceID: instance.ID, WorkspaceID: instance.WorkspaceID,
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow artifacts")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"artifacts": workflowArtifactsResponse(rows),
+	})
+}
+
+// SubmitWorkflowArtifact records an artifact against a node instance,
+// replacing whatever that node last delivered under the same key.
+//
+// The replacement retires the previous row rather than updating it, so an
+// agent that overwrites a sound document during rework cannot destroy it.
+func (h *Handler) SubmitWorkflowArtifact(w http.ResponseWriter, r *http.Request) {
+	if !h.workflowWriteEnabled(w, r) {
+		return
+	}
+	node, instance, ok := h.loadWorkflowNode(w, r)
+	if !ok {
+		return
+	}
+	var req submitWorkflowArtifactRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.ArtifactKey = strings.TrimSpace(req.ArtifactKey)
+	if req.ArtifactKey == "" {
+		writeError(w, http.StatusBadRequest, "artifact_key is required")
+		return
+	}
+	if instance.Status != "running" || !workflowNodeIsOpen(node) {
+		writeError(w, http.StatusConflict, "workflow node does not accept artifacts")
+		return
+	}
+	var nodeDefinition workflowdomain.NodeDefinition
+	if err := json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition); err != nil {
+		writeError(w, http.StatusInternalServerError, "invalid workflow node snapshot")
+		return
+	}
+	requirement, declared := findArtifactRequirement(nodeDefinition, req.ArtifactKey)
+	if !declared {
+		writeError(w, http.StatusBadRequest, "workflow node does not declare this artifact")
+		return
+	}
+	kind := workflowdomain.ArtifactKind(requirement)
+
+	// Exactly one carrier must match the declared kind. The database enforces
+	// this too, but a mismatch here is a caller error worth naming.
+	content, url := "", strings.TrimSpace(req.URL)
+	var attachmentID pgtype.UUID
+	switch kind {
+	case "document":
+		content = req.Content
+		if strings.TrimSpace(content) == "" {
+			writeError(w, http.StatusBadRequest, "content is required for a document artifact")
+			return
+		}
+		if len(content) > maxWorkflowArtifactContentBytes {
+			writeError(w, http.StatusBadRequest, "artifact content exceeds 1 MB; submit it as an attachment")
+			return
+		}
+		if req.AttachmentID != nil || url != "" {
+			writeError(w, http.StatusBadRequest, "a document artifact carries content only")
+			return
+		}
+	case "attachment":
+		if req.AttachmentID == nil {
+			writeError(w, http.StatusBadRequest, "attachment_id is required for an attachment artifact")
+			return
+		}
+		parsed, valid := parseUUIDOrBadRequest(w, *req.AttachmentID, "attachment_id")
+		if !valid {
+			return
+		}
+		if _, err := h.Queries.GetAttachment(r.Context(), db.GetAttachmentParams{
+			ID: parsed, WorkspaceID: node.WorkspaceID,
+		}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusBadRequest, "attachment not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to load attachment")
+			return
+		}
+		attachmentID = parsed
+		if strings.TrimSpace(req.Content) != "" || url != "" {
+			writeError(w, http.StatusBadRequest, "an attachment artifact carries attachment_id only")
+			return
+		}
+	case "link":
+		if url == "" {
+			writeError(w, http.StatusBadRequest, "url is required for a link artifact")
+			return
+		}
+		if strings.TrimSpace(req.Content) != "" || req.AttachmentID != nil {
+			writeError(w, http.StatusBadRequest, "a link artifact carries url only")
+			return
+		}
+	}
+
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	actorType, actorIDText := h.resolveActor(r, userID, uuidToString(node.WorkspaceID))
+	actorID, ok := parseUUIDOrBadRequest(w, actorIDText, "actor_id")
+	if !ok {
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start workflow transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	replaced, err := qtx.SupersedeWorkflowArtifact(r.Context(), db.SupersedeWorkflowArtifactParams{
+		WorkspaceID: node.WorkspaceID, WorkflowNodeInstanceID: node.ID,
+		ArtifactKey: req.ArtifactKey,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to supersede workflow artifact")
+		return
+	}
+	artifact, err := qtx.CreateWorkflowArtifact(r.Context(), db.CreateWorkflowArtifactParams{
+		WorkspaceID: node.WorkspaceID, WorkflowInstanceID: instance.ID,
+		WorkflowNodeInstanceID: node.ID, ArtifactKey: req.ArtifactKey,
+		Attempt: node.Attempt, Kind: kind, Name: requirement.Name,
+		Description: requirement.Description,
+		Content:     content, AttachmentID: attachmentID, Url: url,
+		SubmittedByType: actorType, SubmittedByID: actorID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record workflow artifact")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit workflow artifact")
+		return
+	}
+
+	h.publishWorkflowRealtime(
+		protocol.EventWorkflowArtifactSubmitted,
+		uuidToString(node.WorkspaceID), actorType, actorIDText,
+		map[string]any{
+			"workflow_instance_id":      uuidToString(instance.ID),
+			"workflow_node_instance_id": uuidToString(node.ID),
+			"artifact_id":               uuidToString(artifact.ID),
+			"artifact_key":              artifact.ArtifactKey,
+			"replaced":                  replaced > 0,
+		},
+	)
+	h.WorkflowReconciler.Notify()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"artifact": workflowArtifactToResponse(artifact),
+		"replaced": replaced > 0,
+	})
+}
+
+type reviewWorkflowArtifactRequest struct {
+	Status  string `json:"status"`
+	Comment string `json:"comment,omitempty"`
+}
+
+// ReviewWorkflowArtifact records an approval or rejection against the live
+// artifact. A rejection blocks node completion the same way a missing artifact
+// does; an approval only holds until the artifact is replaced.
+func (h *Handler) ReviewWorkflowArtifact(w http.ResponseWriter, r *http.Request) {
+	if !h.workflowWriteEnabled(w, r) {
+		return
+	}
+	node, _, ok := h.loadWorkflowNode(w, r)
+	if !ok {
+		return
+	}
+	artifactID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "artifactId"), "artifact_id")
+	if !ok {
+		return
+	}
+	var req reviewWorkflowArtifactRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	switch req.Status {
+	case "approved", "rejected":
+	default:
+		writeError(w, http.StatusBadRequest, "status must be approved or rejected")
+		return
+	}
+	existing, err := h.Queries.GetWorkflowArtifact(r.Context(), db.GetWorkflowArtifactParams{
+		ID: artifactID, WorkspaceID: node.WorkspaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) || existing.WorkflowNodeInstanceID != node.ID {
+		writeError(w, http.StatusNotFound, "workflow artifact not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow artifact")
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	reviewer, ok := parseUUIDOrBadRequest(w, userID, "user_id")
+	if !ok {
+		return
+	}
+	artifact, err := h.Queries.ReviewWorkflowArtifact(r.Context(), db.ReviewWorkflowArtifactParams{
+		ID: artifactID, WorkspaceID: node.WorkspaceID,
+		ReviewStatus: req.Status, ReviewComment: strings.TrimSpace(req.Comment),
+		ReviewedBy: reviewer,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The row was superseded between the read and the write. Reviewing
+		// retired content would record a decision about something no longer in
+		// play, so the caller has to re-read and decide again.
+		writeError(w, http.StatusConflict, "workflow artifact was replaced; refresh and try again")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to review workflow artifact")
+		return
+	}
+	h.publishWorkflowRealtime(
+		protocol.EventWorkflowArtifactReviewed,
+		uuidToString(node.WorkspaceID), "member", userID,
+		map[string]any{
+			"workflow_instance_id":      uuidToString(artifact.WorkflowInstanceID),
+			"workflow_node_instance_id": uuidToString(node.ID),
+			"artifact_id":               uuidToString(artifact.ID),
+			"artifact_key":              artifact.ArtifactKey,
+			"review_status":             artifact.ReviewStatus,
+		},
+	)
+	h.WorkflowReconciler.Notify()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"artifact": workflowArtifactToResponse(artifact),
+	})
+}

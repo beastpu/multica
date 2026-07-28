@@ -141,6 +141,8 @@ const (
 	EventWorkflowVerdictCreated            = "workflow_verdict:created"
 	EventWorkflowConfirmationUpdated       = "workflow_confirmation:updated"
 	EventWorkflowAcceptanceUpdated         = "workflow_acceptance:updated"
+	EventWorkflowArtifactSubmitted         = "workflow_artifact:submitted"
+	EventWorkflowArtifactReviewed          = "workflow_artifact:reviewed"
 
 	// Squad events
 	EventSquadCreated = "squad:created"

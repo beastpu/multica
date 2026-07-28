@@ -1247,6 +1247,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/issues", h.ListWorkflowInstanceIssues)
 					r.Get("/events", h.ListWorkflowInstanceEvents)
 					r.Get("/diagnostics", h.GetWorkflowInstanceDiagnostics)
+					r.Get("/artifacts", h.ListWorkflowInstanceArtifacts)
 					r.Get("/acceptances", h.ListWorkflowAcceptances)
 					r.Post("/acceptances", h.DecideWorkflowAcceptance)
 					r.Post("/roles", h.UpdateWorkflowInstanceRoles)
@@ -1267,6 +1268,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					"/submissions/{submissionId}/confirm-tasks",
 					h.ConfirmWorkflowSubmissionTasks,
 				)
+				r.Get("/artifacts", h.ListWorkflowNodeArtifacts)
+				r.Post("/artifacts", h.SubmitWorkflowArtifact)
+				r.Post("/artifacts/{artifactId}/review", h.ReviewWorkflowArtifact)
 				r.Get("/verdicts", h.ListWorkflowNodeVerdicts)
 				r.Post("/verdicts", h.CreateWorkflowNodeVerdict)
 				r.Post("/confirm", h.ConfirmWorkflowNode)

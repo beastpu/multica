@@ -1671,6 +1671,38 @@ func (h *Handler) evaluateWorkflowNode(
 			})
 		}
 	}
+	if required := workflowdomain.RequiredArtifacts(nodeDefinition); len(required) > 0 {
+		artifacts, err := q.ListWorkflowNodeArtifacts(ctx, db.ListWorkflowNodeArtifactsParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			return false, nil, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, err
+		}
+		delivered := make(map[string]db.WorkflowArtifact, len(artifacts))
+		for _, artifact := range artifacts {
+			delivered[artifact.ArtifactKey] = artifact
+		}
+		for _, requirement := range required {
+			artifact, exists := delivered[requirement.Key]
+			if !exists {
+				reasons = append(reasons, workflowdomain.WaitingReason{
+					Code: "required_artifact_missing", Field: requirement.Key,
+					Message: "Required artifact has not been submitted",
+				})
+				continue
+			}
+			// A rejected artifact is an explicit "not acceptable", so it blocks
+			// exactly like a missing one. Submitted and approved both pass:
+			// requiring approval here would stall every node whose artifacts
+			// nobody was asked to review.
+			if artifact.ReviewStatus == "rejected" {
+				reasons = append(reasons, workflowdomain.WaitingReason{
+					Code: "required_artifact_rejected", Field: requirement.Key,
+					Message: "Required artifact was rejected in review",
+				})
+			}
+		}
+	}
 	if len(reasons) > 0 {
 		return false, reasons, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, nil
 	}

@@ -107,6 +107,13 @@ func cleanupWorkflowRelationshipsForIssue(ctx context.Context, q *db.Queries, is
 	}); err != nil {
 		return fmt.Errorf("delete workflow node participants: %w", err)
 	}
+	// Artifacts are keyed by instance, so they have to go before the instances
+	// do — nothing else would be able to find them afterwards.
+	if err := q.DeleteWorkflowArtifactsByHost(ctx, db.DeleteWorkflowArtifactsByHostParams{
+		WorkspaceID: issue.WorkspaceID, HostIssueID: issue.ID,
+	}); err != nil {
+		return fmt.Errorf("delete workflow artifacts: %w", err)
+	}
 	if err := q.DeleteWorkflowNodesByHost(ctx, db.DeleteWorkflowNodesByHostParams{
 		WorkspaceID: issue.WorkspaceID, HostIssueID: issue.ID,
 	}); err != nil {
