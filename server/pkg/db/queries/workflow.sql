@@ -1780,3 +1780,68 @@ WHERE assignment.workspace_id = @workspace_id
 DELETE FROM workflow_instance
 WHERE workspace_id = @workspace_id
   AND host_issue_id = @host_issue_id;
+
+-- name: SupersedeWorkflowArtifact :execrows
+-- Retires the live row for one (node instance, key) so a replacement can take
+-- its place. Returning the affected count lets the caller tell a replacement
+-- from a first submission without a second read.
+UPDATE workflow_artifact
+SET superseded_at = now(), updated_at = now()
+WHERE workspace_id = @workspace_id
+  AND workflow_node_instance_id = @workflow_node_instance_id
+  AND artifact_key = @artifact_key
+  AND superseded_at IS NULL;
+
+-- name: CreateWorkflowArtifact :one
+INSERT INTO workflow_artifact (
+    workspace_id, workflow_instance_id, workflow_node_instance_id,
+    artifact_key, attempt, kind, name, description,
+    content, attachment_id, url,
+    submitted_by_type, submitted_by_id
+) VALUES (
+    @workspace_id, @workflow_instance_id, @workflow_node_instance_id,
+    @artifact_key, @attempt, @kind, @name, @description,
+    @content, sqlc.narg(attachment_id), @url,
+    @submitted_by_type, sqlc.narg(submitted_by_id)
+)
+RETURNING *;
+
+-- name: GetWorkflowArtifact :one
+SELECT * FROM workflow_artifact
+WHERE id = @id AND workspace_id = @workspace_id;
+
+-- name: ListWorkflowNodeArtifacts :many
+SELECT * FROM workflow_artifact
+WHERE workspace_id = @workspace_id
+  AND workflow_node_instance_id = @workflow_node_instance_id
+  AND superseded_at IS NULL
+ORDER BY artifact_key;
+
+-- name: ListWorkflowInstanceArtifacts :many
+-- Every live artifact in one run, ordered so the caller sees them in the order
+-- the workflow produced them.
+SELECT artifact.* FROM workflow_artifact artifact
+JOIN workflow_node_instance node
+  ON node.id = artifact.workflow_node_instance_id
+WHERE artifact.workspace_id = @workspace_id
+  AND artifact.workflow_instance_id = @workflow_instance_id
+  AND artifact.superseded_at IS NULL
+ORDER BY node.display_order, artifact.artifact_key;
+
+-- name: ReviewWorkflowArtifact :one
+UPDATE workflow_artifact
+SET review_status = @review_status,
+    review_comment = @review_comment,
+    reviewed_by = sqlc.narg(reviewed_by),
+    reviewed_at = now(),
+    updated_at = now()
+WHERE id = @id AND workspace_id = @workspace_id AND superseded_at IS NULL
+RETURNING *;
+
+-- name: DeleteWorkflowArtifactsByHost :exec
+DELETE FROM workflow_artifact artifact
+WHERE artifact.workspace_id = @workspace_id
+  AND artifact.workflow_instance_id IN (
+    SELECT id FROM workflow_instance
+    WHERE workspace_id = @workspace_id AND host_issue_id = @host_issue_id
+  );

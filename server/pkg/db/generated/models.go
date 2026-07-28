@@ -1315,6 +1315,30 @@ type WorkflowAcceptance struct {
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
+type WorkflowArtifact struct {
+	ID                     pgtype.UUID        `json:"id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	WorkflowInstanceID     pgtype.UUID        `json:"workflow_instance_id"`
+	WorkflowNodeInstanceID pgtype.UUID        `json:"workflow_node_instance_id"`
+	ArtifactKey            string             `json:"artifact_key"`
+	Attempt                int32              `json:"attempt"`
+	Kind                   string             `json:"kind"`
+	Name                   string             `json:"name"`
+	Description            string             `json:"description"`
+	Content                string             `json:"content"`
+	AttachmentID           pgtype.UUID        `json:"attachment_id"`
+	Url                    string             `json:"url"`
+	ReviewStatus           string             `json:"review_status"`
+	ReviewComment          string             `json:"review_comment"`
+	ReviewedBy             pgtype.UUID        `json:"reviewed_by"`
+	ReviewedAt             pgtype.Timestamptz `json:"reviewed_at"`
+	SubmittedByType        string             `json:"submitted_by_type"`
+	SubmittedByID          pgtype.UUID        `json:"submitted_by_id"`
+	SupersededAt           pgtype.Timestamptz `json:"superseded_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
 type WorkflowEvent struct {
 	ID                     pgtype.UUID        `json:"id"`
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`

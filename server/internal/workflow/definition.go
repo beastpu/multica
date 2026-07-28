@@ -52,22 +52,23 @@ type RoleDefinition struct {
 }
 
 type NodeDefinition struct {
-	Key              string               `json:"key"`
-	Kind             string               `json:"kind"`
-	JoinMode         string               `json:"join_mode,omitempty"`
-	ActivityMode     string               `json:"activity_mode,omitempty"`
-	Name             string               `json:"name"`
-	Description      string               `json:"description,omitempty"`
-	Color            string               `json:"color,omitempty"`
-	TimeoutMinutes   int                  `json:"timeout_minutes,omitempty"`
-	OwnerRole        string               `json:"owner_role,omitempty"`
-	ParticipantRoles []string             `json:"participant_roles,omitempty"`
-	Executor         ExecutorDefinition   `json:"executor,omitempty"`
-	IssuePolicy      string               `json:"issue_policy,omitempty"`
-	IssueTemplates   []IssueTemplate      `json:"issue_templates,omitempty"`
-	SubmissionSchema *SubmissionSchema    `json:"submission_schema,omitempty"`
-	Verdict          *VerdictDefinition   `json:"verdict,omitempty"`
-	Completion       CompletionDefinition `json:"completion,omitempty"`
+	Key              string                `json:"key"`
+	Kind             string                `json:"kind"`
+	JoinMode         string                `json:"join_mode,omitempty"`
+	ActivityMode     string                `json:"activity_mode,omitempty"`
+	Name             string                `json:"name"`
+	Description      string                `json:"description,omitempty"`
+	Color            string                `json:"color,omitempty"`
+	TimeoutMinutes   int                   `json:"timeout_minutes,omitempty"`
+	OwnerRole        string                `json:"owner_role,omitempty"`
+	ParticipantRoles []string              `json:"participant_roles,omitempty"`
+	Executor         ExecutorDefinition    `json:"executor,omitempty"`
+	IssuePolicy      string                `json:"issue_policy,omitempty"`
+	IssueTemplates   []IssueTemplate       `json:"issue_templates,omitempty"`
+	Artifacts        []ArtifactRequirement `json:"artifacts,omitempty"`
+	SubmissionSchema *SubmissionSchema     `json:"submission_schema,omitempty"`
+	Verdict          *VerdictDefinition    `json:"verdict,omitempty"`
+	Completion       CompletionDefinition  `json:"completion,omitempty"`
 	// OnEnter/OnComplete run controlled side effects when an activity
 	// activates or completes. Only white-listed action kinds are allowed;
 	// notifications and integrations stay in their own subsystems.
@@ -114,6 +115,39 @@ type IssueTemplate struct {
 	Required      bool   `json:"required"`
 	InitialStatus string `json:"initial_status,omitempty"`
 	Priority      string `json:"priority,omitempty"`
+}
+
+// ArtifactRequirement declares one formal output a node is expected to
+// deliver. Kind selects the carrier: a document is stored inline, an
+// attachment references the existing attachment entity, and a link holds an
+// external address such as a pull request.
+type ArtifactRequirement struct {
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+// ArtifactKind resolves a requirement's carrier, defaulting to document. The
+// default matters because most node outputs are written prose, and a template
+// author who omits the field means "a document".
+func ArtifactKind(requirement ArtifactRequirement) string {
+	if requirement.Kind == "" {
+		return "document"
+	}
+	return requirement.Kind
+}
+
+// RequiredArtifacts returns the requirements that block node completion.
+func RequiredArtifacts(node NodeDefinition) []ArtifactRequirement {
+	required := make([]ArtifactRequirement, 0, len(node.Artifacts))
+	for _, requirement := range node.Artifacts {
+		if requirement.Required {
+			required = append(required, requirement)
+		}
+	}
+	return required
 }
 
 type SubmissionSchema struct {
@@ -300,6 +334,14 @@ func validateNodes(definitions []NodeDefinition, roles map[string]RoleDefinition
 		if strings.TrimSpace(node.Name) == "" {
 			return nil, "", 0, 0, fmt.Errorf("node %q name is required", node.Key)
 		}
+		// Only an activity has an executor to hold responsible for an output.
+		// A control node declaring one would create a requirement nobody can
+		// satisfy, and the node would never complete.
+		if len(node.Artifacts) > 0 && node.Kind != "activity" {
+			return nil, "", 0, 0, fmt.Errorf(
+				"node %q cannot declare artifacts outside an activity", node.Key,
+			)
+		}
 		switch node.Kind {
 		case "start":
 			if startKey != "" {
@@ -431,6 +473,27 @@ func validateActivity(
 		case "", "none", "low", "medium", "high", "urgent":
 		default:
 			return fmt.Errorf("activity %q task %q has invalid priority %q", node.Key, task.Key, task.Priority)
+		}
+	}
+	artifactKeys := map[string]struct{}{}
+	for _, requirement := range node.Artifacts {
+		if !validKey(requirement.Key) {
+			return fmt.Errorf("activity %q has invalid artifact key %q", node.Key, requirement.Key)
+		}
+		if _, exists := artifactKeys[requirement.Key]; exists {
+			return fmt.Errorf("activity %q has duplicate artifact key %q", node.Key, requirement.Key)
+		}
+		artifactKeys[requirement.Key] = struct{}{}
+		if strings.TrimSpace(requirement.Name) == "" {
+			return fmt.Errorf("activity %q artifact %q name is required", node.Key, requirement.Key)
+		}
+		switch requirement.Kind {
+		case "", "document", "attachment", "link":
+		default:
+			return fmt.Errorf(
+				"activity %q artifact %q has invalid kind %q",
+				node.Key, requirement.Key, requirement.Kind,
+			)
 		}
 	}
 	if node.SubmissionSchema != nil {

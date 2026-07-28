@@ -721,6 +721,80 @@ func (q *Queries) CreateWorkflowAcceptance(ctx context.Context, arg CreateWorkfl
 	return i, err
 }
 
+const createWorkflowArtifact = `-- name: CreateWorkflowArtifact :one
+INSERT INTO workflow_artifact (
+    workspace_id, workflow_instance_id, workflow_node_instance_id,
+    artifact_key, attempt, kind, name, description,
+    content, attachment_id, url,
+    submitted_by_type, submitted_by_id
+) VALUES (
+    $1, $2, $3,
+    $4, $5, $6, $7, $8,
+    $9, $10, $11,
+    $12, $13
+)
+RETURNING id, workspace_id, workflow_instance_id, workflow_node_instance_id, artifact_key, attempt, kind, name, description, content, attachment_id, url, review_status, review_comment, reviewed_by, reviewed_at, submitted_by_type, submitted_by_id, superseded_at, created_at, updated_at
+`
+
+type CreateWorkflowArtifactParams struct {
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
+	WorkflowInstanceID     pgtype.UUID `json:"workflow_instance_id"`
+	WorkflowNodeInstanceID pgtype.UUID `json:"workflow_node_instance_id"`
+	ArtifactKey            string      `json:"artifact_key"`
+	Attempt                int32       `json:"attempt"`
+	Kind                   string      `json:"kind"`
+	Name                   string      `json:"name"`
+	Description            string      `json:"description"`
+	Content                string      `json:"content"`
+	AttachmentID           pgtype.UUID `json:"attachment_id"`
+	Url                    string      `json:"url"`
+	SubmittedByType        string      `json:"submitted_by_type"`
+	SubmittedByID          pgtype.UUID `json:"submitted_by_id"`
+}
+
+func (q *Queries) CreateWorkflowArtifact(ctx context.Context, arg CreateWorkflowArtifactParams) (WorkflowArtifact, error) {
+	row := q.db.QueryRow(ctx, createWorkflowArtifact,
+		arg.WorkspaceID,
+		arg.WorkflowInstanceID,
+		arg.WorkflowNodeInstanceID,
+		arg.ArtifactKey,
+		arg.Attempt,
+		arg.Kind,
+		arg.Name,
+		arg.Description,
+		arg.Content,
+		arg.AttachmentID,
+		arg.Url,
+		arg.SubmittedByType,
+		arg.SubmittedByID,
+	)
+	var i WorkflowArtifact
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowInstanceID,
+		&i.WorkflowNodeInstanceID,
+		&i.ArtifactKey,
+		&i.Attempt,
+		&i.Kind,
+		&i.Name,
+		&i.Description,
+		&i.Content,
+		&i.AttachmentID,
+		&i.Url,
+		&i.ReviewStatus,
+		&i.ReviewComment,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.SubmittedByType,
+		&i.SubmittedByID,
+		&i.SupersededAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createWorkflowEvent = `-- name: CreateWorkflowEvent :one
 INSERT INTO workflow_event (
     workspace_id, workflow_instance_id, workflow_node_instance_id,
@@ -1385,6 +1459,25 @@ type DeleteWorkflowAcceptancesByHostParams struct {
 
 func (q *Queries) DeleteWorkflowAcceptancesByHost(ctx context.Context, arg DeleteWorkflowAcceptancesByHostParams) error {
 	_, err := q.db.Exec(ctx, deleteWorkflowAcceptancesByHost, arg.WorkspaceID, arg.HostIssueID)
+	return err
+}
+
+const deleteWorkflowArtifactsByHost = `-- name: DeleteWorkflowArtifactsByHost :exec
+DELETE FROM workflow_artifact artifact
+WHERE artifact.workspace_id = $1
+  AND artifact.workflow_instance_id IN (
+    SELECT id FROM workflow_instance
+    WHERE workspace_id = $1 AND host_issue_id = $2
+  )
+`
+
+type DeleteWorkflowArtifactsByHostParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	HostIssueID pgtype.UUID `json:"host_issue_id"`
+}
+
+func (q *Queries) DeleteWorkflowArtifactsByHost(ctx context.Context, arg DeleteWorkflowArtifactsByHostParams) error {
+	_, err := q.db.Exec(ctx, deleteWorkflowArtifactsByHost, arg.WorkspaceID, arg.HostIssueID)
 	return err
 }
 
@@ -2060,6 +2153,45 @@ func (q *Queries) GetWorkflowAcceptanceByIdempotencyKey(ctx context.Context, arg
 		&i.Evidence,
 		&i.IdempotencyKey,
 		&i.DecidedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getWorkflowArtifact = `-- name: GetWorkflowArtifact :one
+SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, artifact_key, attempt, kind, name, description, content, attachment_id, url, review_status, review_comment, reviewed_by, reviewed_at, submitted_by_type, submitted_by_id, superseded_at, created_at, updated_at FROM workflow_artifact
+WHERE id = $1 AND workspace_id = $2
+`
+
+type GetWorkflowArtifactParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetWorkflowArtifact(ctx context.Context, arg GetWorkflowArtifactParams) (WorkflowArtifact, error) {
+	row := q.db.QueryRow(ctx, getWorkflowArtifact, arg.ID, arg.WorkspaceID)
+	var i WorkflowArtifact
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowInstanceID,
+		&i.WorkflowNodeInstanceID,
+		&i.ArtifactKey,
+		&i.Attempt,
+		&i.Kind,
+		&i.Name,
+		&i.Description,
+		&i.Content,
+		&i.AttachmentID,
+		&i.Url,
+		&i.ReviewStatus,
+		&i.ReviewComment,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.SubmittedByType,
+		&i.SubmittedByID,
+		&i.SupersededAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -3068,6 +3200,65 @@ func (q *Queries) ListWorkflowExecutorResolutions(ctx context.Context, arg ListW
 	return items, nil
 }
 
+const listWorkflowInstanceArtifacts = `-- name: ListWorkflowInstanceArtifacts :many
+SELECT artifact.id, artifact.workspace_id, artifact.workflow_instance_id, artifact.workflow_node_instance_id, artifact.artifact_key, artifact.attempt, artifact.kind, artifact.name, artifact.description, artifact.content, artifact.attachment_id, artifact.url, artifact.review_status, artifact.review_comment, artifact.reviewed_by, artifact.reviewed_at, artifact.submitted_by_type, artifact.submitted_by_id, artifact.superseded_at, artifact.created_at, artifact.updated_at FROM workflow_artifact artifact
+JOIN workflow_node_instance node
+  ON node.id = artifact.workflow_node_instance_id
+WHERE artifact.workspace_id = $1
+  AND artifact.workflow_instance_id = $2
+  AND artifact.superseded_at IS NULL
+ORDER BY node.display_order, artifact.artifact_key
+`
+
+type ListWorkflowInstanceArtifactsParams struct {
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	WorkflowInstanceID pgtype.UUID `json:"workflow_instance_id"`
+}
+
+// Every live artifact in one run, ordered so the caller sees them in the order
+// the workflow produced them.
+func (q *Queries) ListWorkflowInstanceArtifacts(ctx context.Context, arg ListWorkflowInstanceArtifactsParams) ([]WorkflowArtifact, error) {
+	rows, err := q.db.Query(ctx, listWorkflowInstanceArtifacts, arg.WorkspaceID, arg.WorkflowInstanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowArtifact{}
+	for rows.Next() {
+		var i WorkflowArtifact
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.WorkflowInstanceID,
+			&i.WorkflowNodeInstanceID,
+			&i.ArtifactKey,
+			&i.Attempt,
+			&i.Kind,
+			&i.Name,
+			&i.Description,
+			&i.Content,
+			&i.AttachmentID,
+			&i.Url,
+			&i.ReviewStatus,
+			&i.ReviewComment,
+			&i.ReviewedBy,
+			&i.ReviewedAt,
+			&i.SubmittedByType,
+			&i.SubmittedByID,
+			&i.SupersededAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkflowInstanceDisplayContexts = `-- name: ListWorkflowInstanceDisplayContexts :many
 SELECT
   wi.id AS workflow_instance_id,
@@ -3693,6 +3884,61 @@ func (q *Queries) ListWorkflowInstances(ctx context.Context, arg ListWorkflowIns
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ReconcileAfter,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkflowNodeArtifacts = `-- name: ListWorkflowNodeArtifacts :many
+SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, artifact_key, attempt, kind, name, description, content, attachment_id, url, review_status, review_comment, reviewed_by, reviewed_at, submitted_by_type, submitted_by_id, superseded_at, created_at, updated_at FROM workflow_artifact
+WHERE workspace_id = $1
+  AND workflow_node_instance_id = $2
+  AND superseded_at IS NULL
+ORDER BY artifact_key
+`
+
+type ListWorkflowNodeArtifactsParams struct {
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
+	WorkflowNodeInstanceID pgtype.UUID `json:"workflow_node_instance_id"`
+}
+
+func (q *Queries) ListWorkflowNodeArtifacts(ctx context.Context, arg ListWorkflowNodeArtifactsParams) ([]WorkflowArtifact, error) {
+	rows, err := q.db.Query(ctx, listWorkflowNodeArtifacts, arg.WorkspaceID, arg.WorkflowNodeInstanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowArtifact{}
+	for rows.Next() {
+		var i WorkflowArtifact
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.WorkflowInstanceID,
+			&i.WorkflowNodeInstanceID,
+			&i.ArtifactKey,
+			&i.Attempt,
+			&i.Kind,
+			&i.Name,
+			&i.Description,
+			&i.Content,
+			&i.AttachmentID,
+			&i.Url,
+			&i.ReviewStatus,
+			&i.ReviewComment,
+			&i.ReviewedBy,
+			&i.ReviewedAt,
+			&i.SubmittedByType,
+			&i.SubmittedByID,
+			&i.SupersededAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -4774,6 +5020,60 @@ func (q *Queries) ResetWorkflowNodeTaskMaterialization(ctx context.Context, arg 
 	return i, err
 }
 
+const reviewWorkflowArtifact = `-- name: ReviewWorkflowArtifact :one
+UPDATE workflow_artifact
+SET review_status = $1,
+    review_comment = $2,
+    reviewed_by = $3,
+    reviewed_at = now(),
+    updated_at = now()
+WHERE id = $4 AND workspace_id = $5 AND superseded_at IS NULL
+RETURNING id, workspace_id, workflow_instance_id, workflow_node_instance_id, artifact_key, attempt, kind, name, description, content, attachment_id, url, review_status, review_comment, reviewed_by, reviewed_at, submitted_by_type, submitted_by_id, superseded_at, created_at, updated_at
+`
+
+type ReviewWorkflowArtifactParams struct {
+	ReviewStatus  string      `json:"review_status"`
+	ReviewComment string      `json:"review_comment"`
+	ReviewedBy    pgtype.UUID `json:"reviewed_by"`
+	ID            pgtype.UUID `json:"id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) ReviewWorkflowArtifact(ctx context.Context, arg ReviewWorkflowArtifactParams) (WorkflowArtifact, error) {
+	row := q.db.QueryRow(ctx, reviewWorkflowArtifact,
+		arg.ReviewStatus,
+		arg.ReviewComment,
+		arg.ReviewedBy,
+		arg.ID,
+		arg.WorkspaceID,
+	)
+	var i WorkflowArtifact
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowInstanceID,
+		&i.WorkflowNodeInstanceID,
+		&i.ArtifactKey,
+		&i.Attempt,
+		&i.Kind,
+		&i.Name,
+		&i.Description,
+		&i.Content,
+		&i.AttachmentID,
+		&i.Url,
+		&i.ReviewStatus,
+		&i.ReviewComment,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.SubmittedByType,
+		&i.SubmittedByID,
+		&i.SupersededAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setWorkflowNodeLatestSubmission = `-- name: SetWorkflowNodeLatestSubmission :exec
 UPDATE workflow_node_instance
 SET latest_submission_id = $1, updated_at = now()
@@ -4924,6 +5224,32 @@ func (q *Queries) SetWorkflowTemplatePublishedVersion(ctx context.Context, arg S
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const supersedeWorkflowArtifact = `-- name: SupersedeWorkflowArtifact :execrows
+UPDATE workflow_artifact
+SET superseded_at = now(), updated_at = now()
+WHERE workspace_id = $1
+  AND workflow_node_instance_id = $2
+  AND artifact_key = $3
+  AND superseded_at IS NULL
+`
+
+type SupersedeWorkflowArtifactParams struct {
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
+	WorkflowNodeInstanceID pgtype.UUID `json:"workflow_node_instance_id"`
+	ArtifactKey            string      `json:"artifact_key"`
+}
+
+// Retires the live row for one (node instance, key) so a replacement can take
+// its place. Returning the affected count lets the caller tell a replacement
+// from a first submission without a second read.
+func (q *Queries) SupersedeWorkflowArtifact(ctx context.Context, arg SupersedeWorkflowArtifactParams) (int64, error) {
+	result, err := q.db.Exec(ctx, supersedeWorkflowArtifact, arg.WorkspaceID, arg.WorkflowNodeInstanceID, arg.ArtifactKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateWorkflowInstanceState = `-- name: UpdateWorkflowInstanceState :one
