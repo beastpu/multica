@@ -55,6 +55,8 @@
     "title": "Start a workflow",
     "description": "Creates a host issue and starts the selected published workflow in one action.",
     "issue_title": "Requirement title",
+    "issue_description": "Requirement description",
+    "issue_description_placeholder": "Describe the goal, scope, and acceptance criteria...",
     "template": "Workflow template",
     "choose_template": "Choose a published template",
     "no_templates": "Publish a template before starting a workflow."

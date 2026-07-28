@@ -55,6 +55,8 @@
     "title": "워크플로 시작",
     "description": "호스트 Issue를 만들고 게시된 워크플로를 한 번에 시작합니다.",
     "issue_title": "요구사항 제목",
+    "issue_description": "요구사항 설명",
+    "issue_description_placeholder": "목표, 범위, 승인 기준 입력...",
     "template": "워크플로 템플릿",
     "choose_template": "게시된 템플릿 선택",
     "no_templates": "워크플로를 시작하기 전에 템플릿을 게시하세요."

@@ -180,6 +180,10 @@ describe("NewWorkflowDialog", () => {
       within(dialog).getByRole("textbox", { name: "Requirement title" }),
       "Release 2.0",
     );
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Requirement description" }),
+      "Ship the release page with download links and release notes.",
+    );
     const submit = within(dialog).getByRole("button", {
       name: "New workflow",
     });
@@ -196,6 +200,8 @@ describe("NewWorkflowDialog", () => {
       expect(mocks.createWorkflow).toHaveBeenCalledWith(
         expect.objectContaining({
           title: "Release 2.0",
+          description:
+            "Ship the release page with download links and release notes.",
           template_id: "template-1",
           template_version_id: "version-1",
           host_status_mode: "managed",

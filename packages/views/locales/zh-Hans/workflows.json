@@ -55,6 +55,8 @@
     "title": "启动工作流",
     "description": "一次操作原子创建宿主需求 issue，并启动所选的已发布工作流。",
     "issue_title": "需求标题",
+    "issue_description": "需求描述",
+    "issue_description_placeholder": "说明目标、范围和验收标准...",
     "template": "工作流模板",
     "choose_template": "选择一个已发布模板",
     "no_templates": "请先发布一个模板，再启动工作流。"

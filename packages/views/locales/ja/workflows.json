@@ -55,6 +55,8 @@
     "title": "ワークフローを開始",
     "description": "ホスト Issue を作成し、公開済みワークフローを一度に開始します。",
     "issue_title": "要件タイトル",
+    "issue_description": "要件の説明",
+    "issue_description_placeholder": "目的、範囲、受け入れ基準を入力...",
     "template": "ワークフローテンプレート",
     "choose_template": "公開済みテンプレートを選択",
     "no_templates": "開始前にテンプレートを公開してください。"

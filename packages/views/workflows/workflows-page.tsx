@@ -48,6 +48,7 @@ import {
 } from "@multica/ui/components/ui/dialog";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
+import { Textarea } from "@multica/ui/components/ui/textarea";
 import {
   Card,
   CardAction,
@@ -625,6 +626,7 @@ export function NewWorkflowDialog() {
   const navigation = useNavigation();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [templateId, setTemplateId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [hostStatusMode, setHostStatusMode] = useState<
@@ -710,6 +712,7 @@ export function NewWorkflowDialog() {
   const close = () => {
     setOpen(false);
     setTitle("");
+    setDescription("");
     setTemplateId("");
     setVersionId("");
     setHostStatusMode("managed");
@@ -723,6 +726,7 @@ export function NewWorkflowDialog() {
     setError("");
     create.mutate({
       title: title.trim(),
+      description: description.trim(),
       template_id: templateId,
       template_version_id: selectedVersion.id,
       host_status_mode: hostStatusMode,
@@ -781,6 +785,18 @@ export function NewWorkflowDialog() {
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               autoFocus
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="new-workflow-description">
+              {t(($) => $.create.issue_description)}
+            </Label>
+            <Textarea
+              id="new-workflow-description"
+              value={description}
+              rows={4}
+              placeholder={t(($) => $.create.issue_description_placeholder)}
+              onChange={(event) => setDescription(event.target.value)}
             />
           </div>
           <div className="space-y-1.5">
