@@ -39,7 +39,9 @@ export function WorkflowNodeIssues({
 
   return (
     <section className="space-y-2">
-      <h3 className="text-sm font-medium">
+      {/* Same heading rule as the rest of the node panel: xs and muted, so the
+          issue titles below are what the eye lands on. */}
+      <h3 className="text-xs font-medium text-muted-foreground">
         {t(($) => $.workbench.node_issues)}
       </h3>
       <ul className="divide-y rounded-xl border bg-surface">

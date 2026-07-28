@@ -928,6 +928,14 @@ export function RoleSetupPanel({
   );
 }
 
+// Three type sizes in the node panel, and no more. Headings are signposts, not
+// content: they stay xs and muted so the eye lands on values instead. Values are
+// sm. Only the node's own name gets base — it is the one thing the panel is
+// about. Mixing sm-weight headings with xs-weight ones is what made the panel
+// read as "fonts jumping around" (the same label appeared at two sizes
+// depending on which block it sat in).
+const SECTION_HEADING = "text-xs font-medium text-muted-foreground";
+
 export function WorkflowTaskCard({
   instanceId,
   nodeId,
@@ -2201,15 +2209,25 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   );
   const requiredIssueOutcome =
     selectedNode?.definition.completion?.required_issue_outcome ?? "done";
-  const completedRequiredIssues = selectedRequiredTasks.filter((task) => {
-    if (!task.issue_id) return false;
-    const issue = selectedIssueById.get(task.issue_id);
-    if (!issue) return false;
+  const issueSatisfiesNode = (issue: Issue) => {
     if (requiredIssueOutcome === "terminal") {
       return issue.status === "done" || issue.status === "cancelled";
     }
     return requiredIssueOutcome === "none" || issue.status === "done";
+  };
+  const completedRequiredIssues = selectedRequiredTasks.filter((task) => {
+    if (!task.issue_id) return false;
+    const issue = selectedIssueById.get(task.issue_id);
+    if (!issue) return false;
+    return issueSatisfiesNode(issue);
   }).length;
+  // The panel lists what is still holding the node, not everything the node
+  // produced — the board beside it already shows all of them, by status. A
+  // second full list would be the same information asking to be read twice;
+  // "what's left" is the thing the board cannot say.
+  const blockingNodeIssues = selectedRequiredTasks
+    .map((task) => (task.issue_id ? selectedIssueById.get(task.issue_id) : undefined))
+    .filter((issue): issue is Issue => Boolean(issue) && !issueSatisfiesNode(issue!));
   const visibleWaitingReasons = selectedNode?.waiting_reasons.filter(
     (reason) =>
       reason.code !== "required_issue_not_done" &&
@@ -2282,7 +2300,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs font-medium text-muted-foreground">
+            <p className={SECTION_HEADING}>
               {t(($) => $.workbench.parent_issue)}
             </p>
             {hostIssue ? (
@@ -2398,7 +2416,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         <div>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs font-medium text-muted-foreground">
+            <p className={SECTION_HEADING}>
               {t(($) => $.workbench.current_node)}
             </p>
             <h2
@@ -2407,11 +2425,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             >
               {selectedNode.name}
             </h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t(($) => $.workbench.attempt, {
-                attempt: selectedNode.attempt,
-              })}
-            </p>
           </div>
           <WorkflowStatusBadge status={selectedNode.status} />
         </div>
@@ -2422,12 +2435,16 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         )}
       </div>
 
-      <div className="space-y-3 border-y py-4">
-        <div>
-          <p className="text-xs font-medium text-muted-foreground">
-            {t(($) => $.workbench.owners)}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
+      {/*
+        Single-value node facts share the two-column definition list the host
+        block above uses. Each used to own a full-width heading + row, which
+        spent six rows saying four short things and made the panel scroll
+        before the parts that need action.
+      */}
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-y py-4">
+        <div className="min-w-0">
+          <dt className={SECTION_HEADING}>{t(($) => $.workbench.owners)}</dt>
+          <dd className="mt-1 flex flex-wrap gap-2">
             {nodeQuery.data.participants
               .filter((participant) => participant.role === "owner")
               .map((participant) => (
@@ -2455,47 +2472,59 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                 {t(($) => $.runs.none)}
               </span>
             )}
-          </div>
+          </dd>
         </div>
-        <div>
-          <p className="text-xs font-medium text-muted-foreground">
-            {t(($) => $.workbench.participants)}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2 text-sm">
-            {nodeQuery.data.participants
-              .filter((participant) => participant.role !== "owner")
-              .map((participant) => (
-                <span key={participant.id}>
-                  {actorName(
-                    participant.actor_type as "member" | "agent" | "squad",
-                    participant.actor_id,
-                  )}
-                </span>
-              ))}
-            {!nodeQuery.data.participants.some(
-              (participant) => participant.role !== "owner",
-            ) && (
-              <span className="text-muted-foreground">
-                {t(($) => $.runs.none)}
-              </span>
-            )}
+        {/* Omitted entirely when empty — a heading over "none" spends a row to
+            say nothing. */}
+        {nodeQuery.data.participants.some(
+          (participant) => participant.role !== "owner",
+        ) && (
+          <div className="min-w-0">
+            <dt className={SECTION_HEADING}>
+              {t(($) => $.workbench.participants)}
+            </dt>
+            <dd className="mt-1 flex flex-wrap gap-2 text-sm">
+              {nodeQuery.data.participants
+                .filter((participant) => participant.role !== "owner")
+                .map((participant) => (
+                  <span key={participant.id} className="truncate">
+                    {actorName(
+                      participant.actor_type as "member" | "agent" | "squad",
+                      participant.actor_id,
+                    )}
+                  </span>
+                ))}
+            </dd>
           </div>
+        )}
+        <div className="min-w-0">
+          <dt className={SECTION_HEADING}>
+            {t(($) => $.workbench.attempt_label)}
+          </dt>
+          <dd className="mt-1 text-sm tabular-nums">
+            {t(($) => $.workbench.attempt, { attempt: selectedNode.attempt })}
+          </dd>
         </div>
         {selectedNode.definition.timeout_minutes && (
-          <p className="text-xs text-muted-foreground">
-            {t(($) => $.workbench.timeout, {
-              minutes: selectedNode.definition.timeout_minutes,
-            })}
-          </p>
+          <div className="min-w-0">
+            <dt className={SECTION_HEADING}>
+              {t(($) => $.workbench.timeout_label)}
+            </dt>
+            <dd className="mt-1 text-sm tabular-nums">
+              {t(($) => $.workbench.timeout, {
+                minutes: selectedNode.definition.timeout_minutes,
+              })}
+            </dd>
+          </div>
         )}
-      </div>
+      </dl>
 
       <section
         aria-labelledby="workflow-completion-rule"
-        className="space-y-3 rounded-xl border bg-muted/20 p-4"
+        className="space-y-2 border-y py-4"
       >
         <div className="flex items-center justify-between gap-3">
-          <h3 id="workflow-completion-rule" className="text-sm font-medium">
+          <h3 id="workflow-completion-rule" className={SECTION_HEADING}>
             {t(($) => $.workbench.completion_rule)}
           </h3>
           {requiredIssueOutcome !== "none" && (
@@ -2511,24 +2540,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               ? t(($) => $.workbench.completion_rule_none)
               : t(($) => $.workbench.completion_rule_done)}
         </p>
-        {requiredIssueOutcome !== "none" && selectedRequiredTasks.length > 0 && (
-          <div
-            className="h-1.5 overflow-hidden rounded-full bg-muted"
-            role="progressbar"
-            aria-valuemin={0}
-            aria-valuemax={selectedRequiredTasks.length}
-            aria-valuenow={completedRequiredIssues}
-          >
-            <div
-              className="h-full rounded-full bg-primary transition-[width] motion-reduce:transition-none"
-              style={{
-                width: `${
-                  (completedRequiredIssues / selectedRequiredTasks.length) * 100
-                }%`,
-              }}
-            />
-          </div>
-        )}
       </section>
 
       {visibleWaitingReasons.length > 0 && (
@@ -2549,7 +2560,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
 
       {taskInterventions.length > 0 && (
         <section className="space-y-2">
-          <h3 className="text-sm font-medium">
+          <h3 className={SECTION_HEADING}>
             {t(($) => $.workbench.needs_attention)}
           </h3>
           {taskInterventions.map((task) => {
@@ -2581,7 +2592,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         consulted far less often.
       */}
       <WorkflowNodeIssues
-        issues={selectedNodeIssues}
+        issues={blockingNodeIssues}
         canManage={canManageSelectedNode}
       />
 
