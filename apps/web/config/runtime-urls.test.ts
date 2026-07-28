@@ -156,6 +156,11 @@ describe("runtimeRewriteDestination", () => {
       }),
     ).toBe("http://backend:8080/auth/send-code");
     expect(
+      runtimeRewriteDestination("/auth/feishu", {
+        REMOTE_API_URL: "http://backend:8080",
+      }),
+    ).toBe("http://backend:8080/auth/feishu");
+    expect(
       runtimeRewriteDestination("/uploads/workspaces/a.png", {
         REMOTE_API_URL: "http://backend:8080",
       }),
@@ -165,7 +170,17 @@ describe("runtimeRewriteDestination", () => {
   it("does not rewrite frontend auth callback pages", () => {
     expect(runtimeRewriteDestination("/auth/callback", {})).toBeUndefined();
     expect(
+      runtimeRewriteDestination("/auth/feishu/callback", {
+        REMOTE_API_URL: "http://backend:8080",
+      }),
+    ).toBeUndefined();
+    expect(
       runtimeRewriteDestination("/auth/hg-sso/callback", {}),
+    ).toBeUndefined();
+    expect(
+      runtimeRewriteDestination("/auth/unknown", {
+        REMOTE_API_URL: "http://backend:8080",
+      }),
     ).toBeUndefined();
   });
 

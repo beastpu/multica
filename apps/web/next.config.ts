@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import { config } from "dotenv";
 import { resolve } from "path";
 import {
+  backendAuthPaths,
   resolveDevDocsUrl,
   resolveDevRemoteApiUrl,
   resolveDocsUrl,
@@ -74,10 +75,10 @@ const nextConfig: NextConfig = {
               source: "/ws",
               destination: `${remoteApiUrl}/ws`,
             },
-            {
-              source: "/auth/:path*",
-              destination: `${remoteApiUrl}/auth/:path*`,
-            },
+            ...backendAuthPaths.map((path) => ({
+              source: path,
+              destination: `${remoteApiUrl}${path}`,
+            })),
             {
               source: "/uploads/:path*",
               destination: `${remoteApiUrl}/uploads/:path*`,

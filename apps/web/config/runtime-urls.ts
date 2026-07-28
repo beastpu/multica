@@ -1,5 +1,14 @@
 type RuntimeEnv = Record<string, string | undefined>;
 
+export const backendAuthPaths = [
+  "/auth/send-code",
+  "/auth/verify-code",
+  "/auth/google",
+  "/auth/feishu",
+  "/auth/feishu-plugin",
+  "/auth/logout",
+] as const;
+
 function cleanUrl(raw: string | undefined): string | undefined {
   const value = raw?.trim();
   if (!value) return undefined;
@@ -96,11 +105,9 @@ export function runtimeRewriteDestination(
 }
 
 function isBackendAuthPath(pathname: string): boolean {
-  if (pathname === "/auth/callback") return false;
-  if (pathname.startsWith("/auth/callback/")) return false;
-  if (pathname === "/auth/hg-sso/callback") return false;
-  if (pathname.startsWith("/auth/hg-sso/callback/")) return false;
-  return pathname === "/auth" || pathname.startsWith("/auth/");
+  return backendAuthPaths.includes(
+    pathname as (typeof backendAuthPaths)[number],
+  );
 }
 
 function tryDeriveWsUrl(apiUrl: string): string | undefined {
