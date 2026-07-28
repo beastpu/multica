@@ -150,12 +150,32 @@ kubectl -n kube-system logs deploy/alb-ingress-controller --tail=200
 
 The existing root Dockerfiles build both images:
 
+`--platform linux/amd64` is required, not optional, when building on Apple
+Silicon: the nodes are amd64, and an arm64 image pushes fine and then fails at
+pull time with `no match for platform in manifest` — a message that points at
+the registry rather than at the machine that built it.
+
+The web image also needs its build args. They are baked into the bundle at
+build time, so a missing one fails the build rather than degrading at runtime.
+The values live in `deploy/k8s/base/configmap.yaml`.
+
 ```bash
-docker build -f Dockerfile     -t lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server:$TAG .
-docker build -f Dockerfile.web -t lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web:$TAG    .
+docker build --platform linux/amd64 -f Dockerfile \
+  -t lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server:$TAG .
+
+docker build --platform linux/amd64 -f Dockerfile.web \
+  --build-arg NEXT_PUBLIC_FEISHU_APP_ID=cli_a739addb39e41013 \
+  --build-arg REMOTE_API_URL=http://multica-server:8080 \
+  --build-arg NEXT_PUBLIC_APP_VERSION=$TAG \
+  -t lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web:$TAG .
+
 docker push lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server:$TAG
 docker push lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web:$TAG
 ```
+
+Cross-architecture builds run under emulation and are markedly slower than
+native — the web image in particular. Budget for it rather than assuming the
+build hung.
 
 ACK worker nodes in the same Aliyun account as the ACR Enterprise Edition
 instance may auto-authenticate via RAM role, but these manifests currently
