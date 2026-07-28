@@ -364,10 +364,42 @@ export function useChangeWorkflowNodeTask(
 export interface CreateWorkflowSubmissionInput {
   payload: Record<string, unknown>;
   summary?: string;
+  /** The outgoing node this activity picked; branches read it. */
+  choice?: string;
   evidence?: unknown[];
   source_issue_id?: string;
   source_agent_run_id?: string;
   proposed_tasks?: WorkflowIssueTemplate[];
+}
+
+// Reviewing an artifact changes whether the node may complete, so the node
+// detail and the artifact list both go stale. Invalidate rather than patch: the
+// server may have superseded the row between read and write, and a patched
+// cache would show a decision that never landed.
+export function useReviewWorkflowArtifact(
+  instanceId: string,
+  nodeInstanceId: string,
+) {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (input: {
+      artifactId: string;
+      status: "approved" | "rejected";
+      comment?: string;
+    }) =>
+      api.reviewWorkflowArtifact(nodeInstanceId, input.artifactId, {
+        status: input.status,
+        comment: input.comment,
+      }),
+    onSettled: () => {
+      qc.invalidateQueries({
+        queryKey: [...workflowKeys.node(wsId, nodeInstanceId), "artifacts"],
+      });
+      qc.invalidateQueries({ queryKey: workflowKeys.node(wsId, nodeInstanceId) });
+      qc.invalidateQueries({ queryKey: workflowKeys.instance(wsId, instanceId) });
+    },
+  });
 }
 
 export function useCreateWorkflowSubmission(

@@ -255,7 +255,17 @@
     "select_node": "Select an activity to inspect its work and evidence.",
     "attempt": "Attempt {{attempt}}",
     "role_reassign": "Reassign roles",
-    "role_reassign_help": "Owners of nodes still in flight update with the change; assignees of issues already created stay as they are — reassign those separately if needed."
+    "role_reassign_help": "Owners of nodes still in flight update with the change; assignees of issues already created stay as they are — reassign those separately if needed.",
+    "summary_help": "{{used}} / {{limit}} characters",
+    "branch_choice": "Branch to take",
+    "branch_choice_none": "No explicit branch",
+    "tab_artifacts": "Artifacts",
+    "no_artifacts": "This activity declares no artifacts.",
+    "artifact_missing_required": "Required — not submitted yet.",
+    "artifact_missing_optional": "Optional — not submitted.",
+    "artifact_read": "Read",
+    "artifact_hide": "Hide",
+    "artifact_review_comment": "Review note (optional)"
   },
   "editor": {
     "title": "Workflow template",

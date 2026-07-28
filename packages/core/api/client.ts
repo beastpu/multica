@@ -357,6 +357,8 @@ import {
   WorkflowInstanceDetailSchema,
   WorkflowIssuesResponseSchema,
   WorkflowNodeDetailSchema,
+  WorkflowArtifactListSchema,
+  EMPTY_WORKFLOW_ARTIFACT_LIST,
   WorkflowSubmissionMutationResponseSchema,
   WorkflowVerdictMutationResponseSchema,
   WorkflowTaskMutationResponseSchema,
@@ -3269,6 +3271,35 @@ export class ApiClient {
     return parseWithFallback(raw, WorkflowInstanceDetailSchema, EMPTY_WORKFLOW_INSTANCE_DETAIL, {
       endpoint: "POST /api/issues/:id/workflow",
     });
+  }
+
+  async listWorkflowNodeArtifacts(nodeInstanceId: string) {
+    const raw = await this.fetch<unknown>(
+      `/api/workflow-node-instances/${nodeInstanceId}/artifacts`,
+    );
+    return parseWithFallback(raw, WorkflowArtifactListSchema, EMPTY_WORKFLOW_ARTIFACT_LIST, {
+      endpoint: "GET /api/workflow-node-instances/:id/artifacts",
+    });
+  }
+
+  async listWorkflowInstanceArtifacts(instanceId: string) {
+    const raw = await this.fetch<unknown>(
+      `/api/workflow-instances/${instanceId}/artifacts`,
+    );
+    return parseWithFallback(raw, WorkflowArtifactListSchema, EMPTY_WORKFLOW_ARTIFACT_LIST, {
+      endpoint: "GET /api/workflow-instances/:id/artifacts",
+    });
+  }
+
+  async reviewWorkflowArtifact(
+    nodeInstanceId: string,
+    artifactId: string,
+    body: { status: "approved" | "rejected"; comment?: string },
+  ) {
+    return this.fetch<unknown>(
+      `/api/workflow-node-instances/${nodeInstanceId}/artifacts/${artifactId}/review`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
   }
 
   async getWorkflowNode(id: string): Promise<WorkflowNodeDetail> {

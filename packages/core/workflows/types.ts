@@ -55,6 +55,15 @@ export interface WorkflowCompletionDefinition {
   authorized_roles?: string[];
 }
 
+/** One formal output a node is expected to deliver. */
+export interface WorkflowArtifactRequirement {
+  key: string;
+  name: string;
+  description?: string;
+  kind?: "document" | "attachment" | "link";
+  required?: boolean;
+}
+
 export interface WorkflowNodeDefinition {
   key: string;
   kind: string;
@@ -68,6 +77,7 @@ export interface WorkflowNodeDefinition {
   participant_roles?: string[];
   issue_policy?: string;
   issue_templates?: WorkflowIssueTemplate[];
+  artifacts?: WorkflowArtifactRequirement[];
   submission_schema?: {
     policy?: "none" | "single" | "per_required_task" | "fan_in";
   };

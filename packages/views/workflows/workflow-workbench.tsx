@@ -57,6 +57,8 @@ import {
   workflowInstanceIssuesOptions,
   workflowInstanceOptions,
   workflowNodeOptions,
+  workflowNodeArtifactsOptions,
+  useReviewWorkflowArtifact,
   workflowTemplateOptions,
   workflowCompletionMode,
   type WorkflowNodeInstance,
@@ -140,21 +142,28 @@ import { PriorityIcon } from "../issues/components/priority-icon";
 import { StatusIcon } from "../issues/components/status-icon";
 import { ActorAvatar } from "../common/actor-avatar";
 import { WorkflowCanvas } from "./workflow-canvas";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { WorkflowStatusBadge } from "./workflow-status";
 import {
   latestWorkflowAttemptNodes,
   type WorkflowIssueScope,
 } from "./workflow-workbench-state";
 
+// handoffSummaryLimit mirrors the server cap. Showing it as a countdown lets an
+// author trim before submitting instead of being rejected after writing.
+const handoffSummaryLimit = 500;
+
 export function SubmissionPanel({
   instanceId,
   node,
+  nodes,
   submissions,
   tasks,
   canManage,
 }: {
   instanceId: string;
   node: WorkflowNodeInstance;
+  nodes: WorkflowNodeInstance[];
   submissions: WorkflowSubmission[];
   tasks: WorkflowNodeTask[];
   actorOptions: WorkflowActorOption[];
@@ -163,6 +172,7 @@ export function SubmissionPanel({
   const { t } = useT("workflows");
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [summary, setSummary] = useState("");
+  const [choice, setChoice] = useState("");
   const [sourceIssueId, setSourceIssueId] = useState("");
   const [proposedTitle, setProposedTitle] = useState("");
   const [proposedRequired, setProposedRequired] = useState(false);
@@ -175,10 +185,20 @@ export function SubmissionPanel({
   const sourceTasks = tasks.filter((task) => task.issue_id);
   const allowsFanOut = node.definition.issue_policy === "dynamic" ||
     node.definition.issue_policy === "fixed_and_dynamic";
+  // A branch choice is only worth asking for when the run actually forks. With
+  // one way forward there is nothing to decide, and an extra select would read
+  // as a decision the author has to make.
+  const branchTargets = nodes
+    .filter((candidate) => candidate.node_key !== node.node_key)
+    .map((candidate) => ({
+      key: candidate.node_key,
+      name: candidate.name || candidate.node_key,
+    }));
 
   useEffect(() => {
     setValues({});
     setSummary("");
+    setChoice("");
     setSourceIssueId("");
     setProposedTitle("");
     setProposedRequired(false);
@@ -187,7 +207,10 @@ export function SubmissionPanel({
 
   return (
     <div className="space-y-4">
-      {canManage && node.definition.submission_schema &&
+      {/* A node with no schema still owes the next node a conclusion, and the
+          default node shape has no schema — gating this panel on one left the
+          most common node with nowhere to hand anything off from. */}
+      {canManage &&
         (node.status === "active" || node.status === "waiting" ||
           node.status === "blocked") && (
         <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
@@ -222,8 +245,35 @@ export function SubmissionPanel({
               value={summary}
               onChange={(event) => setSummary(event.target.value)}
               rows={3}
+              maxLength={handoffSummaryLimit}
             />
+            <p className="text-xs text-muted-foreground">
+              {t(($) => $.workbench.summary_help, {
+                used: summary.length,
+                limit: handoffSummaryLimit,
+              })}
+            </p>
           </div>
+          {branchTargets.length > 1 && (
+            <div className="space-y-1.5">
+              <Label htmlFor="workflow-submission-choice">
+                {t(($) => $.workbench.branch_choice)}
+              </Label>
+              <select
+                id="workflow-submission-choice"
+                value={choice}
+                onChange={(event) => setChoice(event.target.value)}
+                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              >
+                <option value="">
+                  {t(($) => $.workbench.branch_choice_none)}
+                </option>
+                {branchTargets.map((target) => (
+                  <option key={target.key} value={target.key}>{target.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           {allowsFanOut && (
             <div className="space-y-3 rounded-lg border border-dashed p-3">
               <div>
@@ -312,10 +362,12 @@ export function SubmissionPanel({
             onClick={() => submit.mutate({
               payload: values,
               summary,
+              choice: choice || undefined,
               source_issue_id: sourceIssueId || undefined,
               proposed_tasks: proposedTasks,
             }, {
               onSuccess: () => {
+                setChoice("");
                 setProposedTasks([]);
                 setProposedTitle("");
                 setProposedRequired(false);
@@ -402,6 +454,158 @@ export function SubmissionPanel({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ArtifactPanel is the human half of artifacts. Agents submit through the CLI;
+// members need to read what was produced and say whether it passes, because a
+// required artifact that nobody can see is a gate nobody can clear.
+export function ArtifactPanel({
+  instanceId,
+  node,
+  canManage,
+}: {
+  instanceId: string;
+  node: WorkflowNodeInstance;
+  canManage: boolean;
+}) {
+  const { t } = useT("workflows");
+  const wsId = useWorkspaceId();
+  const [expanded, setExpanded] = useState<string>("");
+  const [comment, setComment] = useState("");
+  const artifactsQuery = useQuery(workflowNodeArtifactsOptions(wsId, node.id));
+  const review = useReviewWorkflowArtifact(instanceId, node.id);
+  const required = node.definition.artifacts ?? [];
+  const artifacts = artifactsQuery.data?.artifacts ?? [];
+  const delivered = new Set(artifacts.map((artifact) => artifact.artifact_key));
+
+  if (required.length === 0 && artifacts.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        {t(($) => $.workbench.no_artifacts)}
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {required
+        .filter((requirement) => !delivered.has(requirement.key))
+        .map((requirement) => (
+          <div
+            key={requirement.key}
+            className="rounded-xl border border-dashed p-4"
+          >
+            <p className="text-sm font-medium">{requirement.name}</p>
+            {requirement.description && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {requirement.description}
+              </p>
+            )}
+            <p className="mt-2 text-xs text-muted-foreground">
+              {requirement.required
+                ? t(($) => $.workbench.artifact_missing_required)
+                : t(($) => $.workbench.artifact_missing_optional)}
+            </p>
+          </div>
+        ))}
+      {artifacts.map((artifact) => (
+        <div key={artifact.id} className="space-y-3 rounded-xl border p-4">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{artifact.name}</p>
+              {artifact.description && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {artifact.description}
+                </p>
+              )}
+            </div>
+            <Badge
+              variant={artifact.review_status === "rejected"
+                ? "destructive"
+                : "outline"}
+            >
+              {artifact.review_status}
+            </Badge>
+          </div>
+          {artifact.kind === "link" && artifact.url && (
+            <a
+              href={artifact.url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="block truncate text-sm underline underline-offset-2"
+            >
+              {artifact.url}
+            </a>
+          )}
+          {artifact.kind === "document" && artifact.content && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="min-h-11"
+                onClick={() =>
+                  setExpanded(expanded === artifact.id ? "" : artifact.id)}
+              >
+                {expanded === artifact.id
+                  ? t(($) => $.workbench.artifact_hide)
+                  : t(($) => $.workbench.artifact_read)}
+              </Button>
+              {expanded === artifact.id && (
+                <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-muted/40 p-3 text-xs">
+                  {artifact.content}
+                </pre>
+              )}
+            </>
+          )}
+          {artifact.review_comment && (
+            <p className="text-xs text-muted-foreground">
+              {artifact.review_comment}
+            </p>
+          )}
+          {canManage && (
+            <div className="space-y-2">
+              <Textarea
+                value={expanded === artifact.id ? comment : ""}
+                rows={2}
+                placeholder={t(($) => $.workbench.artifact_review_comment)}
+                onChange={(event) => {
+                  setExpanded(artifact.id);
+                  setComment(event.target.value);
+                }}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  className="min-h-11"
+                  disabled={review.isPending}
+                  onClick={() => review.mutate({
+                    artifactId: artifact.id,
+                    status: "approved",
+                    comment: comment.trim() || undefined,
+                  }, { onSuccess: () => setComment("") })}
+                >
+                  {t(($) => $.actions.approve)}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="min-h-11"
+                  disabled={review.isPending}
+                  onClick={() => review.mutate({
+                    artifactId: artifact.id,
+                    status: "rejected",
+                    comment: comment.trim() || undefined,
+                  }, { onSuccess: () => setComment("") })}
+                >
+                  {t(($) => $.actions.reject)}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -2375,6 +2579,10 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               {t(($) => $.workbench.submission)}
             </TabsTrigger>
           )}
+          <TabsTrigger value="artifacts">
+            <FileCheck2 />
+            {t(($) => $.workbench.tab_artifacts)}
+          </TabsTrigger>
           {hasVerdictPanel && (
             <TabsTrigger value="verdict">
               <FileCheck2 />
@@ -2403,6 +2611,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             <SubmissionPanel
               instanceId={instanceId}
               node={selectedNode}
+              nodes={nodes}
               submissions={nodeQuery.data.submissions}
               tasks={nodeQuery.data.tasks}
               actorOptions={actorOptions}
@@ -2410,6 +2619,13 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             />
           </TabsContent>
         )}
+        <TabsContent value="artifacts" className="pt-4">
+          <ArtifactPanel
+            instanceId={instanceId}
+            node={selectedNode}
+            canManage={canManageSelectedNode}
+          />
+        </TabsContent>
         {hasVerdictPanel && (
           <TabsContent value="verdict" className="pt-4">
             <VerdictPanel

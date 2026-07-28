@@ -142,6 +142,22 @@ export function workflowNodeOptions(wsId: string, nodeInstanceId: string) {
   });
 }
 
+export function workflowNodeArtifactsOptions(wsId: string, nodeInstanceId: string) {
+  return queryOptions({
+    queryKey: [...workflowKeys.node(wsId, nodeInstanceId), "artifacts"],
+    queryFn: () => api.listWorkflowNodeArtifacts(nodeInstanceId),
+    enabled: Boolean(nodeInstanceId),
+  });
+}
+
+export function workflowInstanceArtifactsOptions(wsId: string, instanceId: string) {
+  return queryOptions({
+    queryKey: [...workflowKeys.instance(wsId, instanceId), "artifacts"],
+    queryFn: () => api.listWorkflowInstanceArtifacts(instanceId),
+    enabled: Boolean(instanceId),
+  });
+}
+
 export function workflowTemplateListOptions(
   wsId: string,
   filters: WorkflowTemplateFilters = {},

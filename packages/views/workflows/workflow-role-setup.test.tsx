@@ -146,15 +146,9 @@ function renderSubmissionPanel(
       key: "review",
       kind: "activity",
       name: "Review",
-      issue_policy: "fixed",
-      submission_schema: {
-        policy: "single",
-        fields: [
-          { key: "summary", name: "Summary", type: "text", required: true },
-          { key: "approved", name: "Approved", type: "boolean", required: true },
-          { key: "reviewer", name: "Reviewer", type: "member", required: true },
-        ],
-      },
+      // The default node shape: no issues, no schema. Gating the panel on a
+      // schema left exactly this node with nowhere to hand anything off from.
+      issue_policy: "none",
     },
   } as unknown as WorkflowNodeInstance;
   render(
@@ -167,6 +161,7 @@ function renderSubmissionPanel(
       <SubmissionPanel
         instanceId="instance-1"
         node={node}
+        nodes={[node]}
         submissions={submissions}
         tasks={[]}
         actorOptions={[
@@ -405,5 +400,12 @@ describe("AcceptancePanel", () => {
       reason: "Fix API",
       rework_target_node_key: "implementation",
     });
+  });
+});
+
+describe("SubmissionPanel handoff entry", () => {
+  it("offers a handoff summary on a node that declares no schema", () => {
+    renderSubmissionPanel();
+    expect(screen.getByLabelText("Summary")).toBeInTheDocument();
   });
 });

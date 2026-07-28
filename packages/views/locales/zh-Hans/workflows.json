@@ -255,7 +255,17 @@
     "select_node": "选择一个活动，查看其中的任务、产出和检查结果。",
     "attempt": "第 {{attempt}} 次",
     "role_reassign": "调整角色负责人",
-    "role_reassign_help": "更换后，尚未结束的节点负责人会同步更新；已创建的 issue 负责人不变，需要时请单独改派。"
+    "role_reassign_help": "更换后，尚未结束的节点负责人会同步更新；已创建的 issue 负责人不变，需要时请单独改派。",
+    "summary_help": "{{used}} / {{limit}} 字符",
+    "branch_choice": "选择分支",
+    "branch_choice_none": "不显式选择分支",
+    "tab_artifacts": "制品",
+    "no_artifacts": "该活动没有配置制品。",
+    "artifact_missing_required": "必需 — 尚未提交。",
+    "artifact_missing_optional": "可选 — 尚未提交。",
+    "artifact_read": "查看正文",
+    "artifact_hide": "收起",
+    "artifact_review_comment": "验收意见（可选）"
   },
   "editor": {
     "title": "工作流模板",

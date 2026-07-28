@@ -358,6 +358,38 @@ export const WorkflowInstanceDetailSchema = z.object({
   tasks: arrayOrEmpty(WorkflowNodeTaskSchema),
 }).loose();
 
+export const WorkflowArtifactSchema = z.object({
+  id: z.string(),
+  workflow_instance_id: z.string().optional().default(""),
+  workflow_node_instance_id: z.string().optional().default(""),
+  artifact_key: z.string().optional().default(""),
+  attempt: z.number().optional().default(1),
+  kind: z.string().optional().default("document"),
+  name: z.string().optional().default(""),
+  description: z.string().optional().default(""),
+  content: z.string().optional().default(""),
+  attachment_id: nullableString,
+  url: z.string().optional().default(""),
+  review_status: z.string().optional().default("submitted"),
+  review_comment: z.string().optional().default(""),
+  reviewed_by: nullableString,
+  reviewed_at: nullableString,
+  submitted_by_type: z.string().optional().default("system"),
+  submitted_by_id: nullableString,
+  created_at: z.string().optional().default(""),
+  updated_at: z.string().optional().default(""),
+}).loose();
+
+export type WorkflowArtifact = z.infer<typeof WorkflowArtifactSchema>;
+
+export const WorkflowArtifactListSchema = z.object({
+  artifacts: arrayOrEmpty(WorkflowArtifactSchema),
+}).loose();
+
+export type WorkflowArtifactList = z.infer<typeof WorkflowArtifactListSchema>;
+
+export const EMPTY_WORKFLOW_ARTIFACT_LIST: WorkflowArtifactList = { artifacts: [] };
+
 export const WorkflowNodeDetailSchema = z.object({
   instance: WorkflowInstanceSchema,
   node: WorkflowNodeInstanceSchema,

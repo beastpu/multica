@@ -255,7 +255,17 @@
     "select_node": "アクティビティを選択して詳細を確認します。",
     "attempt": "試行 {{attempt}}",
     "role_reassign": "ロール担当者を変更",
-    "role_reassign_help": "変更すると、未完了ノードの担当者は同期して更新されます。作成済み issue の担当者は変わらないため、必要に応じて個別に変更してください。"
+    "role_reassign_help": "変更すると、未完了ノードの担当者は同期して更新されます。作成済み issue の担当者は変わらないため、必要に応じて個別に変更してください。",
+    "summary_help": "{{used}} / {{limit}} 文字",
+    "branch_choice": "進む分岐",
+    "branch_choice_none": "分岐を明示しない",
+    "tab_artifacts": "成果物",
+    "no_artifacts": "このアクティビティに成果物の設定はありません。",
+    "artifact_missing_required": "必須 — 未提出。",
+    "artifact_missing_optional": "任意 — 未提出。",
+    "artifact_read": "本文を見る",
+    "artifact_hide": "閉じる",
+    "artifact_review_comment": "レビューコメント（任意）"
   },
   "editor": {
     "title": "ワークフローテンプレート",

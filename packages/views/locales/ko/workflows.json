@@ -255,7 +255,17 @@
     "select_node": "활동을 선택해 작업과 근거를 확인하세요.",
     "attempt": "시도 {{attempt}}",
     "role_reassign": "역할 담당자 변경",
-    "role_reassign_help": "변경하면 아직 진행 중인 노드의 담당자가 함께 갱신됩니다. 이미 생성된 이슈의 담당자는 그대로이므로 필요하면 따로 변경하세요."
+    "role_reassign_help": "변경하면 아직 진행 중인 노드의 담당자가 함께 갱신됩니다. 이미 생성된 이슈의 담당자는 그대로이므로 필요하면 따로 변경하세요.",
+    "summary_help": "{{used}} / {{limit}}자",
+    "branch_choice": "진행할 분기",
+    "branch_choice_none": "분기를 지정하지 않음",
+    "tab_artifacts": "산출물",
+    "no_artifacts": "이 활동에는 산출물이 설정되어 있지 않습니다.",
+    "artifact_missing_required": "필수 — 아직 제출되지 않음.",
+    "artifact_missing_optional": "선택 — 제출되지 않음.",
+    "artifact_read": "본문 보기",
+    "artifact_hide": "접기",
+    "artifact_review_comment": "검토 의견(선택)"
   },
   "editor": {
     "title": "워크플로 템플릿",
