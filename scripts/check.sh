@@ -107,8 +107,20 @@ echo "==> [4/5] Starting services for E2E..."
 
 if curl -sf "http://localhost:${PORT}/health" > /dev/null 2>&1; then
   echo "    Backend already running on :$PORT"
+  # A backend started elsewhere carries whatever flags that process was given.
+  # Say so rather than let a flag-gated spec fail as a missing UI.
+  if ! curl -sf "http://localhost:${PORT}/api/config" 2>/dev/null \
+      | grep -q '"workflows_activity_engine":true'; then
+    echo "    NOTE: workflow flag is off in the running backend; workflow E2E will fail."
+    echo "          Restart it with MULTICA_FEATURE_FLAGS_FILE=$PWD/e2e/feature-flags.yaml"
+  fi
 else
   echo "    Starting backend..."
+  # E2E specs cover surfaces behind feature flags, and the server enforces those
+  # flags independently of the browser. Without this the specs fail as "the page
+  # never rendered", which reads like a UI bug rather than a disabled feature.
+  # An operator-set value wins, so this cannot override a deliberate choice.
+  export MULTICA_FEATURE_FLAGS_FILE="${MULTICA_FEATURE_FLAGS_FILE:-$PWD/e2e/feature-flags.yaml}"
   (cd server && go run ./cmd/server) > /tmp/multica-check-backend.log 2>&1 &
   BACKEND_PID=$!
   STARTED_BACKEND=true
