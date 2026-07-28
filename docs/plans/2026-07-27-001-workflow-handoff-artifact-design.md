@@ -908,11 +908,13 @@ stateDiagram-v2
 
 顺序由依赖关系和风险决定：
 
-1. **子 issue metadata 不变量**。零风险，且是第 2、3 步的前提。**已完成。**
-2. **父需求引用行**。相对独立，可单独验证。**已完成**（含启动对话框补填需求描述）。
-3. **制品实体 + `multica workflow` 命令组**。依赖第 1 步。**部分完成**，剩余项见 §21.1。
-4. **`node_choice` 与 `api` 审核方式**。必须早于第 5 步。
-5. **移除 `submission_schema.fields` 与表单构建器**。影响面最大，放在最后。
+1. **子 issue metadata 不变量**。**已完成。**
+2. **父需求引用行**（含启动对话框补填需求描述）。**已完成。**
+3. **制品实体 + `multica workflow` 命令组**，以及交接摘要的写入、门禁、`upstream` 与提示词引导。**已完成。**
+4. **`node_choice` 与 `api` 审核方式**。**已完成。**
+5. **移除 `submission_schema.fields` 与表单构建器**。**已完成**，实际范围见 §21.1。
+
+方案全部落地。
 
 两条硬约束：
 
@@ -921,7 +923,7 @@ stateDiagram-v2
 
 ### 21.1 第 5 步的实际范围
 
-移除 `submission_schema.fields` 比原估计大。试做一遍后确认它连带三件文档未记录的事：
+**已完成。** 移除 `submission_schema.fields` 比原估计大，实际连带三件文档未记录的事：
 
 - **`previous_selected` 执行者策略一并停用。** 该策略从上游节点的提交字段里取出一个 member/agent/squad 作为本节点执行者（`internal/handler/workflow_executor.go`）。字段移除后它没有数据源，而替代字段的三种形态——制品、交接摘要、`node_choice`——没有一种指向人。保留它只会解析到空并让节点无声卡住，因此应显式拒绝并提示改用 `fixed_actor` 或按角色解析。这是本方案第一次真正**减少**能力，需要单独确认是否接受。
 - **`ValidateSubmissionPayload` 整体退场。** 没有字段就没有可校验的载荷，函数与其两处调用点一并移除。
@@ -930,7 +932,7 @@ stateDiagram-v2
 
 内置模板 `requirement_delivery.json` 的迁移已经验证过方向是对的：它那个 `design_summary` 字段本质就是交接摘要，改为 `handoff_required: true` 加一份 `technical design` 制品后语义更准确。
 
-因此第 5 步应作为独立一次改动推进，而不是接在第 4 步后面顺手做完。
+第 5 步已作为独立一次改动完成。`previous_selected` 按上述理由停用——运行中改角色分配覆盖了同一需求，且可见、可审计，而表单字段两者皆非。
 
 ### 21.2 第 3 步的剩余项
 
