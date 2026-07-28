@@ -172,14 +172,24 @@ type CompletionDefinition struct {
 	Mode                 string `json:"mode,omitempty"`
 	RequiredIssueOutcome string `json:"required_issue_outcome,omitempty"`
 	SubmissionRequired   bool   `json:"submission_required,omitempty"`
-	VerdictRequired      string `json:"verdict_required,omitempty"`
-	Confirmation         string `json:"confirmation,omitempty"`
+	// HandoffRequired blocks completion until the node carries a non-empty
+	// handoff summary. It is separate from SubmissionRequired because a node
+	// can owe a structured result without owing a conclusion, and far more
+	// often owes the conclusion alone.
+	HandoffRequired bool   `json:"handoff_required,omitempty"`
+	VerdictRequired string `json:"verdict_required,omitempty"`
+	Confirmation    string `json:"confirmation,omitempty"`
 	// AuthorizedRoles lists workflow roles whose resolved member actors may
 	// force-complete, skip, or roll back this node in addition to the
 	// defaults (workspace admins always; the node owner for manual
 	// completion).
 	AuthorizedRoles []string `json:"authorized_roles,omitempty"`
 }
+
+// MaxHandoffSummaryChars caps the handoff summary. The point of the summary is
+// that a downstream node can read it in full without deciding whether to; a cap
+// is what keeps that true as a workflow grows.
+const MaxHandoffSummaryChars = 500
 
 type EdgeDefinition struct {
 	From      string          `json:"from"`

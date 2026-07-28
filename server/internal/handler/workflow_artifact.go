@@ -378,3 +378,129 @@ func (h *Handler) ReviewWorkflowArtifact(w http.ResponseWriter, r *http.Request)
 		"artifact": workflowArtifactToResponse(artifact),
 	})
 }
+
+type workflowUpstreamNode struct {
+	NodeKey   string                    `json:"node_key"`
+	Name      string                    `json:"name"`
+	Status    string                    `json:"status"`
+	Summary   string                    `json:"summary"`
+	Artifacts []workflowArtifactSummary `json:"artifacts"`
+}
+
+// workflowArtifactSummary is the index form of an artifact: enough to decide
+// whether to read it, without the body. Carrying bodies here would make every
+// downstream node pay for prose it may not need.
+type workflowArtifactSummary struct {
+	ID           string `json:"id"`
+	ArtifactKey  string `json:"artifact_key"`
+	Kind         string `json:"kind"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	ReviewStatus string `json:"review_status"`
+}
+
+func workflowArtifactSummaries(rows []db.WorkflowArtifact) []workflowArtifactSummary {
+	items := make([]workflowArtifactSummary, len(rows))
+	for index, row := range rows {
+		items[index] = workflowArtifactSummary{
+			ID: uuidToString(row.ID), ArtifactKey: row.ArtifactKey,
+			Kind: row.Kind, Name: row.Name, Description: row.Description,
+			ReviewStatus: row.ReviewStatus,
+		}
+	}
+	return items
+}
+
+// GetWorkflowNodeUpstream returns the handoff summary and artifact index of
+// each direct predecessor of a node.
+//
+// Direct predecessors only, because that is what the graph says this node
+// depends on. Walking further back would pull in parallel branches this node
+// never waited for, and the whole point of the summary is to be small enough
+// to read without deciding to.
+func (h *Handler) GetWorkflowNodeUpstream(w http.ResponseWriter, r *http.Request) {
+	node, instance, ok := h.loadWorkflowNode(w, r)
+	if !ok {
+		return
+	}
+	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(
+		r.Context(),
+		db.GetWorkflowTemplateVersionInWorkspaceParams{
+			ID: instance.TemplateVersionID, WorkspaceID: instance.WorkspaceID,
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow definition")
+		return
+	}
+	definition, err := workflowdomain.ParseDefinition(version.Definition)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "invalid workflow definition")
+		return
+	}
+	plan, err := workflowdomain.BuildGraphPlan(definition)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "invalid workflow graph")
+		return
+	}
+	predecessors := make(map[string]struct{}, len(plan.Incoming[node.NodeKey]))
+	for _, edge := range plan.Incoming[node.NodeKey] {
+		predecessors[edge.From] = struct{}{}
+	}
+
+	nodes, err := h.Queries.ListWorkflowNodeInstances(r.Context(), db.ListWorkflowNodeInstancesParams{
+		WorkflowInstanceID: instance.ID, WorkspaceID: instance.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow nodes")
+		return
+	}
+	// Several attempts of the same node can exist after a rework. The live one
+	// is the highest attempt; an earlier attempt's conclusion described work
+	// that has since been redone.
+	live := make(map[string]db.WorkflowNodeInstance, len(predecessors))
+	for _, candidate := range nodes {
+		if _, wanted := predecessors[candidate.NodeKey]; !wanted {
+			continue
+		}
+		if existing, seen := live[candidate.NodeKey]; !seen || candidate.Attempt > existing.Attempt {
+			live[candidate.NodeKey] = candidate
+		}
+	}
+
+	upstream := make([]workflowUpstreamNode, 0, len(live))
+	for _, definitionNode := range plan.Ordered {
+		candidate, exists := live[definitionNode.Key]
+		if !exists {
+			continue
+		}
+		entry := workflowUpstreamNode{
+			NodeKey: candidate.NodeKey, Name: candidate.NameSnapshot,
+			Status: candidate.Status, Artifacts: []workflowArtifactSummary{},
+		}
+		if candidate.LatestSubmissionID.Valid {
+			submission, err := h.Queries.GetWorkflowSubmissionInWorkspace(
+				r.Context(),
+				db.GetWorkflowSubmissionInWorkspaceParams{
+					ID: candidate.LatestSubmissionID, WorkspaceID: instance.WorkspaceID,
+				},
+			)
+			if err == nil {
+				entry.Summary = submission.Summary
+			}
+		}
+		artifacts, err := h.Queries.ListWorkflowNodeArtifacts(
+			r.Context(),
+			db.ListWorkflowNodeArtifactsParams{
+				WorkflowNodeInstanceID: candidate.ID, WorkspaceID: instance.WorkspaceID,
+			},
+		)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load workflow artifacts")
+			return
+		}
+		entry.Artifacts = workflowArtifactSummaries(artifacts)
+		upstream = append(upstream, entry)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"upstream": upstream})
+}

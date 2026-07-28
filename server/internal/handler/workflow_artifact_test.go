@@ -286,3 +286,214 @@ func TestWorkflowArtifactGatesNodeCompletion(t *testing.T) {
 		t.Fatalf("complete status = %d after resubmission, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+// startHandoffWorkflow boots a two-activity run whose first node owes a handoff
+// summary, so the gate and the upstream view can both be exercised.
+func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
+	t.Helper()
+	ctx := context.Background()
+
+	var hostID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_type, creator_id, number, position
+		) VALUES ($1, 'Handoff host', 'todo', 'none', 'member', $2, $3, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID, nextWorkspaceIssueNumber(t)).Scan(&hostID); err != nil {
+		t.Fatalf("create host issue: %v", err)
+	}
+
+	activity := func(nodeKey, name string, handoff bool) workflowdomain.NodeDefinition {
+		return workflowdomain.NodeDefinition{
+			Key: nodeKey, Kind: "activity", ActivityMode: "work", Name: name,
+			OwnerRole: "owner", IssuePolicy: "none",
+			Executor: workflowdomain.ExecutorDefinition{Strategies: []workflowdomain.ExecutorStrategy{
+				{Kind: "fixed_role", Role: "owner"}, {Kind: "manual"},
+			}},
+			Completion: workflowdomain.CompletionDefinition{
+				Mode: "manual", RequiredIssueOutcome: "none", HandoffRequired: handoff,
+			},
+		}
+	}
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Handoff delivery",
+		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true, AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			activity("review", "Review", true),
+			activity("design", "Design", false),
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "review"}, {From: "review", To: "design"},
+			{From: "design", To: "end"},
+		},
+		Acceptance: workflowdomain.AcceptanceDefinition{Policy: "none"},
+	}
+
+	definitionJSON, _ := json.Marshal(definition)
+	var templateID, versionID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workflow_template (workspace_id, name, status, created_by)
+		VALUES ($1, 'Handoff test template', 'published', $2) RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&templateID); err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workflow_template_version (
+			workspace_id, template_id, version, status, definition,
+			definition_checksum, created_by, published_by, published_at
+		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now()) RETURNING id
+	`, testWorkspaceID, templateID, definitionJSON, testUserID).Scan(&versionID); err != nil {
+		t.Fatalf("create template version: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE workflow_template SET latest_published_version_id = $1 WHERE id = $2
+	`, versionID, templateID); err != nil {
+		t.Fatalf("set published version: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(
+		http.MethodPost, "/api/issues/"+hostID+"/workflow?workspace_id="+testWorkspaceID,
+		map[string]any{
+			"template_id": templateID,
+			"role_assignments": []map[string]any{{
+				"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
+			}},
+			"idempotency_key": "handoff-test-" + key,
+		},
+	), "id", hostID)
+	testHandler.StartIssueWorkflow(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("StartIssueWorkflow status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var started workflowInstanceDetailResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &started); err != nil {
+		t.Fatalf("decode start response: %v", err)
+	}
+	review := findWorkflowNodeResponse(t, started.Nodes, "review", 1)
+	design := findWorkflowNodeResponse(t, started.Nodes, "design", 1)
+	return started.Instance.ID, review.ID, design.ID
+}
+
+func submitHandoff(t *testing.T, nodeID, summary, key string) *httptest.ResponseRecorder {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(
+		http.MethodPost,
+		"/api/workflow-node-instances/"+nodeID+"/submissions?workspace_id="+testWorkspaceID,
+		map[string]any{"summary": summary, "idempotency_key": key},
+	), "nodeInstanceId", nodeID)
+	testHandler.CreateWorkflowNodeSubmission(recorder, request)
+	return recorder
+}
+
+// A node that owes a conclusion is not finished without one — otherwise the
+// next node inherits nothing and the requirement is decorative.
+func TestWorkflowHandoffSummaryGatesCompletion(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	_, reviewID, _ := startHandoffWorkflow(t, "gate")
+
+	complete := func(n int) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		request := withURLParam(newRequest(
+			http.MethodPost,
+			"/api/workflow-node-instances/"+reviewID+"/complete?workspace_id="+testWorkspaceID,
+			map[string]any{"idempotency_key": fmt.Sprintf("handoff-gate-%d", n)},
+		), "nodeInstanceId", reviewID)
+		testHandler.CompleteWorkflowNode(recorder, request)
+		return recorder
+	}
+
+	if recorder := complete(1); recorder.Code == http.StatusOK {
+		t.Fatal("node completed without its handoff summary")
+	}
+	if recorder := submitHandoff(
+		t, reviewID, "Scope confirmed; first release is linear only.", "handoff-gate-summary",
+	); recorder.Code != http.StatusCreated {
+		t.Fatalf("submit handoff status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder := complete(2); recorder.Code != http.StatusOK {
+		t.Fatalf("complete status = %d after handoff, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestWorkflowHandoffSummaryRejectsOverlongText(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	_, reviewID, _ := startHandoffWorkflow(t, "overlong")
+
+	recorder := submitHandoff(
+		t, reviewID,
+		strings.Repeat("借", workflowdomain.MaxHandoffSummaryChars+1),
+		"handoff-overlong",
+	)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("submit status = %d, want 400; body = %s", recorder.Code, recorder.Body.String())
+	}
+	// The cap counts characters, not bytes: a multi-byte summary well under the
+	// limit in runes must not be rejected for its encoding.
+	if recorder := submitHandoff(
+		t, reviewID, strings.Repeat("借", 100), "handoff-multibyte",
+	); recorder.Code != http.StatusCreated {
+		t.Fatalf("multi-byte summary rejected: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// Downstream sees its direct predecessor's conclusion and artifact index, and
+// nothing else — the index carries no bodies.
+func TestWorkflowUpstreamReturnsPredecessorHandoff(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	_, reviewID, designID := startHandoffWorkflow(t, "upstream")
+
+	if recorder := submitHandoff(
+		t, reviewID, "Scope confirmed; dynamic decomposition deferred.", "handoff-upstream",
+	); recorder.Code != http.StatusCreated {
+		t.Fatalf("submit handoff status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(
+		http.MethodGet,
+		"/api/workflow-node-instances/"+designID+"/upstream?workspace_id="+testWorkspaceID,
+		nil,
+	), "nodeInstanceId", designID)
+	testHandler.GetWorkflowNodeUpstream(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("upstream status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Upstream []struct {
+			NodeKey   string `json:"node_key"`
+			Summary   string `json:"summary"`
+			Artifacts []struct {
+				ID string `json:"id"`
+			} `json:"artifacts"`
+		} `json:"upstream"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode upstream: %v", err)
+	}
+	if len(response.Upstream) != 1 {
+		t.Fatalf("upstream entries = %d, want exactly the direct predecessor", len(response.Upstream))
+	}
+	if response.Upstream[0].NodeKey != "review" {
+		t.Errorf("upstream node = %q, want review", response.Upstream[0].NodeKey)
+	}
+	if !strings.Contains(response.Upstream[0].Summary, "Scope confirmed") {
+		t.Errorf("upstream summary = %q, want the submitted handoff", response.Upstream[0].Summary)
+	}
+	if !strings.Contains(recorder.Body.String(), `"artifacts"`) {
+		t.Error("upstream response should carry an artifact index")
+	}
+	if strings.Contains(recorder.Body.String(), `"content"`) {
+		t.Error("upstream index must not carry artifact bodies")
+	}
+}

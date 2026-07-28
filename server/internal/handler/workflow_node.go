@@ -322,9 +322,16 @@ func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Re
 	var req createWorkflowSubmissionRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil || req.Payload == nil {
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "payload must be a JSON object")
 		return
+	}
+	// A node can owe a conclusion without owing a structured result — that is
+	// the common shape now that nodes declare artifacts instead of fields. An
+	// omitted payload therefore means "empty", not "malformed"; the schema, if
+	// there is one, still decides whether empty is acceptable.
+	if req.Payload == nil {
+		req.Payload = map[string]any{}
 	}
 	idempotencyKey := strings.TrimSpace(req.IdempotencyKey)
 	if idempotencyKey == "" {
@@ -341,7 +348,11 @@ func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Re
 		return
 	}
 	submissionPolicy := workflowdomain.SubmissionPolicy(nodeDefinition)
-	if submissionPolicy == "none" {
+	// The policy governs structured results, not the handoff conclusion. A node
+	// that declares no schema still owes the next node a summary — refusing it
+	// here would leave the default node shape, which produces no issues and no
+	// fields, with nowhere to hand anything off from.
+	if submissionPolicy == "none" && len(req.Payload) > 0 {
 		writeError(w, http.StatusConflict, "workflow node does not accept member submissions")
 		return
 	}
@@ -358,6 +369,15 @@ func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Re
 			http.StatusConflict,
 			"workflow node does not allow proposed dynamic tasks",
 		)
+		return
+	}
+	// A summary longer than the cap defeats its purpose: downstream is meant to
+	// read it whole without deciding whether to. Reject at the boundary so the
+	// author can trim it, rather than truncating and silently losing meaning.
+	if len([]rune(strings.TrimSpace(req.Summary))) > workflowdomain.MaxHandoffSummaryChars {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+			"handoff summary exceeds %d characters", workflowdomain.MaxHandoffSummaryChars,
+		))
 		return
 	}
 	reasons := workflowdomain.ValidateSubmissionPayload(nodeDefinition.SubmissionSchema, req.Payload)
@@ -1811,6 +1831,17 @@ func (h *Handler) evaluateWorkflowNode(
 		); len(validation) > 0 {
 			return false, validation, submission, db.WorkflowNodeVerdict{}, nil
 		}
+	}
+	// The handoff summary is what the next node reads first, so a node that
+	// owes one is not finished without it. Checked against the live submission
+	// rather than any submission: an earlier revision's conclusion described
+	// work that has since changed.
+	if nodeDefinition.Completion.HandoffRequired &&
+		strings.TrimSpace(submission.Summary) == "" {
+		return false, []workflowdomain.WaitingReason{{
+			Code:    "handoff_summary_required",
+			Message: "A handoff summary is required before this node can complete",
+		}}, submission, db.WorkflowNodeVerdict{}, nil
 	}
 	if verdictRequired == "none" {
 		confirmationReady, confirmationReasons, err := h.evaluateWorkflowConfirmation(

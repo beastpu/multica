@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -50,6 +52,13 @@ var workflowArtifactGetCmd = &cobra.Command{
 	RunE:  runWorkflowArtifactGet,
 }
 
+var workflowUpstreamCmd = &cobra.Command{
+	Use:   "upstream [issue-id]",
+	Short: "Show the handoff summary and artifact index of each direct predecessor",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runWorkflowUpstream,
+}
+
 var workflowSubmitCmd = &cobra.Command{
 	Use:   "submit [issue-id]",
 	Short: "Submit an artifact for the current node",
@@ -59,6 +68,7 @@ var workflowSubmitCmd = &cobra.Command{
 
 func init() {
 	workflowCmd.AddCommand(workflowCurrentCmd)
+	workflowCmd.AddCommand(workflowUpstreamCmd)
 	workflowCmd.AddCommand(workflowArtifactsCmd)
 	workflowCmd.AddCommand(workflowArtifactCmd)
 	workflowArtifactCmd.AddCommand(workflowArtifactGetCmd)
@@ -66,15 +76,16 @@ func init() {
 
 	workflowCurrentCmd.Flags().String("output", "table", "Output format: table or json")
 	workflowArtifactsCmd.Flags().String("output", "table", "Output format: table or json")
+	workflowUpstreamCmd.Flags().String("output", "table", "Output format: table or json")
 	workflowArtifactGetCmd.Flags().String("output", "text", "Output format: text or json")
 
-	workflowSubmitCmd.Flags().String("artifact", "", "Artifact key declared by the node (required)")
+	workflowSubmitCmd.Flags().String("summary", "", "Handoff summary for the next node")
+	workflowSubmitCmd.Flags().String("artifact", "", "Artifact key declared by the node")
 	workflowSubmitCmd.Flags().String("file", "", "Read the document body from this file")
 	workflowSubmitCmd.Flags().String("content", "", "Document body given inline")
 	workflowSubmitCmd.Flags().String("url", "", "External address for a link artifact")
 	workflowSubmitCmd.Flags().String("attachment-id", "", "Attachment id for an attachment artifact")
 	workflowSubmitCmd.Flags().String("output", "table", "Output format: table or json")
-	_ = workflowSubmitCmd.MarkFlagRequired("artifact")
 }
 
 // daemonTaskIssueID reads the issue this process was dispatched for from the
@@ -383,6 +394,67 @@ func artifactBodyFromFlags(cmd *cobra.Command, artifactKey string) (map[string]a
 	return body, nil
 }
 
+type workflowUpstreamEntry struct {
+	NodeKey   string                    `json:"node_key"`
+	Name      string                    `json:"name"`
+	Status    string                    `json:"status"`
+	Summary   string                    `json:"summary"`
+	Artifacts []workflowArtifactSummary `json:"artifacts"`
+}
+
+func runWorkflowUpstream(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	issueID, err := resolveWorkflowIssueID(args)
+	if err != nil {
+		return err
+	}
+	detail, nodeKey, err := resolveWorkflowContext(client, issueID)
+	if err != nil {
+		return err
+	}
+	if nodeKey == "" {
+		return fmt.Errorf("issue %s is not a workflow node issue", issueID)
+	}
+	node, ok := currentNode(detail, nodeKey)
+	if !ok {
+		return fmt.Errorf("workflow node %q is not part of run %s", nodeKey, detail.Instance.ID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var response struct {
+		Upstream []workflowUpstreamEntry `json:"upstream"`
+	}
+	if err := client.GetJSON(
+		ctx, "/api/workflow-node-instances/"+node.ID+"/upstream", &response,
+	); err != nil {
+		return fmt.Errorf("get upstream: %w", err)
+	}
+	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+		return cli.PrintJSON(os.Stdout, response)
+	}
+	if len(response.Upstream) == 0 {
+		fmt.Fprintln(os.Stdout, "no upstream nodes; this is the first activity in the run")
+		return nil
+	}
+	for _, entry := range response.Upstream {
+		fmt.Fprintf(os.Stdout, "%s (%s)\n", entry.Name, entry.Status)
+		if entry.Summary != "" {
+			fmt.Fprintf(os.Stdout, "  handoff: %s\n", entry.Summary)
+		} else {
+			fmt.Fprintln(os.Stdout, "  handoff: (not submitted)")
+		}
+		for _, artifact := range entry.Artifacts {
+			fmt.Fprintf(os.Stdout, "  artifact %s  [%s/%s]  %s\n",
+				artifact.ID, artifact.Kind, artifact.ReviewStatus, artifact.Name)
+		}
+	}
+	fmt.Fprintln(os.Stdout, "\nRead a body with: multica workflow artifact get <artifact-id>")
+	return nil
+}
+
 func runWorkflowSubmit(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -392,10 +464,18 @@ func runWorkflowSubmit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	artifactKey, _ := cmd.Flags().GetString("artifact")
-	body, err := artifactBodyFromFlags(cmd, strings.TrimSpace(artifactKey))
-	if err != nil {
-		return err
+	artifactKey := strings.TrimSpace(mustFlag(cmd, "artifact"))
+	summary := strings.TrimSpace(mustFlag(cmd, "summary"))
+	if artifactKey == "" && summary == "" {
+		return fmt.Errorf("give --summary, --artifact, or both")
+	}
+	var body map[string]any
+	if artifactKey != "" {
+		var err error
+		body, err = artifactBodyFromFlags(cmd, artifactKey)
+		if err != nil {
+			return err
+		}
 	}
 	detail, nodeKey, err := resolveWorkflowContext(client, issueID)
 	if err != nil {
@@ -413,22 +493,69 @@ func runWorkflowSubmit(cmd *cobra.Command, args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	var response struct {
-		Artifact workflowArtifactSummary `json:"artifact"`
-		Replaced bool                    `json:"replaced"`
+
+	// The artifact goes first. Its absence is what blocks completion, and the
+	// summary is meant to point at it — a summary landing first would name
+	// something that is not there yet.
+	results := map[string]any{}
+	if body != nil {
+		var response struct {
+			Artifact workflowArtifactSummary `json:"artifact"`
+			Replaced bool                    `json:"replaced"`
+		}
+		if err := client.PostJSON(
+			ctx, "/api/workflow-node-instances/"+node.ID+"/artifacts", body, &response,
+		); err != nil {
+			return fmt.Errorf("submit artifact: %w", err)
+		}
+		results["artifact"] = response.Artifact
+		results["replaced"] = response.Replaced
 	}
-	if err := client.PostJSON(
-		ctx, "/api/workflow-node-instances/"+node.ID+"/artifacts", body, &response,
-	); err != nil {
-		return fmt.Errorf("submit artifact: %w", err)
+	if summary != "" {
+		var response struct {
+			Submission struct {
+				ID      string `json:"id"`
+				Summary string `json:"summary"`
+			} `json:"submission"`
+		}
+		if err := client.PostJSON(
+			ctx, "/api/workflow-node-instances/"+node.ID+"/submissions",
+			map[string]any{
+				"summary":         summary,
+				"idempotency_key": "handoff-" + node.ID + "-" + shortDigest(summary),
+			}, &response,
+		); err != nil {
+			return fmt.Errorf("submit handoff summary: %w", err)
+		}
+		results["submission"] = response.Submission
 	}
 	if output, _ := cmd.Flags().GetString("output"); output == "json" {
-		return cli.PrintJSON(os.Stdout, response)
+		return cli.PrintJSON(os.Stdout, results)
 	}
-	verb := "submitted"
-	if response.Replaced {
-		verb = "replaced"
+	if body != nil {
+		verb := "submitted"
+		if replaced, _ := results["replaced"].(bool); replaced {
+			verb = "replaced"
+		}
+		if artifact, ok := results["artifact"].(workflowArtifactSummary); ok {
+			fmt.Fprintf(os.Stdout, "%s %s (%s)\n", verb, artifact.Name, artifact.ID)
+		}
 	}
-	fmt.Fprintf(os.Stdout, "%s %s (%s)\n", verb, response.Artifact.Name, response.Artifact.ID)
+	if summary != "" {
+		fmt.Fprintln(os.Stdout, "handoff summary submitted")
+	}
 	return nil
+}
+
+func mustFlag(cmd *cobra.Command, name string) string {
+	value, _ := cmd.Flags().GetString(name)
+	return value
+}
+
+// shortDigest derives a stable idempotency suffix from the summary, so a
+// retried submit is recognised as the same handoff rather than stacking a
+// second revision.
+func shortDigest(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:8])
 }
