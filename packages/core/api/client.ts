@@ -1877,6 +1877,11 @@ export class ApiClient {
     return this.fetch(`/api/runtimes/${runtimeId}/update/${updateId}`);
   }
 
+  async fetchLatestCliVersion(): Promise<string> {
+    const res = await this.fetchRaw("/api/downloads/latest-cli.txt");
+    return (await res.text()).trim();
+  }
+
   async initiateListModels(runtimeId: string): Promise<RuntimeModelListRequest> {
     return this.fetch(`/api/runtimes/${runtimeId}/models`, { method: "POST" });
   }
