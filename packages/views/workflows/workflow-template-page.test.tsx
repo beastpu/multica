@@ -328,8 +328,13 @@ describe("WorkflowTemplatePage", () => {
     const user = userEvent.setup();
     renderPage();
 
+    // Editing the name is rare, so it lives behind the overflow rather than
+    // competing with publish for the header row.
     await user.click(
-      await screen.findByRole("button", { name: "Edit details" }),
+      await screen.findByRole("button", { name: "More actions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Edit details" }),
     );
     const dialog = await screen.findByRole("dialog");
     const name = within(dialog).getByLabelText("Template name");
@@ -350,7 +355,12 @@ describe("WorkflowTemplatePage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "Archive" }));
+    await user.click(
+      await screen.findByRole("button", { name: "More actions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Archive" }),
+    );
     expect(mocks.archive).not.toHaveBeenCalled();
 
     const dialog = await screen.findByRole("alertdialog");
@@ -426,5 +436,31 @@ describe("WorkflowTemplatePage", () => {
       { from: "work", to: "end" },
       { from: "work", to: branch?.key },
     ]);
+  });
+});
+
+describe("WorkflowTemplatePage inspector", () => {
+  // The inspector used to stack template-level settings above the node being
+  // edited, so every node edit began by scrolling past roles and acceptance.
+  // Now it follows the selection — but a node is selected on load and the
+  // canvas has no empty space to click, so the template settings need their
+  // own door or they become unreachable.
+  it("swaps between node and template settings", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    // A node is selected on load, so template settings are not showing.
+    expect(await screen.findByRole("button", { name: "Template settings" }))
+      .toBeInTheDocument();
+    expect(screen.queryByText("Definition inspector")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Template settings" }));
+    expect(await screen.findByText("Definition inspector")).toBeInTheDocument();
+
+    // And back again, so selecting a node is not a one-way door.
+    await user.click(screen.getByRole("button", { name: "Back to node" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Definition inspector")).toBeNull()
+    );
   });
 });

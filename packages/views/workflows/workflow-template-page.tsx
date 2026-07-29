@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   GitBranch,
   GitFork,
+  MoreHorizontal,
   Pencil,
   Plus,
   Save,
@@ -54,8 +55,13 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@multica/ui/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@multica/ui/components/ui/dropdown-menu";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -83,12 +89,16 @@ import {
 
 function TemplateMetadataDialog({
   template,
+  open,
+  onOpenChange,
 }: {
   template: WorkflowTemplate;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useT("workflows");
   const { t: commonT } = useT("common");
-  const [open, setOpen] = useState(false);
+  const setOpen = onOpenChange;
   const [name, setName] = useState(template.name);
   const [description, setDescription] = useState(template.description);
   const [appliesToTypeKey, setAppliesToTypeKey] = useState(
@@ -128,10 +138,6 @@ function TemplateMetadataDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button size="sm" variant="outline" />}>
-        <Pencil />
-        {t(($) => $.actions.edit_metadata)}
-      </DialogTrigger>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t(($) => $.templates.metadata_title)}</DialogTitle>
@@ -453,6 +459,7 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
   const [dirty, setDirty] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [metadataOpen, setMetadataOpen] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [changeSummary, setChangeSummary] = useState("");
   const updateDraft = useUpdateWorkflowTemplateDraft(templateId);
@@ -491,6 +498,9 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
   }, [loadedVersionId, selectedVersion]);
 
   const selectedNode = definition?.nodes.find((node) => node.key === selectedKey);
+  const firstNodeKey = definition?.nodes.find(
+    (node) => node.kind === "activity",
+  )?.key ?? definition?.nodes[0]?.key ?? "";
   const changeDefinition = (next: WorkflowDefinition) => {
     if (!canEdit) return;
     setDefinition(next);
@@ -638,9 +648,6 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
         description={template.description || t(($) => $.editor.description)}
         actions={canManage && !isMobile ? (
           <>
-            {template.status !== "archived" && (
-              <TemplateMetadataDialog template={template} />
-            )}
             {draft && canEdit && (
               <>
                 <span className={cn(
@@ -671,16 +678,39 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
                 </Button>
               </>
             )}
+            {/*
+              Editing the name and archiving are rare and never urgent, so they
+              sit behind the overflow rather than competing with publish. Five
+              controls in a row left no visual answer to "which one ships it".
+            */}
             {template.status !== "archived" && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setArchiveOpen(true)}
-                disabled={archive.isPending}
-              >
-                <Archive />
-                {t(($) => $.actions.archive)}
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t(($) => $.editor.more_actions)}
+                    >
+                      <MoreHorizontal aria-hidden="true" />
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setMetadataOpen(true)}>
+                    <Pencil />
+                    {t(($) => $.actions.edit_metadata)}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setArchiveOpen(true)}
+                    disabled={archive.isPending}
+                  >
+                    <Archive />
+                    {t(($) => $.actions.archive)}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </>
         ) : undefined}
@@ -835,15 +865,39 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
                     </div>
                   )}
                 </section>
+                {/*
+                  The inspector follows the selection, the way every canvas
+                  editor's does: a node when one is selected, the template's own
+                  settings when none is. They used to stack, so editing a node
+                  meant scrolling past two collapsed blocks of roles and
+                  acceptance policy that had nothing to do with it.
+                */}
                 <aside className="max-h-[46rem] overflow-y-auto bg-muted/10 p-5">
-                  <WorkflowDefinitionInspector
-                    definition={definition}
-                    actorOptions={actorOptions}
-                    readOnly={!canEdit}
-                    onChange={changeDefinition}
-                  />
+                  {/*
+                    A node is selected on load and the canvas has no empty
+                    space to click, so the template's own settings need a door
+                    of their own — otherwise moving the inspector behind the
+                    selection would hide roles and acceptance for good.
+                  */}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedKey(selectedNode ? "" : firstNodeKey)}
+                    className="mb-4 inline-flex min-h-9 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {selectedNode
+                      ? t(($) => $.editor.template_settings)
+                      : t(($) => $.editor.back_to_node)}
+                  </button>
+                  {!selectedNode && (
+                    <WorkflowDefinitionInspector
+                      definition={definition}
+                      actorOptions={actorOptions}
+                      readOnly={!canEdit}
+                      onChange={changeDefinition}
+                    />
+                  )}
                   {selectedNode && (
-                    <div className="mt-5 space-y-5 border-t pt-5">
+                    <div className="space-y-5">
                       <WorkflowNodeDefinitionInspector
                         node={selectedNode}
                         definition={definition}
@@ -902,6 +956,13 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {template && template.status !== "archived" && (
+        <TemplateMetadataDialog
+          template={template}
+          open={metadataOpen}
+          onOpenChange={setMetadataOpen}
+        />
+      )}
       <AlertDialog open={archiveOpen} onOpenChange={setArchiveOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
