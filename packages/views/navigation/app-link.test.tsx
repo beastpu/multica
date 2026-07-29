@@ -42,6 +42,41 @@ describe("AppLink", () => {
     expect(order).toEqual(["onClick", "push"]);
   });
 
+  // A surface that opens the target in place says so by name. preventDefault
+  // deliberately does NOT do this — see the spread-override test below, which
+  // guarantees a caller cannot silently swallow navigation.
+  it("skips push when intercept claims the click, keeping the href intact", () => {
+    const adapter = makeAdapter();
+    const intercept = vi.fn(() => true);
+    renderLink(adapter, { href: "/issues", intercept });
+
+    fireEvent.click(screen.getByText("go"));
+    expect(intercept).toHaveBeenCalledWith("/issues");
+    expect(adapter.push).not.toHaveBeenCalled();
+    expect(screen.getByText("go").closest("a")).toHaveAttribute("href", "/issues");
+  });
+
+  it("pushes normally when intercept declines the click", () => {
+    const adapter = makeAdapter();
+    renderLink(adapter, { href: "/issues", intercept: () => false });
+
+    fireEvent.click(screen.getByText("go"));
+    expect(adapter.push).toHaveBeenCalledWith("/issues");
+  });
+
+  // Modifier-clicks must reach the browser/adapter untouched even on an
+  // intercepting surface, so "open in a new tab" keeps working.
+  it("does not consult intercept on a modifier-click", () => {
+    const openInNewTab = vi.fn();
+    const adapter = makeAdapter({ openInNewTab });
+    const intercept = vi.fn(() => true);
+    renderLink(adapter, { href: "/issues", intercept });
+
+    fireEvent.click(screen.getByText("go"), { metaKey: true });
+    expect(intercept).not.toHaveBeenCalled();
+    expect(openInNewTab).toHaveBeenCalled();
+  });
+
   it("calls adapter.prefetch on hover, alongside the caller's onMouseEnter — neither is overridden by {...props}", () => {
     const prefetch = vi.fn();
     const callerMouseEnter = vi.fn();

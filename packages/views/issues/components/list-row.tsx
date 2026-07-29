@@ -5,7 +5,7 @@ import { useSortable, defaultAnimateLayoutChanges } from "@dnd-kit/sortable";
 import type { AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AppLink } from "../../navigation";
-import { useIssueOpenClick } from "../surface/issue-open-context";
+import { useIssueOpenIntercept } from "../surface/issue-open-context";
 import type { Issue, Project,
   IssueProperty,
 } from "@multica/core/types";
@@ -60,7 +60,7 @@ function ListRowContent({
   const selected = selection.selectedIds.has(issue.id);
   const toggle = selection.toggle;
   const p = useWorkspacePaths();
-  const openInPlace = useIssueOpenClick(issue.id);
+  const openInPlace = useIssueOpenIntercept(issue.id);
   const storeProperties = useViewStore((s) => s.cardProperties);
   const cardPropertyIds = useViewStore((s) => s.cardPropertyIds);
   const rowWsId = useWorkspaceId();
@@ -108,7 +108,7 @@ function ListRowContent({
         </div>
         <AppLink
           href={p.issueDetail(issue.id)}
-          onClick={openInPlace}
+          intercept={openInPlace}
           className={`flex flex-1 items-center gap-2 min-w-0 ${isDragging ? "pointer-events-none" : ""}`}
         >
           <span className="w-16 shrink-0 text-xs text-muted-foreground">

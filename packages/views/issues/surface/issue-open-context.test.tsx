@@ -1,83 +1,42 @@
 // @vitest-environment jsdom
 
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { IssueOpenProvider, useIssueOpenClick } from "./issue-open-context";
+import { IssueOpenProvider, useIssueOpenIntercept } from "./issue-open-context";
 
 function Card({ issueId }: { issueId: string }) {
-  const openInPlace = useIssueOpenClick(issueId);
+  const intercept = useIssueOpenIntercept(issueId);
+  // Mirrors how AppLink consults intercept, so the test exercises the shape
+  // the card actually hands over rather than a click handler of its own.
   return (
-    <a href={`/issues/${issueId}`} onClick={openInPlace}>
+    <button
+      type="button"
+      data-handled={intercept ? String(intercept()) : "none"}
+    >
       open {issueId}
-    </a>
+    </button>
   );
 }
 
-describe("useIssueOpenClick", () => {
-  // Without a provider the card must stay an ordinary link — every surface
-  // outside the workbench depends on that.
-  it("leaves the link alone when no surface handles opening", async () => {
-    const user = userEvent.setup();
+describe("useIssueOpenIntercept", () => {
+  // Every surface outside the workbench must keep routing normally, and it
+  // signals that by handing AppLink no intercept at all.
+  it("returns nothing when no surface handles opening", () => {
     render(<Card issueId="i-1" />);
-
-    const link = screen.getByRole("link");
-    const clickEvent = new MouseEvent("click", {
-      bubbles: true,
-      cancelable: true,
-    });
-    link.dispatchEvent(clickEvent);
-    await user.click(link);
-
-    expect(clickEvent.defaultPrevented).toBe(false);
+    expect(screen.getByRole("button")).toHaveAttribute("data-handled", "none");
   });
 
-  it("hands a plain click to the surface instead of navigating", async () => {
+  it("claims the click and opens the issue on the surface", () => {
     const onOpenIssue = vi.fn();
-    const user = userEvent.setup();
     render(
       <IssueOpenProvider onOpenIssue={onOpenIssue}>
         <Card issueId="i-1" />
       </IssueOpenProvider>,
     );
 
-    const link = screen.getByRole("link");
-    const clickEvent = new MouseEvent("click", {
-      bubbles: true,
-      cancelable: true,
-    });
-    link.dispatchEvent(clickEvent);
-
+    // Returning true is what tells AppLink to skip the push.
+    expect(screen.getByRole("button")).toHaveAttribute("data-handled", "true");
     expect(onOpenIssue).toHaveBeenCalledWith("i-1");
-    expect(clickEvent.defaultPrevented).toBe(true);
-    // The href survives so "copy link address" still yields a real URL.
-    expect(link).toHaveAttribute("href", "/issues/i-1");
-    await user.click(link);
-  });
-
-  // ⌘-click / ctrl-click must keep opening a real tab even on an intercepting
-  // surface; swallowing it would break a habit users rely on.
-  it.each([
-    ["metaKey", { metaKey: true }],
-    ["ctrlKey", { ctrlKey: true }],
-    ["shiftKey", { shiftKey: true }],
-  ])("lets a %s click through to the browser", (_label, modifiers) => {
-    const onOpenIssue = vi.fn();
-    render(
-      <IssueOpenProvider onOpenIssue={onOpenIssue}>
-        <Card issueId="i-1" />
-      </IssueOpenProvider>,
-    );
-
-    const clickEvent = new MouseEvent("click", {
-      bubbles: true,
-      cancelable: true,
-      ...modifiers,
-    });
-    screen.getByRole("link").dispatchEvent(clickEvent);
-
-    expect(onOpenIssue).not.toHaveBeenCalled();
-    expect(clickEvent.defaultPrevented).toBe(false);
   });
 });

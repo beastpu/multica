@@ -10,11 +10,17 @@ interface AppLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
    * (modifier-click or `target="_blank"`). Falls back to the path.
    */
   newTabTitle?: string;
+  /**
+   * Return true to take over a plain click: the link stays a real link
+   * (modifier-clicks, "copy link address" and the href are untouched) but no
+   * route is pushed. For surfaces that open the target in place.
+   */
+  intercept?: (href: string) => boolean;
 }
 
 export const AppLink = forwardRef<HTMLAnchorElement, AppLinkProps>(
   function AppLink(
-    { href, children, onClick, onMouseEnter, onFocus, target, newTabTitle, ...props },
+    { href, children, onClick, onMouseEnter, onFocus, target, newTabTitle, intercept, ...props },
     ref,
   ) {
     const { push, openInNewTab, prefetch } = useNavigation();
@@ -45,6 +51,12 @@ export const AppLink = forwardRef<HTMLAnchorElement, AppLinkProps>(
       // (close popover, clear selection, blur the trigger) lands in the
       // same tick rather than getting deferred behind the transition.
       onClick?.(e);
+      // `intercept` is the one way to stop the push, and it is deliberately
+      // not preventDefault: AppLink owns its click handler precisely so a
+      // spread-through onClick cannot silently swallow navigation, and that
+      // guarantee is load-bearing (see app-link.test). A surface that opens
+      // the target in place asks for it by name instead.
+      if (intercept?.(href)) return;
       push(href);
     };
 

@@ -2,7 +2,7 @@
 
 import { useCallback, memo } from "react";
 import { AppLink } from "../../navigation";
-import { useIssueOpenClick } from "../surface/issue-open-context";
+import { useIssueOpenIntercept } from "../surface/issue-open-context";
 import { useSortable, defaultAnimateLayoutChanges } from "@dnd-kit/sortable";
 import type { AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -336,7 +336,7 @@ export const DraggableBoardCard = memo(function DraggableBoardCard({
   disableSorting?: boolean;
 }) {
   const p = useWorkspacePaths();
-  const openInPlace = useIssueOpenClick(issue.id);
+  const openInPlace = useIssueOpenIntercept(issue.id);
   const {
     attributes,
     listeners,
@@ -367,7 +367,7 @@ export const DraggableBoardCard = memo(function DraggableBoardCard({
       >
         <AppLink
           href={p.issueDetail(issue.id)}
-          onClick={openInPlace}
+          intercept={openInPlace}
           className={`group block transition-colors ${isDragging ? "pointer-events-none" : ""}`}
         >
           <BoardCardContent

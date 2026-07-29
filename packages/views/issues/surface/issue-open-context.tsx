@@ -41,25 +41,20 @@ export function useIssueOpen() {
 }
 
 /**
- * Builds the click handler for an issue card. Returns undefined when there is
- * no in-place handler, leaving the link untouched.
+ * Builds AppLink's `intercept` for an issue card: returns true when the
+ * surface opened the issue in place, so no route is pushed.
  *
- * Modified clicks (⌘/ctrl/shift/middle) fall through to the browser so
- * "open in a new tab" keeps working even on an intercepting surface.
+ * Returns undefined when no surface handles opening, leaving the link fully
+ * default. AppLink already routes modifier-clicks to the new-tab path before
+ * consulting intercept, so "open in a new tab" needs no handling here.
  */
-export function useIssueOpenClick(issueId: string) {
+export function useIssueOpenIntercept(issueId: string) {
   const openIssue = useIssueOpen();
   return useMemo(() => {
     if (!openIssue) return undefined;
-    return (event: React.MouseEvent) => {
-      if (
-        event.defaultPrevented || event.metaKey || event.ctrlKey ||
-        event.shiftKey || event.altKey || event.button !== 0
-      ) {
-        return;
-      }
-      event.preventDefault();
+    return () => {
       openIssue(issueId);
+      return true;
     };
   }, [openIssue, issueId]);
 }
