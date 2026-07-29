@@ -117,9 +117,55 @@ describe("WorkflowNodeIssues", () => {
     );
   });
 
-  // A node with no issues should not leave an empty heading behind.
-  it("renders nothing when the node produced no issues", () => {
-    const { container } = renderList([]);
-    expect(container).toBeEmptyDOMElement();
+  // "Nothing is blocking" is a result, not an absence: rendering an empty area
+  // would read as "still loading" at the exact moment the node is ready.
+  it("says so when nothing blocks the node", () => {
+    renderList([]);
+    expect(screen.getByText(enWorkflows.workbench.node_issues_clear))
+      .toBeInTheDocument();
+  });
+});
+
+describe("WorkflowNodeIssues completion block", () => {
+  // The rule, the count and the action are one question — "can this node move,
+  // and if not, why" — so they have to arrive together.
+  it("carries the rule, the count and the action alongside the list", () => {
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{ en: { workflows: enWorkflows, issues: enIssues } }}
+      >
+        <WorkflowNodeIssues
+          issues={[issue({ id: "i-1" })]}
+          canManage
+          rule="All required issues are done"
+          completed={0}
+          total={1}
+          action={<button type="button">Complete node</button>}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("0/1")).toBeInTheDocument();
+    expect(screen.getByText("All required issues are done")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Complete node" }))
+      .toBeInTheDocument();
+  });
+
+  // An empty area reads as "not loaded"; being clear is a result worth saying.
+  it("states the clear case instead of rendering an empty area", () => {
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{ en: { workflows: enWorkflows, issues: enIssues } }}
+      >
+        <WorkflowNodeIssues issues={[]} canManage rule="rule text" total={0} />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText(enWorkflows.workbench.node_issues_clear))
+      .toBeInTheDocument();
+    // A node with no required-issue rule shows no fraction at all.
+    expect(screen.queryByText("0/0")).toBeNull();
   });
 });

@@ -24,7 +24,6 @@ import {
   Undo2,
   UserRoundCheck,
   Users,
-  Wrench,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -140,7 +139,6 @@ import { useT } from "../i18n";
 import { IssueDisplayControls } from "../issues/components/issues-header";
 import { IssueSurface } from "../issues/surface/issue-surface";
 import { PriorityIcon } from "../issues/components/priority-icon";
-import { StatusIcon } from "../issues/components/status-icon";
 import { WorkflowIssuePanel } from "./workflow-issue-panel";
 import { WorkflowNodeIssues } from "./workflow-node-issues";
 import { ActorAvatar } from "../common/actor-avatar";
@@ -1421,19 +1419,12 @@ function NodeTransitionPanel({
   if (!canComplete && !canOpenManagement) return null;
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border bg-muted/15 p-3">
-      <div className="min-w-0">
-        <h3 className="flex items-center gap-2 text-sm font-medium">
-          <Wrench className="size-4 shrink-0" aria-hidden="true" />
-          {t(($) => $.workbench.node_operations)}
-        </h3>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {manualCompletion
-            ? t(($) => $.workbench.complete_activity_help)
-            : t(($) => $.workbench.admin_actions_help)}
-        </p>
-      </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+    // No card, no "node operations" heading: this is the action the panel
+    // builds up to, and wrapping it in chrome made it read as one more
+    // reference block. The primary button carries the meaning; the rest of the
+    // node's transitions stay behind the overflow menu.
+    <div className="flex items-center gap-1.5">
+      <div className="flex flex-1 items-center gap-1.5">
         {canComplete && (
           <Button
             size="sm"
@@ -1990,7 +1981,6 @@ function WorkflowIssueDetachDialog({
 
 export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   const { t } = useT("workflows");
-  const { t: issueT } = useT("issues");
   const wsId = useWorkspaceId();
   const p = useWorkspacePaths();
   const userId = useAuthStore((state) => state.user?.id);
@@ -2268,9 +2258,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
     ? (completedWorkflowNodes / nodes.length) * 100
     : 0;
   const hostIssue = hostIssueQuery.data;
-  const hostAssigneeName = hostIssue?.assignee_type && hostIssue.assignee_id
-    ? actorName(hostIssue.assignee_type, hostIssue.assignee_id)
-    : null;
 
   if (detailQuery.isLoading) {
     return (
@@ -2294,117 +2281,57 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
 
   const nodeSidebarContent = selectedNode && nodeQuery.data ? (
     <div className="-m-4 min-h-full">
+      {/*
+        The host issue is a reference here, not a subject. Its status, priority
+        and assignee belong to it, not to the job this panel exists for —
+        pushing the current node forward — and they used to take the top third
+        of the panel before the node was even named. What stays is the pointer
+        (so you always know which requirement you are inside) and the run's
+        progress, which is the one host-level fact that frames the node.
+      */}
       <section
         aria-labelledby="workflow-host-issue-heading"
-        className="space-y-4 border-b bg-muted/15 p-4"
+        className="space-y-2 border-b bg-muted/15 px-4 py-3"
       >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className={SECTION_HEADING}>
-              {t(($) => $.workbench.parent_issue)}
-            </p>
-            {hostIssue ? (
-              <>
-                <h2
-                  id="workflow-host-issue-heading"
-                  className="mt-1 line-clamp-2 text-sm font-semibold leading-snug"
-                >
-                  {hostIssue.title}
-                </h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {hostIssue.identifier}
-                </p>
-              </>
-            ) : (
-              <div className="mt-2 space-y-2" aria-busy="true">
-                <Skeleton className="h-4 w-4/5" />
-                <Skeleton className="h-3 w-20" />
-              </div>
-            )}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span className={SECTION_HEADING}>
+              {t(($) => $.workbench.host_issue)}
+            </span>
+            <span
+              id="workflow-host-issue-heading"
+              className="truncate text-sm"
+            >
+              {hostIssue?.identifier ?? ""}
+            </span>
           </div>
           <AppLink
             href={p.issueDetail(instance.host_issue_id)}
-            className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
+            className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-7"
             aria-label={t(($) => $.workbench.open_parent_issue)}
           >
-            <span className="hidden min-[400px]:inline">
-              {t(($) => $.workbench.open_parent_issue)}
-            </span>
+            {t(($) => $.workbench.open_parent_issue)}
             <ArrowUpRight className="size-3.5" />
           </AppLink>
         </div>
-
-        {hostIssue?.description && (
-          <p className="line-clamp-3 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
-            {hostIssue.description}
-          </p>
-        )}
-
-        {hostIssue && (
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
-            <div>
-              <dt className="text-xs text-muted-foreground">
-                {issueT(($) => $.actions.status)}
-              </dt>
-              <dd className="mt-1 flex items-center gap-1.5 text-sm">
-                <StatusIcon status={hostIssue.status} className="size-3.5" />
-                {issueT(($) => $.status[hostIssue.status])}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">
-                {issueT(($) => $.actions.priority)}
-              </dt>
-              <dd className="mt-1 flex items-center gap-1.5 text-sm">
-                <PriorityIcon priority={hostIssue.priority} />
-                {issueT(($) => $.priority[hostIssue.priority])}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">
-                {issueT(($) => $.actions.assignee)}
-              </dt>
-              <dd className="mt-1 flex min-w-0 items-center gap-1.5 text-sm">
-                {hostIssue.assignee_type && hostIssue.assignee_id ? (
-                  <>
-                    <ActorAvatar
-                      actorType={hostIssue.assignee_type}
-                      actorId={hostIssue.assignee_id}
-                      size="sm"
-                    />
-                    <span className="truncate">{hostAssigneeName}</span>
-                  </>
-                ) : (
-                  <span className="text-muted-foreground">
-                    {issueT(($) => $.actions.unassigned)}
-                  </span>
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">
-                {t(($) => $.workbench.workflow_progress)}
-              </dt>
-              <dd className="mt-1 text-sm tabular-nums">
-                {completedWorkflowNodes}/{nodes.length}
-              </dd>
-            </div>
-          </dl>
-        )}
-
         {nodes.length > 0 && (
-          <div
-            className="h-1.5 overflow-hidden rounded-full bg-muted"
-            role="progressbar"
-            aria-label={t(($) => $.workbench.workflow_progress)}
-            aria-valuemin={0}
-            aria-valuemax={nodes.length}
-            aria-valuenow={completedWorkflowNodes}
-          >
+          <div className="flex items-center gap-2">
             <div
-              className="h-full rounded-full bg-primary transition-[width] motion-reduce:transition-none"
-              style={{ width: `${workflowProgressPercent}%` }}
-            />
+              className="h-1 flex-1 overflow-hidden rounded-full bg-muted"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={nodes.length}
+              aria-valuenow={completedWorkflowNodes}
+              aria-label={t(($) => $.workbench.workflow_progress)}
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-[width] motion-reduce:transition-none"
+                style={{ width: `${workflowProgressPercent}%` }}
+              />
+            </div>
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+              {completedWorkflowNodes}/{nodes.length}
+            </span>
           </div>
         )}
       </section>
@@ -2519,29 +2446,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         )}
       </dl>
 
-      <section
-        aria-labelledby="workflow-completion-rule"
-        className="space-y-2 border-y py-4"
-      >
-        <div className="flex items-center justify-between gap-3">
-          <h3 id="workflow-completion-rule" className={SECTION_HEADING}>
-            {t(($) => $.workbench.completion_rule)}
-          </h3>
-          {requiredIssueOutcome !== "none" && (
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {completedRequiredIssues}/{selectedRequiredTasks.length}
-            </span>
-          )}
-        </div>
-        <p className="text-sm text-muted-foreground">
-          {requiredIssueOutcome === "terminal"
-            ? t(($) => $.workbench.completion_rule_terminal)
-            : requiredIssueOutcome === "none"
-              ? t(($) => $.workbench.completion_rule_none)
-              : t(($) => $.workbench.completion_rule_done)}
-        </p>
-      </section>
-
       {visibleWaitingReasons.length > 0 && (
         <Alert>
           <AlertCircle />
@@ -2586,14 +2490,35 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
       )}
 
       {/*
-        The node's own issues sit above the tabs, not inside one. Moving an
-        issue to done is the most frequent action on this surface, and a tab
-        would put the run's main work object one click behind panels that are
-        consulted far less often.
+        What blocks the node, the rule that defines "blocked", and the action
+        that clears it are one thought — so they are one block, above the tabs.
+        They used to be three: a completion-rule section, an issue list, and a
+        "node operations" card at the very bottom of the panel, which meant the
+        primary action of the whole surface sat below four tabs of reference
+        material.
       */}
       <WorkflowNodeIssues
         issues={blockingNodeIssues}
         canManage={canManageSelectedNode}
+        rule={requiredIssueOutcome === "terminal"
+          ? t(($) => $.workbench.completion_rule_terminal)
+          : requiredIssueOutcome === "none"
+            ? t(($) => $.workbench.completion_rule_none)
+            : t(($) => $.workbench.completion_rule_done)}
+        completed={completedRequiredIssues}
+        total={requiredIssueOutcome === "none"
+          ? 0
+          : selectedRequiredTasks.length}
+        action={
+          <NodeTransitionPanel
+            instanceId={instanceId}
+            node={selectedNode}
+            submissions={nodeQuery.data.submissions}
+            canManage={canManageSelectedNode}
+            canAdmin={canAdmin}
+            instanceRunning={instance.status === "running"}
+          />
+        }
       />
 
       <Tabs key={selectedNode.id} defaultValue={sidebarDefaultTab}>
@@ -2724,14 +2649,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         confirmations={nodeQuery.data.confirmations}
         actorName={actorName}
         canConfirm={canConfirmSelectedNode}
-      />
-      <NodeTransitionPanel
-        instanceId={instanceId}
-        node={selectedNode}
-        submissions={nodeQuery.data.submissions}
-        canManage={canManageSelectedNode}
-        canAdmin={canAdmin}
-        instanceRunning={instance.status === "running"}
       />
       {canAdmin && (
         <WorkflowCancelPanel
