@@ -879,15 +879,38 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
                     of their own — otherwise moving the inspector behind the
                     selection would hide roles and acceptance for good.
                   */}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedKey(selectedNode ? "" : firstNodeKey)}
-                    className="mb-4 inline-flex min-h-9 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    {selectedNode
-                      ? t(($) => $.editor.template_settings)
-                      : t(($) => $.editor.back_to_node)}
-                  </button>
+                  {/*
+                    Two segments rather than one button whose label flips: a
+                    single button had to be read to know what it would do, and
+                    it sat directly above the node's own tab row, so it looked
+                    like a selected tab in a second, unexplained tab bar. Here
+                    the outer choice ("inspect what") is visibly a choice, and
+                    the inner tabs stay the only tabs.
+                  */}
+                  <div className="mb-4 flex rounded-lg bg-muted p-0.5 text-xs font-medium">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedKey(firstNodeKey)}
+                      aria-pressed={Boolean(selectedNode)}
+                      className={cn(
+                        "min-h-8 flex-1 rounded-md px-2 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        selectedNode && "bg-background text-foreground shadow-xs",
+                      )}
+                    >
+                      {t(($) => $.editor.inspect_node)}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedKey("")}
+                      aria-pressed={!selectedNode}
+                      className={cn(
+                        "min-h-8 flex-1 rounded-md px-2 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        !selectedNode && "bg-background text-foreground shadow-xs",
+                      )}
+                    >
+                      {t(($) => $.editor.template_settings)}
+                    </button>
+                  </div>
                   {!selectedNode && (
                     <WorkflowDefinitionInspector
                       definition={definition}

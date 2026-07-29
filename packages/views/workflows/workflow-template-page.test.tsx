@@ -445,20 +445,24 @@ describe("WorkflowTemplatePage inspector", () => {
   // Now it follows the selection — but a node is selected on load and the
   // canvas has no empty space to click, so the template settings need their
   // own door or they become unreachable.
-  it("swaps between node and template settings", async () => {
+  it("swaps the inspector between node and template settings", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    // A node is selected on load, so template settings are not showing.
-    expect(await screen.findByRole("button", { name: "Template settings" }))
-      .toBeInTheDocument();
+    // A node is selected on load, so the Node segment is the active one.
+    const nodeSeg = await screen.findByRole("button", { name: "Node" });
+    const templateSeg = screen.getByRole("button", { name: "Template settings" });
+    expect(nodeSeg).toHaveAttribute("aria-pressed", "true");
+    expect(templateSeg).toHaveAttribute("aria-pressed", "false");
     expect(screen.queryByText("Definition inspector")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Template settings" }));
+    await user.click(templateSeg);
     expect(await screen.findByText("Definition inspector")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Template settings" }))
+      .toHaveAttribute("aria-pressed", "true");
 
     // And back again, so selecting a node is not a one-way door.
-    await user.click(screen.getByRole("button", { name: "Back to node" }));
+    await user.click(screen.getByRole("button", { name: "Node" }));
     await waitFor(() =>
       expect(screen.queryByText("Definition inspector")).toBeNull()
     );

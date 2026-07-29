@@ -1443,11 +1443,12 @@ function NodeTransitionPanel({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon-sm"
-                  className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8"
+                  size={canComplete ? "icon-sm" : "sm"}
+                  className="min-h-11 sm:min-h-8"
                   aria-label={t(($) => $.workbench.manage_node)}
                 >
                   <MoreHorizontal aria-hidden="true" />
+                  {!canComplete && t(($) => $.workbench.manage_node)}
                 </Button>
               }
             />
@@ -2368,7 +2369,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         spent six rows saying four short things and made the panel scroll
         before the parts that need action.
       */}
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-y py-4">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-t py-4">
         <div className="min-w-0">
           <dt className={SECTION_HEADING}>{t(($) => $.workbench.owners)}</dt>
           <dd className="mt-1 flex flex-wrap gap-2">
