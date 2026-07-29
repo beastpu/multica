@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Archive,
   ArrowRight,
   Copy,
   GitBranch,
@@ -368,6 +369,19 @@ function TemplatesPanel({
   const { data, isLoading, isError } = useQuery(
     workflowTemplateListOptions(wsId),
   );
+  // Archived templates are hidden by default — archiving is how this product
+  // deletes, and a retired template sitting in the same grid as live ones is
+  // what made "archive the old one, create a new one with the same name" look
+  // like the system permitting duplicates. Retired is not gone, though, so the
+  // count stays visible and one click brings them back.
+  const [showArchived, setShowArchived] = useState(false);
+  const allTemplates = data?.templates ?? [];
+  const archivedCount = allTemplates.filter(
+    (template) => template.status === "archived",
+  ).length;
+  const visibleTemplates = showArchived
+    ? allTemplates
+    : allTemplates.filter((template) => template.status !== "archived");
   const createTemplate = useCreateWorkflowTemplate();
   const copyTemplate = useCopyWorkflowTemplate();
   const createFromBuiltin = useCreateWorkflowTemplateFromBuiltin();
@@ -422,6 +436,21 @@ function TemplatesPanel({
         </div>
         {canManage && (
           <div className="flex items-center gap-2">
+            {/* Shown only when there is something to reveal, so the control
+                does not advertise an empty state. */}
+            {archivedCount > 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowArchived((shown) => !shown)}
+                aria-pressed={showArchived}
+              >
+                <Archive />
+                {showArchived
+                  ? t(($) => $.templates.hide_archived)
+                  : t(($) => $.templates.show_archived, { count: archivedCount })}
+              </Button>
+            )}
             <Button
               size="sm"
               variant="outline"
@@ -494,9 +523,9 @@ function TemplatesPanel({
           <Skeleton className="h-32 rounded-xl" />
           <Skeleton className="h-32 rounded-xl" />
         </div>
-      ) : data?.templates.length ? (
+      ) : visibleTemplates.length ? (
         <div className="grid gap-3 md:grid-cols-2">
-          {data.templates.map((template) => (
+          {visibleTemplates.map((template) => (
             <Card key={template.id} size="sm">
               <CardHeader>
                 <CardTitle className="truncate">{template.name}</CardTitle>

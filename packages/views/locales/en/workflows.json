@@ -146,6 +146,8 @@
     "archive_description": "Archived templates remain visible in history and existing runs, but cannot start new workflows.",
     "archived_help": "This template is archived and read-only. Existing runs and published versions remain available.",
     "use_builtin": "Use built-in template",
+    "show_archived": "Archived ({count})",
+    "hide_archived": "Hide archived",
     "builtin_title": "Built-in templates",
     "builtin_description": "Ready-to-use delivery flows shipped with Multica. Create one to start immediately, or edit it afterwards.",
     "builtin_create": "Create"

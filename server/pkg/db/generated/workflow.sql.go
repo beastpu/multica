@@ -298,6 +298,36 @@ func (q *Queries) ClearWorkflowIssueOrigin(ctx context.Context, arg ClearWorkflo
 	return err
 }
 
+const countLiveWorkflowTemplatesByName = `-- name: CountLiveWorkflowTemplatesByName :one
+
+SELECT count(*) FROM workflow_template
+WHERE workspace_id = $1
+  AND lower(btrim(name)) = lower(btrim($2::text))
+  AND status <> 'archived'
+  -- NULL on create (nothing to exclude). ` + "`" + `id <> NULL` + "`" + ` evaluates to NULL, not
+  -- true, which would filter every row out and make the check always pass.
+  AND ($3::uuid IS NULL OR id <> $3)
+`
+
+type CountLiveWorkflowTemplatesByNameParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Name        string      `json:"name"`
+	ExcludeID   pgtype.UUID `json:"exclude_id"`
+}
+
+// =====================
+// Workflow templates
+// =====================
+// Counts live templates already using a name. Archived ones are excluded:
+// replacing a template by archiving the old one and recreating it under the
+// same name is the normal revision path once runs depend on the old version.
+func (q *Queries) CountLiveWorkflowTemplatesByName(ctx context.Context, arg CountLiveWorkflowTemplatesByNameParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveWorkflowTemplatesByName, arg.WorkspaceID, arg.Name, arg.ExcludeID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countWorkflowInstances = `-- name: CountWorkflowInstances :one
 SELECT count(*)::bigint
 FROM workflow_instance wi
@@ -4609,7 +4639,6 @@ func (q *Queries) ListWorkflowTemplateVersions(ctx context.Context, arg ListWork
 }
 
 const listWorkflowTemplates = `-- name: ListWorkflowTemplates :many
-
 SELECT id, workspace_id, name, description, applies_to_kind, applies_to_type_key, status, latest_published_version_id, created_by, archived_at, created_at, updated_at FROM workflow_template
 WHERE workspace_id = $1
   AND ($2::text IS NULL OR status = $2)
@@ -4621,9 +4650,6 @@ type ListWorkflowTemplatesParams struct {
 	Status      pgtype.Text `json:"status"`
 }
 
-// =====================
-// Workflow templates
-// =====================
 func (q *Queries) ListWorkflowTemplates(ctx context.Context, arg ListWorkflowTemplatesParams) ([]WorkflowTemplate, error) {
 	rows, err := q.db.Query(ctx, listWorkflowTemplates, arg.WorkspaceID, arg.Status)
 	if err != nil {

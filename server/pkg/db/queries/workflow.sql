@@ -2,6 +2,18 @@
 -- Workflow templates
 -- =====================
 
+-- Counts live templates already using a name. Archived ones are excluded:
+-- replacing a template by archiving the old one and recreating it under the
+-- same name is the normal revision path once runs depend on the old version.
+-- name: CountLiveWorkflowTemplatesByName :one
+SELECT count(*) FROM workflow_template
+WHERE workspace_id = @workspace_id
+  AND lower(btrim(name)) = lower(btrim(@name::text))
+  AND status <> 'archived'
+  -- NULL on create (nothing to exclude). `id <> NULL` evaluates to NULL, not
+  -- true, which would filter every row out and make the check always pass.
+  AND (@exclude_id::uuid IS NULL OR id <> @exclude_id);
+
 -- name: ListWorkflowTemplates :many
 SELECT * FROM workflow_template
 WHERE workspace_id = @workspace_id

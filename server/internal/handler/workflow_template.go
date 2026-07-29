@@ -288,6 +288,39 @@ type createWorkflowTemplateRequest struct {
 	ChangeSummary    string          `json:"change_summary"`
 }
 
+// workflowTemplateNameTaken reports whether another live template in the
+// workspace already answers to this name, writing the 409 when it does.
+//
+// Enforced here rather than only in the database because the message matters:
+// a unique-violation surfacing as a 500 tells the user nothing about which
+// field to change. The partial index behind it is the backstop for races.
+//
+// excludeID keeps a rename to its own current name a no-op instead of a
+// self-collision.
+func (h *Handler) workflowTemplateNameTaken(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID pgtype.UUID,
+	name string,
+	excludeID pgtype.UUID,
+) bool {
+	count, err := h.Queries.CountLiveWorkflowTemplatesByName(
+		r.Context(),
+		db.CountLiveWorkflowTemplatesByNameParams{
+			WorkspaceID: workspaceID, Name: name, ExcludeID: excludeID,
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check workflow template name")
+		return true
+	}
+	if count > 0 {
+		writeError(w, http.StatusConflict, "a workflow template with this name already exists")
+		return true
+	}
+	return false
+}
+
 func (h *Handler) CreateWorkflowTemplate(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return
@@ -318,6 +351,9 @@ func (h *Handler) CreateWorkflowTemplate(w http.ResponseWriter, r *http.Request)
 	}
 	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user_id")
 	if !ok {
+		return
+	}
+	if h.workflowTemplateNameTaken(w, r, wsUUID, req.Name, pgtype.UUID{}) {
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -591,6 +627,10 @@ func (h *Handler) UpdateWorkflowTemplateMetadata(w http.ResponseWriter, r *http.
 		return
 	}
 	if !h.ensureWorkflowTemplateWritable(w, r, wsUUID, templateID) {
+		return
+	}
+	if req.Name != nil &&
+		h.workflowTemplateNameTaken(w, r, wsUUID, *req.Name, templateID) {
 		return
 	}
 	template, err := h.Queries.UpdateWorkflowTemplateMetadata(r.Context(), db.UpdateWorkflowTemplateMetadataParams{

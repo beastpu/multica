@@ -2,11 +2,13 @@
 
 import {
   AlertTriangle,
+  Archive,
   CheckCircle2,
   Circle,
   CircleDashed,
   Clock3,
   PauseCircle,
+  PencilLine,
   PlayCircle,
   SkipForward,
   XCircle,
@@ -36,6 +38,12 @@ const statusStyle: Record<string, string> = {
   pass: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   rejected: "border-destructive/30 bg-destructive/10 text-destructive",
   fail: "border-destructive/30 bg-destructive/10 text-destructive",
+  // Template lifecycle. Draft is in-progress work, published is live, archived
+  // is retired — the last one reads as muted on purpose, since an archived
+  // template is shown only when the user asked to see retired ones.
+  draft: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  published: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  archived: "border-muted-foreground/20 bg-muted text-muted-foreground",
 };
 
 function StatusIcon({ status }: { status: string }) {
@@ -69,6 +77,12 @@ function StatusIcon({ status }: { status: string }) {
     case "skipped":
     case "superseded":
       return <SkipForward className={className} />;
+    case "draft":
+      return <PencilLine className={className} />;
+    case "published":
+      return <CheckCircle2 className={className} />;
+    case "archived":
+      return <Archive className={className} />;
     case "unknown":
       return <CircleDashed className={className} />;
     default:
@@ -106,6 +120,9 @@ export function WorkflowStatusBadge({
       case "rejected": return t(($) => $.status.rejected);
       case "pass": return t(($) => $.status.pass);
       case "fail": return t(($) => $.status.fail);
+      case "draft": return t(($) => $.templates.draft);
+      case "published": return t(($) => $.templates.published);
+      case "archived": return t(($) => $.templates.archived);
       default: return t(($) => $.status.unknown);
     }
   })();

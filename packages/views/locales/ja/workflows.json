@@ -146,6 +146,8 @@
     "archive_description": "履歴と既存の実行には残りますが、新しいワークフローを開始できなくなります。",
     "archived_help": "このテンプレートはアーカイブ済みで読み取り専用です。既存の実行と公開バージョンは引き続き利用できます。",
     "use_builtin": "組み込みテンプレートを使用",
+    "show_archived": "アーカイブ済み（{count}）",
+    "hide_archived": "アーカイブを隠す",
     "builtin_title": "組み込みテンプレート",
     "builtin_description": "すぐに使える標準の開発フローです。作成後すぐに利用でき、後から編集もできます。",
     "builtin_create": "作成"
