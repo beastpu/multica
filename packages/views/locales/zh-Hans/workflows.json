@@ -146,7 +146,7 @@
     "archive_description": "归档后仍保留历史版本和已有运行实例，但不能再启动新的工作流。",
     "archived_help": "这个模板已归档并进入只读状态；已有运行实例和已发布版本仍然保留。",
     "use_builtin": "使用内置模板",
-    "show_archived": "已归档（{count}）",
+    "show_archived": "已归档（{{count}}）",
     "hide_archived": "隐藏已归档",
     "builtin_title": "内置模板",
     "builtin_description": "由官方提供的常用研发流程，创建后立即可用，也可以再编辑调整。",
