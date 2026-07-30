@@ -3,6 +3,7 @@
 import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type {
+  WorkflowArtifactRequirement,
   WorkflowDefinition,
   WorkflowExecutorStrategy,
   WorkflowIssueTemplate,
@@ -862,6 +863,141 @@ function ExecutorEditor({
   );
 }
 
+// ArtifactEditor declares what a node must deliver.
+//
+// It sits beside the issue templates because the two are a pair: an issue is
+// the work, an artifact is the thing that comes out of it. Both are the node's
+// contract, and both were previously only expressible by hand-editing the
+// definition JSON — which is why templates in the wild carry no artifacts at
+// all and downstream nodes get a handoff summary with nothing behind it.
+//
+// The key is surfaced rather than hidden because agents submit against it
+// (`multica workflow submit --artifact <key>`) and the server rejects any key
+// the node did not declare. It is generated once and then left alone: renaming
+// it would orphan whatever a running node already submitted.
+function ArtifactEditor({
+  node,
+  readOnly,
+  onChange,
+}: {
+  node: WorkflowNodeDefinition;
+  readOnly: boolean;
+  onChange: (node: WorkflowNodeDefinition) => void;
+}) {
+  const { t } = useT("workflows");
+  const artifacts = node.artifacts ?? [];
+  const update = (index: number, artifact: WorkflowArtifactRequirement) => {
+    const next = [...artifacts];
+    next[index] = artifact;
+    onChange({ ...node, artifacts: next });
+  };
+
+  return (
+    <div className="space-y-3">
+      {artifacts.map((artifact, index) => (
+        <div key={artifact.key} className="space-y-3 rounded-lg border p-2.5">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Label>{t(($) => $.editor.artifact_name)}</Label>
+              <Input
+                value={artifact.name}
+                disabled={readOnly}
+                className="min-h-9 text-xs"
+                onChange={(event) => update(index, {
+                  ...artifact,
+                  name: event.target.value,
+                })}
+              />
+              <p className="font-mono text-xs text-muted-foreground">
+                {artifact.key}
+              </p>
+            </div>
+            <RemoveButton
+              label={t(($) => $.actions.remove)}
+              disabled={readOnly}
+              onClick={() => onChange({
+                ...node,
+                artifacts: artifacts.filter((item) => item.key !== artifact.key),
+              })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t(($) => $.editor.artifact_description)}</Label>
+            <Textarea
+              value={artifact.description ?? ""}
+              disabled={readOnly}
+              rows={2}
+              placeholder={t(($) => $.editor.artifact_description_hint)}
+              onChange={(event) => update(index, {
+                ...artifact,
+                description: event.target.value || undefined,
+              })}
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.artifact_kind)}</Label>
+              <select
+                value={artifact.kind ?? "document"}
+                disabled={readOnly}
+                className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
+                onChange={(event) => update(index, {
+                  ...artifact,
+                  kind: event.target.value as WorkflowArtifactRequirement["kind"],
+                })}
+              >
+                <option value="document">
+                  {t(($) => $.editor.artifact_kind_document)}
+                </option>
+                <option value="attachment">
+                  {t(($) => $.editor.artifact_kind_attachment)}
+                </option>
+                <option value="link">
+                  {t(($) => $.editor.artifact_kind_link)}
+                </option>
+              </select>
+            </div>
+            <label className="flex min-h-9 items-center gap-2 self-end text-xs">
+              <input
+                type="checkbox"
+                checked={artifact.required !== false}
+                disabled={readOnly}
+                onChange={(event) => update(index, {
+                  ...artifact,
+                  required: event.target.checked,
+                })}
+              />
+              {t(($) => $.editor.artifact_required)}
+            </label>
+          </div>
+        </div>
+      ))}
+      {!readOnly && (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-9 w-full"
+          onClick={() => onChange({
+            ...node,
+            artifacts: [
+              ...artifacts,
+              {
+                key: stableKey("artifact"),
+                name: "",
+                kind: "document",
+                required: true,
+              },
+            ],
+          })}
+        >
+          <Plus />
+          {t(($) => $.editor.add_artifact)}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function IssueTemplateEditor({
   node,
   roles,
@@ -1701,6 +1837,20 @@ export function WorkflowNodeDefinitionInspector({
             node={node}
             roles={definition.roles}
             actorOptions={actorOptions}
+            readOnly={readOnly}
+            onChange={onChange}
+          />
+          {/* Artifacts sit under the same tab as the issues: the issue is the
+              work, the artifact is what comes out of it, and both are this
+              node's contract with the ones after it. */}
+          <div className="space-y-1.5 border-t pt-3">
+            <Label>{t(($) => $.editor.artifacts)}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t(($) => $.editor.artifacts_hint)}
+            </p>
+          </div>
+          <ArtifactEditor
+            node={node}
             readOnly={readOnly}
             onChange={onChange}
           />

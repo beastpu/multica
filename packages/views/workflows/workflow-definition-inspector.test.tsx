@@ -347,3 +347,64 @@ describe("WorkflowNodeDefinitionInspector", () => {
     }));
   });
 });
+
+describe("artifact declarations", () => {
+  // Artifacts were only expressible by hand-editing the definition JSON, which
+  // is why templates in the wild carry none and downstream nodes get a handoff
+  // summary with nothing behind it.
+  it("adds an artifact with a generated key and sensible defaults", async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    renderInspector(onChange);
+
+    await user.click(screen.getByRole("tab", { name: enWorkflows.editor.tab_work }));
+    await user.click(
+      screen.getByRole("button", { name: enWorkflows.editor.add_artifact }),
+    );
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const next = onChange.mock.calls[0]![0] as WorkflowNodeDefinition;
+    expect(next.artifacts).toHaveLength(1);
+    const [artifact] = next.artifacts!;
+    // Required and document by default: the common case is "this node owes a
+    // written deliverable", and an optional artifact gates nothing.
+    expect(artifact).toMatchObject({ kind: "document", required: true });
+    expect(artifact!.key).toMatch(/^artifact_/);
+  });
+
+  it("edits and removes a declared artifact", async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    const withArtifact: WorkflowNodeDefinition = {
+      ...node,
+      artifacts: [{
+        key: "design_doc",
+        name: "Design doc",
+        kind: "document",
+        required: true,
+      }],
+    };
+    render(
+      <I18nProvider locale="en" resources={{ en: { workflows: enWorkflows } }}>
+        <WorkflowNodeDefinitionInspector
+          node={withArtifact}
+          definition={definition}
+          actorOptions={actorOptions}
+          readOnly={false}
+          onChange={onChange}
+        />
+      </I18nProvider>,
+    );
+
+    await user.click(screen.getByRole("tab", { name: enWorkflows.editor.tab_work }));
+    // The key is shown, not editable: agents submit against it and the server
+    // rejects anything else, so renaming it would orphan live submissions.
+    expect(screen.getByText("design_doc")).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("button", {
+      name: enWorkflows.actions.remove,
+    }).at(-1)!);
+    const afterRemove = onChange.mock.calls.at(-1)![0] as WorkflowNodeDefinition;
+    expect(afterRemove.artifacts).toEqual([]);
+  });
+});
