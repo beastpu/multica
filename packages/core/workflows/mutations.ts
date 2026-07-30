@@ -402,6 +402,40 @@ export function useReviewWorkflowArtifact(
   });
 }
 
+// Adopting an attachment already on the issue as this node's artifact. The
+// file is in the system; this records that it is the node's deliverable rather
+// than uploading a second copy of it.
+export function useSubmitWorkflowArtifact(
+  instanceId: string,
+  nodeInstanceId: string,
+) {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (input: {
+      artifactKey: string;
+      attachmentId?: string;
+      content?: string;
+      url?: string;
+      issueId?: string;
+    }) =>
+      api.submitWorkflowArtifact(nodeInstanceId, {
+        artifact_key: input.artifactKey,
+        attachment_id: input.attachmentId,
+        content: input.content,
+        url: input.url,
+        issue_id: input.issueId,
+      }),
+    onSettled: () => {
+      qc.invalidateQueries({
+        queryKey: [...workflowKeys.node(wsId, nodeInstanceId), "artifacts"],
+      });
+      qc.invalidateQueries({ queryKey: workflowKeys.node(wsId, nodeInstanceId) });
+      qc.invalidateQueries({ queryKey: workflowKeys.instance(wsId, instanceId) });
+    },
+  });
+}
+
 export function useCreateWorkflowSubmission(
   instanceId: string,
   nodeInstanceId: string,

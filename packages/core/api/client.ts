@@ -3291,6 +3291,23 @@ export class ApiClient {
     });
   }
 
+  async submitWorkflowArtifact(
+    nodeInstanceId: string,
+    body: {
+      artifact_key: string;
+      content?: string;
+      attachment_id?: string;
+      url?: string;
+      /** Node issue the submission came from; the server traces it there. */
+      issue_id?: string;
+    },
+  ) {
+    return this.fetch<unknown>(
+      `/api/workflow-node-instances/${nodeInstanceId}/artifacts`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  }
+
   async reviewWorkflowArtifact(
     nodeInstanceId: string,
     artifactId: string,

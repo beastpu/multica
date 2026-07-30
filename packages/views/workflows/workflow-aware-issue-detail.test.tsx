@@ -19,6 +19,15 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => mockState.query,
+  // The artifact-adoption provider wrapping the ordinary-issue branch builds
+  // its query options with this.
+  queryOptions: (options: unknown) => options,
+}));
+
+// The provider contributes an attachment action only inside a workflow node
+// issue; these cases are about the surface around it, so it stays inert.
+vi.mock("./artifact-adopt-provider", () => ({
+  ArtifactAdoptProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 vi.mock("@multica/core/config", () => ({

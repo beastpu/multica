@@ -8,6 +8,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { issueWorkflowOptions } from "@multica/core/workflows";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { IssueDetail } from "../issues/components";
+import { ArtifactAdoptProvider } from "./artifact-adopt-provider";
 import { WorkflowStartDialog } from "./workflow-start-dialog";
 import { WorkflowWorkbench } from "./workflow-workbench";
 
@@ -48,18 +49,22 @@ export function WorkflowAwareIssueDetail({
     workflowQuery.error.status === 404;
   if (!enabled || isExpectedMiss || workflowQuery.isError) {
     return (
-      <IssueDetail
-        issueId={issueId}
-        onDelete={onDelete}
-        headerActions={enabled ? <WorkflowStartDialog issueId={issueId} /> : undefined}
-      />
+      <ArtifactAdoptProvider issueId={issueId}>
+        <IssueDetail
+          issueId={issueId}
+          onDelete={onDelete}
+          headerActions={enabled ? <WorkflowStartDialog issueId={issueId} /> : undefined}
+        />
+      </ArtifactAdoptProvider>
     );
   }
   return (
-    <IssueDetail
-      issueId={issueId}
-      onDelete={onDelete}
-      headerActions={<WorkflowStartDialog issueId={issueId} />}
-    />
+    <ArtifactAdoptProvider issueId={issueId}>
+      <IssueDetail
+        issueId={issueId}
+        onDelete={onDelete}
+        headerActions={<WorkflowStartDialog issueId={issueId} />}
+      />
+    </ArtifactAdoptProvider>
   );
 }

@@ -11,6 +11,7 @@
 
 import { Download, Eye, FileText, Loader2, Trash2 } from "lucide-react";
 import { useT } from "../i18n";
+import { useAttachmentActions } from "./attachment-actions-context";
 import { getPreviewKind } from "./utils/preview";
 
 interface AttachmentCardChromeProps {
@@ -22,6 +23,8 @@ interface AttachmentCardChromeProps {
   onPreview: () => void;
   onDownload: () => void;
   onDelete?: () => void;
+  /** Present for stored attachments; absent while still uploading. */
+  attachmentId?: string;
 }
 
 function AttachmentCardChrome({
@@ -33,8 +36,10 @@ function AttachmentCardChrome({
   onPreview,
   onDownload,
   onDelete,
+  attachmentId,
 }: AttachmentCardChromeProps) {
   const { t } = useT("editor");
+  const surfaceActions = useAttachmentActions(attachmentId);
   return (
     <div
       className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1 transition-colors hover:bg-muted"
@@ -82,6 +87,23 @@ function AttachmentCardChrome({
           <Download className="size-3.5" />
         </button>
       )}
+      {!uploading && surfaceActions.map((action) => (
+        <button
+          key={action.id}
+          type="button"
+          disabled={action.disabled}
+          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+          title={action.label}
+          aria-label={action.label}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (attachmentId) action.onSelect(attachmentId);
+          }}
+        >
+          {action.icon}
+        </button>
+      ))}
       {!uploading && canDelete && onDelete && (
         <button
           type="button"
@@ -156,6 +178,7 @@ export function AttachmentCard({
         onPreview={onPreview}
         onDownload={onDownload}
         onDelete={onDelete}
+        attachmentId={attachmentId}
       />
     </div>
   );
