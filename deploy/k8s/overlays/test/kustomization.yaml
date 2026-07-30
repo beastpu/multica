@@ -30,7 +30,7 @@ images:
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server
     newTag: "test-20260730-e23947c2a-workflow"
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web
-    newTag: "test-20260730-e23947c2a-workflow"
+    newTag: "test-20260730-0a184ea58-workflow"
 
 # Test runs at 1/1 — single web pod is enough for smoke testing and matches
 # the server's single-replica constraint (in-memory WS hub).
