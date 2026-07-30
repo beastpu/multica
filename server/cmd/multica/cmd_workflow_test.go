@@ -122,7 +122,7 @@ func TestArtifactBodyFromFlags(t *testing.T) {
 					t.Fatalf("set %s: %v", name, err)
 				}
 			}
-			body, err := artifactBodyFromFlags(cmd, "design_doc")
+			body, err := artifactBodyFromFlags(cmd, "design_doc", "issue-1")
 			if test.wantErr {
 				if err == nil {
 					t.Fatalf("artifactBodyFromFlags() = %v, want an error", body)
@@ -151,7 +151,7 @@ func TestArtifactBodyFromFileFlag(t *testing.T) {
 	if err := cmd.Flags().Set("file", path); err != nil {
 		t.Fatalf("set file: %v", err)
 	}
-	body, err := artifactBodyFromFlags(cmd, "design_doc")
+	body, err := artifactBodyFromFlags(cmd, "design_doc", "issue-1")
 	if err != nil {
 		t.Fatalf("artifactBodyFromFlags() error = %v", err)
 	}

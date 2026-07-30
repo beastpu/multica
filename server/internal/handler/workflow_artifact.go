@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	neturl "net/url"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/util"
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -80,6 +83,11 @@ type submitWorkflowArtifactRequest struct {
 	Content      string  `json:"content,omitempty"`
 	AttachmentID *string `json:"attachment_id,omitempty"`
 	URL          string  `json:"url,omitempty"`
+	// IssueID is the node issue the submitter is working in. Optional: when
+	// present the submission leaves a trace on that issue, so delivering does
+	// not also require posting a comment to make the work visible to people.
+	// Older CLIs omit it and simply get no trace.
+	IssueID string `json:"issue_id,omitempty"`
 }
 
 // findArtifactRequirement locates the declaration an incoming artifact claims
@@ -285,6 +293,7 @@ func (h *Handler) SubmitWorkflowArtifact(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	h.noteArtifactOnIssue(r, node, artifact, req.IssueID, replaced > 0)
 	h.publishWorkflowRealtime(
 		protocol.EventWorkflowArtifactSubmitted,
 		uuidToString(node.WorkspaceID), actorType, actorIDText,
@@ -301,6 +310,81 @@ func (h *Handler) SubmitWorkflowArtifact(w http.ResponseWriter, r *http.Request)
 		"artifact": workflowArtifactToResponse(artifact),
 		"replaced": replaced > 0,
 	})
+}
+
+// maxArtifactCommentPreview keeps the trace readable in a comment thread. The
+// artifact itself is the record; this is a pointer to it.
+const maxArtifactCommentPreview = 400
+
+// noteArtifactOnIssue records a delivery on the node's issue.
+//
+// Submitting an artifact and posting it for people to see used to be two
+// actions: agents attached the file to a comment so humans could read it, then
+// submitted the same content again so the node could advance. Same file, twice,
+// through two paths — and forgetting the second one silently blocked the run.
+// One action now does both.
+//
+// Best-effort on purpose. The artifact is already committed and it is what
+// gates the node; failing the request because a courtesy comment could not be
+// written would trade the delivery for its announcement.
+func (h *Handler) noteArtifactOnIssue(
+	r *http.Request,
+	node db.WorkflowNodeInstance,
+	artifact db.WorkflowArtifact,
+	issueID string,
+	replaced bool,
+) {
+	if strings.TrimSpace(issueID) == "" {
+		return
+	}
+	parsed, err := util.ParseUUID(issueID)
+	if err != nil {
+		return
+	}
+	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+		ID: parsed, WorkspaceID: node.WorkspaceID,
+	})
+	if err != nil {
+		return
+	}
+
+	var body strings.Builder
+	verb := "Submitted"
+	if replaced {
+		verb = "Replaced"
+	}
+	fmt.Fprintf(&body, "%s artifact **%s** (`%s`).", verb, artifact.Name, artifact.ArtifactKey)
+	switch artifact.Kind {
+	case "link":
+		fmt.Fprintf(&body, "\n\n%s", artifact.Url)
+	case "attachment":
+		body.WriteString("\n\nDelivered as a file attachment.")
+	default:
+		preview := []rune(strings.TrimSpace(artifact.Content))
+		if len(preview) > maxArtifactCommentPreview {
+			fmt.Fprintf(&body, "\n\n%s…", string(preview[:maxArtifactCommentPreview]))
+		} else if len(preview) > 0 {
+			fmt.Fprintf(&body, "\n\n%s", string(preview))
+		}
+	}
+
+	if _, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
+		IssueID:     issue.ID,
+		WorkspaceID: node.WorkspaceID,
+		// author_type='system' with the zero UUID, matching the other
+		// machine-written comments; the frontend branches on author_type.
+		AuthorType: "system",
+		AuthorID:   pgtype.UUID{Valid: true},
+		Content:    body.String(),
+		Type:       "system",
+		ParentID:   pgtype.UUID{Valid: false},
+	}); err != nil {
+		slog.Warn("workflow artifact: issue trace failed",
+			"error", err,
+			"artifact_id", uuidToString(artifact.ID),
+			"issue_id", issueID,
+		)
+	}
 }
 
 type reviewWorkflowArtifactRequest struct {

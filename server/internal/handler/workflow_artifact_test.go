@@ -63,9 +63,9 @@ func startArtifactWorkflow(t *testing.T, key string) (string, string) {
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workflow_template (workspace_id, name, status, created_by)
-		VALUES ($1, 'Artifact test template', 'published', $2)
+		VALUES ($1, $3, 'published', $2)
 		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&templateID); err != nil {
+	`, testWorkspaceID, testUserID, "Artifact test template "+t.Name()).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
@@ -92,7 +92,7 @@ func startArtifactWorkflow(t *testing.T, key string) (string, string) {
 			"role_assignments": []map[string]any{{
 				"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
 			}},
-			"idempotency_key": "artifact-test-" + key,
+			"idempotency_key": "artifact-test-" + key + "-" + t.Name(),
 		},
 	), "id", hostID)
 	testHandler.StartIssueWorkflow(recorder, request)
@@ -368,8 +368,8 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workflow_template (workspace_id, name, status, created_by)
-		VALUES ($1, 'Handoff test template', 'published', $2) RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&templateID); err != nil {
+		VALUES ($1, $3, 'published', $2) RETURNING id
+	`, testWorkspaceID, testUserID, "Handoff test template "+t.Name()).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
@@ -666,5 +666,79 @@ func TestAPIWorkflowVerdictBlocksOnUnreachableEndpoint(t *testing.T) {
 	got, reason := testHandler.evaluateAPIWorkflowVerdict(context.Background(), url)
 	if got != "blocked" {
 		t.Errorf("evaluateAPIWorkflowVerdict() = %q (%s), want blocked", got, reason)
+	}
+}
+
+// Delivering an artifact and making that delivery visible to people used to be
+// two actions: attach the file to a comment so humans could read it, then
+// submit the same content so the node could advance. Forgetting the second one
+// silently blocked the run; doing both duplicated the content. One action now
+// leaves the record on the issue too.
+func TestWorkflowArtifactSubmitLeavesIssueTrace(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	instanceID, nodeID := startArtifactWorkflow(t, "design_doc")
+
+	var hostID string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT host_issue_id FROM workflow_instance WHERE id = $1`, instanceID,
+	).Scan(&hostID); err != nil {
+		t.Fatalf("resolve host issue: %v", err)
+	}
+
+	recorder := submitArtifact(t, nodeID, map[string]any{
+		"artifact_key": "design_doc",
+		"content":      "Interfaces, data shapes, and how it was verified.",
+		"issue_id":     hostID,
+	})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("submit: got %d, body %s", recorder.Code, recorder.Body.String())
+	}
+
+	var content, authorType string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT content, author_type FROM comment
+		WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 1
+	`, hostID).Scan(&content, &authorType); err != nil {
+		t.Fatalf("read trace comment: %v", err)
+	}
+	if authorType != "system" {
+		t.Errorf("author_type = %q, want system", authorType)
+	}
+	for _, want := range []string{"design_doc", "Interfaces, data shapes"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("trace missing %q:\n%s", want, content)
+		}
+	}
+}
+
+// The artifact is what gates the node and it is already committed by then, so
+// a submission without an issue must still succeed — older CLIs send none.
+func TestWorkflowArtifactSubmitWithoutIssueStillSucceeds(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	instanceID, nodeID := startArtifactWorkflow(t, "design_doc")
+
+	var hostID string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT host_issue_id FROM workflow_instance WHERE id = $1`, instanceID,
+	).Scan(&hostID); err != nil {
+		t.Fatalf("resolve host issue: %v", err)
+	}
+
+	recorder := submitArtifact(t, nodeID, map[string]any{
+		"artifact_key": "design_doc",
+		"content":      "No issue supplied.",
+	})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("submit: got %d, body %s", recorder.Code, recorder.Body.String())
+	}
+
+	var comments int
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT count(*) FROM comment WHERE issue_id = $1`, hostID,
+	).Scan(&comments); err != nil {
+		t.Fatalf("count comments: %v", err)
+	}
+	if comments != 0 {
+		t.Errorf("comments = %d, want 0 when no issue was supplied", comments)
 	}
 }

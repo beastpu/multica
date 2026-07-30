@@ -401,7 +401,11 @@ func runWorkflowArtifactGet(cmd *cobra.Command, args []string) error {
 // artifactBodyFromFlags reads exactly one carrier off the flags. Rejecting a
 // second one here rather than letting the server pick keeps the failure at the
 // point the caller can see what it typed.
-func artifactBodyFromFlags(cmd *cobra.Command, artifactKey string) (map[string]any, error) {
+func artifactBodyFromFlags(
+	cmd *cobra.Command,
+	artifactKey string,
+	issueID string,
+) (map[string]any, error) {
 	file, _ := cmd.Flags().GetString("file")
 	content, _ := cmd.Flags().GetString("content")
 	url, _ := cmd.Flags().GetString("url")
@@ -420,7 +424,10 @@ func artifactBodyFromFlags(cmd *cobra.Command, artifactKey string) (map[string]a
 		return nil, fmt.Errorf("give only one of --file, --content, --url or --attachment-id")
 	}
 
-	body := map[string]any{"artifact_key": artifactKey}
+	// The issue travels with the submission so the server can leave a trace on
+	// it: delivering and making the delivery visible to people are one action,
+	// not two.
+	body := map[string]any{"artifact_key": artifactKey, "issue_id": issueID}
 	switch {
 	case strings.TrimSpace(file) != "":
 		data, err := os.ReadFile(file)
@@ -516,7 +523,7 @@ func runWorkflowSubmit(cmd *cobra.Command, args []string) error {
 	var body map[string]any
 	if artifactKey != "" {
 		var err error
-		body, err = artifactBodyFromFlags(cmd, artifactKey)
+		body, err = artifactBodyFromFlags(cmd, artifactKey, issueID)
 		if err != nil {
 			return err
 		}
