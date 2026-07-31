@@ -93,9 +93,6 @@ func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 	if cfg.AnalyticsEnvironment != "dev" {
 		t.Fatalf("analytics_environment: want dev, got %q", cfg.AnalyticsEnvironment)
 	}
-	if cfg.WorkspaceCreationDisabled {
-		t.Fatalf("workspace_creation_disabled: want false by default, got true")
-	}
 	if cfg.DaemonServerURL != "https://api.example.com" {
 		t.Fatalf("daemon_server_url: want https://api.example.com, got %q", cfg.DaemonServerURL)
 	}
@@ -294,33 +291,6 @@ func TestURLHostEqualsCanonicalizesCommonHostForms(t *testing.T) {
 				t.Fatalf("urlHostEquals(%q): want %v, got %v", tt.raw, tt.want, got)
 			}
 		})
-	}
-}
-
-// TestGetConfigExposesWorkspaceCreationDisabled verifies that the self-host
-// gate added by #3433 surfaces to the frontend through /api/config so the UI
-// can hide every "Create workspace" affordance.
-func TestGetConfigExposesWorkspaceCreationDisabled(t *testing.T) {
-	origStorage := testHandler.Storage
-	testHandler.Storage = &mockStorage{}
-	defer func() { testHandler.Storage = origStorage }()
-
-	t.Setenv("DISABLE_WORKSPACE_CREATION", "true")
-
-	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
-	w := httptest.NewRecorder()
-
-	testHandler.GetConfig(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var cfg AppConfig
-	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
-		t.Fatalf("decode config: %v", err)
-	}
-	if !cfg.WorkspaceCreationDisabled {
-		t.Fatalf("workspace_creation_disabled: want true with env on, got false (body=%s)", w.Body.String())
 	}
 }
 

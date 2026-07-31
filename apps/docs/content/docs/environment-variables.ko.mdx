@@ -138,22 +138,6 @@ S3 앞에 CloudFront를 두는 경우 세 가지 변수가 적용됩니다: `CLO
 
 **초대 흐름 자체는 가입 허용 목록을 확인하지 않습니다** — 하지만 초대받은 사람은 초대를 수락하기 전에 여전히 **로그인**할 수 있어야 합니다. 이미 Multica 계정이 있다면(예: 다른 워크스페이스에서) 허용 목록의 영향을 받지 않고 바로 수락할 수 있습니다; **한 번도 가입한 적이 없다면**, 로그인의 첫 단계(인증 코드 요청)는 여전히 허용 목록 확인을 거치며, `ALLOW_SIGNUP=false`나 `ALLOWED_EMAILS` / `ALLOWED_EMAIL_DOMAINS`에 의해 거부된 이메일은 **가입을 완료할 수 없고, 따라서 초대를 수락할 수 없습니다**.
 
-## 워크스페이스 생성 잠그기
-
-`ALLOW_SIGNUP=false`는 새 계정을 차단하지만, 이미 로그인한 사용자가 `POST /api/workspaces`를 통해 또 다른 워크스페이스를 생성하는 것은 **차단하지 않습니다**. 모든 이슈, 저장소, 에이전트가 플랫폼 관리자에게 보여야 하는 자체 호스팅 인스턴스에서는, 그 틈을 막기 위해 `DISABLE_WORKSPACE_CREATION=true`로 설정하세요.
-
-| 변수 | 기본값 | 설명 |
-|---|---|---|
-| `DISABLE_WORKSPACE_CREATION` | `false` | `true`이면 `POST /api/workspaces`에 대한 모든 호출이 `403 workspace creation is disabled for this instance`를 반환합니다. 웹 UI는 `/api/config`를 통해 모든 "워크스페이스 생성" 요소를 숨깁니다. 역할/owner 예외는 없습니다 — 이 게이트는 인스턴스 단위로 전역 적용됩니다 |
-
-권장 부트스트랩 순서:
-
-1. `DISABLE_WORKSPACE_CREATION`을 설정하지 않은 채로(기본값) 인스턴스를 시작합니다.
-2. 관리자로 로그인하여 공유 워크스페이스를 생성합니다.
-3. `DISABLE_WORKSPACE_CREATION=true`로 설정하고 백엔드를 재시작합니다. 이 시점부터 사용자는 초대를 통해서만 참여할 수 있습니다.
-
-초대받은 사용자가 첫 인증 코드로 가입을 완료할 수 있도록 `ALLOW_SIGNUP=true`를 유지하고 싶다면, `DISABLE_WORKSPACE_CREATION=true`를 `ALLOWED_EMAIL_DOMAINS` / `ALLOWED_EMAILS`와 결합하여 어떤 주소가 가입할 수 있는지 범위를 지정하세요. `ALLOW_SIGNUP=false`로 설정하면 대기 중인 초대 대상자가 계정을 만드는 것조차 추가로 차단됩니다 — 모든 멤버가 이미 Multica 계정을 가지고 있는 인스턴스에서만 유용합니다.
-
 ## 속도 제한 (선택적 Redis)
 
 공개 auth 엔드포인트 — `/auth/send-code`, `/auth/verify-code`, `/auth/google` — 앞에는 IP별 고정 윈도우 속도 제한이 있습니다. 리미터는 Redis로 뒷받침됩니다. `REDIS_URL`을 설정하지 않으면 미들웨어는 **no-op**(fail-open)이 되고, 백엔드는 시작 시 `rate limiting disabled: REDIS_URL not configured`를 로깅합니다.

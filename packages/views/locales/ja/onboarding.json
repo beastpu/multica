@@ -254,14 +254,7 @@
       "skills_meta": "再利用できるプレイブック",
       "more_label": "その他",
       "more_meta": "さらに多くの機能"
-    },
-    "creation_disabled_eyebrow": "ワークスペースの作成は無効です",
-    "creation_disabled_headline": "管理者に招待を依頼してください。",
-    "creation_disabled_lede": "この Multica インスタンスでは新しいワークスペースを作成できません。管理者からワークスペースに招待されたら、招待を承諾して更新し、続けてください。",
-    "creation_disabled_logout": "ログアウト",
-    "creation_disabled_eyebrow_resume": "あなたのワークスペース",
-    "creation_disabled_headline_resume": "{{name}} で続けましょう。",
-    "creation_disabled_lede_resume": "このインスタンスではワークスペースの作成が無効になっているため、既存のワークスペースへ続けて移動します。"
+    }
   },
   "step_runtime": {
     "scanning_headline": "このコンピュータを接続中…",

@@ -16,20 +16,14 @@ const TEST_RESOURCES = {
 };
 
 type MockConfigState = {
-  workspaceCreationDisabled: boolean;
   daemonAppUrl: string;
 };
 
-const mockLogout = vi.hoisted(() => vi.fn());
 const mockUseConfigStore = vi.hoisted(() =>
   vi.fn((selector: (state: MockConfigState) => unknown) =>
-    selector({ workspaceCreationDisabled: false, daemonAppUrl: "" }),
+    selector({ daemonAppUrl: "" }),
   ),
 );
-
-vi.mock("../../auth", () => ({
-  useLogout: () => mockLogout,
-}));
 
 vi.mock("@multica/core/config", () => ({
   useConfigStore: (selector: (state: MockConfigState) => unknown) =>
@@ -56,16 +50,14 @@ function I18nWrapper({ children }: { children: ReactNode }) {
 
 function renderStep({
   existing,
-  disabled,
   daemonAppUrl = "",
 }: {
   existing: Workspace | null;
-  disabled: boolean;
   daemonAppUrl?: string;
 }) {
   mockUseConfigStore.mockImplementation(
     (selector: (state: MockConfigState) => unknown) =>
-      selector({ workspaceCreationDisabled: disabled, daemonAppUrl }),
+      selector({ daemonAppUrl }),
   );
   return render(
     <StepWorkspace existing={existing} onCreated={vi.fn()} onBack={vi.fn()} />,
@@ -86,13 +78,9 @@ const EXISTING_WORKSPACE: Workspace = {
   updated_at: "2025-01-01T00:00:00Z",
 } as unknown as Workspace;
 
-// Regression for #3433 (PR feedback): when DISABLE_WORKSPACE_CREATION is on,
-// every onboarding entry point must steer the user toward an existing
-// workspace or a logout escape — never toward the create form, even
-// indirectly (stale CTA copy, "or start another" prose, etc.).
-describe("StepWorkspace — DISABLE_WORKSPACE_CREATION gate", () => {
-  it("renders the create form when the flag is off and the user has no workspace", () => {
-    renderStep({ existing: null, disabled: false });
+describe("StepWorkspace — unrestricted workspace creation", () => {
+  it("renders the create form when the user has no workspace", () => {
+    renderStep({ existing: null });
 
     expect(
       screen.getByText("Name your workspace.", { exact: false }),
@@ -101,46 +89,15 @@ describe("StepWorkspace — DISABLE_WORKSPACE_CREATION gate", () => {
     expect(screen.getByLabelText("URL")).toBeInTheDocument();
   });
 
-  it("hides the create form and shows the disabled notice when the flag is on and there is no workspace", () => {
-    renderStep({ existing: null, disabled: true });
+  it("keeps the create-new option when an existing workspace is available", () => {
+    renderStep({ existing: EXISTING_WORKSPACE });
 
     expect(
-      screen.getByText("Ask your administrator for an invitation.", {
-        exact: false,
-      }),
-    ).toBeInTheDocument();
-    expect(screen.queryByLabelText("Workspace name")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /log out/i })).toBeInTheDocument();
-  });
-
-  it("forces the existing-workspace-only state when the flag is on and the user already has a workspace", () => {
-    renderStep({ existing: EXISTING_WORKSPACE, disabled: true });
-
-    // Disabled-specific copy is used in place of the "or start another" prose.
-    expect(
-      screen.getByText("Continue with Acme.", { exact: false }),
+      screen.getByText(/start another/i),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/start another/i),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/create a new one alongside it/i),
-    ).not.toBeInTheDocument();
-
-    // Resume picker still shows the existing workspace card (its name
-    // appears multiple times across avatar / card / side panel — at least
-    // one is enough to know the card is rendered), but the "Create a new
-    // workspace" radio card is gone entirely.
-    expect(screen.getAllByText("Acme").length).toBeGreaterThan(0);
-    expect(
-      screen.queryByText("Create a new workspace", { exact: false }),
-    ).not.toBeInTheDocument();
-
-    // CTA is pre-selected to the existing-only action and immediately
-    // enabled, so the user can press it without further interaction.
-    const cta = screen.getByRole("button", { name: "Open Acme" });
-    expect(cta).toBeEnabled();
+      screen.getByText("Create a new workspace", { exact: false }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -148,14 +105,13 @@ describe("StepWorkspace — DISABLE_WORKSPACE_CREATION gate", () => {
 // self-hosted instances instead of the hardcoded `multica.ai`.
 describe("StepWorkspace — workspace URL prefix", () => {
   it("shows the brand host when no app URL is configured", () => {
-    renderStep({ existing: null, disabled: false });
+    renderStep({ existing: null });
     expect(screen.getByText("multica.ai/")).toBeInTheDocument();
   });
 
   it("shows the deployment host for self-hosted instances", () => {
     renderStep({
       existing: null,
-      disabled: false,
       daemonAppUrl: "https://multica.example.com",
     });
     expect(screen.getByText("multica.example.com/")).toBeInTheDocument();

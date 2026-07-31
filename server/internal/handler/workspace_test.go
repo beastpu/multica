@@ -37,27 +37,40 @@ func TestCreateWorkspace_RejectsReservedSlug(t *testing.T) {
 	}
 }
 
-func TestCreateWorkspace_DisabledByEnv(t *testing.T) {
-	t.Setenv("ALLOW_WORKSPACE_CREATE", "false")
+func TestCreateWorkspace_IgnoresLegacyCreationGates(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
 
-	const slug = "handler-disabled-workspace-create"
+	t.Setenv("ALLOW_WORKSPACE_CREATE", "false")
+	t.Setenv("DISABLE_WORKSPACE_CREATION", "true")
+
+	const slug = "handler-unrestricted-workspace-create"
+	ctx := context.Background()
+	_, _ = testPool.Exec(ctx, `DELETE FROM member WHERE workspace_id IN (SELECT id FROM workspace WHERE slug = $1)`, slug)
+	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE workspace_id IN (SELECT id FROM workspace WHERE slug = $1)`, slug)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE slug = $1`, slug)
+	})
+
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/workspaces", map[string]any{
-		"name": "Disabled Workspace Create",
+		"name": "Unrestricted Workspace Create",
 		"slug": slug,
 	})
 	testHandler.CreateWorkspace(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("CreateWorkspace: expected 403 when disabled, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateWorkspace: expected 201 with legacy gates set, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var count int
-	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM workspace WHERE slug = $1`, slug).Scan(&count); err != nil {
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM workspace WHERE slug = $1`, slug).Scan(&count); err != nil {
 		t.Fatalf("CreateWorkspace: check workspace count: %v", err)
 	}
-	if count != 0 {
-		t.Fatalf("CreateWorkspace: expected no workspace row when disabled, got %d", count)
+	if count != 1 {
+		t.Fatalf("CreateWorkspace: expected one workspace row with legacy gates set, got %d", count)
 	}
 }
 
@@ -103,48 +116,6 @@ func TestCreateWorkspace_DoesNotMarkOnboarded(t *testing.T) {
 	}
 	if onboardedAt != nil {
 		t.Fatalf("CreateWorkspace marked user as onboarded; expected NULL, got %q. The workspace layout hard gate relies on this staying NULL until Step 3 CompleteOnboarding fires.", *onboardedAt)
-	}
-}
-
-// TestCreateWorkspace_DisabledByConfig guards the self-host gate added by
-// #3433: when DisableWorkspaceCreation is true on the handler config, every
-// caller — even an already-authenticated user — must receive 403 and the
-// workspace row must not be written.
-func TestCreateWorkspace_DisabledByConfig(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	const slug = "handler-tests-disabled-create"
-	ctx := context.Background()
-	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE slug = $1`, slug)
-	})
-
-	prev := testHandler.cfg
-	testHandler.cfg = Config{
-		AllowSignup:              prev.AllowSignup,
-		DisableWorkspaceCreation: true,
-	}
-	t.Cleanup(func() { testHandler.cfg = prev })
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/workspaces", map[string]any{
-		"name": "Disabled Create",
-		"slug": slug,
-	})
-	testHandler.CreateWorkspace(w, req)
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("CreateWorkspace: expected 403 with flag on, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var count int
-	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM workspace WHERE slug = $1`, slug).Scan(&count); err != nil {
-		t.Fatalf("count workspaces: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("expected no workspace row to be written when gate fires, found %d", count)
 	}
 }
 
