@@ -25,12 +25,6 @@ type AppConfig struct {
 	// toggle signup or wire Google OAuth.
 	AllowSignup    bool   `json:"allow_signup"`
 	GoogleClientID string `json:"google_client_id,omitempty"`
-	// WorkspaceCreationDisabled mirrors the server-side
-	// DISABLE_WORKSPACE_CREATION env var so the UI can hide every
-	// "Create workspace" affordance on self-hosted instances. Omitted
-	// from the JSON when false to keep responses identical to the
-	// previous shape for the common managed-cloud case (#3433).
-	WorkspaceCreationDisabled bool `json:"workspace_creation_disabled,omitempty"`
 	// Public daemon setup config consumed by the web app at runtime so
 	// self-hosted instances can show `multica setup self-host` commands
 	// with the operator's own domains instead of Multica Cloud defaults.
@@ -73,9 +67,8 @@ type AppConfig struct {
 // to anonymous callers — never user- or tenant-scoped data.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	config := AppConfig{
-		AllowSignup:               os.Getenv("ALLOW_SIGNUP") != "false",
-		GoogleClientID:            os.Getenv("GOOGLE_CLIENT_ID"),
-		WorkspaceCreationDisabled: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+		AllowSignup:    os.Getenv("ALLOW_SIGNUP") != "false",
+		GoogleClientID: os.Getenv("GOOGLE_CLIENT_ID"),
 	}
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()

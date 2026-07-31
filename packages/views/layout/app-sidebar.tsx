@@ -65,7 +65,6 @@ import { countUnreadChatMessages } from "@multica/core/chat/unread";
 import { useChatStore } from "@multica/core/chat";
 import { api, ApiError } from "@multica/core/api";
 import { useModalStore } from "@multica/core/modals";
-import { useConfigStore } from "@multica/core/config";
 import { pinListOptions } from "@multica/core/pins/queries";
 import { useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
 import { issueDetailOptions } from "@multica/core/issues/queries";
@@ -360,8 +359,6 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   const p = useWorkspacePaths();
   const { data: workspaces = EMPTY_WORKSPACES } = useQuery(workspaceListOptions());
   const { data: myInvitations = EMPTY_INVITATIONS } = useQuery(myInvitationListOptions());
-  const workspaceCreationDisabled = useConfigStore((s) => s.workspaceCreationDisabled);
-
   const wsId = workspace?.id;
   const { data: inboxItems = EMPTY_INBOX } = useQuery({
     queryKey: wsId ? inboxKeys.list(wsId) : ["inbox", "disabled"],
@@ -574,16 +571,14 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         )}
                       </DropdownMenuItem>
                     ))}
-                    {!workspaceCreationDisabled && (
-                      <DropdownMenuItem
-                        onClick={() =>
-                          useModalStore.getState().open("create-workspace")
-                        }
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        {t(($) => $.sidebar.create_workspace)}
-                      </DropdownMenuItem>
-                    )}
+                    <DropdownMenuItem
+                      onClick={() =>
+                        useModalStore.getState().open("create-workspace")
+                      }
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      {t(($) => $.sidebar.create_workspace)}
+                    </DropdownMenuItem>
                   </DropdownMenuGroup>
                   {myInvitations.length > 0 && (
                     <>

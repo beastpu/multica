@@ -138,22 +138,6 @@ S3 の前段に CloudFront を置く場合、3 つの変数が適用されます
 
 **招待フロー自体はサインアップ許可リストをチェックしません** — ただし、招待された人は招待を承諾する前に依然として**サインイン**できる必要があります。すでに Multica アカウントを持っている場合（例: 別のワークスペースから）、許可リストの影響を受けずに直接承諾できます。**一度もサインアップしたことがない場合**、サインインの最初のステップ（検証コードの要求）は依然として許可リストのチェックを通過し、`ALLOW_SIGNUP=false` や `ALLOWED_EMAILS` / `ALLOWED_EMAIL_DOMAINS` によって拒否されたメールは**サインアップを完了できず、したがって招待を承諾できません**。
 
-## ワークスペース作成をロックダウンする
-
-`ALLOW_SIGNUP=false` は新しいアカウントをブロックしますが、すでにサインイン済みのユーザーが `POST /api/workspaces` 経由で別のワークスペースを作成することは**ブロックしません**。すべてのイシュー、リポジトリ、エージェントがプラットフォーム管理者に見えなければならないセルフホストインスタンスでは、そのギャップを塞ぐために `DISABLE_WORKSPACE_CREATION=true` を設定してください。
-
-| 変数 | デフォルト | 説明 |
-|---|---|---|
-| `DISABLE_WORKSPACE_CREATION` | `false` | `true` の場合、`POST /api/workspaces` へのすべての呼び出しが `403 workspace creation is disabled for this instance` を返します。Web UI は `/api/config` 経由ですべての「ワークスペース作成」要素を非表示にします。役割 / owner の例外はありません — このゲートはインスタンス単位で全体に適用されます |
-
-推奨されるブートストラップ手順:
-
-1. `DISABLE_WORKSPACE_CREATION` を設定しないまま（デフォルト）インスタンスを起動します。
-2. 管理者としてサインインし、共有ワークスペースを作成します。
-3. `DISABLE_WORKSPACE_CREATION=true` を設定してバックエンドを再起動します。この時点から、ユーザーは招待によってのみ参加できます。
-
-招待されたユーザーが最初の検証コードでサインアップを完了できるよう `ALLOW_SIGNUP=true` を維持したい場合は、`DISABLE_WORKSPACE_CREATION=true` を `ALLOWED_EMAIL_DOMAINS` / `ALLOWED_EMAILS` と組み合わせて、どのアドレスがサインアップできるかの範囲を指定してください。`ALLOW_SIGNUP=false` を設定すると、保留中の招待対象者がアカウントを作成すること自体も追加でブロックされます — すべてのメンバーがすでに Multica アカウントを持っているインスタンスでのみ有用です。
-
 ## レート制限（任意の Redis）
 
 公開 auth エンドポイント — `/auth/send-code`、`/auth/verify-code`、`/auth/google` — の前段には、IP ごとの固定ウィンドウのレート制限があります。リミッターは Redis によって支えられています。`REDIS_URL` を設定しない場合、ミドルウェアは **no-op**（fail-open）になり、バックエンドは起動時に `rate limiting disabled: REDIS_URL not configured` をログに記録します。

@@ -44,7 +44,6 @@ function resetConfigStore() {
     googleClientId: "",
     daemonServerUrl: "",
     daemonAppUrl: "",
-    workspaceCreationDisabled: false,
   });
 }
 

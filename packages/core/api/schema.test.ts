@@ -262,7 +262,6 @@ describe("ApiClient schema fallback", () => {
         allow_signup: true,
         daemon_server_url: { wrong: "shape" },
         daemon_app_url: 123,
-        workspace_creation_disabled: false,
         feature_flags: { composio_mcp_apps: true },
       });
       const client = new ApiClient("https://api.example.test");
