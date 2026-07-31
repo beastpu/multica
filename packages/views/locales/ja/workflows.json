@@ -326,6 +326,8 @@
     "issue_policy_fixed": "固定タスク",
     "issue_policy_dynamic": "動的分解",
     "issue_policy_both": "固定と動的",
+    "issue_policy_deprecated": "非推奨",
+    "issue_policy_deprecated_hint": "実行時の分解は廃止されました。固定タスクで issue を宣言し、その配下にサブ issue を作成してください。",
     "confirmation": "ノード確認",
     "confirmation_none": "確認不要",
     "confirmation_owner_any": "任意のノード所有者",

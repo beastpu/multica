@@ -1683,6 +1683,21 @@ func (h *Handler) evaluateWorkflowNode(
 		issueStatuses[issue.ID] = issue.Status
 	}
 	reasons := make([]workflowdomain.WaitingReason, 0)
+	// An activity that defers its issues to runtime has nothing to gate on
+	// until someone decomposes it: with no tasks, "all required issues are
+	// done" is true of the empty set, so the node activated and completed in
+	// the same breath and the work it stood for never happened. That is the
+	// one reading of "decide at runtime" nobody means.
+	//
+	// Checked against materialized tasks rather than the declaration, so a
+	// fixed_and_dynamic node that did declare one is unaffected, and the block
+	// clears the moment the first task exists.
+	if workflowdomain.AllowsDynamicIssues(nodeDefinition) && len(tasks) == 0 {
+		reasons = append(reasons, workflowdomain.WaitingReason{
+			Code:    "awaiting_decomposition",
+			Message: "Waiting for this activity to be broken into issues",
+		})
+	}
 	requiredIssueOutcome := nodeDefinition.Completion.RequiredIssueOutcome
 	if requiredIssueOutcome == "" {
 		requiredIssueOutcome = "done"

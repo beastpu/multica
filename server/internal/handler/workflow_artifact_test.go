@@ -742,3 +742,132 @@ func TestWorkflowArtifactSubmitWithoutIssueStillSucceeds(t *testing.T) {
 		t.Errorf("comments = %d, want 0 when no issue was supplied", comments)
 	}
 }
+
+// A node that defers its issues to runtime used to activate and complete in
+// the same breath: with no tasks, "all required issues are done" is true of
+// the empty set, so the work the node stood for silently never happened. This
+// is the shape a user hit by switching an activity to runtime decomposition —
+// the editor cleared its issue templates, and the node stopped meaning
+// anything.
+func TestDynamicNodeWaitsToBeDecomposed(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	ctx := context.Background()
+
+	var hostID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_type, creator_id, number, position
+		) VALUES ($1, 'Decomposition host', 'todo', 'none', 'member', $2, $3, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID, nextWorkspaceIssueNumber(t)).Scan(&hostID); err != nil {
+		t.Fatalf("create host issue: %v", err)
+	}
+
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Decomposition " + t.Name(),
+		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true,
+			AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "work", Kind: "activity", ActivityMode: "work",
+				Name: "Work", OwnerRole: "owner",
+				// Runtime decomposition with an automatic completion mode —
+				// exactly what the editor produced before this was retired.
+				IssuePolicy: "dynamic",
+				Executor: workflowdomain.ExecutorDefinition{
+					Strategies: []workflowdomain.ExecutorStrategy{
+						{Kind: "fixed_role", Role: "owner"}, {Kind: "manual"},
+					},
+				},
+				Completion: workflowdomain.CompletionDefinition{Mode: "automatic"},
+			},
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "work"}, {From: "work", To: "end"},
+		},
+		Acceptance: workflowdomain.AcceptanceDefinition{Policy: "none"},
+	}
+
+	definitionJSON, err := json.Marshal(definition)
+	if err != nil {
+		t.Fatalf("marshal definition: %v", err)
+	}
+	var templateID, versionID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workflow_template (workspace_id, name, status, created_by)
+		VALUES ($1, $3, 'published', $2)
+		RETURNING id
+	`, testWorkspaceID, testUserID, "Decomposition "+t.Name()).Scan(&templateID); err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workflow_template_version (
+			workspace_id, template_id, version, status, definition,
+			definition_checksum, created_by, published_by, published_at
+		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
+		RETURNING id
+	`, testWorkspaceID, templateID, definitionJSON, testUserID).Scan(&versionID); err != nil {
+		t.Fatalf("create template version: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE workflow_template SET latest_published_version_id = $1 WHERE id = $2
+	`, versionID, templateID); err != nil {
+		t.Fatalf("set published version: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	testHandler.StartIssueWorkflow(recorder, withURLParam(newRequest(
+		http.MethodPost,
+		"/api/issues/"+hostID+"/workflow?workspace_id="+testWorkspaceID,
+		map[string]any{
+			"template_id": templateID,
+			"role_assignments": []map[string]any{{
+				"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
+			}},
+			"idempotency_key": "decomposition-" + t.Name(),
+		},
+	), "id", hostID))
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("start workflow: got %d, body %s", recorder.Code, recorder.Body.String())
+	}
+
+	var started workflowInstanceDetailResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &started); err != nil {
+		t.Fatalf("decode start: %v", err)
+	}
+	node := findWorkflowNodeResponse(t, started.Nodes, "work", 1)
+	if node.Status == "completed" {
+		t.Fatal("node completed with nothing to do; it must wait to be decomposed")
+	}
+
+	// The start response predates the first completion check, so the reasons
+	// are only written once the instance is reconciled.
+	reconcileWorkflowForTest(t, started.Instance.ID, "decomposition-"+t.Name())
+
+	var reasonsJSON []byte
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT waiting_reasons FROM workflow_node_instance WHERE id = $1`, node.ID,
+	).Scan(&reasonsJSON); err != nil {
+		t.Fatalf("read waiting reasons: %v", err)
+	}
+
+	var reasons []workflowdomain.WaitingReason
+	if err := json.Unmarshal(reasonsJSON, &reasons); err != nil {
+		t.Fatalf("decode waiting reasons: %v", err)
+	}
+	var sawReason bool
+	for _, reason := range reasons {
+		if reason.Code == "awaiting_decomposition" {
+			sawReason = true
+		}
+	}
+	if !sawReason {
+		t.Errorf("expected awaiting_decomposition, got %+v", reasons)
+	}
+}

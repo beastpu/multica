@@ -998,6 +998,13 @@ function ArtifactEditor({
   );
 }
 
+// Runtime decomposition at the workflow level is retired — see the comment at
+// the policy select. These values are still accepted so existing definitions
+// keep running; they are simply no longer offered.
+function isDeprecatedIssuePolicy(policy: string | undefined): policy is string {
+  return policy === "dynamic" || policy === "fixed_and_dynamic";
+}
+
 function IssueTemplateEditor({
   node,
   roles,
@@ -1829,9 +1836,33 @@ export function WorkflowNodeDefinitionInspector({
             >
               <option value="none">{t(($) => $.editor.issue_policy_none)}</option>
               <option value="fixed">{t(($) => $.editor.issue_policy_fixed)}</option>
-              <option value="dynamic">{t(($) => $.editor.issue_policy_dynamic)}</option>
-              <option value="fixed_and_dynamic">{t(($) => $.editor.issue_policy_both)}</option>
+              {/*
+                Runtime decomposition is not offered any more. Breaking work
+                down already happens one level below, as sub-issues under the
+                activity's own issue — that is what squads do, and the stage
+                barrier already reports when they are all finished. A parallel
+                decomposition at the workflow level was the same thing recorded
+                twice, and it was never used once: every task ever materialised
+                came from a template.
+                Existing definitions keep working, and a node still carrying an
+                old policy shows it so the value is legible rather than silently
+                rewritten.
+              */}
+              {isDeprecatedIssuePolicy(node.issue_policy) && (
+                <option value={node.issue_policy}>
+                  {node.issue_policy === "dynamic"
+                    ? t(($) => $.editor.issue_policy_dynamic)
+                    : t(($) => $.editor.issue_policy_both)}
+                  {" · "}
+                  {t(($) => $.editor.issue_policy_deprecated)}
+                </option>
+              )}
             </select>
+            {isDeprecatedIssuePolicy(node.issue_policy) && (
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                {t(($) => $.editor.issue_policy_deprecated_hint)}
+              </p>
+            )}
           </div>
           <IssueTemplateEditor
             node={node}

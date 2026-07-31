@@ -326,6 +326,8 @@
     "issue_policy_fixed": "固定任务",
     "issue_policy_dynamic": "动态拆解",
     "issue_policy_both": "固定 + 动态",
+    "issue_policy_deprecated": "已废弃",
+    "issue_policy_deprecated_hint": "运行时拆解已废弃。请改用固定任务声明一条 issue，再在它下面拆子 issue。",
     "confirmation": "节点确认策略",
     "confirmation_none": "无需确认",
     "confirmation_owner_any": "任一节点负责人",

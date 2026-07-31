@@ -326,6 +326,8 @@
     "issue_policy_fixed": "고정 작업",
     "issue_policy_dynamic": "동적 분해",
     "issue_policy_both": "고정 및 동적",
+    "issue_policy_deprecated": "지원 중단",
+    "issue_policy_deprecated_hint": "런타임 분해는 지원이 중단되었습니다. 고정 작업으로 issue를 선언하고 그 아래에 하위 issue를 만드세요.",
     "confirmation": "노드 확인",
     "confirmation_none": "확인 없음",
     "confirmation_owner_any": "노드 소유자 중 한 명",

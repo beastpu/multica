@@ -38,7 +38,7 @@
           {"kind": "manual"}
         ]
       },
-      "issue_policy": "fixed_and_dynamic",
+      "issue_policy": "fixed",
       "issue_templates": [
         {
           "key": "fix_bug",
