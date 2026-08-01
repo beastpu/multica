@@ -554,6 +554,14 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 	if acceptanceNode.Attempt != 1 || acceptanceNode.Status != "waiting" {
 		t.Fatalf("first acceptance node = %#v", acceptanceNode)
 	}
+	var firstAttemptIssueID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT issue_id::text FROM workflow_node_task
+		WHERE workflow_node_instance_id = $1 AND issue_id IS NOT NULL
+		ORDER BY created_at DESC LIMIT 1
+	`, firstWorkNode.ID).Scan(&firstAttemptIssueID); err != nil {
+		t.Fatalf("read first attempt issue: %v", err)
+	}
 	transitionWorkflowNode(t, firstWorkNode.ID, "rollback", "runtime-test-rollback")
 
 	secondWorkNode := latestWorkflowNodeForTest(t, instanceID, "work")
@@ -565,6 +573,43 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 	})
 	if err != nil || len(secondTasks) != 1 || !secondTasks[0].IssueID.Valid {
 		t.Fatalf("second attempt tasks = %#v, err = %v", secondTasks, err)
+	}
+	// Rework continues on the issue the previous attempt already used. A fresh
+	// issue would strip the executor of its own prior work and leave the old
+	// one orphaned in a non-terminal status, assigned to someone who is no
+	// longer on the hook for it.
+	if got := uuidToString(secondTasks[0].IssueID); got != firstAttemptIssueID {
+		t.Fatalf(
+			"rework materialized a new issue %s, want the prior attempt's %s",
+			got, firstAttemptIssueID,
+		)
+	}
+	var reworkIssueStatus string
+	if err := testPool.QueryRow(ctx,
+		`SELECT status FROM issue WHERE id = $1`, firstAttemptIssueID,
+	).Scan(&reworkIssueStatus); err != nil {
+		t.Fatalf("read reused issue status: %v", err)
+	}
+	if reworkIssueStatus != "todo" {
+		t.Fatalf("reused rework issue status = %q, want todo", reworkIssueStatus)
+	}
+	// The reused issue carries the prior attempt, but nothing on it says the
+	// work was rejected or why. That has to reach the executor through the task
+	// context, or it repeats the attempt that was just sent back.
+	reworkIssue, err := testHandler.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID: parseUUID(firstAttemptIssueID), WorkspaceID: parseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatalf("load reused rework issue: %v", err)
+	}
+	reworkContext := testHandler.workflowTaskContext(ctx, reworkIssue)
+	if reworkContext == nil || reworkContext.Rework == nil {
+		t.Fatalf("rework task context = %#v, want a rework block", reworkContext)
+	}
+	if reworkContext.Rework.Attempt != 2 ||
+		reworkContext.Rework.Source != "manual_rollback" ||
+		reworkContext.Rework.Reason != "Test node transition" {
+		t.Fatalf("rework block = %#v", reworkContext.Rework)
 	}
 	completeWorkflowIssue(t, uuidToString(secondTasks[0].IssueID))
 	if err := testPool.QueryRow(

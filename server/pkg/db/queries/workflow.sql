@@ -1235,6 +1235,23 @@ WHERE t.workflow_node_instance_id = @workflow_node_instance_id
   AND t.workspace_id = @workspace_id
 ORDER BY t.created_at, t.id;
 
+-- Finds the issue an earlier attempt of the same node already used for this
+-- task key, so a rework attempt continues on it instead of opening a second
+-- issue for the same piece of work.
+-- name: GetPriorAttemptWorkflowTaskIssue :one
+SELECT t.issue_id
+FROM workflow_node_task t
+JOIN workflow_node_instance n
+  ON n.id = t.workflow_node_instance_id AND n.workspace_id = t.workspace_id
+WHERE t.workspace_id = @workspace_id
+  AND t.workflow_instance_id = @workflow_instance_id
+  AND n.node_key = @node_key
+  AND t.task_key = @task_key
+  AND n.attempt < @attempt
+  AND t.issue_id IS NOT NULL
+ORDER BY n.attempt DESC, t.created_at DESC
+LIMIT 1;
+
 -- name: BindWorkflowNodeTaskIssue :one
 UPDATE workflow_node_task
 SET issue_id = @issue_id,
@@ -1697,6 +1714,19 @@ WHERE child.workspace_id = @workspace_id
       AND task.workspace_id = child.workspace_id
       AND instance.host_issue_id = @host_issue_id
   );
+
+-- Finds the judgement that sent a node back, so a rework attempt can tell its
+-- executor why it is running again. Acceptance rejections name the node they
+-- rework; manual rollbacks name the node they target.
+-- name: GetLatestWorkflowReworkEvent :one
+SELECT event_type, payload
+FROM workflow_event
+WHERE workspace_id = @workspace_id
+  AND workflow_instance_id = @workflow_instance_id
+  AND event_type IN ('node.rollback', 'acceptance.rejected')
+  AND COALESCE(payload->>'rework_target_node_key', payload->>'node_key') = @node_key::text
+ORDER BY created_at DESC
+LIMIT 1;
 
 -- name: DeleteWorkflowEventsByHost :exec
 DELETE FROM workflow_event event

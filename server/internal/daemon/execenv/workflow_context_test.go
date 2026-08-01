@@ -114,3 +114,39 @@ func TestPendingRequiredArtifacts(t *testing.T) {
 		t.Error("nil context must yield no pending artifacts")
 	}
 }
+
+// A re-attempted node is the one place an agent is most likely to repeat work
+// it already did. The brief has to say that this is a retry and why the
+// previous attempt was sent back — the issue itself carries the prior work, but
+// nothing on it says which part was judged wrong.
+func TestRenderIssueContext_WorkflowRework(t *testing.T) {
+	workflow := workflowFixture()
+	workflow.Rework = &WorkflowReworkContext{
+		Attempt: 2,
+		Source:  "acceptance",
+		Reason:  "AC-004 未通过：~> 5.3 应阻断却放行",
+	}
+	md := renderIssueContext("claude", TaskContextForEnv{
+		IssueID:  "issue-1",
+		Workflow: workflow,
+	})
+	for _, want := range []string{
+		"第 2 次",
+		"AC-004 未通过：~> 5.3 应阻断却放行",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("rework brief missing %q:\n%s", want, md)
+		}
+	}
+}
+
+// A first attempt must not read as a retry.
+func TestRenderIssueContext_NoReworkOnFirstAttempt(t *testing.T) {
+	md := renderIssueContext("claude", TaskContextForEnv{
+		IssueID:  "issue-1",
+		Workflow: workflowFixture(),
+	})
+	if strings.Contains(md, "第 2 次") {
+		t.Fatalf("first attempt rendered as rework:\n%s", md)
+	}
+}

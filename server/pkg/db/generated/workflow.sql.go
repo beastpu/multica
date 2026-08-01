@@ -2080,6 +2080,38 @@ func (q *Queries) GetLatestWorkflowNodeAttempt(ctx context.Context, arg GetLates
 	return i, err
 }
 
+const getLatestWorkflowReworkEvent = `-- name: GetLatestWorkflowReworkEvent :one
+SELECT event_type, payload
+FROM workflow_event
+WHERE workspace_id = $1
+  AND workflow_instance_id = $2
+  AND event_type IN ('node.rollback', 'acceptance.rejected')
+  AND COALESCE(payload->>'rework_target_node_key', payload->>'node_key') = $3::text
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetLatestWorkflowReworkEventParams struct {
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	WorkflowInstanceID pgtype.UUID `json:"workflow_instance_id"`
+	NodeKey            string      `json:"node_key"`
+}
+
+type GetLatestWorkflowReworkEventRow struct {
+	EventType string `json:"event_type"`
+	Payload   []byte `json:"payload"`
+}
+
+// Finds the judgement that sent a node back, so a rework attempt can tell its
+// executor why it is running again. Acceptance rejections name the node they
+// rework; manual rollbacks name the node they target.
+func (q *Queries) GetLatestWorkflowReworkEvent(ctx context.Context, arg GetLatestWorkflowReworkEventParams) (GetLatestWorkflowReworkEventRow, error) {
+	row := q.db.QueryRow(ctx, getLatestWorkflowReworkEvent, arg.WorkspaceID, arg.WorkflowInstanceID, arg.NodeKey)
+	var i GetLatestWorkflowReworkEventRow
+	err := row.Scan(&i.EventType, &i.Payload)
+	return i, err
+}
+
 const getNextWorkflowAcceptanceRevision = `-- name: GetNextWorkflowAcceptanceRevision :one
 SELECT COALESCE(max(revision), 0)::integer + 1
 FROM workflow_acceptance
@@ -2153,6 +2185,45 @@ func (q *Queries) GetNextWorkflowVerdictRevision(ctx context.Context, arg GetNex
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const getPriorAttemptWorkflowTaskIssue = `-- name: GetPriorAttemptWorkflowTaskIssue :one
+SELECT t.issue_id
+FROM workflow_node_task t
+JOIN workflow_node_instance n
+  ON n.id = t.workflow_node_instance_id AND n.workspace_id = t.workspace_id
+WHERE t.workspace_id = $1
+  AND t.workflow_instance_id = $2
+  AND n.node_key = $3
+  AND t.task_key = $4
+  AND n.attempt < $5
+  AND t.issue_id IS NOT NULL
+ORDER BY n.attempt DESC, t.created_at DESC
+LIMIT 1
+`
+
+type GetPriorAttemptWorkflowTaskIssueParams struct {
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	WorkflowInstanceID pgtype.UUID `json:"workflow_instance_id"`
+	NodeKey            string      `json:"node_key"`
+	TaskKey            string      `json:"task_key"`
+	Attempt            int32       `json:"attempt"`
+}
+
+// Finds the issue an earlier attempt of the same node already used for this
+// task key, so a rework attempt continues on it instead of opening a second
+// issue for the same piece of work.
+func (q *Queries) GetPriorAttemptWorkflowTaskIssue(ctx context.Context, arg GetPriorAttemptWorkflowTaskIssueParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getPriorAttemptWorkflowTaskIssue,
+		arg.WorkspaceID,
+		arg.WorkflowInstanceID,
+		arg.NodeKey,
+		arg.TaskKey,
+		arg.Attempt,
+	)
+	var issue_id pgtype.UUID
+	err := row.Scan(&issue_id)
+	return issue_id, err
 }
 
 const getWorkflowAcceptanceByIdempotencyKey = `-- name: GetWorkflowAcceptanceByIdempotencyKey :one

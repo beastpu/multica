@@ -35,6 +35,17 @@ type WorkflowTaskContext struct {
 	HandoffRequired bool                      `json:"handoff_required,omitempty"`
 	Artifacts       []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
 	Upstream        []WorkflowUpstreamContext `json:"upstream,omitempty"`
+	Rework          *WorkflowReworkContext    `json:"rework,omitempty"`
+}
+
+// WorkflowReworkContext explains why a node is running again. Nil on a first
+// attempt. Rework continues on the previous attempt's issue, so the prior work
+// is already in front of the executor; what the issue cannot say is that this
+// is a retry and which judgement sent it back.
+type WorkflowReworkContext struct {
+	Attempt int    `json:"attempt"`
+	Source  string `json:"source,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // WorkflowArtifactDuty is one artifact the node owes, paired with whether it
@@ -163,7 +174,47 @@ func (h *Handler) workflowTaskContext(
 	}
 	result.Artifacts = h.workflowArtifactDuties(ctx, instance.WorkspaceID, node, nodeDefinition)
 	result.Upstream = h.workflowUpstreamContext(ctx, instance, node, live)
+	result.Rework = h.workflowReworkContext(ctx, instance, node)
 	return result
+}
+
+// workflowReworkContext explains a re-attempt. It returns nil for a first
+// attempt, and for a later attempt whose originating judgement can no longer be
+// found — a missing reason is worth rendering as "unstated", but a fabricated
+// one is not.
+func (h *Handler) workflowReworkContext(
+	ctx context.Context,
+	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
+) *WorkflowReworkContext {
+	if node.Attempt < 2 {
+		return nil
+	}
+	rework := &WorkflowReworkContext{Attempt: int(node.Attempt)}
+	event, err := h.Queries.GetLatestWorkflowReworkEvent(
+		ctx,
+		db.GetLatestWorkflowReworkEventParams{
+			WorkspaceID:        instance.WorkspaceID,
+			WorkflowInstanceID: instance.ID,
+			NodeKey:            node.NodeKey,
+		},
+	)
+	if err != nil {
+		return rework
+	}
+	switch event.EventType {
+	case "acceptance.rejected":
+		rework.Source = "acceptance"
+	case "node.rollback":
+		rework.Source = "manual_rollback"
+	}
+	var payload struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal(event.Payload, &payload) == nil {
+		rework.Reason = payload.Reason
+	}
+	return rework
 }
 
 // workflowArtifactDuties pairs each declared artifact with what the node has

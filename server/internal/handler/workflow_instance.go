@@ -1331,6 +1331,16 @@ func (h *Handler) materializeWorkflowTask(
 		}
 		return bindErr
 	}
+	if node.Attempt > 1 {
+		reused, err := h.reuseWorkflowReworkIssue(ctx, workspaceID, node, task)
+		if err != nil {
+			return err
+		}
+		if reused {
+			materializationOutcome = "reworked"
+			return nil
+		}
+	}
 	claimed := task
 	if task.MaterializationStatus != "materializing" {
 		var err error
@@ -1401,6 +1411,72 @@ func (h *Handler) materializeWorkflowTask(
 		h.stampWorkflowIssueMetadata(ctx, workspaceID, result.Issue, instance, node, host)
 	}
 	return err
+}
+
+// reuseWorkflowReworkIssue continues a rework attempt on the issue an earlier
+// attempt of the same node already used, instead of opening a second issue for
+// the same piece of work.
+//
+// Reuse is what makes rework legible to whoever picks it up: the executor sees
+// its own prior attempt, the review that rejected it, and the whole thread, on
+// the issue it already knows. A fresh issue would hand it a blank slate and
+// strand the old one in a non-terminal status, still assigned to someone who is
+// no longer on the hook.
+//
+// Reports false when no earlier attempt left an issue behind — a first attempt,
+// or a task key a newer template version introduced. Callers fall through to
+// ordinary materialization.
+func (h *Handler) reuseWorkflowReworkIssue(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	node db.WorkflowNodeInstance,
+	task db.WorkflowNodeTask,
+) (bool, error) {
+	priorIssueID, err := h.Queries.GetPriorAttemptWorkflowTaskIssue(
+		ctx,
+		db.GetPriorAttemptWorkflowTaskIssueParams{
+			WorkspaceID:        workspaceID,
+			WorkflowInstanceID: task.WorkflowInstanceID,
+			NodeKey:            node.NodeKey,
+			TaskKey:            task.TaskKey,
+			Attempt:            node.Attempt,
+		},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !priorIssueID.Valid {
+		return false, nil
+	}
+	// Reopen before binding: a bound task whose issue still reads "done" would
+	// let the node complete again on the previous attempt's outcome.
+	reopened, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+		ID: priorIssueID, Status: "todo", WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return false, err
+	}
+	if _, err := h.Queries.BindWorkflowNodeTaskIssue(
+		ctx,
+		db.BindWorkflowNodeTaskIssueParams{
+			IssueID: priorIssueID, ID: task.ID, WorkspaceID: workspaceID,
+		},
+	); err != nil {
+		return false, err
+	}
+	// Reopening alone does not wake an agent assignee — nothing re-dispatches a
+	// status change the way an assignment does.
+	if _, err := h.TaskService.EnqueueTaskForIssue(ctx, reopened); err != nil {
+		slog.Warn("enqueue agent task for workflow rework failed",
+			"issue_id", uuidToString(priorIssueID),
+			"node_key", node.NodeKey,
+			"attempt", node.Attempt,
+			"error", err)
+	}
+	return true, nil
 }
 
 // workflowHostReferencePrefix opens the blockquote line that points a node

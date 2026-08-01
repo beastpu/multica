@@ -22,6 +22,19 @@ type WorkflowTaskContext struct {
 	HandoffRequired bool                      `json:"handoff_required,omitempty"`
 	Artifacts       []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
 	Upstream        []WorkflowUpstreamContext `json:"upstream,omitempty"`
+	Rework          *WorkflowReworkContext    `json:"rework,omitempty"`
+}
+
+// WorkflowReworkContext explains why a node is being executed again. It is nil
+// on a first attempt.
+//
+// The prior attempt's work lives on the same issue — rework continues there
+// rather than opening a new one — so this carries only what the issue cannot
+// say for itself: that this is a retry, and which judgement sent it back.
+type WorkflowReworkContext struct {
+	Attempt int    `json:"attempt"`
+	Source  string `json:"source,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // WorkflowArtifactDuty is one artifact the node owes plus its delivery state.
@@ -81,8 +94,37 @@ func renderWorkflowProtocol(b *strings.Builder, workflow *WorkflowTaskContext) {
 			"instructions.\n\n", workflow.HostIssue)
 	}
 
+	renderWorkflowRework(b, workflow.Rework)
 	renderWorkflowUpstream(b, workflow.InstanceID, workflow.Upstream)
 	renderWorkflowDuties(b, workflow)
+}
+
+// renderWorkflowRework writes why this node is being executed again. It comes
+// before the upstream conclusions because it changes what the agent should do
+// with them: on a retry the upstream has not moved, and the thing that has is
+// the judgement below.
+func renderWorkflowRework(b *strings.Builder, rework *WorkflowReworkContext) {
+	if rework == nil || rework.Attempt < 2 {
+		return
+	}
+	b.WriteString("### 你为什么回到这里\n\n")
+	fmt.Fprintf(b, "这是本节点的第 %d 次执行。上一次的产出留在同一个 Issue 上——"+
+		"先读它和它的评论，只改被判定有问题的部分，不要从头重做。\n\n", rework.Attempt)
+	switch rework.Source {
+	case "acceptance":
+		b.WriteString("退回来源：**验收驳回**\n\n")
+	case "manual_rollback":
+		b.WriteString("退回来源：**人工回滚**\n\n")
+	}
+	if reason := strings.TrimSpace(rework.Reason); reason != "" {
+		for line := range strings.SplitSeq(reason, "\n") {
+			fmt.Fprintf(b, "> %s\n", line)
+		}
+		b.WriteString("\n")
+	} else {
+		b.WriteString("> (没有填写退回理由——先在 Issue 上问清楚再动手，" +
+			"盲目重做很可能被再次退回。)\n\n")
+	}
 }
 
 // renderWorkflowUpstream writes what the predecessors concluded. Summaries are
