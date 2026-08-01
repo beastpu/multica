@@ -189,7 +189,6 @@ import type {
   WorkflowInstance,
   WorkflowInstanceDetail,
   WorkflowIssuesResponse,
-  WorkflowIssueTemplate,
   WorkflowConfirmation,
   WorkflowExecutorResolution,
   BuiltinWorkflowTemplate,
@@ -362,7 +361,6 @@ import {
   WorkflowSubmissionMutationResponseSchema,
   WorkflowVerdictMutationResponseSchema,
   WorkflowTaskMutationResponseSchema,
-  WorkflowTasksMutationResponseSchema,
   WorkflowTemplateCreateResponseSchema,
   WorkflowTemplateDetailSchema,
   WorkflowTemplatePublishResponseSchema,
@@ -3560,7 +3558,6 @@ export class ApiClient {
       evidence?: unknown[];
       source_issue_id?: string;
       source_agent_run_id?: string;
-      proposed_tasks?: WorkflowIssueTemplate[];
       idempotency_key: string;
     },
   ): Promise<{ submission: WorkflowSubmission; validation_errors: Array<{ code: string; field?: string; message: string }> }> {
@@ -3576,7 +3573,7 @@ export class ApiClient {
           id: "", workflow_node_instance_id: nodeId, revision: 0, status: "unknown",
           payload: {}, summary: "", evidence: [], submitted_by_type: "system",
           submitted_by_id: null, source_issue_id: null,
-          source_agent_run_id: null, proposed_tasks: [], created_at: "",
+          source_agent_run_id: null, created_at: "",
         },
         validation_errors: [],
       },
@@ -3622,29 +3619,6 @@ export class ApiClient {
       { endpoint: "POST /api/workflow-node-instances/:id/verdicts" },
     );
     return parsed.verdict;
-  }
-
-  async confirmWorkflowSubmissionTasks(
-    nodeId: string,
-    submissionId: string,
-    idempotencyKey: string,
-  ): Promise<{ tasks: WorkflowNodeTask[]; replayed: boolean }> {
-    const raw = await this.fetch<unknown>(
-      `/api/workflow-node-instances/${nodeId}/submissions/${submissionId}/confirm-tasks`,
-      {
-        method: "POST",
-        body: JSON.stringify({ idempotency_key: idempotencyKey }),
-      },
-    );
-    return parseWithFallback(
-      raw,
-      WorkflowTasksMutationResponseSchema,
-      { tasks: [], replayed: false },
-      {
-        endpoint:
-          "POST /api/workflow-node-instances/:id/submissions/:submissionId/confirm-tasks",
-      },
-    );
   }
 
   async decideWorkflowAcceptance(

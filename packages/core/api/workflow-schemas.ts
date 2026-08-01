@@ -270,7 +270,6 @@ export const WorkflowSubmissionSchema = z.object({
   submitted_by_id: nullableString,
   source_issue_id: nullableString,
   source_agent_run_id: nullableString,
-  proposed_tasks: arrayOrEmpty(WorkflowIssueTemplateSchema),
   created_at: z.string().optional().default(""),
 }).loose();
 
@@ -447,11 +446,6 @@ export const WorkflowVerdictMutationResponseSchema = z.object({
 
 export const WorkflowTaskMutationResponseSchema = z.object({
   task: WorkflowNodeTaskSchema,
-}).loose();
-
-export const WorkflowTasksMutationResponseSchema = z.object({
-  tasks: arrayOrEmpty(WorkflowNodeTaskSchema),
-  replayed: z.boolean().optional().default(false),
 }).loose();
 
 export const WorkflowExecutorResolutionMutationResponseSchema = z.object({

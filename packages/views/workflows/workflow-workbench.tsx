@@ -37,7 +37,6 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import type { Issue } from "@multica/core/types";
 import {
   useCreateWorkflowSubmission,
-  useConfirmWorkflowSubmissionTasks,
   useCreateWorkflowNodeIssue,
   useCreateWorkflowVerdict,
   useChangeWorkflowNodeTask,
@@ -67,7 +66,6 @@ import {
   type WorkflowEvent,
   type WorkflowSubmission,
   type WorkflowVerdict,
-  type WorkflowIssueTemplate,
   type WorkflowRoleAssignment,
   type WorkflowRoleDefinition,
 } from "@multica/core/workflows";
@@ -175,17 +173,11 @@ export function SubmissionPanel({
   const [summary, setSummary] = useState("");
   const [choice, setChoice] = useState("");
   const [sourceIssueId, setSourceIssueId] = useState("");
-  const [proposedTitle, setProposedTitle] = useState("");
-  const [proposedRequired, setProposedRequired] = useState(false);
-  const [proposedTasks, setProposedTasks] = useState<WorkflowIssueTemplate[]>([]);
   const submit = useCreateWorkflowSubmission(instanceId, node.id);
-  const confirmTasks = useConfirmWorkflowSubmissionTasks(instanceId, node.id);
   const submissionPolicy = node.definition.submission_schema?.policy ?? "single";
   const taskScoped = submissionPolicy === "per_required_task" ||
     submissionPolicy === "fan_in";
   const sourceTasks = tasks.filter((task) => task.issue_id);
-  const allowsFanOut = node.definition.issue_policy === "dynamic" ||
-    node.definition.issue_policy === "fixed_and_dynamic";
   // A branch choice is only worth asking for when the run actually forks. With
   // one way forward there is nothing to decide, and an extra select would read
   // as a decision the author has to make.
@@ -201,9 +193,6 @@ export function SubmissionPanel({
     setSummary("");
     setChoice("");
     setSourceIssueId("");
-    setProposedTitle("");
-    setProposedRequired(false);
-    setProposedTasks([]);
   }, [node.id]);
 
   return (
@@ -275,88 +264,6 @@ export function SubmissionPanel({
               </select>
             </div>
           )}
-          {allowsFanOut && (
-            <div className="space-y-3 rounded-lg border border-dashed p-3">
-              <div>
-                <p className="text-sm font-medium">
-                  {t(($) => $.workbench.proposed_tasks)}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t(($) => $.workbench.proposed_tasks_help)}
-                </p>
-              </div>
-              {proposedTasks.length > 0 && (
-                <ul className="space-y-2">
-                  {proposedTasks.map((task) => (
-                    <li
-                      key={task.key}
-                      className="flex min-h-11 items-center justify-between gap-2 rounded-md border px-3 text-sm"
-                    >
-                      <span className="min-w-0 truncate">
-                        {task.title}
-                        {task.required && (
-                          <span className="ml-2 text-xs text-muted-foreground">
-                            {t(($) => $.workbench.required)}
-                          </span>
-                        )}
-                      </span>
-                      <Button
-                        type="button"
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label={t(($) => $.actions.remove)}
-                        onClick={() => setProposedTasks((current) =>
-                          current.filter((item) => item.key !== task.key)
-                        )}
-                      >
-                        <X />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
-                <Input
-                  aria-label={t(($) => $.workbench.proposed_task_title)}
-                  placeholder={t(($) => $.workbench.proposed_task_title)}
-                  value={proposedTitle}
-                  className="min-h-11"
-                  onChange={(event) => setProposedTitle(event.target.value)}
-                />
-                <label className="flex min-h-11 items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={proposedRequired}
-                    onChange={(event) => setProposedRequired(event.target.checked)}
-                  />
-                  {t(($) => $.workbench.required)}
-                </label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={!proposedTitle.trim()}
-                  onClick={() => {
-                    setProposedTasks((current) => [
-                      ...current,
-                      {
-                        key: `proposed_${crypto.randomUUID().replaceAll("-", "_")}`,
-                        title: proposedTitle.trim(),
-                        required: proposedRequired,
-                        initial_status: "todo",
-                        priority: "none",
-                      },
-                    ]);
-                    setProposedTitle("");
-                    setProposedRequired(false);
-                  }}
-                >
-                  <Plus />
-                  {t(($) => $.actions.add_task)}
-                </Button>
-              </div>
-            </div>
-          )}
           <Button
             size="sm"
             className="min-h-11"
@@ -365,13 +272,9 @@ export function SubmissionPanel({
               summary,
               choice: choice || undefined,
               source_issue_id: sourceIssueId || undefined,
-              proposed_tasks: proposedTasks,
             }, {
               onSuccess: () => {
                 setChoice("");
-                setProposedTasks([]);
-                setProposedTitle("");
-                setProposedRequired(false);
               },
             })}
             disabled={
@@ -414,38 +317,6 @@ export function SubmissionPanel({
                       task.issue_id === submission.source_issue_id
                     )?.definition.title ?? submission.source_issue_id}
                   </p>
-                )}
-                {submission.proposed_tasks.length > 0 && (
-                  <div className="space-y-2 rounded-lg border border-dashed p-3">
-                    <p className="text-xs font-medium">
-                      {t(($) => $.workbench.proposed_tasks)}
-                    </p>
-                    <ul className="space-y-1 text-xs text-muted-foreground">
-                      {submission.proposed_tasks.map((task) => (
-                        <li key={task.key}>
-                          {task.title}
-                          {task.required
-                            ? ` · ${t(($) => $.workbench.required)}`
-                            : ""}
-                        </li>
-                      ))}
-                    </ul>
-                    {canManage && submission.status === "valid" &&
-                      !submission.proposed_tasks.every((proposed) =>
-                        tasks.some((task) => task.task_key === proposed.key)
-                      ) && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="min-h-11"
-                          disabled={confirmTasks.isPending}
-                          onClick={() => confirmTasks.mutate(submission.id)}
-                        >
-                          <Check />
-                          {t(($) => $.workbench.confirm_proposed_tasks)}
-                        </Button>
-                      )}
-                  </div>
                 )}
                 <pre className="max-h-48 overflow-auto rounded-lg bg-muted p-3 text-xs">
                   {JSON.stringify(submission.payload, null, 2)}

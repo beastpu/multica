@@ -287,7 +287,6 @@ export interface WorkflowSubmission {
   submitted_by_id: string | null;
   source_issue_id: string | null;
   source_agent_run_id: string | null;
-  proposed_tasks: WorkflowIssueTemplate[];
   created_at: string;
 }
 

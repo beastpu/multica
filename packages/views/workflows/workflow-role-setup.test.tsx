@@ -42,10 +42,6 @@ vi.mock("@multica/core/workflows", async (importOriginal) => ({
     isPending: false,
     isError: false,
   }),
-  useConfirmWorkflowSubmissionTasks: () => ({
-    mutate: vi.fn(),
-    isPending: false,
-  }),
   useResolveWorkflowNodeExecutor: () => ({
     mutate: mocks.resolveExecutor,
     isPending: false,
@@ -189,7 +185,6 @@ describe("SubmissionPanel", () => {
       summary: `Revision ${revision}`,
       source_issue_id: null,
       source_agent_run_id: null,
-      proposed_tasks: [],
       evidence: [],
       submitted_by_type: "member",
       submitted_by_id: "member-1",

@@ -20,20 +20,19 @@ import (
 )
 
 type workflowSubmissionResponse struct {
-	ID                     string                         `json:"id"`
-	WorkflowNodeInstanceID string                         `json:"workflow_node_instance_id"`
-	Revision               int32                          `json:"revision"`
-	Status                 string                         `json:"status"`
-	Payload                json.RawMessage                `json:"payload"`
-	Summary                string                         `json:"summary"`
-	Choice                 string                         `json:"choice,omitempty"`
-	Evidence               json.RawMessage                `json:"evidence"`
-	SubmittedByType        string                         `json:"submitted_by_type"`
-	SubmittedByID          *string                        `json:"submitted_by_id"`
-	SourceIssueID          *string                        `json:"source_issue_id"`
-	SourceAgentRunID       *string                        `json:"source_agent_run_id"`
-	ProposedTasks          []workflowdomain.IssueTemplate `json:"proposed_tasks"`
-	CreatedAt              string                         `json:"created_at"`
+	ID                     string          `json:"id"`
+	WorkflowNodeInstanceID string          `json:"workflow_node_instance_id"`
+	Revision               int32           `json:"revision"`
+	Status                 string          `json:"status"`
+	Payload                json.RawMessage `json:"payload"`
+	Summary                string          `json:"summary"`
+	Choice                 string          `json:"choice,omitempty"`
+	Evidence               json.RawMessage `json:"evidence"`
+	SubmittedByType        string          `json:"submitted_by_type"`
+	SubmittedByID          *string         `json:"submitted_by_id"`
+	SourceIssueID          *string         `json:"source_issue_id"`
+	SourceAgentRunID       *string         `json:"source_agent_run_id"`
+	CreatedAt              string          `json:"created_at"`
 }
 
 type workflowVerdictResponse struct {
@@ -75,26 +74,13 @@ type workflowAcceptanceResponse struct {
 }
 
 func workflowSubmissionToResponse(row db.WorkflowNodeSubmission) workflowSubmissionResponse {
-	payload := json.RawMessage(row.Payload)
-	proposedTasks := make([]workflowdomain.IssueTemplate, 0)
-	var payloadObject map[string]json.RawMessage
-	if json.Unmarshal(row.Payload, &payloadObject) == nil {
-		if raw, exists := payloadObject[workflowProposedTasksPayloadKey]; exists {
-			_ = json.Unmarshal(raw, &proposedTasks)
-			delete(payloadObject, workflowProposedTasksPayloadKey)
-			if normalized, err := json.Marshal(payloadObject); err == nil {
-				payload = normalized
-			}
-		}
-	}
 	return workflowSubmissionResponse{
 		ID: uuidToString(row.ID), WorkflowNodeInstanceID: uuidToString(row.WorkflowNodeInstanceID),
-		Revision: row.Revision, Status: row.Status, Payload: payload,
+		Revision: row.Revision, Status: row.Status, Payload: json.RawMessage(row.Payload),
 		Summary: row.Summary, Choice: row.Choice, Evidence: json.RawMessage(row.Evidence),
 		SubmittedByType: row.SubmittedByType, SubmittedByID: uuidToPtr(row.SubmittedByID),
 		SourceIssueID: uuidToPtr(row.SourceIssueID), SourceAgentRunID: uuidToPtr(row.SourceAgentRunID),
-		ProposedTasks: proposedTasks,
-		CreatedAt:     timestampToString(row.CreatedAt),
+		CreatedAt: timestampToString(row.CreatedAt),
 	}
 }
 
@@ -309,14 +295,13 @@ func (h *Handler) ListWorkflowNodeSubmissions(w http.ResponseWriter, r *http.Req
 }
 
 type createWorkflowSubmissionRequest struct {
-	Payload          map[string]any                 `json:"payload"`
-	Summary          string                         `json:"summary"`
-	Choice           string                         `json:"choice,omitempty"`
-	Evidence         json.RawMessage                `json:"evidence,omitempty"`
-	SourceIssueID    string                         `json:"source_issue_id,omitempty"`
-	SourceAgentRunID string                         `json:"source_agent_run_id,omitempty"`
-	ProposedTasks    []workflowdomain.IssueTemplate `json:"proposed_tasks,omitempty"`
-	IdempotencyKey   string                         `json:"idempotency_key"`
+	Payload          map[string]any  `json:"payload"`
+	Summary          string          `json:"summary"`
+	Choice           string          `json:"choice,omitempty"`
+	Evidence         json.RawMessage `json:"evidence,omitempty"`
+	SourceIssueID    string          `json:"source_issue_id,omitempty"`
+	SourceAgentRunID string          `json:"source_agent_run_id,omitempty"`
+	IdempotencyKey   string          `json:"idempotency_key"`
 }
 
 func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Request) {
@@ -360,21 +345,6 @@ func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusConflict, "workflow node does not accept member submissions")
 		return
 	}
-	proposedTasks, proposedTasksErr := workflowdomain.NormalizeProposedTasks(
-		req.ProposedTasks,
-	)
-	if proposedTasksErr != nil {
-		writeError(w, http.StatusBadRequest, proposedTasksErr.Error())
-		return
-	}
-	if len(proposedTasks) > 0 && !workflowdomain.AllowsDynamicIssues(nodeDefinition) {
-		writeError(
-			w,
-			http.StatusConflict,
-			"workflow node does not allow proposed dynamic tasks",
-		)
-		return
-	}
 	// A choice names the branch the node picked, so it has to be one of the
 	// node's own outgoing targets. The graph fixes the range — that is the
 	// whole reason a system-defined choice replaces a user-defined field.
@@ -407,9 +377,6 @@ func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Re
 	status := "valid"
 	if len(reasons) > 0 {
 		status = "invalid"
-	}
-	if len(proposedTasks) > 0 {
-		req.Payload[workflowProposedTasksPayloadKey] = proposedTasks
 	}
 	payload, _ := json.Marshal(req.Payload)
 	evidence, ok := normalizeWorkflowJSONArray(w, req.Evidence, "evidence")

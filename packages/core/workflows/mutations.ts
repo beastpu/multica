@@ -11,7 +11,6 @@ import type {
   WorkflowInstanceDetail,
   WorkflowNodeDetail,
   WorkflowTemplateDetail,
-  WorkflowIssueTemplate,
   WorkflowSubmission,
 } from "./types";
 import { workflowKeys } from "./queries";
@@ -369,7 +368,6 @@ export interface CreateWorkflowSubmissionInput {
   evidence?: unknown[];
   source_issue_id?: string;
   source_agent_run_id?: string;
-  proposed_tasks?: WorkflowIssueTemplate[];
 }
 
 // Reviewing an artifact changes whether the node may complete, so the node
@@ -465,7 +463,6 @@ export function useCreateWorkflowSubmission(
         submitted_by_id: null,
         source_issue_id: input.source_issue_id ?? null,
         source_agent_run_id: input.source_agent_run_id ?? null,
-        proposed_tasks: input.proposed_tasks ?? [],
         created_at: new Date().toISOString(),
       };
       qc.setQueryData<WorkflowNodeDetail>(nodeKey, (old) =>
@@ -480,33 +477,6 @@ export function useCreateWorkflowSubmission(
     onSettled: () => {
       qc.invalidateQueries({ queryKey: nodeKey });
       qc.invalidateQueries({ queryKey: workflowKeys.instance(wsId, instanceId) });
-      qc.invalidateQueries({ queryKey: workflowKeys.instances(wsId) });
-    },
-  });
-}
-
-export function useConfirmWorkflowSubmissionTasks(
-  instanceId: string,
-  nodeInstanceId: string,
-) {
-  const qc = useQueryClient();
-  const wsId = useWorkspaceId();
-  const idempotency = useRetrySafeMutationKey();
-  return useMutation({
-    mutationFn: (submissionId: string) =>
-      api.confirmWorkflowSubmissionTasks(
-        nodeInstanceId,
-        submissionId,
-        idempotency.forPayload(submissionId),
-      ),
-    onSuccess: (_detail, submissionId) =>
-      idempotency.clear(submissionId),
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: workflowKeys.node(wsId, nodeInstanceId) });
-      qc.invalidateQueries({ queryKey: workflowKeys.instance(wsId, instanceId) });
-      qc.invalidateQueries({
-        queryKey: workflowKeys.instanceIssues(wsId, instanceId),
-      });
       qc.invalidateQueries({ queryKey: workflowKeys.instances(wsId) });
     },
   });

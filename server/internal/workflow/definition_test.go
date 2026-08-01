@@ -728,30 +728,6 @@ func TestValidateDefinitionAcceptsParallelGatewayDAG(t *testing.T) {
 	}
 }
 
-func TestNormalizeProposedTasks(t *testing.T) {
-	tasks, err := NormalizeProposedTasks([]IssueTemplate{{
-		Key:      "investigate_logs",
-		Title:    "Investigate {{host.title}}",
-		Required: true,
-	}})
-	if err != nil {
-		t.Fatalf("NormalizeProposedTasks() error = %v", err)
-	}
-	if tasks[0].InitialStatus != "todo" || tasks[0].Priority != "none" {
-		t.Fatalf("normalized task = %#v", tasks[0])
-	}
-}
-
-func TestNormalizeProposedTasksRejectsDuplicateStableKey(t *testing.T) {
-	_, err := NormalizeProposedTasks([]IssueTemplate{
-		{Key: "same", Title: "First"},
-		{Key: "same", Title: "Second"},
-	})
-	if err == nil || !strings.Contains(err.Error(), "duplicate key") {
-		t.Fatalf("NormalizeProposedTasks() error = %v, want duplicate key", err)
-	}
-}
-
 func TestValidateDefinitionRejectsGatewayWithoutDefault(t *testing.T) {
 	definition := validDefinition()
 	definition.Nodes = []NodeDefinition{

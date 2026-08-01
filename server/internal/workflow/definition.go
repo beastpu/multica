@@ -21,7 +21,6 @@ const (
 	maxTasks            = 1000
 	maxEdges            = 2000
 	maxSubmissionFields = 500
-	maxProposedTasks    = 100
 )
 
 type Definition struct {
@@ -667,75 +666,6 @@ func validateNodeActions(nodeKey, phase string, actions []NodeActionDefinition) 
 
 func AllowsDynamicIssues(node NodeDefinition) bool {
 	return node.IssuePolicy == "dynamic" || node.IssuePolicy == "fixed_and_dynamic"
-}
-
-// NormalizeProposedTasks validates the stable task contract carried by a
-// Submission before a member confirms the fan-out. Role references are
-// validated against the running instance by the handler because a node
-// snapshot intentionally does not duplicate the template's role definitions.
-func NormalizeProposedTasks(tasks []IssueTemplate) ([]IssueTemplate, error) {
-	if len(tasks) > maxProposedTasks {
-		return nil, fmt.Errorf("proposed_tasks exceeds limit %d", maxProposedTasks)
-	}
-	normalized := make([]IssueTemplate, len(tasks))
-	keys := make(map[string]struct{}, len(tasks))
-	for index, task := range tasks {
-		task.Key = strings.TrimSpace(task.Key)
-		task.Title = strings.TrimSpace(task.Title)
-		task.Description = strings.TrimSpace(task.Description)
-		task.AssigneeRole = strings.TrimSpace(task.AssigneeRole)
-		task.AssigneeType = strings.TrimSpace(task.AssigneeType)
-		task.AssigneeID = strings.TrimSpace(task.AssigneeID)
-		if !validKey(task.Key) {
-			return nil, fmt.Errorf("proposed task has invalid key %q", task.Key)
-		}
-		if _, exists := keys[task.Key]; exists {
-			return nil, fmt.Errorf("proposed_tasks has duplicate key %q", task.Key)
-		}
-		keys[task.Key] = struct{}{}
-		if task.Title == "" {
-			return nil, fmt.Errorf("proposed task %q title is required", task.Key)
-		}
-		if err := validateIssueTitleTemplate(task.Title); err != nil {
-			return nil, fmt.Errorf("proposed task %q: %w", task.Key, err)
-		}
-		if task.AssigneeRole != "" &&
-			(task.AssigneeType != "" || task.AssigneeID != "") {
-			return nil, fmt.Errorf(
-				"proposed task %q cannot declare both assignee_role and a direct assignee",
-				task.Key,
-			)
-		}
-		if err := validateDirectActor(task.AssigneeType, task.AssigneeID); err != nil {
-			return nil, fmt.Errorf("proposed task %q: %w", task.Key, err)
-		}
-		if task.InitialStatus == "" {
-			task.InitialStatus = "todo"
-		}
-		switch task.InitialStatus {
-		case "backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled":
-		default:
-			return nil, fmt.Errorf(
-				"proposed task %q has invalid initial_status %q",
-				task.Key,
-				task.InitialStatus,
-			)
-		}
-		if task.Priority == "" {
-			task.Priority = "none"
-		}
-		switch task.Priority {
-		case "none", "low", "medium", "high", "urgent":
-		default:
-			return nil, fmt.Errorf(
-				"proposed task %q has invalid priority %q",
-				task.Key,
-				task.Priority,
-			)
-		}
-		normalized[index] = task
-	}
-	return normalized, nil
 }
 
 func SubmissionPolicy(node NodeDefinition) string {

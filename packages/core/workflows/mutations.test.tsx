@@ -70,7 +70,6 @@ function submissionResponse(payload: Record<string, unknown>) {
     submitted_by_id: "user-1",
     source_issue_id: null,
     source_agent_run_id: null,
-    proposed_tasks: [],
     created_at: "2026-07-24T00:00:00.000Z",
   };
   return { submission, validation_errors: [] };

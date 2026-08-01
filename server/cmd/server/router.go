@@ -1264,10 +1264,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/issues", h.CreateWorkflowNodeIssue)
 				r.Get("/submissions", h.ListWorkflowNodeSubmissions)
 				r.Post("/submissions", h.CreateWorkflowNodeSubmission)
-				r.Post(
-					"/submissions/{submissionId}/confirm-tasks",
-					h.ConfirmWorkflowSubmissionTasks,
-				)
 				r.Get("/upstream", h.GetWorkflowNodeUpstream)
 				r.Get("/artifacts", h.ListWorkflowNodeArtifacts)
 				r.Post("/artifacts", h.SubmitWorkflowArtifact)

@@ -6,7 +6,6 @@ import {
   WorkflowInstanceDetailSchema,
   WorkflowNodeDefinitionSchema,
   WorkflowNodeDetailSchema,
-  WorkflowSubmissionSchema,
 } from "./workflow-schemas";
 
 const endpoint = { endpoint: "GET /api/workflow-instances/:id" };
@@ -114,30 +113,6 @@ describe("workflow response schemas", () => {
     expect(parsed.participants).toEqual([]);
     expect(parsed.executor_resolutions).toEqual([]);
     expect(parsed.confirmations).toEqual([]);
-  });
-
-  it("keeps valid proposed tasks and degrades a malformed list to empty", () => {
-    const base = {
-      id: "submission-1",
-      workflow_node_instance_id: "node-1",
-      payload: {},
-    };
-    const valid = WorkflowSubmissionSchema.parse({
-      ...base,
-      proposed_tasks: [{
-        key: "investigate",
-        title: "Investigate",
-        required: true,
-      }],
-    });
-    const malformed = WorkflowSubmissionSchema.parse({
-      ...base,
-      proposed_tasks: "not-an-array",
-    });
-
-    expect(valid.proposed_tasks).toHaveLength(1);
-    expect(valid.proposed_tasks[0]?.key).toBe("investigate");
-    expect(malformed.proposed_tasks).toEqual([]);
   });
 
   it("preserves direct node executors and child issue overrides", () => {
