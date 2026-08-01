@@ -375,7 +375,11 @@ describe("IntegrationsTab (Feishu Project panel)", () => {
     render(<IntegrationsTab />, { wrapper: I18nWrapper });
 
     await user.click(screen.getByLabelText(STR.feishu_project_sync_range_label));
-    await user.click(screen.getByRole("option", { name: "Last 180 days" }));
+    // findByRole, not getByRole: the listbox mounts into a portal a tick after
+    // the trigger is clicked, so the synchronous query raced the render and
+    // failed only under parallel test load — where the machine is busy enough
+    // for that tick to matter.
+    await user.click(await screen.findByRole("option", { name: "Last 180 days" }));
     await user.click(screen.getByRole("button", { name: STR.feishu_project_sync_now }));
 
     await waitFor(() => expect(mockSyncIntegration).toHaveBeenCalledTimes(1));

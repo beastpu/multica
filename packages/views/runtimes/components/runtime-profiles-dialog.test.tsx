@@ -165,7 +165,7 @@ describe("RuntimeProfilesDialog", () => {
     expect(screen.getByText("claude")).toBeInTheDocument();
   });
 
-  it("clears built-in detail when the built-in reference section collapses", () => {
+  it("clears built-in detail when the built-in reference section collapses", async () => {
     queryState.profiles = [profile()];
 
     renderDialog();
@@ -174,7 +174,8 @@ describe("RuntimeProfilesDialog", () => {
       name: /Supported base protocols/,
     });
     fireEvent.click(builtinsToggle);
-    fireEvent.click(screen.getByRole("option", { name: /claude/i }));
+    // Portal-mounted listbox — see the note in integrations-tab.test.tsx.
+    fireEvent.click(await screen.findByRole("option", { name: /claude/i }));
 
     expect(
       screen.getByText(/claude is a built-in protocol family/),
