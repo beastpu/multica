@@ -808,3 +808,52 @@ func TestEvaluateConditionCompositionsAndMissingFailClosed(t *testing.T) {
 		t.Fatalf("missing neq = %v, %v; want fail-closed false", missing, err)
 	}
 }
+
+// A node whose choice a downstream gateway reads has to be told so. The
+// options come from the graph rather than the template author's prose, which
+// is what stops a run silently taking the default because nobody mentioned
+// there was a decision to make.
+func TestChoiceBranchesForNode(t *testing.T) {
+	definition := Definition{
+		SchemaVersion: 1,
+		Name:          "branching",
+		AppliesTo:     AppliesTo{Kind: "issue"},
+		Roles:         []RoleDefinition{{Key: "qa", Name: "QA", Required: true, AllowedActorTypes: []string{"member"}}},
+		Nodes: []NodeDefinition{
+			{Key: "start", Kind: "start", Name: "开始"},
+			{Key: "triage", Kind: "activity", Name: "问题分诊", OwnerRole: "qa"},
+			{Key: "route", Kind: "gateway", Name: "是否需要修复"},
+			{Key: "fix", Kind: "activity", Name: "缺陷修复", OwnerRole: "qa"},
+			{Key: "end", Kind: "end", Name: "结束"},
+		},
+		Edges: []EdgeDefinition{
+			{From: "start", To: "triage"},
+			{From: "triage", To: "route"},
+			{From: "route", To: "end", Condition: json.RawMessage(
+				`{"source":"node_choice","node":"triage","key":"choice","op":"eq","value":"end"}`)},
+			{From: "route", To: "fix", Default: true},
+		},
+	}
+
+	duty, found := ChoiceBranchesForNode(definition, "triage")
+	if !found {
+		t.Fatal("triage feeds a gateway but reported no choice duty")
+	}
+	if duty.GatewayName != "是否需要修复" {
+		t.Fatalf("gateway name = %q", duty.GatewayName)
+	}
+	if duty.DefaultTarget != "缺陷修复" {
+		t.Fatalf("default target = %q", duty.DefaultTarget)
+	}
+	if len(duty.Options) != 1 ||
+		duty.Options[0].Value != "end" ||
+		duty.Options[0].Target != "结束" {
+		t.Fatalf("options = %#v", duty.Options)
+	}
+
+	// A node nothing branches on must not be told to choose — an invented
+	// decision is worse than none.
+	if _, found := ChoiceBranchesForNode(definition, "fix"); found {
+		t.Fatal("fix has no downstream gateway reading it, but reported a choice duty")
+	}
+}

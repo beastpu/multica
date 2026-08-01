@@ -285,7 +285,8 @@
     "rework_reason_help": "작업을 다시 하는 실행자가 이 내용을 그대로 읽습니다. 한 줄짜리 사유로는 실행할 근거가 없습니다.",
     "rework_badge": "재작업 ×{{attempt}}",
     "rework_badge_title": "이 작업은 반려된 적이 있습니다. 현재 {{attempt}}번째 시도입니다.",
-    "reworked_activities": "재작업한 활동"
+    "reworked_activities": "재작업한 활동",
+    "branch_choice_help": "「{{gateway}}」가 이 선택으로 분기합니다. 선택하지 않으면 「{{fallback}}」로 진행합니다."
   },
   "editor": {
     "title": "워크플로 템플릿",

@@ -346,3 +346,108 @@ func conditionNumber(value any) (float64, bool) {
 		return 0, false
 	}
 }
+
+// ChoiceBranch is one branch a node can pick, paired with where it leads.
+type ChoiceBranch struct {
+	Value  string
+	Target string
+}
+
+// ChoiceDuty describes the routing decision a node owes. It is derived from
+// the graph rather than declared on the node, so a template cannot claim a
+// decision nothing reads, nor omit one something does.
+type ChoiceDuty struct {
+	GatewayName   string
+	DefaultTarget string
+	Options       []ChoiceBranch
+}
+
+// ChoiceBranchesForNode reports the branches nodeKey may pick, by finding the
+// gateways whose outgoing conditions read this node's choice.
+//
+// Deriving this is what lets the executor be told there is a decision to make.
+// Without it the instruction has to be written by hand into the node's issue
+// description, and a template that forgets produces a run that silently takes
+// the default every time — with nothing anywhere reporting that a branch was
+// never considered.
+//
+// Only equality leaves yield a listed option: a richer condition still marks
+// the node as deciding, but its accepted values cannot be enumerated honestly,
+// and guessing them would be worse than saying nothing.
+func ChoiceBranchesForNode(definition Definition, nodeKey string) (ChoiceDuty, bool) {
+	names := make(map[string]string, len(definition.Nodes))
+	for _, node := range definition.Nodes {
+		names[node.Key] = node.Name
+	}
+	duty := ChoiceDuty{}
+	found := false
+	seen := map[string]struct{}{}
+	for _, node := range definition.Nodes {
+		if node.Kind != "gateway" {
+			continue
+		}
+		gatewayReadsNode := false
+		for _, edge := range definition.Edges {
+			if edge.From != node.Key || edge.Default {
+				continue
+			}
+			references, err := ConditionReferences(edge.Condition)
+			if err != nil {
+				continue
+			}
+			for _, reference := range references {
+				if reference.Source == "node_choice" && reference.Node == nodeKey {
+					gatewayReadsNode = true
+				}
+			}
+		}
+		if !gatewayReadsNode {
+			continue
+		}
+		found = true
+		if duty.GatewayName == "" {
+			duty.GatewayName = node.Name
+		}
+		for _, edge := range definition.Edges {
+			if edge.From != node.Key {
+				continue
+			}
+			if edge.Default {
+				if duty.DefaultTarget == "" {
+					duty.DefaultTarget = names[edge.To]
+				}
+				continue
+			}
+			for _, value := range conditionChoiceValues(edge.Condition, nodeKey) {
+				if _, exists := seen[value]; exists {
+					continue
+				}
+				seen[value] = struct{}{}
+				duty.Options = append(duty.Options, ChoiceBranch{
+					Value: value, Target: names[edge.To],
+				})
+			}
+		}
+	}
+	return duty, found
+}
+
+// conditionChoiceValues collects the values an equality test compares this
+// node's choice against.
+func conditionChoiceValues(raw json.RawMessage, nodeKey string) []string {
+	values := make([]string, 0, 1)
+	terms := 0
+	_ = walkCondition(raw, 0, &terms, func(expression conditionExpression) error {
+		if expression.Source != "node_choice" ||
+			expression.Node != nodeKey ||
+			expression.Op != "eq" {
+			return nil
+		}
+		var value string
+		if json.Unmarshal(expression.Value, &value) == nil && value != "" {
+			values = append(values, value)
+		}
+		return nil
+	})
+	return values
+}

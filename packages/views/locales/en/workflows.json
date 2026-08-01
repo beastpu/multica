@@ -285,7 +285,8 @@
     "rework_reason_help": "The executor redoing this work reads these verbatim. A one-line reason gives it nothing to act on.",
     "rework_badge": "rework ×{{attempt}}",
     "rework_badge_title": "This work was sent back — it is on attempt {{attempt}}.",
-    "reworked_activities": "Reworked activities"
+    "reworked_activities": "Reworked activities",
+    "branch_choice_help": "「{{gateway}}」routes on this. Leave it unset and the run goes to「{{fallback}}」."
   },
   "editor": {
     "title": "Workflow template",

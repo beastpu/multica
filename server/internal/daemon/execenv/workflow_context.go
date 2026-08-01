@@ -23,6 +23,25 @@ type WorkflowTaskContext struct {
 	Artifacts       []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
 	Upstream        []WorkflowUpstreamContext `json:"upstream,omitempty"`
 	Rework          *WorkflowReworkContext    `json:"rework,omitempty"`
+	Choice          *WorkflowChoiceDuty       `json:"choice,omitempty"`
+}
+
+// WorkflowChoiceDuty is the routing decision this node owes a downstream
+// gateway. It is nil when nothing branches on this node.
+//
+// The options are derived from the graph, not from the template author's
+// prose. A node whose choice decides the path but whose description forgets to
+// say so takes the default branch on every run, and nothing anywhere reports
+// that a decision was never made.
+type WorkflowChoiceDuty struct {
+	GatewayName   string                 `json:"gateway_name,omitempty"`
+	DefaultTarget string                 `json:"default_target,omitempty"`
+	Options       []WorkflowChoiceOption `json:"options,omitempty"`
+}
+
+type WorkflowChoiceOption struct {
+	Value  string `json:"value"`
+	Target string `json:"target,omitempty"`
 }
 
 // WorkflowReworkContext explains why a node is being executed again. It is nil
@@ -95,6 +114,7 @@ func renderWorkflowProtocol(b *strings.Builder, workflow *WorkflowTaskContext) {
 	}
 
 	renderWorkflowRework(b, workflow.Rework)
+	renderWorkflowChoice(b, workflow.Choice)
 	renderWorkflowUpstream(b, workflow.InstanceID, workflow.Upstream)
 	renderWorkflowDuties(b, workflow)
 }
@@ -124,6 +144,34 @@ func renderWorkflowRework(b *strings.Builder, rework *WorkflowReworkContext) {
 	} else {
 		b.WriteString("> (没有填写退回理由——先在 Issue 上问清楚再动手，" +
 			"盲目重做很可能被再次退回。)\n\n")
+	}
+}
+
+// renderWorkflowChoice writes the branch decision this node owes. It states
+// the consequence of not choosing, so skipping the decision is at least an
+// informed choice rather than an unnoticed one.
+func renderWorkflowChoice(b *strings.Builder, choice *WorkflowChoiceDuty) {
+	if choice == nil || len(choice.Options) == 0 {
+		return
+	}
+	b.WriteString("### 这个节点要选一条分支\n\n")
+	gateway := choice.GatewayName
+	if gateway == "" {
+		gateway = "下游网关"
+	}
+	fmt.Fprintf(b, "下游的「%s」会读你的选择来决定流程走向。可选：\n\n", gateway)
+	for _, option := range choice.Options {
+		if option.Target != "" {
+			fmt.Fprintf(b, "- `%s` — 走向「%s」\n", option.Value, option.Target)
+		} else {
+			fmt.Fprintf(b, "- `%s`\n", option.Value)
+		}
+	}
+	b.WriteString("\n提交时带上选择：\n\n")
+	b.WriteString("```\nmultica workflow submit --summary \"<结论>\" --choice <上面的某个值>\n```\n\n")
+	if choice.DefaultTarget != "" {
+		fmt.Fprintf(b, "不选则走默认路径「%s」。如果你的结论其实指向别的分支，"+
+			"不选就等于把判断丢掉了。\n\n", choice.DefaultTarget)
 	}
 }
 

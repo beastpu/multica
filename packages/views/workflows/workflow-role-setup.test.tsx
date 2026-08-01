@@ -157,7 +157,6 @@ function renderSubmissionPanel(
       <SubmissionPanel
         instanceId="instance-1"
         node={node}
-        nodes={[node]}
         submissions={submissions}
         tasks={[]}
         actorOptions={[
@@ -165,6 +164,7 @@ function renderSubmissionPanel(
           { type: "agent", id: "agent-1", name: "Build Agent" },
         ]}
         canManage
+        branchDuty={null}
       />
     </I18nProvider>,
   );

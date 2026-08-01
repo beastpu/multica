@@ -144,6 +144,7 @@ import { WorkflowCanvas } from "./workflow-canvas";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { WorkflowStatusBadge } from "./workflow-status";
 import { ReworkReasonFields } from "./rework-reason-fields";
+import { branchChoiceDuty } from "./branch-choice";
 import {
   composeReworkReason,
   emptyReworkReasonDraft,
@@ -161,18 +162,18 @@ const handoffSummaryLimit = 500;
 export function SubmissionPanel({
   instanceId,
   node,
-  nodes,
   submissions,
   tasks,
   canManage,
+  branchDuty,
 }: {
   instanceId: string;
   node: WorkflowNodeInstance;
-  nodes: WorkflowNodeInstance[];
   submissions: WorkflowSubmission[];
   tasks: WorkflowNodeTask[];
   actorOptions: WorkflowActorOption[];
   canManage: boolean;
+  branchDuty: ReturnType<typeof branchChoiceDuty>;
 }) {
   const { t } = useT("workflows");
   const [values, setValues] = useState<Record<string, unknown>>({});
@@ -184,15 +185,9 @@ export function SubmissionPanel({
   const taskScoped = submissionPolicy === "per_required_task" ||
     submissionPolicy === "fan_in";
   const sourceTasks = tasks.filter((task) => task.issue_id);
-  // A branch choice is only worth asking for when the run actually forks. With
-  // one way forward there is nothing to decide, and an extra select would read
-  // as a decision the author has to make.
-  const branchTargets = nodes
-    .filter((candidate) => candidate.node_key !== node.node_key)
-    .map((candidate) => ({
-      key: candidate.node_key,
-      name: candidate.name || candidate.node_key,
-    }));
+  // Only the values a gateway condition actually matches. Offering every node
+  // let an author pick one no condition reads: the server accepts it and the
+  // run then takes the default edge, looking exactly like no decision at all.
 
   useEffect(() => {
     setValues({});
@@ -250,7 +245,7 @@ export function SubmissionPanel({
               })}
             </p>
           </div>
-          {branchTargets.length > 1 && (
+          {branchDuty && (
             <div className="space-y-1.5">
               <Label htmlFor="workflow-submission-choice">
                 {t(($) => $.workbench.branch_choice)}
@@ -264,10 +259,20 @@ export function SubmissionPanel({
                 <option value="">
                   {t(($) => $.workbench.branch_choice_none)}
                 </option>
-                {branchTargets.map((target) => (
-                  <option key={target.key} value={target.key}>{target.name}</option>
+                {branchDuty.options.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {option.key} — {option.target}
+                  </option>
                 ))}
               </select>
+              {branchDuty.defaultTarget && (
+                <p className="text-xs text-muted-foreground">
+                  {t(($) => $.workbench.branch_choice_help, {
+                    gateway: branchDuty.gatewayName,
+                    fallback: branchDuty.defaultTarget,
+                  })}
+                </p>
+              )}
             </div>
           )}
           <Button
@@ -2481,11 +2486,17 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             <SubmissionPanel
               instanceId={instanceId}
               node={selectedNode}
-              nodes={nodes}
               submissions={nodeQuery.data.submissions}
               tasks={nodeQuery.data.tasks}
               actorOptions={actorOptions}
               canManage={canManageSelectedNode}
+              branchDuty={templateVersion
+                ? branchChoiceDuty(
+                  templateVersion.definition.nodes,
+                  templateVersion.definition.edges,
+                  selectedNode.node_key,
+                )
+                : null}
             />
           </TabsContent>
         )}

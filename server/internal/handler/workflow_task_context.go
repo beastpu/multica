@@ -36,6 +36,21 @@ type WorkflowTaskContext struct {
 	Artifacts       []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
 	Upstream        []WorkflowUpstreamContext `json:"upstream,omitempty"`
 	Rework          *WorkflowReworkContext    `json:"rework,omitempty"`
+	Choice          *WorkflowChoiceDuty       `json:"choice,omitempty"`
+}
+
+// WorkflowChoiceDuty is the routing decision this node owes a downstream
+// gateway, derived from the graph rather than declared on the node. Nil when
+// nothing branches on this node.
+type WorkflowChoiceDuty struct {
+	GatewayName   string                 `json:"gateway_name,omitempty"`
+	DefaultTarget string                 `json:"default_target,omitempty"`
+	Options       []WorkflowChoiceOption `json:"options,omitempty"`
+}
+
+type WorkflowChoiceOption struct {
+	Value  string `json:"value"`
+	Target string `json:"target,omitempty"`
 }
 
 // WorkflowReworkContext explains why a node is running again. Nil on a first
@@ -175,7 +190,46 @@ func (h *Handler) workflowTaskContext(
 	result.Artifacts = h.workflowArtifactDuties(ctx, instance.WorkspaceID, node, nodeDefinition)
 	result.Upstream = h.workflowUpstreamContext(ctx, instance, node, live)
 	result.Rework = h.workflowReworkContext(ctx, instance, node)
+	result.Choice = h.workflowChoiceDuty(ctx, instance, node)
 	return result
+}
+
+// workflowChoiceDuty reports the branch decision this node owes, derived from
+// the published graph. Nil when no gateway reads this node's choice, so a node
+// is never told to make a decision nothing consumes.
+func (h *Handler) workflowChoiceDuty(
+	ctx context.Context,
+	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
+) *WorkflowChoiceDuty {
+	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(
+		ctx,
+		db.GetWorkflowTemplateVersionInWorkspaceParams{
+			ID: instance.TemplateVersionID, WorkspaceID: instance.WorkspaceID,
+		},
+	)
+	if err != nil {
+		return nil
+	}
+	definition, err := workflowdomain.ParseDefinition(version.Definition)
+	if err != nil {
+		return nil
+	}
+	duty, decides := workflowdomain.ChoiceBranchesForNode(definition, node.NodeKey)
+	if !decides || len(duty.Options) == 0 {
+		return nil
+	}
+	options := make([]WorkflowChoiceOption, 0, len(duty.Options))
+	for _, option := range duty.Options {
+		options = append(options, WorkflowChoiceOption{
+			Value: option.Value, Target: option.Target,
+		})
+	}
+	return &WorkflowChoiceDuty{
+		GatewayName:   duty.GatewayName,
+		DefaultTarget: duty.DefaultTarget,
+		Options:       options,
+	}
 }
 
 // workflowReworkContext explains a re-attempt. It returns nil for a first

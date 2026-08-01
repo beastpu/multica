@@ -285,7 +285,8 @@
     "rework_reason_help": "重做这份工作的执行者会原样读到这几条。只写一句话的理由，等于没给它可执行的信息。",
     "rework_badge": "返工 ×{{attempt}}",
     "rework_badge_title": "这份工作被退回过，当前是第 {{attempt}} 次执行。",
-    "reworked_activities": "返工过的活动"
+    "reworked_activities": "返工过的活动",
+    "branch_choice_help": "「{{gateway}}」按这个选择路由。不选则走「{{fallback}}」。"
   },
   "editor": {
     "title": "工作流模板",
