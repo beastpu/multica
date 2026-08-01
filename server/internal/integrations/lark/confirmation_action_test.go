@@ -37,6 +37,47 @@ func TestRenderConfirmationCardEmbedsRealChatID(t *testing.T) {
 	}
 }
 
+func TestRenderConfirmationCardV2UsesCardKitCallbackBehaviors(t *testing.T) {
+	t.Parallel()
+	cardJSON, err := renderConfirmationCardV2(
+		"是否确认？【确认执行】",
+		ChatSessionBinding{ChannelChatID: "oc_real", ChatType: "p2p"},
+		"task-1", "ou_user", time.Unix(1700000000, 0),
+	)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(cardJSON), &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var buttons []map[string]any
+	collectCardElementsByTag(doc, "button", &buttons)
+	if len(buttons) != 2 {
+		t.Fatalf("buttons=%d want 2: %s", len(buttons), cardJSON)
+	}
+	actions := map[string]bool{}
+	for _, button := range buttons {
+		if _, legacy := button["value"]; legacy {
+			t.Fatalf("CardKit 2.0 button must not use the legacy top-level value: %v", button)
+		}
+		behaviors, _ := button["behaviors"].([]any)
+		if len(behaviors) != 1 {
+			t.Fatalf("button callback behaviors=%v", button["behaviors"])
+		}
+		behavior, _ := behaviors[0].(map[string]any)
+		value, _ := behavior["value"].(map[string]any)
+		action, _ := value["action"].(string)
+		if behavior["type"] != "callback" || action == "" {
+			t.Fatalf("invalid callback behavior=%v", behavior)
+		}
+		actions[action] = true
+	}
+	if !actions[confirmationActionConfirm] || !actions[confirmationActionCancel] {
+		t.Fatalf("callback actions=%v", actions)
+	}
+}
+
 func TestRenderIssueConfirmationResolvedCardRemovesActions(t *testing.T) {
 	t.Parallel()
 	cardJSON, err := RenderIssueConfirmationResolvedCard("是否确认发布？", IssueConfirmationCardAction{
@@ -270,4 +311,20 @@ func containsCardTag(v any, tag string) bool {
 		}
 	}
 	return false
+}
+
+func collectCardElementsByTag(v any, tag string, out *[]map[string]any) {
+	switch x := v.(type) {
+	case map[string]any:
+		if x["tag"] == tag {
+			*out = append(*out, x)
+		}
+		for _, child := range x {
+			collectCardElementsByTag(child, tag, out)
+		}
+	case []any:
+		for _, child := range x {
+			collectCardElementsByTag(child, tag, out)
+		}
+	}
 }

@@ -201,6 +201,10 @@ type Handler struct {
 	// UI consults IsConfigured() to decide whether to surface install
 	// entry points.
 	LarkAPIClient lark.APIClient
+	// LarkOutboundPatcher owns the durable progress-card outbox worker. The
+	// router constructs and registers it; main starts Run under sweepCtx so
+	// retries and delayed cards survive event-handler/process boundaries.
+	LarkOutboundPatcher *lark.Patcher
 	// Composio integration (MUL-3720). Nil when COMPOSIO_API_KEY is unset;
 	// the composio HTTP handlers return 503 in that case. Wired in
 	// cmd/server/router.go after handler.New.

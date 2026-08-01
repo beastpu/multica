@@ -340,6 +340,7 @@ func main() {
 	var businessMetrics *obsmetrics.BusinessMetrics
 	var samplerPool *pgxpool.Pool
 	var channelMediaMetrics *obsmetrics.ChannelMediaReconcilerMetrics
+	var larkOutboundMetrics *obsmetrics.LarkOutboundMetrics
 	if metricsConfig.Enabled() {
 		// Build a dedicated tiny pool for the BusinessSamplerCollector
 		// so a stalled scrape can never starve business traffic. If the
@@ -368,6 +369,7 @@ func main() {
 		httpMetrics = metricsRegistry.HTTP
 		businessMetrics = metricsRegistry.Business
 		channelMediaMetrics = metricsRegistry.ChannelMedia
+		larkOutboundMetrics = metricsRegistry.LarkOutbound
 		// Forward inbound daemon WS frames into the per-kind counter so
 		// dashboards can split heartbeat / unknown / invalid traffic.
 		if daemonHub != nil {
@@ -392,12 +394,13 @@ func main() {
 	heartbeatScheduler := handler.NewBatchedHeartbeatScheduler(queries, handler.DefaultHeartbeatBatchInterval)
 
 	r, h := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
-		HTTPMetrics:        httpMetrics,
-		BusinessMetrics:    businessMetrics,
-		DaemonHub:          daemonHub,
-		DaemonWakeup:       daemonWakeup,
-		FeatureFlags:       flags,
-		HeartbeatScheduler: heartbeatScheduler,
+		HTTPMetrics:         httpMetrics,
+		BusinessMetrics:     businessMetrics,
+		LarkOutboundMetrics: larkOutboundMetrics,
+		DaemonHub:           daemonHub,
+		DaemonWakeup:        daemonWakeup,
+		FeatureFlags:        flags,
+		HeartbeatScheduler:  heartbeatScheduler,
 	})
 
 	srv := &http.Server{
@@ -463,6 +466,13 @@ func main() {
 	if h.ChannelMediaReconciler != nil {
 		h.ChannelMediaReconciler.Metrics = channelMediaMetrics
 		go h.ChannelMediaReconciler.Run(sweepCtx)
+	}
+
+	// Durable Feishu progress-card outbox. Every replica may run a worker;
+	// database leases and SKIP LOCKED ensure only one sends a revision while
+	// expired leases make crash recovery automatic.
+	if h.LarkOutboundPatcher != nil {
+		go h.LarkOutboundPatcher.Run(sweepCtx)
 	}
 
 	// MUL-2957: DB-backed execution scheduler. The scheduler turns the

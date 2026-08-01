@@ -11,6 +11,64 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const abandonChannelOutboundCardDelivery = `-- name: AbandonChannelOutboundCardDelivery :one
+UPDATE channel_outbound_card_message
+SET lease_token = NULL,
+    lease_expires_at = NULL,
+    attempt_count = attempt_count + 1,
+    delivery_failed_at = now(),
+    last_error = $1,
+    next_attempt_at = NULL
+WHERE id = $2
+  AND lease_token = $3
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, desired_revision, applied_revision, inflight_revision, inflight_sequence, inflight_card_json, operation_sequence, projected_seq, visible_text, current_stage, files_read_count, files_edited_count, searches_count, commands_count, terminal_content, next_attempt_at, lease_token, lease_expires_at, attempt_count, delivery_failed_at, last_error
+`
+
+type AbandonChannelOutboundCardDeliveryParams struct {
+	LastError  string      `json:"last_error"`
+	ID         pgtype.UUID `json:"id"`
+	LeaseToken pgtype.UUID `json:"lease_token"`
+}
+
+func (q *Queries) AbandonChannelOutboundCardDelivery(ctx context.Context, arg AbandonChannelOutboundCardDeliveryParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, abandonChannelOutboundCardDelivery, arg.LastError, arg.ID, arg.LeaseToken)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
 const acquireChannelWSLease = `-- name: AcquireChannelWSLease :one
 UPDATE channel_installation
 SET ws_lease_token       = $1,
@@ -288,6 +346,241 @@ func (q *Queries) ClaimChannelMediaPendingObjectsForReconcile(ctx context.Contex
 	return items, nil
 }
 
+const claimChannelOutboundCardDelivery = `-- name: ClaimChannelOutboundCardDelivery :one
+WITH candidate AS (
+    SELECT pending.id
+    FROM channel_outbound_card_message AS pending
+    WHERE pending.channel_type = $3
+      AND pending.delivery_failed_at IS NULL
+      AND (
+          pending.desired_revision > pending.applied_revision
+          OR EXISTS (
+              SELECT 1 FROM task_message AS message
+              WHERE message.task_id = pending.task_id
+                AND message.seq > pending.projected_seq
+          )
+      )
+      AND (
+          pending.next_attempt_at <= now()
+          OR (
+              pending.next_attempt_at IS NULL
+              AND pending.status IN ('pending', 'streaming')
+              AND EXISTS (
+                  SELECT 1 FROM task_message AS message
+                  WHERE message.task_id = pending.task_id
+                    AND message.seq > pending.projected_seq
+              )
+          )
+      )
+      AND (pending.lease_expires_at IS NULL OR pending.lease_expires_at <= now())
+    ORDER BY pending.next_attempt_at, pending.created_at
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+UPDATE channel_outbound_card_message AS c
+SET lease_token = $1,
+    lease_expires_at = now() + make_interval(secs => $2::double precision),
+    inflight_revision = COALESCE(c.inflight_revision, c.desired_revision)
+FROM candidate
+WHERE c.id = candidate.id
+RETURNING c.id, c.chat_session_id, c.task_id, c.channel_type, c.channel_chat_id, c.channel_card_message_id, c.status, c.last_patched_at, c.created_at, c.channel_card_id, c.transport, c.desired_revision, c.applied_revision, c.inflight_revision, c.inflight_sequence, c.inflight_card_json, c.operation_sequence, c.projected_seq, c.visible_text, c.current_stage, c.files_read_count, c.files_edited_count, c.searches_count, c.commands_count, c.terminal_content, c.next_attempt_at, c.lease_token, c.lease_expires_at, c.attempt_count, c.delivery_failed_at, c.last_error
+`
+
+type ClaimChannelOutboundCardDeliveryParams struct {
+	LeaseToken   pgtype.UUID `json:"lease_token"`
+	LeaseSeconds float64     `json:"lease_seconds"`
+	ChannelType  string      `json:"channel_type"`
+}
+
+func (q *Queries) ClaimChannelOutboundCardDelivery(ctx context.Context, arg ClaimChannelOutboundCardDeliveryParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, claimChannelOutboundCardDelivery, arg.LeaseToken, arg.LeaseSeconds, arg.ChannelType)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const claimChannelOutboundCardDeliveryByTask = `-- name: ClaimChannelOutboundCardDeliveryByTask :one
+UPDATE channel_outbound_card_message AS c
+SET lease_token = $1,
+    lease_expires_at = now() + make_interval(secs => $2::double precision),
+    inflight_revision = COALESCE(inflight_revision, desired_revision)
+WHERE c.task_id = $3
+  AND c.channel_type = $4
+  AND c.delivery_failed_at IS NULL
+  AND (
+      c.desired_revision > c.applied_revision
+      OR EXISTS (
+          SELECT 1 FROM task_message AS message
+          WHERE message.task_id = c.task_id
+            AND message.seq > c.projected_seq
+      )
+  )
+  AND (
+      c.next_attempt_at <= now()
+      OR (
+          c.next_attempt_at IS NULL
+          AND c.status IN ('pending', 'streaming')
+          AND EXISTS (
+              SELECT 1 FROM task_message AS message
+              WHERE message.task_id = c.task_id
+                AND message.seq > c.projected_seq
+          )
+      )
+  )
+  AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= now())
+RETURNING c.id, c.chat_session_id, c.task_id, c.channel_type, c.channel_chat_id, c.channel_card_message_id, c.status, c.last_patched_at, c.created_at, c.channel_card_id, c.transport, c.desired_revision, c.applied_revision, c.inflight_revision, c.inflight_sequence, c.inflight_card_json, c.operation_sequence, c.projected_seq, c.visible_text, c.current_stage, c.files_read_count, c.files_edited_count, c.searches_count, c.commands_count, c.terminal_content, c.next_attempt_at, c.lease_token, c.lease_expires_at, c.attempt_count, c.delivery_failed_at, c.last_error
+`
+
+type ClaimChannelOutboundCardDeliveryByTaskParams struct {
+	LeaseToken   pgtype.UUID `json:"lease_token"`
+	LeaseSeconds float64     `json:"lease_seconds"`
+	TaskID       pgtype.UUID `json:"task_id"`
+	ChannelType  string      `json:"channel_type"`
+}
+
+func (q *Queries) ClaimChannelOutboundCardDeliveryByTask(ctx context.Context, arg ClaimChannelOutboundCardDeliveryByTaskParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, claimChannelOutboundCardDeliveryByTask,
+		arg.LeaseToken,
+		arg.LeaseSeconds,
+		arg.TaskID,
+		arg.ChannelType,
+	)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const completeChannelOutboundCardDelivery = `-- name: CompleteChannelOutboundCardDelivery :one
+UPDATE channel_outbound_card_message
+SET applied_revision = inflight_revision,
+    status = CASE WHEN status = 'pending' THEN 'streaming' ELSE status END,
+    last_patched_at = now(),
+    inflight_revision = NULL,
+    inflight_sequence = NULL,
+    inflight_card_json = '',
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    attempt_count = 0,
+    delivery_failed_at = NULL,
+    last_error = '',
+    next_attempt_at = CASE
+        WHEN desired_revision > inflight_revision THEN now()
+        ELSE NULL
+    END
+WHERE id = $1
+  AND lease_token = $2
+  AND inflight_revision IS NOT NULL
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, desired_revision, applied_revision, inflight_revision, inflight_sequence, inflight_card_json, operation_sequence, projected_seq, visible_text, current_stage, files_read_count, files_edited_count, searches_count, commands_count, terminal_content, next_attempt_at, lease_token, lease_expires_at, attempt_count, delivery_failed_at, last_error
+`
+
+type CompleteChannelOutboundCardDeliveryParams struct {
+	ID         pgtype.UUID `json:"id"`
+	LeaseToken pgtype.UUID `json:"lease_token"`
+}
+
+func (q *Queries) CompleteChannelOutboundCardDelivery(ctx context.Context, arg CompleteChannelOutboundCardDeliveryParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, completeChannelOutboundCardDelivery, arg.ID, arg.LeaseToken)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
 const consumeChannelBindingToken = `-- name: ConsumeChannelBindingToken :one
 UPDATE channel_binding_token
 SET consumed_at = now()
@@ -446,11 +739,18 @@ const createChannelOutboundCardMessage = `-- name: CreateChannelOutboundCardMess
 
 INSERT INTO channel_outbound_card_message (
     chat_session_id, task_id, channel_type, channel_chat_id,
-    channel_card_message_id, status
+    channel_card_message_id, status, desired_revision, next_attempt_at
 ) VALUES (
-    $1, $6, $2, $3, $4, $5
+    $1, $6, $2, $3, $4, $5, 1,
+    now() + make_interval(secs => $7::double precision)
 )
-RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at
+ON CONFLICT (task_id) WHERE task_id IS NOT NULL DO UPDATE
+SET next_attempt_at = LEAST(
+        channel_outbound_card_message.next_attempt_at,
+        EXCLUDED.next_attempt_at
+    )
+WHERE channel_outbound_card_message.status IN ('pending', 'streaming')
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, desired_revision, applied_revision, inflight_revision, inflight_sequence, inflight_card_json, operation_sequence, projected_seq, visible_text, current_stage, files_read_count, files_edited_count, searches_count, commands_count, terminal_content, next_attempt_at, lease_token, lease_expires_at, attempt_count, delivery_failed_at, last_error
 `
 
 type CreateChannelOutboundCardMessageParams struct {
@@ -460,6 +760,7 @@ type CreateChannelOutboundCardMessageParams struct {
 	ChannelCardMessageID string      `json:"channel_card_message_id"`
 	Status               string      `json:"status"`
 	TaskID               pgtype.UUID `json:"task_id"`
+	StartDelaySeconds    float64     `json:"start_delay_seconds"`
 }
 
 // =====================
@@ -473,6 +774,7 @@ func (q *Queries) CreateChannelOutboundCardMessage(ctx context.Context, arg Crea
 		arg.ChannelCardMessageID,
 		arg.Status,
 		arg.TaskID,
+		arg.StartDelaySeconds,
 	)
 	var i ChannelOutboundCardMessage
 	err := row.Scan(
@@ -485,6 +787,28 @@ func (q *Queries) CreateChannelOutboundCardMessage(ctx context.Context, arg Crea
 		&i.Status,
 		&i.LastPatchedAt,
 		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -723,6 +1047,124 @@ type DeleteChannelUserBindingsByWorkspaceMemberParams struct {
 func (q *Queries) DeleteChannelUserBindingsByWorkspaceMember(ctx context.Context, arg DeleteChannelUserBindingsByWorkspaceMemberParams) error {
 	_, err := q.db.Exec(ctx, deleteChannelUserBindingsByWorkspaceMember, arg.WorkspaceID, arg.MulticaUserID)
 	return err
+}
+
+const downgradeChannelOutboundCardTransport = `-- name: DowngradeChannelOutboundCardTransport :one
+UPDATE channel_outbound_card_message
+SET transport = 'legacy',
+    channel_card_id = ''
+WHERE id = $1
+  AND lease_token = $2
+  AND transport = 'cardkit'
+  AND channel_card_message_id = ''
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, desired_revision, applied_revision, inflight_revision, inflight_sequence, inflight_card_json, operation_sequence, projected_seq, visible_text, current_stage, files_read_count, files_edited_count, searches_count, commands_count, terminal_content, next_attempt_at, lease_token, lease_expires_at, attempt_count, delivery_failed_at, last_error
+`
+
+type DowngradeChannelOutboundCardTransportParams struct {
+	ID         pgtype.UUID `json:"id"`
+	LeaseToken pgtype.UUID `json:"lease_token"`
+}
+
+func (q *Queries) DowngradeChannelOutboundCardTransport(ctx context.Context, arg DowngradeChannelOutboundCardTransportParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, downgradeChannelOutboundCardTransport, arg.ID, arg.LeaseToken)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const failChannelOutboundCardDelivery = `-- name: FailChannelOutboundCardDelivery :one
+UPDATE channel_outbound_card_message
+SET lease_token = NULL,
+    lease_expires_at = NULL,
+    attempt_count = attempt_count + 1,
+    last_error = $1,
+    next_attempt_at = now() + make_interval(secs => $2::double precision)
+WHERE id = $3
+  AND lease_token = $4
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, desired_revision, applied_revision, inflight_revision, inflight_sequence, inflight_card_json, operation_sequence, projected_seq, visible_text, current_stage, files_read_count, files_edited_count, searches_count, commands_count, terminal_content, next_attempt_at, lease_token, lease_expires_at, attempt_count, delivery_failed_at, last_error
+`
+
+type FailChannelOutboundCardDeliveryParams struct {
+	LastError    string      `json:"last_error"`
+	RetrySeconds float64     `json:"retry_seconds"`
+	ID           pgtype.UUID `json:"id"`
+	LeaseToken   pgtype.UUID `json:"lease_token"`
+}
+
+func (q *Queries) FailChannelOutboundCardDelivery(ctx context.Context, arg FailChannelOutboundCardDeliveryParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, failChannelOutboundCardDelivery,
+		arg.LastError,
+		arg.RetrySeconds,
+		arg.ID,
+		arg.LeaseToken,
+	)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
+	)
+	return i, err
 }
 
 const findReusableChannelUserBinding = `-- name: FindReusableChannelUserBinding :one
@@ -1029,7 +1471,7 @@ func (q *Queries) GetChannelLarkInboxIssueCard(ctx context.Context, arg GetChann
 }
 
 const getChannelOutboundCardByTask = `-- name: GetChannelOutboundCardByTask :one
-SELECT id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at FROM channel_outbound_card_message
+SELECT id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, desired_revision, applied_revision, inflight_revision, inflight_sequence, inflight_card_json, operation_sequence, projected_seq, visible_text, current_stage, files_read_count, files_edited_count, searches_count, commands_count, terminal_content, next_attempt_at, lease_token, lease_expires_at, attempt_count, delivery_failed_at, last_error FROM channel_outbound_card_message
 WHERE task_id = $1
   AND channel_type = $2
 `
@@ -1055,6 +1497,28 @@ func (q *Queries) GetChannelOutboundCardByTask(ctx context.Context, arg GetChann
 		&i.Status,
 		&i.LastPatchedAt,
 		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -1457,6 +1921,98 @@ func (q *Queries) NullChannelInboundAuditInstallationID(ctx context.Context, ins
 	return err
 }
 
+const projectChannelOutboundTaskMessage = `-- name: ProjectChannelOutboundTaskMessage :one
+UPDATE channel_outbound_card_message
+SET projected_seq = $1,
+    visible_text = right(visible_text || $2, 20000),
+    current_stage = $3,
+    files_read_count = files_read_count + $4,
+    files_edited_count = files_edited_count + $5,
+    searches_count = searches_count + $6,
+    commands_count = commands_count + $7,
+    desired_revision = desired_revision + 1,
+    next_attempt_at = CASE
+        WHEN channel_card_message_id = '' THEN next_attempt_at
+        ELSE LEAST(
+            COALESCE(next_attempt_at, now() + make_interval(secs => $8::double precision)),
+            now() + make_interval(secs => $8::double precision)
+        )
+    END
+WHERE task_id = $9
+  AND channel_type = $10
+  AND status IN ('pending', 'streaming')
+  AND projected_seq < $1
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, desired_revision, applied_revision, inflight_revision, inflight_sequence, inflight_card_json, operation_sequence, projected_seq, visible_text, current_stage, files_read_count, files_edited_count, searches_count, commands_count, terminal_content, next_attempt_at, lease_token, lease_expires_at, attempt_count, delivery_failed_at, last_error
+`
+
+type ProjectChannelOutboundTaskMessageParams struct {
+	Seq                int32       `json:"seq"`
+	VisibleTextAppend  string      `json:"visible_text_append"`
+	CurrentStage       string      `json:"current_stage"`
+	FilesReadDelta     int32       `json:"files_read_delta"`
+	FilesEditedDelta   int32       `json:"files_edited_delta"`
+	SearchesDelta      int32       `json:"searches_delta"`
+	CommandsDelta      int32       `json:"commands_delta"`
+	MinIntervalSeconds float64     `json:"min_interval_seconds"`
+	TaskID             pgtype.UUID `json:"task_id"`
+	ChannelType        string      `json:"channel_type"`
+}
+
+// Applies a public-safe projection of one persisted task event. Raw tool input,
+// output, commands, prompts, and paths never enter the outbound row. projected_seq
+// makes duplicate bus delivery idempotent. The existing due time is preserved
+// until the delayed initial send; once a card exists, updates are coalesced by
+// the DB clock instead of a process clock.
+func (q *Queries) ProjectChannelOutboundTaskMessage(ctx context.Context, arg ProjectChannelOutboundTaskMessageParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, projectChannelOutboundTaskMessage,
+		arg.Seq,
+		arg.VisibleTextAppend,
+		arg.CurrentStage,
+		arg.FilesReadDelta,
+		arg.FilesEditedDelta,
+		arg.SearchesDelta,
+		arg.CommandsDelta,
+		arg.MinIntervalSeconds,
+		arg.TaskID,
+		arg.ChannelType,
+	)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
 const purgeChannelInboundDedup = `-- name: PurgeChannelInboundDedup :exec
 DELETE FROM channel_inbound_message_dedup
 WHERE received_at < $1
@@ -1784,6 +2340,70 @@ func (q *Queries) RenewChannelMediaPendingObjectLease(ctx context.Context, arg R
 	return result.RowsAffected(), nil
 }
 
+const scheduleChannelOutboundTaskMessage = `-- name: ScheduleChannelOutboundTaskMessage :one
+UPDATE channel_outbound_card_message
+SET next_attempt_at = CASE
+        WHEN channel_card_message_id = '' THEN next_attempt_at
+        ELSE LEAST(
+            COALESCE(next_attempt_at, now() + make_interval(secs => $1::double precision)),
+            now() + make_interval(secs => $1::double precision)
+        )
+    END
+WHERE task_id = $2
+  AND channel_type = $3
+  AND status IN ('pending', 'streaming')
+  AND delivery_failed_at IS NULL
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, desired_revision, applied_revision, inflight_revision, inflight_sequence, inflight_card_json, operation_sequence, projected_seq, visible_text, current_stage, files_read_count, files_edited_count, searches_count, commands_count, terminal_content, next_attempt_at, lease_token, lease_expires_at, attempt_count, delivery_failed_at, last_error
+`
+
+type ScheduleChannelOutboundTaskMessageParams struct {
+	MinIntervalSeconds float64     `json:"min_interval_seconds"`
+	TaskID             pgtype.UUID `json:"task_id"`
+	ChannelType        string      `json:"channel_type"`
+}
+
+// Task-message ingestion only wakes the durable worker. The worker projects
+// the persisted transcript under the delivery lease, so the synchronous event
+// path never performs remote I/O and a crashed event listener loses no data.
+func (q *Queries) ScheduleChannelOutboundTaskMessage(ctx context.Context, arg ScheduleChannelOutboundTaskMessageParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, scheduleChannelOutboundTaskMessage, arg.MinIntervalSeconds, arg.TaskID, arg.ChannelType)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
 const setChannelInstallationConfig = `-- name: SetChannelInstallationConfig :exec
 UPDATE channel_installation
 SET config = $2, updated_at = now()
@@ -1817,6 +2437,266 @@ type SetChannelInstallationStatusParams struct {
 func (q *Queries) SetChannelInstallationStatus(ctx context.Context, arg SetChannelInstallationStatusParams) error {
 	_, err := q.db.Exec(ctx, setChannelInstallationStatus, arg.ID, arg.Status)
 	return err
+}
+
+const setChannelOutboundCardEntityID = `-- name: SetChannelOutboundCardEntityID :one
+UPDATE channel_outbound_card_message
+SET channel_card_id = $1
+WHERE id = $2
+  AND lease_token = $3
+  AND (channel_card_id = '' OR channel_card_id = $1)
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, desired_revision, applied_revision, inflight_revision, inflight_sequence, inflight_card_json, operation_sequence, projected_seq, visible_text, current_stage, files_read_count, files_edited_count, searches_count, commands_count, terminal_content, next_attempt_at, lease_token, lease_expires_at, attempt_count, delivery_failed_at, last_error
+`
+
+type SetChannelOutboundCardEntityIDParams struct {
+	ChannelCardID string      `json:"channel_card_id"`
+	ID            pgtype.UUID `json:"id"`
+	LeaseToken    pgtype.UUID `json:"lease_token"`
+}
+
+func (q *Queries) SetChannelOutboundCardEntityID(ctx context.Context, arg SetChannelOutboundCardEntityIDParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, setChannelOutboundCardEntityID, arg.ChannelCardID, arg.ID, arg.LeaseToken)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const setChannelOutboundCardMessageID = `-- name: SetChannelOutboundCardMessageID :one
+UPDATE channel_outbound_card_message
+SET channel_card_message_id = $1
+WHERE id = $2
+  AND lease_token = $3
+  AND (channel_card_message_id = '' OR channel_card_message_id = $1)
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, desired_revision, applied_revision, inflight_revision, inflight_sequence, inflight_card_json, operation_sequence, projected_seq, visible_text, current_stage, files_read_count, files_edited_count, searches_count, commands_count, terminal_content, next_attempt_at, lease_token, lease_expires_at, attempt_count, delivery_failed_at, last_error
+`
+
+type SetChannelOutboundCardMessageIDParams struct {
+	ChannelCardMessageID string      `json:"channel_card_message_id"`
+	ID                   pgtype.UUID `json:"id"`
+	LeaseToken           pgtype.UUID `json:"lease_token"`
+}
+
+func (q *Queries) SetChannelOutboundCardMessageID(ctx context.Context, arg SetChannelOutboundCardMessageIDParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, setChannelOutboundCardMessageID, arg.ChannelCardMessageID, arg.ID, arg.LeaseToken)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const setChannelOutboundInflightPayload = `-- name: SetChannelOutboundInflightPayload :one
+UPDATE channel_outbound_card_message
+SET inflight_revision = $1::bigint,
+    inflight_sequence = CASE
+        WHEN transport = 'cardkit' AND channel_card_message_id <> ''
+        THEN operation_sequence + 1
+        ELSE NULL
+    END,
+    operation_sequence = CASE
+        WHEN transport = 'cardkit' AND channel_card_message_id <> ''
+        THEN operation_sequence + 1
+        ELSE operation_sequence
+    END,
+    inflight_card_json = $2
+WHERE id = $3
+  AND lease_token = $4
+  AND desired_revision >= $1::bigint
+  AND inflight_card_json = ''
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, desired_revision, applied_revision, inflight_revision, inflight_sequence, inflight_card_json, operation_sequence, projected_seq, visible_text, current_stage, files_read_count, files_edited_count, searches_count, commands_count, terminal_content, next_attempt_at, lease_token, lease_expires_at, attempt_count, delivery_failed_at, last_error
+`
+
+type SetChannelOutboundInflightPayloadParams struct {
+	DesiredRevision int64       `json:"desired_revision"`
+	CardJson        string      `json:"card_json"`
+	ID              pgtype.UUID `json:"id"`
+	LeaseToken      pgtype.UUID `json:"lease_token"`
+}
+
+func (q *Queries) SetChannelOutboundInflightPayload(ctx context.Context, arg SetChannelOutboundInflightPayloadParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, setChannelOutboundInflightPayload,
+		arg.DesiredRevision,
+		arg.CardJson,
+		arg.ID,
+		arg.LeaseToken,
+	)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const setChannelOutboundTerminalDesired = `-- name: SetChannelOutboundTerminalDesired :one
+UPDATE channel_outbound_card_message
+SET status = $1,
+    terminal_content = $2,
+    desired_revision = desired_revision + 1,
+    applied_revision = CASE
+        WHEN channel_card_id = ''
+         AND channel_card_message_id = ''
+         AND (lease_expires_at IS NULL OR lease_expires_at <= now())
+        THEN desired_revision + 1
+        ELSE applied_revision
+    END,
+    next_attempt_at = CASE
+        WHEN channel_card_id = ''
+         AND channel_card_message_id = ''
+         AND (lease_expires_at IS NULL OR lease_expires_at <= now())
+        THEN NULL
+        ELSE now()
+    END
+WHERE task_id = $3
+  AND channel_type = $4
+  AND status IN ('pending', 'streaming')
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, desired_revision, applied_revision, inflight_revision, inflight_sequence, inflight_card_json, operation_sequence, projected_seq, visible_text, current_stage, files_read_count, files_edited_count, searches_count, commands_count, terminal_content, next_attempt_at, lease_token, lease_expires_at, attempt_count, delivery_failed_at, last_error
+`
+
+type SetChannelOutboundTerminalDesiredParams struct {
+	Status          string      `json:"status"`
+	TerminalContent string      `json:"terminal_content"`
+	TaskID          pgtype.UUID `json:"task_id"`
+	ChannelType     string      `json:"channel_type"`
+}
+
+// A terminal event is monotonic: later progress events cannot reopen it. When
+// no worker owns the unsent row, applied_revision is advanced immediately and
+// the caller keeps the native fast-reply path. If a worker already started the
+// remote card, the terminal revision is queued for that same card.
+func (q *Queries) SetChannelOutboundTerminalDesired(ctx context.Context, arg SetChannelOutboundTerminalDesiredParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, setChannelOutboundTerminalDesired,
+		arg.Status,
+		arg.TerminalContent,
+		arg.TaskID,
+		arg.ChannelType,
+	)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.DesiredRevision,
+		&i.AppliedRevision,
+		&i.InflightRevision,
+		&i.InflightSequence,
+		&i.InflightCardJson,
+		&i.OperationSequence,
+		&i.ProjectedSeq,
+		&i.VisibleText,
+		&i.CurrentStage,
+		&i.FilesReadCount,
+		&i.FilesEditedCount,
+		&i.SearchesCount,
+		&i.CommandsCount,
+		&i.TerminalContent,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.DeliveryFailedAt,
+		&i.LastError,
+	)
+	return i, err
 }
 
 const tombstoneChannelMediaPendingObject = `-- name: TombstoneChannelMediaPendingObject :execrows
@@ -1890,23 +2770,6 @@ type UpdateChannelChatSessionBindingReplyTargetParams struct {
 // outbound patcher can thread its reply back into the originating topic.
 func (q *Queries) UpdateChannelChatSessionBindingReplyTarget(ctx context.Context, arg UpdateChannelChatSessionBindingReplyTargetParams) error {
 	_, err := q.db.Exec(ctx, updateChannelChatSessionBindingReplyTarget, arg.ChatSessionID, arg.LastMessageID, arg.LastThreadID)
-	return err
-}
-
-const updateChannelOutboundCardStatus = `-- name: UpdateChannelOutboundCardStatus :exec
-UPDATE channel_outbound_card_message
-SET status = $2,
-    last_patched_at = now()
-WHERE id = $1
-`
-
-type UpdateChannelOutboundCardStatusParams struct {
-	ID     pgtype.UUID `json:"id"`
-	Status string      `json:"status"`
-}
-
-func (q *Queries) UpdateChannelOutboundCardStatus(ctx context.Context, arg UpdateChannelOutboundCardStatusParams) error {
-	_, err := q.db.Exec(ctx, updateChannelOutboundCardStatus, arg.ID, arg.Status)
 	return err
 }
 

@@ -170,10 +170,71 @@ type CreateOutboundCardMessageParams struct {
 	ChannelCardMessageID string
 	Status               string
 	TaskID               pgtype.UUID
+	StartDelaySeconds    float64
 }
 
-// UpdateOutboundCardStatusParams transitions an outbound card's status.
-type UpdateOutboundCardStatusParams struct {
-	ID     pgtype.UUID
-	Status string
+type ProjectOutboundTaskMessageParams struct {
+	TaskID             pgtype.UUID
+	Seq                int32
+	VisibleTextAppend  string
+	CurrentStage       string
+	FilesReadDelta     int32
+	FilesEditedDelta   int32
+	SearchesDelta      int32
+	CommandsDelta      int32
+	MinIntervalSeconds float64
+}
+
+type ScheduleOutboundTaskMessageParams struct {
+	TaskID             pgtype.UUID
+	MinIntervalSeconds float64
+}
+
+type SetOutboundTerminalDesiredParams struct {
+	TaskID          pgtype.UUID
+	Status          string
+	TerminalContent string
+}
+
+type ClaimOutboundCardDeliveryParams struct {
+	TaskID       pgtype.UUID
+	LeaseToken   pgtype.UUID
+	LeaseSeconds float64
+}
+
+type SetOutboundInflightPayloadParams struct {
+	ID              pgtype.UUID
+	LeaseToken      pgtype.UUID
+	DesiredRevision int64
+	CardJSON        string
+}
+
+type SetOutboundCardEntityIDParams struct {
+	ID            pgtype.UUID
+	LeaseToken    pgtype.UUID
+	ChannelCardID string
+}
+
+type SetOutboundCardMessageIDParams struct {
+	ID                   pgtype.UUID
+	LeaseToken           pgtype.UUID
+	ChannelCardMessageID string
+}
+
+type OutboundDeliveryLeaseParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.UUID
+}
+
+type FailOutboundCardDeliveryParams struct {
+	ID           pgtype.UUID
+	LeaseToken   pgtype.UUID
+	LastError    string
+	RetrySeconds float64
+}
+
+type AbandonOutboundCardDeliveryParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.UUID
+	LastError  string
 }

@@ -402,6 +402,72 @@ func renderConfirmationCard(content string, binding ChatSessionBinding, taskID, 
 	return string(raw), nil
 }
 
+// renderConfirmationCardV2 is the CardKit terminal variant. Streaming is
+// explicitly closed before interactive controls appear, as CardKit rejects
+// callback-driven updates while streaming_mode remains enabled.
+func renderConfirmationCardV2(content string, binding ChatSessionBinding, taskID, allowedOpenID string, now time.Time) (string, error) {
+	content = truncateUTF8Bytes(content, 16*1024)
+	confirmMessage, ok := chatConfirmationReplyMessage(content)
+	if !ok {
+		confirmMessage = confirmationMessageConfirm
+	}
+	cancelMessage := confirmationCancelMessage(confirmMessage)
+	issuedAt := now.Unix()
+	expiresAt := now.Add(confirmationCardTTL).Unix()
+	chatID := string(outboundChatID(binding))
+	embeddedContent := truncateConfirmationCardContent(content)
+	value := func(action, message string) confirmationCardValue {
+		v := confirmationCardValue{
+			Kind: confirmationCardActionKind, Action: action, Message: message,
+			Content: embeddedContent, TaskID: taskID, ChatID: chatID,
+			ChatType: binding.ChatType, AllowedOpenID: allowedOpenID,
+			IssuedAtUnix: issuedAt, ExpiresAtUnix: expiresAt,
+		}
+		if binding.LastThreadID.Valid {
+			v.ThreadID = binding.LastThreadID.String
+		}
+		return v
+	}
+	card := map[string]any{
+		"schema": "2.0",
+		"config": map[string]any{
+			"update_multi":   true,
+			"streaming_mode": false,
+			"summary":        map[string]any{"content": "需要确认"},
+		},
+		"header": map[string]any{
+			"template": "blue",
+			"title":    map[string]any{"tag": "plain_text", "content": "需要确认"},
+		},
+		"body": map[string]any{
+			"elements": []any{
+				map[string]any{"tag": "markdown", "element_id": "confirmation_content", "content": content},
+				map[string]any{
+					"tag": "column_set", "element_id": "confirmation_actions",
+					"flex_mode": "stretch", "horizontal_spacing": "8px",
+					"columns": []any{
+						map[string]any{"tag": "column", "width": "weighted", "weight": 1, "elements": []any{
+							map[string]any{"tag": "button", "element_id": "confirmation_confirm", "text": map[string]any{"tag": "plain_text", "content": confirmMessage}, "type": "primary", "width": "fill", "behaviors": []any{
+								map[string]any{"type": "callback", "value": value(confirmationActionConfirm, confirmMessage)},
+							}},
+						}},
+						map[string]any{"tag": "column", "width": "weighted", "weight": 1, "elements": []any{
+							map[string]any{"tag": "button", "element_id": "confirmation_cancel", "text": map[string]any{"tag": "plain_text", "content": cancelMessage}, "type": "default", "width": "fill", "behaviors": []any{
+								map[string]any{"type": "callback", "value": value(confirmationActionCancel, cancelMessage)},
+							}},
+						}},
+					},
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(card)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
 func truncateConfirmationCardContent(content string) string {
 	runes := []rune(strings.TrimSpace(content))
 	if len(runes) <= maxConfirmationCardContentRunes {
