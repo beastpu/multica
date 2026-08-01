@@ -367,11 +367,8 @@ func (w *WorkflowSweeper) SweepOnce(ctx context.Context) error {
 				Code: "executor_unresolved", Message: "A workflow task needs a manual executor",
 			})
 		}
-		if definition.TimeoutMinutes > 0 && node.ActivatedAt.Valid &&
-			time.Now().After(node.ActivatedAt.Time.Add(time.Duration(definition.TimeoutMinutes)*time.Minute)) {
-			reasons = appendWorkflowWaitingReason(reasons, workflowdomain.WaitingReason{
-				Code: "node_timeout", Message: "The activity exceeded its configured timeout",
-			})
+		if reason, timedOut := workflowNodeTimeoutReason(node, definition); timedOut {
+			reasons = appendWorkflowWaitingReason(reasons, reason)
 		}
 		if !workflowWaitingReasonsEqual(node.WaitingReasons, reasons) {
 			encoded := workflowdomain.EncodeWaitingReasons(reasons)

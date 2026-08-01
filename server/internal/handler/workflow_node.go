@@ -1607,7 +1607,62 @@ func latestNodeByKey(nodes []db.WorkflowNodeInstance, key string) (db.WorkflowNo
 	return selected, nil
 }
 
+// workflowNodeTimeoutReason reports the timeout waiting reason for a node that
+// has been active past its configured timeout.
+//
+// Both the reconciler and the sweeper persist a node's waiting reasons, and
+// each rebuilds the list from scratch. Deriving the timeout here, from state
+// both of them already hold, keeps the later writer from erasing what the
+// earlier one recorded: an instance reads `node_timeout` to surface
+// `blocked_or_timeout`, so dropping it makes a stalled activity look exactly
+// like a healthy one.
+func workflowNodeTimeoutReason(
+	node db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+) (workflowdomain.WaitingReason, bool) {
+	if nodeDefinition.TimeoutMinutes <= 0 || !node.ActivatedAt.Valid {
+		return workflowdomain.WaitingReason{}, false
+	}
+	deadline := node.ActivatedAt.Time.Add(
+		time.Duration(nodeDefinition.TimeoutMinutes) * time.Minute,
+	)
+	if !time.Now().After(deadline) {
+		return workflowdomain.WaitingReason{}, false
+	}
+	return workflowdomain.WaitingReason{
+		Code:    "node_timeout",
+		Message: "The activity exceeded its configured timeout",
+	}, true
+}
+
+// evaluateWorkflowNode reports whether a node may complete, plus the reasons it
+// cannot. The timeout is appended here rather than inside the readiness rules
+// because it is not a readiness input — a node past its deadline still
+// completes the moment its real obligations are met.
 func (h *Handler) evaluateWorkflowNode(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+	definition workflowdomain.Definition,
+	includeManualCompletion bool,
+) (bool, []workflowdomain.WaitingReason, db.WorkflowNodeSubmission, db.WorkflowNodeVerdict, error) {
+	ready, reasons, submission, verdict, err := h.evaluateWorkflowNodeReadiness(
+		ctx, q, workspaceID, instance, node, nodeDefinition, definition,
+		includeManualCompletion,
+	)
+	if err != nil || ready {
+		return ready, reasons, submission, verdict, err
+	}
+	if reason, timedOut := workflowNodeTimeoutReason(node, nodeDefinition); timedOut {
+		reasons = appendWorkflowWaitingReason(reasons, reason)
+	}
+	return ready, reasons, submission, verdict, nil
+}
+
+func (h *Handler) evaluateWorkflowNodeReadiness(
 	ctx context.Context,
 	q *db.Queries,
 	workspaceID pgtype.UUID,

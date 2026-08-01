@@ -427,6 +427,19 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 		!jsonContainsWaitingReason(sweptNode.WaitingReasons, "node_timeout") {
 		t.Fatalf("sweeper waiting reasons = %s", sweptNode.WaitingReasons)
 	}
+	// The sweeper and the reconciler both persist waiting reasons. A reconcile
+	// triggered by any ordinary event (a comment, a submission, an issue status
+	// change) must not erase the timeout the sweeper just recorded — the
+	// instance derives `blocked_or_timeout` from it, so losing it makes a
+	// stalled activity look identical to a healthy one.
+	reconcileWorkflowForTest(t, instanceID, "runtime-test-timeout-survives-reconcile")
+	reconciledNode := latestWorkflowNodeForTest(t, instanceID, "work")
+	if !jsonContainsWaitingReason(reconciledNode.WaitingReasons, "node_timeout") {
+		t.Fatalf(
+			"node_timeout erased by reconcile: waiting reasons = %s",
+			reconciledNode.WaitingReasons,
+		)
+	}
 	var interventionInboxCount int
 	if err := testPool.QueryRow(ctx, `
 		SELECT count(*)
