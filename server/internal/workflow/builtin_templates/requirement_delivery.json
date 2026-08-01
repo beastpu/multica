@@ -56,8 +56,10 @@
       ],
       "completion": {
         "mode": "automatic",
-        "required_issue_outcome": "done"
-      }
+        "required_issue_outcome": "done",
+        "handoff_required": true
+      },
+      "timeout_minutes": 1440
     },
     {
       "key": "plan",
@@ -100,7 +102,8 @@
           "kind": "document",
           "required": true
         }
-      ]
+      ],
+      "timeout_minutes": 1440
     },
     {
       "key": "implement",
@@ -131,8 +134,10 @@
       ],
       "completion": {
         "mode": "automatic",
-        "required_issue_outcome": "done"
-      }
+        "required_issue_outcome": "done",
+        "handoff_required": true
+      },
+      "timeout_minutes": 1440
     },
     {
       "key": "acceptance",
@@ -140,7 +145,8 @@
       "activity_mode": "acceptance",
       "name": "验收",
       "description": "验收人确认业务结果，不通过可退回方案设计或代码实施。",
-      "owner_role": "approver"
+      "owner_role": "approver",
+      "timeout_minutes": 1440
     },
     {
       "key": "end",
