@@ -557,6 +557,9 @@ func TestHTTPClient_SendInteractiveCard_HappyPath(t *testing.T) {
 			if !strings.Contains(body["content"], "\"tag\"") {
 				t.Errorf("content not a card body: %q", body["content"])
 			}
+			if body["uuid"] != "stream-ee100002-ee10-ee10-ee10-eeeeeeeeeeee" {
+				t.Errorf("uuid: got %q", body["uuid"])
+			}
 		},
 	)
 
@@ -565,6 +568,7 @@ func TestHTTPClient_SendInteractiveCard_HappyPath(t *testing.T) {
 		InstallationID: testCreds(),
 		ChatID:         ChatID("oc_chat_1"),
 		CardJSON:       `{"tag":"div","text":"hi"}`,
+		IdempotencyKey: "stream-ee100002-ee10-ee10-ee10-eeeeeeeeeeee",
 	})
 	if err != nil {
 		t.Fatalf("send: %v", err)

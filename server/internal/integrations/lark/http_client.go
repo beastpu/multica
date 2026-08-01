@@ -302,6 +302,9 @@ func (c *httpAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParam
 		return "", err
 	}
 	path, body := outboundMessageRequest(p.ChatID, "interactive", p.CardJSON, p.ReplyTarget)
+	if p.IdempotencyKey != "" {
+		body["uuid"] = p.IdempotencyKey
+	}
 	var resp struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
@@ -536,6 +539,117 @@ func (c *httpAPIClient) PatchInteractiveCard(ctx context.Context, p PatchCardPar
 			c.invalidateToken(p.InstallationID.AppID)
 		}
 		return fmt.Errorf("lark http client: patch interactive card: code=%d msg=%q", resp.Code, resp.Msg)
+	}
+	return nil
+}
+
+func (c *httpAPIClient) CreateCardKitCard(ctx context.Context, p CreateCardKitCardParams) (string, error) {
+	if p.CardJSON == "" {
+		return "", errors.New("lark http client: missing CardKit card json")
+	}
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	if err != nil {
+		return "", err
+	}
+	body := map[string]any{"type": "card_json", "data": p.CardJSON}
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			CardID string `json:"card_id"`
+		} `json:"data"`
+	}
+	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, "/open-apis/cardkit/v1/cards", token, body, &resp); err != nil {
+		return "", fmt.Errorf("lark http client: create CardKit card: %w", err)
+	}
+	if resp.Code != 0 || resp.Data.CardID == "" {
+		if isTokenError(resp.Code) {
+			c.invalidateToken(p.InstallationID.AppID)
+		}
+		return "", &APIError{Op: "create CardKit card", Code: resp.Code, Msg: resp.Msg}
+	}
+	return resp.Data.CardID, nil
+}
+
+func (c *httpAPIClient) SendCardKitCard(ctx context.Context, p SendCardKitCardParams) (string, error) {
+	if p.ChatID == "" {
+		return "", errors.New("lark http client: missing chat_id")
+	}
+	if p.CardID == "" {
+		return "", errors.New("lark http client: missing CardKit card_id")
+	}
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	if err != nil {
+		return "", err
+	}
+	content, err := json.Marshal(map[string]any{
+		"type": "card",
+		"data": map[string]string{"card_id": p.CardID},
+	})
+	if err != nil {
+		return "", fmt.Errorf("lark http client: encode CardKit message content: %w", err)
+	}
+	path, body := outboundMessageRequest(p.ChatID, "interactive", string(content), p.ReplyTarget)
+	if p.IdempotencyKey != "" {
+		body["uuid"] = p.IdempotencyKey
+	}
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			MessageID string `json:"message_id"`
+		} `json:"data"`
+	}
+	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, path, token, body, &resp); err != nil {
+		return "", fmt.Errorf("lark http client: send CardKit card: %w", err)
+	}
+	if resp.Code != 0 || resp.Data.MessageID == "" {
+		if isTokenError(resp.Code) {
+			c.invalidateToken(p.InstallationID.AppID)
+		}
+		return "", &APIError{Op: "send CardKit card", Code: resp.Code, Msg: resp.Msg}
+	}
+	return resp.Data.MessageID, nil
+}
+
+func (c *httpAPIClient) UpdateCardKitCard(ctx context.Context, p UpdateCardKitCardParams) error {
+	if p.CardID == "" {
+		return errors.New("lark http client: missing CardKit card_id")
+	}
+	if p.CardJSON == "" {
+		return errors.New("lark http client: missing CardKit card json")
+	}
+	if p.Sequence <= 0 {
+		return errors.New("lark http client: CardKit sequence must be positive")
+	}
+	var card map[string]any
+	if err := json.Unmarshal([]byte(p.CardJSON), &card); err != nil {
+		return fmt.Errorf("lark http client: decode CardKit card json: %w", err)
+	}
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{
+		"card":     card,
+		"sequence": p.Sequence,
+	}
+	if p.IdempotencyKey != "" {
+		body["uuid"] = p.IdempotencyKey
+	}
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	path := "/open-apis/cardkit/v1/cards/" + url.PathEscape(p.CardID)
+	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPut, path, token, body, &resp); err != nil {
+		return fmt.Errorf("lark http client: update CardKit card: %w", err)
+	}
+	if resp.Code != 0 {
+		if isTokenError(resp.Code) {
+			c.invalidateToken(p.InstallationID.AppID)
+		}
+		return &APIError{Op: "update CardKit card", Code: resp.Code, Msg: resp.Msg}
 	}
 	return nil
 }
@@ -1222,7 +1336,7 @@ func (c *httpAPIClient) doJSON(ctx context.Context, baseURL, method, path, token
 		return fmt.Errorf("read body: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("http %d: %s", resp.StatusCode, truncate(string(rawBody), 512))
+		return &HTTPStatusError{StatusCode: resp.StatusCode, Path: path, Body: truncate(string(rawBody), 512)}
 	}
 	if out != nil && len(rawBody) > 0 {
 		if err := json.Unmarshal(rawBody, out); err != nil {
@@ -1249,6 +1363,19 @@ type APIError struct {
 	Op   string
 	Code int
 	Msg  string
+}
+
+// HTTPStatusError preserves a definitive non-2xx status for narrowly scoped
+// callers such as CardKit's permission fallback while retaining the historical
+// error text used by the rest of the transport.
+type HTTPStatusError struct {
+	StatusCode int
+	Path       string
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("http %d: %s", e.StatusCode, e.Body)
 }
 
 func (e *APIError) Error() string {

@@ -164,11 +164,12 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analytics
 }
 
 type RouterOptions struct {
-	HTTPMetrics     *obsmetrics.HTTPMetrics
-	BusinessMetrics *obsmetrics.BusinessMetrics
-	DaemonHub       *daemonws.Hub
-	DaemonWakeup    service.TaskWakeupNotifier
-	FeatureFlags    *featureflag.Service
+	HTTPMetrics         *obsmetrics.HTTPMetrics
+	BusinessMetrics     *obsmetrics.BusinessMetrics
+	LarkOutboundMetrics *obsmetrics.LarkOutboundMetrics
+	DaemonHub           *daemonws.Hub
+	DaemonWakeup        service.TaskWakeupNotifier
+	FeatureFlags        *featureflag.Service
 	// HeartbeatScheduler, when non-nil, replaces the default synchronous
 	// passthrough scheduler on the constructed Handler. main.go injects a
 	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
@@ -340,8 +341,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// backfills) take it directly; the constructor-based services
 				// wrap *db.Queries internally, so they keep taking queries.
 				cs := lark.NewChannelStore(queries)
-				patcher := lark.NewPatcher(cs, installSvc, larkClient, lark.PatcherConfig{})
+				patcher := lark.NewPatcher(cs, installSvc, larkClient, lark.PatcherConfig{Metrics: opts.LarkOutboundMetrics})
 				patcher.Register(bus)
+				h.LarkOutboundPatcher = patcher
 				inboxNotifier := lark.NewInboxNotifier(cs, installSvc, larkClient, lark.InboxNotifierConfig{
 					Logger:    slog.Default(),
 					PublicURL: larkInboxURLFromEnv(),
