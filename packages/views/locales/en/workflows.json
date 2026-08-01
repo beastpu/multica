@@ -275,7 +275,17 @@
     "artifact_missing_optional": "Optional — not submitted.",
     "artifact_read": "Read",
     "artifact_hide": "Hide",
-    "artifact_review_comment": "Review note (optional)"
+    "artifact_review_comment": "Review note (optional)",
+    "rework_criterion": "Which criterion or test failed",
+    "rework_criterion_placeholder": "e.g. AC-004, or the failing test name",
+    "rework_gap": "Expected vs actual (required)",
+    "rework_gap_placeholder": "What should have happened, and what happened instead",
+    "rework_hint": "Where to change (optional)",
+    "rework_hint_placeholder": "A file, function, or the part of the approach to revisit",
+    "rework_reason_help": "The executor redoing this work reads these verbatim. A one-line reason gives it nothing to act on.",
+    "rework_badge": "rework ×{{attempt}}",
+    "rework_badge_title": "This work was sent back — it is on attempt {{attempt}}.",
+    "reworked_activities": "Reworked activities"
   },
   "editor": {
     "title": "Workflow template",
@@ -323,7 +333,7 @@
     "issue_policy_dynamic": "Dynamic decomposition",
     "issue_policy_both": "Fixed and dynamic",
     "issue_policy_deprecated": "deprecated",
-    "issue_policy_deprecated_hint": "Runtime decomposition is retired. Break the work down as sub-issues under this activity\u2019s own issue instead — switch to fixed tasks and declare that issue.",
+    "issue_policy_deprecated_hint": "Runtime decomposition is retired. Break the work down as sub-issues under this activity’s own issue instead — switch to fixed tasks and declare that issue.",
     "confirmation": "Node confirmation",
     "confirmation_none": "No confirmation",
     "confirmation_owner_any": "Any node owner",

@@ -385,14 +385,25 @@ describe("AcceptancePanel", () => {
       status: "approved",
     });
 
+    // A rejection is only useful if it says what is wrong, so the button stays
+    // disabled until the expected-versus-actual answer is filled in — the
+    // criterion and the hint are optional context around it.
     const rework = screen.getByRole("button", { name: "Request changes" });
     expect(rework).toBeDisabled();
-    await user.type(screen.getByRole("textbox", { name: "Reason" }), "Fix API");
+    await user.type(
+      screen.getByRole("textbox", { name: "Which criterion or test failed" }),
+      "AC-004",
+    );
+    expect(rework).toBeDisabled();
+    await user.type(
+      screen.getByRole("textbox", { name: "Expected vs actual (required)" }),
+      "should block, allowed instead",
+    );
     expect(rework).toBeEnabled();
     await user.click(rework);
     expect(mocks.decideAcceptance).toHaveBeenLastCalledWith({
       status: "changes_requested",
-      reason: "Fix API",
+      reason: "Failed: AC-004\nExpected vs actual: should block, allowed instead",
       rework_target_node_key: "implementation",
     });
   });

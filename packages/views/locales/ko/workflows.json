@@ -275,7 +275,17 @@
     "artifact_missing_optional": "선택 — 제출되지 않음.",
     "artifact_read": "본문 보기",
     "artifact_hide": "접기",
-    "artifact_review_comment": "검토 의견(선택)"
+    "artifact_review_comment": "검토 의견(선택)",
+    "rework_criterion": "어떤 기준이나 테스트가 실패했는지",
+    "rework_criterion_placeholder": "예: AC-004 또는 실패한 테스트 이름",
+    "rework_gap": "기대 동작 대 실제 동작 (필수)",
+    "rework_gap_placeholder": "무엇이 일어나야 했고 실제로는 무엇이 일어났는지",
+    "rework_hint": "어디를 고칠지 (선택)",
+    "rework_hint_placeholder": "파일, 함수 또는 다시 검토할 접근 방식",
+    "rework_reason_help": "작업을 다시 하는 실행자가 이 내용을 그대로 읽습니다. 한 줄짜리 사유로는 실행할 근거가 없습니다.",
+    "rework_badge": "재작업 ×{{attempt}}",
+    "rework_badge_title": "이 작업은 반려된 적이 있습니다. 현재 {{attempt}}번째 시도입니다.",
+    "reworked_activities": "재작업한 활동"
   },
   "editor": {
     "title": "워크플로 템플릿",

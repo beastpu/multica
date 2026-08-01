@@ -275,7 +275,17 @@
     "artifact_missing_optional": "可选 — 尚未提交。",
     "artifact_read": "查看正文",
     "artifact_hide": "收起",
-    "artifact_review_comment": "验收意见（可选）"
+    "artifact_review_comment": "验收意见（可选）",
+    "rework_criterion": "哪条标准或用例没通过",
+    "rework_criterion_placeholder": "例如 AC-004，或失败的用例名",
+    "rework_gap": "期望 vs 实际（必填）",
+    "rework_gap_placeholder": "本该发生什么，实际发生了什么",
+    "rework_hint": "建议从哪里改（选填）",
+    "rework_hint_placeholder": "某个文件、函数，或需要重新考虑的思路",
+    "rework_reason_help": "重做这份工作的执行者会原样读到这几条。只写一句话的理由，等于没给它可执行的信息。",
+    "rework_badge": "返工 ×{{attempt}}",
+    "rework_badge_title": "这份工作被退回过，当前是第 {{attempt}} 次执行。",
+    "reworked_activities": "返工过的活动"
   },
   "editor": {
     "title": "工作流模板",

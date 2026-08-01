@@ -143,6 +143,12 @@ import { ActorAvatar } from "../common/actor-avatar";
 import { WorkflowCanvas } from "./workflow-canvas";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { WorkflowStatusBadge } from "./workflow-status";
+import { ReworkReasonFields } from "./rework-reason-fields";
+import {
+  composeReworkReason,
+  emptyReworkReasonDraft,
+  isReworkReasonComplete,
+} from "./rework-reason";
 import {
   latestWorkflowAttemptNodes,
   type WorkflowIssueScope,
@@ -1215,6 +1221,7 @@ function NodeTransitionPanel({
   const [completeOpen, setCompleteOpen] = useState(false);
   const [completionNote, setCompletionNote] = useState("");
   const [completionValues, setCompletionValues] = useState<Record<string, unknown>>({});
+  const [reworkDraft, setReworkDraft] = useState(emptyReworkReasonDraft);
   const [managementAction, setManagementAction] = useState<
     "complete" | "skip" | "rollback" | null
   >(null);
@@ -1273,15 +1280,26 @@ function NodeTransitionPanel({
     }
   };
 
+  // A rollback sends work back to an executor; force-complete and skip end it.
+  // Only the first has someone downstream who needs to know what to change.
+  const isReworkAction = managementAction === "rollback";
+  const managementReasonValue = isReworkAction
+    ? composeReworkReason(reworkDraft)
+    : managementReason.trim();
+  const managementReasonReady = isReworkAction
+    ? isReworkReasonComplete(reworkDraft)
+    : managementReason.trim().length > 0;
+
   const runManagementAction = async () => {
-    if (!managementAction || !managementReason.trim()) return;
+    if (!managementAction || !managementReasonReady) return;
     try {
       await transition.mutateAsync({
         action: managementAction,
-        reason: managementReason.trim(),
+        reason: managementReasonValue,
       });
       setManagementAction(null);
       setManagementReason("");
+      setReworkDraft(emptyReworkReasonDraft);
     } catch {
       return;
     }
@@ -1436,17 +1454,27 @@ function NodeTransitionPanel({
               {t(($) => $.workbench.admin_actions_help)}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-1.5">
-            <Label htmlFor={`workflow-management-reason-${node.id}`}>
-              {t(($) => $.workbench.action_reason)}
-            </Label>
-            <Textarea
-              id={`workflow-management-reason-${node.id}`}
-              value={managementReason}
-              onChange={(event) => setManagementReason(event.target.value)}
-              rows={3}
-            />
-          </div>
+          {isReworkAction
+            ? (
+              <ReworkReasonFields
+                idPrefix={`workflow-rollback-${node.id}`}
+                draft={reworkDraft}
+                onChange={setReworkDraft}
+              />
+            )
+            : (
+              <div className="space-y-1.5">
+                <Label htmlFor={`workflow-management-reason-${node.id}`}>
+                  {t(($) => $.workbench.action_reason)}
+                </Label>
+                <Textarea
+                  id={`workflow-management-reason-${node.id}`}
+                  value={managementReason}
+                  onChange={(event) => setManagementReason(event.target.value)}
+                  rows={3}
+                />
+              </div>
+            )}
           {transition.isError && (
             <p role="alert" className="text-xs text-destructive">
               {t(($) => $.errors.action_failed)}
@@ -1463,7 +1491,7 @@ function NodeTransitionPanel({
             <Button
               type="button"
               variant={managementAction === "rollback" ? "outline" : "default"}
-              disabled={!managementReason.trim() || transition.isPending}
+              disabled={!managementReasonReady || transition.isPending}
               onClick={() => void runManagementAction()}
             >
               {managementAction === "rollback" && <Undo2 aria-hidden="true" />}
@@ -1686,13 +1714,13 @@ export function AcceptancePanel({
   canDecide: boolean;
 }) {
   const { t } = useT("workflows");
-  const [reason, setReason] = useState("");
   const [target, setTarget] = useState(targets[0]?.value ?? "");
+  const [reworkDraft, setReworkDraft] = useState(emptyReworkReasonDraft);
   const decide = useDecideWorkflowAcceptance(instanceId);
 
   useEffect(() => {
     setTarget(targets[0]?.value ?? "");
-    setReason("");
+    setReworkDraft(emptyReworkReasonDraft);
   }, [node.id, targets]);
 
   if (!pending) {
@@ -1722,18 +1750,14 @@ export function AcceptancePanel({
           {t(($) => $.actions.approve)}
         </Button>
       </div>
-      <div className="grid gap-3 border-t pt-4 sm:grid-cols-[1fr_220px_auto] sm:items-end">
-        <div className="space-y-1.5">
-          <Label htmlFor="acceptance-reason">
-            {t(($) => $.workbench.reason)}
-          </Label>
-          <Input
-            id="acceptance-reason"
-            value={reason}
-            className="min-h-11 sm:min-h-8"
-            onChange={(event) => setReason(event.target.value)}
-          />
-        </div>
+      <div className="space-y-3 border-t pt-4">
+        <ReworkReasonFields
+          idPrefix="acceptance-rework"
+          draft={reworkDraft}
+          onChange={setReworkDraft}
+        />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-[220px_auto] sm:items-end">
         <div className="space-y-1.5">
           <Label htmlFor="acceptance-target">
             {t(($) => $.workbench.rework_target)}
@@ -1753,14 +1777,15 @@ export function AcceptancePanel({
           variant="outline"
           className="min-h-11"
           onClick={() => {
-            if (!reason.trim() || !target) return;
+            if (!isReworkReasonComplete(reworkDraft) || !target) return;
             decide.mutate({
               status: "changes_requested",
-              reason: reason.trim(),
+              reason: composeReworkReason(reworkDraft),
               rework_target_node_key: target,
             });
           }}
-          disabled={decide.isPending || !reason.trim() || !target}
+          disabled={decide.isPending ||
+            !isReworkReasonComplete(reworkDraft) || !target}
         >
           <RotateCcw />
           {t(($) => $.actions.request_changes)}
@@ -1916,6 +1941,18 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
     );
     setSelectedNodeId((current ?? nodes[0])!.id);
   }, [nodes, selectedNodeId]);
+
+  // Rework is invisible once it is over: the retried attempt supersedes the
+  // one before it, and the issue it reuses looks like any other. Counting the
+  // activities that took more than one attempt is what makes a run that
+  // bounced twice distinguishable from one that went straight through.
+  const reworkedActivityCount = useMemo(
+    () =>
+      nodes.filter((node) =>
+        node.node_kind === "activity" && node.attempt > 1
+      ).length,
+    [nodes],
+  );
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId);
   useEffect(() => {
@@ -2176,6 +2213,13 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             >
               {hostIssue?.identifier ?? ""}
             </span>
+            {reworkedActivityCount > 0 && (
+              <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 tabular-nums dark:text-amber-400">
+                {t(($) => $.workbench.reworked_activities)}
+                {" "}
+                {reworkedActivityCount}
+              </span>
+            )}
           </div>
           <AppLink
             href={p.issueDetail(instance.host_issue_id)}
@@ -2372,6 +2416,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
       <WorkflowNodeIssues
         issues={blockingNodeIssues}
         canManage={canManageSelectedNode}
+        attempt={selectedNode.attempt}
         rule={requiredIssueOutcome === "terminal"
           ? t(($) => $.workbench.completion_rule_terminal)
           : requiredIssueOutcome === "none"

@@ -275,7 +275,17 @@
     "artifact_missing_optional": "任意 — 未提出。",
     "artifact_read": "本文を見る",
     "artifact_hide": "閉じる",
-    "artifact_review_comment": "レビューコメント（任意）"
+    "artifact_review_comment": "レビューコメント（任意）",
+    "rework_criterion": "どの基準・テストが通らなかったか",
+    "rework_criterion_placeholder": "例：AC-004、または失敗したテスト名",
+    "rework_gap": "期待値と実際（必須）",
+    "rework_gap_placeholder": "本来どうなるべきで、実際はどうだったか",
+    "rework_hint": "どこを直すか（任意）",
+    "rework_hint_placeholder": "ファイル、関数、または見直すべき方針",
+    "rework_reason_help": "やり直す実行者はこれをそのまま読みます。一行の理由では手掛かりになりません。",
+    "rework_badge": "やり直し ×{{attempt}}",
+    "rework_badge_title": "この作業は差し戻されています。現在 {{attempt}} 回目です。",
+    "reworked_activities": "やり直した活動"
   },
   "editor": {
     "title": "ワークフローテンプレート",

@@ -32,6 +32,7 @@ export function WorkflowNodeIssues({
   completed,
   total,
   action,
+  attempt,
 }: {
   issues: Issue[];
   canManage: boolean;
@@ -42,6 +43,11 @@ export function WorkflowNodeIssues({
   total?: number;
   /** The node's transition controls, rendered under the list. */
   action?: ReactNode;
+  /**
+   * The node's current attempt. Rework continues on the same issue, so past 1
+   * the identifier alone no longer says this work has been sent back before.
+   */
+  attempt?: number;
 }) {
   const { t } = useT("workflows");
   const p = useWorkspacePaths();
@@ -86,6 +92,14 @@ export function WorkflowNodeIssues({
                 <span className="shrink-0 font-mono text-xs text-muted-foreground">
                   {issue.identifier}
                 </span>
+                {typeof attempt === "number" && attempt > 1 && (
+                  <span
+                    className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 tabular-nums dark:text-amber-400"
+                    title={t(($) => $.workbench.rework_badge_title)}
+                  >
+                    {t(($) => $.workbench.rework_badge, { attempt })}
+                  </span>
+                )}
                 <span className="min-w-0 flex-1 truncate text-sm">
                   {issue.title}
                 </span>
