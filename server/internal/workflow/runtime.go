@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
-	"time"
 )
 
 // WaitingReason is persisted on a node instance so clients can explain why an
@@ -107,29 +105,6 @@ func (p SerialPlan) Node(nodeKey string) (NodeDefinition, bool) {
 		return NodeDefinition{}, false
 	}
 	return p.Ordered[index], true
-}
-
-func submissionValueMatches(fieldType string, value any) bool {
-	switch fieldType {
-	case "text", "member", "agent", "squad":
-		text, ok := value.(string)
-		return ok && strings.TrimSpace(text) != ""
-	case "number":
-		_, ok := value.(float64)
-		return ok
-	case "boolean":
-		_, ok := value.(bool)
-		return ok
-	case "date":
-		text, ok := value.(string)
-		if !ok {
-			return false
-		}
-		_, err := time.Parse("2006-01-02", text)
-		return err == nil
-	default:
-		return false
-	}
 }
 
 func EncodeWaitingReasons(reasons []WaitingReason) []byte {
