@@ -697,7 +697,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
         <div className="mx-auto max-w-7xl space-y-4">
           {selectedVersion && definition ? (
             <>
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
                   <select
                     aria-label={t(($) => $.editor.version_selector)}
@@ -717,23 +717,6 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
                     ))}
                   </select>
                 </div>
-                {/*
-                  The change summary is what the version list reads back, so
-                  it belongs beside the version — not inside a publish dialog
-                  that no longer exists.
-                */}
-                {canEdit && (
-                  <Input
-                    aria-label={t(($) => $.editor.change_summary)}
-                    value={changeSummary}
-                    placeholder={t(($) => $.editor.change_summary_placeholder)}
-                    className="h-9 max-w-xs text-xs"
-                    onChange={(event) => {
-                      setChangeSummary(event.target.value);
-                      setDirty(true);
-                    }}
-                  />
-                )}
               </div>
               <div className="grid min-h-[34rem] overflow-hidden rounded-xl border bg-surface lg:grid-cols-[minmax(0,1fr)_360px]">
                 <section className="min-w-0 space-y-4 border-b p-5 lg:border-r lg:border-b-0">

@@ -304,8 +304,6 @@
     "unsaved": "未保存の変更",
     "saved": "下書きを保存しました",
     "conflict": "別の場所で下書きが更新されました。再読み込みしてください。",
-    "change_summary": "変更概要",
-    "change_summary_placeholder": "このバージョンの変更内容を記述",
     "active_runs_unchanged": "実行中のワークフローは変更されません。",
     "mobile_read_only": "モバイルではテンプレートは読み取り専用です。編集には大きな画面を使用してください。",
     "version_selector": "テンプレートバージョン",

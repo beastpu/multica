@@ -947,18 +947,21 @@ func (h *Handler) transitionWorkflowNode(
 			writeError(w, http.StatusBadRequest, "rollback target must be an activity")
 			return
 		}
+		// A run parked on its end gate has no open node, and that is exactly
+		// when rolling back matters most — acceptance found something wrong.
+		// Requiring a current node to precede made the whole graph
+		// unreachable at the one point a rejection happens.
 		activeNodes := workflowActiveNodes(latestWorkflowNodesByKey(nodes), plan)
-		if len(activeNodes) == 0 {
-			writeError(w, http.StatusConflict, "workflow has no current node")
-			return
-		}
-		precedesCurrent := false
-		for _, current := range activeNodes {
-			precedesCurrent = precedesCurrent || plan.IsAncestor(node.NodeKey, current.NodeKey)
-		}
-		if !precedesCurrent {
-			writeError(w, http.StatusConflict, "rollback target must precede the current node")
-			return
+		if len(activeNodes) > 0 {
+			precedesCurrent := false
+			for _, current := range activeNodes {
+				precedesCurrent = precedesCurrent ||
+					plan.IsAncestor(node.NodeKey, current.NodeKey)
+			}
+			if !precedesCurrent {
+				writeError(w, http.StatusConflict, "rollback target must precede the current node")
+				return
+			}
 		}
 		latestTarget, findErr := latestNodeByKey(nodes, targetDefinition.Key)
 		if findErr != nil {
@@ -985,6 +988,17 @@ func (h *Handler) transitionWorkflowNode(
 					return
 				}
 			}
+		}
+		// The run is leaving its end gate, so an undecided acceptance is now a
+		// question about a state this rollback just undid.
+		if err := qtx.DeletePendingWorkflowAcceptance(
+			r.Context(),
+			db.DeletePendingWorkflowAcceptanceParams{
+				WorkflowInstanceID: locked.ID, WorkspaceID: locked.WorkspaceID,
+			},
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to clear pending acceptance")
+			return
 		}
 		snapshot, _ := json.Marshal(targetDefinition)
 		activatedNode, err = qtx.CreateWorkflowNodeInstance(

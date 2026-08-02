@@ -153,7 +153,7 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 		)
 	}
 	var created struct {
-		Template workflowResponse                `json:"template"`
+		Workflow workflowResponse                `json:"workflow"`
 		Draft    workflowWorkflowVersionResponse `json:"draft"`
 	}
 	if err := json.Unmarshal(create.Body.Bytes(), &created); err != nil {
@@ -164,12 +164,12 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 	publishRequest := withURLParam(
 		newRequest(
 			http.MethodPost,
-			"/api/workflow-templates/"+created.Template.ID+
+			"/api/workflow-templates/"+created.Workflow.ID+
 				"/publish?workspace_id="+testWorkspaceID,
 			nil,
 		),
 		"id",
-		created.Template.ID,
+		created.Workflow.ID,
 	)
 	testHandler.PublishWorkflow(publish, publishRequest)
 	if publish.Code != http.StatusOK {
@@ -183,9 +183,9 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 	var publishedDefinition []byte
 	if err := testPool.QueryRow(ctx, `
 		SELECT definition
-		FROM workflow_template_version
-		WHERE template_id = $1 AND status = 'published' AND version = 1
-	`, created.Template.ID).Scan(&publishedDefinition); err != nil {
+		FROM workflow_version
+		WHERE workflow_id = $1 AND status = 'published' AND version = 1
+	`, created.Workflow.ID).Scan(&publishedDefinition); err != nil {
 		t.Fatalf("load published workflow definition: %v", err)
 	}
 
@@ -193,12 +193,12 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 	createDraftRequest := withURLParam(
 		newRequest(
 			http.MethodPost,
-			"/api/workflow-templates/"+created.Template.ID+
+			"/api/workflow-templates/"+created.Workflow.ID+
 				"/draft?workspace_id="+testWorkspaceID,
 			nil,
 		),
 		"id",
-		created.Template.ID,
+		created.Workflow.ID,
 	)
 	testHandler.CreateWorkflowDraft(createDraft, createDraftRequest)
 	if createDraft.Code != http.StatusCreated {
@@ -220,7 +220,7 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 		request := withURLParam(
 			newRequest(
 				http.MethodPut,
-				"/api/workflow-templates/"+created.Template.ID+
+				"/api/workflow-templates/"+created.Workflow.ID+
 					"/draft?workspace_id="+testWorkspaceID,
 				map[string]any{
 					"definition":     updatedDefinition,
@@ -229,7 +229,7 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 				},
 			),
 			"id",
-			created.Template.ID,
+			created.Workflow.ID,
 		)
 		testHandler.UpdateWorkflowDraft(recorder, request)
 		return recorder
@@ -266,9 +266,9 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 	var publishedAfter []byte
 	if err := testPool.QueryRow(ctx, `
 		SELECT definition
-		FROM workflow_template_version
-		WHERE template_id = $1 AND status = 'published' AND version = 1
-	`, created.Template.ID).Scan(&publishedAfter); err != nil {
+		FROM workflow_version
+		WHERE workflow_id = $1 AND status = 'published' AND version = 1
+	`, created.Workflow.ID).Scan(&publishedAfter); err != nil {
 		t.Fatalf("reload published workflow definition: %v", err)
 	}
 	if string(publishedAfter) != string(publishedDefinition) {
@@ -283,12 +283,12 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 	memberGetRequest := withURLParam(
 		newRequest(
 			http.MethodGet,
-			"/api/workflow-templates/"+created.Template.ID+
+			"/api/workflow-templates/"+created.Workflow.ID+
 				"?workspace_id="+testWorkspaceID,
 			nil,
 		),
 		"id",
-		created.Template.ID,
+		created.Workflow.ID,
 	)
 	memberGetRequest.Header.Set("X-User-ID", memberID)
 	testHandler.GetWorkflow(memberGet, memberGetRequest)
@@ -314,12 +314,12 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 	archiveRequest := withURLParam(
 		newRequest(
 			http.MethodPost,
-			"/api/workflow-templates/"+created.Template.ID+
+			"/api/workflow-templates/"+created.Workflow.ID+
 				"/archive?workspace_id="+testWorkspaceID,
 			nil,
 		),
 		"id",
-		created.Template.ID,
+		created.Workflow.ID,
 	)
 	testHandler.ArchiveWorkflow(archive, archiveRequest)
 	if archive.Code != http.StatusOK {
@@ -339,18 +339,18 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 	}{
 		{
 			name: "metadata", method: http.MethodPatch,
-			path: "/api/workflow-templates/" + created.Template.ID,
+			path: "/api/workflow-templates/" + created.Workflow.ID,
 			body: map[string]any{"name": "Changed after archive"},
 			call: testHandler.UpdateWorkflowMetadata,
 		},
 		{
 			name: "draft", method: http.MethodPost,
-			path: "/api/workflow-templates/" + created.Template.ID + "/draft",
+			path: "/api/workflow-templates/" + created.Workflow.ID + "/draft",
 			call: testHandler.CreateWorkflowDraft,
 		},
 		{
 			name: "update draft", method: http.MethodPut,
-			path: "/api/workflow-templates/" + created.Template.ID + "/draft",
+			path: "/api/workflow-templates/" + created.Workflow.ID + "/draft",
 			body: map[string]any{
 				"definition": updatedDefinition, "change_summary": "Archived",
 				"revision": draft.Revision + 1,
@@ -359,7 +359,7 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 		},
 		{
 			name: "publish", method: http.MethodPost,
-			path: "/api/workflow-templates/" + created.Template.ID + "/publish",
+			path: "/api/workflow-templates/" + created.Workflow.ID + "/publish",
 			call: testHandler.PublishWorkflow,
 		},
 	}
@@ -373,7 +373,7 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 					mutation.body,
 				),
 				"id",
-				created.Template.ID,
+				created.Workflow.ID,
 			)
 			mutation.call(recorder, request)
 			if recorder.Code != http.StatusConflict {

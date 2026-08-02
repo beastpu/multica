@@ -242,6 +242,14 @@ describe("WorkflowPage", () => {
     mocks.validation.errors = [];
   });
 
+  it("does not expose the internal version change summary in the editor toolbar", async () => {
+    renderPage();
+
+    await screen.findByRole("combobox", { name: "Template version" });
+    expect(screen.queryByRole("textbox", { name: "Change summary" }))
+      .not.toBeInTheDocument();
+  });
+
   it("saves the edited definition into a version in one action", async () => {
     // Authoring used to be four steps — create draft, save, validate, publish.
     // Saving is now all of them, so the edit and the click are the whole flow.

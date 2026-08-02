@@ -28,15 +28,15 @@ func TestStartWorkflowRunCreatesIdempotentStandaloneRun(t *testing.T) {
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template (workspace_id, name, status, created_by)
+		INSERT INTO workflow (workspace_id, name, status, created_by)
 		VALUES ($1, 'Standalone test template', 'published', $2)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template_version (
-			workspace_id, template_id, version, status, definition,
+		INSERT INTO workflow_version (
+			workspace_id, workflow_id, version, status, definition,
 			definition_checksum, created_by, published_by, published_at
 		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
 		RETURNING id
@@ -44,7 +44,7 @@ func TestStartWorkflowRunCreatesIdempotentStandaloneRun(t *testing.T) {
 		t.Fatalf("create template version: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
-		UPDATE workflow_template SET latest_published_version_id = $1 WHERE id = $2
+		UPDATE workflow SET latest_published_version_id = $1 WHERE id = $2
 	`, versionID, templateID); err != nil {
 		t.Fatalf("publish template: %v", err)
 	}
@@ -144,15 +144,15 @@ func TestStandaloneRunDispatchesIssueLessAgentNode(t *testing.T) {
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template (workspace_id, name, status, created_by)
+		INSERT INTO workflow (workspace_id, name, status, created_by)
 		VALUES ($1, 'Direct agent template', 'published', $2)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template_version (
-			workspace_id, template_id, version, status, definition,
+		INSERT INTO workflow_version (
+			workspace_id, workflow_id, version, status, definition,
 			definition_checksum, created_by, published_by, published_at
 		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
 		RETURNING id
@@ -160,7 +160,7 @@ func TestStandaloneRunDispatchesIssueLessAgentNode(t *testing.T) {
 		t.Fatalf("create template version: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
-		UPDATE workflow_template SET latest_published_version_id = $1 WHERE id = $2
+		UPDATE workflow SET latest_published_version_id = $1 WHERE id = $2
 	`, versionID, templateID); err != nil {
 		t.Fatalf("publish template: %v", err)
 	}
@@ -408,15 +408,15 @@ func startDirectStandaloneRunForTest(
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template (workspace_id, name, status, created_by)
+		INSERT INTO workflow (workspace_id, name, status, created_by)
 		VALUES ($1, $2, 'published', $3)
 		RETURNING id
 	`, testWorkspaceID, title+" template", testUserID).Scan(&templateID); err != nil {
 		t.Fatalf("create direct template: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template_version (
-			workspace_id, template_id, version, status, definition,
+		INSERT INTO workflow_version (
+			workspace_id, workflow_id, version, status, definition,
 			definition_checksum, created_by, published_by, published_at
 		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
 		RETURNING id
@@ -424,7 +424,7 @@ func startDirectStandaloneRunForTest(
 		t.Fatalf("create direct template version: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
-		UPDATE workflow_template SET latest_published_version_id = $1 WHERE id = $2
+		UPDATE workflow SET latest_published_version_id = $1 WHERE id = $2
 	`, versionID, templateID); err != nil {
 		t.Fatalf("publish direct template: %v", err)
 	}

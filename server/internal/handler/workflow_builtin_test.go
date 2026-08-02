@@ -16,14 +16,14 @@ func deleteWorkflowsByName(t *testing.T, names []string) {
 	ctx := context.Background()
 	for _, name := range names {
 		if _, err := testPool.Exec(ctx, `
-			DELETE FROM workflow_template_version WHERE template_id IN (
-				SELECT id FROM workflow_template WHERE workspace_id = $1 AND name = $2
+			DELETE FROM workflow_version WHERE workflow_id IN (
+				SELECT id FROM workflow WHERE workspace_id = $1 AND name = $2
 			)
 		`, testWorkspaceID, name); err != nil {
 			t.Fatalf("delete workflow template versions %q: %v", name, err)
 		}
 		if _, err := testPool.Exec(ctx, `
-			DELETE FROM workflow_template WHERE workspace_id = $1 AND name = $2
+			DELETE FROM workflow WHERE workspace_id = $1 AND name = $2
 		`, testWorkspaceID, name); err != nil {
 			t.Fatalf("delete workflow templates %q: %v", name, err)
 		}
@@ -88,12 +88,12 @@ func TestCreateWorkflowFromBuiltin(t *testing.T) {
 		t.Fatalf("from-builtin status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	var response struct {
-		Template struct {
+		Workflow struct {
 			ID                       string `json:"id"`
 			Name                     string `json:"name"`
 			Status                   string `json:"status"`
 			LatestPublishedVersionID string `json:"latest_published_version_id"`
-		} `json:"template"`
+		} `json:"workflow"`
 		Version struct {
 			ID      string `json:"id"`
 			Version int    `json:"version"`
@@ -103,11 +103,11 @@ func TestCreateWorkflowFromBuiltin(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode from-builtin response: %v", err)
 	}
-	if response.Template.Name != builtin.Name {
-		t.Fatalf("template name = %q, want %q", response.Template.Name, builtin.Name)
+	if response.Workflow.Name != builtin.Name {
+		t.Fatalf("template name = %q, want %q", response.Workflow.Name, builtin.Name)
 	}
-	if response.Template.Status != "published" {
-		t.Fatalf("template status = %q, want published", response.Template.Status)
+	if response.Workflow.Status != "published" {
+		t.Fatalf("template status = %q, want published", response.Workflow.Status)
 	}
 	if response.Version.Status != "published" || response.Version.Version != 1 {
 		t.Fatalf(
@@ -116,10 +116,10 @@ func TestCreateWorkflowFromBuiltin(t *testing.T) {
 			response.Version.Status,
 		)
 	}
-	if response.Template.LatestPublishedVersionID != response.Version.ID {
+	if response.Workflow.LatestPublishedVersionID != response.Version.ID {
 		t.Fatalf(
 			"latest_published_version_id = %q, want %q",
-			response.Template.LatestPublishedVersionID,
+			response.Workflow.LatestPublishedVersionID,
 			response.Version.ID,
 		)
 	}

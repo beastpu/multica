@@ -73,7 +73,7 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template (
+		INSERT INTO workflow (
 			workspace_id, name, status, created_by
 		) VALUES ($1, 'Runtime test template', 'published', $2)
 		RETURNING id
@@ -81,8 +81,8 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 		t.Fatalf("create template: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template_version (
-			workspace_id, template_id, version, status, definition,
+		INSERT INTO workflow_version (
+			workspace_id, workflow_id, version, status, definition,
 			definition_checksum, created_by, published_by, published_at
 		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
 		RETURNING id
@@ -90,7 +90,7 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 		t.Fatalf("create template version: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
-		UPDATE workflow_template SET latest_published_version_id = $1 WHERE id = $2
+		UPDATE workflow SET latest_published_version_id = $1 WHERE id = $2
 	`, versionID, templateID); err != nil {
 		t.Fatalf("set published version: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 	}
 	postWorkflowVerdict(t, firstWorkNode.ID, "runtime-test-verdict-1")
 
-	assertPendingWorkflowAcceptance(t, instanceID, 1)
+	assertPendingWorkflowAcceptance(t, instanceID)
 	var firstAttemptIssueID string
 	if err := testPool.QueryRow(ctx, `
 		SELECT issue_id::text FROM workflow_node_task
@@ -621,7 +621,7 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 	postSubmission(t, uuidToString(secondWorkNode.ID), "runtime-test-submission-2", "reworked result")
 	postWorkflowVerdict(t, uuidToString(secondWorkNode.ID), "runtime-test-verdict-2")
 
-	assertPendingWorkflowAcceptance(t, instanceID, 2)
+	assertPendingWorkflowAcceptance(t, instanceID)
 	decideAcceptance(t, instanceID, map[string]any{
 		"status": "changes_requested", "reason": "Needs another pass",
 		"rework_target_node_key": "work", "idempotency_key": "runtime-test-rework",
@@ -633,7 +633,7 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 	}
 	transitionWorkflowNode(t, uuidToString(thirdWorkNode.ID), "skip", "runtime-test-skip")
 
-	assertPendingWorkflowAcceptance(t, instanceID, 3)
+	assertPendingWorkflowAcceptance(t, instanceID)
 	decideAcceptance(t, instanceID, map[string]any{
 		"status": "approved", "reason": "Accepted", "idempotency_key": "runtime-test-approved",
 	})
@@ -696,15 +696,15 @@ func TestCreateWorkflowAtomicAndIdempotent(t *testing.T) {
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template (workspace_id, name, status, created_by)
+		INSERT INTO workflow (workspace_id, name, status, created_by)
 		VALUES ($1, 'Atomic test template', 'published', $2)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template_version (
-			workspace_id, template_id, version, status, definition,
+		INSERT INTO workflow_version (
+			workspace_id, workflow_id, version, status, definition,
 			definition_checksum, created_by, published_by, published_at
 		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
 		RETURNING id
@@ -712,7 +712,7 @@ func TestCreateWorkflowAtomicAndIdempotent(t *testing.T) {
 		t.Fatalf("create version: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
-		UPDATE workflow_template SET latest_published_version_id = $1 WHERE id = $2
+		UPDATE workflow SET latest_published_version_id = $1 WHERE id = $2
 	`, versionID, templateID); err != nil {
 		t.Fatalf("publish template: %v", err)
 	}
@@ -722,12 +722,12 @@ func TestCreateWorkflowAtomicAndIdempotent(t *testing.T) {
 		"idempotency_key": "atomic-create-test",
 	}
 	firstRecorder := httptest.NewRecorder()
-	testHandler.CreateWorkflow(
+	testHandler.CreateWorkflowRun(
 		firstRecorder,
 		newRequest(http.MethodPost, "/api/workflow-instances?workspace_id="+testWorkspaceID, body),
 	)
 	if firstRecorder.Code != http.StatusCreated {
-		t.Fatalf("CreateWorkflow status = %d, body = %s", firstRecorder.Code, firstRecorder.Body.String())
+		t.Fatalf("CreateWorkflowRun status = %d, body = %s", firstRecorder.Code, firstRecorder.Body.String())
 	}
 	var first workflowInstanceDetailResponse
 	if err := json.Unmarshal(firstRecorder.Body.Bytes(), &first); err != nil {
@@ -739,7 +739,7 @@ func TestCreateWorkflowAtomicAndIdempotent(t *testing.T) {
 	}
 
 	secondRecorder := httptest.NewRecorder()
-	testHandler.CreateWorkflow(
+	testHandler.CreateWorkflowRun(
 		secondRecorder,
 		newRequest(http.MethodPost, "/api/workflow-instances?workspace_id="+testWorkspaceID, body),
 	)
@@ -893,7 +893,7 @@ func TestWorkflowPauseResumeAndCancelPreserveExistingIssue(t *testing.T) {
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workflow_instance (
-			workspace_id, template_id, template_version_id, host_issue_id,
+			workspace_id, workflow_id, workflow_version_id, host_issue_id,
 			status, host_status_mode, started_by_type, started_by_id
 		) VALUES (
 			$1, gen_random_uuid(), gen_random_uuid(), $2,
@@ -1056,7 +1056,7 @@ func TestWorkflowIssueRelationshipGuardsAndHostCleanup(t *testing.T) {
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workflow_instance (
-			workspace_id, template_id, template_version_id, host_issue_id,
+			workspace_id, workflow_id, workflow_version_id, host_issue_id,
 			status, host_status_mode, started_by_type, started_by_id
 		) VALUES ($1, gen_random_uuid(), gen_random_uuid(), $2, 'running', 'independent', 'member', $3)
 		RETURNING id
@@ -1785,12 +1785,11 @@ func TestWorkflowCapabilityMatchUsesStructuredEnabledSkill(t *testing.T) {
 	}
 }
 
-func TestWorkflowDirectExecutorDefaultsAndIssueOverrides(t *testing.T) {
+func TestWorkflowDirectExecutorOwnsEveryTask(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
 	ctx := context.Background()
 	defaultAgentID := createHandlerTestAgent(t, "workflow-default-agent", nil)
-	overrideAgentID := createHandlerTestAgent(t, "workflow-override-agent", nil)
 
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
@@ -1859,9 +1858,12 @@ func TestWorkflowDirectExecutorDefaultsAndIssueOverrides(t *testing.T) {
 		t.Fatalf("direct node owner participants = %#v, err=%v", participants, err)
 	}
 
+	// Both tasks answer to the node's executor. The issue template used to
+	// carry its own assignee that outranked it, which is the "three places to
+	// write it, the third one wins" the executor field replaced.
 	expected := map[string]string{
 		"implementation": defaultAgentID,
-		"verification":   overrideAgentID,
+		"verification":   defaultAgentID,
 	}
 	for _, task := range started.Tasks {
 		if task.IssueID == nil {
@@ -2017,7 +2019,7 @@ func TestWorkflowAgentSubmissionAndVerdictRemainControlledSuggestion(t *testing.
 				}},
 				SubmissionSchema: &workflowdomain.SubmissionSchema{},
 				Reviewer: &workflowdomain.ReviewerDefinition{
-					Kind: "role", Role: "owner", Required: true,
+					Kind: "role", Role: "worker", Required: true,
 				},
 				Completion: workflowdomain.CompletionDefinition{
 					RequiredIssueOutcome: "done", SubmissionRequired: true,
@@ -3442,15 +3444,15 @@ func createPublishedWorkflowForTest(
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template (workspace_id, name, status, created_by)
+		INSERT INTO workflow (workspace_id, name, status, created_by)
 		VALUES ($1, $2, 'published', $3)
 		RETURNING id
 	`, testWorkspaceID, name, testUserID).Scan(&templateID); err != nil {
 		t.Fatalf("create workflow template %q: %v", name, err)
 	}
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template_version (
-			workspace_id, template_id, version, status, definition,
+		INSERT INTO workflow_version (
+			workspace_id, workflow_id, version, status, definition,
 			definition_checksum, created_by, published_by, published_at
 		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
 		RETURNING id
@@ -3458,7 +3460,7 @@ func createPublishedWorkflowForTest(
 		t.Fatalf("create workflow template version %q: %v", name, err)
 	}
 	if _, err := testPool.Exec(ctx, `
-		UPDATE workflow_template SET latest_published_version_id = $1 WHERE id = $2
+		UPDATE workflow SET latest_published_version_id = $1 WHERE id = $2
 	`, versionID, templateID); err != nil {
 		t.Fatalf("publish workflow template %q: %v", name, err)
 	}
@@ -3650,7 +3652,7 @@ func decideAcceptance(t *testing.T, instanceID string, body map[string]any) {
 // assertPendingWorkflowAcceptance checks the run stopped at its end gate.
 // Acceptance is no longer a node, so what proves the run is waiting is a
 // pending acceptance row plus an instance that has not completed.
-func assertPendingWorkflowAcceptance(t *testing.T, instanceID string, wantRevision int32) {
+func assertPendingWorkflowAcceptance(t *testing.T, instanceID string) {
 	t.Helper()
 	acceptance, err := testHandler.Queries.GetLatestWorkflowAcceptance(
 		context.Background(),
@@ -3662,8 +3664,10 @@ func assertPendingWorkflowAcceptance(t *testing.T, instanceID string, wantRevisi
 	if err != nil {
 		t.Fatalf("load pending acceptance: %v", err)
 	}
-	if acceptance.Status != "pending" || acceptance.Revision != wantRevision {
-		t.Fatalf("acceptance = %#v, want pending revision %d", acceptance, wantRevision)
+	// The revision is not the assertion — it restarts when a rollback clears
+	// an undecided round. That the run is parked on its end gate is.
+	if acceptance.Status != "pending" {
+		t.Fatalf("acceptance = %#v, want pending", acceptance)
 	}
 	instance, err := testHandler.Queries.GetWorkflowInstanceInWorkspace(
 		context.Background(),
@@ -3882,7 +3886,7 @@ func cleanupWorkflowRuntimeTest(t *testing.T) {
 			"workflow_executor_resolution",
 			"workflow_node_task", "workflow_node_participant", "workflow_node_instance",
 			"workflow_instance_role_assignment", "workflow_instance",
-			"workflow_template_version", "workflow_template",
+			"workflow_version", "workflow",
 		} {
 			if _, err := testPool.Exec(ctx, "DELETE FROM "+table+" WHERE workspace_id = $1", testWorkspaceID); err != nil {
 				t.Fatalf("cleanup %s: %v", table, err)

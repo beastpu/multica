@@ -1500,6 +1500,28 @@ func (q *Queries) DeferWorkflowInstanceReconcile(ctx context.Context, arg DeferW
 	return i, err
 }
 
+const deletePendingWorkflowAcceptance = `-- name: DeletePendingWorkflowAcceptance :exec
+DELETE FROM workflow_acceptance
+WHERE workflow_instance_id = $1
+  AND workspace_id = $2
+  AND status = 'pending'
+`
+
+type DeletePendingWorkflowAcceptanceParams struct {
+	WorkflowInstanceID pgtype.UUID `json:"workflow_instance_id"`
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+}
+
+// Clears an undecided acceptance when the run leaves its end gate. The row is
+// an unanswered question about a state that a rollback has undone; leaving it
+// pending makes a run that is mid-rework read as waiting for a decision.
+// Nothing is lost — the rollback event is the history, and a decided
+// acceptance is never touched.
+func (q *Queries) DeletePendingWorkflowAcceptance(ctx context.Context, arg DeletePendingWorkflowAcceptanceParams) error {
+	_, err := q.db.Exec(ctx, deletePendingWorkflowAcceptance, arg.WorkflowInstanceID, arg.WorkspaceID)
+	return err
+}
+
 const deleteWorkflowAcceptancesByHost = `-- name: DeleteWorkflowAcceptancesByHost :exec
 DELETE FROM workflow_acceptance acceptance
 WHERE acceptance.workspace_id = $1
@@ -3373,7 +3395,17 @@ SELECT
           AND newer.node_key = node.node_key
           AND newer.attempt > node.attempt
       )
-  ), 0) AS integer) AS activity_completed
+  ), 0) AS integer) AS activity_completed,
+  -- Whether the run is parked on its end gate. Inferring this from "running
+  -- with no open node" reads a healthy run that simply has no nodes as
+  -- awaiting a decision nobody was asked for.
+  EXISTS (
+    SELECT 1
+    FROM workflow_acceptance acceptance
+    WHERE acceptance.workflow_instance_id = wi.id
+      AND acceptance.workspace_id = wi.workspace_id
+      AND acceptance.status = 'pending'
+  ) AS awaiting_acceptance
 FROM workflow_instance wi
 LEFT JOIN issue host
   ON host.id = wi.host_issue_id
@@ -3403,6 +3435,7 @@ type ListWorkflowInstanceDisplayContextsRow struct {
 	WorkflowVersion    int32       `json:"workflow_version"`
 	ActivityTotal      int32       `json:"activity_total"`
 	ActivityCompleted  int32       `json:"activity_completed"`
+	AwaitingAcceptance bool        `json:"awaiting_acceptance"`
 }
 
 func (q *Queries) ListWorkflowInstanceDisplayContexts(ctx context.Context, arg ListWorkflowInstanceDisplayContextsParams) ([]ListWorkflowInstanceDisplayContextsRow, error) {
@@ -3424,6 +3457,7 @@ func (q *Queries) ListWorkflowInstanceDisplayContexts(ctx context.Context, arg L
 			&i.WorkflowVersion,
 			&i.ActivityTotal,
 			&i.ActivityCompleted,
+			&i.AwaitingAcceptance,
 		); err != nil {
 			return nil, err
 		}

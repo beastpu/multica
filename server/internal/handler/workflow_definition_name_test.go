@@ -32,12 +32,12 @@ func createWorkflowNamed(t *testing.T, name string) (int, string) {
 		map[string]any{"name": name, "description": "", "definition": definition},
 	))
 	var response struct {
-		Template struct {
+		Workflow struct {
 			ID string `json:"id"`
-		} `json:"template"`
+		} `json:"workflow"`
 	}
 	_ = json.Unmarshal(recorder.Body.Bytes(), &response)
-	return recorder.Code, response.Template.ID
+	return recorder.Code, response.Workflow.ID
 }
 
 func renameTemplate(t *testing.T, id, name string) int {
@@ -75,8 +75,8 @@ func cleanupWorkflowNames(t *testing.T, names ...string) {
 	for _, name := range names {
 		if _, err := testPool.Exec(
 			context.Background(),
-			`DELETE FROM workflow_template_version WHERE template_id IN (
-			   SELECT id FROM workflow_template
+			`DELETE FROM workflow_version WHERE workflow_id IN (
+			   SELECT id FROM workflow
 			   WHERE workspace_id = $1 AND name = $2)`,
 			testWorkspaceID, name,
 		); err != nil {
@@ -84,7 +84,7 @@ func cleanupWorkflowNames(t *testing.T, names ...string) {
 		}
 		if _, err := testPool.Exec(
 			context.Background(),
-			`DELETE FROM workflow_template WHERE workspace_id = $1 AND name = $2`,
+			`DELETE FROM workflow WHERE workspace_id = $1 AND name = $2`,
 			testWorkspaceID, name,
 		); err != nil {
 			t.Fatalf("cleanup templates: %v", err)

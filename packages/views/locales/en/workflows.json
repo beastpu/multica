@@ -304,8 +304,6 @@
     "unsaved": "Unsaved changes",
     "saved": "Draft saved",
     "conflict": "The draft changed elsewhere. Refresh before saving again.",
-    "change_summary": "Change summary",
-    "change_summary_placeholder": "Describe what changed in this version",
     "active_runs_unchanged": "This will not modify workflow instances already running.",
     "mobile_read_only": "Template editing is read-only on mobile. Use a larger screen to change the graph.",
     "version_selector": "Template version",

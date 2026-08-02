@@ -304,8 +304,6 @@
     "unsaved": "有未保存改动",
     "saved": "草稿已保存",
     "conflict": "草稿已在其他位置更新，请刷新后再保存。",
-    "change_summary": "版本变更摘要",
-    "change_summary_placeholder": "说明这个版本修改了什么",
     "active_runs_unchanged": "已经运行的工作流实例不会被修改。",
     "mobile_read_only": "移动端仅支持只读查看模板，请使用更大屏幕编辑流程图。",
     "version_selector": "模板版本",

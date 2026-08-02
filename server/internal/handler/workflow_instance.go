@@ -86,16 +86,17 @@ type workflowActorReferenceResponse struct {
 }
 
 type workflowInstanceDisplayContext struct {
-	HostIssueTitle    string
-	HostIssueNumber   int32
-	HostIssuePriority string
-	ProjectID         pgtype.UUID
-	WorkflowName      string
-	WorkflowVersion   int32
-	CurrentActivities []workflowCurrentActivityResponse
-	ActivityCompleted int32
-	ActivityTotal     int32
-	CurrentOwners     []workflowActorReferenceResponse
+	HostIssueTitle     string
+	HostIssueNumber    int32
+	HostIssuePriority  string
+	ProjectID          pgtype.UUID
+	WorkflowName       string
+	WorkflowVersion    int32
+	CurrentActivities  []workflowCurrentActivityResponse
+	ActivityCompleted  int32
+	ActivityTotal      int32
+	CurrentOwners      []workflowActorReferenceResponse
+	AwaitingAcceptance bool
 }
 
 type workflowRoleAssignmentResponse struct {
@@ -213,7 +214,7 @@ func workflowInstanceRuntimeResponseFromFacts(
 ) workflowInstanceResponse {
 	response := workflowInstanceToResponse(row)
 	response.NextAction, response.InterventionReason =
-		workflowRuntimeNextAction(row.Status, nodes, tasks)
+		workflowRuntimeNextAction(row.Status, nodes, tasks, display.AwaitingAcceptance)
 	response.HostIssueTitle = display.HostIssueTitle
 	if issuePrefix != "" && display.HostIssueNumber > 0 {
 		response.HostIssueIdentifier = issuePrefix + "-" +
@@ -258,14 +259,15 @@ func (h *Handler) loadWorkflowInstanceDisplayContexts(
 	for _, row := range rows {
 		contexts[uuidToString(row.WorkflowInstanceID)] =
 			workflowInstanceDisplayContext{
-				HostIssueTitle:    row.HostIssueTitle,
-				HostIssueNumber:   row.HostIssueNumber,
-				HostIssuePriority: row.HostIssuePriority,
-				ProjectID:         row.ProjectID,
-				WorkflowName:      row.WorkflowName,
-				WorkflowVersion:   row.WorkflowVersion,
-				ActivityCompleted: row.ActivityCompleted,
-				ActivityTotal:     row.ActivityTotal,
+				HostIssueTitle:     row.HostIssueTitle,
+				HostIssueNumber:    row.HostIssueNumber,
+				HostIssuePriority:  row.HostIssuePriority,
+				ProjectID:          row.ProjectID,
+				WorkflowName:       row.WorkflowName,
+				WorkflowVersion:    row.WorkflowVersion,
+				ActivityCompleted:  row.ActivityCompleted,
+				ActivityTotal:      row.ActivityTotal,
+				AwaitingAcceptance: row.AwaitingAcceptance,
 			}
 	}
 	activities, err := h.Queries.ListWorkflowCurrentActivitiesForInstances(
@@ -340,6 +342,7 @@ func workflowRuntimeNextAction(
 	status string,
 	nodes []db.WorkflowNodeInstance,
 	tasks []db.WorkflowNodeTask,
+	awaitingAcceptance bool,
 ) (string, string) {
 	if status == "paused" {
 		return "resume", "workflow_paused"
@@ -361,7 +364,6 @@ func workflowRuntimeNextAction(
 	}
 	reasonCodes := make(map[string]struct{})
 	blocked := false
-	hasOpenNode := false
 	for _, node := range nodes {
 		if node.Status == "blocked" {
 			blocked = true
@@ -369,7 +371,6 @@ func workflowRuntimeNextAction(
 		if !workflowNodeIsOpen(node) {
 			continue
 		}
-		hasOpenNode = true
 		var reasons []workflowdomain.WaitingReason
 		if json.Unmarshal(node.WaitingReasons, &reasons) != nil {
 			continue
@@ -386,10 +387,11 @@ func workflowRuntimeNextAction(
 		}
 		return false
 	}
-	// A running instance with nothing open has finished its work and is held
-	// only by acceptance. Acceptance is no longer a node, so there is no node
-	// waiting reason to read it off — the absence of open nodes is the signal.
-	if status == "running" && !hasOpenNode {
+	// Acceptance is no longer a node, so there is no node waiting reason to
+	// read it off — the pending record is the fact. "Running with nothing
+	// open" looked like the same thing and is not: a run with no nodes at all
+	// matches it while nobody has been asked for anything.
+	if awaitingAcceptance {
 		return "review_acceptance", "awaiting_acceptance"
 	}
 	switch {
@@ -429,8 +431,11 @@ func workflowPersonalizedNextAction(
 	viewerID pgtype.UUID,
 	viewerIsAdmin bool,
 	roles workflowViewerNodeRoles,
+	awaitingAcceptance bool,
 ) (string, string) {
-	action, reason := workflowRuntimeNextAction(instance.Status, nodes, tasks)
+	action, reason := workflowRuntimeNextAction(
+		instance.Status, nodes, tasks, awaitingAcceptance,
+	)
 	if action == "none" || action == "view_current_activity" {
 		return action, reason
 	}
@@ -1981,6 +1986,7 @@ func (h *Handler) ListWorkflowInstances(w http.ResponseWriter, r *http.Request) 
 				viewerID,
 				viewerIsAdmin,
 				rolesByInstance[key],
+				contexts[key].AwaitingAcceptance,
 			)
 	}
 	var nextCursor *string

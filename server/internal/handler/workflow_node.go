@@ -1201,7 +1201,8 @@ func (h *Handler) reconcileWorkflowInstance(
 				switch {
 				case workflowWaitingReasonsBlockNode(reasons):
 					nextStatus = "blocked"
-				case workflowWaitingReasonsAwaitReview(reasons):
+				case workflowdomain.ReviewerAcceptsMember(nodeDefinition) &&
+					workflowWaitingReasonsAwaitReview(reasons):
 					nextStatus = "in_review"
 				}
 				updatedNode, err := qtx.UpdateWorkflowNodeState(ctx, db.UpdateWorkflowNodeStateParams{
@@ -1847,6 +1848,10 @@ func workflowVerdictIsManualCompletion(verdict db.WorkflowNodeVerdict) bool {
 // workflowWaitingReasonsAwaitReview reports whether the node is stopped on its
 // reviewer rather than on its own work. The distinction is what the canvas
 // renders: the executor has delivered, and the flow is waiting on someone else.
+//
+// Callers pair this with ReviewerAcceptsMember, because "someone else" has to
+// be a person. An api or auto reviewer already answered — a rule that
+// evaluated to no is a node that is waiting, not one under review.
 func workflowWaitingReasonsAwaitReview(
 	reasons []workflowdomain.WaitingReason,
 ) bool {

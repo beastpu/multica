@@ -28,12 +28,13 @@ func workflowTestUUID(last byte) pgtype.UUID {
 
 func TestWorkflowRuntimeNextActionUsesSpecificIntervention(t *testing.T) {
 	tests := []struct {
-		name       string
-		status     string
-		nodes      []db.WorkflowNodeInstance
-		tasks      []db.WorkflowNodeTask
-		wantAction string
-		wantReason string
+		name               string
+		status             string
+		nodes              []db.WorkflowNodeInstance
+		tasks              []db.WorkflowNodeTask
+		awaitingAcceptance bool
+		wantAction         string
+		wantReason         string
 	}{
 		{
 			name:   "materialization failure wins",
@@ -72,19 +73,19 @@ func TestWorkflowRuntimeNextActionUsesSpecificIntervention(t *testing.T) {
 			name:   "member verdict",
 			status: "running",
 			nodes: []db.WorkflowNodeInstance{
-				workflowNodeWithReason(t, "waiting", "member_verdict_required"),
+				workflowNodeWithReason(t, "in_review", "review_required"),
 			},
 			wantAction: "record_verdict",
 			wantReason: "awaiting_verdict",
 		},
 		{
-			name:   "acceptance",
-			status: "running",
-			nodes: []db.WorkflowNodeInstance{
-				workflowNodeWithReason(t, "waiting", "awaiting_acceptance"),
-			},
-			wantAction: "review_acceptance",
-			wantReason: "awaiting_acceptance",
+			// Acceptance left the canvas, so nothing on a node says the run is
+			// parked on it — the pending record does.
+			name:               "acceptance",
+			status:             "running",
+			awaitingAcceptance: true,
+			wantAction:         "review_acceptance",
+			wantReason:         "awaiting_acceptance",
 		},
 		{
 			name:   "manual completion",
@@ -117,6 +118,7 @@ func TestWorkflowRuntimeNextActionUsesSpecificIntervention(t *testing.T) {
 				test.status,
 				test.nodes,
 				test.tasks,
+				test.awaitingAcceptance,
 			)
 			if action != test.wantAction || reason != test.wantReason {
 				t.Fatalf(
@@ -150,13 +152,14 @@ func TestWorkflowPersonalizedNextActionOnlyCreatesRealUserTodo(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		instance   db.WorkflowInstance
-		nodes      []db.WorkflowNodeInstance
-		tasks      []db.WorkflowNodeTask
-		isAdmin    bool
-		roles      workflowViewerNodeRoles
-		wantAction string
+		name               string
+		instance           db.WorkflowInstance
+		nodes              []db.WorkflowNodeInstance
+		tasks              []db.WorkflowNodeTask
+		isAdmin            bool
+		roles              workflowViewerNodeRoles
+		awaitingAcceptance bool
+		wantAction         string
 	}{
 		{
 			name: "unrelated member does not receive acceptance todo",
@@ -167,13 +170,14 @@ func TestWorkflowPersonalizedNextActionOnlyCreatesRealUserTodo(t *testing.T) {
 			wantAction: "view_current_activity",
 		},
 		{
-			name: "configured approver receives acceptance todo",
+			// Acceptance judges the run, so it is not gated on holding a node
+			// role — canDecideWorkflowAcceptance enforces the approver.
+			name: "acceptance reaches whoever is looking",
 			instance: db.WorkflowInstance{
 				ID: instanceID, Status: "running",
 			},
-			nodes:      []db.WorkflowNodeInstance{nodeWithReason("awaiting_acceptance")},
-			roles:      roles("approver"),
-			wantAction: "review_acceptance",
+			awaitingAcceptance: true,
+			wantAction:         "review_acceptance",
 		},
 		{
 			name: "node owner receives submission todo",
@@ -223,6 +227,7 @@ func TestWorkflowPersonalizedNextActionOnlyCreatesRealUserTodo(t *testing.T) {
 				viewerID,
 				test.isAdmin,
 				test.roles,
+				test.awaitingAcceptance,
 			)
 			if action != test.wantAction {
 				t.Fatalf(

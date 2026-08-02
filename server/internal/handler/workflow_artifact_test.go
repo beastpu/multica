@@ -62,15 +62,15 @@ func startArtifactWorkflow(t *testing.T, key string) (string, string) {
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template (workspace_id, name, status, created_by)
+		INSERT INTO workflow (workspace_id, name, status, created_by)
 		VALUES ($1, $3, 'published', $2)
 		RETURNING id
 	`, testWorkspaceID, testUserID, "Artifact test template "+t.Name()).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template_version (
-			workspace_id, template_id, version, status, definition,
+		INSERT INTO workflow_version (
+			workspace_id, workflow_id, version, status, definition,
 			definition_checksum, created_by, published_by, published_at
 		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
 		RETURNING id
@@ -78,7 +78,7 @@ func startArtifactWorkflow(t *testing.T, key string) (string, string) {
 		t.Fatalf("create template version: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
-		UPDATE workflow_template SET latest_published_version_id = $1 WHERE id = $2
+		UPDATE workflow SET latest_published_version_id = $1 WHERE id = $2
 	`, versionID, templateID); err != nil {
 		t.Fatalf("set published version: %v", err)
 	}
@@ -367,21 +367,21 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template (workspace_id, name, status, created_by)
+		INSERT INTO workflow (workspace_id, name, status, created_by)
 		VALUES ($1, $3, 'published', $2) RETURNING id
 	`, testWorkspaceID, testUserID, "Handoff test template "+t.Name()).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template_version (
-			workspace_id, template_id, version, status, definition,
+		INSERT INTO workflow_version (
+			workspace_id, workflow_id, version, status, definition,
 			definition_checksum, created_by, published_by, published_at
 		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now()) RETURNING id
 	`, testWorkspaceID, templateID, definitionJSON, testUserID).Scan(&versionID); err != nil {
 		t.Fatalf("create template version: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
-		UPDATE workflow_template SET latest_published_version_id = $1 WHERE id = $2
+		UPDATE workflow SET latest_published_version_id = $1 WHERE id = $2
 	`, versionID, templateID); err != nil {
 		t.Fatalf("set published version: %v", err)
 	}
@@ -798,15 +798,15 @@ func TestDynamicNodeWaitsToBeDecomposed(t *testing.T) {
 	}
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template (workspace_id, name, status, created_by)
+		INSERT INTO workflow (workspace_id, name, status, created_by)
 		VALUES ($1, $3, 'published', $2)
 		RETURNING id
 	`, testWorkspaceID, testUserID, "Decomposition "+t.Name()).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow_template_version (
-			workspace_id, template_id, version, status, definition,
+		INSERT INTO workflow_version (
+			workspace_id, workflow_id, version, status, definition,
 			definition_checksum, created_by, published_by, published_at
 		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
 		RETURNING id
@@ -814,7 +814,7 @@ func TestDynamicNodeWaitsToBeDecomposed(t *testing.T) {
 		t.Fatalf("create template version: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
-		UPDATE workflow_template SET latest_published_version_id = $1 WHERE id = $2
+		UPDATE workflow SET latest_published_version_id = $1 WHERE id = $2
 	`, versionID, templateID); err != nil {
 		t.Fatalf("set published version: %v", err)
 	}
