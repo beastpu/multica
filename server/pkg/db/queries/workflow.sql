@@ -270,7 +270,7 @@ SELECT
 FROM workflow_node_instance node
 WHERE node.workspace_id = @workspace_id
   AND node.workflow_instance_id = ANY(@workflow_instance_ids::uuid[])
-  AND node.status IN ('active', 'waiting', 'blocked')
+  AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
   AND NOT EXISTS (
     SELECT 1 FROM workflow_node_instance newer
     WHERE newer.workflow_instance_id = node.workflow_instance_id
@@ -291,7 +291,7 @@ JOIN workflow_node_instance node
  AND node.workspace_id = owner.workspace_id
 WHERE node.workspace_id = @workspace_id
   AND node.workflow_instance_id = ANY(@workflow_instance_ids::uuid[])
-  AND node.status IN ('active', 'waiting', 'blocked')
+  AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
   AND owner.role = 'owner'
 ORDER BY node.workflow_instance_id, owner.created_at, owner.actor_id;
 
@@ -307,7 +307,7 @@ JOIN workflow_node_instance node
  AND node.workspace_id = participant.workspace_id
 WHERE node.workspace_id = @workspace_id
   AND node.workflow_instance_id = ANY(@workflow_instance_ids::uuid[])
-  AND node.status IN ('active', 'waiting', 'blocked')
+  AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
   AND participant.actor_type = 'member'
   AND participant.actor_id = @viewer_id
 ORDER BY
@@ -357,7 +357,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' IN ('executor_needs_setup', 'executor_unresolved')
     ) THEN 'configure_executor'
     WHEN wi.status IN ('running', 'needs_setup') AND EXISTS (
@@ -366,7 +366,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' IN (
           'required_task_not_materialized', 'stale_materialization',
           'direct_execution_failed'
@@ -378,7 +378,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' IN ('awaiting_acceptance', 'acceptance_not_approved')
     ) THEN 'review_acceptance'
     WHEN wi.status = 'running' AND EXISTS (
@@ -387,7 +387,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' IN (
           'task_submission_required', 'valid_submission_required',
           'submission_required_field_missing', 'submission_field_type_invalid'
@@ -399,7 +399,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' IN (
           'member_verdict_required', 'verdict_definition_missing', 'verdict_not_passed'
         )
@@ -410,7 +410,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' = 'confirmation_required'
     ) THEN 'confirm_activity'
     WHEN wi.status = 'running' AND EXISTS (
@@ -419,7 +419,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' = 'manual_completion_required'
     ) THEN 'complete_activity'
     WHEN wi.status = 'running' AND EXISTS (
@@ -428,7 +428,7 @@ CROSS JOIN LATERAL (
       LEFT JOIN LATERAL jsonb_array_elements(node.waiting_reasons) reason ON true
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND (
           node.status = 'blocked'
           OR reason->>'code' = 'node_timeout'
@@ -476,7 +476,7 @@ CROSS JOIN LATERAL (
       jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND participant.role = 'owner'
         AND participant.actor_type = 'member'
         AND participant.actor_id = sqlc.arg(viewer_id)::uuid
@@ -510,7 +510,7 @@ CROSS JOIN LATERAL (
         jsonb_array_elements(node.waiting_reasons) reason
         WHERE node.workflow_instance_id = wi.id
           AND node.workspace_id = wi.workspace_id
-          AND node.status IN ('active', 'waiting', 'blocked')
+          AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
           AND participant.role = 'approver'
           AND participant.actor_type = 'member'
           AND participant.actor_id = sqlc.arg(viewer_id)::uuid
@@ -523,7 +523,7 @@ CROSS JOIN LATERAL (
         FROM workflow_node_instance node
         WHERE node.workflow_instance_id = wi.id
           AND node.workspace_id = wi.workspace_id
-          AND node.status IN ('active', 'waiting', 'blocked')
+          AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
           AND EXISTS (
             SELECT 1
             FROM jsonb_array_elements(node.waiting_reasons) reason
@@ -566,7 +566,7 @@ CROSS JOIN LATERAL (
          AND participant.workspace_id = node.workspace_id
         WHERE node.workflow_instance_id = wi.id
           AND node.workspace_id = wi.workspace_id
-          AND node.status IN ('active', 'waiting', 'blocked')
+          AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
           AND participant.role = 'owner'
           AND participant.actor_type = 'member'
           AND participant.actor_id = sqlc.arg(viewer_id)::uuid
@@ -607,7 +607,7 @@ WHERE wi.workspace_id = @workspace_id
     WHERE current_node.workflow_instance_id = wi.id
       AND current_node.workspace_id = wi.workspace_id
       AND current_node.node_key = sqlc.narg(current_node_key)
-      AND current_node.status IN ('active', 'waiting', 'blocked')
+      AND current_node.status IN ('active', 'in_review', 'waiting', 'blocked')
   ))
   AND (
     sqlc.narg(owner_id)::uuid IS NULL
@@ -617,7 +617,7 @@ WHERE wi.workspace_id = @workspace_id
         ON owner_node.id = owner_filter.workflow_node_instance_id
        AND owner_node.workspace_id = owner_filter.workspace_id
       WHERE owner_node.workflow_instance_id = wi.id
-        AND owner_node.status IN ('active', 'waiting', 'blocked')
+        AND owner_node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND owner_filter.role = 'owner'
         AND owner_filter.actor_type = sqlc.narg(owner_type)
         AND owner_filter.actor_id = sqlc.narg(owner_id)
@@ -710,7 +710,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' IN ('executor_needs_setup', 'executor_unresolved')
     ) THEN 'configure_executor'
     WHEN wi.status IN ('running', 'needs_setup') AND EXISTS (
@@ -719,7 +719,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' IN (
           'required_task_not_materialized', 'stale_materialization',
           'direct_execution_failed'
@@ -731,7 +731,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' IN ('awaiting_acceptance', 'acceptance_not_approved')
     ) THEN 'review_acceptance'
     WHEN wi.status = 'running' AND EXISTS (
@@ -740,7 +740,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' IN (
           'task_submission_required', 'valid_submission_required',
           'submission_required_field_missing', 'submission_field_type_invalid'
@@ -752,7 +752,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' IN (
           'member_verdict_required', 'verdict_definition_missing', 'verdict_not_passed'
         )
@@ -763,7 +763,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' = 'confirmation_required'
     ) THEN 'confirm_activity'
     WHEN wi.status = 'running' AND EXISTS (
@@ -772,7 +772,7 @@ CROSS JOIN LATERAL (
            jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND reason->>'code' = 'manual_completion_required'
     ) THEN 'complete_activity'
     WHEN wi.status = 'running' AND EXISTS (
@@ -781,7 +781,7 @@ CROSS JOIN LATERAL (
       LEFT JOIN LATERAL jsonb_array_elements(node.waiting_reasons) reason ON true
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND (
           node.status = 'blocked'
           OR reason->>'code' = 'node_timeout'
@@ -829,7 +829,7 @@ CROSS JOIN LATERAL (
       jsonb_array_elements(node.waiting_reasons) reason
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
-        AND node.status IN ('active', 'waiting', 'blocked')
+        AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND participant.role = 'owner'
         AND participant.actor_type = 'member'
         AND participant.actor_id = sqlc.arg(viewer_id)::uuid
@@ -863,7 +863,7 @@ CROSS JOIN LATERAL (
         jsonb_array_elements(node.waiting_reasons) reason
         WHERE node.workflow_instance_id = wi.id
           AND node.workspace_id = wi.workspace_id
-          AND node.status IN ('active', 'waiting', 'blocked')
+          AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
           AND participant.role = 'approver'
           AND participant.actor_type = 'member'
           AND participant.actor_id = sqlc.arg(viewer_id)::uuid
@@ -876,7 +876,7 @@ CROSS JOIN LATERAL (
         FROM workflow_node_instance node
         WHERE node.workflow_instance_id = wi.id
           AND node.workspace_id = wi.workspace_id
-          AND node.status IN ('active', 'waiting', 'blocked')
+          AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
           AND EXISTS (
             SELECT 1
             FROM jsonb_array_elements(node.waiting_reasons) reason
@@ -919,7 +919,7 @@ CROSS JOIN LATERAL (
          AND participant.workspace_id = node.workspace_id
         WHERE node.workflow_instance_id = wi.id
           AND node.workspace_id = wi.workspace_id
-          AND node.status IN ('active', 'waiting', 'blocked')
+          AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
           AND participant.role = 'owner'
           AND participant.actor_type = 'member'
           AND participant.actor_id = sqlc.arg(viewer_id)::uuid
@@ -960,7 +960,7 @@ WHERE wi.workspace_id = @workspace_id
     WHERE current_node.workflow_instance_id = wi.id
       AND current_node.workspace_id = wi.workspace_id
       AND current_node.node_key = sqlc.narg(current_node_key)
-      AND current_node.status IN ('active', 'waiting', 'blocked')
+      AND current_node.status IN ('active', 'in_review', 'waiting', 'blocked')
   ))
   AND (
     sqlc.narg(owner_id)::uuid IS NULL
@@ -970,7 +970,7 @@ WHERE wi.workspace_id = @workspace_id
         ON owner_node.id = owner_filter.workflow_node_instance_id
        AND owner_node.workspace_id = owner_filter.workspace_id
       WHERE owner_node.workflow_instance_id = wi.id
-        AND owner_node.status IN ('active', 'waiting', 'blocked')
+        AND owner_node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND owner_filter.role = 'owner'
         AND owner_filter.actor_type = sqlc.narg(owner_type)
         AND owner_filter.actor_id = sqlc.narg(owner_id)
@@ -1129,7 +1129,7 @@ UPDATE workflow_node_instance
 SET status = 'cancelled', updated_at = now()
 WHERE workflow_instance_id = @workflow_instance_id
   AND workspace_id = @workspace_id
-  AND status IN ('pending', 'ready', 'active', 'waiting', 'blocked');
+  AND status IN ('pending', 'ready', 'active', 'in_review', 'waiting', 'blocked');
 
 -- name: CreateWorkflowNodeParticipant :one
 INSERT INTO workflow_node_participant (
@@ -1223,7 +1223,7 @@ JOIN workflow_instance instance
 WHERE task.issue_id = @issue_id
   AND task.workspace_id = @workspace_id
   AND instance.status IN ('needs_setup', 'running', 'paused')
-  AND node.status IN ('ready', 'active', 'waiting', 'blocked')
+  AND node.status IN ('ready', 'active', 'in_review', 'waiting', 'blocked')
 LIMIT 1;
 
 -- name: ListWorkflowInstanceIssues :many
@@ -1344,7 +1344,7 @@ WITH candidate AS (
      AND resolution.workflow_node_task_id = task.id
      AND resolution.status = 'resolved'
     WHERE instance.status = 'running'
-      AND node.status IN ('active', 'waiting', 'blocked')
+      AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
       AND task.issue_id IS NULL
       AND task.attempt_count < @max_attempts
       AND (
@@ -1407,7 +1407,7 @@ WITH candidate AS (
                AND bound_issue.workspace_id = task.workspace_id
               WHERE node.workflow_instance_id = instance.id
                 AND node.workspace_id = instance.workspace_id
-                AND node.status IN ('active', 'waiting', 'blocked')
+                AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
                 AND (
                   instance.last_reconciled_at IS NULL
                   OR node.updated_at > instance.last_reconciled_at
@@ -1490,7 +1490,7 @@ JOIN workflow_instance instance
   ON instance.id = node.workflow_instance_id
  AND instance.workspace_id = node.workspace_id
 WHERE instance.status IN ('needs_setup', 'running')
-  AND node.status IN ('active', 'waiting', 'blocked')
+  AND node.status IN ('active', 'in_review', 'waiting', 'blocked')
 ORDER BY node.updated_at, node.id
 LIMIT @row_limit;
 
@@ -1512,7 +1512,7 @@ SET waiting_reasons = @waiting_reasons,
     updated_at = now()
 WHERE id = @id
   AND workspace_id = @workspace_id
-  AND status IN ('active', 'waiting', 'blocked')
+  AND status IN ('active', 'in_review', 'waiting', 'blocked')
 RETURNING *;
 
 -- name: DetachWorkflowNodeTask :one
