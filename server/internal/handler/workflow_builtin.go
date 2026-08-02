@@ -98,6 +98,7 @@ func (h *Handler) CreateWorkflowFromBuiltin(w http.ResponseWriter, r *http.Reque
 	qtx := h.Queries.WithTx(tx)
 	template, err := qtx.CreateWorkflow(r.Context(), db.CreateWorkflowParams{
 		WorkspaceID: wsUUID, Name: builtin.Name, Description: builtin.Description,
+		CreatedBy: userUUID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create workflow template")

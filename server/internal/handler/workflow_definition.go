@@ -45,7 +45,7 @@ func workflowSummaryToResponse(
 ) workflowResponse {
 	return workflowResponse{
 		ID: uuidToString(row.ID), WorkspaceID: uuidToString(row.WorkspaceID),
-		Name: row.Name, Description: row.Description,
+		Name: row.Name, Description: row.Description, Status: row.Status,
 		LatestPublishedVersionID: uuidToPtr(row.LatestPublishedVersionID),
 		CreatedBy:                uuidToString(row.CreatedBy),
 		ArchivedAt:               timestampToPtr(row.ArchivedAt),
