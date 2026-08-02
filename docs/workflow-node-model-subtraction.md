@@ -91,8 +91,8 @@ implement  participant_roles=['developer']       owner_role=developer
     "kind": "role",              // role | actor | api | owner
     "role": "qa",
     "api_url": null,             // kind=api 时必填，且只能来自模板
-    "required": true,
-    "rework_targets": []         // 可选，见 §10.3。空 = 只能打回本节点
+    "required": true
+    // 注意：不再有 rework_targets —— 回滚目标由图决定，见 §10.2
   },
 
   // 谁对这个节点负责。只管权限，不再兼职表达执行者。
@@ -118,7 +118,7 @@ implement  participant_roles=['developer']       owner_role=developer
 |---|---|---|
 | `role.default_actor_type/id` | 直接删 | 使用率 0% |
 | `node.participant_roles` | 直接删 | 仅有的用例里它和 `owner_role` 填的是同一个角色（§2.3） |
-| `acceptance` 活动节点 | 降为 End 上的门 | 它不干活、无执行者、无交付物（§6） |
+| `acceptance` 活动节点 | 降为实例级状态，不占画布节点 | 它不干活、无执行者、无交付物（§6） |
 | `node.executor.strategies[]` | 塌缩成 `executor` + 单层 `fallback` | 策略链从未超过两级 |
 | `issue_templates[].assignee_role/type/id` | 由 `node.executor` 统一决定 | 消除"三处写、第三处赢"的坑 |
 | `node.verdict` | 并入 `reviewer` | `evaluator: member/api` 就是"谁审" |
@@ -138,16 +138,16 @@ implement  participant_roles=['developer']       owner_role=developer
 
 ```text
 改前  start → 分诊 → 修复 → 回归验证 → 验收 → end
-改后  start → 分诊 → 修复[reviewer=qa] → end[验收门]
+改后  start → 分诊 → 修复[reviewer=qa] → end
 ```
 
-`回归验证` 收成 `修复` 上的 reviewer 槽位，`验收` 降为 End 上的门。
+`回归验证` 收成 `修复` 上的 reviewer 槽位，`验收` 离开画布、降为实例级状态。
 
 ### 4.2 `requirement_delivery`：6 → 5 个节点
 
 ```text
 改前  start → 需求评审 → 方案设计 → 代码实施 → 验收 → end
-改后  start → 需求评审 → 方案设计[reviewer=owner] → 代码实施 → end[验收门]
+改后  start → 需求评审 → 方案设计[reviewer=owner] → 代码实施 → end
 
 方案设计   completion.confirmation: "owner_any"   →  reviewer: { kind: "owner" }
 ```
@@ -159,7 +159,7 @@ implement  participant_roles=['developer']       owner_role=developer
 | | 实际产出 | 适合 |
 |---|---|---|
 | 回归验证 | 重跑复现脚本 + 全量 14 项测试，贴真实输出，产出 Submission | **节点** |
-| 验收 | `status=approved`，reason 空，evidence 空 | **槽位** |
+| 验收 | `status=approved`，reason 空，evidence 空 | **实例级状态**（§6） |
 
 判据：**审本身需要干活、需要留痕、需要交付物 → 节点；只是通过/驳回加一句话 → 槽位。**
 
@@ -167,20 +167,31 @@ implement  participant_roles=['developer']       owner_role=developer
 §4.1 把 `回归验证` 收成槽位，是因为内置模板要覆盖的是常见情况；
 真需要跑回归的团队仍可以把它建成节点。
 
-## 6. 验收：保留概念，去掉节点
+## 6. 验收：保留概念，离开画布
 
 验收现在是一个 `activity` 节点，但它**不干活、没有执行者、没有交付物、不产生 issue**。
 它存在的唯一目的是在画布上占一个位置。
 
 RFC §0.1 给的理由是可见性——"必须表现为画布上的显式验收 Activity……不制造 End 之后的隐藏阶段"。
-但可见性是渲染问题，不是模型问题：在 End 节点上画一个门标记同样可见，不需要一个空的活动节点。
+但验收判的不是某个节点，是整次运行；把它画在画布上，无论画成空节点还是画成 End 上的门，
+都是在给 start / end 这类纯结构标记附加业务语义。**结构标记不承担业务语义**——
+一旦 End 变成"有时是终点、有时是待批的门"，读图的人就得先判断它今天是哪一种。
+
+验收本来就是实例的状态，实现里也已经这么存了：`awaiting_acceptance` 是实例的 waiting reason，
+归到 `review_acceptance`。所以它该展示在实例上（宿主 Issue 头部 / 流程运行状态区），
+不该挤进画布。
 
 ```text
 删掉   acceptance 作为 activity 节点
-保留   definition.acceptance          流程级配置（approver_role / rework_targets）
+删掉   acceptance.node_key 及其"必须引用可见验收节点"的校验
+删掉   acceptance.rework_targets      回滚目标改由图决定，见 §10.2
+删掉   End 节点上的门（start / end 恢复为纯结构标记，无状态、无被等待方）
+保留   definition.acceptance          流程级配置（policy / approver_role）
 保留   workflow_acceptance 记录       谁批的、理由、证据、退回目标
-渲染   End 节点上的门标记
+渲染   实例级状态「待验收」+ approver，展示在宿主 Issue 上，不在画布上
 ```
+
+`rework_targets` 这个字段整个删掉了，原因见 §10.2。
 
 ### 6.1 验收记录必须留在实例级，不能并进节点 reviewer
 
@@ -247,16 +258,17 @@ activity_mode: "acceptance" 节点    → 删除该节点，其入边改指 End
 - 不引入 Askhz 那种 `format_checking` 三段状态机——格式校验用 artifact + reviewer 表达即可
 - 不给节点加"多执行者"——需要并行就用多个 issue_template 或多个节点
 - 不改 gateway / node_choice / 控制节点
-- 不改 rework、handoff 这些本轮刚验证过的机制
-- 不改验收的**语义**——`rework_targets`、验收记录、定点返工全部照旧，动的只是它在画布上
-  是否占一个活动节点
+- 不改 handoff 这些本轮刚验证过的机制（rework 的目标选择改了，见 §10.2）
+- 不改验收的**语义**——审批人、验收记录、定点返工全部照旧，动的只是它不再占画布上的位置，
+  以及回滚目标从模板白名单改为由图决定（§10.2）
 
-## 10. 三个决定
-
-前两个共用一条原则：**画布上永远回答「现在在等谁」**。这是流程图被打开时唯一被问的问题，
-而现在它只回答「走到哪了」。
+## 10. 五个决定
 
 ### 10.1 `in_review` 渲染：显示被等待方的头像
+
+原则：**画布上永远回答「现在在等谁」**。这是流程图被打开时唯一被问的问题，
+而现在它只回答「走到哪了」。注意这条只适用于活动节点——start / end 不承担业务语义，
+永远没有被等待方（§6）。
 
 不新增颜色、不拆半格。节点上显示**当前被等待那一方的头像**：
 
@@ -273,40 +285,64 @@ in_review  显示 reviewer 的头像
 「谁在做」和评审阶段「谁在审」。加状态色只解决后者，而且颜色语义会和现有的
 active / waiting / blocked 挤在一起。
 
-### 10.2 验收门渲染：End 节点变成被等待方
+### 10.2 回滚目标由图决定，不配置
 
-工作流配了 `acceptance` 时，End 节点在验收待决期间：
+原方案是「reviewer 默认只退本节点，想退更远就在模板里配 `rework_targets` 白名单」。
+改成：**不配置，图上在你前面的 activity 都能选，驳回的人当场挑，选中之后它后面的节点全部一起回滚。**
 
-- 显示 approver 的头像（同 10.1 的机制）
-- 图形上区别于普通终点（终点是句号，门是需要推开的）
-- **它就是当前节点**——流程确实停在这里，不该让画布显示"已经到终点了"
+推翻原方案的是两件事。
 
-验收通过后 End 恢复成普通终点。这样 RFC §0.1 担心的「End 之后的隐藏阶段」不会出现：
-待决期间那个阶段就画在 End 上，是可见的。
+**一、白名单是图的第二份副本。** 它必须跟着图一起维护，而漏维护是静默的——加一个节点忘了
+把它加进 `rework_targets`，它就是不能当回滚目标，配置者看不出为什么。这跟 §1 里
+「三处写、第三处赢」是同一类病：两份真相，其中一份没人记得更新。
 
-### 10.3 reviewer 的退回目标：默认只退本节点，可显式放开
+**二、运行时早就不是这么做的。** 手动回滚动作从来就是「在画布上选中哪个节点就退到哪个」，
+只校验 `IsAncestor`（`workflow_node_actions.go` 的 rollback 分支）。只有验收驳回走白名单。
+同一个产品里两种回滚规则，是模型没收敛干净，不是设计。
 
-```jsonc
-"reviewer": {
-  "kind": "role",
-  "role": "qa",
-  "rework_targets": ["triage"]      // 可选。不写 = 只能打回本节点
-}
-```
+原方案的顾虑——「一个代码 review 驳回，不该顺带具备把流程退回需求评审的权力」——是真的，
+但**它是权限问题，不该用目的地白名单来解**。权限已经有自己的表达：`completion.authorized_roles`、
+节点 owner、工作区管理员管手动回滚，`acceptance.approver_role` 管验收驳回。
+用白名单兼职做权限，等于把「谁能退」和「能退到哪」搅在一起——这正是本方案在别处一直在拆的东西。
 
-**不复用 `acceptance.rework_targets`。** 两者选的目标是为不同判断服务的：
+### 10.3 驳回和回滚是两件事
+
+收敛后剩下两个机制，边界清楚，都不需要配置：
 
 ```text
-acceptance.rework_targets   业务结果不对 → 退回方案设计
-reviewer.rework_targets     这个节点的产出不对 → 通常退回本节点
+reviewer 判定不通过   节点停在 in_review，执行者改完重新交付，不新建 attempt
+回滚动作             选一个上游 activity，它和它的后置节点全部 superseded，目标建新 attempt
 ```
 
-一个代码 review 驳回，不该顺带具备把流程退回需求评审的权力。但反过来，
-回归验证发现「根因分析就错了」时确实需要退得更远——所以能力要有，只是默认关闭、
-显式配置。
+前者是「这次交付不行」，后者是「得从更早的地方重来」。reviewer 需要后者时，用回滚动作
+——前提是他有那个权限。这样 reviewer 不需要 `rework_targets`，也就不需要那个字段。
 
-校验规则与 acceptance 一致：目标必须是当前节点的祖先，沿用
-`plan.IsAncestor` 那条既有校验，不新写一套。
+### 10.4 后置节点回到「未执行」
+
+回滚 = 在某个节点上执行的操作：它新建一个 attempt 变成进行中，它的后置节点全部
+`superseded`。用图的可达性而不是显示顺序，所以并行分支上跟目标无关的那一支不受影响。
+
+计算上它们已经出局：进度计数取每个 node_key 的最新 attempt 再筛 `completed/skipped`；
+`superseded` 不在 open 状态集里，既不是当前节点也不挡 `CanComplete`。
+
+**显示上要改一处。** `superseded` 这个值兼了两个含义：
+
+```text
+提交修订被新修订取代    "已被替代" 是准确的
+回滚清空的后置节点      它没被任何东西取代，它是回到了未执行
+```
+
+节点走第二种。所以运行视图把节点状态的 `superseded` 渲染成 `pending`
+（`workflowNodeDisplayStatus`），提交状态不动。
+
+保留 `superseded` 而不是直接把下游改成 `pending`，是因为旧的 submission / verdict / issue
+必须留在旧 attempt 上，新一轮从干净的 attempt 开始；直接改状态会让这些残留被复用。
+
+### 10.5 attempt 不展示
+
+节点详情里原来有一行「第 N 次尝试」，删掉。谁回滚的、什么时候、为什么，操作记录里
+（`node.rollback` 事件带 `reason` 和时间）已经全有了，attempt 号是同一件事的第二种说法，
+而且是信息更少的那种。画布本来就只显示每个节点的最新 attempt，旧 attempt 从未露过面。
 
 ## 11. 已排除的顾虑
 
