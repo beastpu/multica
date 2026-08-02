@@ -66,7 +66,7 @@ import {
   CollectionPageState,
 } from "../layout/collection-page";
 import { cn } from "@multica/ui/lib/utils";
-import { useT, useTimeAgo } from "../i18n";
+import { useT } from "../i18n";
 import { WorkflowStatusBadge } from "./workflow-status";
 import { canManageWorkflows } from "./workflow-list";
 import { WorkflowRoleEditor } from "./workflow-definition-inspector";
@@ -488,16 +488,13 @@ function BuiltinTemplatesPanel({ canManage }: { canManage: boolean }) {
 
 function TemplatesPanel({
   canManage,
-  actorName,
 }: {
   canManage: boolean;
-  actorName: (actorType: string, actorId: string) => string;
 }) {
   const { t } = useT("workflows");
   const wsId = useWorkspaceId();
   const p = useWorkspacePaths();
   const navigation = useNavigation();
-  const timeAgo = useTimeAgo();
   const { data, isLoading, isError } = useQuery(
     workflowListOptions(wsId),
   );
@@ -537,8 +534,10 @@ function TemplatesPanel({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
+    <div>
+      {/* The header keeps the page's own padding; the table below runs to the
+          edges, so the two align on the same left rule. */}
+      <div className="flex items-center justify-between gap-3 px-3 py-4">
         <div>
           <h2 className="text-sm font-medium">{t(($) => $.templates.title)}</h2>
           {!canManage && (
@@ -560,43 +559,14 @@ function TemplatesPanel({
           </div>
         )}
       </div>
-      <div
-        aria-label={t(($) => $.filters.status)}
-        className="flex flex-wrap items-center gap-1"
-      >
-        {([
-          ["all", t(($) => $.filters.all_statuses)],
-          ["published", t(($) => $.templates.published)],
-          ["draft", t(($) => $.templates.draft)],
-          ["archived", t(($) => $.templates.archived)],
-        ] as Array<[TemplateStatusFilter, string]>).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={statusFilter === value}
-            onClick={() => setStatusFilter(value)}
-            className={cn(
-              "min-h-9 rounded-md px-3 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              statusFilter === value
-                ? "bg-muted text-foreground"
-                : "text-muted-foreground hover:bg-muted/60",
-            )}
-          >
-            {label}
-            <span className="ml-1.5 tabular-nums opacity-60">
-              {countFor(value)}
-            </span>
-          </button>
-        ))}
-      </div>
       {isLoading ? (
         <div className="space-y-2">
           <Skeleton className="h-12 rounded-lg" />
           <Skeleton className="h-12 rounded-lg" />
         </div>
       ) : visibleTemplates.length ? (
-        <div className="overflow-x-auto rounded-lg border bg-background">
-          <table className="w-full min-w-[44rem] text-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[44rem] border-collapse text-sm">
             <caption className="sr-only">{t(($) => $.templates.title)}</caption>
             <thead>
               <tr className="border-b text-xs text-muted-foreground">
@@ -612,15 +582,49 @@ function TemplatesPanel({
                 <th scope="col" className="px-3 py-2 text-right font-medium">
                   {t(($) => $.templates.runs)}
                 </th>
-                <th scope="col" className="px-3 py-2 text-left font-medium">
-                  {t(($) => $.templates.column_updated)}
-                </th>
                 <th scope="col" className="px-3 py-2 text-right font-medium">
                   {t(($) => $.templates.column_actions)}
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y">
+              {/* The filters read as part of the list, not a control bar
+                  hovering above it — same alignment, same rules. */}
+              <tr>
+                <td colSpan={5} className="px-3 py-2">
+                  <div
+                    aria-label={t(($) => $.filters.status)}
+                    className="flex flex-wrap items-center gap-1"
+                  >
+                    {([
+                      ["all", t(($) => $.filters.all_statuses)],
+                      ["published", t(($) => $.templates.published)],
+                      ["draft", t(($) => $.templates.draft)],
+                      ["archived", t(($) => $.templates.archived)],
+                    ] as Array<[TemplateStatusFilter, string]>).map(
+                      ([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          aria-pressed={statusFilter === value}
+                          onClick={() => setStatusFilter(value)}
+                          className={cn(
+                            "min-h-8 rounded-md px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            statusFilter === value
+                              ? "bg-muted text-foreground"
+                              : "text-muted-foreground hover:bg-muted/60",
+                          )}
+                        >
+                          {label}
+                          <span className="ml-1.5 tabular-nums opacity-60">
+                            {countFor(value)}
+                          </span>
+                        </button>
+                      ),
+                    )}
+                  </div>
+                </td>
+              </tr>
               {visibleTemplates.map((template) => (
                 <tr
                   key={template.id}
@@ -655,23 +659,6 @@ function TemplatesPanel({
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {template.run_count}
-                  </td>
-                  {/* Who is still tending this one — the fact the card grid
-                      carried and the reference table has no room for. */}
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
-                    {template.last_published_at
-                      ? (
-                        <span className="block truncate">
-                          {timeAgo(template.last_published_at)}
-                          {template.last_published_by && (
-                            <>
-                              <span aria-hidden="true"> · </span>
-                              {actorName("member", template.last_published_by)}
-                            </>
-                          )}
-                        </span>
-                      )
-                      : "—"}
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center justify-end gap-1">
@@ -1312,13 +1299,6 @@ export function WorkflowsPage() {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const currentMember = members.find((member) => member.user_id === userId);
   const canManage = canManageWorkflows(currentMember?.role);
-  const memberNames = useMemo(
-    () => new Map(members.map((member) => [member.user_id, member.name])),
-    [members],
-  );
-  const actorName = (_actorType: string, actorId: string) =>
-    memberNames.get(actorId) ?? actorId.slice(0, 8);
-
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <CollectionPageHeader
@@ -1346,15 +1326,17 @@ export function WorkflowsPage() {
       </nav>
       <main
         data-tab-scroll-root="workflows"
-        className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
+        className="min-h-0 flex-1 overflow-y-auto"
       >
-        <div className="mx-auto w-full max-w-7xl">
+        {/* The workflow list runs edge to edge — it is the page, not a card
+            centred in it. Everything else keeps the padded column. */}
+        <div className={cn("w-full", tab !== "workflows" && "mx-auto max-w-7xl px-5 py-5")}>
           {tab === "builtin" ? (
             <BuiltinTemplatesPanel canManage={canManage} />
           ) : tab === "roles" ? (
             <RolesPanel canManage={canManage} />
           ) : (
-            <TemplatesPanel canManage={canManage} actorName={actorName} />
+            <TemplatesPanel canManage={canManage} />
           )}
         </div>
       </main>
