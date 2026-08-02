@@ -28,9 +28,9 @@ commonAnnotations:
 # tag (e.g. main-<sha>) once CI is wired and you can drop the Always patch.
 images:
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server
-    newTag: "test-20260802-0dc910a63-workflow"
+    newTag: "test-20260802-77628908d-workflow"
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web
-    newTag: "test-20260802-b4a79b304-workflow"
+    newTag: "test-20260802-77628908d-workflow"
 
 # Test runs at 1/1 — single web pod is enough for smoke testing and matches
 # the server's single-replica constraint (in-memory WS hub).
