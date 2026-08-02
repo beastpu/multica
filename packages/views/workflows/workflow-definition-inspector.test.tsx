@@ -10,7 +10,10 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import enWorkflows from "../locales/en/workflows.json";
-import { WorkflowNodeDefinitionInspector } from "./workflow-definition-inspector";
+import {
+  WorkflowDefinitionInspector,
+  WorkflowNodeDefinitionInspector,
+} from "./workflow-definition-inspector";
 
 const node: WorkflowNodeDefinition = {
   key: "backend",
@@ -75,6 +78,28 @@ function renderInspector(onChange: (value: WorkflowNodeDefinition) => void) {
   );
 }
 
+describe("WorkflowDefinitionInspector", () => {
+  it("keeps role management out of workflow settings", () => {
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{ en: { workflows: enWorkflows } }}
+      >
+        <WorkflowDefinitionInspector
+          definition={definition}
+          readOnly={false}
+          onChange={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.queryByText(enWorkflows.editor.workflow_roles))
+      .not.toBeInTheDocument();
+    expect(screen.getByText(enWorkflows.editor.workflow_acceptance))
+      .toBeInTheDocument();
+  });
+});
+
 describe("WorkflowNodeDefinitionInspector", () => {
   it("splits the activity config into info, work, and transition tabs", () => {
     renderInspector(vi.fn());
@@ -103,6 +128,13 @@ describe("WorkflowNodeDefinitionInspector", () => {
       .toBeGreaterThan(0);
     expect(screen.queryByRole("option", { name: "fixed_role" })).toBeNull();
     expect(screen.queryByRole("option", { name: "manual" })).toBeNull();
+  });
+
+  it("hides executor fallback configuration from the default editor", () => {
+    renderInspector(vi.fn());
+
+    expect(screen.queryByText(enWorkflows.editor.executor_fallback))
+      .not.toBeInTheDocument();
   });
 
   it("keeps the executor's fallback when the actor changes", async () => {

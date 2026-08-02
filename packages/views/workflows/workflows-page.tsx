@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  ArrowRight,
   Copy,
   GitBranch,
   LayoutTemplate,
@@ -11,26 +10,22 @@ import {
   Play,
   Plus,
   Users,
-  Workflow as WorkflowIcon,
 } from "lucide-react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { projectListOptions } from "@multica/core/projects";
 import {
   useCreateWorkflow,
   useCreateWorkflowTemplateFromBuiltin,
   useCopyWorkflow,
   useCreateWorkflowRun,
   useRunWorkflow,
+  useSaveWorkflowDefinition,
   workflowBuiltinTemplateListOptions,
-  workflowInstanceInfiniteListOptions,
   workflowListOptions,
   workflowOptions,
   type WorkflowDefinition,
-  type WorkflowInstanceFilters,
-  type WorkflowInstance,
   type WorkflowRoleDefinition,
   type Workflow,
 } from "@multica/core/workflows";
@@ -54,7 +49,6 @@ import { Label } from "@multica/ui/components/ui/label";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -74,14 +68,8 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import { useT, useTimeAgo } from "../i18n";
 import { WorkflowStatusBadge } from "./workflow-status";
-import { WorkflowStartDialog } from "./workflow-start-dialog";
-import {
-  canManageWorkflows,
-  isWorkflowRunActionable,
-  partitionWorkflowRuns,
-  workflowStatusForTab,
-  type WorkflowTab,
-} from "./workflow-list";
+import { canManageWorkflows } from "./workflow-list";
+import { WorkflowRoleEditor } from "./workflow-definition-inspector";
 import { workflowPreviewActivities } from "./workflow-preview";
 
 function defaultWorkflowDefinition(): WorkflowDefinition {
@@ -166,182 +154,6 @@ function defaultNewWorkflowAssignments(
   return owner
     ? { owner: workflowAssignmentKey("member", userId) }
     : {};
-}
-
-function RunCard({
-  run,
-  actorName,
-  projectName,
-}: {
-  run: WorkflowInstance;
-  actorName: (actorType: string, actorId: string) => string;
-  projectName: (projectId: string) => string;
-}) {
-  const { t } = useT("workflows");
-  const p = useWorkspacePaths();
-  const timeAgo = useTimeAgo();
-  const actionable = isWorkflowRunActionable(run);
-
-  return (
-    <Card
-      size="sm"
-      className={actionable ? "border-amber-500/35 bg-amber-500/[0.025]" : ""}
-    >
-      <CardHeader>
-        <CardTitle className="flex min-w-0 items-center gap-2">
-          <span className="truncate">
-            {run.title || run.host_issue_title || run.host_issue_identifier ||
-              run.id.slice(0, 8)}
-          </span>
-          <WorkflowStatusBadge status={run.status} />
-        </CardTitle>
-        <CardDescription className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate font-mono text-xs">
-            {run.host_issue_identifier || t(($) => $.runs.standalone)}
-          </span>
-          <span aria-hidden="true">·</span>
-          <span className="truncate">
-            {run.workflow_name || run.workflow_id.slice(0, 8)}
-            {run.workflow_version > 0 ? ` v${run.workflow_version}` : ""}
-          </span>
-        </CardDescription>
-        <CardAction>
-          <Button
-            size="sm"
-            variant={actionable ? "brandSubtle" : "ghost"}
-            render={<AppLink href={p.workflowRun(run.id)} />}
-          >
-            {t(($) => $.actions.open)}
-            <ArrowRight />
-          </Button>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="space-y-3 text-xs text-muted-foreground">
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-          <span>
-            {t(($) => $.runs.current_activity)} ·{" "}
-            {run.current_activities.length > 0
-              ? run.current_activities.map((activity) => activity.name).join(", ")
-              : t(($) => $.runs.none)}
-          </span>
-          <span>
-            {t(($) => $.runs.progress)} · {run.activity_completed}/
-            {run.activity_total}
-          </span>
-          {run.current_owners.length > 0 && (
-            <span>
-              {t(($) => $.runs.current_owner)} ·{" "}
-              {run.current_owners.map((owner) =>
-                actorName(owner.actor_type, owner.actor_id)
-              ).join(", ")}
-            </span>
-          )}
-          {run.project_id && (
-            <span>
-              {t(($) => $.runs.project)} · {projectName(run.project_id)}
-            </span>
-          )}
-          <span>
-            {t(($) => $.runs.updated)} · {timeAgo(run.updated_at)}
-          </span>
-        </div>
-        <div
-          className={actionable
-            ? "flex items-center gap-2 text-amber-700 dark:text-amber-300"
-            : "flex items-center gap-2"}
-        >
-          <span className="font-medium">{t(($) => $.runs.next_action)}</span>
-          <span>
-            {actionable
-              ? run.intervention_reason
-              : t(($) => $.runs.healthy)}
-          </span>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function RunList({
-  runs,
-  isLoading,
-  actorName,
-  projectName,
-}: {
-  runs: WorkflowInstance[];
-  isLoading: boolean;
-  actorName: (actorType: string, actorId: string) => string;
-  projectName: (projectId: string) => string;
-}) {
-  const { t } = useT("workflows");
-  if (isLoading) {
-    return (
-      <div className="grid gap-3">
-        {Array.from({ length: 4 }, (_, index) => (
-          <Skeleton key={index} className="h-28 rounded-xl" />
-        ))}
-      </div>
-    );
-  }
-  if (runs.length === 0) {
-    return (
-      <CollectionPageState
-        icon={WorkflowIcon}
-        title={t(($) => $.runs.empty_title)}
-        description={t(($) => $.runs.empty_description)}
-      />
-    );
-  }
-
-  const { actionable, healthy } = partitionWorkflowRuns(runs);
-
-  return (
-    <div className="space-y-7">
-      {actionable.length > 0 && (
-        <section className="space-y-3" aria-labelledby="workflow-interventions">
-          <div>
-            <h2
-              id="workflow-interventions"
-              className="flex items-center gap-2 text-sm font-medium"
-            >
-              <AlertTriangle className="size-4 text-amber-500" />
-              {t(($) => $.runs.intervention_title)}
-            </h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t(($) => $.runs.intervention_description)}
-            </p>
-          </div>
-          <div className="grid gap-3">
-            {actionable.map((run) => (
-              <RunCard
-                key={run.id}
-                run={run}
-                actorName={actorName}
-                projectName={projectName}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-      {healthy.length > 0 && (
-        <section className="space-y-3" aria-labelledby="workflow-runs">
-          <h2 id="workflow-runs" className="text-sm font-medium">
-            {t(($) => $.runs.all_title)}
-          </h2>
-          <div className="grid gap-3">
-            {healthy.map((run) => (
-              <RunCard
-                key={run.id}
-                run={run}
-                actorName={actorName}
-                projectName={projectName}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-    </div>
-  );
 }
 
 function RunTemplateDialog({
@@ -598,7 +410,7 @@ function RunTemplateDialog({
   );
 }
 
-type TemplateStatusFilter = "live" | "all" | "published" | "draft" | "archived";
+type TemplateStatusFilter = "all" | "published" | "draft" | "archived";
 
 function matchesTemplateStatus(
   template: Workflow,
@@ -607,8 +419,6 @@ function matchesTemplateStatus(
   switch (filter) {
     case "all":
       return true;
-    case "live":
-      return template.status !== "archived";
     default:
       return template.status === filter;
   }
@@ -691,14 +501,7 @@ function TemplatesPanel({
   const { data, isLoading, isError } = useQuery(
     workflowListOptions(wsId),
   );
-  // Archiving is how this product deletes, so a retired template sitting
-  // beside live ones is what made "archive the old one, create a new one with
-  // the same name" look like the system permitting duplicates. The default
-  // view leaves them out; the filter is where you go to find them again.
-  //
-  // No "paused" — a template you do not want started is archived. A fourth
-  // state would be a second word for the same act.
-  const [statusFilter, setStatusFilter] = useState<TemplateStatusFilter>("live");
+  const [statusFilter, setStatusFilter] = useState<TemplateStatusFilter>("all");
   const allTemplates = data?.workflows ?? [];
   const countFor = (filter: TemplateStatusFilter) =>
     allTemplates.filter((template) => matchesTemplateStatus(template, filter))
@@ -757,18 +560,12 @@ function TemplatesPanel({
           </div>
         )}
       </div>
-      {/*
-        A row per template, because scanning "which of these is live and how
-        much is running on it" is what this page is for. The cards spread four
-        facts over two columns each and made that a reading exercise.
-      */}
       <div
-        role="tablist"
         aria-label={t(($) => $.filters.status)}
         className="flex flex-wrap items-center gap-1"
       >
         {([
-          ["live", t(($) => $.filters.all_statuses)],
+          ["all", t(($) => $.filters.all_statuses)],
           ["published", t(($) => $.templates.published)],
           ["draft", t(($) => $.templates.draft)],
           ["archived", t(($) => $.templates.archived)],
@@ -776,11 +573,10 @@ function TemplatesPanel({
           <button
             key={value}
             type="button"
-            role="tab"
-            aria-selected={statusFilter === value}
+            aria-pressed={statusFilter === value}
             onClick={() => setStatusFilter(value)}
             className={cn(
-              "min-h-8 rounded-md px-2.5 text-xs font-medium",
+              "min-h-9 rounded-md px-3 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
               statusFilter === value
                 ? "bg-muted text-foreground"
                 : "text-muted-foreground hover:bg-muted/60",
@@ -799,8 +595,9 @@ function TemplatesPanel({
           <Skeleton className="h-12 rounded-lg" />
         </div>
       ) : visibleTemplates.length ? (
-        <div className="overflow-x-auto rounded-xl border bg-surface">
-          <table className="w-full min-w-[40rem] text-sm">
+        <div className="overflow-x-auto rounded-lg border bg-background">
+          <table className="w-full min-w-[44rem] text-sm">
+            <caption className="sr-only">{t(($) => $.templates.title)}</caption>
             <thead>
               <tr className="border-b text-xs text-muted-foreground">
                 <th scope="col" className="px-3 py-2 text-left font-medium">
@@ -825,19 +622,30 @@ function TemplatesPanel({
             </thead>
             <tbody className="divide-y">
               {visibleTemplates.map((template) => (
-                <tr key={template.id} className="hover:bg-muted/30">
-                  <td className="px-3 py-2">
-                    <AppLink
-                      href={p.workflow(template.id)}
-                      className="block min-w-0 font-medium hover:underline"
-                    >
-                      <span className="block truncate">{template.name}</span>
-                    </AppLink>
-                    {template.description && (
-                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                        {template.description}
-                      </span>
-                    )}
+                <tr
+                  key={template.id}
+                  className="h-16 transition-colors hover:bg-muted/30"
+                >
+                  <td className="max-w-[26rem] px-3 py-2">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <GitBranch
+                        aria-hidden="true"
+                        className="size-4 shrink-0 text-muted-foreground"
+                      />
+                      <div className="min-w-0">
+                        <AppLink
+                          href={p.workflow(template.id)}
+                          className="block truncate font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {template.name}
+                        </AppLink>
+                        {template.description && (
+                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                            {template.description}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     <WorkflowStatusBadge status={template.status} />
@@ -929,6 +737,177 @@ function TemplatesPanel({
         }}
       />
     </div>
+  );
+}
+
+function RolesPanel({ canManage }: { canManage: boolean }) {
+  const { t } = useT("workflows");
+  const wsId = useWorkspaceId();
+  const workflowsQuery = useQuery(workflowListOptions(wsId));
+  const workflows = useMemo(
+    () => (workflowsQuery.data?.workflows ?? []).filter(
+      (workflow) => workflow.status !== "archived",
+    ),
+    [workflowsQuery.data?.workflows],
+  );
+  const [workflowId, setWorkflowId] = useState("");
+  const detailQuery = useQuery({
+    ...workflowOptions(wsId, workflowId),
+    enabled: Boolean(workflowId),
+  });
+  const versions = useMemo(
+    () => [...(detailQuery.data?.versions ?? [])].sort(
+      (left, right) => right.version - left.version,
+    ),
+    [detailQuery.data?.versions],
+  );
+  const latestVersion = versions.find((version) => version.status === "draft") ??
+    versions.find((version) => version.status === "published") ??
+    versions[0];
+  const [definition, setDefinition] = useState<WorkflowDefinition | null>(null);
+  const [loadedVersionId, setLoadedVersionId] = useState("");
+  const [dirty, setDirty] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const saveDefinition = useSaveWorkflowDefinition(workflowId);
+  const readOnly = !canManage ||
+    detailQuery.data?.workflow.status === "archived";
+
+  useEffect(() => {
+    if (workflowId && workflows.some((workflow) => workflow.id === workflowId)) {
+      return;
+    }
+    setWorkflowId(workflows[0]?.id ?? "");
+    setLoadedVersionId("");
+    setDefinition(null);
+    setDirty(false);
+    setSaveError("");
+  }, [workflowId, workflows]);
+
+  useEffect(() => {
+    if (!latestVersion || latestVersion.id === loadedVersionId) return;
+    setDefinition(latestVersion.definition);
+    setLoadedVersionId(latestVersion.id);
+    setDirty(false);
+    setSaveError("");
+  }, [latestVersion, loadedVersionId]);
+
+  const save = () => {
+    if (!definition || !latestVersion || readOnly || !dirty) return;
+    setSaveError("");
+    saveDefinition.mutate({
+      definition,
+      revision: latestVersion.revision,
+    }, {
+      onSuccess: (result) => {
+        setDefinition(result.version.definition);
+        setLoadedVersionId(result.version.id);
+        setDirty(false);
+        setSaveError(result.validation_error);
+      },
+      onError: (cause) => setSaveError(
+        cause instanceof Error ? cause.message : t(($) => $.errors.load),
+      ),
+    });
+  };
+
+  if (workflowsQuery.isError || detailQuery.isError) {
+    return (
+      <CollectionPageState
+        icon={AlertTriangle}
+        title={t(($) => $.errors.load)}
+        tone="destructive"
+        role="alert"
+      />
+    );
+  }
+
+  if (!workflowsQuery.isLoading && workflows.length === 0) {
+    return (
+      <CollectionPageState
+        icon={Users}
+        title={t(($) => $.templates.empty_title)}
+        description={t(($) => $.templates.empty_description)}
+      />
+    );
+  }
+
+  return (
+    <section aria-labelledby="workflow-roles-title" className="space-y-5">
+      <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <h2 id="workflow-roles-title" className="text-base font-semibold">
+            {t(($) => $.editor.workflow_roles)}
+          </h2>
+          <Label htmlFor="workflow-role-workflow" className="sr-only">
+            {t(($) => $.templates.title)}
+          </Label>
+          {workflowsQuery.isLoading ? (
+            <Skeleton className="h-10 w-full max-w-md rounded-lg" />
+          ) : (
+            <select
+              id="workflow-role-workflow"
+              value={workflowId}
+              onChange={(event) => {
+                setWorkflowId(event.target.value);
+                setLoadedVersionId("");
+                setDefinition(null);
+                setDirty(false);
+                setSaveError("");
+              }}
+              className="min-h-10 w-full max-w-md rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              {workflows.map((workflow) => (
+                <option key={workflow.id} value={workflow.id}>
+                  {workflow.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        {canManage && (
+          <Button
+            size="sm"
+            onClick={save}
+            disabled={!definition || !dirty || readOnly || saveDefinition.isPending}
+          >
+            {saveDefinition.isPending && (
+              <Loader2 className="animate-spin motion-reduce:animate-none" />
+            )}
+            {t(($) => $.actions.save)}
+          </Button>
+        )}
+      </div>
+
+      {detailQuery.isLoading || !definition ? (
+        <div className="grid gap-3 md:grid-cols-2">
+          <Skeleton className="h-40 rounded-lg" />
+          <Skeleton className="h-40 rounded-lg" />
+        </div>
+      ) : (
+        <div className="max-w-3xl">
+          <WorkflowRoleEditor
+            roles={definition.roles}
+            readOnly={readOnly}
+            onChange={(roles) => {
+              if (readOnly) return;
+              setDefinition({ ...definition, roles });
+              setDirty(true);
+              setSaveError("");
+            }}
+          />
+          {dirty && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              {t(($) => $.editor.unsaved)}
+            </p>
+          )}
+          {saveError && (
+            <p role="alert" className="mt-3 text-xs text-destructive">
+              {saveError}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1323,246 +1302,59 @@ export function NewWorkflowDialog() {
   );
 }
 
+type WorkflowPageTab = "workflows" | "roles" | "builtin";
+
 export function WorkflowsPage() {
   const { t } = useT("workflows");
-  const [tab, setTab] = useState<WorkflowTab>("active");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [projectId, setProjectId] = useState("");
-  const [templateId, setTemplateId] = useState("");
-  const [currentNodeKey, setCurrentNodeKey] = useState("");
-  const [ownerValue, setOwnerValue] = useState("");
+  const [tab, setTab] = useState<WorkflowPageTab>("workflows");
   const wsId = useWorkspaceId();
   const userId = useAuthStore((state) => state.user?.id);
   const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: squads = [] } = useQuery(squadListOptions(wsId));
-  const { data: projects = [] } = useQuery(projectListOptions(wsId));
-  const { data: templateData } = useQuery(workflowListOptions(wsId));
   const currentMember = members.find((member) => member.user_id === userId);
   const canManage = canManageWorkflows(currentMember?.role);
-  const actorNames = useMemo(() => {
-    const names = new Map<string, string>();
-    for (const member of members) {
-      names.set(`member:${member.user_id}`, member.name);
-    }
-    for (const agent of agents) {
-      names.set(`agent:${agent.id}`, agent.name);
-    }
-    for (const squad of squads) {
-      names.set(`squad:${squad.id}`, squad.name);
-    }
-    return names;
-  }, [agents, members, squads]);
-  const actorName = (actorType: string, actorId: string) =>
-    actorNames.get(`${actorType}:${actorId}`) ?? actorId.slice(0, 8);
-  const projectNames = useMemo(
-    () => new Map(projects.map((project) => [project.id, project.title])),
-    [projects],
+  const memberNames = useMemo(
+    () => new Map(members.map((member) => [member.user_id, member.name])),
+    [members],
   );
-  const projectName = (id: string) =>
-    projectNames.get(id) ?? id.slice(0, 8);
-  const filters = useMemo<WorkflowInstanceFilters>(() => {
-    const [ownerType, ownerId] = ownerValue.split(":", 2) as [
-      "member" | "agent" | "squad" | "",
-      string | undefined,
-    ];
-    return {
-      status: workflowStatusForTab(tab, statusFilter),
-      related_to_me: tab === "mine" || undefined,
-      project_id: projectId || undefined,
-      workflow_id: templateId || undefined,
-      current_node_key: currentNodeKey.trim() || undefined,
-      owner_type: ownerType || undefined,
-      owner_id: ownerId || undefined,
-      limit: 100,
-    };
-  }, [
-    currentNodeKey,
-    ownerValue,
-    projectId,
-    statusFilter,
-    tab,
-    templateId,
-  ]);
-  const runsQuery = useInfiniteQuery({
-    ...workflowInstanceInfiniteListOptions(wsId, filters),
-    enabled: tab !== "templates",
-  });
-  const visibleRuns = useMemo(() => {
-    const runs = runsQuery.data?.pages.flatMap((page) => page.instances) ?? [];
-    if (tab === "active" || tab === "mine") {
-      return runs.filter((run) =>
-        run.status !== "completed" && run.status !== "cancelled"
-      );
-    }
-    return runs;
-  }, [runsQuery.data?.pages, tab]);
-  const runCount = runsQuery.data?.pages[0]?.total ?? visibleRuns.length;
+  const actorName = (_actorType: string, actorId: string) =>
+    memberNames.get(actorId) ?? actorId.slice(0, 8);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <CollectionPageHeader
         icon={GitBranch}
         title={t(($) => $.title)}
-        count={tab === "templates" ? undefined : runCount}
         description={t(($) => $.description)}
-        actions={tab !== "templates" ? (
-          <>
-            <WorkflowStartDialog />
-            <NewWorkflowDialog />
-          </>
-        ) : undefined}
       />
-      <div className="border-b px-5">
+      <nav aria-label={t(($) => $.title)} className="border-b px-5">
         <Tabs
           value={tab}
-          onValueChange={(value) => {
-            setTab(value as WorkflowTab);
-            setStatusFilter("");
-          }}
+          onValueChange={(value) => setTab(value as WorkflowPageTab)}
         >
           <TabsList variant="line" className="h-10">
-            <TabsTrigger value="active">{t(($) => $.tabs.active)}</TabsTrigger>
-            <TabsTrigger value="mine">{t(($) => $.tabs.mine)}</TabsTrigger>
-            <TabsTrigger value="completed">{t(($) => $.tabs.completed)}</TabsTrigger>
-            <TabsTrigger value="templates">
+            <TabsTrigger value="workflows">
               {t(($) => $.tabs.templates)}
             </TabsTrigger>
-            {/* The starter library is a place you go once, not a banner over
-                the list you work in every day. */}
+            <TabsTrigger value="roles">
+              {t(($) => $.tabs.roles)}
+            </TabsTrigger>
             <TabsTrigger value="builtin">
               {t(($) => $.tabs.builtin)}
             </TabsTrigger>
           </TabsList>
         </Tabs>
-      </div>
+      </nav>
       <main
         data-tab-scroll-root="workflows"
         className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
       >
-        <div className="mx-auto w-full max-w-5xl">
+        <div className="mx-auto w-full max-w-7xl">
           {tab === "builtin" ? (
             <BuiltinTemplatesPanel canManage={canManage} />
-          ) : tab === "templates" ? (
-            <TemplatesPanel canManage={canManage} actorName={actorName} />
-          ) : runsQuery.isError ? (
-            <CollectionPageState
-              icon={AlertTriangle}
-              title={t(($) => $.errors.load)}
-              tone="destructive"
-              role="alert"
-            />
+          ) : tab === "roles" ? (
+            <RolesPanel canManage={canManage} />
           ) : (
-            <div className="space-y-5">
-              <div
-                className="grid gap-2 rounded-xl border bg-muted/15 p-3 sm:grid-cols-2 lg:grid-cols-5"
-                aria-label={t(($) => $.filters.title)}
-              >
-                <select
-                  aria-label={t(($) => $.filters.status)}
-                  value={statusFilter}
-                  onChange={(event) => setStatusFilter(event.target.value)}
-                  className="min-h-11 rounded-lg border border-input bg-background px-3 text-sm"
-                >
-                  <option value="">{t(($) => $.filters.all_statuses)}</option>
-                  {tab === "completed" ? (
-                    <>
-                      <option value="completed">
-                        {t(($) => $.status.completed)}
-                      </option>
-                      <option value="cancelled">
-                        {t(($) => $.status.cancelled)}
-                      </option>
-                    </>
-                  ) : (
-                    <>
-                      <option value="running">{t(($) => $.status.running)}</option>
-                      <option value="needs_setup">
-                        {t(($) => $.status.needs_setup)}
-                      </option>
-                      <option value="paused">{t(($) => $.status.paused)}</option>
-                      <option value="failed">{t(($) => $.status.failed)}</option>
-                    </>
-                  )}
-                </select>
-                <select
-                  aria-label={t(($) => $.filters.project)}
-                  value={projectId}
-                  onChange={(event) => setProjectId(event.target.value)}
-                  className="min-h-11 rounded-lg border border-input bg-background px-3 text-sm"
-                >
-                  <option value="">{t(($) => $.filters.all_projects)}</option>
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>{project.title}</option>
-                  ))}
-                </select>
-                <select
-                  aria-label={t(($) => $.filters.template)}
-                  value={templateId}
-                  onChange={(event) => setTemplateId(event.target.value)}
-                  className="min-h-11 rounded-lg border border-input bg-background px-3 text-sm"
-                >
-                  <option value="">{t(($) => $.filters.all_templates)}</option>
-                  {(templateData?.workflows ?? []).map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label={t(($) => $.filters.owner)}
-                  value={ownerValue}
-                  onChange={(event) => setOwnerValue(event.target.value)}
-                  className="min-h-11 rounded-lg border border-input bg-background px-3 text-sm"
-                >
-                  <option value="">{t(($) => $.filters.all_owners)}</option>
-                  {members.map((member) => (
-                    <option
-                      key={`member:${member.user_id}`}
-                      value={`member:${member.user_id}`}
-                    >
-                      {member.name}
-                    </option>
-                  ))}
-                  {agents.filter((agent) => !agent.archived_at).map((agent) => (
-                    <option key={`agent:${agent.id}`} value={`agent:${agent.id}`}>
-                      {agent.name}
-                    </option>
-                  ))}
-                  {squads.filter((squad) => !squad.archived_at).map((squad) => (
-                    <option key={`squad:${squad.id}`} value={`squad:${squad.id}`}>
-                      {squad.name}
-                    </option>
-                  ))}
-                </select>
-                <Input
-                  aria-label={t(($) => $.filters.current_node)}
-                  placeholder={t(($) => $.filters.current_node)}
-                  value={currentNodeKey}
-                  onChange={(event) => setCurrentNodeKey(event.target.value)}
-                  className="min-h-11"
-                />
-              </div>
-              <RunList
-                runs={visibleRuns}
-                isLoading={runsQuery.isLoading}
-                actorName={actorName}
-                projectName={projectName}
-              />
-              {runsQuery.hasNextPage && (
-                <div className="flex justify-center pt-1">
-                  <Button
-                    variant="outline"
-                    onClick={() => runsQuery.fetchNextPage()}
-                    disabled={runsQuery.isFetchingNextPage}
-                  >
-                    {runsQuery.isFetchingNextPage
-                      ? t(($) => $.actions.loading_more)
-                      : t(($) => $.actions.load_more)}
-                  </Button>
-                </div>
-              )}
-            </div>
+            <TemplatesPanel canManage={canManage} actorName={actorName} />
           )}
         </div>
       </main>

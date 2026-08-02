@@ -347,7 +347,7 @@ function JsonObjectEditor({
   );
 }
 
-function RoleEditor({
+export function WorkflowRoleEditor({
   roles,
   readOnly,
   onChange,
@@ -533,13 +533,6 @@ export function WorkflowDefinitionInspector({
   const { t } = useT("workflows");
   return (
     <div className="space-y-3">
-      <InspectorSection title={t(($) => $.editor.workflow_roles)}>
-        <RoleEditor
-          roles={definition.roles}
-          readOnly={readOnly}
-          onChange={(roles) => onChange({ ...definition, roles })}
-        />
-      </InspectorSection>
       <InspectorSection title={t(($) => $.editor.workflow_acceptance)}>
         <AcceptanceEditor
           definition={definition}
@@ -572,42 +565,24 @@ function ExecutorEditor({
     onChange({ ...node, executor: next });
 
   return (
-    <div className="space-y-3">
-      <ExecutorEntryFields
-        idPrefix={`node-executor-${node.key}`}
-        label={t(($) => $.editor.executor)}
-        entry={executor}
-        definition={definition}
-        actorOptions={actorOptions}
-        readOnly={readOnly}
-        onChange={(entry) => {
-          if (!entry) {
-            setExecutor(undefined);
-            return;
-          }
-          setExecutor({ ...entry, fallback });
-        }}
-      />
-      {executor && (
-        <ExecutorEntryFields
-          idPrefix={`node-executor-fallback-${node.key}`}
-          label={t(($) => $.editor.executor_fallback)}
-          hint={t(($) => $.editor.executor_fallback_hint)}
-          entry={fallback}
-          definition={definition}
-          actorOptions={actorOptions}
-          readOnly={readOnly}
-          allowCapability={false}
-          onChange={(entry) => setExecutor({ ...executor, fallback: entry })}
-        />
-      )}
-    </div>
+    <ExecutorEntryFields
+      idPrefix={`node-executor-${node.key}`}
+      label={t(($) => $.editor.executor)}
+      entry={executor}
+      definition={definition}
+      actorOptions={actorOptions}
+      readOnly={readOnly}
+      onChange={(entry) => {
+        if (!entry) {
+          setExecutor(undefined);
+          return;
+        }
+        setExecutor({ ...entry, fallback });
+      }}
+    />
   );
 }
 
-// One executor entry — the node's own, or its single fallback. The fallback
-// reuses this rather than getting its own shape: "who instead" is the same
-// question as "who", asked once more.
 function ExecutorEntryFields({
   idPrefix,
   label,
@@ -616,7 +591,6 @@ function ExecutorEntryFields({
   definition,
   actorOptions,
   readOnly,
-  allowCapability = true,
   onChange,
 }: {
   idPrefix: string;
@@ -626,14 +600,11 @@ function ExecutorEntryFields({
   definition: WorkflowDefinition;
   actorOptions: WorkflowActorOption[];
   readOnly: boolean;
-  allowCapability?: boolean;
   onChange: (entry: WorkflowExecutorDefinition | undefined) => void;
 }) {
   const { t } = useT("workflows");
   const kinds: Array<NonNullable<WorkflowExecutorDefinition["kind"]>> =
-    allowCapability
-      ? ["role", "actor", "capability", "manual"]
-      : ["role", "actor", "manual"];
+    ["role", "actor", "capability", "manual"];
   const kindLabel = (kind: string) => {
     switch (kind) {
       case "role":

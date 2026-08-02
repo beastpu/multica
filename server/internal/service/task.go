@@ -1301,6 +1301,7 @@ const QuickCreateContextType = "quick_create"
 // that executes directly through an agent instead of through an Issue.
 type WorkflowNodeTaskContext struct {
 	Type           string `json:"type"`
+	Phase          string `json:"phase,omitempty"`
 	WorkspaceID    string `json:"workspace_id"`
 	InstanceID     string `json:"instance_id"`
 	NodeInstanceID string `json:"node_instance_id"`
@@ -1312,6 +1313,11 @@ type WorkflowNodeTaskContext struct {
 
 const WorkflowNodeTaskContextType = "workflow_node"
 
+const (
+	WorkflowNodeTaskPhaseWorker = "worker"
+	WorkflowNodeTaskPhaseCritic = "critic"
+)
+
 // EnqueueWorkflowNodeTask creates an issue-less execution owned by one
 // workflow_node_task. The caller resolves a squad to its leader agent and
 // passes the squad id separately so the daemon can still inject squad context.
@@ -1321,6 +1327,37 @@ func (s *TaskService) EnqueueWorkflowNodeTask(
 	instanceID, nodeInstanceID pgtype.UUID,
 	agentID, squadID pgtype.UUID,
 	runTitle, prompt string,
+) (db.AgentTaskQueue, error) {
+	return s.enqueueWorkflowNodeTask(
+		ctx, workspaceID, requesterID, workflowNodeTaskID, instanceID,
+		nodeInstanceID, agentID, squadID, runTitle, prompt,
+		WorkflowNodeTaskPhaseWorker,
+	)
+}
+
+// EnqueueWorkflowNodeCriticTask creates the review phase for a delivered node.
+// The task uses the same workflow_node_task carrier as execution, but its
+// explicit phase keeps the daemon prompt and completion callback unambiguous.
+func (s *TaskService) EnqueueWorkflowNodeCriticTask(
+	ctx context.Context,
+	workspaceID, requesterID, workflowNodeTaskID pgtype.UUID,
+	instanceID, nodeInstanceID pgtype.UUID,
+	agentID, squadID pgtype.UUID,
+	runTitle string,
+) (db.AgentTaskQueue, error) {
+	return s.enqueueWorkflowNodeTask(
+		ctx, workspaceID, requesterID, workflowNodeTaskID, instanceID,
+		nodeInstanceID, agentID, squadID, runTitle, "",
+		WorkflowNodeTaskPhaseCritic,
+	)
+}
+
+func (s *TaskService) enqueueWorkflowNodeTask(
+	ctx context.Context,
+	workspaceID, requesterID, workflowNodeTaskID pgtype.UUID,
+	instanceID, nodeInstanceID pgtype.UUID,
+	agentID, squadID pgtype.UUID,
+	runTitle, prompt, phase string,
 ) (db.AgentTaskQueue, error) {
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
@@ -1333,7 +1370,8 @@ func (s *TaskService) EnqueueWorkflowNodeTask(
 		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
 	}
 	payload := WorkflowNodeTaskContext{
-		Type: WorkflowNodeTaskContextType, WorkspaceID: util.UUIDToString(workspaceID),
+		Type: WorkflowNodeTaskContextType, Phase: phase,
+		WorkspaceID: util.UUIDToString(workspaceID),
 		InstanceID: util.UUIDToString(instanceID), NodeInstanceID: util.UUIDToString(nodeInstanceID),
 		NodeTaskID: util.UUIDToString(workflowNodeTaskID), RunTitle: runTitle,
 		Prompt: strings.TrimSpace(prompt), SquadID: util.UUIDToString(squadID),
@@ -4453,6 +4491,9 @@ func ParseWorkflowNodeTaskContext(task db.AgentTaskQueue) (WorkflowNodeTaskConte
 		workflowTask.Type != WorkflowNodeTaskContextType ||
 		strings.TrimSpace(workflowTask.WorkspaceID) == "" {
 		return WorkflowNodeTaskContext{}, false
+	}
+	if strings.TrimSpace(workflowTask.Phase) == "" {
+		workflowTask.Phase = WorkflowNodeTaskPhaseWorker
 	}
 	return workflowTask, true
 }

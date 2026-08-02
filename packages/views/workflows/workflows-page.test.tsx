@@ -8,11 +8,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import enCommon from "../locales/en/common.json";
 import enWorkflows from "../locales/en/workflows.json";
-import { NewWorkflowDialog } from "./workflows-page";
+import { NewWorkflowDialog, WorkflowsPage } from "./workflows-page";
 
 const mocks = vi.hoisted(() => ({
   createWorkflow: vi.fn(),
   navigate: vi.fn(),
+  saveDefinition: vi.fn(),
 }));
 
 const definition = {
@@ -51,13 +52,19 @@ const templateSummary = {
   id: "template-1",
   status: "published",
   name: "Delivery workflow",
+  description: "",
+  activity_count: 2,
+  run_count: 4,
+  last_published_by: null,
+  last_published_at: null,
 };
 
 const templateDetail = {
-  template: templateSummary,
+  workflow: templateSummary,
   versions: [{
     id: "version-1",
     version: 1,
+    revision: 1,
     status: "published",
     change_summary: "Initial release",
     definition,
@@ -73,7 +80,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
       if (key.includes("members")) {
         return {
           data: [
-            { user_id: "user-1", name: "Current member" },
+            { user_id: "user-1", name: "Current member", role: "admin" },
             { user_id: "user-2", name: "QA member" },
           ],
           isLoading: false,
@@ -92,6 +99,14 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
         isError: false,
       };
     },
+    useInfiniteQuery: () => ({
+      data: { pages: [{ instances: [], total: 0 }] },
+      isLoading: false,
+      isError: false,
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+    }),
   };
 });
 
@@ -110,6 +125,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => {
   return {
     ...actual,
     useWorkspacePaths: () => ({
+      workflow: (id: string) => `/workspace/workflows/${id}`,
       workflowRun: (id: string) => `/workspace/workflows/runs/${id}`,
     }),
   };
@@ -125,8 +141,24 @@ vi.mock("@multica/core/workflows", async (importOriginal) => {
       mutate: (input: unknown) => mocks.createWorkflow(input),
       isPending: false,
     }),
+    useCreateWorkflow: () => ({ mutate: vi.fn(), isPending: false }),
+    useCopyWorkflow: () => ({ mutate: vi.fn(), isPending: false }),
+    useCreateWorkflowTemplateFromBuiltin: () => ({
+      mutate: vi.fn(),
+      isPending: false,
+      isError: false,
+    }),
+    useRunWorkflow: () => ({ mutate: vi.fn(), isPending: false }),
+    useSaveWorkflowDefinition: () => ({
+      mutate: (input: unknown) => mocks.saveDefinition(input),
+      isPending: false,
+    }),
   };
 });
+
+vi.mock("./workflow-start-dialog", () => ({
+  WorkflowStartDialog: () => <button type="button">Start workflow</button>,
+}));
 
 vi.mock("../navigation", async () => {
   const React = await import("react");
@@ -224,5 +256,49 @@ describe("NewWorkflowDialog", () => {
         }),
       );
     });
+  });
+});
+
+describe("WorkflowsPage", () => {
+  beforeEach(() => {
+    mocks.saveDefinition.mockReset();
+  });
+
+  it("keeps definitions, roles, and starter templates as the only page tabs", () => {
+    render(<WorkflowsPage />, { wrapper });
+
+    expect(
+      screen.getAllByRole("tab").map((tab) => tab.textContent),
+    ).toEqual(["Workflows", "Roles", "Starter templates"]);
+    expect(screen.queryByRole("tab", { name: "Active" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Related to me" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Completed" })).toBeNull();
+  });
+
+  it("shows workflow definitions in a compact operational table", () => {
+    render(<WorkflowsPage />, { wrapper });
+
+    expect(screen.getByRole("columnheader", { name: "Name" }))
+      .toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Status" }))
+      .toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Nodes" }))
+      .toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Runs" }))
+      .toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Delivery workflow" }))
+      .toHaveAttribute("href", "/workspace/workflows/template-1");
+  });
+
+  it("moves workflow role management into its own page tab", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowsPage />, { wrapper });
+
+    await user.click(screen.getByRole("tab", { name: "Roles" }));
+
+    expect(await screen.findByText("Workflow roles")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Owner")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add role" }))
+      .toBeInTheDocument();
   });
 });

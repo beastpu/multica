@@ -6,6 +6,7 @@
     "mine": "自分に関連",
     "completed": "完了",
     "templates": "ワークフロー",
+    "roles": "ロール",
     "builtin": "組み込みテンプレート"
   },
   "actions": {

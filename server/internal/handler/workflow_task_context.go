@@ -26,6 +26,7 @@ import (
 // pay for prose it may never read.
 type WorkflowTaskContext struct {
 	InstanceID string `json:"instance_id"`
+	Phase      string `json:"phase,omitempty"`
 	// NodeInstanceID addresses the live attempt. Submissions are scoped to it,
 	// so an agent that cached an earlier attempt's id would write to work that
 	// has since been redone.
@@ -36,11 +37,22 @@ type WorkflowTaskContext struct {
 	Instructions    string                    `json:"instructions,omitempty"`
 	DirectExecution bool                      `json:"direct_execution,omitempty"`
 	HostIssue       string                    `json:"host_issue,omitempty"`
+	NodeIssues      []string                  `json:"node_issues,omitempty"`
 	HandoffRequired bool                      `json:"handoff_required,omitempty"`
 	Artifacts       []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
 	Upstream        []WorkflowUpstreamContext `json:"upstream,omitempty"`
 	Rework          *WorkflowReworkContext    `json:"rework,omitempty"`
 	Choice          *WorkflowChoiceDuty       `json:"choice,omitempty"`
+	ReviewSubmission *WorkflowReviewSubmission `json:"review_submission,omitempty"`
+}
+
+// WorkflowReviewSubmission is the exact worker handoff the Critic judges.
+// The server still points the Critic at issue and artifact bodies for detail;
+// this compact record identifies the revision and preserves its conclusion.
+type WorkflowReviewSubmission struct {
+	ID      string          `json:"id"`
+	Summary string          `json:"summary,omitempty"`
+	Evidence json.RawMessage `json:"evidence,omitempty"`
 }
 
 // WorkflowChoiceDuty is the routing decision this node owes a downstream
@@ -72,6 +84,7 @@ type WorkflowReworkContext struct {
 // accepts; the server rejects any key the node did not declare, so it has to
 // travel with the task instead of being guessed.
 type WorkflowArtifactDuty struct {
+	ID           string `json:"id,omitempty"`
 	Key          string `json:"key"`
 	Name         string `json:"name"`
 	Description  string `json:"description,omitempty"`
@@ -185,6 +198,7 @@ func (h *Handler) workflowTaskContext(
 	}
 	result := &WorkflowTaskContext{
 		InstanceID:      uuidToString(instance.ID),
+		Phase:           service.WorkflowNodeTaskPhaseWorker,
 		NodeInstanceID:  uuidToString(node.ID),
 		NodeKey:         node.NodeKey,
 		NodeName:        node.NameSnapshot,
@@ -194,9 +208,11 @@ func (h *Handler) workflowTaskContext(
 		HandoffRequired: nodeDefinition.Completion.HandoffRequired,
 	}
 	result.Artifacts = h.workflowArtifactDuties(ctx, instance.WorkspaceID, node, nodeDefinition)
+	result.NodeIssues = h.workflowNodeIssueIdentifiers(ctx, instance.WorkspaceID, node)
 	result.Upstream = h.workflowUpstreamContext(ctx, instance, node, live)
 	result.Rework = h.workflowReworkContext(ctx, instance, node)
 	result.Choice = h.workflowChoiceDuty(ctx, instance, node)
+	result.ReviewSubmission = h.workflowReviewSubmission(ctx, instance.WorkspaceID, node)
 	return result
 }
 
@@ -245,6 +261,7 @@ func (h *Handler) workflowTaskContextForDirectTask(
 		return nil
 	}
 	result.DirectExecution = true
+	result.Phase = direct.Phase
 	if strings.TrimSpace(direct.Prompt) != "" {
 		result.Instructions = strings.TrimSpace(direct.Prompt)
 	}
@@ -252,6 +269,56 @@ func (h *Handler) workflowTaskContextForDirectTask(
 		result.RunTitle = strings.TrimSpace(direct.RunTitle)
 	}
 	return result
+}
+
+func (h *Handler) workflowNodeIssueIdentifiers(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	node db.WorkflowNodeInstance,
+) []string {
+	tasks, err := h.Queries.ListWorkflowNodeTasks(ctx, db.ListWorkflowNodeTasksParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return nil
+	}
+	prefix := h.getIssuePrefix(ctx, workspaceID)
+	issues := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		if !task.IssueID.Valid {
+			continue
+		}
+		issue, issueErr := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+			ID: task.IssueID, WorkspaceID: workspaceID,
+		})
+		if issueErr == nil {
+			issues = append(issues, prefix+"-"+strconv.Itoa(int(issue.Number)))
+		}
+	}
+	return issues
+}
+
+func (h *Handler) workflowReviewSubmission(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	node db.WorkflowNodeInstance,
+) *WorkflowReviewSubmission {
+	if !node.LatestSubmissionID.Valid {
+		return nil
+	}
+	submission, err := h.Queries.GetWorkflowSubmissionInWorkspace(
+		ctx,
+		db.GetWorkflowSubmissionInWorkspaceParams{
+			ID: node.LatestSubmissionID, WorkspaceID: workspaceID,
+		},
+	)
+	if err != nil || submission.Status != "valid" {
+		return nil
+	}
+	return &WorkflowReviewSubmission{
+		ID: uuidToString(submission.ID), Summary: submission.Summary,
+		Evidence: json.RawMessage(submission.Evidence),
+	}
 }
 
 // workflowChoiceDuty reports the branch decision this node owes, derived from
@@ -365,6 +432,7 @@ func (h *Handler) workflowArtifactDuties(
 			Required:    requirement.Required,
 		}
 		if artifact, exists := delivered[requirement.Key]; exists {
+			duty.ID = uuidToString(artifact.ID)
 			duty.Delivered = true
 			duty.ReviewStatus = artifact.ReviewStatus
 		}
