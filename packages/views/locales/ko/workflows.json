@@ -286,7 +286,8 @@
     "rework_badge": "재작업 ×{{attempt}}",
     "rework_badge_title": "이 작업은 반려된 적이 있습니다. 현재 {{attempt}}번째 시도입니다.",
     "reworked_activities": "재작업한 활동",
-    "branch_choice_help": "「{{gateway}}」가 이 선택으로 분기합니다. 선택하지 않으면 「{{fallback}}」로 진행합니다."
+    "branch_choice_help": "「{{gateway}}」가 이 선택으로 분기합니다. 선택하지 않으면 「{{fallback}}」로 진행합니다.",
+    "node_configuration": "노드 설정"
   },
   "editor": {
     "title": "워크플로 템플릿",

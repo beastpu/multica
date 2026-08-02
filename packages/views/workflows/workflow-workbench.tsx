@@ -18,7 +18,6 @@ import {
   RotateCcw,
   Send,
   ShieldCheck,
-  Stethoscope,
   SkipForward,
   Unlink,
   Undo2,
@@ -2132,6 +2131,9 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   const blockingNodeIssues = selectedRequiredTasks
     .map((task) => (task.issue_id ? selectedIssueById.get(task.issue_id) : undefined))
     .filter((issue): issue is Issue => Boolean(issue) && !issueSatisfiesNode(issue!));
+  const nodeOwners = (nodeQuery.data?.participants ?? []).filter(
+    (participant) => participant.role === "owner",
+  );
   const visibleWaitingReasons = selectedNode?.waiting_reasons.filter(
     (reason) =>
       reason.code !== "required_issue_not_done" &&
@@ -2281,91 +2283,38 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             {selectedNode.definition.description}
           </p>
         )}
+        {/*
+          Who is on the hook stays visible; everything else about the node
+          moved into the collapsed block at the bottom. "Who owns this" is the
+          one fact people scan for without having gone looking for it.
+        */}
+        {nodeOwners.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className={SECTION_HEADING}>
+              {t(($) => $.workbench.owners)}
+            </span>
+            {nodeOwners.map((participant) => (
+              <span
+                key={participant.id}
+                className="inline-flex min-w-0 items-center gap-1.5 text-sm"
+              >
+                <ActorAvatar
+                  actorType={participant.actor_type as "member" | "agent" | "squad"}
+                  actorId={participant.actor_id}
+                  size="sm"
+                />
+                <span className="truncate">
+                  {actorName(
+                    participant.actor_type as "member" | "agent" | "squad",
+                    participant.actor_id,
+                  )}
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/*
-        Single-value node facts share the two-column definition list the host
-        block above uses. Each used to own a full-width heading + row, which
-        spent six rows saying four short things and made the panel scroll
-        before the parts that need action.
-      */}
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-t py-4">
-        <div className="min-w-0">
-          <dt className={SECTION_HEADING}>{t(($) => $.workbench.owners)}</dt>
-          <dd className="mt-1 flex flex-wrap gap-2">
-            {nodeQuery.data.participants
-              .filter((participant) => participant.role === "owner")
-              .map((participant) => (
-                <span
-                  key={participant.id}
-                  className="inline-flex min-w-0 items-center gap-1.5 text-sm"
-                >
-                  <ActorAvatar
-                    actorType={participant.actor_type as "member" | "agent" | "squad"}
-                    actorId={participant.actor_id}
-                    size="sm"
-                  />
-                  <span className="truncate">
-                    {actorName(
-                      participant.actor_type as "member" | "agent" | "squad",
-                      participant.actor_id,
-                    )}
-                  </span>
-                </span>
-              ))}
-            {!nodeQuery.data.participants.some(
-              (participant) => participant.role === "owner",
-            ) && (
-              <span className="text-sm text-muted-foreground">
-                {t(($) => $.runs.none)}
-              </span>
-            )}
-          </dd>
-        </div>
-        {/* Omitted entirely when empty — a heading over "none" spends a row to
-            say nothing. */}
-        {nodeQuery.data.participants.some(
-          (participant) => participant.role !== "owner",
-        ) && (
-          <div className="min-w-0">
-            <dt className={SECTION_HEADING}>
-              {t(($) => $.workbench.participants)}
-            </dt>
-            <dd className="mt-1 flex flex-wrap gap-2 text-sm">
-              {nodeQuery.data.participants
-                .filter((participant) => participant.role !== "owner")
-                .map((participant) => (
-                  <span key={participant.id} className="truncate">
-                    {actorName(
-                      participant.actor_type as "member" | "agent" | "squad",
-                      participant.actor_id,
-                    )}
-                  </span>
-                ))}
-            </dd>
-          </div>
-        )}
-        <div className="min-w-0">
-          <dt className={SECTION_HEADING}>
-            {t(($) => $.workbench.attempt_label)}
-          </dt>
-          <dd className="mt-1 text-sm tabular-nums">
-            {t(($) => $.workbench.attempt, { attempt: selectedNode.attempt })}
-          </dd>
-        </div>
-        {selectedNode.definition.timeout_minutes && (
-          <div className="min-w-0">
-            <dt className={SECTION_HEADING}>
-              {t(($) => $.workbench.timeout_label)}
-            </dt>
-            <dd className="mt-1 text-sm tabular-nums">
-              {t(($) => $.workbench.timeout, {
-                minutes: selectedNode.definition.timeout_minutes,
-              })}
-            </dd>
-          </div>
-        )}
-      </dl>
 
       {visibleWaitingReasons.length > 0 && (
         <Alert>
@@ -2474,12 +2423,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             <History />
             {t(($) => $.workbench.history)}
           </TabsTrigger>
-          {canAdmin && (
-            <TabsTrigger value="diagnostics">
-              <Stethoscope />
-              {t(($) => $.workbench.diagnostics)}
-            </TabsTrigger>
-          )}
         </TabsList>
         {hasSubmissionPanel && (
           <TabsContent value="submission" className="pt-4">
@@ -2532,8 +2475,20 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             loading={eventsQuery.isLoading}
           />
         </TabsContent>
-        {canAdmin && (
-          <TabsContent value="diagnostics" className="space-y-5 pt-4">
+      </Tabs>
+
+      {/*
+        Diagnostics is a troubleshooting tool, not a step in anyone's work. As
+        a peer tab of "submit result" it put a debugging surface on the primary
+        path; it belongs with the other reference material, collapsed.
+      */}
+      {canAdmin && (
+        <details className="border-t pt-3">
+          <summary className="cursor-pointer text-xs font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            {t(($) => $.workbench.diagnostics)}
+          </summary>
+          <div className="space-y-5 pt-3">
+
             <WorkflowDiagnosticsPanel diagnostics={diagnosticsQuery.data} />
             <details className="rounded-xl border bg-muted/10">
               <summary className="cursor-pointer px-4 py-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -2567,9 +2522,100 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                 )}
               </div>
             </details>
-          </TabsContent>
+          </div>
+        </details>
+      )}
+
+      {/*
+        Node configuration — who owns it, which attempt, how long before it is
+        flagged. Reference material: true for the whole run, needed once, and
+        never the reason someone opened this panel. It sat between the node
+        title and the action, so the primary control of the surface began below
+        four rows of facts nobody had asked for. Collapsed, and below.
+      */}
+      <details className="border-t pt-3">
+        <summary className="cursor-pointer text-xs font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {t(($) => $.workbench.node_configuration)}
+        </summary>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-t py-4">
+        <div className="min-w-0">
+          <dt className={SECTION_HEADING}>{t(($) => $.workbench.owners)}</dt>
+          <dd className="mt-1 flex flex-wrap gap-2">
+            {nodeQuery.data.participants
+              .filter((participant) => participant.role === "owner")
+              .map((participant) => (
+                <span
+                  key={participant.id}
+                  className="inline-flex min-w-0 items-center gap-1.5 text-sm"
+                >
+                  <ActorAvatar
+                    actorType={participant.actor_type as "member" | "agent" | "squad"}
+                    actorId={participant.actor_id}
+                    size="sm"
+                  />
+                  <span className="truncate">
+                    {actorName(
+                      participant.actor_type as "member" | "agent" | "squad",
+                      participant.actor_id,
+                    )}
+                  </span>
+                </span>
+              ))}
+            {!nodeQuery.data.participants.some(
+              (participant) => participant.role === "owner",
+            ) && (
+              <span className="text-sm text-muted-foreground">
+                {t(($) => $.runs.none)}
+              </span>
+            )}
+          </dd>
+        </div>
+        {/* Omitted entirely when empty — a heading over "none" spends a row to
+            say nothing. */}
+        {nodeQuery.data.participants.some(
+          (participant) => participant.role !== "owner",
+        ) && (
+          <div className="min-w-0">
+            <dt className={SECTION_HEADING}>
+              {t(($) => $.workbench.participants)}
+            </dt>
+            <dd className="mt-1 flex flex-wrap gap-2 text-sm">
+              {nodeQuery.data.participants
+                .filter((participant) => participant.role !== "owner")
+                .map((participant) => (
+                  <span key={participant.id} className="truncate">
+                    {actorName(
+                      participant.actor_type as "member" | "agent" | "squad",
+                      participant.actor_id,
+                    )}
+                  </span>
+                ))}
+            </dd>
+          </div>
         )}
-      </Tabs>
+        <div className="min-w-0">
+          <dt className={SECTION_HEADING}>
+            {t(($) => $.workbench.attempt_label)}
+          </dt>
+          <dd className="mt-1 text-sm tabular-nums">
+            {t(($) => $.workbench.attempt, { attempt: selectedNode.attempt })}
+          </dd>
+        </div>
+        {selectedNode.definition.timeout_minutes && (
+          <div className="min-w-0">
+            <dt className={SECTION_HEADING}>
+              {t(($) => $.workbench.timeout_label)}
+            </dt>
+            <dd className="mt-1 text-sm tabular-nums">
+              {t(($) => $.workbench.timeout, {
+                minutes: selectedNode.definition.timeout_minutes,
+              })}
+            </dd>
+          </div>
+        )}
+      </dl>
+      </details>
+
 
       <ConfirmationPanel
         instanceId={instanceId}

@@ -286,7 +286,8 @@
     "rework_badge": "返工 ×{{attempt}}",
     "rework_badge_title": "这份工作被退回过，当前是第 {{attempt}} 次执行。",
     "reworked_activities": "返工过的活动",
-    "branch_choice_help": "「{{gateway}}」按这个选择路由。不选则走「{{fallback}}」。"
+    "branch_choice_help": "「{{gateway}}」按这个选择路由。不选则走「{{fallback}}」。",
+    "node_configuration": "节点配置"
   },
   "editor": {
     "title": "工作流模板",

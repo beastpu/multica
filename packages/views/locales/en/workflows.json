@@ -286,7 +286,8 @@
     "rework_badge": "rework ×{{attempt}}",
     "rework_badge_title": "This work was sent back — it is on attempt {{attempt}}.",
     "reworked_activities": "Reworked activities",
-    "branch_choice_help": "「{{gateway}}」routes on this. Leave it unset and the run goes to「{{fallback}}」."
+    "branch_choice_help": "「{{gateway}}」routes on this. Leave it unset and the run goes to「{{fallback}}」.",
+    "node_configuration": "Node configuration"
   },
   "editor": {
     "title": "Workflow template",
