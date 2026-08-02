@@ -235,7 +235,7 @@ describe("workflow graph editor", () => {
     ]);
   });
 
-  it("cleans acceptance references and never deletes Start", () => {
+  it("leaves acceptance alone on deletion and never deletes Start", () => {
     const definition = {
       ...workflow(
         [start, activity("accept"), end],
@@ -244,18 +244,14 @@ describe("workflow graph editor", () => {
           { from: "accept", to: "end" },
         ],
       ),
-      acceptance: {
-        policy: "member",
-        node_key: "accept",
-        rework_targets: ["accept"],
-      },
+      acceptance: { policy: "member" },
     } satisfies WorkflowDefinition;
 
     expect(removeWorkflowNode(definition, "start")).toBeNull();
+    // Acceptance belongs to the run, and its rework destinations come from the
+    // graph — deleting a node updates them by definition.
     expect(removeWorkflowNode(definition, "accept")?.acceptance).toEqual({
-      policy: undefined,
-      node_key: undefined,
-      rework_targets: [],
+      policy: "member",
     });
   });
 });

@@ -1,7 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRef } from "react";
 import { api } from "../api";
-import { useAuthStore } from "../auth";
 import { useWorkspaceId } from "../hooks";
 import { issueKeys } from "../issues/queries";
 import type {
@@ -271,63 +270,6 @@ export function useResolveWorkflowNodeExecutor(
       qc.invalidateQueries({ queryKey: workflowKeys.node(wsId, nodeInstanceId) });
       qc.invalidateQueries({ queryKey: workflowKeys.instance(wsId, instanceId) });
       qc.invalidateQueries({ queryKey: workflowKeys.instanceIssues(wsId, instanceId) });
-      qc.invalidateQueries({ queryKey: workflowKeys.instances(wsId) });
-    },
-  });
-}
-
-export function useConfirmWorkflowNode(
-  instanceId: string,
-  nodeInstanceId: string,
-) {
-  const qc = useQueryClient();
-  const wsId = useWorkspaceId();
-  const userId = useAuthStore((state) => state.user?.id);
-  const nodeKey = workflowKeys.node(wsId, nodeInstanceId);
-  const idempotency = useRetrySafeMutationKey();
-  return useMutation({
-    mutationFn: (input: {
-      decision: "approved" | "rejected";
-      comment?: string;
-    }) => api.confirmWorkflowNode(nodeInstanceId, {
-      ...input,
-      idempotency_key: idempotency.forPayload(input),
-    }),
-    onMutate: async (input) => {
-      await qc.cancelQueries({ queryKey: nodeKey });
-      const previous = qc.getQueryData<WorkflowNodeDetail>(nodeKey);
-      if (previous && userId) {
-        const now = new Date().toISOString();
-        const optimistic = {
-          id: `optimistic:${mutationKey()}`,
-          workflow_node_instance_id: nodeInstanceId,
-          member_id: userId,
-          decision: input.decision,
-          comment: input.comment ?? "",
-          decided_at: now,
-          updated_at: now,
-        };
-        const confirmations = previous.confirmations.some(
-          (item) => item.member_id === userId,
-        )
-          ? previous.confirmations.map((item) =>
-            item.member_id === userId ? optimistic : item
-          )
-          : [optimistic, ...previous.confirmations];
-        qc.setQueryData<WorkflowNodeDetail>(nodeKey, {
-          ...previous,
-          confirmations,
-        });
-      }
-      return { previous };
-    },
-    onError: (_error, _input, context) => {
-      if (context?.previous) qc.setQueryData(nodeKey, context.previous);
-    },
-    onSuccess: (_detail, input) => idempotency.clear(input),
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: workflowKeys.node(wsId, nodeInstanceId) });
-      qc.invalidateQueries({ queryKey: workflowKeys.instance(wsId, instanceId) });
       qc.invalidateQueries({ queryKey: workflowKeys.instances(wsId) });
     },
   });

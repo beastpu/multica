@@ -216,46 +216,18 @@ describe("WorkflowStartDialog", () => {
     });
   });
 
-  it("pre-fills role assignments from template default actors", () => {
-    const assignments = defaultAssignments(
-      [
-        {
-          key: "fixer",
-          name: "Fixer",
-          required: true,
-          allowed_actor_types: ["agent"],
-          default_actor_type: "agent",
-          default_actor_id: "agent-1",
-        },
-        {
-          key: "owner",
-          name: "Owner",
-          required: true,
-          allowed_actor_types: ["member"],
-        },
-      ],
-      "user-1",
-    );
-
-    expect(assignments).toEqual({
-      fixer: "agent:agent-1",
-      owner: "member:user-1",
-    });
-  });
-
-  it("keeps the template owner default over the current-user fallback", () => {
+  it("falls back to the current user for a member-only owner role", () => {
     const assignments = defaultAssignments(
       [{
         key: "owner",
         name: "Owner",
         required: true,
         allowed_actor_types: ["member"],
-        default_actor_type: "member",
-        default_actor_id: "member-9",
       }],
       "user-1",
     );
 
-    expect(assignments).toEqual({ owner: "member:member-9" });
+    expect(assignments).toEqual({ owner: "member:user-1" });
   });
+
 });

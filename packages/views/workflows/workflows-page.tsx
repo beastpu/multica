@@ -97,43 +97,30 @@ function defaultWorkflowDefinition(): WorkflowDefinition {
       {
         key: "work",
         kind: "activity",
-        activity_mode: "work",
         name: "Work",
         owner_role: "owner",
         executor: {
-          strategies: [
-            { kind: "fixed_role", role: "owner" },
-            { kind: "manual" },
-          ],
+          kind: "role",
+          role: "owner",
+          fallback: { kind: "manual" },
         },
         issue_templates: [{
           key: "work_item",
           title: "Complete {{host.title}}",
-          assignee_role: "owner",
           required: true,
           initial_status: "todo",
         }],
         completion: { mode: "automatic", required_issue_outcome: "done" },
       },
-      {
-        key: "acceptance",
-        kind: "activity",
-        activity_mode: "acceptance",
-        name: "Acceptance",
-        owner_role: "owner",
-      },
       { key: "end", kind: "end", name: "End" },
     ],
     edges: [
       { from: "start", to: "work" },
-      { from: "work", to: "acceptance" },
-      { from: "acceptance", to: "end" },
+      { from: "work", to: "end" },
     ],
     acceptance: {
       policy: "member",
       approver_role: "owner",
-      node_key: "acceptance",
-      rework_targets: ["work"],
     },
   };
 }

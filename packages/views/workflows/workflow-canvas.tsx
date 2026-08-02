@@ -41,7 +41,10 @@ import {
   workflowConnectionTargets,
   workflowNodeCanAddOutgoing,
 } from "./workflow-graph-editor";
-import { WorkflowStatusDot } from "./workflow-status";
+import {
+  WorkflowStatusDot,
+  workflowNodeDisplayStatus,
+} from "./workflow-status";
 
 export type {
   WorkflowCanvasBranchKind,
@@ -342,7 +345,11 @@ export function WorkflowCanvas({
                   type="button"
                   disabled={!selectable}
                   aria-pressed={selected}
-                  aria-label={`${node.name || node.key}, ${instance?.status ?? node.kind}`}
+                  aria-label={`${node.name || node.key}, ${
+                    instance
+                      ? workflowNodeDisplayStatus(instance.status)
+                      : node.kind
+                  }`}
                   onClick={() => {
                     if (instance && onSelect) onSelect(instance.id);
                     else onSelectKey?.(node.key);
@@ -355,10 +362,16 @@ export function WorkflowCanvas({
                   )}
                 >
                   <span
-                    data-workflow-status={instance?.status ?? "draft"}
+                    data-workflow-status={instance
+                      ? workflowNodeDisplayStatus(instance.status)
+                      : "draft"}
                     className="grid size-3 shrink-0 place-items-center"
                   >
-                    <WorkflowStatusDot status={instance?.status ?? "unknown"} />
+                    <WorkflowStatusDot
+                      status={instance
+                        ? workflowNodeDisplayStatus(instance.status)
+                        : "unknown"}
+                    />
                   </span>
                   <span className="min-w-0 flex-1 truncate text-sm font-medium">
                     {node.name || node.key}

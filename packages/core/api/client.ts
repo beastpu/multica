@@ -189,7 +189,6 @@ import type {
   WorkflowInstance,
   WorkflowInstanceDetail,
   WorkflowIssuesResponse,
-  WorkflowConfirmation,
   WorkflowExecutorResolution,
   BuiltinWorkflowTemplate,
   WorkflowNodeDetail,
@@ -349,7 +348,6 @@ import {
   ListWorkflowTemplatesResponseSchema,
   WorkflowAcceptanceMutationResponseSchema,
   WorkflowAcceptancesResponseSchema,
-  WorkflowConfirmationMutationResponseSchema,
   WorkflowExecutorResolutionMutationResponseSchema,
   WorkflowDiagnosticsSchema,
   WorkflowEventsResponseSchema,
@@ -3493,32 +3491,6 @@ export class ApiClient {
       { endpoint: "POST /api/workflow-node-instances/:id/resolve-executor" },
     );
     return parsed.resolution;
-  }
-
-  async confirmWorkflowNode(
-    nodeId: string,
-    input: {
-      decision: "approved" | "rejected";
-      comment?: string;
-      idempotency_key: string;
-    },
-  ): Promise<WorkflowConfirmation> {
-    const raw = await this.fetch<unknown>(
-      `/api/workflow-node-instances/${nodeId}/confirm`,
-      { method: "POST", body: JSON.stringify(input) },
-    );
-    const parsed = parseWithFallback(
-      raw,
-      WorkflowConfirmationMutationResponseSchema,
-      {
-        confirmation: {
-          id: "", workflow_node_instance_id: nodeId, member_id: "",
-          decision: "unknown", comment: "", decided_at: "", updated_at: "",
-        },
-      },
-      { endpoint: "POST /api/workflow-node-instances/:id/confirm" },
-    );
-    return parsed.confirmation;
   }
 
   async changeWorkflowNodeTask(

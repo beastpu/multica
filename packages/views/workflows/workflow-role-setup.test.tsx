@@ -284,7 +284,7 @@ function workflowNode(overrides: Partial<WorkflowNodeInstance> = {}) {
       key: "review",
       kind: "activity",
       name: "Review",
-      verdict: { evaluator: "member" },
+      reviewer: { kind: "role", role: "qa", required: true },
     },
     status: "active",
     waiting_reasons: [],

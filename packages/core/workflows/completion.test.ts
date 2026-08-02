@@ -42,9 +42,9 @@ describe("workflowCompletionMode", () => {
     }))).toBe("automatic");
   });
 
-  it("treats acceptance and control nodes as automatic", () => {
+  it("treats control nodes as automatic", () => {
     expect(workflowCompletionMode(activity({
-      activity_mode: "acceptance",
+      kind: "gateway",
     }))).toBe("automatic");
     expect(workflowCompletionMode({
       key: "end",

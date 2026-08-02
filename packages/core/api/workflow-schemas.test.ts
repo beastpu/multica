@@ -112,41 +112,34 @@ describe("workflow response schemas", () => {
     expect(parsed.verdicts).toEqual([]);
     expect(parsed.participants).toEqual([]);
     expect(parsed.executor_resolutions).toEqual([]);
-    expect(parsed.confirmations).toEqual([]);
   });
 
-  it("preserves direct node executors and child issue overrides", () => {
+  it("preserves the node executor and its single fallback", () => {
     const parsed = WorkflowNodeDefinitionSchema.parse({
       key: "backend",
       kind: "activity",
       name: "Backend development",
       executor: {
-        strategies: [{
-          kind: "fixed_actor",
-          actor_type: "agent",
-          actor_id: "agent-default",
-        }, {
-          kind: "manual",
-        }],
+        kind: "actor",
+        actor_type: "agent",
+        actor_id: "agent-default",
+        fallback: { kind: "manual" },
       },
+      reviewer: { kind: "role", role: "qa", required: true },
       issue_templates: [{
         key: "verify",
         title: "Verify implementation",
-        assignee_type: "squad",
-        assignee_id: "squad-review",
         required: true,
       }],
     });
 
-    expect(parsed.executor?.strategies[0]).toMatchObject({
-      kind: "fixed_actor",
+    expect(parsed.executor).toMatchObject({
+      kind: "actor",
       actor_type: "agent",
       actor_id: "agent-default",
+      fallback: { kind: "manual" },
     });
-    expect(parsed.issue_templates[0]).toMatchObject({
-      assignee_type: "squad",
-      assignee_id: "squad-review",
-    });
+    expect(parsed.reviewer).toMatchObject({ kind: "role", role: "qa", required: true });
   });
 
   it("preserves known completion modes and ignores unknown future modes", () => {

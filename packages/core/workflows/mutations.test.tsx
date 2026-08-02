@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import {
-  useConfirmWorkflowNode,
   useCreateWorkflow,
   useCreateWorkflowSubmission,
 } from "./mutations";
@@ -119,42 +118,6 @@ describe("workflow optimistic mutations", () => {
     await waitFor(() => {
       expect(
         queryClient.getQueryData<WorkflowNodeDetail>(NODE_KEY)?.submissions,
-      ).toEqual([]);
-    });
-  });
-
-  it("shows the current member confirmation and restores it after failure", async () => {
-    const request = deferred<never>();
-    setApiInstance({
-      confirmWorkflowNode: vi.fn(() => request.promise),
-    } as unknown as ApiClient);
-    const { result } = renderHook(
-      () => useConfirmWorkflowNode("instance-1", "node-1"),
-      { wrapper: wrapper(queryClient) },
-    );
-
-    let mutation!: Promise<unknown>;
-    act(() => {
-      mutation = result.current.mutateAsync({
-        decision: "approved",
-        comment: "looks good",
-      });
-    });
-
-    await waitFor(() => {
-      const confirmation = queryClient
-        .getQueryData<WorkflowNodeDetail>(NODE_KEY)
-        ?.confirmations[0];
-      expect(confirmation?.member_id).toBe("user-1");
-      expect(confirmation?.decision).toBe("approved");
-      expect(confirmation?.comment).toBe("looks good");
-    });
-
-    request.reject(new Error("request rejected"));
-    await expect(mutation).rejects.toThrow("request rejected");
-    await waitFor(() => {
-      expect(
-        queryClient.getQueryData<WorkflowNodeDetail>(NODE_KEY)?.confirmations,
       ).toEqual([]);
     });
   });

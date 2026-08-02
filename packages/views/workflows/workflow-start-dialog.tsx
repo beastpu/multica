@@ -65,14 +65,6 @@ export function defaultAssignments(
   userId: string | undefined,
 ): Record<string, string> {
   const assignments: Record<string, string> = {};
-  for (const role of roles) {
-    if (role.default_actor_type && role.default_actor_id) {
-      assignments[role.key] = assignmentKey(
-        role.default_actor_type,
-        role.default_actor_id,
-      );
-    }
-  }
   if (!userId) return assignments;
   const owner = roles.find((role) =>
     role.key === "owner" && role.allowed_actor_types.includes("member")

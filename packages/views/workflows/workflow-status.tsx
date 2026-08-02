@@ -46,6 +46,22 @@ const statusStyle: Record<string, string> = {
   archived: "border-muted-foreground/20 bg-muted text-muted-foreground",
 };
 
+/**
+ * Maps a node instance's status to what the run views should show.
+ *
+ * A rollback supersedes the target's downstream nodes so their old submissions
+ * and verdicts stay behind on the old attempt. But nothing replaced those
+ * nodes — they are back to not having run, and that is what the canvas has to
+ * say. "Superseded" is only the truth for a submission revision, which is why
+ * this maps node status rather than the badge itself.
+ *
+ * Who rolled back, when, and why is in the operation log; the canvas does not
+ * repeat it.
+ */
+export function workflowNodeDisplayStatus(status: string): string {
+  return status === "superseded" ? "pending" : status;
+}
+
 function StatusIcon({ status }: { status: string }) {
   const className = "size-3";
   switch (status) {

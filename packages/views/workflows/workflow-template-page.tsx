@@ -210,7 +210,6 @@ function newActivity(definition: WorkflowDefinition): WorkflowNodeDefinition {
   return {
     key,
     kind: "activity",
-    activity_mode: "work",
     name: "New activity",
     owner_role: "owner",
     // A new activity is a process step first. Producing issues is an explicit
@@ -218,10 +217,9 @@ function newActivity(definition: WorkflowDefinition): WorkflowNodeDefinition {
     // author has not decided to track as work items yet.
     issue_policy: "none",
     executor: {
-      strategies: [
-        { kind: "fixed_role", role: "owner" },
-        { kind: "manual" },
-      ],
+      kind: "role",
+      role: "owner",
+      fallback: { kind: "manual" },
     },
     // Without issues there is nothing to observe, so the owner completes the
     // activity explicitly. An automatic node here would satisfy its (empty)
@@ -510,29 +508,11 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
   };
   const changeNode = (next: WorkflowNodeDefinition) => {
     if (!definition || !selectedNode) return;
-    let acceptance = definition.acceptance;
-    if (next.kind === "activity" && next.activity_mode === "acceptance") {
-      acceptance = {
-        ...acceptance,
-        policy: "member",
-        node_key: next.key,
-      };
-    } else if (
-      selectedNode.activity_mode === "acceptance" &&
-      acceptance.node_key === selectedNode.key
-    ) {
-      acceptance = {
-        ...acceptance,
-        policy: undefined,
-        node_key: undefined,
-      };
-    }
     changeDefinition({
       ...definition,
       nodes: definition.nodes.map((node) =>
         node.key === next.key ? next : node
       ),
-      acceptance,
     });
   };
   const save = (onSaved?: () => void) => {
@@ -914,7 +894,6 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
                   {!selectedNode && (
                     <WorkflowDefinitionInspector
                       definition={definition}
-                      actorOptions={actorOptions}
                       readOnly={!canEdit}
                       onChange={changeDefinition}
                     />

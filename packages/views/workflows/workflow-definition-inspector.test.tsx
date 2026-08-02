@@ -15,17 +15,13 @@ import { WorkflowNodeDefinitionInspector } from "./workflow-definition-inspector
 const node: WorkflowNodeDefinition = {
   key: "backend",
   kind: "activity",
-  activity_mode: "work",
   name: "Backend development",
   issue_policy: "fixed",
   executor: {
-    strategies: [{
-      kind: "fixed_actor",
-      actor_type: "agent",
-      actor_id: "agent-default",
-    }, {
-      kind: "manual",
-    }],
+    kind: "actor",
+    actor_type: "agent",
+    actor_id: "agent-default",
+    fallback: { kind: "manual" },
   },
   issue_templates: [{
     key: "implementation",
@@ -49,7 +45,7 @@ const definition: WorkflowDefinition = {
     { from: "start", to: "backend" },
     { from: "backend", to: "end" },
   ],
-  acceptance: { policy: "none", rework_targets: [] },
+  acceptance: { policy: "none" },
 };
 
 const actorOptions = [{
@@ -100,7 +96,7 @@ describe("WorkflowNodeDefinitionInspector", () => {
     expect(screen.getByText("End")).toBeInTheDocument();
   });
 
-  it("shows humanized executor strategy labels instead of engine enums", () => {
+  it("shows humanized executor kind labels instead of engine enums", () => {
     renderInspector(vi.fn());
 
     expect(screen.getAllByRole("option", { name: "By role" }).length)
@@ -109,81 +105,23 @@ describe("WorkflowNodeDefinitionInspector", () => {
     expect(screen.queryByRole("option", { name: "manual" })).toBeNull();
   });
 
-  it("collapses executor resolution behind an advanced toggle when unconfigured", async () => {
-    const user = userEvent.setup();
-    const bareNode: WorkflowNodeDefinition = {
-      key: "backend",
-      kind: "activity",
-      activity_mode: "work",
-      name: "Backend development",
-      issue_policy: "fixed",
-      issue_templates: node.issue_templates,
-    };
-    render(
-      <I18nProvider
-        locale="en"
-        resources={{ en: { workflows: enWorkflows } }}
-      >
-        <WorkflowNodeDefinitionInspector
-          node={bareNode}
-          definition={definition}
-          actorOptions={actorOptions}
-          readOnly={false}
-          onChange={vi.fn()}
-        />
-      </I18nProvider>,
-    );
-
-    expect(screen.queryByText("Add resolution strategy")).toBeNull();
-    await user.click(
-      screen.getByRole("button", { name: /Executor resolution/ }),
-    );
-    expect(screen.getByText("Add resolution strategy")).toBeInTheDocument();
-  });
-
-  it("assigns a concrete node executor", async () => {
+  it("keeps the executor's fallback when the actor changes", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     renderInspector(onChange);
 
     await user.selectOptions(
-      screen.getByLabelText("Default assignee"),
+      screen.getByLabelText(enWorkflows.editor.direct_executor),
       "squad:squad-review",
     );
 
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
       executor: {
-        strategies: [{
-          kind: "fixed_actor",
-          actor_type: "squad",
-          actor_id: "squad-review",
-        }, {
-          kind: "manual",
-        }],
+        kind: "actor",
+        actor_type: "squad",
+        actor_id: "squad-review",
+        fallback: { kind: "manual" },
       },
-    }));
-  });
-
-  it("stores an issue assignee as an override of the node default", async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    renderInspector(onChange);
-
-    await user.click(
-      screen.getByRole("tab", { name: enWorkflows.editor.tab_work }),
-    );
-    await user.selectOptions(
-      screen.getByLabelText("Direct assignee override"),
-      "squad:squad-review",
-    );
-
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
-      issue_templates: [expect.objectContaining({
-        key: "implementation",
-        assignee_role: undefined,
-        assignee_type: "squad",
-        assignee_id: "squad-review",
-      })],
     }));
   });
 
@@ -237,15 +175,15 @@ describe("WorkflowNodeDefinitionInspector", () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
       owner_role: undefined,
       executor: {
-        strategies: [
-          { kind: "fixed_actor", actor_type: "member", actor_id: "member-1" },
-          { kind: "manual" },
-        ],
+        kind: "actor",
+        actor_type: "member",
+        actor_id: "member-1",
+        fallback: { kind: "manual" },
       },
     }));
   });
 
-  it("enables owner confirmation presets for a pinned member owner", async () => {
+  it("enables the owner reviewer for a pinned member owner", async () => {
     const user = userEvent.setup();
     render(
       <I18nProvider
@@ -257,14 +195,10 @@ describe("WorkflowNodeDefinitionInspector", () => {
             ...node,
             owner_role: undefined,
             executor: {
-              strategies: [
-                {
-                  kind: "fixed_actor",
-                  actor_type: "member",
-                  actor_id: "member-1",
-                },
-                { kind: "manual" },
-              ],
+              kind: "actor",
+              actor_type: "member",
+              actor_id: "member-1",
+              fallback: { kind: "manual" },
             },
           }}
           definition={definition}
@@ -279,8 +213,8 @@ describe("WorkflowNodeDefinitionInspector", () => {
       screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
     );
     expect(
-      screen.getByRole("radio", {
-        name: new RegExp(enWorkflows.editor.completion_preset_single),
+      screen.getByRole("option", {
+        name: enWorkflows.editor.reviewer_kind_owner,
       }),
     ).toBeEnabled();
   });
@@ -303,7 +237,7 @@ describe("WorkflowNodeDefinitionInspector", () => {
     }));
   });
 
-  it("applies the single-confirmation completion preset", async () => {
+  it("stores a reviewer that holds the node until it rules", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const memberOwnerDefinition: WorkflowDefinition = {
@@ -333,17 +267,13 @@ describe("WorkflowNodeDefinitionInspector", () => {
     await user.click(
       screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
     );
-    await user.click(
-      screen.getByRole("radio", {
-        name: new RegExp(enWorkflows.editor.completion_preset_single),
-      }),
+    await user.selectOptions(
+      screen.getByLabelText(enWorkflows.editor.reviewer),
+      "owner",
     );
 
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
-      completion: expect.objectContaining({
-        mode: "automatic",
-        confirmation: "owner_any",
-      }),
+      reviewer: expect.objectContaining({ kind: "owner", required: true }),
     }));
   });
 });

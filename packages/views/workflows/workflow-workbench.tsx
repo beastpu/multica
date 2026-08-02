@@ -17,7 +17,6 @@ import {
   RefreshCw,
   RotateCcw,
   Send,
-  ShieldCheck,
   SkipForward,
   Unlink,
   Undo2,
@@ -40,7 +39,6 @@ import {
   useCreateWorkflowVerdict,
   useChangeWorkflowNodeTask,
   useCancelWorkflowInstance,
-  useConfirmWorkflowNode,
   useDecideWorkflowAcceptance,
   usePauseWorkflowInstance,
   useReconcileWorkflowInstance,
@@ -66,6 +64,7 @@ import {
   type WorkflowSubmission,
   type WorkflowVerdict,
   type WorkflowRoleAssignment,
+  type WorkflowNodeDefinition,
   type WorkflowRoleDefinition,
 } from "@multica/core/workflows";
 import {
@@ -141,7 +140,10 @@ import { WorkflowNodeIssues } from "./workflow-node-issues";
 import { ActorAvatar } from "../common/actor-avatar";
 import { WorkflowCanvas } from "./workflow-canvas";
 import { Badge } from "@multica/ui/components/ui/badge";
-import { WorkflowStatusBadge } from "./workflow-status";
+import {
+  WorkflowStatusBadge,
+  workflowNodeDisplayStatus,
+} from "./workflow-status";
 import { ReworkReasonFields } from "./rework-reason-fields";
 import { branchChoiceDuty } from "./branch-choice";
 import {
@@ -520,7 +522,7 @@ export function VerdictPanel({
 
   return (
     <div className="space-y-4">
-      {canRecord && isOpen && node.definition.verdict?.evaluator === "member" && (
+      {canRecord && isOpen && reviewerAcceptsMember(node.definition) && (
         <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -1108,104 +1110,6 @@ function DynamicIssuePanel({
   );
 }
 
-function ConfirmationPanel({
-  instanceId,
-  node,
-  confirmations,
-  actorName,
-  canConfirm,
-}: {
-  instanceId: string;
-  node: WorkflowNodeInstance;
-  confirmations: Array<{
-    id: string;
-    member_id: string;
-    decision: string;
-    comment: string;
-  }>;
-  actorName: (type: "member", id: string) => string;
-  canConfirm: boolean;
-}) {
-  const { t } = useT("workflows");
-  const [comment, setComment] = useState("");
-  const confirm = useConfirmWorkflowNode(instanceId, node.id);
-  const confirmation = node.definition.completion?.confirmation;
-  const policy = typeof confirmation === "string" ? confirmation : "none";
-  const isOpen = node.status === "active" || node.status === "waiting" ||
-    node.status === "blocked";
-  if (policy === "none") return null;
-
-  return (
-    <div className="space-y-3 rounded-xl border bg-muted/15 p-4">
-      <div>
-        <h3 className="flex items-center gap-2 text-sm font-medium">
-          <ShieldCheck className="size-4" />
-          {t(($) => $.workbench.confirmation)}
-        </h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {t(($) => $.workbench.confirmation_policy)}: {policy}
-        </p>
-      </div>
-      {confirmations.length > 0 && (
-        <ul className="space-y-2">
-          {confirmations.map((item) => (
-            <li key={item.id} className="flex items-start justify-between gap-3 text-xs">
-              <span>
-                {actorName("member", item.member_id)}
-                {item.comment && (
-                  <span className="ml-2 text-muted-foreground">{item.comment}</span>
-                )}
-              </span>
-              <WorkflowStatusBadge status={item.decision} />
-            </li>
-          ))}
-        </ul>
-      )}
-      {isOpen && canConfirm && (
-        <>
-          <Textarea
-            aria-label={t(($) => $.workbench.confirmation_comment)}
-            placeholder={t(($) => $.workbench.confirmation_comment)}
-            value={comment}
-            onChange={(event) => setComment(event.target.value)}
-            rows={2}
-          />
-          <div className="flex flex-wrap gap-2">
-            <Button
-              className="min-h-11"
-              disabled={confirm.isPending}
-              onClick={() => confirm.mutate({
-                decision: "approved",
-                comment: comment.trim(),
-              })}
-            >
-              <Check />
-              {t(($) => $.actions.confirm)}
-            </Button>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              disabled={confirm.isPending}
-              onClick={() => confirm.mutate({
-                decision: "rejected",
-                comment: comment.trim(),
-              })}
-            >
-              <X />
-              {t(($) => $.actions.reject)}
-            </Button>
-          </div>
-        </>
-      )}
-      {confirm.isError && (
-        <p role="alert" className="text-xs text-destructive">
-          {t(($) => $.errors.action_failed)}
-        </p>
-      )}
-    </div>
-  );
-}
-
 function NodeTransitionPanel({
   instanceId,
   node,
@@ -1703,6 +1607,14 @@ function WorkflowCancelPanel({
     </details>
   );
 }
+// Only a person can be asked to post a verdict: an api or auto reviewer rules
+// on its own, and offering the form there would let a member overrule the
+// judge the template picked.
+function reviewerAcceptsMember(definition: WorkflowNodeDefinition): boolean {
+  const kind = definition.reviewer?.kind;
+  return kind === "role" || kind === "actor" || kind === "owner";
+}
+
 
 export function AcceptancePanel({
   instanceId,
@@ -2052,39 +1964,27 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
       (userId && instance?.started_by_type === "member" &&
         instance.started_by_id === userId),
   );
-  const confirmationPolicy =
-    selectedNode?.definition.completion?.confirmation ?? "none";
-  const isSelectedNodeMember = Boolean(
-    userId && nodeQuery.data?.participants.some((participant) =>
-      participant.actor_type === "member" &&
-      participant.actor_id === userId
-    ),
-  );
-  const isSelectedNodeOwner = Boolean(
-    userId && nodeQuery.data?.participants.some((participant) =>
-      participant.role === "owner" &&
-      participant.actor_type === "member" &&
-      participant.actor_id === userId
-    ),
-  );
-  const canConfirmSelectedNode = Boolean(currentMember) && (
-    confirmationPolicy === "member_any" ||
-    (confirmationPolicy === "member_all" && isSelectedNodeMember) ||
-    ((confirmationPolicy === "owner_any" ||
-      confirmationPolicy === "owner_all") && isSelectedNodeOwner) ||
-    (confirmationPolicy === "admin_only" && Boolean(canAdmin))
-  );
-  const reworkTargetKeys = templateVersion?.definition.acceptance.rework_targets ?? [];
-  const targetItems = reworkTargetKeys.map((key) => ({
-    value: key,
-    label: nodes.find((node) => node.node_key === key)?.name ?? key,
-  }));
+  // Every activity in the template is a legitimate destination; the approver
+  // picks one at rejection time and everything after it rolls back with it.
+  const targetItems = (templateVersion?.definition.nodes ?? [])
+    .filter((node) => node.kind === "activity")
+    .map((node) => ({
+      value: node.key,
+      label: nodes.find((instance) => instance.node_key === node.key)?.name
+        ?? node.name,
+    }));
   const latestAcceptance = acceptancesQuery.data?.acceptances[0];
   // Every activity can hand off, so every activity gets the tab. Gating it on a
   // schema hid it from the default node shape — which declares none — leaving
   // the panel inside reachable only by URL.
   const hasSubmissionPanel = selectedNode?.node_kind === "activity";
-  const hasVerdictPanel = Boolean(selectedNode?.definition.verdict?.evaluator);
+  const hasVerdictPanel = Boolean(
+    selectedNode && reviewerAcceptsMember(selectedNode.definition),
+  );
+  // Acceptance is a property of the run, so the tab follows the template's
+  // acceptance policy rather than any node's kind.
+  const hasAcceptancePanel =
+    templateVersion?.definition.acceptance.policy === "member";
   const selectedIssuePolicy = selectedNode?.definition.issue_policy ?? "none";
   const selectedNodeAcceptsIssues = Boolean(
     selectedNode &&
@@ -2155,7 +2055,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
     ? "submission"
     : hasVerdictPanel
       ? "verdict"
-      : selectedNode?.definition.activity_mode === "acceptance"
+      : hasAcceptancePanel
         ? "acceptance"
         : "history";
   const workflowIssueMenuActions = useMemo(() => [{
@@ -2276,7 +2176,9 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               {selectedNode.name}
             </h2>
           </div>
-          <WorkflowStatusBadge status={selectedNode.status} />
+          <WorkflowStatusBadge
+            status={workflowNodeDisplayStatus(selectedNode.status)}
+          />
         </div>
         {selectedNode.definition.description && (
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
@@ -2413,7 +2315,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               {t(($) => $.workbench.verdict)}
             </TabsTrigger>
           )}
-          {selectedNode.definition.activity_mode === "acceptance" && (
+          {hasAcceptancePanel && (
             <TabsTrigger value="acceptance">
               <Check />
               {t(($) => $.workbench.acceptance)}
@@ -2527,7 +2429,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
       )}
 
       {/*
-        Node configuration — who owns it, which attempt, how long before it is
+        Node configuration — who owns it, how long before it is
         flagged. Reference material: true for the whole run, needed once, and
         never the reason someone opened this panel. It sat between the node
         title and the action, so the primary control of the surface began below
@@ -2593,14 +2495,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             </dd>
           </div>
         )}
-        <div className="min-w-0">
-          <dt className={SECTION_HEADING}>
-            {t(($) => $.workbench.attempt_label)}
-          </dt>
-          <dd className="mt-1 text-sm tabular-nums">
-            {t(($) => $.workbench.attempt, { attempt: selectedNode.attempt })}
-          </dd>
-        </div>
         {selectedNode.definition.timeout_minutes && (
           <div className="min-w-0">
             <dt className={SECTION_HEADING}>
@@ -2617,13 +2511,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
       </details>
 
 
-      <ConfirmationPanel
-        instanceId={instanceId}
-        node={selectedNode}
-        confirmations={nodeQuery.data.confirmations}
-        actorName={actorName}
-        canConfirm={canConfirmSelectedNode}
-      />
       {canAdmin && (
         <WorkflowCancelPanel
           instanceId={instanceId}

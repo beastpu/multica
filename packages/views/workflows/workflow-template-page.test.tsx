@@ -35,7 +35,7 @@ const definition = {
     { from: "start", to: "work" },
     { from: "work", to: "end" },
   ],
-  acceptance: { policy: "none", rework_targets: [] },
+  acceptance: { policy: "none" },
 };
 
 const detail = {

@@ -9,7 +9,7 @@ export type WorkflowCompletionMode = "automatic" | "manual";
 export function workflowCompletionMode(
   node: WorkflowNodeDefinition,
 ): WorkflowCompletionMode {
-  if (node.kind !== "activity" || node.activity_mode === "acceptance") {
+  if (node.kind !== "activity") {
     return "automatic";
   }
   if (node.completion?.mode) return node.completion.mode;
@@ -20,16 +20,8 @@ export function workflowCompletionMode(
   );
   const hasConfiguredGate = Boolean(
     node.submission_schema ||
-      node.verdict ||
+      node.reviewer ||
       completion.submission_required === true ||
-      (
-        completion.verdict_required !== undefined &&
-        completion.verdict_required !== "none"
-      ) ||
-      (
-        completion.confirmation !== undefined &&
-        completion.confirmation !== "none"
-      ) ||
       hasRequiredIssue,
   );
 

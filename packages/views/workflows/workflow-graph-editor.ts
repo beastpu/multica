@@ -232,22 +232,11 @@ export function removeWorkflowNode(
     }
   }
 
-  const clearsAcceptance = definition.acceptance.node_key === nodeKey;
+  // Acceptance survives a node deletion untouched: it belongs to the run, and
+  // its rework destinations come from the graph, which the deletion updates.
   return {
     ...definition,
     nodes: definition.nodes.filter((candidate) => candidate.key !== nodeKey),
     edges: remainingEdges,
-    acceptance: {
-      ...definition.acceptance,
-      policy: clearsAcceptance
-        ? undefined
-        : definition.acceptance.policy,
-      node_key: clearsAcceptance
-        ? undefined
-        : definition.acceptance.node_key,
-      rework_targets: definition.acceptance.rework_targets?.filter(
-        (key) => key !== nodeKey,
-      ),
-    },
   };
 }

@@ -5,33 +5,43 @@ export interface WorkflowRoleDefinition {
   name: string;
   required: boolean;
   allowed_actor_types: string[];
-  /** Optional template-level default assignee, pre-filled when starting. */
-  default_actor_type?: "member" | "agent" | "squad";
-  default_actor_id?: string;
 }
 
 export interface WorkflowIssueTemplate {
   key: string;
   title: string;
   description?: string;
-  assignee_role?: string;
-  assignee_type?: "member" | "agent" | "squad";
-  assignee_id?: string;
   required: boolean;
   initial_status?: string;
   priority?: string;
 }
 
-export interface WorkflowExecutorStrategy {
-  kind: string;
+/**
+ * Who is expected to produce the node's output. The single entry point: an
+ * issue template carries no assignee, so there is one place to read and one
+ * answer to give. `fallback` is one layer deep and cannot nest.
+ */
+export interface WorkflowExecutorDefinition {
+  kind: "role" | "actor" | "capability" | "manual";
   role?: string;
   actor_type?: "member" | "agent" | "squad";
   actor_id?: string;
   capability?: string;
-  node?: string;
-  field?: string;
-  /** Structured condition gating this strategy; same DSL as gateway edges. */
+  fallback?: WorkflowExecutorDefinition;
+}
+
+/**
+ * Who judges the node's output. Absent means the node completes on delivery;
+ * present and required means delivery moves the node to in_review.
+ */
+export interface WorkflowReviewerDefinition {
+  kind: "role" | "actor" | "api" | "owner" | "auto";
+  role?: string;
+  actor_type?: "member" | "agent" | "squad";
+  actor_id?: string;
+  api_url?: string;
   condition?: unknown;
+  required?: boolean;
 }
 
 export interface WorkflowNodeAction {
@@ -43,14 +53,7 @@ export interface WorkflowCompletionDefinition {
   mode?: "automatic" | "manual";
   required_issue_outcome?: "done" | "terminal" | "none";
   submission_required?: boolean;
-  verdict_required?: "none" | "pass" | "not_blocked";
-  confirmation?:
-    | "none"
-    | "owner_any"
-    | "owner_all"
-    | "member_any"
-    | "member_all"
-    | "admin_only";
+  handoff_required?: boolean;
   /** Workflow roles additionally allowed to complete/skip/rollback. */
   authorized_roles?: string[];
 }
@@ -68,28 +71,20 @@ export interface WorkflowNodeDefinition {
   key: string;
   kind: string;
   join_mode?: string;
-  activity_mode?: string;
   name: string;
   description?: string;
   color?: string;
   timeout_minutes?: number;
   owner_role?: string;
-  participant_roles?: string[];
   issue_policy?: string;
   issue_templates?: WorkflowIssueTemplate[];
   artifacts?: WorkflowArtifactRequirement[];
   submission_schema?: {
     policy?: "none" | "single" | "per_required_task" | "fan_in";
   };
-  verdict?: {
-    evaluator: string;
-    required_result?: string;
-    condition?: unknown;
-  };
   completion?: WorkflowCompletionDefinition;
-  executor?: {
-    strategies: WorkflowExecutorStrategy[];
-  };
+  executor?: WorkflowExecutorDefinition;
+  reviewer?: WorkflowReviewerDefinition;
   /** Controlled side effects when the activity activates / completes. */
   on_enter?: WorkflowNodeAction[];
   on_complete?: WorkflowNodeAction[];
@@ -105,8 +100,6 @@ export interface WorkflowDefinition {
   acceptance: {
     policy?: string;
     approver_role?: string;
-    node_key?: string;
-    rework_targets?: string[];
   };
   layout?: unknown;
 }
@@ -265,16 +258,6 @@ export interface WorkflowExecutorResolution {
   created_at: string;
 }
 
-export interface WorkflowConfirmation {
-  id: string;
-  workflow_node_instance_id: string;
-  member_id: string;
-  decision: string;
-  comment: string;
-  decided_at: string;
-  updated_at: string;
-}
-
 export interface WorkflowSubmission {
   id: string;
   workflow_node_instance_id: string;
@@ -333,7 +316,6 @@ export interface WorkflowNodeDetail {
   verdicts: WorkflowVerdict[];
   participants: WorkflowNodeParticipant[];
   executor_resolutions: WorkflowExecutorResolution[];
-  confirmations: WorkflowConfirmation[];
 }
 
 export interface ListWorkflowInstancesResponse {
@@ -382,7 +364,6 @@ export interface WorkflowDiagnosticNode {
   executor_resolutions: WorkflowExecutorResolution[];
   submissions: WorkflowSubmission[];
   verdicts: WorkflowVerdict[];
-  confirmations: WorkflowConfirmation[];
 }
 
 export interface WorkflowDiagnostics {

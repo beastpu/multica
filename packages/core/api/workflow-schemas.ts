@@ -34,9 +34,6 @@ const WorkflowIssueTemplateSchema = z.object({
   key: z.string(),
   title: z.string(),
   description: z.string().optional(),
-  assignee_role: z.string().optional(),
-  assignee_type: z.enum(["member", "agent", "squad"]).optional(),
-  assignee_id: z.string().optional(),
   required: z.boolean().optional().default(false),
   initial_status: z.string().optional(),
   priority: z.string().optional(),
@@ -54,52 +51,52 @@ const WorkflowCompletionDefinitionSchema = z.object({
   required_issue_outcome: z.enum(["done", "terminal", "none"])
     .optional().catch(undefined),
   submission_required: z.boolean().optional().catch(undefined),
-  verdict_required: z.enum(["none", "pass", "not_blocked"])
-    .optional().catch(undefined),
-  confirmation: z.enum([
-    "none",
-    "owner_any",
-    "owner_all",
-    "member_any",
-    "member_all",
-    "admin_only",
-  ]).optional().catch(undefined),
+  handoff_required: z.boolean().optional().catch(undefined),
+  authorized_roles: arrayOrEmpty(z.string()).optional(),
+}).loose();
+
+// One level of fallback, matching the definition: a chain longer than
+// "who, and who instead" is not expressible and never was used.
+const WorkflowExecutorEntrySchema = z.object({
+  kind: z.string(),
+  role: z.string().optional(),
+  actor_type: z.enum(["member", "agent", "squad"]).optional(),
+  actor_id: z.string().optional(),
+  capability: z.string().optional(),
+}).loose();
+
+const WorkflowExecutorDefinitionSchema = WorkflowExecutorEntrySchema.extend({
+  fallback: WorkflowExecutorEntrySchema.optional(),
+}).loose();
+
+const WorkflowReviewerDefinitionSchema = z.object({
+  kind: z.string(),
+  role: z.string().optional(),
+  actor_type: z.enum(["member", "agent", "squad"]).optional(),
+  actor_id: z.string().optional(),
+  api_url: z.string().optional(),
+  condition: z.unknown().optional(),
+  required: z.boolean().optional().default(false),
 }).loose();
 
 export const WorkflowNodeDefinitionSchema = z.object({
   key: z.string(),
   kind: z.string(),
   join_mode: z.string().optional(),
-  activity_mode: z.string().optional(),
   name: z.string().optional().default(""),
   description: z.string().optional(),
   color: z.string().optional(),
   timeout_minutes: z.number().optional(),
   owner_role: z.string().optional(),
-  participant_roles: arrayOrEmpty(z.string()).optional().default([]),
   issue_policy: z.string().optional(),
   issue_templates: arrayOrEmpty(WorkflowIssueTemplateSchema).optional().default([]),
   submission_schema: z.object({
     policy: z.string().optional(),
     fields: arrayOrEmpty(WorkflowSubmissionFieldSchema),
   }).loose().optional(),
-  verdict: z.object({
-    evaluator: z.string(),
-    required_result: z.string().optional(),
-    condition: z.unknown().optional(),
-  }).loose().optional(),
   completion: WorkflowCompletionDefinitionSchema.optional().default({}),
-  executor: z.object({
-    strategies: arrayOrEmpty(z.object({
-      kind: z.string(),
-      role: z.string().optional(),
-      actor_type: z.enum(["member", "agent", "squad"]).optional(),
-      actor_id: z.string().optional(),
-      capability: z.string().optional(),
-      node: z.string().optional(),
-      field: z.string().optional(),
-    }).loose()),
-  }).loose().optional(),
+  executor: WorkflowExecutorDefinitionSchema.optional(),
+  reviewer: WorkflowReviewerDefinitionSchema.optional(),
 }).loose();
 
 export const WorkflowDefinitionSchema = z.object({
@@ -120,9 +117,7 @@ export const WorkflowDefinitionSchema = z.object({
   acceptance: z.object({
     policy: z.string().optional(),
     approver_role: z.string().optional(),
-    node_key: z.string().optional(),
-    rework_targets: arrayOrEmpty(z.string()).optional().default([]),
-  }).loose().optional().default({ rework_targets: [] }),
+  }).loose().optional().default({}),
   layout: z.unknown().optional(),
 }).loose();
 
@@ -323,16 +318,6 @@ export const WorkflowExecutorResolutionSchema = z.object({
   created_at: z.string().optional().default(""),
 }).loose();
 
-export const WorkflowConfirmationSchema = z.object({
-  id: z.string(),
-  workflow_node_instance_id: z.string(),
-  member_id: z.string(),
-  decision: z.string().optional().default("unknown"),
-  comment: z.string().optional().default(""),
-  decided_at: z.string().optional().default(""),
-  updated_at: z.string().optional().default(""),
-}).loose();
-
 export const WorkflowEventSchema = z.object({
   id: z.string(),
   workflow_node_instance_id: nullableString,
@@ -397,7 +382,6 @@ export const WorkflowNodeDetailSchema = z.object({
   verdicts: arrayOrEmpty(WorkflowVerdictSchema),
   participants: arrayOrEmpty(WorkflowNodeParticipantSchema),
   executor_resolutions: arrayOrEmpty(WorkflowExecutorResolutionSchema),
-  confirmations: arrayOrEmpty(WorkflowConfirmationSchema),
 }).loose();
 
 export const ListWorkflowTemplatesResponseSchema = z.object({
@@ -452,10 +436,6 @@ export const WorkflowExecutorResolutionMutationResponseSchema = z.object({
   resolution: WorkflowExecutorResolutionSchema,
 }).loose();
 
-export const WorkflowConfirmationMutationResponseSchema = z.object({
-  confirmation: WorkflowConfirmationSchema,
-}).loose();
-
 export const WorkflowAcceptanceMutationResponseSchema = z.object({
   acceptance: WorkflowAcceptanceSchema,
   instance: WorkflowInstanceSchema.optional(),
@@ -484,8 +464,7 @@ export const WorkflowDiagnosticsSchema = z.object({
     executor_resolutions: arrayOrEmpty(WorkflowExecutorResolutionSchema),
     submissions: arrayOrEmpty(WorkflowSubmissionSchema),
     verdicts: arrayOrEmpty(WorkflowVerdictSchema),
-    confirmations: arrayOrEmpty(WorkflowConfirmationSchema),
-  }).loose()),
+    }).loose()),
   acceptances: arrayOrEmpty(WorkflowAcceptanceSchema),
   allowed_rework_targets: arrayOrEmpty(z.string()),
   recent_sweeper_events: arrayOrEmpty(WorkflowEventSchema),
@@ -525,7 +504,7 @@ export const EMPTY_WORKFLOW_NODE_DETAIL: WorkflowNodeDetail = {
     latest_verdict_id: null, activated_at: null, completed_at: null,
   },
   tasks: [], submissions: [], verdicts: [], participants: [],
-  executor_resolutions: [], confirmations: [],
+  executor_resolutions: [],
 };
 export const EMPTY_WORKFLOW_TEMPLATE_DETAIL: WorkflowTemplateDetail = {
   template: {
