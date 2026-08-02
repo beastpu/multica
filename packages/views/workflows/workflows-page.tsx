@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  Archive,
   ArrowRight,
   Copy,
   GitBranch,
@@ -72,6 +71,7 @@ import {
   CollectionPageHeader,
   CollectionPageState,
 } from "../layout/collection-page";
+import { cn } from "@multica/ui/lib/utils";
 import { useT, useTimeAgo } from "../i18n";
 import { WorkflowStatusBadge } from "./workflow-status";
 import { WorkflowStartDialog } from "./workflow-start-dialog";
@@ -598,6 +598,84 @@ function RunTemplateDialog({
   );
 }
 
+type TemplateStatusFilter = "live" | "all" | "published" | "draft" | "archived";
+
+function matchesTemplateStatus(
+  template: WorkflowTemplate,
+  filter: TemplateStatusFilter,
+): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "live":
+      return template.status !== "archived";
+    default:
+      return template.status === filter;
+  }
+}
+
+// The starter library: definitions shipped with the server that a workspace
+// copies to get going. Its own tab rather than a band above the list, because
+// you visit it once and then never again.
+function BuiltinTemplatesPanel({ canManage }: { canManage: boolean }) {
+  const { t } = useT("workflows");
+  const navigation = useNavigation();
+  const p = useWorkspacePaths();
+  const createFromBuiltin = useCreateWorkflowTemplateFromBuiltin();
+  const wsId = useWorkspaceId();
+  const builtinTemplates = useQuery(workflowBuiltinTemplateListOptions(wsId));
+
+  if (builtinTemplates.isLoading) {
+    return (
+      <div className="grid gap-3 md:grid-cols-2">
+        <Skeleton className="h-28 rounded-xl" />
+        <Skeleton className="h-28 rounded-xl" />
+      </div>
+    );
+  }
+  const templates = builtinTemplates.data?.templates ?? [];
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        {t(($) => $.templates.builtin_description)}
+      </p>
+      <div className="grid gap-3 md:grid-cols-2">
+        {templates.map((builtin) => (
+          <Card key={builtin.key} size="sm">
+            <CardHeader>
+              <CardTitle className="truncate">{builtin.name}</CardTitle>
+              <CardDescription className="line-clamp-3">
+                {builtin.description}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                size="sm"
+                disabled={!canManage || createFromBuiltin.isPending}
+                onClick={() => createFromBuiltin.mutate(builtin.key, {
+                  onSuccess: ({ template }) => {
+                    if (template.id) navigation.push(p.workflowTemplate(template.id));
+                  },
+                })}
+              >
+                <Plus />
+                {t(($) => $.templates.builtin_create)}
+              </Button>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      {createFromBuiltin.isError && (
+        <p role="alert" className="text-sm text-destructive">
+          {createFromBuiltin.error instanceof Error
+            ? createFromBuiltin.error.message
+            : t(($) => $.errors.load)}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function TemplatesPanel({
   canManage,
   actorName,
@@ -613,37 +691,24 @@ function TemplatesPanel({
   const { data, isLoading, isError } = useQuery(
     workflowTemplateListOptions(wsId),
   );
-  // Archived templates are hidden by default — archiving is how this product
-  // deletes, and a retired template sitting in the same grid as live ones is
-  // what made "archive the old one, create a new one with the same name" look
-  // like the system permitting duplicates. Retired is not gone, though, so the
-  // count stays visible and one click brings them back.
-  const [showArchived, setShowArchived] = useState(false);
+  // Archiving is how this product deletes, so a retired template sitting
+  // beside live ones is what made "archive the old one, create a new one with
+  // the same name" look like the system permitting duplicates. The default
+  // view leaves them out; the filter is where you go to find them again.
+  //
+  // No "paused" — a template you do not want started is archived. A fourth
+  // state would be a second word for the same act.
+  const [statusFilter, setStatusFilter] = useState<TemplateStatusFilter>("live");
   const allTemplates = data?.templates ?? [];
-  const archivedCount = allTemplates.filter(
-    (template) => template.status === "archived",
-  ).length;
-  const visibleTemplates = showArchived
-    ? allTemplates
-    : allTemplates.filter((template) => template.status !== "archived");
+  const countFor = (filter: TemplateStatusFilter) =>
+    allTemplates.filter((template) => matchesTemplateStatus(template, filter))
+      .length;
+  const visibleTemplates = allTemplates.filter((template) =>
+    matchesTemplateStatus(template, statusFilter)
+  );
   const createTemplate = useCreateWorkflowTemplate();
   const copyTemplate = useCopyWorkflowTemplate();
-  const createFromBuiltin = useCreateWorkflowTemplateFromBuiltin();
-  const [builtinOpen, setBuiltinOpen] = useState(false);
   const [runTemplate, setRunTemplate] = useState<WorkflowTemplate | null>(null);
-  const builtinTemplates = useQuery({
-    ...workflowBuiltinTemplateListOptions(wsId),
-    enabled: builtinOpen,
-  });
-
-  const createBuiltin = (key: string) => {
-    createFromBuiltin.mutate(key, {
-      onSuccess: ({ template }) => {
-        setBuiltinOpen(false);
-        if (template.id) navigation.push(p.workflowTemplate(template.id));
-      },
-    });
-  };
 
   const create = () => {
     const definition = defaultWorkflowDefinition();
@@ -681,29 +746,6 @@ function TemplatesPanel({
         </div>
         {canManage && (
           <div className="flex items-center gap-2">
-            {/* Shown only when there is something to reveal, so the control
-                does not advertise an empty state. */}
-            {archivedCount > 0 && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setShowArchived((shown) => !shown)}
-                aria-pressed={showArchived}
-              >
-                <Archive />
-                {showArchived
-                  ? t(($) => $.templates.hide_archived)
-                  : t(($) => $.templates.show_archived, { count: archivedCount })}
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setBuiltinOpen(true)}
-            >
-              <LayoutTemplate />
-              {t(($) => $.templates.use_builtin)}
-            </Button>
             <Button
               size="sm"
               onClick={create}
@@ -715,161 +757,151 @@ function TemplatesPanel({
           </div>
         )}
       </div>
-      <Dialog open={builtinOpen} onOpenChange={setBuiltinOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t(($) => $.templates.builtin_title)}</DialogTitle>
-            <DialogDescription>
-              {t(($) => $.templates.builtin_description)}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            {builtinTemplates.isLoading ? (
-              <>
-                <Skeleton className="h-16 rounded-lg" />
-                <Skeleton className="h-16 rounded-lg" />
-              </>
-            ) : (
-              (builtinTemplates.data?.templates ?? []).map((builtin) => (
-                <div
-                  key={builtin.key}
-                  className="flex items-start justify-between gap-3 rounded-lg border p-3"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">
-                      {builtin.name}
-                    </p>
-                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                      {builtin.description}
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    disabled={createFromBuiltin.isPending}
-                    onClick={() => createBuiltin(builtin.key)}
-                  >
-                    {t(($) => $.templates.builtin_create)}
-                  </Button>
-                </div>
-              ))
+      {/*
+        A row per template, because scanning "which of these is live and how
+        much is running on it" is what this page is for. The cards spread four
+        facts over two columns each and made that a reading exercise.
+      */}
+      <div
+        role="tablist"
+        aria-label={t(($) => $.filters.status)}
+        className="flex flex-wrap items-center gap-1"
+      >
+        {([
+          ["live", t(($) => $.filters.all_statuses)],
+          ["published", t(($) => $.templates.published)],
+          ["draft", t(($) => $.templates.draft)],
+          ["archived", t(($) => $.templates.archived)],
+        ] as Array<[TemplateStatusFilter, string]>).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={statusFilter === value}
+            onClick={() => setStatusFilter(value)}
+            className={cn(
+              "min-h-8 rounded-md px-2.5 text-xs font-medium",
+              statusFilter === value
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:bg-muted/60",
             )}
-            {createFromBuiltin.isError && (
-              <p className="text-xs text-destructive" role="alert">
-                {createFromBuiltin.error instanceof Error
-                  ? createFromBuiltin.error.message
-                  : t(($) => $.errors.load)}
-              </p>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+          >
+            {label}
+            <span className="ml-1.5 tabular-nums opacity-60">
+              {countFor(value)}
+            </span>
+          </button>
+        ))}
+      </div>
       {isLoading ? (
-        <div className="grid gap-3 md:grid-cols-2">
-          <Skeleton className="h-32 rounded-xl" />
-          <Skeleton className="h-32 rounded-xl" />
+        <div className="space-y-2">
+          <Skeleton className="h-12 rounded-lg" />
+          <Skeleton className="h-12 rounded-lg" />
         </div>
       ) : visibleTemplates.length ? (
-        <div className="grid gap-3 md:grid-cols-2">
-          {visibleTemplates.map((template) => (
-            <Card key={template.id} size="sm">
-              <CardHeader>
-                <CardTitle className="truncate">{template.name}</CardTitle>
-                <CardDescription className="line-clamp-2 min-h-8">
-                  {template.description || t(($) => $.editor.description)}
-                </CardDescription>
-                <CardAction>
-                  <WorkflowStatusBadge status={template.status} />
-                </CardAction>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                  <div>
-                    <dt className="text-muted-foreground">
-                      {t(($) => $.templates.applies_to)}
-                    </dt>
-                    <dd>{template.applies_to_type_key ||
-                      template.applies_to_kind}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">
-                      {t(($) => $.templates.latest_version)}
-                    </dt>
-                    <dd>
-                      {template.latest_published_version > 0
-                        ? `v${template.latest_published_version}`
-                        : t(($) => $.runs.none)}
-                      {template.has_draft
-                        ? ` · ${t(($) => $.templates.draft)} v${template.draft_version}`
-                        : ""}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">
-                      {t(($) => $.templates.activities)}
-                    </dt>
-                    <dd>{template.activity_count}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">
-                      {t(($) => $.templates.runs)}
-                    </dt>
-                    <dd>{template.run_count}</dd>
-                  </div>
-                </dl>
-                {(template.latest_change_summary ||
-                  template.last_published_at) && (
-                  <p className="line-clamp-2 text-xs text-muted-foreground">
-                    {template.latest_change_summary}
-                    {template.last_published_by && (
-                      <>
-                        <span aria-hidden="true"> · </span>
-                        {actorName("member", template.last_published_by)}
-                      </>
-                    )}
-                    {template.last_published_at && (
-                      <>
-                        <span aria-hidden="true"> · </span>
-                        {timeAgo(template.last_published_at)}
-                      </>
-                    )}
-                  </p>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  {template.status === "published" && (
-                    <Button size="sm" onClick={() => setRunTemplate(template)}>
-                      <Play />
-                      {t(($) => $.actions.run)}
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    render={<AppLink href={p.workflowTemplate(template.id)} />}
-                  >
-                    {t(($) => $.actions.open)}
-                    <ArrowRight />
-                  </Button>
-                  {canManage && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={copyTemplate.isPending}
-                      onClick={() => copyTemplate.mutate({
-                        templateId: template.id,
-                        name: `${template.name} ${t(($) => $.templates.copy_suffix)}`,
-                      }, {
-                        onSuccess: ({ template: copied }) =>
-                          navigation.push(p.workflowTemplate(copied.id)),
-                      })}
+        <div className="overflow-x-auto rounded-xl border bg-surface">
+          <table className="w-full min-w-[40rem] text-sm">
+            <thead>
+              <tr className="border-b text-xs text-muted-foreground">
+                <th scope="col" className="px-3 py-2 text-left font-medium">
+                  {t(($) => $.templates.column_name)}
+                </th>
+                <th scope="col" className="px-3 py-2 text-left font-medium">
+                  {t(($) => $.templates.column_status)}
+                </th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">
+                  {t(($) => $.templates.activities)}
+                </th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">
+                  {t(($) => $.templates.runs)}
+                </th>
+                <th scope="col" className="px-3 py-2 text-left font-medium">
+                  {t(($) => $.templates.column_updated)}
+                </th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">
+                  {t(($) => $.templates.column_actions)}
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {visibleTemplates.map((template) => (
+                <tr key={template.id} className="hover:bg-muted/30">
+                  <td className="px-3 py-2">
+                    <AppLink
+                      href={p.workflowTemplate(template.id)}
+                      className="block min-w-0 font-medium hover:underline"
                     >
-                      <Copy />
-                      {t(($) => $.actions.copy)}
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                      <span className="block truncate">{template.name}</span>
+                    </AppLink>
+                    {template.description && (
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                        {template.description}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <WorkflowStatusBadge status={template.status} />
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {template.activity_count}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {template.run_count}
+                  </td>
+                  {/* Who is still tending this one — the fact the card grid
+                      carried and the reference table has no room for. */}
+                  <td className="px-3 py-2 text-xs text-muted-foreground">
+                    {template.last_published_at
+                      ? (
+                        <span className="block truncate">
+                          {timeAgo(template.last_published_at)}
+                          {template.last_published_by && (
+                            <>
+                              <span aria-hidden="true"> · </span>
+                              {actorName("member", template.last_published_by)}
+                            </>
+                          )}
+                        </span>
+                      )
+                      : "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center justify-end gap-1">
+                      {template.status === "published" && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={t(($) => $.actions.run)}
+                          onClick={() => setRunTemplate(template)}
+                        >
+                          <Play />
+                        </Button>
+                      )}
+                      {canManage && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={t(($) => $.actions.copy)}
+                          disabled={copyTemplate.isPending}
+                          onClick={() => copyTemplate.mutate({
+                            templateId: template.id,
+                            name: `${template.name} ${
+                              t(($) => $.templates.copy_suffix)
+                            }`,
+                          }, {
+                            onSuccess: ({ template: copied }) =>
+                              navigation.push(p.workflowTemplate(copied.id)),
+                          })}
+                        >
+                          <Copy />
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : (
         <CollectionPageState
@@ -878,12 +910,7 @@ function TemplatesPanel({
           description={t(($) => $.templates.empty_description)}
           actions={canManage ? (
             <div className="flex items-center gap-2">
-              <Button onClick={() => setBuiltinOpen(true)}>
-                <LayoutTemplate />
-                {t(($) => $.templates.use_builtin)}
-              </Button>
               <Button
-                variant="outline"
                 onClick={create}
                 disabled={createTemplate.isPending}
               >
@@ -1401,6 +1428,11 @@ export function WorkflowsPage() {
             <TabsTrigger value="templates">
               {t(($) => $.tabs.templates)}
             </TabsTrigger>
+            {/* The starter library is a place you go once, not a banner over
+                the list you work in every day. */}
+            <TabsTrigger value="builtin">
+              {t(($) => $.tabs.builtin)}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -1409,7 +1441,9 @@ export function WorkflowsPage() {
         className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
       >
         <div className="mx-auto w-full max-w-5xl">
-          {tab === "templates" ? (
+          {tab === "builtin" ? (
+            <BuiltinTemplatesPanel canManage={canManage} />
+          ) : tab === "templates" ? (
             <TemplatesPanel canManage={canManage} actorName={actorName} />
           ) : runsQuery.isError ? (
             <CollectionPageState

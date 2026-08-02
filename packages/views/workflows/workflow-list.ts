@@ -1,6 +1,11 @@
 import type { WorkflowInstance } from "@multica/core/workflows";
 
-export type WorkflowTab = "active" | "mine" | "completed" | "templates";
+export type WorkflowTab =
+  | "active"
+  | "mine"
+  | "completed"
+  | "templates"
+  | "builtin";
 
 export function isWorkflowRunActionable(run: WorkflowInstance): boolean {
   return run.next_action !== "none" &&
