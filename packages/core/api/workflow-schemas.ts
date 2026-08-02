@@ -413,6 +413,12 @@ export const WorkflowTemplateCreateResponseSchema = z.object({
   draft: WorkflowTemplateVersionSchema,
 }).loose();
 
+export const WorkflowTemplateSaveResponseSchema = z.object({
+  version: WorkflowTemplateVersionSchema,
+  published: z.boolean().optional().default(false),
+  validation_error: z.string().optional().default(""),
+}).loose();
+
 export const WorkflowTemplatePublishResponseSchema = z.object({
   template: WorkflowTemplateSchema,
   version: WorkflowTemplateVersionSchema,

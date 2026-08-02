@@ -362,6 +362,7 @@ import {
   WorkflowTemplateCreateResponseSchema,
   WorkflowTemplateDetailSchema,
   WorkflowTemplatePublishResponseSchema,
+  WorkflowTemplateSaveResponseSchema,
   WorkflowTemplateSchema,
   WorkflowTemplateVersionSchema,
   WorkflowDefinitionValidationResponseSchema,
@@ -3728,6 +3729,39 @@ export class ApiClient {
       change_summary: input.change_summary ?? "", created_by: "", published_by: null,
       published_at: null, created_at: "", updated_at: "",
     }, { endpoint: "PUT /api/workflow-templates/:id/draft" });
+  }
+
+  // One editing action: write the definition into a version and make it live
+  // if it validates. `published` is false when it did not, and
+  // `validation_error` says why — the version is stored either way.
+  async saveWorkflowTemplateDefinition(
+    templateId: string,
+    input: {
+      definition: WorkflowDefinition;
+      change_summary?: string;
+      revision?: number;
+    },
+  ): Promise<
+    { version: WorkflowTemplateVersion; published: boolean; validation_error: string }
+  > {
+    const raw = await this.fetch<unknown>(
+      `/api/workflow-templates/${templateId}/definition`,
+      { method: "PUT", body: JSON.stringify(input) },
+    );
+    return parseWithFallback(
+      raw,
+      WorkflowTemplateSaveResponseSchema,
+      {
+        version: {
+          ...EMPTY_WORKFLOW_TEMPLATE_VERSION,
+          template_id: templateId,
+          definition: input.definition,
+        },
+        published: false,
+        validation_error: "",
+      },
+      { endpoint: "PUT /api/workflow-templates/:id/definition" },
+    );
   }
 
   async createWorkflowTemplateDraft(templateId: string): Promise<WorkflowTemplateVersion> {

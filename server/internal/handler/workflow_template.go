@@ -748,6 +748,161 @@ func workflowDraftETag(revision int64) string {
 	return fmt.Sprintf(`"workflow-draft-%d"`, revision)
 }
 
+type saveWorkflowDefinitionRequest struct {
+	Definition    json.RawMessage `json:"definition"`
+	ChangeSummary string          `json:"change_summary"`
+	Revision      int64           `json:"revision"`
+}
+
+// SaveWorkflowTemplateDefinition is the one editing action: it writes the
+// definition into a new version and makes that version live if it validates.
+//
+// It replaces a four-step sequence — create draft, save, validate, publish —
+// that made the author perform the storage model. Versions still exist and are
+// still immutable once published; they are just allocated by saving rather
+// than by a button.
+//
+// A definition that does not validate is still stored, on a version that stays
+// a draft. Refusing to save it would leave half-finished work nowhere to go,
+// which is the one thing the old draft state was genuinely good for.
+func (h *Handler) SaveWorkflowTemplateDefinition(w http.ResponseWriter, r *http.Request) {
+	if !h.workflowTemplateWriteEnabled(w, r) {
+		return
+	}
+	var req saveWorkflowDefinitionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	definition, checksum, err := workflowDefinitionBytes(req.Definition)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "template_id")
+	if !ok {
+		return
+	}
+	if !h.ensureWorkflowTemplateWritable(w, r, wsUUID, templateID) {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user_id")
+	if !ok {
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start workflow save transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	// Reuse the open draft when there is one, so a run of saves fills the same
+	// version instead of allocating one per keystroke-batch. A published
+	// version is never written to — that is what keeps running instances,
+	// which pin a version id, unaffected by any amount of editing.
+	target, err := qtx.LockWorkflowTemplateDraft(r.Context(), db.LockWorkflowTemplateDraftParams{
+		TemplateID: templateID, WorkspaceID: wsUUID,
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		version, versionErr := qtx.GetNextWorkflowTemplateVersion(
+			r.Context(),
+			db.GetNextWorkflowTemplateVersionParams{
+				TemplateID: templateID, WorkspaceID: wsUUID,
+			},
+		)
+		if versionErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to allocate workflow template version")
+			return
+		}
+		target, err = qtx.CreateWorkflowTemplateVersion(r.Context(), db.CreateWorkflowTemplateVersionParams{
+			WorkspaceID: wsUUID, TemplateID: templateID, Version: version, Status: "draft",
+			Definition: definition, DefinitionChecksum: checksum,
+			ChangeSummary: req.ChangeSummary, CreatedBy: userUUID,
+		})
+		if err != nil {
+			writeError(w, http.StatusConflict, "workflow template version changed; refresh and try again")
+			return
+		}
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "failed to load workflow template draft")
+		return
+	default:
+		expected := req.Revision
+		if expected <= 0 {
+			expected = target.Revision
+		}
+		target, err = qtx.UpdateWorkflowTemplateDraft(r.Context(), db.UpdateWorkflowTemplateDraftParams{
+			Definition: definition, DefinitionChecksum: checksum,
+			ChangeSummary: req.ChangeSummary,
+			ID:            target.ID, WorkspaceID: wsUUID, ExpectedRevision: expected,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, "workflow template draft changed; refresh and try again")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save workflow template draft")
+			return
+		}
+	}
+
+	published := false
+	var validationErr string
+	if _, parseErr := workflowdomain.ParseDefinition(definition); parseErr != nil {
+		validationErr = parseErr.Error()
+	} else {
+		target, err = qtx.PublishWorkflowTemplateVersion(r.Context(), db.PublishWorkflowTemplateVersionParams{
+			PublishedBy: userUUID, ID: target.ID, WorkspaceID: wsUUID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to publish workflow template version")
+			return
+		}
+		if _, err := qtx.SetWorkflowTemplatePublishedVersion(r.Context(), db.SetWorkflowTemplatePublishedVersionParams{
+			LatestPublishedVersionID: target.ID, ID: templateID, WorkspaceID: wsUUID,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update workflow template")
+			return
+		}
+		published = true
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit workflow template save")
+		return
+	}
+
+	event := protocol.EventWorkflowTemplateUpdated
+	if published {
+		event = protocol.EventWorkflowTemplatePublished
+	}
+	h.publishWorkflowRealtime(
+		event, workspaceID, "member", userID,
+		map[string]any{
+			"workflow_template_id":         uuidToString(templateID),
+			"workflow_template_version_id": uuidToString(target.ID),
+		},
+	)
+	w.Header().Set("ETag", workflowDraftETag(target.Revision))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version":          workflowTemplateVersionToResponse(target),
+		"published":        published,
+		"validation_error": validationErr,
+	})
+}
+
 func (h *Handler) PublishWorkflowTemplate(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return

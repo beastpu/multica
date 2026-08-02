@@ -180,16 +180,13 @@ export class TestApiClient {
     })).json();
     const templateId = created.template?.id ?? created.id;
     this.createdWorkflowTemplateIds.push(templateId);
-    await this.authedFetch(`/api/workflow-templates/${templateId}/draft`, {
-      method: "PATCH",
+    await this.authedFetch(`/api/workflow-templates/${templateId}/definition`, {
+      method: "PUT",
       body: JSON.stringify({
         definition,
         change_summary: "e2e",
         revision: created.version?.revision ?? 1,
       }),
-    });
-    await this.authedFetch(`/api/workflow-templates/${templateId}/publish`, {
-      method: "POST",
     });
     return templateId;
   }

@@ -3,14 +3,11 @@
 import {
   AlertCircle,
   Archive,
-  CheckCircle2,
   GitBranch,
   GitFork,
   MoreHorizontal,
   Pencil,
-  Plus,
   Save,
-  Send,
   Trash2,
   Waypoints,
 } from "lucide-react";
@@ -20,12 +17,9 @@ import { ApiError } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
-  useCreateWorkflowTemplateDraft,
   useArchiveWorkflowTemplate,
-  usePublishWorkflowTemplate,
   useUpdateWorkflowTemplate,
-  useUpdateWorkflowTemplateDraft,
-  useValidateWorkflowTemplateDefinition,
+  useSaveWorkflowTemplateDefinition,
   workflowTemplateOptions,
   type WorkflowDefinition,
   type WorkflowNodeDefinition,
@@ -455,22 +449,22 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
   const [selectedVersionId, setSelectedVersionId] = useState("");
   const [loadedVersionId, setLoadedVersionId] = useState("");
   const [dirty, setDirty] = useState(false);
-  const [publishOpen, setPublishOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [changeSummary, setChangeSummary] = useState("");
-  const updateDraft = useUpdateWorkflowTemplateDraft(templateId);
-  const createDraft = useCreateWorkflowTemplateDraft(templateId);
-  const publish = usePublishWorkflowTemplate(templateId);
+  const saveDefinition = useSaveWorkflowTemplateDefinition(templateId);
   const archive = useArchiveWorkflowTemplate(templateId);
-  const validate = useValidateWorkflowTemplateDefinition(templateId);
 
   const selectedVersion = versions.find(
     (version) => version.id === selectedVersionId,
   );
+  // Editing the newest version is how you author the next one — saving writes
+  // into a version rather than mutating the one that is live, so there is no
+  // draft to create first. Older versions stay read-only history.
+  const latestVersion = draft ?? published[0] ?? versions[0];
   const canEdit = canManage && !isMobile &&
-    selectedVersion?.status === "draft" &&
+    selectedVersion?.id === latestVersion?.id &&
     detailQuery.data?.template.status !== "archived";
 
   useEffect(() => {
@@ -504,7 +498,6 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
     setDefinition(next);
     setDirty(true);
     setSaveError("");
-    validate.reset();
   };
   const changeNode = (next: WorkflowNodeDefinition) => {
     if (!definition || !selectedNode) return;
@@ -515,21 +508,23 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
       ),
     });
   };
-  const save = (onSaved?: () => void) => {
-    if (!definition || !draft || selectedVersion?.id !== draft.id) return;
-    updateDraft.mutate({
+  const save = () => {
+    if (!definition || !canEdit) return;
+    saveDefinition.mutate({
       definition,
       change_summary: changeSummary.trim(),
-      revision: draft.revision,
+      revision: selectedVersion?.revision,
     }, {
-      onSuccess: (saved) => {
-        setLoadedVersionId(saved.id);
-        setSelectedVersionId(saved.id);
-        setDefinition(saved.definition);
-        setChangeSummary(saved.change_summary);
+      onSuccess: (result) => {
+        setLoadedVersionId(result.version.id);
+        setSelectedVersionId(result.version.id);
+        setDefinition(result.version.definition);
+        setChangeSummary(result.version.change_summary);
         setDirty(false);
-        setSaveError("");
-        onSaved?.();
+        // A definition that does not validate is still stored; it just does
+        // not go live. Saying so where the errors already render beats a
+        // silent save that changes nothing anyone can run.
+        setSaveError(result.validation_error);
       },
       onError: (error) => {
         setSaveError(
@@ -539,26 +534,6 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
         );
       },
     });
-  };
-  // Publish is the single "make it live" action: it validates first and only
-  // opens the confirmation once the definition is known to be publishable.
-  const startPublish = () => {
-    if (!definition) return;
-    validate.mutate(definition, {
-      onSuccess: (result) => {
-        if (result.valid) setPublishOpen(true);
-      },
-    });
-  };
-  const confirmPublish = () => {
-    const publishNow = () => publish.mutate(undefined, {
-      onSuccess: () => setPublishOpen(false),
-    });
-    if (dirty || changeSummary.trim() !== (draft?.change_summary ?? "")) {
-      save(publishNow);
-      return;
-    }
-    publishNow();
   };
   const insertNode = (
     kind: WorkflowCanvasInsertKind,
@@ -628,7 +603,7 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
         description={template.description || t(($) => $.editor.description)}
         actions={canManage && !isMobile ? (
           <>
-            {draft && canEdit && (
+            {canEdit && (
               <>
                 <span className={cn(
                   "hidden text-xs text-muted-foreground md:inline",
@@ -638,23 +613,11 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
                 </span>
                 <Button
                   size="sm"
-                  variant="outline"
-                  onClick={() => save()}
-                  disabled={!dirty || updateDraft.isPending}
+                  onClick={save}
+                  disabled={!dirty || saveDefinition.isPending}
                 >
                   <Save />
                   {t(($) => $.actions.save)}
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={startPublish}
-                  disabled={publish.isPending || updateDraft.isPending ||
-                    validate.isPending}
-                >
-                  <Send />
-                  {published.length === 0
-                    ? t(($) => $.actions.publish_first)
-                    : t(($) => $.actions.publish)}
                 </Button>
               </>
             )}
@@ -713,61 +676,35 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
           <AlertTitle>{t(($) => $.templates.archived_help)}</AlertTitle>
         </Alert>
       )}
-      {!draft && canManage && template.status !== "archived" && (
-        <div className="m-5 flex items-center justify-between gap-4 rounded-xl border bg-muted/20 p-4">
-          <div>
-            <p className="text-sm font-medium">{t(($) => $.templates.published)}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t(($) => $.editor.publish_help)}
-            </p>
-          </div>
-          <Button
-            onClick={() => createDraft.mutate(undefined, {
-              onSuccess: (created) => setSelectedVersionId(created.id),
-            })}
-            disabled={createDraft.isPending || published.length === 0}
-          >
-            <Plus />
-            {t(($) => $.templates.draft)}
-          </Button>
-        </div>
-      )}
+      {/*
+        Saving validates, so this is where a bad definition surfaces. The node
+        name in the message is a link: the error names a node key, and the
+        point of reading it is to go fix that node.
+      */}
       {saveError && (
         <Alert variant="destructive" className="mx-5 mt-5">
           <AlertCircle />
-          <AlertTitle>{saveError}</AlertTitle>
-        </Alert>
-      )}
-      {validate.data && !validate.data.valid && (
-        <Alert variant="destructive" className="mx-5 mt-5">
-          <AlertCircle />
-          <AlertTitle>{t(($) => $.editor.validation_failed)}</AlertTitle>
+          <AlertTitle>{t(($) => $.editor.saved_not_live)}</AlertTitle>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
-            {validate.data.errors.map((error) => {
-              const node = definition?.nodes.find((candidate) =>
-                error.includes(`"${candidate.key}"`)
-              );
-              return (
-                <li key={error}>
-                  {node ? (
+            <li>
+              {(() => {
+                const node = definition?.nodes.find((candidate) =>
+                  saveError.includes(`"${candidate.key}"`)
+                );
+                return node
+                  ? (
                     <button
                       type="button"
                       className="text-left underline underline-offset-2"
                       onClick={() => setSelectedKey(node.key)}
                     >
-                      {error}
+                      {saveError}
                     </button>
-                  ) : error}
-                </li>
-              );
-            })}
+                  )
+                  : saveError;
+              })()}
+            </li>
           </ul>
-        </Alert>
-      )}
-      {validate.data?.valid && (
-        <Alert className="mx-5 mt-5">
-          <CheckCircle2 />
-          <AlertTitle>{t(($) => $.editor.validation_passed)}</AlertTitle>
         </Alert>
       )}
       <main
@@ -797,18 +734,22 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
                     ))}
                   </select>
                 </div>
+                {/*
+                  The change summary is what the version list reads back, so
+                  it belongs beside the version — not inside a publish dialog
+                  that no longer exists.
+                */}
                 {canEdit && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => definition && validate.mutate(definition)}
-                      disabled={validate.isPending}
-                    >
-                      <CheckCircle2 />
-                      {t(($) => $.actions.validate)}
-                    </Button>
-                  </div>
+                  <Input
+                    aria-label={t(($) => $.editor.change_summary)}
+                    value={changeSummary}
+                    placeholder={t(($) => $.editor.change_summary_placeholder)}
+                    className="h-9 max-w-xs text-xs"
+                    onChange={(event) => {
+                      setChangeSummary(event.target.value);
+                      setDirty(true);
+                    }}
+                  />
                 )}
               </div>
               <div className="grid min-h-[34rem] overflow-hidden rounded-xl border bg-surface lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -922,42 +863,6 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
         </div>
       </main>
 
-      <AlertDialog open={publishOpen} onOpenChange={setPublishOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t(($) => $.actions.publish)}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(($) => $.editor.version_to_publish, { version: draft?.version ?? 0 })}
-              {" "}
-              {t(($) => $.editor.active_runs_unchanged)}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-1.5">
-            <Label htmlFor="workflow-change-summary">
-              {t(($) => $.editor.change_summary)}
-            </Label>
-            <Textarea
-              id="workflow-change-summary"
-              value={changeSummary}
-              rows={2}
-              placeholder={t(($) => $.editor.change_summary_placeholder)}
-              onChange={(event) => setChangeSummary(event.target.value)}
-            />
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={publish.isPending}>
-              {commonT(($) => $.cancel)}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmPublish}
-              disabled={publish.isPending || updateDraft.isPending ||
-                (published.length > 0 && !changeSummary.trim())}
-            >
-              {t(($) => $.actions.publish)}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
       {template && template.status !== "archived" && (
         <TemplateMetadataDialog
           template={template}

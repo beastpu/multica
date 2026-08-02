@@ -1231,6 +1231,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/from-builtin", h.CreateWorkflowTemplateFromBuiltin)
 					r.Patch("/{id}", h.UpdateWorkflowTemplateMetadata)
 					r.Post("/{id}/draft", h.CreateWorkflowTemplateDraft)
+					r.Put("/{id}/definition", h.SaveWorkflowTemplateDefinition)
 					r.Post("/{id}/validate", h.ValidateWorkflowTemplateDefinition)
 					r.Put("/{id}/draft", h.UpdateWorkflowTemplateDraft)
 					r.Post("/{id}/publish", h.PublishWorkflowTemplate)

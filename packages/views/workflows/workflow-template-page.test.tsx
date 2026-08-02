@@ -11,13 +11,9 @@ import enWorkflows from "../locales/en/workflows.json";
 import { WorkflowTemplatePage } from "./workflow-template-page";
 
 const mocks = vi.hoisted(() => ({
-  validate: vi.fn(),
-  validateReset: vi.fn(),
-  publish: vi.fn(),
+  save: vi.fn(),
   updateMetadata: vi.fn(),
   archive: vi.fn(),
-  updateDraft: vi.fn(),
-  createDraft: vi.fn(),
   validation: { valid: true, errors: [] as string[] },
 }));
 
@@ -131,32 +127,24 @@ vi.mock("@multica/core/workflows", () => ({
       options?.onSuccess?.();
     },
   }),
-  useUpdateWorkflowTemplateDraft: () => ({
+  useSaveWorkflowTemplateDefinition: () => ({
     isPending: false,
     mutate: (
       input: { definition: unknown; change_summary?: string },
-      options?: { onSuccess?: (saved: unknown) => void },
+      options?: { onSuccess?: (result: unknown) => void },
     ) => {
-      mocks.updateDraft(input);
+      mocks.save(input);
       options?.onSuccess?.({
-        ...detail.versions[0],
-        definition: input.definition,
-        change_summary: input.change_summary ?? "",
+        version: {
+          ...detail.versions[0],
+          definition: input.definition,
+          change_summary: input.change_summary ?? "",
+        },
+        published: mocks.validation.valid,
+        validation_error: mocks.validation.valid
+          ? ""
+          : mocks.validation.errors[0] ?? "",
       });
-    },
-  }),
-  useCreateWorkflowTemplateDraft: () => ({
-    isPending: false,
-    mutate: mocks.createDraft,
-  }),
-  usePublishWorkflowTemplate: () => ({
-    isPending: false,
-    mutate: (
-      input: unknown,
-      options?: { onSuccess?: () => void },
-    ) => {
-      mocks.publish(input);
-      options?.onSuccess?.();
     },
   }),
   useArchiveWorkflowTemplate: () => ({
@@ -168,18 +156,6 @@ vi.mock("@multica/core/workflows", () => ({
       mocks.archive(input);
       options?.onSuccess?.();
     },
-  }),
-  useValidateWorkflowTemplateDefinition: () => ({
-    data: mocks.validation,
-    isPending: false,
-    mutate: (
-      input: unknown,
-      options?: { onSuccess?: (result: typeof mocks.validation) => void },
-    ) => {
-      mocks.validate(input);
-      options?.onSuccess?.(mocks.validation);
-    },
-    reset: mocks.validateReset,
   }),
 }));
 
@@ -267,61 +243,46 @@ describe("WorkflowTemplatePage", () => {
     mocks.validation.errors = [];
   });
 
-  it("validates from the publish action and requires explicit confirmation", async () => {
+  it("saves the edited definition into a version in one action", async () => {
+    // Authoring used to be four steps — create draft, save, validate, publish.
+    // Saving is now all of them, so the edit and the click are the whole flow.
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(
-      await screen.findByRole("button", { name: "Create and enable" }),
-    );
-    expect(mocks.validate).toHaveBeenCalledWith(definition);
-    expect(mocks.publish).not.toHaveBeenCalled();
+    await user.click(await screen.findByRole("button", {
+      name: "Insert activity between Work and End",
+    }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
 
-    const dialog = await screen.findByRole("alertdialog");
-    expect(dialog).toHaveTextContent("Publish version 1");
-    expect(dialog).toHaveTextContent(
-      "This will not modify workflow instances already running.",
-    );
-
-    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
-    await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+    const input = mocks.save.mock.calls[0]![0] as {
+      definition: typeof definition;
+    };
+    expect(input.definition.nodes).toHaveLength(4);
   });
 
-  it("does not open the publish confirmation when validation fails", async () => {
+  it("says the definition was stored but is not live when it fails to validate", async () => {
+    // Refusing the save would leave half-finished work nowhere to go, so it is
+    // kept on a version that stays a draft — and the panel has to say so.
     mocks.validation.valid = false;
     mocks.validation.errors = ['node "work" has no outgoing edge'];
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(
-      await screen.findByRole("button", { name: "Create and enable" }),
-    );
-
-    expect(mocks.validate).toHaveBeenCalledWith(definition);
-    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    expect(
-      await screen.findByText("The workflow definition is invalid"),
-    ).toBeInTheDocument();
-  });
-
-  it("saves pending draft edits before publishing them", async () => {
-    const user = userEvent.setup();
-    renderPage();
-
-    await user.click(screen.getByRole("button", {
+    await user.click(await screen.findByRole("button", {
       name: "Insert activity between Work and End",
     }));
-    await user.click(screen.getByRole("button", { name: "Create and enable" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
 
-    const dialog = await screen.findByRole("alertdialog");
-    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
-
-    await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1));
-    expect(mocks.updateDraft).toHaveBeenCalledTimes(1);
-    const input = mocks.updateDraft.mock.calls[0]![0] as {
-      definition: typeof definition;
-    };
-    expect(input.definition.nodes).toHaveLength(4);
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText(
+        "Saved, but not live yet — this definition does not validate.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: 'node "work" has no outgoing edge' }),
+    ).toBeInTheDocument();
   });
 
   it("updates template metadata through the dedicated details dialog", async () => {
@@ -329,7 +290,7 @@ describe("WorkflowTemplatePage", () => {
     renderPage();
 
     // Editing the name is rare, so it lives behind the overflow rather than
-    // competing with publish for the header row.
+    // competing with save for the header row.
     await user.click(
       await screen.findByRole("button", { name: "More actions" }),
     );
@@ -380,9 +341,9 @@ describe("WorkflowTemplatePage", () => {
     await user.click(screen.getByRole("button", {
       name: "Insert activity between Work and End",
     }));
-    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
 
-    const input = mocks.updateDraft.mock.calls[0]![0] as {
+    const input = mocks.save.mock.calls[0]![0] as {
       definition: typeof definition;
     };
     const inserted = input.definition.nodes.find(
@@ -413,9 +374,9 @@ describe("WorkflowTemplatePage", () => {
     await user.click(screen.getByRole("button", {
       name: "Add parallel activity from Work",
     }));
-    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
 
-    const input = mocks.updateDraft.mock.calls[0]![0] as {
+    const input = mocks.save.mock.calls[0]![0] as {
       definition: typeof definition;
     };
     const branch = input.definition.nodes.find(

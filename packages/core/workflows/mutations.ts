@@ -561,35 +561,18 @@ export function useCopyWorkflowTemplate() {
   });
 }
 
-export function useUpdateWorkflowTemplateDraft(templateId: string) {
+// Saving is the whole editing flow: it allocates or reuses a version, stores
+// the definition, and makes it live when it validates. Invalidates the
+// template list too, because the live version is what the list shows.
+export function useSaveWorkflowTemplateDefinition(templateId: string) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
     mutationFn: (input: {
       definition: WorkflowDefinition;
       change_summary?: string;
-      revision: number;
-    }) => api.updateWorkflowTemplateDraft(templateId, input),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: workflowKeys.template(wsId, templateId) }),
-  });
-}
-
-export function useCreateWorkflowTemplateDraft(templateId: string) {
-  const qc = useQueryClient();
-  const wsId = useWorkspaceId();
-  return useMutation({
-    mutationFn: () => api.createWorkflowTemplateDraft(templateId),
-    onSettled: () =>
-      qc.invalidateQueries({ queryKey: workflowKeys.template(wsId, templateId) }),
-  });
-}
-
-export function usePublishWorkflowTemplate(templateId: string) {
-  const qc = useQueryClient();
-  const wsId = useWorkspaceId();
-  return useMutation({
-    mutationFn: () => api.publishWorkflowTemplate(templateId),
+      revision?: number;
+    }) => api.saveWorkflowTemplateDefinition(templateId, input),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: workflowKeys.template(wsId, templateId) });
       qc.invalidateQueries({ queryKey: workflowKeys.templates(wsId) });
@@ -606,13 +589,6 @@ export function useArchiveWorkflowTemplate(templateId: string) {
       qc.invalidateQueries({ queryKey: workflowKeys.template(wsId, templateId) });
       qc.invalidateQueries({ queryKey: workflowKeys.templates(wsId) });
     },
-  });
-}
-
-export function useValidateWorkflowTemplateDefinition(templateId: string) {
-  return useMutation({
-    mutationFn: (definition: WorkflowDefinition) =>
-      api.validateWorkflowTemplateDefinition(templateId, definition),
   });
 }
 
