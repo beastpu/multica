@@ -1280,13 +1280,13 @@ export function IssueDisplayControls({
                     {t(($) => $.filters.workflow_issues_only)}
                   </DropdownMenuCheckboxItem>
 
-                  {(workflowData?.templates.length ?? 0) > 0 && (
+                  {(workflowData?.workflows.length ?? 0) > 0 && (
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuLabel>
                         {t(($) => $.filters.workflow_template)}
                       </DropdownMenuLabel>
-                      {workflowData!.templates.map((template) => {
+                      {workflowData!.workflows.map((template) => {
                         const checked = workflowFilter === template.id;
                         return (
                           <DropdownMenuCheckboxItem

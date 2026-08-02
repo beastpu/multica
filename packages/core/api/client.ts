@@ -338,7 +338,7 @@ import {
 } from "./schemas";
 import {
   EMPTY_LIST_WORKFLOW_INSTANCES,
-  EMPTY_LIST_WORKFLOW_TEMPLATES,
+  EMPTY_LIST_WORKFLOWS,
   EMPTY_WORKFLOW_INSTANCE_DETAIL,
   EMPTY_WORKFLOW_NODE_DETAIL,
   EMPTY_WORKFLOW_DETAIL,
@@ -3644,7 +3644,7 @@ export class ApiClient {
     if (params?.status) search.set("status", params.status);
     const suffix = search.size > 0 ? `?${search.toString()}` : "";
     const raw = await this.fetch<unknown>(`/api/workflows${suffix}`);
-    return parseWithFallback(raw, ListWorkflowsResponseSchema, EMPTY_LIST_WORKFLOW_TEMPLATES, {
+    return parseWithFallback(raw, ListWorkflowsResponseSchema, EMPTY_LIST_WORKFLOWS, {
       endpoint: "GET /api/workflows",
     });
   }

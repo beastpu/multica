@@ -87,7 +87,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
         return { data: templateDetail, isLoading: false, isError: false };
       }
       return {
-        data: { templates: [templateSummary] },
+        data: { workflows: [templateSummary] },
         isLoading: false,
         isError: false,
       };

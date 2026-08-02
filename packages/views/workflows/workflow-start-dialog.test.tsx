@@ -74,7 +74,7 @@ const templateDetail = {
   }],
 };
 const templateList = {
-  templates: [{
+  workflows: [{
     id: "template-1",
     name: "Delivery",
     status: "published",

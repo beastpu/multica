@@ -325,7 +325,7 @@ export interface ListWorkflowInstancesResponse {
 }
 
 export interface ListWorkflowsResponse {
-  templates: Workflow[];
+  workflows: Workflow[];
   total: number;
 }
 

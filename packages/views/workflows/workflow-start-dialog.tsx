@@ -110,10 +110,10 @@ export function WorkflowStartDialog({ issueId }: { issueId?: string }) {
     enabled: Boolean(wsId),
   });
   const templates = useMemo(
-    () => (templatesQuery.data?.templates ?? []).filter(
+    () => (templatesQuery.data?.workflows ?? []).filter(
       (template) => template.status === "published",
     ),
-    [templatesQuery.data?.templates],
+    [templatesQuery.data?.workflows],
   );
   const templateQuery = useQuery({
     ...workflowOptions(wsId, templateId),

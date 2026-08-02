@@ -699,7 +699,7 @@ function TemplatesPanel({
   // No "paused" — a template you do not want started is archived. A fourth
   // state would be a second word for the same act.
   const [statusFilter, setStatusFilter] = useState<TemplateStatusFilter>("live");
-  const allTemplates = data?.templates ?? [];
+  const allTemplates = data?.workflows ?? [];
   const countFor = (filter: TemplateStatusFilter) =>
     allTemplates.filter((template) => matchesTemplateStatus(template, filter))
       .length;
@@ -969,10 +969,10 @@ export function NewWorkflowDialog() {
   });
   const create = useCreateWorkflowRun();
   const templates = useMemo(
-    () => (templatesQuery.data?.templates ?? []).filter(
+    () => (templatesQuery.data?.workflows ?? []).filter(
       (template) => template.status === "published",
     ),
-    [templatesQuery.data?.templates],
+    [templatesQuery.data?.workflows],
   );
   const publishedVersions = useMemo(
     () => (templateQuery.data?.versions ?? [])
@@ -1503,7 +1503,7 @@ export function WorkflowsPage() {
                   className="min-h-11 rounded-lg border border-input bg-background px-3 text-sm"
                 >
                   <option value="">{t(($) => $.filters.all_templates)}</option>
-                  {(templateData?.templates ?? []).map((template) => (
+                  {(templateData?.workflows ?? []).map((template) => (
                     <option key={template.id} value={template.id}>
                       {template.name}
                     </option>

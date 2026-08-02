@@ -501,7 +501,7 @@ export const EMPTY_LIST_WORKFLOW_INSTANCES: ListWorkflowInstancesResponse = {
 export const EMPTY_WORKFLOW_ACCEPTANCES: WorkflowAcceptancesResponse = {
   acceptances: [],
 };
-export const EMPTY_LIST_WORKFLOW_TEMPLATES: ListWorkflowsResponse = { templates: [], total: 0 };
+export const EMPTY_LIST_WORKFLOWS: ListWorkflowsResponse = { workflows: [], total: 0 };
 export const EMPTY_WORKFLOW_INSTANCE_DETAIL: WorkflowInstanceDetail = {
   instance: EMPTY_WORKFLOW_INSTANCE, role_assignments: [], nodes: [], tasks: [],
 };
