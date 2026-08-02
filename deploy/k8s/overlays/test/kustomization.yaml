@@ -28,7 +28,7 @@ commonAnnotations:
 # tag (e.g. main-<sha>) once CI is wired and you can drop the Always patch.
 images:
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-server
-    newTag: "test-20260802-b4a79b304-workflow"
+    newTag: "test-20260802-b02d13637-workflow"
   - name: lilith-registry.cn-shanghai.cr.aliyuncs.com/devops/multica-web
     newTag: "test-20260802-b4a79b304-workflow"
 
