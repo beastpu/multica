@@ -10,6 +10,7 @@
   "actions": {
     "new_workflow": "새 워크플로",
     "new_template": "새 템플릿",
+    "run": "실행",
     "open": "열기",
     "save": "저장",
     "reconcile": "상태 복구",
@@ -58,6 +59,13 @@
     "choose_template": "게시된 템플릿 선택",
     "no_templates": "워크플로를 시작하기 전에 템플릿을 게시하세요."
   },
+  "run": {
+    "title": "워크플로 실행",
+    "description": "템플릿에서 바로 실행합니다. Issue는 필요한 활동에서만 생성됩니다.",
+    "name": "실행 이름",
+    "instructions": "실행 지침",
+    "instructions_placeholder": "목표, 배경, 기대 결과를 입력하세요..."
+  },
   "start": {
     "title": "이 issue에서 워크플로 시작",
     "description": "게시된 워크플로 버전을 선택하고 역할을 배정한 뒤 이 issue를 호스트로 사용합니다.",
@@ -98,6 +106,7 @@
     "empty_title": "워크플로가 없습니다",
     "empty_description": "워크플로를 시작하면 여기에 표시됩니다.",
     "host_issue": "호스트 이슈",
+    "standalone": "독립 실행",
     "current_activity": "현재 활동",
     "current_owner": "현재 담당자",
     "progress": "진행률",
@@ -159,6 +168,7 @@
     "parent_issue": "워크플로 / 상위 issue",
     "open_parent_issue": "상위 issue 열기",
     "host_issue": "상위 issue",
+    "run_context": "실행",
     "node_issues": "노드를 막고 있는 항목",
     "node_issues_clear": "막고 있는 항목이 없습니다",
     "timeout_label": "타임아웃",
@@ -196,6 +206,9 @@
     "waiting": "대기 중",
     "awaiting_approver": "지정된 승인자의 처리를 기다리는 중",
     "no_issues": "이 범위에 Issue가 없습니다",
+    "direct_execution": "Agent 직접 실행",
+    "direct_execution_help": "이 활동은 Agent 또는 Squad에 직접 할당되며 Issue를 만들지 않고 자체 작업과 실행 기록을 가집니다.",
+    "view_all_issues": "모든 워크플로 Issue 보기({{count}})",
     "no_nodes": "이 워크플로에는 노드가 없습니다",
     "no_tasks": "이 활동에는 작업이 없습니다",
     "no_submission": "제출된 결과가 없습니다",

@@ -3888,8 +3888,16 @@ func cleanupWorkflowRuntimeTest(t *testing.T) {
 	t.Helper()
 	cleanup := func() {
 		ctx := context.Background()
+		if _, err := testPool.Exec(ctx, `
+			DELETE FROM agent_task_queue
+			WHERE workflow_node_task_id IN (
+				SELECT id FROM workflow_node_task WHERE workspace_id = $1
+			)
+		`, testWorkspaceID); err != nil {
+			t.Fatalf("cleanup workflow agent tasks: %v", err)
+		}
 		for _, table := range []string{
-			"workflow_event", "workflow_acceptance", "workflow_node_confirmation",
+			"workflow_event", "workflow_acceptance",
 			"workflow_node_verdict", "workflow_node_submission", "workflow_artifact",
 			"workflow_executor_resolution",
 			"workflow_node_task", "workflow_node_participant", "workflow_node_instance",

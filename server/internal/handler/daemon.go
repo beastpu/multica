@@ -2267,6 +2267,33 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// Quick-create task: no issue / chat / autopilot link — workspace and
 	// prompt come from the task's context JSONB. Resolve workspace from
 	// there so the isolation check below has something to compare.
+	hasWorkflowNode := false
+	if direct, ok := service.ParseWorkflowNodeTaskContext(*task); ok {
+		hasWorkflowNode = true
+		resp.WorkspaceID = direct.WorkspaceID
+		resp.ThreadName = direct.RunTitle
+		resp.Workflow = h.workflowTaskContextForDirectTask(r.Context(), *task)
+		if task.IsLeaderTask && task.SquadID.Valid && resp.Agent != nil {
+			workspaceUUID, parseErr := util.ParseUUID(direct.WorkspaceID)
+			if parseErr == nil {
+				if squad, squadErr := h.Queries.GetSquadInWorkspace(
+					r.Context(), db.GetSquadInWorkspaceParams{
+						ID: task.SquadID, WorkspaceID: workspaceUUID,
+					},
+				); squadErr == nil && uuidToString(squad.LeaderID) == resp.Agent.ID {
+					briefing := buildSquadLeaderBriefing(r.Context(), h.Queries, squad)
+					if strings.TrimSpace(resp.Agent.Instructions) == "" {
+						resp.Agent.Instructions = briefing
+					} else {
+						resp.Agent.Instructions += "\n\n" + briefing
+					}
+					resp.SquadID = uuidToString(squad.ID)
+					resp.SquadName = squad.Name
+				}
+			}
+		}
+	}
+
 	hasQuickCreate := false
 	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
 		var qc service.QuickCreateContext
@@ -2414,6 +2441,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			"has_chat", task.ChatSessionID.Valid,
 			"has_autopilot_run", task.AutopilotRunID.Valid,
 			"has_quick_create", hasQuickCreate,
+			"has_workflow_node", hasWorkflowNode,
 		)
 		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
 			slog.Error("task claim: cancel after workspace check failed",

@@ -325,6 +325,33 @@ VALUES (
 )
 RETURNING *;
 
+-- name: CreateWorkflowAgentTask :one
+-- Issue-less workflow execution. The workflow context is self-contained and
+-- workflow_node_task_id is the durable ownership link used for idempotency and
+-- node readiness. A squad still executes through its leader agent while the
+-- squad id remains attached for briefing and audit.
+INSERT INTO agent_task_queue (
+    agent_id, runtime_id, issue_id, workflow_node_task_id, status, priority,
+    context, is_leader_task, squad_id, originator_user_id,
+    accountable_user_id, runtime_mcp_overlay, runtime_connected_apps,
+    originator_source, trigger_evidence_kind, trigger_evidence_ref_id
+)
+VALUES (
+    @agent_id, @runtime_id, NULL, @workflow_node_task_id, 'queued', @priority,
+    @context, COALESCE(sqlc.narg('is_leader_task')::boolean, FALSE),
+    sqlc.narg(squad_id), sqlc.narg(originator_user_id),
+    sqlc.narg(accountable_user_id), sqlc.narg(runtime_mcp_overlay),
+    sqlc.narg(runtime_connected_apps), sqlc.narg(originator_source),
+    'workflow_node', @workflow_node_task_id
+)
+RETURNING *;
+
+-- name: GetLatestAgentTaskForWorkflowNodeTask :one
+SELECT * FROM agent_task_queue
+WHERE workflow_node_task_id = @workflow_node_task_id
+ORDER BY attempt DESC, created_at DESC, id DESC
+LIMIT 1;
+
 -- name: CreateDeferredAgentTask :one
 -- Deferred tasks are inert until PromoteDueDeferredTasksForRuntime flips them
 -- to queued. Used for comment-routing escalation: a thread-owner primary task
@@ -446,6 +473,7 @@ WHERE id = $1 AND issue_id IS NULL;
 -- disabled (max_attempts<=1) task, so this only ever widens, never revives.
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, chat_session_id, autopilot_run_id,
+    workflow_node_task_id,
     status, priority, trigger_comment_id, coalesced_comment_ids, trigger_summary, context,
     session_id, work_dir,
     attempt, max_attempts, parent_task_id, force_fresh_session, is_leader_task,
@@ -456,6 +484,7 @@ INSERT INTO agent_task_queue (
 )
 SELECT
     p.agent_id, p.runtime_id, p.issue_id, p.chat_session_id, p.autopilot_run_id,
+    p.workflow_node_task_id,
     CASE WHEN sqlc.narg(fire_at)::timestamptz IS NOT NULL THEN 'deferred' ELSE 'queued' END,
     CASE WHEN p.chat_session_id IS NOT NULL THEN GREATEST(p.priority, 3) ELSE p.priority END,
     p.trigger_comment_id, p.coalesced_comment_ids, p.trigger_summary, p.context,
@@ -487,6 +516,46 @@ SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE issue_id = $1
   AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
 RETURNING *;
+
+-- name: CancelAgentTasksByWorkflowInstance :many
+-- Direct workflow executions have no issue_id, so the workflow lifecycle must
+-- cancel them through their durable workflow_node_task ownership link.
+UPDATE agent_task_queue agent_task
+SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
+FROM workflow_node_task node_task
+WHERE agent_task.workflow_node_task_id = node_task.id
+  AND node_task.workflow_instance_id = @workflow_instance_id
+  AND node_task.workspace_id = @workspace_id
+  AND agent_task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+RETURNING agent_task.*;
+
+-- name: CancelAgentTasksByWorkflowHost :many
+-- Host deletion removes the workflow runtime, so active direct executions must
+-- be stopped before their ownership rows disappear.
+UPDATE agent_task_queue agent_task
+SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
+FROM workflow_node_task node_task
+JOIN workflow_instance instance
+  ON instance.id = node_task.workflow_instance_id
+ AND instance.workspace_id = node_task.workspace_id
+WHERE agent_task.workflow_node_task_id = node_task.id
+  AND instance.host_issue_id = @host_issue_id
+  AND instance.workspace_id = @workspace_id
+  AND agent_task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
+RETURNING agent_task.*;
+
+-- name: DetachAgentTasksByWorkflowHost :exec
+-- Historical terminal tasks survive for audit, but must not retain a dangling
+-- workflow_node_task_id after host cleanup deletes the workflow runtime.
+UPDATE agent_task_queue agent_task
+SET workflow_node_task_id = NULL
+FROM workflow_node_task node_task
+JOIN workflow_instance instance
+  ON instance.id = node_task.workflow_instance_id
+ AND instance.workspace_id = node_task.workspace_id
+WHERE agent_task.workflow_node_task_id = node_task.id
+  AND instance.host_issue_id = @host_issue_id
+  AND instance.workspace_id = @workspace_id;
 
 -- name: CancelAgentTasksByIssueAndAgent :many
 -- Cancels active tasks for a single (issue, agent) pair without touching

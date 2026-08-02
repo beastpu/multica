@@ -348,11 +348,11 @@ type AgentTaskResponse struct {
 	// for `multica workflow current` to discover, so a runtime on an older CLI
 	// — which has no workflow subcommand at all — still gets the context.
 	// omitempty keeps ordinary issues and old daemons unaffected.
-	Workflow *WorkflowTaskContext `json:"workflow,omitempty"`
-	SquadID                  string                 `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
-	SquadName                string                 `json:"squad_name,omitempty"`                  // display name for the picker squad
-	ParentIssueID            string                 `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
-	ParentIssueIdentifier    string                 `json:"parent_issue_identifier,omitempty"`     // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
+	Workflow              *WorkflowTaskContext `json:"workflow,omitempty"`
+	SquadID               string               `json:"squad_id,omitempty"`                // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
+	SquadName             string               `json:"squad_name,omitempty"`              // display name for the picker squad
+	ParentIssueID         string               `json:"parent_issue_id,omitempty"`         // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
+	ParentIssueIdentifier string               `json:"parent_issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and
@@ -767,6 +767,9 @@ func computeTaskKind(t db.AgentTaskQueue) string {
 	}
 	if uuidToString(t.AutopilotRunID) != "" {
 		return "autopilot"
+	}
+	if _, ok := service.ParseWorkflowNodeTaskContext(t); ok {
+		return "workflow"
 	}
 	if uuidToString(t.IssueID) == "" {
 		return "quick_create"

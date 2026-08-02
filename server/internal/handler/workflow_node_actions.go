@@ -1176,7 +1176,17 @@ func (h *Handler) changeWorkflowNodeTask(w http.ResponseWriter, r *http.Request,
 	}
 	switch action {
 	case "retry":
-		if task.MaterializationStatus != "failed" && task.MaterializationStatus != "materializing" {
+		directExecutionRetry := false
+		if task.Source == "execution" && locked.Status == "running" {
+			latest, latestErr := qtx.GetLatestAgentTaskForWorkflowNodeTask(
+				r.Context(), task.ID,
+			)
+			directExecutionRetry = latestErr == nil &&
+				(latest.Status == "failed" || latest.Status == "cancelled")
+		}
+		if !directExecutionRetry &&
+			task.MaterializationStatus != "failed" &&
+			task.MaterializationStatus != "materializing" {
 			writeError(w, http.StatusConflict, "only failed or stuck materialization can be retried")
 			return
 		}

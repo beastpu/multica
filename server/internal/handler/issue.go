@@ -3408,16 +3408,24 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 	// publish issue:deleted) and is shared with the Feishu orphan reconcile.
 	userID := requestUserID(r)
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
+	var cancelledWorkflowTasks []db.AgentTaskQueue
 	if err := service.HardDeleteIssue(
 		r.Context(), h.Queries, h.TaskService, h.Storage, h.Bus, issue, actorType, actorID,
 		service.HardDeleteIssueOptions{
-			TxStarter:               h.TxStarter,
-			WithinDeleteTransaction: cleanupWorkflowRelationshipsForIssue,
+			TxStarter: h.TxStarter,
+			WithinDeleteTransaction: func(ctx context.Context, q *db.Queries, issue db.Issue) error {
+				var cleanupErr error
+				cancelledWorkflowTasks, cleanupErr = cleanupWorkflowRelationshipsForIssue(
+					ctx, q, issue,
+				)
+				return cleanupErr
+			},
 		},
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete issue")
 		return
 	}
+	h.TaskService.BroadcastCancelledTasks(r.Context(), cancelledWorkflowTasks)
 	slog.Info("issue deleted", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "workspace_id", uuidToString(issue.WorkspaceID))...)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -3867,16 +3875,24 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		}
 
 		actorType, actorID := h.resolveActor(r, userID, workspaceID)
+		var cancelledWorkflowTasks []db.AgentTaskQueue
 		if err := service.HardDeleteIssue(
 			r.Context(), h.Queries, h.TaskService, h.Storage, h.Bus, issue, actorType, actorID,
 			service.HardDeleteIssueOptions{
-				TxStarter:               h.TxStarter,
-				WithinDeleteTransaction: cleanupWorkflowRelationshipsForIssue,
+				TxStarter: h.TxStarter,
+				WithinDeleteTransaction: func(ctx context.Context, q *db.Queries, issue db.Issue) error {
+					var cleanupErr error
+					cancelledWorkflowTasks, cleanupErr = cleanupWorkflowRelationshipsForIssue(
+						ctx, q, issue,
+					)
+					return cleanupErr
+				},
 			},
 		); err != nil {
 			slog.Warn("batch delete issue failed", "issue_id", issueID, "error", err)
 			continue
 		}
+		h.TaskService.BroadcastCancelledTasks(r.Context(), cancelledWorkflowTasks)
 
 		deleted++
 	}

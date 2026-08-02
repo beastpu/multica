@@ -42,6 +42,7 @@ type workflowInstanceResponse struct {
 	WorkspaceID         string                            `json:"workspace_id"`
 	TemplateID          string                            `json:"template_id"`
 	TemplateVersionID   string                            `json:"template_version_id"`
+	Title               string                            `json:"title"`
 	HostIssueID         string                            `json:"host_issue_id"`
 	Status              string                            `json:"status"`
 	HostStatusMode      string                            `json:"host_status_mode"`
@@ -148,7 +149,7 @@ func workflowInstanceToResponse(row db.WorkflowInstance) workflowInstanceRespons
 	return workflowInstanceResponse{
 		ID: uuidToString(row.ID), WorkspaceID: uuidToString(row.WorkspaceID),
 		TemplateID: uuidToString(row.TemplateID), TemplateVersionID: uuidToString(row.TemplateVersionID),
-		HostIssueID: uuidToString(row.HostIssueID), Status: row.Status, HostStatusMode: row.HostStatusMode,
+		Title: row.Title, HostIssueID: uuidToString(row.HostIssueID), Status: row.Status, HostStatusMode: row.HostStatusMode,
 		Input: json.RawMessage(row.Input), Result: json.RawMessage(row.Result), Revision: row.Revision,
 		StartedByType: row.StartedByType, StartedByID: uuidToPtr(row.StartedByID),
 		StartedAt: timestampToString(row.StartedAt), PausedAt: timestampToPtr(row.PausedAt),
@@ -583,7 +584,8 @@ func (h *Handler) StartIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: hostID, WorkspaceID: wsUUID}); err != nil {
+	host, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: hostID, WorkspaceID: wsUUID})
+	if err != nil {
 		writeError(w, http.StatusNotFound, "host issue not found")
 		return
 	}
@@ -678,7 +680,7 @@ func (h *Handler) StartIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 	instance, activeNodes, err := h.createWorkflowRuntime(
 		r.Context(), qtx, workflowRuntimeStartParams{
 			WorkspaceID: wsUUID, TemplateID: template.ID, TemplateVersionID: version.ID,
-			HostIssueID: hostID, HostStatusMode: hostStatusMode, Input: normalizedInput,
+			HostIssueID: hostID, Title: host.Title, HostStatusMode: hostStatusMode, Input: normalizedInput,
 			StartedByID: userUUID, IdempotencyKey: idempotencyKey,
 			Definition: definition, Plan: plan, Assignments: assignments, MissingRoles: missingRoles,
 		},
@@ -758,6 +760,7 @@ type workflowRuntimeStartParams struct {
 	TemplateID        pgtype.UUID
 	TemplateVersionID pgtype.UUID
 	HostIssueID       pgtype.UUID
+	Title             string
 	HostStatusMode    string
 	Input             []byte
 	StartedByID       pgtype.UUID
@@ -780,6 +783,7 @@ func (h *Handler) createWorkflowRuntime(
 	instance, err := q.CreateWorkflowInstance(ctx, db.CreateWorkflowInstanceParams{
 		WorkspaceID: params.WorkspaceID, TemplateID: params.TemplateID,
 		TemplateVersionID: params.TemplateVersionID, HostIssueID: params.HostIssueID,
+		Title:  params.Title,
 		Status: instanceStatus, HostStatusMode: params.HostStatusMode,
 		Input: params.Input, StartedByType: "member", StartedByID: params.StartedByID,
 	})
@@ -1077,6 +1081,36 @@ func createWorkflowNodeActivationRecords(
 		return false, err
 	}
 	needsSetup := false
+	if nodeDefinition.IssuePolicy == "none" &&
+		workflowdomain.HasExecutor(nodeDefinition.Executor) {
+		decision, err := resolveWorkflowNodeExecutor(
+			ctx, q, workspaceID, nodeDefinition, roles,
+		)
+		if err != nil {
+			return false, fmt.Errorf("resolve direct node executor: %w", err)
+		}
+		if decision.Assignment == nil ||
+			decision.Assignment.ActorType == "agent" ||
+			decision.Assignment.ActorType == "squad" {
+			snapshot, _ := json.Marshal(nodeDefinition)
+			task, err := q.CreateWorkflowNodeTask(ctx, db.CreateWorkflowNodeTaskParams{
+				WorkspaceID: workspaceID, WorkflowInstanceID: instance.ID,
+				WorkflowNodeInstanceID: node.ID, TaskKey: "execution",
+				Source: "execution", Required: true, DefinitionSnapshot: snapshot,
+				MaterializationStatus: "pending_materialization",
+				CreatedByType:         instance.StartedByType, CreatedByID: instance.StartedByID,
+			})
+			if err != nil {
+				return false, fmt.Errorf("create direct node task: %w", err)
+			}
+			if _, err := createWorkflowExecutorResolution(
+				ctx, q, workspaceID, instance, node, task, decision,
+			); err != nil {
+				return false, fmt.Errorf("create direct executor resolution: %w", err)
+			}
+			needsSetup = decision.Assignment == nil
+		}
+	}
 	for _, issueTemplate := range nodeDefinition.IssueTemplates {
 		snapshot, _ := json.Marshal(issueTemplate)
 		task, err := q.CreateWorkflowNodeTask(ctx, db.CreateWorkflowNodeTaskParams{
@@ -1232,6 +1266,11 @@ func (h *Handler) materializeWorkflowTask(
 		!resolution.ActorID.Valid {
 		return errors.New("workflow task executor resolution is not resolved")
 	}
+	if task.Source == "execution" {
+		return h.materializeWorkflowAgentTask(
+			ctx, workspaceID, instance, node, task, resolution,
+		)
+	}
 	startedAt := time.Now()
 	materializationOutcome := "failed"
 	defer func() {
@@ -1281,12 +1320,24 @@ func (h *Handler) materializeWorkflowTask(
 	}
 	var nodeDefinition workflowdomain.NodeDefinition
 	_ = json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition)
-	host, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: instance.HostIssueID, WorkspaceID: workspaceID})
-	if err != nil {
-		return h.failWorkflowTaskMaterialization(ctx, workspaceID, task.ID, "host issue not found")
+	var host db.Issue
+	var hostIdentifier string
+	var projectID pgtype.UUID
+	if instance.HostIssueID.Valid {
+		host, err = h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+			ID: instance.HostIssueID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			return h.failWorkflowTaskMaterialization(ctx, workspaceID, task.ID, "host issue not found")
+		}
+		hostIdentifier = h.getIssuePrefix(ctx, workspaceID) + "-" + strconv.Itoa(int(host.Number))
+		projectID = host.ProjectID
 	}
-	hostIdentifier := h.getIssuePrefix(ctx, workspaceID) + "-" + strconv.Itoa(int(host.Number))
-	title := strings.ReplaceAll(template.Title, "{{host.title}}", host.Title)
+	titleContext := instance.Title
+	if host.ID.Valid {
+		titleContext = host.Title
+	}
+	title := strings.ReplaceAll(template.Title, "{{host.title}}", titleContext)
 	status := template.InitialStatus
 	if status == "" {
 		status = "todo"
@@ -1305,7 +1356,7 @@ func (h *Handler) materializeWorkflowTask(
 		Status: status, Priority: priority,
 		AssigneeType: resolution.ActorType, AssigneeID: resolution.ActorID,
 		CreatorType: "member", CreatorID: instance.StartedByID,
-		ParentIssueID: instance.HostIssueID, ProjectID: host.ProjectID,
+		ParentIssueID: instance.HostIssueID, ProjectID: projectID,
 		OriginType: pgtype.Text{String: "workflow", Valid: true}, OriginID: task.ID,
 		Stage: pgtype.Int4{Int32: node.DisplayOrder, Valid: true}, AllowDuplicate: true,
 	}, service.IssueCreateOpts{ActorID: uuidToString(instance.StartedByID), Platform: "workflow"})
@@ -1332,8 +1383,81 @@ func (h *Handler) materializeWorkflowTask(
 	})
 	if err == nil {
 		materializationOutcome = "success"
-		h.stampWorkflowIssueMetadata(ctx, workspaceID, result.Issue, instance, node, host)
+		h.stampWorkflowIssueMetadata(ctx, workspaceID, result.Issue, instance, node, hostIdentifier)
 	}
+	return err
+}
+
+func (h *Handler) materializeWorkflowAgentTask(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
+	task db.WorkflowNodeTask,
+	resolution db.WorkflowExecutorResolution,
+) error {
+	latest, err := h.Queries.GetLatestAgentTaskForWorkflowNodeTask(
+		ctx, task.ID,
+	)
+	if err == nil {
+		if latest.Status == "failed" || latest.Status == "cancelled" {
+			if _, retryErr := h.TaskService.RetryWorkflowNodeTask(ctx, latest); retryErr != nil {
+				return h.failWorkflowTaskMaterialization(
+					ctx, workspaceID, task.ID, retryErr.Error(),
+				)
+			}
+		}
+		_, markErr := h.Queries.MarkWorkflowNodeTaskExecuted(
+			ctx, db.MarkWorkflowNodeTaskExecutedParams{ID: task.ID, WorkspaceID: workspaceID},
+		)
+		return markErr
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	agentID := resolution.ActorID
+	var squadID pgtype.UUID
+	switch resolution.ActorType.String {
+	case "agent":
+	case "squad":
+		squad, err := h.Queries.GetSquadInWorkspace(
+			ctx, db.GetSquadInWorkspaceParams{ID: resolution.ActorID, WorkspaceID: workspaceID},
+		)
+		if err != nil {
+			return h.failWorkflowTaskMaterialization(ctx, workspaceID, task.ID, "squad executor not found")
+		}
+		agentID = squad.LeaderID
+		squadID = squad.ID
+	default:
+		return h.failWorkflowTaskMaterialization(
+			ctx, workspaceID, task.ID, "direct workflow execution requires an agent or squad",
+		)
+	}
+	var nodeDefinition workflowdomain.NodeDefinition
+	if err := json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition); err != nil {
+		return h.failWorkflowTaskMaterialization(ctx, workspaceID, task.ID, "invalid node definition")
+	}
+	prompt := strings.TrimSpace(nodeDefinition.Description)
+	if prompt == "" {
+		prompt = "Complete the workflow activity: " + node.NameSnapshot
+	}
+	var runInput struct {
+		Instructions string `json:"instructions"`
+	}
+	if json.Unmarshal(instance.Input, &runInput) == nil {
+		if instructions := strings.TrimSpace(runInput.Instructions); instructions != "" {
+			prompt = instructions + "\n\n" + prompt
+		}
+	}
+	if _, err := h.TaskService.EnqueueWorkflowNodeTask(
+		ctx, workspaceID, instance.StartedByID, task.ID, instance.ID, node.ID,
+		agentID, squadID, instance.Title, prompt,
+	); err != nil {
+		return h.failWorkflowTaskMaterialization(ctx, workspaceID, task.ID, err.Error())
+	}
+	_, err = h.Queries.MarkWorkflowNodeTaskExecuted(
+		ctx, db.MarkWorkflowNodeTaskExecutedParams{ID: task.ID, WorkspaceID: workspaceID},
+	)
 	return err
 }
 
@@ -1471,9 +1595,8 @@ func (h *Handler) stampWorkflowIssueMetadata(
 	issue db.Issue,
 	instance db.WorkflowInstance,
 	node db.WorkflowNodeInstance,
-	host db.Issue,
+	hostIssue string,
 ) {
-	hostIssue := h.getIssuePrefix(ctx, workspaceID) + "-" + strconv.Itoa(int(host.Number))
 	value, err := workflowIssueMetadata(
 		uuidToString(instance.ID), node.NodeKey, hostIssue,
 	)

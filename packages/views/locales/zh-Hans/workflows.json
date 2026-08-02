@@ -10,6 +10,7 @@
   "actions": {
     "new_workflow": "新建工作流",
     "new_template": "新建模板",
+    "run": "运行",
     "open": "打开工作流",
     "save": "保存",
     "reconcile": "修复状态",
@@ -58,6 +59,13 @@
     "choose_template": "选择一个已发布模板",
     "no_templates": "请先发布一个模板，再启动工作流。"
   },
+  "run": {
+    "title": "运行工作流",
+    "description": "直接从模板启动一次运行；只有确实需要 issue 的活动才会创建 issue。",
+    "name": "运行名称",
+    "instructions": "运行说明",
+    "instructions_placeholder": "说明目标、上下文和期望结果..."
+  },
   "start": {
     "title": "从当前 issue 启动工作流",
     "description": "选择已发布的工作流版本、分配角色，并将当前 issue 作为宿主需求。",
@@ -98,6 +106,7 @@
     "empty_title": "这里还没有工作流",
     "empty_description": "工作流启动后，会在这里持续展示运行状态。",
     "host_issue": "宿主需求",
+    "standalone": "独立运行",
     "current_activity": "当前活动",
     "current_owner": "当前负责人",
     "progress": "整体进度",
@@ -159,6 +168,7 @@
     "parent_issue": "工作流 / 父 issue",
     "open_parent_issue": "打开父 issue",
     "host_issue": "父 issue",
+    "run_context": "运行",
     "node_issues": "节点待完成",
     "node_issues_clear": "没有阻塞项",
     "timeout_label": "超时",
@@ -196,6 +206,9 @@
     "waiting": "等待中",
     "awaiting_approver": "等待指定验收人处理",
     "no_issues": "当前范围没有 issue",
+    "direct_execution": "智能体直接执行",
+    "direct_execution_help": "该活动直接分配给智能体或小队，拥有独立的任务与运行记录，不会为了执行而创建 issue。",
+    "view_all_issues": "查看全部工作流 issue（{{count}}）",
     "no_nodes": "这个工作流还没有节点",
     "no_tasks": "这个活动没有任务",
     "no_submission": "尚未提交结果",

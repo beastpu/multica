@@ -1297,6 +1297,111 @@ type QuickCreateContext struct {
 // QuickCreateContextType marks a task as a quick-create job.
 const QuickCreateContextType = "quick_create"
 
+// WorkflowNodeTaskContext is the self-contained routing envelope for a node
+// that executes directly through an agent instead of through an Issue.
+type WorkflowNodeTaskContext struct {
+	Type           string `json:"type"`
+	WorkspaceID    string `json:"workspace_id"`
+	InstanceID     string `json:"instance_id"`
+	NodeInstanceID string `json:"node_instance_id"`
+	NodeTaskID     string `json:"node_task_id"`
+	RunTitle       string `json:"run_title"`
+	Prompt         string `json:"prompt"`
+	SquadID        string `json:"squad_id,omitempty"`
+}
+
+const WorkflowNodeTaskContextType = "workflow_node"
+
+// EnqueueWorkflowNodeTask creates an issue-less execution owned by one
+// workflow_node_task. The caller resolves a squad to its leader agent and
+// passes the squad id separately so the daemon can still inject squad context.
+func (s *TaskService) EnqueueWorkflowNodeTask(
+	ctx context.Context,
+	workspaceID, requesterID, workflowNodeTaskID pgtype.UUID,
+	instanceID, nodeInstanceID pgtype.UUID,
+	agentID, squadID pgtype.UUID,
+	runTitle, prompt string,
+) (db.AgentTaskQueue, error) {
+	agent, err := s.Queries.GetAgent(ctx, agentID)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
+	}
+	if agent.ArchivedAt.Valid {
+		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
+	}
+	if !agent.RuntimeID.Valid {
+		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
+	}
+	payload := WorkflowNodeTaskContext{
+		Type: WorkflowNodeTaskContextType, WorkspaceID: util.UUIDToString(workspaceID),
+		InstanceID: util.UUIDToString(instanceID), NodeInstanceID: util.UUIDToString(nodeInstanceID),
+		NodeTaskID: util.UUIDToString(workflowNodeTaskID), RunTitle: runTitle,
+		Prompt: strings.TrimSpace(prompt), SquadID: util.UUIDToString(squadID),
+	}
+	contextJSON, err := json.Marshal(payload)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("marshal workflow node context: %w", err)
+	}
+	attr := attribution.DirectHumanRun(
+		requesterID, attribution.EvidenceWorkflowNode, workflowNodeTaskID,
+	)
+	attr, err = s.applyAttributionFallback(ctx, attr, agent)
+	if err != nil {
+		return db.AgentTaskQueue{}, err
+	}
+	attrSource, _, _, _ := attributionCreateParams(attr)
+	overlay := s.buildRuntimeMCPOverlay(ctx, requesterID, agent)
+	task, err := s.Queries.CreateWorkflowAgentTask(ctx, db.CreateWorkflowAgentTaskParams{
+		AgentID: agentID, RuntimeID: agent.RuntimeID,
+		WorkflowNodeTaskID: workflowNodeTaskID, Priority: priorityToInt("high"),
+		Context:      contextJSON,
+		IsLeaderTask: pgtype.Bool{Bool: squadID.Valid, Valid: squadID.Valid}, SquadID: squadID,
+		OriginatorUserID: requesterID, AccountableUserID: attr.AccountableUserID,
+		RuntimeMcpOverlay: overlay.Overlay, RuntimeConnectedApps: overlay.ConnectedApps,
+		OriginatorSource: attrSource,
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("create workflow agent task: %w", err)
+	}
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
+	s.NotifyTaskEnqueued(ctx, task)
+	return task, nil
+}
+
+// RetryWorkflowNodeTask creates a new attempt for an explicitly retried direct
+// workflow execution. The workflow handler owns authorization and idempotency;
+// this method preserves the agent-task lineage and runtime context.
+func (s *TaskService) RetryWorkflowNodeTask(
+	ctx context.Context,
+	parent db.AgentTaskQueue,
+) (db.AgentTaskQueue, error) {
+	if !parent.WorkflowNodeTaskID.Valid ||
+		(parent.Status != "failed" && parent.Status != "cancelled") {
+		return db.AgentTaskQueue{}, fmt.Errorf("workflow agent task is not retryable")
+	}
+	agent, err := s.Queries.GetAgent(ctx, parent.AgentID)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("load workflow retry agent: %w", err)
+	}
+	overlay := s.buildRuntimeMCPOverlay(ctx, parent.OriginatorUserID, agent)
+	maxAttempts := parent.MaxAttempts
+	if maxAttempts <= parent.Attempt {
+		maxAttempts = parent.Attempt + 1
+	}
+	child, err := s.Queries.CreateRetryTask(ctx, db.CreateRetryTaskParams{
+		ID:                   parent.ID,
+		MaxAttempts:          pgtype.Int4{Int32: maxAttempts, Valid: true},
+		RuntimeMcpOverlay:    overlay.Overlay,
+		RuntimeConnectedApps: overlay.ConnectedApps,
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("create workflow retry task: %w", err)
+	}
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, child)
+	s.NotifyTaskEnqueued(ctx, child)
+	return child, nil
+}
+
 // EnqueueQuickCreateTask creates a queued task that has no issue / chat /
 // autopilot link — the user's natural-language prompt is stored in the
 // task's context JSONB and the agent is expected to translate it into a
@@ -3274,20 +3379,20 @@ func ResumeUnsafeFailure(failureReason, errorText string) bool {
 
 // retryEligible reports whether a failed task qualifies for an automatic retry
 // attempt: an infrastructure-shaped failure_reason, remaining attempt budget,
-// not an autopilot run, and linked to an issue or chat session. Shared by
+// not an autopilot run, and linked to an issue, chat session, or workflow node. Shared by
 // FailTask's in-transaction retry and the orphan sweeper's MaybeRetryFailedTask
 // so both agree on which failures re-run.
 func retryEligible(failureReason string, t db.AgentTaskQueue) bool {
 	return retryableReasons[failureReason] &&
 		t.Attempt < retryAttemptCeiling(failureReason, t.MaxAttempts) &&
 		!t.AutopilotRunID.Valid &&
-		(t.IssueID.Valid || t.ChatSessionID.Valid)
+		(t.IssueID.Valid || t.ChatSessionID.Valid || t.WorkflowNodeTaskID.Valid)
 }
 
 // MaybeRetryFailedTask spawns a fresh queued attempt for a recently-failed
 // task when the failure was infrastructure-shaped (daemon crash, runtime
 // went offline, dispatch/run timeout) and the task hasn't exhausted its
-// max_attempts budget. The child task inherits agent/runtime/issue/chat
+// max_attempts budget. The child task inherits agent/runtime/issue/chat/workflow
 // links and, for resume-safe failures, the parent's session_id/work_dir so
 // the agent can resume the conversation when the backend supports it. Returns
 // the new task, or nil when no retry was created.
@@ -3320,7 +3425,7 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 		return nil, nil
 	}
 	// Autopilot has its own retry semantics (don't double-trigger) and a task
-	// with no issue/chat link has nowhere to report its retry — retryEligible
+	// with no issue/chat/workflow link has nowhere to report its retry — retryEligible
 	// covers both, keeping this sweeper path in sync with FailTask's in-tx retry.
 	if !retryEligible(reason, parent) {
 		return nil, nil
@@ -4119,6 +4224,9 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 	if qc, ok := s.parseQuickCreateContext(task); ok {
 		return qc.WorkspaceID
 	}
+	if workflowTask, ok := ParseWorkflowNodeTaskContext(task); ok {
+		return workflowTask.WorkspaceID
+	}
 	return ""
 }
 
@@ -4330,6 +4438,23 @@ func (s *TaskService) parseQuickCreateContext(task db.AgentTaskQueue) (QuickCrea
 		return QuickCreateContext{}, false
 	}
 	return qc, true
+}
+
+// ParseWorkflowNodeTaskContext recognizes issue-less workflow executions.
+// It is exported so the claim handler and activity mapper use the same
+// discriminator as workspace resolution.
+func ParseWorkflowNodeTaskContext(task db.AgentTaskQueue) (WorkflowNodeTaskContext, bool) {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid ||
+		!task.WorkflowNodeTaskID.Valid || len(task.Context) == 0 {
+		return WorkflowNodeTaskContext{}, false
+	}
+	var workflowTask WorkflowNodeTaskContext
+	if err := json.Unmarshal(task.Context, &workflowTask); err != nil ||
+		workflowTask.Type != WorkflowNodeTaskContextType ||
+		strings.TrimSpace(workflowTask.WorkspaceID) == "" {
+		return WorkflowNodeTaskContext{}, false
+	}
+	return workflowTask, true
 }
 
 // notifyQuickCreateCompleted writes a success inbox notification to the

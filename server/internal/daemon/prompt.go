@@ -30,6 +30,9 @@ func BuildPrompt(task Task, provider string) string {
 	if task.QuickCreatePrompt != "" {
 		return buildQuickCreatePrompt(task)
 	}
+	if task.Workflow != nil && task.Workflow.DirectExecution && task.IssueID == "" {
+		return buildDirectWorkflowPrompt(task)
+	}
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
@@ -43,6 +46,27 @@ func BuildPrompt(task Task, provider string) string {
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). Start with `multica issue comment list %s --recent 10 --output json` to read the 10 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. Resolved threads come back folded — `--full` to expand. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
 	b.WriteString(workflowPromptSection(task))
+	return b.String()
+}
+
+func buildDirectWorkflowPrompt(task Task) string {
+	workflow := task.Workflow
+	var b strings.Builder
+	b.WriteString("You are executing an activity in a Multica workflow run. There is no Issue for this node.\n\n")
+	if workflow.RunTitle != "" {
+		fmt.Fprintf(&b, "Run: %s\n", workflow.RunTitle)
+	}
+	name := workflow.NodeName
+	if name == "" {
+		name = workflow.NodeKey
+	}
+	fmt.Fprintf(&b, "Activity: %s (`%s`)\n\n", name, workflow.NodeKey)
+	if workflow.Instructions != "" {
+		b.WriteString("Instructions:\n\n")
+		b.WriteString(workflow.Instructions)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Read the Workflow Protocol section in your runtime context before starting. Complete the activity directly; do not try to fetch, comment on, or change an Issue for this node. Submit every required workflow artifact and handoff summary before exiting. Your final output is captured on the Run.\n")
 	return b.String()
 }
 

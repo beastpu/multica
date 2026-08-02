@@ -18,6 +18,9 @@ type WorkflowTaskContext struct {
 	NodeInstanceID  string                    `json:"node_instance_id"`
 	NodeKey         string                    `json:"node_key"`
 	NodeName        string                    `json:"node_name,omitempty"`
+	RunTitle        string                    `json:"run_title,omitempty"`
+	Instructions    string                    `json:"instructions,omitempty"`
+	DirectExecution bool                      `json:"direct_execution,omitempty"`
 	HostIssue       string                    `json:"host_issue,omitempty"`
 	HandoffRequired bool                      `json:"handoff_required,omitempty"`
 	Artifacts       []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
@@ -102,11 +105,21 @@ func renderWorkflowProtocol(b *strings.Builder, workflow *WorkflowTaskContext) {
 	if name == "" {
 		name = workflow.NodeKey
 	}
+	subject := "This issue is"
+	if workflow.DirectExecution {
+		subject = "This direct agent task executes"
+	}
 	fmt.Fprintf(b,
-		"This issue is node **%s** (`%s`) of workflow run `%s`. "+
+		"%s node **%s** (`%s`) of workflow run `%s`. "+
 			"The run advances only when this node's obligations below are met — "+
 			"finishing the work without them leaves the whole workflow blocked.\n\n",
-		name, workflow.NodeKey, workflow.InstanceID)
+		subject, name, workflow.NodeKey, workflow.InstanceID)
+	if workflow.RunTitle != "" {
+		fmt.Fprintf(b, "Run: **%s**\n\n", workflow.RunTitle)
+	}
+	if workflow.Instructions != "" {
+		fmt.Fprintf(b, "Node instructions:\n\n%s\n\n", workflow.Instructions)
+	}
 	if workflow.HostIssue != "" {
 		fmt.Fprintf(b, "The requirement this run serves is **%s** — read it for the "+
 			"original ask; this issue's description carries only the node's own "+

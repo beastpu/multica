@@ -27,6 +27,8 @@ const (
 	kindQuickCreate
 	// kindChat: interactive chat session, no issue.
 	kindChat
+	// kindWorkflowDirect: issue-less execution of one workflow node.
+	kindWorkflowDirect
 )
 
 // classifyTask maps a TaskContextForEnv to the single taskKind the slim
@@ -42,6 +44,8 @@ func classifyTask(ctx TaskContextForEnv) taskKind {
 		return kindChat
 	case ctx.QuickCreatePrompt != "":
 		return kindQuickCreate
+	case ctx.Workflow != nil && ctx.Workflow.DirectExecution:
+		return kindWorkflowDirect
 	case ctx.AutopilotRunID != "":
 		return kindAutopilotRunOnly
 	case ctx.TriggerCommentID != "":

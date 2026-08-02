@@ -147,6 +147,31 @@ WITH candidate AS (
                   OR node.updated_at > instance.last_reconciled_at
                   OR task.updated_at > instance.last_reconciled_at
                   OR bound_issue.updated_at > instance.last_reconciled_at
+                  OR EXISTS (
+                    SELECT 1
+                    FROM agent_task_queue agent_task
+                    WHERE agent_task.workflow_node_task_id = task.id
+                      AND agent_task.completed_at > instance.last_reconciled_at
+                  )
+                  OR (
+                    EXISTS (
+                      SELECT 1
+                      FROM jsonb_array_elements(node.waiting_reasons) reason
+                      WHERE reason->>'code' IN (
+                        'direct_execution_not_dispatched',
+                        'direct_execution_running'
+                      )
+                    )
+                    AND (
+                      SELECT agent_task.status
+                      FROM agent_task_queue agent_task
+                      WHERE agent_task.workflow_node_task_id = task.id
+                      ORDER BY agent_task.attempt DESC,
+                               agent_task.created_at DESC,
+                               agent_task.id DESC
+                      LIMIT 1
+                    ) IN ('completed', 'failed', 'cancelled')
+                  )
                 )
             )
           )
@@ -176,7 +201,7 @@ SET last_reconciled_at = now(),
     reconcile_after = NULL
 FROM candidate
 WHERE instance.id = candidate.id
-RETURNING instance.id, instance.workspace_id, instance.template_id, instance.template_version_id, instance.host_issue_id, instance.status, instance.host_status_mode, instance.input, instance.result, instance.revision, instance.started_by_type, instance.started_by_id, instance.started_at, instance.paused_at, instance.completed_at, instance.cancelled_at, instance.last_reconciled_at, instance.created_at, instance.updated_at, instance.reconcile_after
+RETURNING instance.id, instance.workspace_id, instance.template_id, instance.template_version_id, instance.host_issue_id, instance.status, instance.host_status_mode, instance.input, instance.result, instance.revision, instance.started_by_type, instance.started_by_id, instance.started_at, instance.paused_at, instance.completed_at, instance.cancelled_at, instance.last_reconciled_at, instance.created_at, instance.updated_at, instance.reconcile_after, instance.title
 `
 
 func (q *Queries) ClaimWorkflowInstanceForReconcile(ctx context.Context, minimumIntervalSeconds float64) (WorkflowInstance, error) {
@@ -203,6 +228,7 @@ func (q *Queries) ClaimWorkflowInstanceForReconcile(ctx context.Context, minimum
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReconcileAfter,
+		&i.Title,
 	)
 	return i, err
 }
@@ -364,7 +390,10 @@ CROSS JOIN LATERAL (
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
         AND node.status IN ('active', 'waiting', 'blocked')
-        AND reason->>'code' IN ('required_task_not_materialized', 'stale_materialization')
+        AND reason->>'code' IN (
+          'required_task_not_materialized', 'stale_materialization',
+          'direct_execution_failed'
+        )
     ) THEN 'retry_materialization'
     WHEN wi.status = 'running' AND EXISTS (
       SELECT 1
@@ -940,13 +969,14 @@ func (q *Queries) CreateWorkflowExecutorResolution(ctx context.Context, arg Crea
 
 const createWorkflowInstance = `-- name: CreateWorkflowInstance :one
 INSERT INTO workflow_instance (
-    workspace_id, template_id, template_version_id, host_issue_id,
+    workspace_id, template_id, template_version_id, host_issue_id, title,
     status, host_status_mode, input, started_by_type, started_by_id
 ) VALUES (
-    $1, $2, $3, $4,
-    $5, $6, $7, $8, $9
+    $1, $2, $3,
+    $4, $5,
+    $6, $7, $8, $9, $10
 )
-RETURNING id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after
+RETURNING id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
 `
 
 type CreateWorkflowInstanceParams struct {
@@ -954,6 +984,7 @@ type CreateWorkflowInstanceParams struct {
 	TemplateID        pgtype.UUID `json:"template_id"`
 	TemplateVersionID pgtype.UUID `json:"template_version_id"`
 	HostIssueID       pgtype.UUID `json:"host_issue_id"`
+	Title             string      `json:"title"`
 	Status            string      `json:"status"`
 	HostStatusMode    string      `json:"host_status_mode"`
 	Input             []byte      `json:"input"`
@@ -967,6 +998,7 @@ func (q *Queries) CreateWorkflowInstance(ctx context.Context, arg CreateWorkflow
 		arg.TemplateID,
 		arg.TemplateVersionID,
 		arg.HostIssueID,
+		arg.Title,
 		arg.Status,
 		arg.HostStatusMode,
 		arg.Input,
@@ -995,6 +1027,7 @@ func (q *Queries) CreateWorkflowInstance(ctx context.Context, arg CreateWorkflow
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReconcileAfter,
+		&i.Title,
 	)
 	return i, err
 }
@@ -1439,7 +1472,7 @@ UPDATE workflow_instance
 SET last_reconciled_at = NULL,
     reconcile_after = now() + make_interval(secs => $1)
 WHERE id = $2 AND workspace_id = $3
-RETURNING id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after
+RETURNING id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
 `
 
 type DeferWorkflowInstanceReconcileParams struct {
@@ -1472,6 +1505,7 @@ func (q *Queries) DeferWorkflowInstanceReconcile(ctx context.Context, arg DeferW
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReconcileAfter,
+		&i.Title,
 	)
 	return i, err
 }
@@ -1810,7 +1844,7 @@ func (q *Queries) DetachWorkflowNodeTasksByIssue(ctx context.Context, arg Detach
 }
 
 const getActiveWorkflowInstanceByHost = `-- name: GetActiveWorkflowInstanceByHost :one
-SELECT id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after FROM workflow_instance
+SELECT id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
 WHERE host_issue_id = $1
   AND workspace_id = $2
   AND status IN ('needs_setup', 'running', 'paused')
@@ -1846,6 +1880,7 @@ func (q *Queries) GetActiveWorkflowInstanceByHost(ctx context.Context, arg GetAc
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReconcileAfter,
+		&i.Title,
 	)
 	return i, err
 }
@@ -1974,7 +2009,7 @@ func (q *Queries) GetLatestWorkflowAcceptance(ctx context.Context, arg GetLatest
 }
 
 const getLatestWorkflowInstanceByHost = `-- name: GetLatestWorkflowInstanceByHost :one
-SELECT id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after FROM workflow_instance
+SELECT id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
 WHERE host_issue_id = $1
   AND workspace_id = $2
 ORDER BY created_at DESC, id DESC
@@ -2010,6 +2045,7 @@ func (q *Queries) GetLatestWorkflowInstanceByHost(ctx context.Context, arg GetLa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReconcileAfter,
+		&i.Title,
 	)
 	return i, err
 }
@@ -2343,7 +2379,7 @@ func (q *Queries) GetWorkflowExecutorResolutionInWorkspace(ctx context.Context, 
 }
 
 const getWorkflowInstanceByStartIdempotencyKey = `-- name: GetWorkflowInstanceByStartIdempotencyKey :one
-SELECT wi.id, wi.workspace_id, wi.template_id, wi.template_version_id, wi.host_issue_id, wi.status, wi.host_status_mode, wi.input, wi.result, wi.revision, wi.started_by_type, wi.started_by_id, wi.started_at, wi.paused_at, wi.completed_at, wi.cancelled_at, wi.last_reconciled_at, wi.created_at, wi.updated_at, wi.reconcile_after
+SELECT wi.id, wi.workspace_id, wi.template_id, wi.template_version_id, wi.host_issue_id, wi.status, wi.host_status_mode, wi.input, wi.result, wi.revision, wi.started_by_type, wi.started_by_id, wi.started_at, wi.paused_at, wi.completed_at, wi.cancelled_at, wi.last_reconciled_at, wi.created_at, wi.updated_at, wi.reconcile_after, wi.title
 FROM workflow_event we
 JOIN workflow_instance wi
   ON wi.id = we.workflow_instance_id
@@ -2383,12 +2419,13 @@ func (q *Queries) GetWorkflowInstanceByStartIdempotencyKey(ctx context.Context, 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReconcileAfter,
+		&i.Title,
 	)
 	return i, err
 }
 
 const getWorkflowInstanceInWorkspace = `-- name: GetWorkflowInstanceInWorkspace :one
-SELECT id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after FROM workflow_instance
+SELECT id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -2421,6 +2458,7 @@ func (q *Queries) GetWorkflowInstanceInWorkspace(ctx context.Context, arg GetWor
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReconcileAfter,
+		&i.Title,
 	)
 	return i, err
 }
@@ -2810,8 +2848,8 @@ SELECT
   node.node_key AS activity_key,
   node.name_snapshot AS activity_name,
   instance.host_issue_id,
-  host.number AS host_issue_number,
-  host.title AS host_issue_title,
+  COALESCE(host.number, 0)::integer AS host_issue_number,
+  COALESCE(host.title, '') AS host_issue_title,
   task.required
 FROM workflow_node_task task
 JOIN workflow_node_instance node
@@ -2823,7 +2861,7 @@ JOIN workflow_instance instance
 JOIN workflow_template template
   ON template.id = instance.template_id
  AND template.workspace_id = task.workspace_id
-JOIN issue host
+LEFT JOIN issue host
   ON host.id = instance.host_issue_id
  AND host.workspace_id = task.workspace_id
 WHERE task.workspace_id = $1
@@ -3313,9 +3351,9 @@ func (q *Queries) ListWorkflowInstanceArtifacts(ctx context.Context, arg ListWor
 const listWorkflowInstanceDisplayContexts = `-- name: ListWorkflowInstanceDisplayContexts :many
 SELECT
   wi.id AS workflow_instance_id,
-  host.title AS host_issue_title,
-  host.number AS host_issue_number,
-  host.priority AS host_issue_priority,
+  COALESCE(host.title, '') AS host_issue_title,
+  COALESCE(host.number, 0)::integer AS host_issue_number,
+  COALESCE(host.priority, '') AS host_issue_priority,
   host.project_id,
   template.name AS template_name,
   version.version AS template_version,
@@ -3349,7 +3387,7 @@ SELECT
       )
   ), 0) AS integer) AS activity_completed
 FROM workflow_instance wi
-JOIN issue host
+LEFT JOIN issue host
   ON host.id = wi.host_issue_id
  AND host.workspace_id = wi.workspace_id
 JOIN workflow_template template
@@ -3521,7 +3559,7 @@ func (q *Queries) ListWorkflowInstanceTasks(ctx context.Context, arg ListWorkflo
 }
 
 const listWorkflowInstances = `-- name: ListWorkflowInstances :many
-SELECT wi.id, wi.workspace_id, wi.template_id, wi.template_version_id, wi.host_issue_id, wi.status, wi.host_status_mode, wi.input, wi.result, wi.revision, wi.started_by_type, wi.started_by_id, wi.started_at, wi.paused_at, wi.completed_at, wi.cancelled_at, wi.last_reconciled_at, wi.created_at, wi.updated_at, wi.reconcile_after
+SELECT wi.id, wi.workspace_id, wi.template_id, wi.template_version_id, wi.host_issue_id, wi.status, wi.host_status_mode, wi.input, wi.result, wi.revision, wi.started_by_type, wi.started_by_id, wi.started_at, wi.paused_at, wi.completed_at, wi.cancelled_at, wi.last_reconciled_at, wi.created_at, wi.updated_at, wi.reconcile_after, wi.title
 FROM workflow_instance wi
 CROSS JOIN LATERAL (
   SELECT CASE
@@ -3556,7 +3594,10 @@ CROSS JOIN LATERAL (
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
         AND node.status IN ('active', 'waiting', 'blocked')
-        AND reason->>'code' IN ('required_task_not_materialized', 'stale_materialization')
+        AND reason->>'code' IN (
+          'required_task_not_materialized', 'stale_materialization',
+          'direct_execution_failed'
+        )
     ) THEN 'retry_materialization'
     WHEN wi.status = 'running' AND EXISTS (
       SELECT 1
@@ -3935,6 +3976,7 @@ func (q *Queries) ListWorkflowInstances(ctx context.Context, arg ListWorkflowIns
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ReconcileAfter,
+			&i.Title,
 		); err != nil {
 			return nil, err
 		}
@@ -4705,7 +4747,7 @@ func (q *Queries) ListWorkflowVerdicts(ctx context.Context, arg ListWorkflowVerd
 }
 
 const lockWorkflowInstance = `-- name: LockWorkflowInstance :one
-SELECT id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after FROM workflow_instance
+SELECT id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE
 `
@@ -4739,6 +4781,7 @@ func (q *Queries) LockWorkflowInstance(ctx context.Context, arg LockWorkflowInst
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReconcileAfter,
+		&i.Title,
 	)
 	return i, err
 }
@@ -4782,7 +4825,7 @@ UPDATE workflow_instance
 SET last_reconciled_at = NULL,
     reconcile_after = NULL
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after
+RETURNING id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
 `
 
 type MarkWorkflowInstanceReconcilePendingParams struct {
@@ -4814,6 +4857,50 @@ func (q *Queries) MarkWorkflowInstanceReconcilePending(ctx context.Context, arg 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReconcileAfter,
+		&i.Title,
+	)
+	return i, err
+}
+
+const markWorkflowNodeTaskExecuted = `-- name: MarkWorkflowNodeTaskExecuted :one
+UPDATE workflow_node_task
+SET materialization_status = 'materialized',
+    claimed_at = NULL,
+    last_error = '',
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND source = 'execution'
+RETURNING id, workspace_id, workflow_instance_id, workflow_node_instance_id, task_key, source, required, definition_snapshot, materialization_status, issue_id, executor_resolution_id, attempt_count, last_error, claimed_at, created_by_type, created_by_id, created_at, updated_at
+`
+
+type MarkWorkflowNodeTaskExecutedParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) MarkWorkflowNodeTaskExecuted(ctx context.Context, arg MarkWorkflowNodeTaskExecutedParams) (WorkflowNodeTask, error) {
+	row := q.db.QueryRow(ctx, markWorkflowNodeTaskExecuted, arg.ID, arg.WorkspaceID)
+	var i WorkflowNodeTask
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowInstanceID,
+		&i.WorkflowNodeInstanceID,
+		&i.TaskKey,
+		&i.Source,
+		&i.Required,
+		&i.DefinitionSnapshot,
+		&i.MaterializationStatus,
+		&i.IssueID,
+		&i.ExecutorResolutionID,
+		&i.AttemptCount,
+		&i.LastError,
+		&i.ClaimedAt,
+		&i.CreatedByType,
+		&i.CreatedByID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -5269,7 +5356,7 @@ SET status = $1,
     last_reconciled_at = CASE WHEN $3::boolean THEN now() ELSE last_reconciled_at END,
     updated_at = now()
 WHERE id = $4 AND workspace_id = $5 AND revision = $6
-RETURNING id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after
+RETURNING id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
 `
 
 type UpdateWorkflowInstanceStateParams struct {
@@ -5312,6 +5399,7 @@ func (q *Queries) UpdateWorkflowInstanceState(ctx context.Context, arg UpdateWor
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReconcileAfter,
+		&i.Title,
 	)
 	return i, err
 }

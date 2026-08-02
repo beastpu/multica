@@ -201,6 +201,7 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 					ctx, qtx, workflowRuntimeStartParams{
 						WorkspaceID: wsUUID, TemplateID: template.ID,
 						TemplateVersionID: version.ID, HostIssueID: host.ID,
+						Title:          host.Title,
 						HostStatusMode: hostStatusMode, Input: normalizedInput,
 						StartedByID: userUUID, IdempotencyKey: req.IdempotencyKey,
 						Definition: definition, Plan: plan, Assignments: assignments,

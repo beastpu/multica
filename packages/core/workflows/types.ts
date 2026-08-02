@@ -157,6 +157,7 @@ export interface WorkflowInstance {
   template_id: string;
   template_version_id: string;
   host_issue_id: string;
+  title: string;
   status: string;
   host_status_mode: string;
   input: Record<string, unknown>;
@@ -229,7 +230,7 @@ export interface WorkflowNodeTask {
   task_key: string;
   source: string;
   required: boolean;
-  definition: WorkflowIssueTemplate;
+  definition: WorkflowIssueTemplate | WorkflowNodeDefinition;
   materialization_status: string;
   issue_id: string | null;
   executor_resolution_id: string | null;
@@ -398,4 +399,12 @@ export interface CreateWorkflowInput extends Omit<StartWorkflowInput, "template_
   priority?: string;
   project_id?: string;
   template_id: string;
+}
+
+export interface RunWorkflowTemplateInput {
+  title?: string;
+  template_version_id?: string;
+  input?: Record<string, unknown>;
+  role_assignments: StartWorkflowInput["role_assignments"];
+  idempotency_key: string;
 }

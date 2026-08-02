@@ -521,6 +521,14 @@ func validateActivity(
 				node.SubmissionSchema.Policy,
 			)
 		}
+		if node.IssuePolicy == "none" &&
+			(policy == "per_required_task" || policy == "fan_in") {
+			return fmt.Errorf(
+				"activity %q submission policy %q requires issue-backed tasks",
+				node.Key,
+				policy,
+			)
+		}
 	}
 	switch node.Completion.RequiredIssueOutcome {
 	case "", "done", "terminal", "none":

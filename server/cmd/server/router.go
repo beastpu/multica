@@ -1225,6 +1225,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/{id}", h.GetWorkflowTemplate)
 				r.Get("/{id}/versions", h.ListWorkflowTemplateVersions)
 				r.Get("/{id}/versions/{version}", h.GetWorkflowTemplateVersion)
+				r.Post("/{id}/runs", h.StartWorkflowTemplateRun)
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRole(queries, "owner", "admin"))
 					r.Post("/", h.CreateWorkflowTemplate)

@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
   submit: vi.fn(),
   resolveExecutor: vi.fn(),
+  changeTask: vi.fn(),
   recordVerdict: vi.fn(),
   decideAcceptance: vi.fn(),
 }));
@@ -47,8 +48,9 @@ vi.mock("@multica/core/workflows", async (importOriginal) => ({
     isPending: false,
   }),
   useChangeWorkflowNodeTask: () => ({
-    mutate: vi.fn(),
+    mutate: mocks.changeTask,
     isPending: false,
+    isError: false,
   }),
   useCreateWorkflowVerdict: () => ({
     mutate: mocks.recordVerdict,
@@ -269,6 +271,65 @@ describe("WorkflowTaskCard", () => {
       reason: "Configured manually in the workflow workbench",
     });
   });
+
+  it("offers retry when a direct execution failed after materialization", async () => {
+    const user = userEvent.setup();
+    const task = {
+      id: "task-direct",
+      task_key: "execution",
+      definition: { key: "diagnosis", kind: "activity", name: "Run diagnosis" },
+      required: true,
+      source: "execution",
+      materialization_status: "materialized",
+      executor_resolution_id: "resolution-direct",
+      issue_id: null,
+      last_error: "",
+    } as WorkflowNodeTask;
+    const resolution = {
+      id: "resolution-direct",
+      workflow_node_instance_id: "node-1",
+      workflow_node_task_id: "task-direct",
+      strategy: "pinned_actor",
+      status: "resolved",
+      actor_type: "agent",
+      actor_id: "agent-1",
+      candidates: [],
+      reason: "",
+      resolved_at: "2026-07-23T00:00:00Z",
+      created_at: "2026-07-23T00:00:00Z",
+    } satisfies WorkflowExecutorResolution;
+
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{ en: { common: enCommon, workflows: enWorkflows } }}
+      >
+        <WorkflowTaskCard
+          instanceId="instance-1"
+          nodeId="node-1"
+          task={task}
+          resolution={resolution}
+          actorOptions={[{ type: "agent", id: "agent-1", name: "Build Agent" }]}
+          canManage
+          canAdmin
+          executionFailed
+        />
+      </I18nProvider>,
+    );
+
+    await user.click(screen.getByText("Recovery actions"));
+    await user.type(
+      screen.getByRole("textbox", { name: "Reason for this action (required)" }),
+      "Retry the failed run",
+    );
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(mocks.changeTask).toHaveBeenCalledWith({
+      taskId: "task-direct",
+      action: "retry",
+      reason: "Retry the failed run",
+    });
+  });
 });
 
 function workflowNode(overrides: Partial<WorkflowNodeInstance> = {}) {
@@ -335,7 +396,7 @@ describe("VerdictPanel", () => {
 
     expect(screen.getByText("Security review is missing")).toBeInTheDocument();
     expect(screen.getByText(/75%/)).toBeInTheDocument();
-    expect(screen.getByText(/\"artifact\": \"report\"/)).toBeInTheDocument();
+    expect(screen.getByText(/"artifact": "report"/)).toBeInTheDocument();
 
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Check result" }),

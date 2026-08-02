@@ -48,6 +48,23 @@ func TestValidateDefinition(t *testing.T) {
 	}
 }
 
+func TestValidateDefinitionRejectsTaskScopedSubmissionWithoutIssues(t *testing.T) {
+	for _, policy := range []string{"per_required_task", "fan_in"} {
+		t.Run(policy, func(t *testing.T) {
+			definition := validDefinition()
+			node := &definition.Nodes[1]
+			node.IssuePolicy = "none"
+			node.IssueTemplates = nil
+			node.SubmissionSchema = &SubmissionSchema{Policy: policy}
+
+			err := ValidateDefinition(definition)
+			if err == nil || !strings.Contains(err.Error(), "requires issue-backed tasks") {
+				t.Fatalf("ValidateDefinition() error = %v, want issue-backed tasks error", err)
+			}
+		})
+	}
+}
+
 func TestValidateDefinitionAcceptsImplicitParallelOutgoingEdges(t *testing.T) {
 	activity := func(key string) NodeDefinition {
 		return NodeDefinition{Key: key, Kind: "activity", Name: key, OwnerRole: "owner"}

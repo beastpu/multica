@@ -10,6 +10,7 @@
   "actions": {
     "new_workflow": "新規ワークフロー",
     "new_template": "新規テンプレート",
+    "run": "実行",
     "open": "開く",
     "save": "保存",
     "reconcile": "状態を修復",
@@ -58,6 +59,13 @@
     "choose_template": "公開済みテンプレートを選択",
     "no_templates": "開始前にテンプレートを公開してください。"
   },
+  "run": {
+    "title": "ワークフローを実行",
+    "description": "テンプレートから直接実行します。Issue は必要なアクティビティでのみ作成されます。",
+    "name": "実行名",
+    "instructions": "実行指示",
+    "instructions_placeholder": "目的、背景、期待する結果を入力..."
+  },
   "start": {
     "title": "この issue からワークフローを開始",
     "description": "公開済みバージョンを選択してロールを割り当て、この issue をワークフローのホストにします。",
@@ -98,6 +106,7 @@
     "empty_title": "ワークフローはありません",
     "empty_description": "開始したワークフローがここに表示されます。",
     "host_issue": "ホスト Issue",
+    "standalone": "単独実行",
     "current_activity": "現在のアクティビティ",
     "current_owner": "現在の担当者",
     "progress": "進捗",
@@ -159,6 +168,7 @@
     "parent_issue": "ワークフロー / 親 issue",
     "open_parent_issue": "親 issue を開く",
     "host_issue": "親 issue",
+    "run_context": "実行",
     "node_issues": "このノードを止めているもの",
     "node_issues_clear": "ブロックしている項目はありません",
     "timeout_label": "タイムアウト",
@@ -196,6 +206,9 @@
     "waiting": "待機中",
     "awaiting_approver": "指定された承認者の対応待ち",
     "no_issues": "この範囲に Issue はありません",
+    "direct_execution": "Agent の直接実行",
+    "direct_execution_help": "このアクティビティは Agent または Squad に直接割り当てられ、Issue を作らずに独自のタスクと実行履歴を持ちます。",
+    "view_all_issues": "すべてのワークフロー Issue を表示（{{count}}）",
     "no_nodes": "このワークフローにはノードがありません",
     "no_tasks": "このアクティビティにはタスクがありません",
     "no_submission": "提出はまだありません",

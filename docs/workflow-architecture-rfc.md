@@ -10,9 +10,47 @@ execution: authorized
 
 # Workflow — Activity-Container Product and Architecture RFC
 
-> 本文是评审稿，不授权创建分支、数据库迁移或生产代码。评审明确通过后，实施从最新
-> `develop` 创建独立的 `codex/workflow-mvp` 分支或同名隔离 worktree，避免携带当前
-> 工作区中的未提交改动。
+> 本文已进入实施。2026-08-02 的架构修订以 §0.0 为准；正文中仍将宿主 Issue 描述为
+> 必选的段落，按“兼容的 Issue 绑定模式”理解，不再限制独立 Workflow Run。
+
+## 0.0 2026-08-02 架构修订：Run 是一等对象，Issue 是可选关联
+
+Workflow Template 可以直接启动一个 Workflow Run，也可以从 Issue 启动。两条入口最终
+创建同一种 `workflow_instance`；区别只在 `host_issue_id` 是否存在：
+
+- `POST /workflow-templates/{id}/runs` 创建独立 Run，不隐式创建宿主 Issue；
+- `POST /issues/{id}/workflow` 保留 Issue 绑定模式；
+- `POST /workflow-instances` 保留“原子创建宿主 Issue + Run”的快捷入口；
+- Issue 与 Run 的绑定是显式关系，不通过 assignee 模拟。assignee 只表达谁负责执行工作；
+- 一个 Issue 同时最多绑定一个非终态 Run；一个 Run 最多有一个宿主 Issue，同时可以在活动中
+  产生 `0..N` 个普通 Issue；
+- `issue_policy=none` 的活动可以直接向 Agent 或 Squad 创建 Agent Task。该 Task 通过
+  `workflow_node_task_id` 归属节点，不制造占位 Issue；
+- 需要讨论、拆分、人工协作、评论或外部同步的活动继续使用普通 Issue；
+- Workflows 工作台是 Run 的主视图：上方活动地图、下方当前活动的工作投影。纯 Agent 活动
+  展示执行主体与任务历史；有 Issue 时复用统一 Issue Surface；“全部工作流 Issue”是同一
+  批 Issue 的局部投影，全局 Issues 页面仍是完整事实视图。
+
+新的领域公式：
+
+```text
+Workflow Run = 一次模板执行（可选绑定一个宿主 Issue）
+Node Task    = 节点内的一份工作定义
+Issue        = 需要协作与留痕时采用的工作载体（可选）
+Agent Task   = Agent/Squad 的一次执行任务，可由 Issue 或 Node Task 触发
+```
+
+```mermaid
+flowchart TD
+    T["Workflow Template"] --> WR["Workflow Run"]
+    I["Optional host Issue"] -. explicit binding .-> WR
+    WR --> N["Activity Node"]
+    N --> NT["Node Task"]
+    NT -->|"issue policy"| WI["Issue 0..N"]
+    NT -->|"direct executor"| AT["Agent Task"]
+    WI --> AT2["Issue-triggered Agent Task"]
+    WI -. "global Issues projection" .-> G["Issues"]
+```
 
 ## 0. 执行摘要
 
@@ -20,7 +58,7 @@ execution: authorized
 
 Multica Workflow 采用飞书项目式的**节点流**心智，但不复制其所有配置复杂度：
 
-- Workflow 绑定在一个宿主 Issue 上；Project 继续只是长期交付、团队和资源上下文。
+- Workflow Run 可独立启动或显式绑定一个宿主 Issue；Project 继续只是长期交付、团队和资源上下文。
 - Workspace 侧边栏新增与 Issues、Projects 并列的 **Workflows** 一级入口；默认进入运行中
   的 Workflow Instances，而不是模板设置。
 - 宿主 Issue 一旦启动 Workflow，详情页采用 **Workflow-first** 布局：流程图是主视图，
@@ -37,8 +75,8 @@ Multica Workflow 采用飞书项目式的**节点流**心智，但不复制其�
 - 条件、并行、汇聚、等待和结束属于**控制节点（Control Node）**，只编排，不派活。
 - 模板发布后不可变；运行实例永久固定在某个模板版本。
 - 所有节点实例在启动 Workflow 时创建，但节点内 Issue 只在节点激活时创建。
-- Workflow Instance 绑定宿主 Issue；Node Instance 只绑定 Workflow Instance，并从它继承
-  宿主和 Project 上下文，不再逐节点绑定宿主。
+- Workflow Instance 的宿主 Issue 可空；Node Instance 只绑定 Workflow Instance，并在存在
+  宿主时继承宿主和 Project 上下文，不再逐节点绑定宿主。
 - Node Instance 是比 Issue 更高一层的“富 Stage”；普通子 Issue 通过 Node Task 归属
   Node Instance，同时仍以宿主 Issue 作为 `parent_issue_id`。
 - Workflow Instance / Node Instance 是唯一流程真相；现有 `issue.stage` 只作兼容展示，
@@ -52,7 +90,7 @@ Multica Workflow 采用飞书项目式的**节点流**心智，但不复制其�
 Node        = 要发生什么
 Executor    = 谁来做，由路由策略解析
 Issue       = 用什么工作载体协作和留痕
-Run         = Agent 对某个 Issue 的一次执行尝试
+Agent Run   = Agent 对某个 Issue 或 Node Task 的一次执行尝试
 Submission  = 执行者交付的结构化结果
 Verdict     = 系统或人对节点是否准出的判断
 Acceptance  = 对整条 Workflow 的业务验收，失败时指定返工目标

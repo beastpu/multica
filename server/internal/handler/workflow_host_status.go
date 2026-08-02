@@ -16,7 +16,7 @@ func (h *Handler) updateManagedWorkflowHostStatus(
 	instance db.WorkflowInstance,
 	status string,
 ) error {
-	if instance.HostStatusMode != "managed" {
+	if instance.HostStatusMode != "managed" || !instance.HostIssueID.Valid {
 		return nil
 	}
 	return h.updateWorkflowHostStatus(ctx, instance, status)
@@ -67,6 +67,9 @@ func (h *Handler) updateWorkflowHostStatus(
 	instance db.WorkflowInstance,
 	status string,
 ) error {
+	if !instance.HostIssueID.Valid {
+		return nil
+	}
 	previous, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
 		ID: instance.HostIssueID, WorkspaceID: instance.WorkspaceID,
 	})

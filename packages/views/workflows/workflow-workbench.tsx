@@ -229,7 +229,7 @@ export function SubmissionPanel({
                 </option>
                 {sourceTasks.map((task) => (
                   <option key={task.id} value={task.issue_id!}>
-                    {task.definition.title}
+                    {workflowTaskTitle(task)}
                   </option>
                 ))}
               </select>
@@ -332,9 +332,9 @@ export function SubmissionPanel({
                 {submission.source_issue_id && (
                   <p className="text-xs text-muted-foreground">
                     {t(($) => $.workbench.submission_source_task)}:{" "}
-                    {tasks.find((task) =>
+                    {workflowTaskTitle(tasks.find((task) =>
                       task.issue_id === submission.source_issue_id
-                    )?.definition.title ?? submission.source_issue_id}
+                    )) ?? submission.source_issue_id}
                   </p>
                 )}
               </CardContent>
@@ -820,6 +820,13 @@ export function RoleSetupPanel({
 // depending on which block it sat in).
 const SECTION_HEADING = WORKFLOW_SECTION_HEADING;
 
+function workflowTaskTitle(task?: WorkflowNodeTask): string | undefined {
+  if (!task) return undefined;
+  return "title" in task.definition
+    ? task.definition.title
+    : task.definition.name || task.task_key;
+}
+
 export function WorkflowTaskCard({
   instanceId,
   nodeId,
@@ -828,6 +835,7 @@ export function WorkflowTaskCard({
   actorOptions,
   canManage,
   canAdmin,
+  executionFailed = false,
 }: {
   instanceId: string;
   nodeId: string;
@@ -836,6 +844,7 @@ export function WorkflowTaskCard({
   actorOptions: WorkflowActorOption[];
   canManage: boolean;
   canAdmin: boolean;
+  executionFailed?: boolean;
 }) {
   const { t } = useT("workflows");
   const [actorValue, setActorValue] = useState("");
@@ -854,21 +863,24 @@ export function WorkflowTaskCard({
     : undefined;
   const needsExecutor = resolution?.status !== "resolved";
   const isRecoverable = task.materialization_status === "failed" ||
-    task.materialization_status === "materializing";
+    task.materialization_status === "materializing" || executionFailed;
+  const taskTitle = workflowTaskTitle(task);
 
   return (
     <article className="space-y-3 rounded-xl border bg-surface px-4 py-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="truncate text-sm font-medium">
-            {task.definition.title}
+            {taskTitle}
           </h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {task.required
               ? t(($) => $.workbench.required)
               : t(($) => $.workbench.optional)}
             <span aria-hidden="true"> · </span>
-            {task.source === "dynamic"
+            {task.source === "execution"
+              ? t(($) => $.workbench.direct_execution)
+              : task.source === "dynamic"
               ? t(($) => $.workbench.dynamic_task)
               : t(($) => $.workbench.template_task)}
           </p>
@@ -1496,7 +1508,7 @@ function WorkflowDiagnosticsPanel({
       .filter((task) => task.last_error)
       .map((task) => ({
         node: node.node.name,
-        task: task.definition.title,
+        task: workflowTaskTitle(task) ?? task.task_key,
         error: task.last_error,
       }))
   );
@@ -1991,6 +2003,11 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
     (issue) =>
       issue.workflow_context?.workflow_node_instance_id === selectedNode?.id,
   );
+  const workflowIssueCount = workflowIssuesQuery.data?.issues.length ?? 0;
+  const selectedNodeUsesIssues = selectedIssuePolicy !== "none";
+  const showIssueSurface = issueScope === "all"
+    ? workflowIssueCount > 0
+    : selectedNodeUsesIssues || selectedNodeIssues.length > 0;
   const selectedRequiredTasks = (nodeQuery.data?.tasks ?? []).filter(
     (task) =>
       task.required && task.materialization_status !== "cancelled",
@@ -2034,9 +2051,15 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         item.id === task.executor_resolution_id ||
         item.workflow_node_task_id === task.id,
     );
+    const executionFailed = selectedNode?.waiting_reasons.some(
+      (reason) =>
+        reason.code === "direct_execution_failed" &&
+        reason.field === task.task_key,
+    ) ?? false;
     return task.materialization_status === "failed" ||
       (task.materialization_status === "materializing" &&
         selectedNode?.status === "blocked") ||
+      executionFailed ||
       resolution?.status !== "resolved";
   });
   // A node in review is waiting on exactly one action, so open on it. Every
@@ -2101,13 +2124,15 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-baseline gap-2">
             <span className={SECTION_HEADING}>
-              {t(($) => $.workbench.host_issue)}
+              {hostIssue
+                ? t(($) => $.workbench.host_issue)
+                : t(($) => $.workbench.run_context)}
             </span>
             <span
               id="workflow-host-issue-heading"
               className="truncate text-sm"
             >
-              {hostIssue?.identifier ?? ""}
+              {hostIssue?.identifier ?? instance.title}
             </span>
             {reworkedActivityCount > 0 && (
               <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 tabular-nums dark:text-amber-400">
@@ -2117,14 +2142,16 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               </span>
             )}
           </div>
-          <AppLink
-            href={p.issueDetail(instance.host_issue_id)}
-            className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-7"
-            aria-label={t(($) => $.workbench.open_parent_issue)}
-          >
-            {t(($) => $.workbench.open_parent_issue)}
-            <ArrowUpRight className="size-3.5" />
-          </AppLink>
+          {instance.host_issue_id && (
+            <AppLink
+              href={p.issueDetail(instance.host_issue_id)}
+              className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-7"
+              aria-label={t(($) => $.workbench.open_parent_issue)}
+            >
+              {t(($) => $.workbench.open_parent_issue)}
+              <ArrowUpRight className="size-3.5" />
+            </AppLink>
+          )}
         </div>
         {nodes.length > 0 && (
           <div className="flex items-center gap-2">
@@ -2261,6 +2288,11 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                 actorOptions={actorOptions}
                 canManage={canManageSelectedNode}
                 canAdmin={canAdmin}
+                executionFailed={selectedNode.waiting_reasons.some(
+                  (reason) =>
+                    reason.code === "direct_execution_failed" &&
+                    reason.field === task.task_key,
+                )}
               />
             );
           })}
@@ -2410,6 +2442,11 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                       actorOptions={actorOptions}
                       canManage={canManageSelectedNode}
                       canAdmin={canAdmin}
+                      executionFailed={selectedNode.waiting_reasons.some(
+                        (reason) =>
+                          reason.code === "direct_execution_failed" &&
+                          reason.field === task.task_key,
+                      )}
                     />
                   );
                 })}
@@ -2533,10 +2570,13 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
     <div className="flex h-full min-h-0 flex-col bg-background">
       <CollectionPageHeader
         icon={GitBranch}
-        title={hostIssueQuery.data?.title ?? t(($) => $.workbench.title)}
+        title={instance.title || hostIssueQuery.data?.title ||
+          t(($) => $.workbench.title)}
         description={(
           <span className="flex flex-wrap items-center gap-2">
-            <span>{hostIssueQuery.data?.identifier}</span>
+            <span>
+              {hostIssueQuery.data?.identifier ?? t(($) => $.runs.standalone)}
+            </span>
             {templateVersion && (
               <AppLink
                 href={p.workflowTemplate(instance.template_id)}
@@ -2640,15 +2680,15 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               nodes={nodes}
               selectedId={selectedNodeId}
               onSelect={setSelectedNodeId}
-              minHeight={240}
+              minHeight={200}
             />
           </div>
         </section>
 
         {templateVersion &&
           (instance.status === "needs_setup" ||
-            instance.status === "running" ||
-            instance.status === "paused") && (
+            instance.next_action === "configure_roles" ||
+            instance.next_action === "configure_executor") && (
           <section className="max-h-64 shrink-0 overflow-y-auto border-b px-4 py-3">
             <RoleSetupPanel
               instanceId={instanceId}
@@ -2672,11 +2712,14 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                 a plain click reads the issue in the sidebar so the board and
                 the user's place in it survive.
               */}
-              <IssueOpenProvider onOpenIssue={setOpenIssueId}>
-              <IssueSurface
+              {showIssueSurface ? (
+                <IssueOpenProvider onOpenIssue={setOpenIssueId}>
+                <IssueSurface
                 scope={issueSurfaceScope}
-                modes={["board", "list", "swimlane"]}
-                surfaceKey={`workflow:${instanceId}`}
+                modes={issueScope === "all"
+                  ? ["list", "board", "swimlane"]
+                  : ["board", "list", "swimlane"]}
+                surfaceKey={`workflow:${instanceId}:${issueScope}`}
                 allowCreate={selectedNodeAcceptsIssues}
                 onCreateIssue={() => setCreateIssueOpen(true)}
                 menuActions={workflowIssueMenuActions}
@@ -2753,7 +2796,59 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                   </div>
                 )}
               />
-              </IssueOpenProvider>
+                </IssueOpenProvider>
+              ) : (
+                <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+                  <div className="w-full max-w-xl rounded-xl border bg-muted/20 p-5">
+                    <div className="flex items-start gap-3">
+                      <div className="rounded-lg bg-primary/10 p-2 text-primary">
+                        <Users className="size-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-sm font-medium">
+                          {t(($) => $.workbench.direct_execution)}
+                        </h3>
+                        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                          {t(($) => $.workbench.direct_execution_help)}
+                        </p>
+                        {nodeOwners.length > 0 && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {nodeOwners.map((participant) => (
+                              <span
+                                key={participant.id}
+                                className="inline-flex items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-xs"
+                              >
+                                <ActorAvatar
+                                  actorType={participant.actor_type as "member" | "agent" | "squad"}
+                                  actorId={participant.actor_id}
+                                  size="sm"
+                                />
+                                {actorName(
+                                  participant.actor_type as "member" | "agent" | "squad",
+                                  participant.actor_id,
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {workflowIssueCount > 0 && (
+                          <Button
+                            className="mt-4"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setIssueScope("all")}
+                          >
+                            <ListChecks />
+                            {t(($) => $.workbench.view_all_issues, {
+                              count: workflowIssueCount,
+                            })}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </section>
             </div>
           </ResizablePanel>

@@ -175,6 +175,17 @@ func (h *Handler) CancelWorkflowInstance(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusConflict, "workflow instance changed; refresh and try again")
 		return
 	}
+	cancelledTasks, err := qtx.CancelAgentTasksByWorkflowInstance(
+		r.Context(),
+		db.CancelAgentTasksByWorkflowInstanceParams{
+			WorkflowInstanceID: locked.ID,
+			WorkspaceID:        locked.WorkspaceID,
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to cancel workflow agent tasks")
+		return
+	}
 	if err := qtx.CancelOpenWorkflowNodes(r.Context(), db.CancelOpenWorkflowNodesParams{
 		WorkflowInstanceID: locked.ID, WorkspaceID: locked.WorkspaceID,
 	}); err != nil {
@@ -202,6 +213,7 @@ func (h *Handler) CancelWorkflowInstance(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to commit workflow cancellation")
 		return
 	}
+	h.TaskService.BroadcastCancelledTasks(r.Context(), cancelledTasks)
 	h.recordWorkflowInstanceStatusTransition(locked.Status, updated.Status)
 	h.Metrics.RecordWorkflowHumanIntervention("cancel")
 	h.publishWorkflowInstanceUpdated(

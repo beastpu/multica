@@ -14,6 +14,7 @@ function run(id: string, nextAction: string): WorkflowInstance {
     template_id: "template-1",
     template_version_id: "version-1",
     host_issue_id: `host-${id}`,
+    title: id,
     status: "running",
     host_status_mode: "independent",
     input: {},

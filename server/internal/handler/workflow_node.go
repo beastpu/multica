@@ -1468,7 +1468,44 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 		requiredIssueOutcome = "done"
 	}
 	for _, task := range tasks {
-		if !task.Required || requiredIssueOutcome == "none" {
+		if !task.Required {
+			continue
+		}
+		if task.Source == "execution" {
+			if task.MaterializationStatus != "materialized" {
+				reasons = append(reasons, workflowdomain.WaitingReason{
+					Code: "direct_execution_not_dispatched", Field: task.TaskKey,
+					Message: "Direct agent execution has not been dispatched",
+				})
+				continue
+			}
+			agentTask, taskErr := q.GetLatestAgentTaskForWorkflowNodeTask(ctx, task.ID)
+			if taskErr != nil {
+				if errors.Is(taskErr, pgx.ErrNoRows) {
+					reasons = append(reasons, workflowdomain.WaitingReason{
+						Code: "direct_execution_not_dispatched", Field: task.TaskKey,
+						Message: "Direct agent execution has not been dispatched",
+					})
+					continue
+				}
+				return false, nil, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, taskErr
+			}
+			switch agentTask.Status {
+			case "completed":
+			case "failed", "cancelled":
+				reasons = append(reasons, workflowdomain.WaitingReason{
+					Code: "direct_execution_failed", Field: task.TaskKey,
+					Message: "Direct agent execution did not complete successfully",
+				})
+			default:
+				reasons = append(reasons, workflowdomain.WaitingReason{
+					Code: "direct_execution_running", Field: task.TaskKey,
+					Message: "Direct agent execution is still running",
+				})
+			}
+			continue
+		}
+		if requiredIssueOutcome == "none" {
 			continue
 		}
 		if task.MaterializationStatus != "materialized" || !task.IssueID.Valid {

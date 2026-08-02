@@ -6,6 +6,7 @@ import { issueKeys } from "../issues/queries";
 import type {
   StartWorkflowInput,
   CreateWorkflowInput,
+  RunWorkflowTemplateInput,
   WorkflowDefinition,
   WorkflowInstanceDetail,
   WorkflowNodeDetail,
@@ -74,6 +75,31 @@ export function useCreateWorkflow() {
     mutationFn: (input: CreateWorkflowInput) => {
       const { idempotency_key: _callerKey, ...payload } = input;
       return api.createWorkflow({
+        ...input,
+        idempotency_key: idempotency.forPayload(payload),
+      });
+    },
+    onSuccess: (detail, input) => {
+      const { idempotency_key: _callerKey, ...payload } = input;
+      idempotency.clear(payload);
+      qc.setQueryData(
+        workflowKeys.instance(wsId, detail.instance.id),
+        detail,
+      );
+    },
+    onSettled: () =>
+      qc.invalidateQueries({ queryKey: workflowKeys.instances(wsId) }),
+  });
+}
+
+export function useRunWorkflowTemplate(templateId: string) {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  const idempotency = useRetrySafeMutationKey();
+  return useMutation({
+    mutationFn: (input: RunWorkflowTemplateInput) => {
+      const { idempotency_key: _callerKey, ...payload } = input;
+      return api.runWorkflowTemplate(templateId, {
         ...input,
         idempotency_key: idempotency.forPayload(payload),
       });

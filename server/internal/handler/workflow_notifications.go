@@ -82,24 +82,28 @@ func (h *Handler) notifyWorkflowActionRequired(
 	body string,
 	extraDetails map[string]any,
 ) {
-	host, err := h.Queries.GetIssueInWorkspace(
-		ctx,
-		db.GetIssueInWorkspaceParams{
-			ID: instance.HostIssueID, WorkspaceID: instance.WorkspaceID,
-		},
-	)
-	if err != nil {
-		slog.Warn(
-			"workflow inbox notification host lookup failed",
-			"workspace_id", uuidToString(instance.WorkspaceID),
-			"workflow_template_id", uuidToString(instance.TemplateID),
-			"workflow_version_id", uuidToString(instance.TemplateVersionID),
-			"workflow_instance_id", uuidToString(instance.ID),
-			"host_issue_id", uuidToString(instance.HostIssueID),
-			"failure_type", "host_lookup_failed",
-			"error", err,
+	var host db.Issue
+	if instance.HostIssueID.Valid {
+		var err error
+		host, err = h.Queries.GetIssueInWorkspace(
+			ctx,
+			db.GetIssueInWorkspaceParams{
+				ID: instance.HostIssueID, WorkspaceID: instance.WorkspaceID,
+			},
 		)
-		return
+		if err != nil {
+			slog.Warn(
+				"workflow inbox notification host lookup failed",
+				"workspace_id", uuidToString(instance.WorkspaceID),
+				"workflow_template_id", uuidToString(instance.TemplateID),
+				"workflow_version_id", uuidToString(instance.TemplateVersionID),
+				"workflow_instance_id", uuidToString(instance.ID),
+				"host_issue_id", uuidToString(instance.HostIssueID),
+				"failure_type", "host_lookup_failed",
+				"error", err,
+			)
+			return
+		}
 	}
 
 	recipients := make(map[pgtype.UUID]struct{})
@@ -208,8 +212,10 @@ func (h *Handler) notifyWorkflowActionRequired(
 			continue
 		}
 		response := inboxToResponse(item)
-		issueStatus := host.Status
-		response.IssueStatus = &issueStatus
+		if host.ID.Valid {
+			issueStatus := host.Status
+			response.IssueStatus = &issueStatus
+		}
 		h.publish(
 			protocol.EventInboxNew,
 			uuidToString(instance.WorkspaceID),

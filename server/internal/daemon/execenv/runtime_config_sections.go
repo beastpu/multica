@@ -358,6 +358,16 @@ func writeWorkflowQuickCreate(b *strings.Builder) {
 	b.WriteString("- If the CLI returns an error, exit with that error as the only output. Do not retry.\n\n")
 }
 
+func writeWorkflowDirect(b *strings.Builder, ctx TaskContextForEnv) {
+	b.WriteString("**This task executes a workflow node directly.** There is no Multica Issue for this node.\n\n")
+	if ctx.Workflow != nil {
+		fmt.Fprintf(b, "- Workflow run: `%s`\n", ctx.Workflow.InstanceID)
+		fmt.Fprintf(b, "- Node: `%s`\n", ctx.Workflow.NodeKey)
+	}
+	b.WriteString("- Complete the node instructions and satisfy the Workflow Protocol below.\n")
+	b.WriteString("- Do not call issue get, issue status, or issue comment commands unless the node instructions explicitly ask you to work with some separate Issue.\n\n")
+}
+
 // writeWorkflowAutopilot emits the autopilot run-only workflow.
 func writeWorkflowAutopilot(b *strings.Builder, ctx TaskContextForEnv) {
 	b.WriteString("**This task was triggered by an Autopilot in run-only mode.** There is no assigned Multica issue for this run.\n\n")
@@ -553,6 +563,9 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 	case kindAutopilotRunOnly:
 		b.WriteString("This is a run-only autopilot task, so there may be no issue comment to post. Your final assistant output is captured automatically as the autopilot run result. Keep it concise and state the outcome.\n\n")
 		b.WriteString("**Delivering files here:** this surface is text-only — the run result carries no attachments. Describe what you produced; do not link its path.\n")
+	case kindWorkflowDirect:
+		b.WriteString("This is an issue-less workflow node. Your final assistant output is captured on the Run; required artifacts and handoff summaries must be submitted through the workflow commands in the Workflow Protocol.\n\n")
+		b.WriteString("**Delivering files here:** submit workflow artifacts with the workflow artifact commands. Do not link a runtime-local path.\n")
 	case kindQuickCreate:
 		b.WriteString("This is a quick-create task. There is NO existing issue to comment on. Your final stdout is captured automatically and the platform writes the user's success/failure inbox notification based on whether `multica issue create` succeeded.\n\n")
 		b.WriteString("- Do NOT call `multica issue comment add` — the issue you just created has no conversation context for this run.\n")
@@ -658,6 +671,8 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 		writeWorkflowQuickCreate(&b)
 	case kindAutopilotRunOnly:
 		writeWorkflowAutopilot(&b, ctx)
+	case kindWorkflowDirect:
+		writeWorkflowDirect(&b, ctx)
 	case kindCommentTriggered:
 		writeWorkflowComment(&b, provider, ctx)
 	case kindAssignmentTriggered:

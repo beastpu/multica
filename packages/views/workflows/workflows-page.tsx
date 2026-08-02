@@ -9,6 +9,7 @@ import {
   GitBranch,
   LayoutTemplate,
   Loader2,
+  Play,
   Plus,
   Users,
   Workflow,
@@ -23,6 +24,7 @@ import {
   useCreateWorkflowTemplateFromBuiltin,
   useCopyWorkflowTemplate,
   useCreateWorkflow,
+  useRunWorkflowTemplate,
   workflowBuiltinTemplateListOptions,
   workflowInstanceInfiniteListOptions,
   workflowTemplateListOptions,
@@ -31,6 +33,7 @@ import {
   type WorkflowInstanceFilters,
   type WorkflowInstance,
   type WorkflowRoleDefinition,
+  type WorkflowTemplate,
 } from "@multica/core/workflows";
 import {
   agentListOptions,
@@ -187,14 +190,14 @@ function RunCard({
       <CardHeader>
         <CardTitle className="flex min-w-0 items-center gap-2">
           <span className="truncate">
-            {run.host_issue_title || run.host_issue_identifier ||
+            {run.title || run.host_issue_title || run.host_issue_identifier ||
               run.id.slice(0, 8)}
           </span>
           <WorkflowStatusBadge status={run.status} />
         </CardTitle>
         <CardDescription className="flex min-w-0 items-center gap-1.5">
           <span className="truncate font-mono text-xs">
-            {run.host_issue_identifier || run.host_issue_id.slice(0, 8)}
+            {run.host_issue_identifier || t(($) => $.runs.standalone)}
           </span>
           <span aria-hidden="true">·</span>
           <span className="truncate">
@@ -341,6 +344,260 @@ function RunList({
   );
 }
 
+function RunTemplateDialog({
+  template,
+  open,
+  onOpenChange,
+}: {
+  template: WorkflowTemplate | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useT("workflows");
+  const wsId = useWorkspaceId();
+  const userId = useAuthStore((state) => state.user?.id);
+  const p = useWorkspacePaths();
+  const navigation = useNavigation();
+  const templateId = template?.id ?? "";
+  const [title, setTitle] = useState("");
+  const [instructions, setInstructions] = useState("");
+  const [versionId, setVersionId] = useState("");
+  const [assignments, setAssignments] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
+  const templateQuery = useQuery({
+    ...workflowTemplateOptions(wsId, templateId),
+    enabled: open && Boolean(templateId),
+  });
+  const { data: members = [] } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: open,
+  });
+  const { data: agents = [] } = useQuery({
+    ...agentListOptions(wsId),
+    enabled: open,
+  });
+  const { data: squads = [] } = useQuery({
+    ...squadListOptions(wsId),
+    enabled: open,
+  });
+  const run = useRunWorkflowTemplate(templateId);
+  const publishedVersions = useMemo(
+    () => (templateQuery.data?.versions ?? [])
+      .filter((version) => version.status === "published")
+      .sort((left, right) => right.version - left.version),
+    [templateQuery.data?.versions],
+  );
+  const selectedVersion = publishedVersions.find(
+    (version) => version.id === versionId,
+  ) ?? publishedVersions[0];
+  const roles = selectedVersion?.definition.roles ?? [];
+  const actorOptions = useMemo<WorkflowActorOption[]>(() => [
+    ...members.map((member) => ({
+      type: "member" as const,
+      id: member.user_id,
+      name: member.name,
+    })),
+    ...agents.filter((agent) => !agent.archived_at).map((agent) => ({
+      type: "agent" as const,
+      id: agent.id,
+      name: agent.name,
+    })),
+    ...squads.filter((squad) => !squad.archived_at).map((squad) => ({
+      type: "squad" as const,
+      id: squad.id,
+      name: squad.name,
+    })),
+  ], [agents, members, squads]);
+
+  useEffect(() => {
+    if (!open) return;
+    setTitle(template?.name ?? "");
+    setInstructions("");
+    setVersionId("");
+    setAssignments({});
+    setError("");
+  }, [open, template?.id, template?.name]);
+
+  useEffect(() => {
+    if (!selectedVersion) return;
+    setVersionId(selectedVersion.id);
+    setAssignments(defaultNewWorkflowAssignments(
+      selectedVersion.definition.roles,
+      userId,
+    ));
+  }, [selectedVersion, userId]);
+
+  const missingRequiredRole = roles.some(
+    (role) => role.required &&
+      !parseWorkflowAssignment(assignments[role.key] ?? ""),
+  );
+  const submit = () => {
+    if (!template || !selectedVersion || !title.trim() || missingRequiredRole) {
+      return;
+    }
+    setError("");
+    run.mutate({
+      title: title.trim(),
+      template_version_id: selectedVersion.id,
+      input: instructions.trim() ? { instructions: instructions.trim() } : {},
+      role_assignments: roles.flatMap((role) => {
+        const actor = parseWorkflowAssignment(assignments[role.key] ?? "");
+        return actor
+          ? [{
+            role_key: role.key,
+            actor_type: actor.actorType,
+            actor_id: actor.actorId,
+            source: "user_selected",
+          }]
+          : [];
+      }),
+      idempotency_key: crypto.randomUUID(),
+    }, {
+      onSuccess: (detail) => {
+        onOpenChange(false);
+        navigation.push(p.workflowDetail(detail.instance.id));
+      },
+      onError: (cause) => setError(
+        cause instanceof Error ? cause.message : t(($) => $.errors.load),
+      ),
+    });
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!run.isPending) onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent className="max-h-[min(90vh,48rem)] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{t(($) => $.run.title)}</DialogTitle>
+          <DialogDescription>{t(($) => $.run.description)}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-1">
+          <div className="space-y-1.5">
+            <Label htmlFor="run-workflow-title">{t(($) => $.run.name)}</Label>
+            <Input
+              id="run-workflow-title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              autoFocus
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="run-workflow-instructions">
+              {t(($) => $.run.instructions)}
+            </Label>
+            <Textarea
+              id="run-workflow-instructions"
+              value={instructions}
+              rows={3}
+              placeholder={t(($) => $.run.instructions_placeholder)}
+              onChange={(event) => setInstructions(event.target.value)}
+            />
+          </div>
+          {templateQuery.isLoading && <Skeleton className="h-28 rounded-lg" />}
+          {selectedVersion && (
+            <>
+              <div className="space-y-1.5">
+                <Label htmlFor="run-workflow-version">
+                  {t(($) => $.start.version)}
+                </Label>
+                <select
+                  id="run-workflow-version"
+                  value={selectedVersion.id}
+                  onChange={(event) => setVersionId(event.target.value)}
+                  className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 sm:text-sm"
+                >
+                  {publishedVersions.map((version) => (
+                    <option key={version.id} value={version.id}>
+                      {t(($) => $.templates.version, { version: version.version })}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <section className="space-y-2 rounded-lg border bg-muted/30 p-3">
+                <h3 className="text-sm font-medium">
+                  {t(($) => $.start.activity_preview)}
+                </h3>
+                <ol className="flex flex-wrap items-center gap-1.5">
+                  {workflowPreviewActivities(selectedVersion.definition).map(
+                    (node, index) => (
+                      <li key={node.key} className="flex items-center gap-1.5 text-sm">
+                        {index > 0 && <span aria-hidden className="text-muted-foreground">→</span>}
+                        <span className="rounded-md border bg-background px-2 py-1">
+                          {node.name}
+                        </span>
+                      </li>
+                    ),
+                  )}
+                </ol>
+              </section>
+              {roles.length > 0 && (
+                <fieldset className="space-y-3">
+                  <legend className="flex items-center gap-2 text-sm font-medium">
+                    <Users className="size-4" />
+                    {t(($) => $.start.roles)}
+                  </legend>
+                  {roles.map((role) => {
+                    const options = actorOptions.filter((actor) =>
+                      role.allowed_actor_types.includes(actor.type)
+                    );
+                    return (
+                      <div key={role.key} className="space-y-1.5">
+                        <Label htmlFor={`run-workflow-role-${role.key}`}>
+                          {role.name}{role.required && <span className="ml-1 text-destructive">*</span>}
+                        </Label>
+                        <select
+                          id={`run-workflow-role-${role.key}`}
+                          value={assignments[role.key] ?? ""}
+                          required={role.required}
+                          onChange={(event) => setAssignments((current) => ({
+                            ...current,
+                            [role.key]: event.target.value,
+                          }))}
+                          className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 sm:text-sm"
+                        >
+                          <option value="">
+                            {role.required
+                              ? t(($) => $.start.choose_actor)
+                              : t(($) => $.start.unassigned)}
+                          </option>
+                          {options.map((actor) => (
+                            <option
+                              key={workflowAssignmentKey(actor.type, actor.id)}
+                              value={workflowAssignmentKey(actor.type, actor.id)}
+                            >
+                              {actor.name} · {t(($) => $.start.actor_type[actor.type])}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </fieldset>
+              )}
+            </>
+          )}
+          {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button
+            onClick={submit}
+            disabled={!title.trim() || !selectedVersion || missingRequiredRole || run.isPending}
+          >
+            {run.isPending
+              ? <Loader2 className="animate-spin motion-reduce:animate-none" />
+              : <Play />}
+            {t(($) => $.actions.run)}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function TemplatesPanel({
   canManage,
   actorName,
@@ -373,6 +630,7 @@ function TemplatesPanel({
   const copyTemplate = useCopyWorkflowTemplate();
   const createFromBuiltin = useCreateWorkflowTemplateFromBuiltin();
   const [builtinOpen, setBuiltinOpen] = useState(false);
+  const [runTemplate, setRunTemplate] = useState<WorkflowTemplate | null>(null);
   const builtinTemplates = useQuery({
     ...workflowBuiltinTemplateListOptions(wsId),
     enabled: builtinOpen,
@@ -577,6 +835,12 @@ function TemplatesPanel({
                   </p>
                 )}
                 <div className="flex flex-wrap gap-2">
+                  {template.status === "published" && (
+                    <Button size="sm" onClick={() => setRunTemplate(template)}>
+                      <Play />
+                      {t(($) => $.actions.run)}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
@@ -630,6 +894,13 @@ function TemplatesPanel({
           ) : undefined}
         />
       )}
+      <RunTemplateDialog
+        template={runTemplate}
+        open={Boolean(runTemplate)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setRunTemplate(null);
+        }}
+      />
     </div>
   );
 }
@@ -670,9 +941,12 @@ export function NewWorkflowDialog() {
     enabled: open,
   });
   const create = useCreateWorkflow();
-  const templates = templatesQuery.data?.templates.filter(
-    (template) => template.status === "published",
-  ) ?? [];
+  const templates = useMemo(
+    () => (templatesQuery.data?.templates ?? []).filter(
+      (template) => template.status === "published",
+    ),
+    [templatesQuery.data?.templates],
+  );
   const publishedVersions = useMemo(
     () => (templateQuery.data?.versions ?? [])
       .filter((version) => version.status === "published")
@@ -1039,11 +1313,6 @@ export function WorkflowsPage() {
   const { data: templateData } = useQuery(workflowTemplateListOptions(wsId));
   const currentMember = members.find((member) => member.user_id === userId);
   const canManage = canManageWorkflowTemplates(currentMember?.role);
-  useEffect(() => {
-    if (tab === "templates" && currentMember && !canManage) {
-      setTab("active");
-    }
-  }, [canManage, currentMember, tab]);
   const actorNames = useMemo(() => {
     const names = new Map<string, string>();
     for (const member of members) {
@@ -1129,11 +1398,9 @@ export function WorkflowsPage() {
             <TabsTrigger value="active">{t(($) => $.tabs.active)}</TabsTrigger>
             <TabsTrigger value="mine">{t(($) => $.tabs.mine)}</TabsTrigger>
             <TabsTrigger value="completed">{t(($) => $.tabs.completed)}</TabsTrigger>
-            {canManage && (
-              <TabsTrigger value="templates">
-                {t(($) => $.tabs.templates)}
-              </TabsTrigger>
-            )}
+            <TabsTrigger value="templates">
+              {t(($) => $.tabs.templates)}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -1142,7 +1409,7 @@ export function WorkflowsPage() {
         className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
       >
         <div className="mx-auto w-full max-w-5xl">
-          {tab === "templates" && canManage ? (
+          {tab === "templates" ? (
             <TemplatesPanel canManage={canManage} actorName={actorName} />
           ) : runsQuery.isError ? (
             <CollectionPageState

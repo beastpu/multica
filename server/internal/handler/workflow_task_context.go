@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -31,6 +32,9 @@ type WorkflowTaskContext struct {
 	NodeInstanceID  string                    `json:"node_instance_id"`
 	NodeKey         string                    `json:"node_key"`
 	NodeName        string                    `json:"node_name,omitempty"`
+	RunTitle        string                    `json:"run_title,omitempty"`
+	Instructions    string                    `json:"instructions,omitempty"`
+	DirectExecution bool                      `json:"direct_execution,omitempty"`
 	HostIssue       string                    `json:"host_issue,omitempty"`
 	HandoffRequired bool                      `json:"handoff_required,omitempty"`
 	Artifacts       []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
@@ -184,6 +188,8 @@ func (h *Handler) workflowTaskContext(
 		NodeInstanceID:  uuidToString(node.ID),
 		NodeKey:         node.NodeKey,
 		NodeName:        node.NameSnapshot,
+		RunTitle:        instance.Title,
+		Instructions:    strings.TrimSpace(nodeDefinition.Description),
 		HostIssue:       coordinates.HostIssue,
 		HandoffRequired: nodeDefinition.Completion.HandoffRequired,
 	}
@@ -191,6 +197,60 @@ func (h *Handler) workflowTaskContext(
 	result.Upstream = h.workflowUpstreamContext(ctx, instance, node, live)
 	result.Rework = h.workflowReworkContext(ctx, instance, node)
 	result.Choice = h.workflowChoiceDuty(ctx, instance, node)
+	return result
+}
+
+// workflowTaskContextForDirectTask adapts the same live workflow protocol used
+// by Issue-backed tasks to an issue-less agent execution.
+func (h *Handler) workflowTaskContextForDirectTask(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+) *WorkflowTaskContext {
+	direct, ok := service.ParseWorkflowNodeTaskContext(task)
+	if !ok {
+		return nil
+	}
+	workspaceID, err := util.ParseUUID(direct.WorkspaceID)
+	if err != nil {
+		return nil
+	}
+	metadata, err := json.Marshal(map[string]any{
+		"workflow": workflowIssueCoordinates{
+			InstanceID: direct.InstanceID, NodeKey: "",
+		},
+	})
+	if err != nil {
+		return nil
+	}
+	nodeID, err := util.ParseUUID(direct.NodeInstanceID)
+	if err != nil {
+		return nil
+	}
+	node, err := h.Queries.GetWorkflowNodeInstanceInWorkspace(
+		ctx, db.GetWorkflowNodeInstanceInWorkspaceParams{ID: nodeID, WorkspaceID: workspaceID},
+	)
+	if err != nil {
+		return nil
+	}
+	var envelope struct {
+		Workflow workflowIssueCoordinates `json:"workflow"`
+	}
+	if json.Unmarshal(metadata, &envelope) != nil {
+		return nil
+	}
+	envelope.Workflow.NodeKey = node.NodeKey
+	metadata, _ = json.Marshal(envelope)
+	result := h.workflowTaskContext(ctx, db.Issue{WorkspaceID: workspaceID, Metadata: metadata})
+	if result == nil {
+		return nil
+	}
+	result.DirectExecution = true
+	if strings.TrimSpace(direct.Prompt) != "" {
+		result.Instructions = strings.TrimSpace(direct.Prompt)
+	}
+	if strings.TrimSpace(direct.RunTitle) != "" {
+		result.RunTitle = strings.TrimSpace(direct.RunTitle)
+	}
 	return result
 }
 

@@ -99,6 +99,7 @@ const (
 	EvidenceAutopilotRun    EvidenceKind = "autopilot_run"
 	EvidenceRuleVersion     EvidenceKind = "rule_version"
 	EvidenceRerun           EvidenceKind = "rerun"
+	EvidenceWorkflowNode    EvidenceKind = "workflow_node"
 	// EvidenceChat points the uniform evidence pair at the chat session that
 	// triggered the run — the chat analogue of autopilot_run/issue_assignment.
 	// The dedicated chat_session_id column still exists for its own consumers;

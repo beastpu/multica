@@ -181,6 +181,7 @@ import type {
   ListWorkflowTemplatesResponse,
   StartWorkflowInput,
   CreateWorkflowInput,
+  RunWorkflowTemplateInput,
   WorkflowAcceptance,
   WorkflowAcceptancesResponse,
   WorkflowDefinition,
@@ -3250,6 +3251,22 @@ export class ApiClient {
       WorkflowInstanceDetailSchema,
       EMPTY_WORKFLOW_INSTANCE_DETAIL,
       { endpoint: "POST /api/workflow-instances" },
+    );
+  }
+
+  async runWorkflowTemplate(
+    templateId: string,
+    input: RunWorkflowTemplateInput,
+  ): Promise<WorkflowInstanceDetail> {
+    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}/runs`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return parseWithFallback(
+      raw,
+      WorkflowInstanceDetailSchema,
+      EMPTY_WORKFLOW_INSTANCE_DETAIL,
+      { endpoint: "POST /api/workflow-templates/:id/runs" },
     );
   }
 

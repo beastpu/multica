@@ -422,14 +422,18 @@ func workflowConditionResolver(
 	instance db.WorkflowInstance,
 	nodes map[string]db.WorkflowNodeInstance,
 ) (workflowdomain.ConditionResolver, error) {
-	host, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
-		ID: instance.HostIssueID, WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("load workflow host for condition: %w", err)
-	}
+	host := db.Issue{Title: instance.Title}
 	properties := map[string]any{}
-	_ = json.Unmarshal(host.Properties, &properties)
+	if instance.HostIssueID.Valid {
+		loadedHost, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+			ID: instance.HostIssueID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("load workflow host for condition: %w", err)
+		}
+		host = loadedHost
+		_ = json.Unmarshal(host.Properties, &properties)
+	}
 
 	submissions := map[string]map[string]any{}
 	choices := map[string]string{}

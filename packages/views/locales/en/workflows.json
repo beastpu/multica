@@ -10,6 +10,7 @@
   "actions": {
     "new_workflow": "New workflow",
     "new_template": "New template",
+    "run": "Run",
     "open": "Open workflow",
     "save": "Save",
     "reconcile": "Repair state",
@@ -58,6 +59,13 @@
     "choose_template": "Choose a published template",
     "no_templates": "Publish a template before starting a workflow."
   },
+  "run": {
+    "title": "Run workflow",
+    "description": "Start a run directly from this template. An issue is only created by activities that need one.",
+    "name": "Run name",
+    "instructions": "Run instructions",
+    "instructions_placeholder": "Describe the goal, context, and expected outcome..."
+  },
   "start": {
     "title": "Start workflow from this issue",
     "description": "Choose a published workflow version, assign its roles, and turn this issue into the workflow's host.",
@@ -98,6 +106,7 @@
     "empty_title": "No workflow runs here",
     "empty_description": "Runs will appear here after a workflow starts.",
     "host_issue": "Host issue",
+    "standalone": "Standalone run",
     "current_activity": "Current activity",
     "current_owner": "Current owner",
     "progress": "Progress",
@@ -159,6 +168,7 @@
     "parent_issue": "Workflow / parent issue",
     "open_parent_issue": "Open parent issue",
     "host_issue": "Parent",
+    "run_context": "Run",
     "node_issues": "Still blocking this node",
     "node_issues_clear": "Nothing is blocking this node",
     "timeout_label": "Timeout",
@@ -196,6 +206,9 @@
     "waiting": "Waiting",
     "awaiting_approver": "Waiting for the assigned approver",
     "no_issues": "No issues in this scope",
+    "direct_execution": "Direct agent execution",
+    "direct_execution_help": "This activity is assigned directly to an agent or squad. It has its own task and run history without creating an issue.",
+    "view_all_issues": "View all workflow issues ({{count}})",
     "no_nodes": "This workflow has no nodes",
     "no_tasks": "This activity has no tasks",
     "no_submission": "No submission yet",

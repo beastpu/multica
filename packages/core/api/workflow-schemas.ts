@@ -184,6 +184,7 @@ export const WorkflowInstanceSchema = z.object({
   template_id: z.string(),
   template_version_id: z.string(),
   host_issue_id: z.string(),
+  title: z.string().optional().default(""),
   status: z.string().optional().default("unknown"),
   host_status_mode: z.string().optional().default("independent"),
   input: objectOrEmpty,
@@ -249,7 +250,7 @@ export const WorkflowNodeTaskSchema = z.object({
   task_key: z.string(),
   source: z.string().optional().default("template"),
   required: z.boolean().optional().default(false),
-  definition: WorkflowIssueTemplateSchema,
+  definition: z.union([WorkflowIssueTemplateSchema, WorkflowNodeDefinitionSchema]),
   materialization_status: z.string().optional().default("unknown"),
   issue_id: nullableString,
   executor_resolution_id: nullableString,
@@ -483,6 +484,7 @@ export const WorkflowDiagnosticsSchema = z.object({
 
 export const EMPTY_WORKFLOW_INSTANCE: WorkflowInstance = {
   id: "", workspace_id: "", template_id: "", template_version_id: "", host_issue_id: "",
+  title: "",
   status: "unknown", host_status_mode: "independent", input: {}, result: {}, revision: 0,
   started_by_type: "system", started_by_id: null, started_at: "", paused_at: null,
   completed_at: null, cancelled_at: null, last_reconciled_at: null, created_at: "",

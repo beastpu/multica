@@ -188,8 +188,8 @@ SELECT
   node.node_key AS activity_key,
   node.name_snapshot AS activity_name,
   instance.host_issue_id,
-  host.number AS host_issue_number,
-  host.title AS host_issue_title,
+  COALESCE(host.number, 0)::integer AS host_issue_number,
+  COALESCE(host.title, '') AS host_issue_title,
   task.required
 FROM workflow_node_task task
 JOIN workflow_node_instance node
@@ -201,7 +201,7 @@ JOIN workflow_instance instance
 JOIN workflow_template template
   ON template.id = instance.template_id
  AND template.workspace_id = task.workspace_id
-JOIN issue host
+LEFT JOIN issue host
   ON host.id = instance.host_issue_id
  AND host.workspace_id = task.workspace_id
 WHERE task.workspace_id = @workspace_id
@@ -211,9 +211,9 @@ ORDER BY task.created_at, task.id;
 -- name: ListWorkflowInstanceDisplayContexts :many
 SELECT
   wi.id AS workflow_instance_id,
-  host.title AS host_issue_title,
-  host.number AS host_issue_number,
-  host.priority AS host_issue_priority,
+  COALESCE(host.title, '') AS host_issue_title,
+  COALESCE(host.number, 0)::integer AS host_issue_number,
+  COALESCE(host.priority, '') AS host_issue_priority,
   host.project_id,
   template.name AS template_name,
   version.version AS template_version,
@@ -247,7 +247,7 @@ SELECT
       )
   ), 0) AS integer) AS activity_completed
 FROM workflow_instance wi
-JOIN issue host
+LEFT JOIN issue host
   ON host.id = wi.host_issue_id
  AND host.workspace_id = wi.workspace_id
 JOIN workflow_template template
@@ -367,7 +367,10 @@ CROSS JOIN LATERAL (
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
         AND node.status IN ('active', 'waiting', 'blocked')
-        AND reason->>'code' IN ('required_task_not_materialized', 'stale_materialization')
+        AND reason->>'code' IN (
+          'required_task_not_materialized', 'stale_materialization',
+          'direct_execution_failed'
+        )
     ) THEN 'retry_materialization'
     WHEN wi.status = 'running' AND EXISTS (
       SELECT 1
@@ -717,7 +720,10 @@ CROSS JOIN LATERAL (
       WHERE node.workflow_instance_id = wi.id
         AND node.workspace_id = wi.workspace_id
         AND node.status IN ('active', 'waiting', 'blocked')
-        AND reason->>'code' IN ('required_task_not_materialized', 'stale_materialization')
+        AND reason->>'code' IN (
+          'required_task_not_materialized', 'stale_materialization',
+          'direct_execution_failed'
+        )
     ) THEN 'retry_materialization'
     WHEN wi.status = 'running' AND EXISTS (
       SELECT 1
@@ -1031,10 +1037,11 @@ FOR UPDATE;
 
 -- name: CreateWorkflowInstance :one
 INSERT INTO workflow_instance (
-    workspace_id, template_id, template_version_id, host_issue_id,
+    workspace_id, template_id, template_version_id, host_issue_id, title,
     status, host_status_mode, input, started_by_type, started_by_id
 ) VALUES (
-    @workspace_id, @template_id, @template_version_id, @host_issue_id,
+    @workspace_id, @template_id, @template_version_id,
+    sqlc.narg(host_issue_id), @title,
     @status, @host_status_mode, @input, @started_by_type, sqlc.narg(started_by_id)
 )
 RETURNING *;
@@ -1262,6 +1269,17 @@ SET issue_id = @issue_id,
 WHERE id = @id AND workspace_id = @workspace_id
 RETURNING *;
 
+-- name: MarkWorkflowNodeTaskExecuted :one
+UPDATE workflow_node_task
+SET materialization_status = 'materialized',
+    claimed_at = NULL,
+    last_error = '',
+    updated_at = now()
+WHERE id = @id
+  AND workspace_id = @workspace_id
+  AND source = 'execution'
+RETURNING *;
+
 -- name: SetWorkflowNodeTaskExecutorResolution :one
 UPDATE workflow_node_task
 SET executor_resolution_id = @executor_resolution_id,
@@ -1395,6 +1413,31 @@ WITH candidate AS (
                   OR node.updated_at > instance.last_reconciled_at
                   OR task.updated_at > instance.last_reconciled_at
                   OR bound_issue.updated_at > instance.last_reconciled_at
+                  OR EXISTS (
+                    SELECT 1
+                    FROM agent_task_queue agent_task
+                    WHERE agent_task.workflow_node_task_id = task.id
+                      AND agent_task.completed_at > instance.last_reconciled_at
+                  )
+                  OR (
+                    EXISTS (
+                      SELECT 1
+                      FROM jsonb_array_elements(node.waiting_reasons) reason
+                      WHERE reason->>'code' IN (
+                        'direct_execution_not_dispatched',
+                        'direct_execution_running'
+                      )
+                    )
+                    AND (
+                      SELECT agent_task.status
+                      FROM agent_task_queue agent_task
+                      WHERE agent_task.workflow_node_task_id = task.id
+                      ORDER BY agent_task.attempt DESC,
+                               agent_task.created_at DESC,
+                               agent_task.id DESC
+                      LIMIT 1
+                    ) IN ('completed', 'failed', 'cancelled')
+                  )
                 )
             )
           )

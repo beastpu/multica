@@ -21,6 +21,41 @@ function instanceShape() {
 }
 
 describe("workflow response schemas", () => {
+  it("keeps standalone runs compatible with the string host_issue_id contract", () => {
+    const parsed = WorkflowInstanceDetailSchema.parse({
+      instance: { ...instanceShape(), host_issue_id: "", title: "Standalone run" },
+      role_assignments: [],
+      nodes: [],
+      tasks: [],
+    });
+
+    expect(parsed.instance.host_issue_id).toBe("");
+    expect(parsed.instance.title).toBe("Standalone run");
+  });
+
+  it("accepts a direct execution task backed by a node definition", () => {
+    const parsed = WorkflowInstanceDetailSchema.parse({
+      instance: { ...instanceShape(), host_issue_id: "", title: "Standalone run" },
+      role_assignments: [],
+      nodes: [],
+      tasks: [{
+        id: "task-direct",
+        workflow_node_instance_id: "node-1",
+        task_key: "execution",
+        source: "execution",
+        required: true,
+        definition: { key: "diagnosis", kind: "activity", name: "Run diagnosis" },
+        issue_id: null,
+        executor_resolution_id: "resolution-1",
+      }],
+    });
+
+    expect(parsed.tasks[0]?.definition).toMatchObject({
+      key: "diagnosis",
+      name: "Run diagnosis",
+    });
+  });
+
   it("normalizes null and wrong-typed collection fields to empty arrays", () => {
     const parsed = WorkflowInstanceDetailSchema.parse({
       instance: {
