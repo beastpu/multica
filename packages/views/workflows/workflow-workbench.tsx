@@ -141,6 +141,7 @@ import { ActorAvatar } from "../common/actor-avatar";
 import { WorkflowCanvas } from "./workflow-canvas";
 import { Badge } from "@multica/ui/components/ui/badge";
 import {
+  WORKFLOW_SECTION_HEADING,
   WorkflowStatusBadge,
   isWorkflowNodeOpen,
   workflowNodeDisplayStatus,
@@ -187,6 +188,13 @@ export function SubmissionPanel({
   const taskScoped = submissionPolicy === "per_required_task" ||
     submissionPolicy === "fan_in";
   const sourceTasks = tasks.filter((task) => task.issue_id);
+  // A node that owes a verdict but declares no schema gets a submission
+  // synthesised for it, carrying a canned summary and a payload that names
+  // the rule that produced it. It is engine bookkeeping, and listing it
+  // beside what a person actually handed over reads as if they wrote it.
+  const deliveredSubmissions = submissions.filter(
+    (submission) => submission.submitted_by_type !== "system",
+  );
   // Only the values a gateway condition actually matches. Offering every node
   // let an author pick one no condition reads: the server accepts it and the
   // run then takes the default edge, looking exactly like no decision at all.
@@ -303,13 +311,13 @@ export function SubmissionPanel({
           )}
         </div>
       )}
-      {submissions.length === 0 ? (
+      {deliveredSubmissions.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">
           {t(($) => $.workbench.no_submission)}
         </p>
       ) : (
         <div className="space-y-3">
-          {submissions.map((submission) => (
+          {deliveredSubmissions.map((submission) => (
             <Card key={submission.id} size="sm">
               <CardHeader>
                 <CardTitle className="flex items-center justify-between gap-3 text-sm">
@@ -329,9 +337,6 @@ export function SubmissionPanel({
                     )?.definition.title ?? submission.source_issue_id}
                   </p>
                 )}
-                <pre className="max-h-48 overflow-auto rounded-lg bg-muted p-3 text-xs">
-                  {JSON.stringify(submission.payload, null, 2)}
-                </pre>
               </CardContent>
             </Card>
           ))}
@@ -813,7 +818,7 @@ export function RoleSetupPanel({
 // about. Mixing sm-weight headings with xs-weight ones is what made the panel
 // read as "fonts jumping around" (the same label appeared at two sizes
 // depending on which block it sat in).
-const SECTION_HEADING = "text-xs font-medium text-muted-foreground";
+const SECTION_HEADING = WORKFLOW_SECTION_HEADING;
 
 export function WorkflowTaskCard({
   instanceId,
@@ -1614,13 +1619,11 @@ function reviewerAcceptsMember(definition: WorkflowNodeDefinition): boolean {
 
 export function AcceptancePanel({
   instanceId,
-  node,
   targets,
   pending,
   canDecide,
 }: {
   instanceId: string;
-  node: WorkflowNodeInstance;
   targets: Array<{ value: string; label: string }>;
   pending: boolean;
   canDecide: boolean;
@@ -1633,15 +1636,11 @@ export function AcceptancePanel({
   useEffect(() => {
     setTarget(targets[0]?.value ?? "");
     setReworkDraft(emptyReworkReasonDraft);
-  }, [node.id, targets]);
+  }, [targets]);
 
-  if (!pending) {
-    return (
-      <p className="py-6 text-center text-sm text-muted-foreground">
-        {t(($) => $.workbench.waiting)}
-      </p>
-    );
-  }
+  // Nothing to show until the run reaches its end gate: acceptance is the
+  // last thing that happens, not a standing section.
+  if (!pending) return null;
   if (!canDecide) {
     return (
       <p className="py-6 text-center text-sm text-muted-foreground">
@@ -2043,15 +2042,11 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   // A node in review is waiting on exactly one action, so open on it. Every
   // activity has a submission panel, so without this the reviewer always
   // landed on the handoff form and had to go looking for the verdict.
-  const sidebarDefaultTab = hasVerdictPanel && selectedNode?.status === "in_review"
-    ? "verdict"
-    : hasSubmissionPanel
-      ? "submission"
-      : hasVerdictPanel
-        ? "verdict"
-        : hasAcceptancePanel
-          ? "acceptance"
-          : "history";
+  // A node in review is waiting on exactly one action, so open on it.
+  const sidebarDefaultTab =
+    hasVerdictPanel && selectedNode?.status === "in_review"
+      ? "verdict"
+      : "delivery";
   const workflowIssueMenuActions = useMemo(() => [{
     id: "remove-from-workflow-node",
     label: t(($) => $.workbench.detach_issue_title),
@@ -2151,6 +2146,38 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             </span>
           </div>
         )}
+        {/*
+          Acceptance judges the run, not a node — which is why it stopped being
+          an activity on the canvas. It was still a tab on every node, so the
+          old model was the last thing left saying otherwise.
+        */}
+        {hasAcceptancePanel && (
+          <AcceptancePanel
+            instanceId={instanceId}
+            targets={targetItems}
+            pending={latestAcceptance?.status === "pending"}
+            canDecide={canDecideAcceptance}
+          />
+        )}
+        {/*
+          Cancelling ends the run and diagnostics describe the run, so neither
+          belongs under whichever node happens to be selected. Collapsed:
+          troubleshooting is not a step in anyone's work.
+        */}
+        {canAdmin && (
+          <details>
+            <summary className={cn(SECTION_HEADING, "cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring")}>
+              {t(($) => $.workbench.run_administration)}
+            </summary>
+            <div className="space-y-4 pt-3">
+              <WorkflowDiagnosticsPanel diagnostics={diagnosticsQuery.data} />
+              <WorkflowCancelPanel
+                instanceId={instanceId}
+                status={instance.status}
+              />
+            </div>
+          </details>
+        )}
       </section>
 
       <section
@@ -2212,22 +2239,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
       </div>
 
 
-      {visibleWaitingReasons.length > 0 && (
-        <Alert>
-          <AlertCircle />
-          <AlertTitle>{t(($) => $.workbench.waiting)}</AlertTitle>
-          <AlertDescription>
-            <ul className="list-disc space-y-1 pl-4">
-              {visibleWaitingReasons.map((reason, index) => (
-                <li key={`${reason.code}-${index}`}>
-                  {reason.message || reason.code}
-                </li>
-              ))}
-            </ul>
-          </AlertDescription>
-        </Alert>
-      )}
-
+      
       {taskInterventions.length > 0 && (
         <section className="space-y-2">
           <h3 className={SECTION_HEADING}>
@@ -2267,6 +2279,23 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         issues={blockingNodeIssues}
         canManage={canManageSelectedNode}
         attempt={selectedNode.attempt}
+        blockers={visibleWaitingReasons.length > 0
+          ? (
+            <Alert>
+              <AlertCircle />
+              <AlertTitle>{t(($) => $.workbench.waiting)}</AlertTitle>
+              <AlertDescription>
+                <ul className="list-disc space-y-1 pl-4">
+                  {visibleWaitingReasons.map((reason, index) => (
+                    <li key={`${reason.code}-${index}`}>
+                      {reason.message || reason.code}
+                    </li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )
+          : null}
         rule={requiredIssueOutcome === "terminal"
           ? t(($) => $.workbench.completion_rule_terminal)
           : requiredIssueOutcome === "none"
@@ -2293,15 +2322,9 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
           variant="line"
           className="w-full justify-start overflow-x-auto border-b"
         >
-          {hasSubmissionPanel && (
-            <TabsTrigger value="submission">
-              <Send />
-              {t(($) => $.workbench.submission)}
-            </TabsTrigger>
-          )}
-          <TabsTrigger value="artifacts">
-            <FileCheck2 />
-            {t(($) => $.workbench.tab_artifacts)}
+          <TabsTrigger value="delivery">
+            <Send />
+            {t(($) => $.workbench.tab_delivery)}
           </TabsTrigger>
           {hasVerdictPanel && (
             <TabsTrigger value="verdict">
@@ -2309,19 +2332,18 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               {t(($) => $.workbench.verdict)}
             </TabsTrigger>
           )}
-          {hasAcceptancePanel && (
-            <TabsTrigger value="acceptance">
-              <Check />
-              {t(($) => $.workbench.acceptance)}
-            </TabsTrigger>
-          )}
           <TabsTrigger value="history">
             <History />
             {t(($) => $.workbench.history)}
           </TabsTrigger>
         </TabsList>
-        {hasSubmissionPanel && (
-          <TabsContent value="submission" className="pt-4">
+        {/*
+          One delivery, not two tabs. The node's business output is an
+          artifact and its conclusion is the handoff summary — halves of the
+          same handover, which is why they were never worth a tab each.
+        */}
+        <TabsContent value="delivery" className="space-y-6 pt-4">
+          {hasSubmissionPanel && (
             <SubmissionPanel
               instanceId={instanceId}
               node={selectedNode}
@@ -2337,9 +2359,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                 )
                 : null}
             />
-          </TabsContent>
-        )}
-        <TabsContent value="artifacts" className="pt-4">
+          )}
           <ArtifactPanel
             instanceId={instanceId}
             node={selectedNode}
@@ -2356,15 +2376,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             />
           </TabsContent>
         )}
-        <TabsContent value="acceptance" className="pt-4">
-          <AcceptancePanel
-            instanceId={instanceId}
-            node={selectedNode}
-            targets={targetItems}
-            pending={latestAcceptance?.status === "pending"}
-            canDecide={canDecideAcceptance}
-          />
-        </TabsContent>
         <TabsContent value="history" className="pt-4">
           <WorkflowHistoryPanel
             events={eventsQuery.data?.events ?? []}
@@ -2373,19 +2384,10 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         </TabsContent>
       </Tabs>
 
-      {/*
-        Diagnostics is a troubleshooting tool, not a step in anyone's work. As
-        a peer tab of "submit result" it put a debugging surface on the primary
-        path; it belongs with the other reference material, collapsed.
-      */}
+      {/* The task rows behind this node's issues — node-scoped debugging. */}
       {canAdmin && (
-        <details className="border-t pt-3">
-          <summary className="cursor-pointer text-xs font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            {t(($) => $.workbench.diagnostics)}
-          </summary>
-          <div className="space-y-5 pt-3">
-
-            <WorkflowDiagnosticsPanel diagnostics={diagnosticsQuery.data} />
+        <div className="border-t pt-3">
+          <div>
             <details className="rounded-xl border bg-muted/10">
               <summary className="cursor-pointer px-4 py-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 {t(($) => $.workbench.internal_tasks)}
@@ -2419,7 +2421,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               </div>
             </details>
           </div>
-        </details>
+        </div>
       )}
 
       {/*
@@ -2430,7 +2432,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         four rows of facts nobody had asked for. Collapsed, and below.
       */}
       <details className="border-t pt-3">
-        <summary className="cursor-pointer text-xs font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <summary className={cn(SECTION_HEADING, "cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring")}>
           {t(($) => $.workbench.node_configuration)}
         </summary>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-t py-4">
@@ -2505,12 +2507,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
       </details>
 
 
-      {canAdmin && (
-        <WorkflowCancelPanel
-          instanceId={instanceId}
-          status={instance.status}
-        />
-      )}
       </section>
     </div>
   ) : (
@@ -2635,7 +2631,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
           className="shrink-0 border-b bg-muted/15 px-4 py-3"
         >
           <div className="mx-auto max-w-[100rem]">
-            <h2 className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <h2 className={cn(SECTION_HEADING, "mb-2 flex items-center gap-2")}>
               <CircleDot className="size-3.5" />
               {t(($) => $.workbench.activity_map)}
             </h2>

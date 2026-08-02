@@ -282,7 +282,9 @@
     "rework_badge_title": "This work was sent back — it is on attempt {{attempt}}.",
     "reworked_activities": "Reworked activities",
     "branch_choice_help": "「{{gateway}}」routes on this. Leave it unset and the run goes to「{{fallback}}」.",
-    "node_configuration": "Node configuration"
+    "node_configuration": "Node configuration",
+    "tab_delivery": "Delivery",
+    "run_administration": "Run administration"
   },
   "editor": {
     "title": "Workflow template",
@@ -457,7 +459,9 @@
     "rejected": "Rejected",
     "pass": "Pass",
     "fail": "Fail",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "valid": "Valid",
+    "invalid": "Invalid"
   },
   "errors": {
     "load": "Workflow data could not be loaded.",

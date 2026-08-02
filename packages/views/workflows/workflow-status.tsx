@@ -45,6 +45,8 @@ const statusStyle: Record<string, string> = {
   draft: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
   published: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   archived: "border-muted-foreground/20 bg-muted text-muted-foreground",
+  valid: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+  invalid: "border-destructive/30 bg-destructive/10 text-destructive",
 };
 
 /**
@@ -62,6 +64,13 @@ const statusStyle: Record<string, string> = {
 export function workflowNodeDisplayStatus(status: string): string {
   return status === "superseded" ? "pending" : status;
 }
+
+/**
+ * The node panel's one heading rule. Section labels are xs and muted so the
+ * content under them is what the eye lands on; four copies of this string had
+ * drifted across the workbench and the issue list.
+ */
+export const WORKFLOW_SECTION_HEADING = "text-xs font-medium text-muted-foreground";
 
 /**
  * Whether a node is still in play — the flow has reached it and has not left.
@@ -95,12 +104,14 @@ function StatusIcon({ status }: { status: string }) {
     case "materialized":
     case "approved":
     case "pass":
+    case "valid":
       return <CheckCircle2 className={className} />;
     case "blocked":
     case "failed":
     case "needs_setup":
     case "rejected":
     case "fail":
+    case "invalid":
       return <AlertTriangle className={className} />;
     case "cancelled":
     case "detached":
@@ -143,6 +154,8 @@ export function WorkflowStatusBadge({
       case "blocked": return t(($) => $.status.blocked);
       case "skipped": return t(($) => $.status.skipped);
       case "superseded": return t(($) => $.status.superseded);
+      case "valid": return t(($) => $.status.valid);
+      case "invalid": return t(($) => $.status.invalid);
       case "pending": return t(($) => $.status.pending);
       case "pending_materialization": return t(($) => $.status.pending_materialization);
       case "materializing": return t(($) => $.status.materializing);

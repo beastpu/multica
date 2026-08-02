@@ -282,7 +282,9 @@
     "rework_badge_title": "この作業は差し戻されています。現在 {{attempt}} 回目です。",
     "reworked_activities": "やり直した活動",
     "branch_choice_help": "「{{gateway}}」がこの選択で分岐します。未選択の場合は「{{fallback}}」へ進みます。",
-    "node_configuration": "ノード設定"
+    "node_configuration": "ノード設定",
+    "tab_delivery": "提出物",
+    "run_administration": "実行の管理"
   },
   "editor": {
     "title": "ワークフローテンプレート",
@@ -457,7 +459,9 @@
     "rejected": "拒否",
     "pass": "合格",
     "fail": "不合格",
-    "unknown": "不明"
+    "unknown": "不明",
+    "valid": "有効",
+    "invalid": "無効"
   },
   "errors": {
     "load": "ワークフローを読み込めませんでした。",

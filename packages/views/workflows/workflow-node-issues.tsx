@@ -5,6 +5,7 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import type { Issue } from "@multica/core/types";
 import { ArrowUpRight, Check } from "lucide-react";
 import type { ReactNode } from "react";
+import { WORKFLOW_SECTION_HEADING } from "./workflow-status";
 
 import { useT } from "../i18n";
 import { StatusIcon } from "../issues/components/status-icon";
@@ -33,6 +34,7 @@ export function WorkflowNodeIssues({
   total,
   action,
   attempt,
+  blockers,
 }: {
   issues: Issue[];
   canManage: boolean;
@@ -48,6 +50,12 @@ export function WorkflowNodeIssues({
    * the identifier alone no longer says this work has been sent back before.
    */
   attempt?: number;
+  /**
+   * Why the node has not advanced, rendered above the rule that defines
+   * "advanced". They answer one question between them and used to sit in two
+   * separate blocks with the tab strip in between.
+   */
+  blockers?: ReactNode;
 }) {
   const { t } = useT("workflows");
   const p = useWorkspacePaths();
@@ -56,10 +64,9 @@ export function WorkflowNodeIssues({
 
   return (
     <section className="space-y-2 border-y py-4">
+      {blockers}
       <div className="flex items-center justify-between gap-3">
-        {/* Same heading rule as the rest of the node panel: xs and muted, so
-            the issue titles below are what the eye lands on. */}
-        <h3 className="text-xs font-medium text-muted-foreground">
+        <h3 className={WORKFLOW_SECTION_HEADING}>
           {t(($) => $.workbench.node_issues)}
         </h3>
         {showCount && (

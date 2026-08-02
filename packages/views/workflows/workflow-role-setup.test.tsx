@@ -372,7 +372,6 @@ describe("AcceptancePanel", () => {
       >
         <AcceptancePanel
           instanceId="instance-1"
-          node={workflowNode({ id: "acceptance-node" })}
           targets={[{ value: "implementation", label: "Implementation" }]}
           pending
           canDecide

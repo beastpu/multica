@@ -282,7 +282,9 @@
     "rework_badge_title": "这份工作被退回过，当前是第 {{attempt}} 次执行。",
     "reworked_activities": "返工过的活动",
     "branch_choice_help": "「{{gateway}}」按这个选择路由。不选则走「{{fallback}}」。",
-    "node_configuration": "节点配置"
+    "node_configuration": "节点配置",
+    "tab_delivery": "交付",
+    "run_administration": "运行管理"
   },
   "editor": {
     "title": "工作流模板",
@@ -457,7 +459,9 @@
     "rejected": "已拒绝",
     "pass": "通过",
     "fail": "未通过",
-    "unknown": "未知"
+    "unknown": "未知",
+    "valid": "有效",
+    "invalid": "无效"
   },
   "errors": {
     "load": "无法加载工作流数据。",

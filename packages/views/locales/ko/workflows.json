@@ -282,7 +282,9 @@
     "rework_badge_title": "이 작업은 반려된 적이 있습니다. 현재 {{attempt}}번째 시도입니다.",
     "reworked_activities": "재작업한 활동",
     "branch_choice_help": "「{{gateway}}」가 이 선택으로 분기합니다. 선택하지 않으면 「{{fallback}}」로 진행합니다.",
-    "node_configuration": "노드 설정"
+    "node_configuration": "노드 설정",
+    "tab_delivery": "산출물",
+    "run_administration": "실행 관리"
   },
   "editor": {
     "title": "워크플로 템플릿",
@@ -457,7 +459,9 @@
     "rejected": "거부됨",
     "pass": "통과",
     "fail": "실패",
-    "unknown": "알 수 없음"
+    "unknown": "알 수 없음",
+    "valid": "유효",
+    "invalid": "무효"
   },
   "errors": {
     "load": "워크플로 데이터를 불러올 수 없습니다.",
