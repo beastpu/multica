@@ -313,7 +313,7 @@ func ValidateDefinition(definition Definition) error {
 	if err := validateReviewerConditions(definition.Nodes, nodes, definition.Edges); err != nil {
 		return err
 	}
-	if err := validateAcceptance(definition.Acceptance, nodes, roles, definition.Edges); err != nil {
+	if err := validateAcceptance(definition.Acceptance, roles); err != nil {
 		return err
 	}
 	return nil
@@ -992,9 +992,7 @@ func hasJSONValue(raw json.RawMessage) bool {
 
 func validateAcceptance(
 	acceptance AcceptanceDefinition,
-	nodes map[string]NodeDefinition,
 	roles map[string]RoleDefinition,
-	edges []EdgeDefinition,
 ) error {
 	if acceptance.Policy == "" || acceptance.Policy == "none" {
 		return nil

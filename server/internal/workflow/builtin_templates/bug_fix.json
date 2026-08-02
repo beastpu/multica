@@ -60,6 +60,44 @@
       }
     },
     {
+      "key": "root_cause",
+      "kind": "activity",
+      "name": "根因分析",
+      "description": "定位缺陷的根本原因，说明触发条件与影响范围，作为修复的依据。",
+      "owner_role": "fixer",
+      "timeout_minutes": 1440,
+      "executor": {
+        "kind": "role",
+        "role": "fixer",
+        "fallback": {
+          "kind": "manual"
+        }
+      },
+      "issue_policy": "fixed",
+      "issue_templates": [
+        {
+          "key": "analyze_root_cause",
+          "title": "根因分析：{{host.title}}",
+          "required": true,
+          "initial_status": "todo"
+        }
+      ],
+      "artifacts": [
+        {
+          "key": "root_cause_report",
+          "name": "根因分析",
+          "description": "根本原因、触发条件、影响范围与修复建议",
+          "kind": "document",
+          "required": true
+        }
+      ],
+      "completion": {
+        "mode": "automatic",
+        "required_issue_outcome": "done",
+        "handoff_required": true
+      }
+    },
+    {
       "key": "fix",
       "kind": "activity",
       "name": "缺陷修复",
@@ -106,6 +144,10 @@
     },
     {
       "from": "triage",
+      "to": "root_cause"
+    },
+    {
+      "from": "root_cause",
       "to": "fix"
     },
     {

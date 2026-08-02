@@ -25,13 +25,15 @@ var builtinTemplates = loadBuiltinTemplates([]struct {
 }{
 	{
 		key: "requirement_delivery",
-		description: "需求评审 → 方案设计 → 代码实施 → 验收的标准需求交付流程，" +
+		description: "需求评审 → 方案设计 → 代码实施的标准需求交付流程，" +
+			"方案设计由产品负责人评审，做完整体进入验收，" +
 			"开发环节可由成员、Agent 或小队执行。",
 	},
 	{
 		key: "bug_fix",
-		description: "问题分诊 → 缺陷修复 → 回归验证 → 验收的缺陷闭环流程，" +
-			"修复环节可交给 Agent 自动执行。",
+		description: "问题分诊 → 根因分析 → 缺陷修复的缺陷闭环流程，" +
+			"修复由测试负责人评审通过后进入验收，" +
+			"分析和修复环节都可交给 Agent 自动执行。",
 	},
 })
 
