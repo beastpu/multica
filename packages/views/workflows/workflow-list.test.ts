@@ -2,7 +2,7 @@ import type { WorkflowInstance } from "@multica/core/workflows";
 import { describe, expect, it } from "vitest";
 
 import {
-  canManageWorkflowTemplates,
+  canManageWorkflows,
   partitionWorkflowRuns,
   workflowStatusForTab,
 } from "./workflow-list";
@@ -11,8 +11,8 @@ function run(id: string, nextAction: string): WorkflowInstance {
   return {
     id,
     workspace_id: "workspace-1",
-    template_id: "template-1",
-    template_version_id: "version-1",
+    workflow_id: "template-1",
+    workflow_version_id: "version-1",
     host_issue_id: `host-${id}`,
     title: id,
     status: "running",
@@ -35,8 +35,8 @@ function run(id: string, nextAction: string): WorkflowInstance {
     host_issue_identifier: `MUL-${id}`,
     host_issue_priority: "none",
     project_id: null,
-    template_name: "Delivery",
-    template_version: 1,
+    workflow_name: "Delivery",
+    workflow_version: 1,
     current_activities: [],
     activity_completed: 0,
     activity_total: 1,
@@ -71,9 +71,9 @@ describe("workflow list presentation", () => {
   });
 
   it("limits template management to workspace owners and admins", () => {
-    expect(canManageWorkflowTemplates("owner")).toBe(true);
-    expect(canManageWorkflowTemplates("admin")).toBe(true);
-    expect(canManageWorkflowTemplates("member")).toBe(false);
-    expect(canManageWorkflowTemplates(undefined)).toBe(false);
+    expect(canManageWorkflows("owner")).toBe(true);
+    expect(canManageWorkflows("admin")).toBe(true);
+    expect(canManageWorkflows("member")).toBe(false);
+    expect(canManageWorkflows(undefined)).toBe(false);
   });
 });

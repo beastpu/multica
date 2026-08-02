@@ -130,9 +130,9 @@ const (
 	// Native activity-container workflow events. Payloads are intentionally
 	// compact identifiers; clients treat these as invalidation signals and
 	// refetch the authoritative read model.
-	EventWorkflowTemplateCreated           = "workflow_template:created"
-	EventWorkflowTemplateUpdated           = "workflow_template:updated"
-	EventWorkflowTemplatePublished         = "workflow_template:published"
+	EventWorkflowCreated                   = "workflow:created"
+	EventWorkflowUpdated                   = "workflow:updated"
+	EventWorkflowPublished                 = "workflow:published"
 	EventWorkflowInstanceUpdated           = "workflow_instance:updated"
 	EventWorkflowNodeUpdated               = "workflow_node:updated"
 	EventWorkflowNodeTaskUpdated           = "workflow_node_task:updated"

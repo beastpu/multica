@@ -66,7 +66,7 @@ test("a member sees what a node owes and can read what it delivered", async ({ p
   const issue = await api.createIssue("E2E workflow artifact host", {
     description: "Import users from CSV, validating each row.",
   });
-  const templateId = await api.publishWorkflowTemplate("E2E delivery", definition);
+  const templateId = await api.publishWorkflow("E2E delivery", definition);
   const started = await api.startWorkflow(issue.id, templateId, [{
     role_key: "owner",
     actor_type: "member",
@@ -106,7 +106,7 @@ test("a node with no issues still offers a handoff summary", async ({ page }) =>
   const issue = await api.createIssue("E2E workflow handoff host", {
     description: "Ship the import feature.",
   });
-  const templateId = await api.publishWorkflowTemplate("E2E handoff", definition);
+  const templateId = await api.publishWorkflow("E2E handoff", definition);
   await api.startWorkflow(issue.id, templateId, [{
     role_key: "owner",
     actor_type: "member",

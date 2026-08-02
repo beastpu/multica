@@ -29,8 +29,8 @@ type workflowRoleAssignmentInput struct {
 }
 
 type startWorkflowRequest struct {
-	TemplateID        string                        `json:"template_id"`
-	TemplateVersionID string                        `json:"template_version_id,omitempty"`
+	WorkflowID        string                        `json:"workflow_id"`
+	WorkflowVersionID string                        `json:"workflow_version_id,omitempty"`
 	HostStatusMode    string                        `json:"host_status_mode,omitempty"`
 	Input             json.RawMessage               `json:"input,omitempty"`
 	RoleAssignments   []workflowRoleAssignmentInput `json:"role_assignments"`
@@ -40,8 +40,8 @@ type startWorkflowRequest struct {
 type workflowInstanceResponse struct {
 	ID                  string                            `json:"id"`
 	WorkspaceID         string                            `json:"workspace_id"`
-	TemplateID          string                            `json:"template_id"`
-	TemplateVersionID   string                            `json:"template_version_id"`
+	WorkflowID          string                            `json:"workflow_id"`
+	WorkflowVersionID   string                            `json:"workflow_version_id"`
 	Title               string                            `json:"title"`
 	HostIssueID         string                            `json:"host_issue_id"`
 	Status              string                            `json:"status"`
@@ -64,8 +64,8 @@ type workflowInstanceResponse struct {
 	HostIssueIdentifier string                            `json:"host_issue_identifier"`
 	HostIssuePriority   string                            `json:"host_issue_priority"`
 	ProjectID           *string                           `json:"project_id"`
-	TemplateName        string                            `json:"template_name"`
-	TemplateVersion     int32                             `json:"template_version"`
+	WorkflowName        string                            `json:"workflow_name"`
+	WorkflowVersion     int32                             `json:"workflow_version"`
 	CurrentActivities   []workflowCurrentActivityResponse `json:"current_activities"`
 	ActivityCompleted   int32                             `json:"activity_completed"`
 	ActivityTotal       int32                             `json:"activity_total"`
@@ -90,8 +90,8 @@ type workflowInstanceDisplayContext struct {
 	HostIssueNumber   int32
 	HostIssuePriority string
 	ProjectID         pgtype.UUID
-	TemplateName      string
-	TemplateVersion   int32
+	WorkflowName      string
+	WorkflowVersion   int32
 	CurrentActivities []workflowCurrentActivityResponse
 	ActivityCompleted int32
 	ActivityTotal     int32
@@ -148,7 +148,7 @@ func workflowInstanceToResponse(row db.WorkflowInstance) workflowInstanceRespons
 	nextAction, intervention := workflowNextAction(row.Status)
 	return workflowInstanceResponse{
 		ID: uuidToString(row.ID), WorkspaceID: uuidToString(row.WorkspaceID),
-		TemplateID: uuidToString(row.TemplateID), TemplateVersionID: uuidToString(row.TemplateVersionID),
+		WorkflowID: uuidToString(row.WorkflowID), WorkflowVersionID: uuidToString(row.WorkflowVersionID),
 		Title: row.Title, HostIssueID: uuidToString(row.HostIssueID), Status: row.Status, HostStatusMode: row.HostStatusMode,
 		Input: json.RawMessage(row.Input), Result: json.RawMessage(row.Result), Revision: row.Revision,
 		StartedByType: row.StartedByType, StartedByID: uuidToPtr(row.StartedByID),
@@ -221,8 +221,8 @@ func workflowInstanceRuntimeResponseFromFacts(
 	}
 	response.HostIssuePriority = display.HostIssuePriority
 	response.ProjectID = uuidToPtr(display.ProjectID)
-	response.TemplateName = display.TemplateName
-	response.TemplateVersion = display.TemplateVersion
+	response.WorkflowName = display.WorkflowName
+	response.WorkflowVersion = display.WorkflowVersion
 	response.CurrentActivities = display.CurrentActivities
 	response.ActivityCompleted = display.ActivityCompleted
 	response.ActivityTotal = display.ActivityTotal
@@ -262,8 +262,8 @@ func (h *Handler) loadWorkflowInstanceDisplayContexts(
 				HostIssueNumber:   row.HostIssueNumber,
 				HostIssuePriority: row.HostIssuePriority,
 				ProjectID:         row.ProjectID,
-				TemplateName:      row.TemplateName,
-				TemplateVersion:   row.TemplateVersion,
+				WorkflowName:      row.WorkflowName,
+				WorkflowVersion:   row.WorkflowVersion,
 				ActivityCompleted: row.ActivityCompleted,
 				ActivityTotal:     row.ActivityTotal,
 			}
@@ -572,7 +572,7 @@ func (h *Handler) StartIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	templateID, ok := parseUUIDOrBadRequest(w, req.TemplateID, "template_id")
+	templateID, ok := parseUUIDOrBadRequest(w, req.WorkflowID, "workflow_id")
 	if !ok {
 		return
 	}
@@ -589,7 +589,7 @@ func (h *Handler) StartIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "host issue not found")
 		return
 	}
-	template, err := h.Queries.GetWorkflowTemplateInWorkspace(r.Context(), db.GetWorkflowTemplateInWorkspaceParams{ID: templateID, WorkspaceID: wsUUID})
+	template, err := h.Queries.GetWorkflowInWorkspace(r.Context(), db.GetWorkflowInWorkspaceParams{ID: templateID, WorkspaceID: wsUUID})
 	if errors.Is(err, pgx.ErrNoRows) || template.Status != "published" {
 		writeError(w, http.StatusNotFound, "published workflow template not found")
 		return
@@ -599,14 +599,14 @@ func (h *Handler) StartIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	versionID := template.LatestPublishedVersionID
-	if strings.TrimSpace(req.TemplateVersionID) != "" {
-		versionID, ok = parseUUIDOrBadRequest(w, req.TemplateVersionID, "template_version_id")
+	if strings.TrimSpace(req.WorkflowVersionID) != "" {
+		versionID, ok = parseUUIDOrBadRequest(w, req.WorkflowVersionID, "workflow_version_id")
 		if !ok {
 			return
 		}
 	}
-	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(r.Context(), db.GetWorkflowTemplateVersionInWorkspaceParams{ID: versionID, WorkspaceID: wsUUID})
-	if errors.Is(err, pgx.ErrNoRows) || version.TemplateID != template.ID || version.Status != "published" {
+	version, err := h.Queries.GetWorkflowVersionInWorkspace(r.Context(), db.GetWorkflowVersionInWorkspaceParams{ID: versionID, WorkspaceID: wsUUID})
+	if errors.Is(err, pgx.ErrNoRows) || version.WorkflowID != template.ID || version.Status != "published" {
 		writeError(w, http.StatusBadRequest, "published template version not found")
 		return
 	}
@@ -679,7 +679,7 @@ func (h *Handler) StartIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	instance, activeNodes, err := h.createWorkflowRuntime(
 		r.Context(), qtx, workflowRuntimeStartParams{
-			WorkspaceID: wsUUID, TemplateID: template.ID, TemplateVersionID: version.ID,
+			WorkspaceID: wsUUID, WorkflowID: template.ID, WorkflowVersionID: version.ID,
 			HostIssueID: hostID, Title: host.Title, HostStatusMode: hostStatusMode, Input: normalizedInput,
 			StartedByID: userUUID, IdempotencyKey: idempotencyKey,
 			Definition: definition, Plan: plan, Assignments: assignments, MissingRoles: missingRoles,
@@ -757,8 +757,8 @@ func (h *Handler) StartIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 
 type workflowRuntimeStartParams struct {
 	WorkspaceID       pgtype.UUID
-	TemplateID        pgtype.UUID
-	TemplateVersionID pgtype.UUID
+	WorkflowID        pgtype.UUID
+	WorkflowVersionID pgtype.UUID
 	HostIssueID       pgtype.UUID
 	Title             string
 	HostStatusMode    string
@@ -781,8 +781,8 @@ func (h *Handler) createWorkflowRuntime(
 		instanceStatus = "needs_setup"
 	}
 	instance, err := q.CreateWorkflowInstance(ctx, db.CreateWorkflowInstanceParams{
-		WorkspaceID: params.WorkspaceID, TemplateID: params.TemplateID,
-		TemplateVersionID: params.TemplateVersionID, HostIssueID: params.HostIssueID,
+		WorkspaceID: params.WorkspaceID, WorkflowID: params.WorkflowID,
+		WorkflowVersionID: params.WorkflowVersionID, HostIssueID: params.HostIssueID,
 		Title:  params.Title,
 		Status: instanceStatus, HostStatusMode: params.HostStatusMode,
 		Input: params.Input, StartedByType: "member", StartedByID: params.StartedByID,
@@ -1773,7 +1773,7 @@ func (h *Handler) ListWorkflowInstances(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	templateID, ok := optionalWorkflowQueryUUID(w, r, "template_id")
+	templateID, ok := optionalWorkflowQueryUUID(w, r, "workflow_id")
 	if !ok {
 		return
 	}
@@ -1852,7 +1852,7 @@ func (h *Handler) ListWorkflowInstances(w http.ResponseWriter, r *http.Request) 
 	filter := db.CountWorkflowInstancesParams{
 		ViewerIsAdmin: viewerIsAdmin,
 		WorkspaceID:   wsUUID, Status: status, ProjectID: projectID,
-		TemplateID: templateID, CurrentNodeKey: currentNodeKey,
+		WorkflowID: templateID, CurrentNodeKey: currentNodeKey,
 		OwnerID: ownerID, OwnerType: ownerType,
 		RelatedToMe: relatedToMe, ViewerID: viewerID,
 		InterventionType: interventionType,
@@ -1865,7 +1865,7 @@ func (h *Handler) ListWorkflowInstances(w http.ResponseWriter, r *http.Request) 
 	rows, err := h.Queries.ListWorkflowInstances(r.Context(), db.ListWorkflowInstancesParams{
 		ViewerIsAdmin: viewerIsAdmin,
 		WorkspaceID:   wsUUID, Status: status, ProjectID: projectID,
-		TemplateID: templateID, CurrentNodeKey: currentNodeKey,
+		WorkflowID: templateID, CurrentNodeKey: currentNodeKey,
 		OwnerID: ownerID, OwnerType: ownerType,
 		RelatedToMe: relatedToMe, ViewerID: viewerID,
 		InterventionType: interventionType, CursorUpdatedAt: cursorUpdatedAt,

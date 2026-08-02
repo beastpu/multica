@@ -25,7 +25,7 @@ export interface CreateIssueRequest {
   /** Issue-scoped label IDs to attach in the same transaction as the create.
    *  Unknown or non-issue ids are rejected by the server with 400. */
   label_ids?: string[];
-  workflow_template_id?: string;
+  workflow_workflow_id?: string;
   workflow_instance_id?: string;
   workflow_activity?: string;
   workflow_issue_only?: boolean;
@@ -130,7 +130,7 @@ export interface ListIssuesParams {
   project_ids?: string[];
   include_no_project?: boolean;
   label_ids?: string[];
-  workflow_template_id?: string;
+  workflow_workflow_id?: string;
   workflow_instance_id?: string;
   workflow_activity?: string;
   workflow_issue_only?: boolean;
@@ -166,7 +166,7 @@ export interface ListGroupedIssuesParams {
   project_ids?: string[];
   include_no_project?: boolean;
   label_ids?: string[];
-  workflow_template_id?: string;
+  workflow_workflow_id?: string;
   workflow_instance_id?: string;
   workflow_activity?: string;
   workflow_issue_only?: boolean;

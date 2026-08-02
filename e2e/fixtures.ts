@@ -24,7 +24,7 @@ export class TestApiClient {
   private workspaceSlug: string | null = null;
   private workspaceId: string | null = null;
   private email: string | null = null;
-  private createdWorkflowTemplateIds: string[] = [];
+  private createdWorkflowIds: string[] = [];
   private createdIssueIds: string[] = [];
 
   async login(email: string, name: string) {
@@ -173,14 +173,14 @@ export class TestApiClient {
    * and only a published version can start a run, so a test that skipped the
    * publish would fail on a state the product never lets a user reach.
    */
-  async publishWorkflowTemplate(name: string, definition: Record<string, unknown>) {
-    const created = await (await this.authedFetch("/api/workflow-templates", {
+  async publishWorkflow(name: string, definition: Record<string, unknown>) {
+    const created = await (await this.authedFetch("/api/workflows", {
       method: "POST",
       body: JSON.stringify({ name, description: "", definition }),
     })).json();
-    const templateId = created.template?.id ?? created.id;
-    this.createdWorkflowTemplateIds.push(templateId);
-    await this.authedFetch(`/api/workflow-templates/${templateId}/definition`, {
+    const templateId = created.workflow?.id ?? created.id;
+    this.createdWorkflowIds.push(templateId);
+    await this.authedFetch(`/api/workflows/${templateId}/definition`, {
       method: "PUT",
       body: JSON.stringify({
         definition,
@@ -195,7 +195,7 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/issues/${issueId}/workflow`, {
       method: "POST",
       body: JSON.stringify({
-        template_id: templateId,
+        workflow_id: templateId,
         role_assignments: roleAssignments,
         idempotency_key: `e2e-${issueId}`,
       }),
@@ -227,16 +227,16 @@ export class TestApiClient {
       }
     }
     this.createdIssueIds = [];
-    for (const id of this.createdWorkflowTemplateIds) {
+    for (const id of this.createdWorkflowIds) {
       try {
-        await this.authedFetch(`/api/workflow-templates/${id}/archive`, {
+        await this.authedFetch(`/api/workflows/${id}/archive`, {
           method: "POST",
         });
       } catch {
         /* ignore — may already be archived */
       }
     }
-    this.createdWorkflowTemplateIds = [];
+    this.createdWorkflowIds = [];
   }
 
   /** The logged-in user's id, needed wherever a member has to be named. */

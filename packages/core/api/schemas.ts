@@ -473,8 +473,8 @@ const IssueMetadataSchema = z.preprocess(
 const IssueExternalFieldsSchema = z.record(z.string(), z.string()).default({});
 const IssueWorkflowContextSchema = z.object({
   workflow_instance_id: z.string(),
-  workflow_template_id: z.string(),
-  workflow_template_name: z.string().optional().default(""),
+  workflow_workflow_id: z.string(),
+  workflow_workflow_name: z.string().optional().default(""),
   workflow_node_instance_id: z.string(),
   activity_key: z.string().optional().default(""),
   activity_name: z.string().optional().default(""),

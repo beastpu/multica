@@ -1298,6 +1298,19 @@ type WebhookDelivery struct {
 	DispatchAttempts       int32              `json:"dispatch_attempts"`
 }
 
+type Workflow struct {
+	ID                       pgtype.UUID        `json:"id"`
+	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	Name                     string             `json:"name"`
+	Description              string             `json:"description"`
+	Status                   string             `json:"status"`
+	LatestPublishedVersionID pgtype.UUID        `json:"latest_published_version_id"`
+	CreatedBy                pgtype.UUID        `json:"created_by"`
+	ArchivedAt               pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+}
+
 type WorkflowAcceptance struct {
 	ID                     pgtype.UUID        `json:"id"`
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
@@ -1373,8 +1386,8 @@ type WorkflowExecutorResolution struct {
 type WorkflowInstance struct {
 	ID                pgtype.UUID        `json:"id"`
 	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
-	TemplateID        pgtype.UUID        `json:"template_id"`
-	TemplateVersionID pgtype.UUID        `json:"template_version_id"`
+	WorkflowID        pgtype.UUID        `json:"workflow_id"`
+	WorkflowVersionID pgtype.UUID        `json:"workflow_version_id"`
 	HostIssueID       pgtype.UUID        `json:"host_issue_id"`
 	Status            string             `json:"status"`
 	HostStatusMode    string             `json:"host_status_mode"`
@@ -1495,25 +1508,10 @@ type WorkflowNodeVerdict struct {
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 }
 
-type WorkflowTemplate struct {
-	ID                       pgtype.UUID        `json:"id"`
-	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
-	Name                     string             `json:"name"`
-	Description              string             `json:"description"`
-	AppliesToKind            string             `json:"applies_to_kind"`
-	AppliesToTypeKey         string             `json:"applies_to_type_key"`
-	Status                   string             `json:"status"`
-	LatestPublishedVersionID pgtype.UUID        `json:"latest_published_version_id"`
-	CreatedBy                pgtype.UUID        `json:"created_by"`
-	ArchivedAt               pgtype.Timestamptz `json:"archived_at"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
-}
-
-type WorkflowTemplateVersion struct {
+type WorkflowVersion struct {
 	ID                 pgtype.UUID        `json:"id"`
 	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
-	TemplateID         pgtype.UUID        `json:"template_id"`
+	WorkflowID         pgtype.UUID        `json:"workflow_id"`
 	Version            int32              `json:"version"`
 	Status             string             `json:"status"`
 	Definition         []byte             `json:"definition"`

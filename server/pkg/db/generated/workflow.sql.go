@@ -11,28 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const archiveWorkflowTemplate = `-- name: ArchiveWorkflowTemplate :one
-UPDATE workflow_template
+const archiveWorkflow = `-- name: ArchiveWorkflow :one
+UPDATE workflow
 SET status = 'archived', archived_at = now(), updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, name, description, applies_to_kind, applies_to_type_key, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
+RETURNING id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
 `
 
-type ArchiveWorkflowTemplateParams struct {
+type ArchiveWorkflowParams struct {
 	ID          pgtype.UUID `json:"id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-func (q *Queries) ArchiveWorkflowTemplate(ctx context.Context, arg ArchiveWorkflowTemplateParams) (WorkflowTemplate, error) {
-	row := q.db.QueryRow(ctx, archiveWorkflowTemplate, arg.ID, arg.WorkspaceID)
-	var i WorkflowTemplate
+func (q *Queries) ArchiveWorkflow(ctx context.Context, arg ArchiveWorkflowParams) (Workflow, error) {
+	row := q.db.QueryRow(ctx, archiveWorkflow, arg.ID, arg.WorkspaceID)
+	var i Workflow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
 		&i.Name,
 		&i.Description,
-		&i.AppliesToKind,
-		&i.AppliesToTypeKey,
 		&i.Status,
 		&i.LatestPublishedVersionID,
 		&i.CreatedBy,
@@ -201,7 +199,7 @@ SET last_reconciled_at = now(),
     reconcile_after = NULL
 FROM candidate
 WHERE instance.id = candidate.id
-RETURNING instance.id, instance.workspace_id, instance.template_id, instance.template_version_id, instance.host_issue_id, instance.status, instance.host_status_mode, instance.input, instance.result, instance.revision, instance.started_by_type, instance.started_by_id, instance.started_at, instance.paused_at, instance.completed_at, instance.cancelled_at, instance.last_reconciled_at, instance.created_at, instance.updated_at, instance.reconcile_after, instance.title
+RETURNING instance.id, instance.workspace_id, instance.workflow_id, instance.workflow_version_id, instance.host_issue_id, instance.status, instance.host_status_mode, instance.input, instance.result, instance.revision, instance.started_by_type, instance.started_by_id, instance.started_at, instance.paused_at, instance.completed_at, instance.cancelled_at, instance.last_reconciled_at, instance.created_at, instance.updated_at, instance.reconcile_after, instance.title
 `
 
 func (q *Queries) ClaimWorkflowInstanceForReconcile(ctx context.Context, minimumIntervalSeconds float64) (WorkflowInstance, error) {
@@ -210,8 +208,8 @@ func (q *Queries) ClaimWorkflowInstanceForReconcile(ctx context.Context, minimum
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.TemplateVersionID,
+		&i.WorkflowID,
+		&i.WorkflowVersionID,
 		&i.HostIssueID,
 		&i.Status,
 		&i.HostStatusMode,
@@ -324,9 +322,9 @@ func (q *Queries) ClearWorkflowIssueOrigin(ctx context.Context, arg ClearWorkflo
 	return err
 }
 
-const countLiveWorkflowTemplatesByName = `-- name: CountLiveWorkflowTemplatesByName :one
+const countLiveWorkflowsByName = `-- name: CountLiveWorkflowsByName :one
 
-SELECT count(*) FROM workflow_template
+SELECT count(*) FROM workflow
 WHERE workspace_id = $1
   AND lower(btrim(name)) = lower(btrim($2::text))
   AND status <> 'archived'
@@ -335,20 +333,20 @@ WHERE workspace_id = $1
   AND ($3::uuid IS NULL OR id <> $3)
 `
 
-type CountLiveWorkflowTemplatesByNameParams struct {
+type CountLiveWorkflowsByNameParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	Name        string      `json:"name"`
 	ExcludeID   pgtype.UUID `json:"exclude_id"`
 }
 
 // =====================
-// Workflow templates
+// Workflows: the versioned definition a run executes.
 // =====================
-// Counts live templates already using a name. Archived ones are excluded:
-// replacing a template by archiving the old one and recreating it under the
+// Counts live workflows already using a name. Archived ones are excluded:
+// replacing a workflow by archiving the old one and recreating it under the
 // same name is the normal revision path once runs depend on the old version.
-func (q *Queries) CountLiveWorkflowTemplatesByName(ctx context.Context, arg CountLiveWorkflowTemplatesByNameParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countLiveWorkflowTemplatesByName, arg.WorkspaceID, arg.Name, arg.ExcludeID)
+func (q *Queries) CountLiveWorkflowsByName(ctx context.Context, arg CountLiveWorkflowsByNameParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveWorkflowsByName, arg.WorkspaceID, arg.Name, arg.ExcludeID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -624,7 +622,7 @@ WHERE wi.workspace_id = $3
       AND host.workspace_id = wi.workspace_id
       AND host.project_id = $5
   ))
-  AND ($6::uuid IS NULL OR wi.template_id = $6)
+  AND ($6::uuid IS NULL OR wi.workflow_id = $6)
   AND ($7::text IS NULL OR EXISTS (
     SELECT 1 FROM workflow_node_instance current_node
     WHERE current_node.workflow_instance_id = wi.id
@@ -689,7 +687,7 @@ type CountWorkflowInstancesParams struct {
 	WorkspaceID      pgtype.UUID `json:"workspace_id"`
 	Status           pgtype.Text `json:"status"`
 	ProjectID        pgtype.UUID `json:"project_id"`
-	TemplateID       pgtype.UUID `json:"template_id"`
+	WorkflowID       pgtype.UUID `json:"workflow_id"`
 	CurrentNodeKey   pgtype.Text `json:"current_node_key"`
 	OwnerID          pgtype.UUID `json:"owner_id"`
 	OwnerType        pgtype.Text `json:"owner_type"`
@@ -704,7 +702,7 @@ func (q *Queries) CountWorkflowInstances(ctx context.Context, arg CountWorkflowI
 		arg.WorkspaceID,
 		arg.Status,
 		arg.ProjectID,
-		arg.TemplateID,
+		arg.WorkflowID,
 		arg.CurrentNodeKey,
 		arg.OwnerID,
 		arg.OwnerType,
@@ -714,6 +712,45 @@ func (q *Queries) CountWorkflowInstances(ctx context.Context, arg CountWorkflowI
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const createWorkflow = `-- name: CreateWorkflow :one
+INSERT INTO workflow (
+    workspace_id, name, description, status, created_by
+) VALUES (
+    $1, $2, $3, 'draft', $4
+)
+RETURNING id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
+`
+
+type CreateWorkflowParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	CreatedBy   pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) (Workflow, error) {
+	row := q.db.QueryRow(ctx, createWorkflow,
+		arg.WorkspaceID,
+		arg.Name,
+		arg.Description,
+		arg.CreatedBy,
+	)
+	var i Workflow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Description,
+		&i.Status,
+		&i.LatestPublishedVersionID,
+		&i.CreatedBy,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const createWorkflowAcceptance = `-- name: CreateWorkflowAcceptance :one
@@ -969,20 +1006,20 @@ func (q *Queries) CreateWorkflowExecutorResolution(ctx context.Context, arg Crea
 
 const createWorkflowInstance = `-- name: CreateWorkflowInstance :one
 INSERT INTO workflow_instance (
-    workspace_id, template_id, template_version_id, host_issue_id, title,
+    workspace_id, workflow_id, workflow_version_id, host_issue_id, title,
     status, host_status_mode, input, started_by_type, started_by_id
 ) VALUES (
     $1, $2, $3,
     $4, $5,
     $6, $7, $8, $9, $10
 )
-RETURNING id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
+RETURNING id, workspace_id, workflow_id, workflow_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
 `
 
 type CreateWorkflowInstanceParams struct {
 	WorkspaceID       pgtype.UUID `json:"workspace_id"`
-	TemplateID        pgtype.UUID `json:"template_id"`
-	TemplateVersionID pgtype.UUID `json:"template_version_id"`
+	WorkflowID        pgtype.UUID `json:"workflow_id"`
+	WorkflowVersionID pgtype.UUID `json:"workflow_version_id"`
 	HostIssueID       pgtype.UUID `json:"host_issue_id"`
 	Title             string      `json:"title"`
 	Status            string      `json:"status"`
@@ -995,8 +1032,8 @@ type CreateWorkflowInstanceParams struct {
 func (q *Queries) CreateWorkflowInstance(ctx context.Context, arg CreateWorkflowInstanceParams) (WorkflowInstance, error) {
 	row := q.db.QueryRow(ctx, createWorkflowInstance,
 		arg.WorkspaceID,
-		arg.TemplateID,
-		arg.TemplateVersionID,
+		arg.WorkflowID,
+		arg.WorkflowVersionID,
 		arg.HostIssueID,
 		arg.Title,
 		arg.Status,
@@ -1009,8 +1046,8 @@ func (q *Queries) CreateWorkflowInstance(ctx context.Context, arg CreateWorkflow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.TemplateVersionID,
+		&i.WorkflowID,
+		&i.WorkflowVersionID,
 		&i.HostIssueID,
 		&i.Status,
 		&i.HostStatusMode,
@@ -1304,106 +1341,6 @@ func (q *Queries) CreateWorkflowSubmission(ctx context.Context, arg CreateWorkfl
 	return i, err
 }
 
-const createWorkflowTemplate = `-- name: CreateWorkflowTemplate :one
-INSERT INTO workflow_template (
-    workspace_id, name, description, applies_to_kind, applies_to_type_key,
-    status, created_by
-) VALUES (
-    $1, $2, $3, $4, $5,
-    'draft', $6
-)
-RETURNING id, workspace_id, name, description, applies_to_kind, applies_to_type_key, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
-`
-
-type CreateWorkflowTemplateParams struct {
-	WorkspaceID      pgtype.UUID `json:"workspace_id"`
-	Name             string      `json:"name"`
-	Description      string      `json:"description"`
-	AppliesToKind    string      `json:"applies_to_kind"`
-	AppliesToTypeKey string      `json:"applies_to_type_key"`
-	CreatedBy        pgtype.UUID `json:"created_by"`
-}
-
-func (q *Queries) CreateWorkflowTemplate(ctx context.Context, arg CreateWorkflowTemplateParams) (WorkflowTemplate, error) {
-	row := q.db.QueryRow(ctx, createWorkflowTemplate,
-		arg.WorkspaceID,
-		arg.Name,
-		arg.Description,
-		arg.AppliesToKind,
-		arg.AppliesToTypeKey,
-		arg.CreatedBy,
-	)
-	var i WorkflowTemplate
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.Description,
-		&i.AppliesToKind,
-		&i.AppliesToTypeKey,
-		&i.Status,
-		&i.LatestPublishedVersionID,
-		&i.CreatedBy,
-		&i.ArchivedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const createWorkflowTemplateVersion = `-- name: CreateWorkflowTemplateVersion :one
-INSERT INTO workflow_template_version (
-    workspace_id, template_id, version, status, definition,
-    definition_checksum, change_summary, created_by
-) VALUES (
-    $1, $2, $3, $4, $5,
-    $6, $7, $8
-)
-RETURNING id, workspace_id, template_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision
-`
-
-type CreateWorkflowTemplateVersionParams struct {
-	WorkspaceID        pgtype.UUID `json:"workspace_id"`
-	TemplateID         pgtype.UUID `json:"template_id"`
-	Version            int32       `json:"version"`
-	Status             string      `json:"status"`
-	Definition         []byte      `json:"definition"`
-	DefinitionChecksum string      `json:"definition_checksum"`
-	ChangeSummary      string      `json:"change_summary"`
-	CreatedBy          pgtype.UUID `json:"created_by"`
-}
-
-func (q *Queries) CreateWorkflowTemplateVersion(ctx context.Context, arg CreateWorkflowTemplateVersionParams) (WorkflowTemplateVersion, error) {
-	row := q.db.QueryRow(ctx, createWorkflowTemplateVersion,
-		arg.WorkspaceID,
-		arg.TemplateID,
-		arg.Version,
-		arg.Status,
-		arg.Definition,
-		arg.DefinitionChecksum,
-		arg.ChangeSummary,
-		arg.CreatedBy,
-	)
-	var i WorkflowTemplateVersion
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.Version,
-		&i.Status,
-		&i.Definition,
-		&i.DefinitionChecksum,
-		&i.ChangeSummary,
-		&i.CreatedBy,
-		&i.PublishedBy,
-		&i.PublishedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Revision,
-	)
-	return i, err
-}
-
 const createWorkflowVerdict = `-- name: CreateWorkflowVerdict :one
 INSERT INTO workflow_node_verdict (
     workspace_id, workflow_instance_id, workflow_node_instance_id, revision,
@@ -1467,12 +1404,65 @@ func (q *Queries) CreateWorkflowVerdict(ctx context.Context, arg CreateWorkflowV
 	return i, err
 }
 
+const createWorkflowVersion = `-- name: CreateWorkflowVersion :one
+INSERT INTO workflow_version (
+    workspace_id, workflow_id, version, status, definition,
+    definition_checksum, change_summary, created_by
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, $8
+)
+RETURNING id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision
+`
+
+type CreateWorkflowVersionParams struct {
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	WorkflowID         pgtype.UUID `json:"workflow_id"`
+	Version            int32       `json:"version"`
+	Status             string      `json:"status"`
+	Definition         []byte      `json:"definition"`
+	DefinitionChecksum string      `json:"definition_checksum"`
+	ChangeSummary      string      `json:"change_summary"`
+	CreatedBy          pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateWorkflowVersion(ctx context.Context, arg CreateWorkflowVersionParams) (WorkflowVersion, error) {
+	row := q.db.QueryRow(ctx, createWorkflowVersion,
+		arg.WorkspaceID,
+		arg.WorkflowID,
+		arg.Version,
+		arg.Status,
+		arg.Definition,
+		arg.DefinitionChecksum,
+		arg.ChangeSummary,
+		arg.CreatedBy,
+	)
+	var i WorkflowVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowID,
+		&i.Version,
+		&i.Status,
+		&i.Definition,
+		&i.DefinitionChecksum,
+		&i.ChangeSummary,
+		&i.CreatedBy,
+		&i.PublishedBy,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+	)
+	return i, err
+}
+
 const deferWorkflowInstanceReconcile = `-- name: DeferWorkflowInstanceReconcile :one
 UPDATE workflow_instance
 SET last_reconciled_at = NULL,
     reconcile_after = now() + make_interval(secs => $1)
 WHERE id = $2 AND workspace_id = $3
-RETURNING id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
+RETURNING id, workspace_id, workflow_id, workflow_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
 `
 
 type DeferWorkflowInstanceReconcileParams struct {
@@ -1487,8 +1477,8 @@ func (q *Queries) DeferWorkflowInstanceReconcile(ctx context.Context, arg DeferW
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.TemplateVersionID,
+		&i.WorkflowID,
+		&i.WorkflowVersionID,
 		&i.HostIssueID,
 		&i.Status,
 		&i.HostStatusMode,
@@ -1844,7 +1834,7 @@ func (q *Queries) DetachWorkflowNodeTasksByIssue(ctx context.Context, arg Detach
 }
 
 const getActiveWorkflowInstanceByHost = `-- name: GetActiveWorkflowInstanceByHost :one
-SELECT id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
+SELECT id, workspace_id, workflow_id, workflow_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
 WHERE host_issue_id = $1
   AND workspace_id = $2
   AND status IN ('needs_setup', 'running', 'paused')
@@ -1862,8 +1852,8 @@ func (q *Queries) GetActiveWorkflowInstanceByHost(ctx context.Context, arg GetAc
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.TemplateVersionID,
+		&i.WorkflowID,
+		&i.WorkflowVersionID,
 		&i.HostIssueID,
 		&i.Status,
 		&i.HostStatusMode,
@@ -1938,25 +1928,25 @@ func (q *Queries) GetActiveWorkflowIssueBinding(ctx context.Context, arg GetActi
 	return i, err
 }
 
-const getLatestPublishedWorkflowTemplateVersion = `-- name: GetLatestPublishedWorkflowTemplateVersion :one
-SELECT id, workspace_id, template_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_template_version
-WHERE template_id = $1 AND workspace_id = $2 AND status = 'published'
+const getLatestPublishedWorkflowVersion = `-- name: GetLatestPublishedWorkflowVersion :one
+SELECT id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
+WHERE workflow_id = $1 AND workspace_id = $2 AND status = 'published'
 ORDER BY version DESC
 LIMIT 1
 `
 
-type GetLatestPublishedWorkflowTemplateVersionParams struct {
-	TemplateID  pgtype.UUID `json:"template_id"`
+type GetLatestPublishedWorkflowVersionParams struct {
+	WorkflowID  pgtype.UUID `json:"workflow_id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-func (q *Queries) GetLatestPublishedWorkflowTemplateVersion(ctx context.Context, arg GetLatestPublishedWorkflowTemplateVersionParams) (WorkflowTemplateVersion, error) {
-	row := q.db.QueryRow(ctx, getLatestPublishedWorkflowTemplateVersion, arg.TemplateID, arg.WorkspaceID)
-	var i WorkflowTemplateVersion
+func (q *Queries) GetLatestPublishedWorkflowVersion(ctx context.Context, arg GetLatestPublishedWorkflowVersionParams) (WorkflowVersion, error) {
+	row := q.db.QueryRow(ctx, getLatestPublishedWorkflowVersion, arg.WorkflowID, arg.WorkspaceID)
+	var i WorkflowVersion
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.TemplateID,
+		&i.WorkflowID,
 		&i.Version,
 		&i.Status,
 		&i.Definition,
@@ -2009,7 +1999,7 @@ func (q *Queries) GetLatestWorkflowAcceptance(ctx context.Context, arg GetLatest
 }
 
 const getLatestWorkflowInstanceByHost = `-- name: GetLatestWorkflowInstanceByHost :one
-SELECT id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
+SELECT id, workspace_id, workflow_id, workflow_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
 WHERE host_issue_id = $1
   AND workspace_id = $2
 ORDER BY created_at DESC, id DESC
@@ -2027,8 +2017,8 @@ func (q *Queries) GetLatestWorkflowInstanceByHost(ctx context.Context, arg GetLa
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.TemplateVersionID,
+		&i.WorkflowID,
+		&i.WorkflowVersionID,
 		&i.HostIssueID,
 		&i.Status,
 		&i.HostStatusMode,
@@ -2162,24 +2152,6 @@ func (q *Queries) GetNextWorkflowSubmissionRevision(ctx context.Context, arg Get
 	return column_1, err
 }
 
-const getNextWorkflowTemplateVersion = `-- name: GetNextWorkflowTemplateVersion :one
-SELECT COALESCE(max(version), 0)::integer + 1
-FROM workflow_template_version
-WHERE template_id = $1 AND workspace_id = $2
-`
-
-type GetNextWorkflowTemplateVersionParams struct {
-	TemplateID  pgtype.UUID `json:"template_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) GetNextWorkflowTemplateVersion(ctx context.Context, arg GetNextWorkflowTemplateVersionParams) (int32, error) {
-	row := q.db.QueryRow(ctx, getNextWorkflowTemplateVersion, arg.TemplateID, arg.WorkspaceID)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const getNextWorkflowVerdictRevision = `-- name: GetNextWorkflowVerdictRevision :one
 SELECT COALESCE(max(revision), 0)::integer + 1
 FROM workflow_node_verdict
@@ -2194,6 +2166,24 @@ type GetNextWorkflowVerdictRevisionParams struct {
 
 func (q *Queries) GetNextWorkflowVerdictRevision(ctx context.Context, arg GetNextWorkflowVerdictRevisionParams) (int32, error) {
 	row := q.db.QueryRow(ctx, getNextWorkflowVerdictRevision, arg.WorkflowNodeInstanceID, arg.WorkspaceID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const getNextWorkflowVersion = `-- name: GetNextWorkflowVersion :one
+SELECT COALESCE(max(version), 0)::integer + 1
+FROM workflow_version
+WHERE workflow_id = $1 AND workspace_id = $2
+`
+
+type GetNextWorkflowVersionParams struct {
+	WorkflowID  pgtype.UUID `json:"workflow_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetNextWorkflowVersion(ctx context.Context, arg GetNextWorkflowVersionParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getNextWorkflowVersion, arg.WorkflowID, arg.WorkspaceID)
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -2314,6 +2304,39 @@ func (q *Queries) GetWorkflowArtifact(ctx context.Context, arg GetWorkflowArtifa
 	return i, err
 }
 
+const getWorkflowDraft = `-- name: GetWorkflowDraft :one
+SELECT id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
+WHERE workflow_id = $1 AND workspace_id = $2 AND status = 'draft'
+LIMIT 1
+`
+
+type GetWorkflowDraftParams struct {
+	WorkflowID  pgtype.UUID `json:"workflow_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetWorkflowDraft(ctx context.Context, arg GetWorkflowDraftParams) (WorkflowVersion, error) {
+	row := q.db.QueryRow(ctx, getWorkflowDraft, arg.WorkflowID, arg.WorkspaceID)
+	var i WorkflowVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowID,
+		&i.Version,
+		&i.Status,
+		&i.Definition,
+		&i.DefinitionChecksum,
+		&i.ChangeSummary,
+		&i.CreatedBy,
+		&i.PublishedBy,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+	)
+	return i, err
+}
+
 const getWorkflowEventByIdempotencyKey = `-- name: GetWorkflowEventByIdempotencyKey :one
 SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, event_type, actor_type, actor_id, idempotency_key, payload, created_at FROM workflow_event
 WHERE workflow_instance_id = $1
@@ -2378,8 +2401,36 @@ func (q *Queries) GetWorkflowExecutorResolutionInWorkspace(ctx context.Context, 
 	return i, err
 }
 
+const getWorkflowInWorkspace = `-- name: GetWorkflowInWorkspace :one
+SELECT id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at FROM workflow
+WHERE id = $1 AND workspace_id = $2
+`
+
+type GetWorkflowInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetWorkflowInWorkspace(ctx context.Context, arg GetWorkflowInWorkspaceParams) (Workflow, error) {
+	row := q.db.QueryRow(ctx, getWorkflowInWorkspace, arg.ID, arg.WorkspaceID)
+	var i Workflow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Description,
+		&i.Status,
+		&i.LatestPublishedVersionID,
+		&i.CreatedBy,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getWorkflowInstanceByStartIdempotencyKey = `-- name: GetWorkflowInstanceByStartIdempotencyKey :one
-SELECT wi.id, wi.workspace_id, wi.template_id, wi.template_version_id, wi.host_issue_id, wi.status, wi.host_status_mode, wi.input, wi.result, wi.revision, wi.started_by_type, wi.started_by_id, wi.started_at, wi.paused_at, wi.completed_at, wi.cancelled_at, wi.last_reconciled_at, wi.created_at, wi.updated_at, wi.reconcile_after, wi.title
+SELECT wi.id, wi.workspace_id, wi.workflow_id, wi.workflow_version_id, wi.host_issue_id, wi.status, wi.host_status_mode, wi.input, wi.result, wi.revision, wi.started_by_type, wi.started_by_id, wi.started_at, wi.paused_at, wi.completed_at, wi.cancelled_at, wi.last_reconciled_at, wi.created_at, wi.updated_at, wi.reconcile_after, wi.title
 FROM workflow_event we
 JOIN workflow_instance wi
   ON wi.id = we.workflow_instance_id
@@ -2401,8 +2452,8 @@ func (q *Queries) GetWorkflowInstanceByStartIdempotencyKey(ctx context.Context, 
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.TemplateVersionID,
+		&i.WorkflowID,
+		&i.WorkflowVersionID,
 		&i.HostIssueID,
 		&i.Status,
 		&i.HostStatusMode,
@@ -2425,7 +2476,7 @@ func (q *Queries) GetWorkflowInstanceByStartIdempotencyKey(ctx context.Context, 
 }
 
 const getWorkflowInstanceInWorkspace = `-- name: GetWorkflowInstanceInWorkspace :one
-SELECT id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
+SELECT id, workspace_id, workflow_id, workflow_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -2440,8 +2491,8 @@ func (q *Queries) GetWorkflowInstanceInWorkspace(ctx context.Context, arg GetWor
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.TemplateVersionID,
+		&i.WorkflowID,
+		&i.WorkflowVersionID,
 		&i.HostIssueID,
 		&i.Status,
 		&i.HostStatusMode,
@@ -2675,136 +2726,6 @@ func (q *Queries) GetWorkflowSubmissionInWorkspace(ctx context.Context, arg GetW
 	return i, err
 }
 
-const getWorkflowTemplateDraft = `-- name: GetWorkflowTemplateDraft :one
-SELECT id, workspace_id, template_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_template_version
-WHERE template_id = $1 AND workspace_id = $2 AND status = 'draft'
-LIMIT 1
-`
-
-type GetWorkflowTemplateDraftParams struct {
-	TemplateID  pgtype.UUID `json:"template_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) GetWorkflowTemplateDraft(ctx context.Context, arg GetWorkflowTemplateDraftParams) (WorkflowTemplateVersion, error) {
-	row := q.db.QueryRow(ctx, getWorkflowTemplateDraft, arg.TemplateID, arg.WorkspaceID)
-	var i WorkflowTemplateVersion
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.Version,
-		&i.Status,
-		&i.Definition,
-		&i.DefinitionChecksum,
-		&i.ChangeSummary,
-		&i.CreatedBy,
-		&i.PublishedBy,
-		&i.PublishedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Revision,
-	)
-	return i, err
-}
-
-const getWorkflowTemplateInWorkspace = `-- name: GetWorkflowTemplateInWorkspace :one
-SELECT id, workspace_id, name, description, applies_to_kind, applies_to_type_key, status, latest_published_version_id, created_by, archived_at, created_at, updated_at FROM workflow_template
-WHERE id = $1 AND workspace_id = $2
-`
-
-type GetWorkflowTemplateInWorkspaceParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) GetWorkflowTemplateInWorkspace(ctx context.Context, arg GetWorkflowTemplateInWorkspaceParams) (WorkflowTemplate, error) {
-	row := q.db.QueryRow(ctx, getWorkflowTemplateInWorkspace, arg.ID, arg.WorkspaceID)
-	var i WorkflowTemplate
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.Description,
-		&i.AppliesToKind,
-		&i.AppliesToTypeKey,
-		&i.Status,
-		&i.LatestPublishedVersionID,
-		&i.CreatedBy,
-		&i.ArchivedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getWorkflowTemplateVersionByNumber = `-- name: GetWorkflowTemplateVersionByNumber :one
-SELECT id, workspace_id, template_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_template_version
-WHERE template_id = $1
-  AND workspace_id = $2
-  AND version = $3
-`
-
-type GetWorkflowTemplateVersionByNumberParams struct {
-	TemplateID  pgtype.UUID `json:"template_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Version     int32       `json:"version"`
-}
-
-func (q *Queries) GetWorkflowTemplateVersionByNumber(ctx context.Context, arg GetWorkflowTemplateVersionByNumberParams) (WorkflowTemplateVersion, error) {
-	row := q.db.QueryRow(ctx, getWorkflowTemplateVersionByNumber, arg.TemplateID, arg.WorkspaceID, arg.Version)
-	var i WorkflowTemplateVersion
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.Version,
-		&i.Status,
-		&i.Definition,
-		&i.DefinitionChecksum,
-		&i.ChangeSummary,
-		&i.CreatedBy,
-		&i.PublishedBy,
-		&i.PublishedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Revision,
-	)
-	return i, err
-}
-
-const getWorkflowTemplateVersionInWorkspace = `-- name: GetWorkflowTemplateVersionInWorkspace :one
-SELECT id, workspace_id, template_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_template_version
-WHERE id = $1 AND workspace_id = $2
-`
-
-type GetWorkflowTemplateVersionInWorkspaceParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) GetWorkflowTemplateVersionInWorkspace(ctx context.Context, arg GetWorkflowTemplateVersionInWorkspaceParams) (WorkflowTemplateVersion, error) {
-	row := q.db.QueryRow(ctx, getWorkflowTemplateVersionInWorkspace, arg.ID, arg.WorkspaceID)
-	var i WorkflowTemplateVersion
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.Version,
-		&i.Status,
-		&i.Definition,
-		&i.DefinitionChecksum,
-		&i.ChangeSummary,
-		&i.CreatedBy,
-		&i.PublishedBy,
-		&i.PublishedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Revision,
-	)
-	return i, err
-}
-
 const getWorkflowVerdictInWorkspace = `-- name: GetWorkflowVerdictInWorkspace :one
 SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, result, reason, confidence, evidence, basis, evaluator_type, evaluator_id, definition_snapshot, created_at FROM workflow_node_verdict
 WHERE id = $1 AND workspace_id = $2
@@ -2837,13 +2758,80 @@ func (q *Queries) GetWorkflowVerdictInWorkspace(ctx context.Context, arg GetWork
 	return i, err
 }
 
+const getWorkflowVersionByNumber = `-- name: GetWorkflowVersionByNumber :one
+SELECT id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
+WHERE workflow_id = $1
+  AND workspace_id = $2
+  AND version = $3
+`
+
+type GetWorkflowVersionByNumberParams struct {
+	WorkflowID  pgtype.UUID `json:"workflow_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Version     int32       `json:"version"`
+}
+
+func (q *Queries) GetWorkflowVersionByNumber(ctx context.Context, arg GetWorkflowVersionByNumberParams) (WorkflowVersion, error) {
+	row := q.db.QueryRow(ctx, getWorkflowVersionByNumber, arg.WorkflowID, arg.WorkspaceID, arg.Version)
+	var i WorkflowVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowID,
+		&i.Version,
+		&i.Status,
+		&i.Definition,
+		&i.DefinitionChecksum,
+		&i.ChangeSummary,
+		&i.CreatedBy,
+		&i.PublishedBy,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+	)
+	return i, err
+}
+
+const getWorkflowVersionInWorkspace = `-- name: GetWorkflowVersionInWorkspace :one
+SELECT id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
+WHERE id = $1 AND workspace_id = $2
+`
+
+type GetWorkflowVersionInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetWorkflowVersionInWorkspace(ctx context.Context, arg GetWorkflowVersionInWorkspaceParams) (WorkflowVersion, error) {
+	row := q.db.QueryRow(ctx, getWorkflowVersionInWorkspace, arg.ID, arg.WorkspaceID)
+	var i WorkflowVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowID,
+		&i.Version,
+		&i.Status,
+		&i.Definition,
+		&i.DefinitionChecksum,
+		&i.ChangeSummary,
+		&i.CreatedBy,
+		&i.PublishedBy,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+	)
+	return i, err
+}
+
 const listIssueWorkflowContexts = `-- name: ListIssueWorkflowContexts :many
 
 SELECT
   task.issue_id,
   instance.id AS workflow_instance_id,
-  template.id AS workflow_template_id,
-  template.name AS workflow_template_name,
+  workflow_def.id AS workflow_id,
+  workflow_def.name AS workflow_name,
   node.id AS workflow_node_instance_id,
   node.node_key AS activity_key,
   node.name_snapshot AS activity_name,
@@ -2858,9 +2846,9 @@ JOIN workflow_node_instance node
 JOIN workflow_instance instance
   ON instance.id = task.workflow_instance_id
  AND instance.workspace_id = task.workspace_id
-JOIN workflow_template template
-  ON template.id = instance.template_id
- AND template.workspace_id = task.workspace_id
+JOIN workflow workflow_def
+  ON workflow_def.id = instance.workflow_id
+ AND workflow_def.workspace_id = task.workspace_id
 LEFT JOIN issue host
   ON host.id = instance.host_issue_id
  AND host.workspace_id = task.workspace_id
@@ -2877,8 +2865,8 @@ type ListIssueWorkflowContextsParams struct {
 type ListIssueWorkflowContextsRow struct {
 	IssueID                pgtype.UUID `json:"issue_id"`
 	WorkflowInstanceID     pgtype.UUID `json:"workflow_instance_id"`
-	WorkflowTemplateID     pgtype.UUID `json:"workflow_template_id"`
-	WorkflowTemplateName   string      `json:"workflow_template_name"`
+	WorkflowID             pgtype.UUID `json:"workflow_id"`
+	WorkflowName           string      `json:"workflow_name"`
 	WorkflowNodeInstanceID pgtype.UUID `json:"workflow_node_instance_id"`
 	ActivityKey            string      `json:"activity_key"`
 	ActivityName           string      `json:"activity_name"`
@@ -2903,8 +2891,8 @@ func (q *Queries) ListIssueWorkflowContexts(ctx context.Context, arg ListIssueWo
 		if err := rows.Scan(
 			&i.IssueID,
 			&i.WorkflowInstanceID,
-			&i.WorkflowTemplateID,
-			&i.WorkflowTemplateName,
+			&i.WorkflowID,
+			&i.WorkflowName,
 			&i.WorkflowNodeInstanceID,
 			&i.ActivityKey,
 			&i.ActivityName,
@@ -3355,8 +3343,8 @@ SELECT
   COALESCE(host.number, 0)::integer AS host_issue_number,
   COALESCE(host.priority, '') AS host_issue_priority,
   host.project_id,
-  template.name AS template_name,
-  version.version AS template_version,
+  workflow_def.name AS workflow_name,
+  version.version AS workflow_version,
   CAST(COALESCE((
     SELECT count(*)::integer
     FROM workflow_node_instance node
@@ -3390,11 +3378,11 @@ FROM workflow_instance wi
 LEFT JOIN issue host
   ON host.id = wi.host_issue_id
  AND host.workspace_id = wi.workspace_id
-JOIN workflow_template template
-  ON template.id = wi.template_id
- AND template.workspace_id = wi.workspace_id
-JOIN workflow_template_version version
-  ON version.id = wi.template_version_id
+JOIN workflow workflow_def
+  ON workflow_def.id = wi.workflow_id
+ AND workflow_def.workspace_id = wi.workspace_id
+JOIN workflow_version version
+  ON version.id = wi.workflow_version_id
  AND version.workspace_id = wi.workspace_id
 WHERE wi.workspace_id = $1
   AND wi.id = ANY($2::uuid[])
@@ -3411,8 +3399,8 @@ type ListWorkflowInstanceDisplayContextsRow struct {
 	HostIssueNumber    int32       `json:"host_issue_number"`
 	HostIssuePriority  string      `json:"host_issue_priority"`
 	ProjectID          pgtype.UUID `json:"project_id"`
-	TemplateName       string      `json:"template_name"`
-	TemplateVersion    int32       `json:"template_version"`
+	WorkflowName       string      `json:"workflow_name"`
+	WorkflowVersion    int32       `json:"workflow_version"`
 	ActivityTotal      int32       `json:"activity_total"`
 	ActivityCompleted  int32       `json:"activity_completed"`
 }
@@ -3432,8 +3420,8 @@ func (q *Queries) ListWorkflowInstanceDisplayContexts(ctx context.Context, arg L
 			&i.HostIssueNumber,
 			&i.HostIssuePriority,
 			&i.ProjectID,
-			&i.TemplateName,
-			&i.TemplateVersion,
+			&i.WorkflowName,
+			&i.WorkflowVersion,
 			&i.ActivityTotal,
 			&i.ActivityCompleted,
 		); err != nil {
@@ -3559,7 +3547,7 @@ func (q *Queries) ListWorkflowInstanceTasks(ctx context.Context, arg ListWorkflo
 }
 
 const listWorkflowInstances = `-- name: ListWorkflowInstances :many
-SELECT wi.id, wi.workspace_id, wi.template_id, wi.template_version_id, wi.host_issue_id, wi.status, wi.host_status_mode, wi.input, wi.result, wi.revision, wi.started_by_type, wi.started_by_id, wi.started_at, wi.paused_at, wi.completed_at, wi.cancelled_at, wi.last_reconciled_at, wi.created_at, wi.updated_at, wi.reconcile_after, wi.title
+SELECT wi.id, wi.workspace_id, wi.workflow_id, wi.workflow_version_id, wi.host_issue_id, wi.status, wi.host_status_mode, wi.input, wi.result, wi.revision, wi.started_by_type, wi.started_by_id, wi.started_at, wi.paused_at, wi.completed_at, wi.cancelled_at, wi.last_reconciled_at, wi.created_at, wi.updated_at, wi.reconcile_after, wi.title
 FROM workflow_instance wi
 CROSS JOIN LATERAL (
   SELECT CASE
@@ -3828,7 +3816,7 @@ WHERE wi.workspace_id = $3
       AND host.workspace_id = wi.workspace_id
       AND host.project_id = $5
   ))
-  AND ($6::uuid IS NULL OR wi.template_id = $6)
+  AND ($6::uuid IS NULL OR wi.workflow_id = $6)
   AND ($7::text IS NULL OR EXISTS (
     SELECT 1 FROM workflow_node_instance current_node
     WHERE current_node.workflow_instance_id = wi.id
@@ -3918,7 +3906,7 @@ type ListWorkflowInstancesParams struct {
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
 	Status                 pgtype.Text        `json:"status"`
 	ProjectID              pgtype.UUID        `json:"project_id"`
-	TemplateID             pgtype.UUID        `json:"template_id"`
+	WorkflowID             pgtype.UUID        `json:"workflow_id"`
 	CurrentNodeKey         pgtype.Text        `json:"current_node_key"`
 	OwnerID                pgtype.UUID        `json:"owner_id"`
 	OwnerType              pgtype.Text        `json:"owner_type"`
@@ -3937,7 +3925,7 @@ func (q *Queries) ListWorkflowInstances(ctx context.Context, arg ListWorkflowIns
 		arg.WorkspaceID,
 		arg.Status,
 		arg.ProjectID,
-		arg.TemplateID,
+		arg.WorkflowID,
 		arg.CurrentNodeKey,
 		arg.OwnerID,
 		arg.OwnerType,
@@ -3958,8 +3946,8 @@ func (q *Queries) ListWorkflowInstances(ctx context.Context, arg ListWorkflowIns
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkspaceID,
-			&i.TemplateID,
-			&i.TemplateVersionID,
+			&i.WorkflowID,
+			&i.WorkflowVersionID,
 			&i.HostIssueID,
 			&i.Status,
 			&i.HostStatusMode,
@@ -4439,6 +4427,120 @@ func (q *Queries) ListWorkflowSubmissions(ctx context.Context, arg ListWorkflowS
 	return items, nil
 }
 
+const listWorkflowSummaries = `-- name: ListWorkflowSummaries :many
+SELECT
+  workflow_def.id, workflow_def.workspace_id, workflow_def.name, workflow_def.description, workflow_def.status, workflow_def.latest_published_version_id, workflow_def.created_by, workflow_def.archived_at, workflow_def.created_at, workflow_def.updated_at,
+  COALESCE(published.version, 0)::integer AS latest_published_version,
+  COALESCE(draft.version, 0)::integer AS draft_version,
+  CAST(draft.id IS NOT NULL AS boolean) AS has_draft,
+  COALESCE((
+    SELECT count(*)::integer
+    FROM jsonb_array_elements(
+      COALESCE(published.definition, draft.definition, '{"nodes":[]}'::jsonb)
+        -> 'nodes'
+    ) node
+    WHERE node->>'kind' = 'activity'
+  ), 0)::integer AS activity_count,
+  (
+    SELECT count(*)::bigint
+    FROM workflow_instance instance
+    WHERE instance.workspace_id = workflow_def.workspace_id
+      AND instance.workflow_id = workflow_def.id
+  ) AS run_count,
+  published.published_by AS last_published_by,
+  published.published_at AS last_published_at,
+  COALESCE(published.change_summary, draft.change_summary, '') AS latest_change_summary
+FROM workflow workflow_def
+LEFT JOIN LATERAL (
+  SELECT version.id, version.workspace_id, version.workflow_id, version.version, version.status, version.definition, version.definition_checksum, version.change_summary, version.created_by, version.published_by, version.published_at, version.created_at, version.updated_at, version.revision
+  FROM workflow_version version
+  WHERE version.workspace_id = workflow_def.workspace_id
+    AND version.workflow_id = workflow_def.id
+    AND version.status = 'published'
+  ORDER BY version.version DESC
+  LIMIT 1
+) published ON true
+LEFT JOIN LATERAL (
+  SELECT version.id, version.workspace_id, version.workflow_id, version.version, version.status, version.definition, version.definition_checksum, version.change_summary, version.created_by, version.published_by, version.published_at, version.created_at, version.updated_at, version.revision
+  FROM workflow_version version
+  WHERE version.workspace_id = workflow_def.workspace_id
+    AND version.workflow_id = workflow_def.id
+    AND version.status = 'draft'
+  LIMIT 1
+) draft ON true
+WHERE workflow_def.workspace_id = $1
+  AND (
+    $2::text IS NULL
+    OR workflow_def.status = $2
+  )
+ORDER BY workflow_def.updated_at DESC, workflow_def.id DESC
+`
+
+type ListWorkflowSummariesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Status      pgtype.Text `json:"status"`
+}
+
+type ListWorkflowSummariesRow struct {
+	ID                       pgtype.UUID        `json:"id"`
+	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	Name                     string             `json:"name"`
+	Description              string             `json:"description"`
+	Status                   string             `json:"status"`
+	LatestPublishedVersionID pgtype.UUID        `json:"latest_published_version_id"`
+	CreatedBy                pgtype.UUID        `json:"created_by"`
+	ArchivedAt               pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	LatestPublishedVersion   int32              `json:"latest_published_version"`
+	DraftVersion             int32              `json:"draft_version"`
+	HasDraft                 bool               `json:"has_draft"`
+	ActivityCount            int32              `json:"activity_count"`
+	RunCount                 int64              `json:"run_count"`
+	LastPublishedBy          pgtype.UUID        `json:"last_published_by"`
+	LastPublishedAt          pgtype.Timestamptz `json:"last_published_at"`
+	LatestChangeSummary      string             `json:"latest_change_summary"`
+}
+
+func (q *Queries) ListWorkflowSummaries(ctx context.Context, arg ListWorkflowSummariesParams) ([]ListWorkflowSummariesRow, error) {
+	rows, err := q.db.Query(ctx, listWorkflowSummaries, arg.WorkspaceID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkflowSummariesRow{}
+	for rows.Next() {
+		var i ListWorkflowSummariesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Name,
+			&i.Description,
+			&i.Status,
+			&i.LatestPublishedVersionID,
+			&i.CreatedBy,
+			&i.ArchivedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LatestPublishedVersion,
+			&i.DraftVersion,
+			&i.HasDraft,
+			&i.ActivityCount,
+			&i.RunCount,
+			&i.LastPublishedBy,
+			&i.LastPublishedAt,
+			&i.LatestChangeSummary,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkflowTasksForInstances = `-- name: ListWorkflowTasksForInstances :many
 SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, task_key, source, required, definition_snapshot, materialization_status, issue_id, executor_resolution_id, attempt_count, last_error, claimed_at, created_by_type, created_by_id, created_at, updated_at
 FROM workflow_node_task
@@ -4478,215 +4580,6 @@ func (q *Queries) ListWorkflowTasksForInstances(ctx context.Context, arg ListWor
 			&i.ClaimedAt,
 			&i.CreatedByType,
 			&i.CreatedByID,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listWorkflowTemplateSummaries = `-- name: ListWorkflowTemplateSummaries :many
-SELECT
-  template.id, template.workspace_id, template.name, template.description, template.applies_to_kind, template.applies_to_type_key, template.status, template.latest_published_version_id, template.created_by, template.archived_at, template.created_at, template.updated_at,
-  COALESCE(published.version, 0)::integer AS latest_published_version,
-  COALESCE(draft.version, 0)::integer AS draft_version,
-  CAST(draft.id IS NOT NULL AS boolean) AS has_draft,
-  COALESCE((
-    SELECT count(*)::integer
-    FROM jsonb_array_elements(
-      COALESCE(published.definition, draft.definition, '{"nodes":[]}'::jsonb)
-        -> 'nodes'
-    ) node
-    WHERE node->>'kind' = 'activity'
-  ), 0)::integer AS activity_count,
-  (
-    SELECT count(*)::bigint
-    FROM workflow_instance instance
-    WHERE instance.workspace_id = template.workspace_id
-      AND instance.template_id = template.id
-  ) AS run_count,
-  published.published_by AS last_published_by,
-  published.published_at AS last_published_at,
-  COALESCE(published.change_summary, draft.change_summary, '') AS latest_change_summary
-FROM workflow_template template
-LEFT JOIN LATERAL (
-  SELECT version.id, version.workspace_id, version.template_id, version.version, version.status, version.definition, version.definition_checksum, version.change_summary, version.created_by, version.published_by, version.published_at, version.created_at, version.updated_at, version.revision
-  FROM workflow_template_version version
-  WHERE version.workspace_id = template.workspace_id
-    AND version.template_id = template.id
-    AND version.status = 'published'
-  ORDER BY version.version DESC
-  LIMIT 1
-) published ON true
-LEFT JOIN LATERAL (
-  SELECT version.id, version.workspace_id, version.template_id, version.version, version.status, version.definition, version.definition_checksum, version.change_summary, version.created_by, version.published_by, version.published_at, version.created_at, version.updated_at, version.revision
-  FROM workflow_template_version version
-  WHERE version.workspace_id = template.workspace_id
-    AND version.template_id = template.id
-    AND version.status = 'draft'
-  LIMIT 1
-) draft ON true
-WHERE template.workspace_id = $1
-  AND (
-    $2::text IS NULL
-    OR template.status = $2
-  )
-ORDER BY template.updated_at DESC, template.id DESC
-`
-
-type ListWorkflowTemplateSummariesParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Status      pgtype.Text `json:"status"`
-}
-
-type ListWorkflowTemplateSummariesRow struct {
-	ID                       pgtype.UUID        `json:"id"`
-	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
-	Name                     string             `json:"name"`
-	Description              string             `json:"description"`
-	AppliesToKind            string             `json:"applies_to_kind"`
-	AppliesToTypeKey         string             `json:"applies_to_type_key"`
-	Status                   string             `json:"status"`
-	LatestPublishedVersionID pgtype.UUID        `json:"latest_published_version_id"`
-	CreatedBy                pgtype.UUID        `json:"created_by"`
-	ArchivedAt               pgtype.Timestamptz `json:"archived_at"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
-	LatestPublishedVersion   int32              `json:"latest_published_version"`
-	DraftVersion             int32              `json:"draft_version"`
-	HasDraft                 bool               `json:"has_draft"`
-	ActivityCount            int32              `json:"activity_count"`
-	RunCount                 int64              `json:"run_count"`
-	LastPublishedBy          pgtype.UUID        `json:"last_published_by"`
-	LastPublishedAt          pgtype.Timestamptz `json:"last_published_at"`
-	LatestChangeSummary      string             `json:"latest_change_summary"`
-}
-
-func (q *Queries) ListWorkflowTemplateSummaries(ctx context.Context, arg ListWorkflowTemplateSummariesParams) ([]ListWorkflowTemplateSummariesRow, error) {
-	rows, err := q.db.Query(ctx, listWorkflowTemplateSummaries, arg.WorkspaceID, arg.Status)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListWorkflowTemplateSummariesRow{}
-	for rows.Next() {
-		var i ListWorkflowTemplateSummariesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.Name,
-			&i.Description,
-			&i.AppliesToKind,
-			&i.AppliesToTypeKey,
-			&i.Status,
-			&i.LatestPublishedVersionID,
-			&i.CreatedBy,
-			&i.ArchivedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.LatestPublishedVersion,
-			&i.DraftVersion,
-			&i.HasDraft,
-			&i.ActivityCount,
-			&i.RunCount,
-			&i.LastPublishedBy,
-			&i.LastPublishedAt,
-			&i.LatestChangeSummary,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listWorkflowTemplateVersions = `-- name: ListWorkflowTemplateVersions :many
-SELECT id, workspace_id, template_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_template_version
-WHERE template_id = $1 AND workspace_id = $2
-ORDER BY version DESC
-`
-
-type ListWorkflowTemplateVersionsParams struct {
-	TemplateID  pgtype.UUID `json:"template_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) ListWorkflowTemplateVersions(ctx context.Context, arg ListWorkflowTemplateVersionsParams) ([]WorkflowTemplateVersion, error) {
-	rows, err := q.db.Query(ctx, listWorkflowTemplateVersions, arg.TemplateID, arg.WorkspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []WorkflowTemplateVersion{}
-	for rows.Next() {
-		var i WorkflowTemplateVersion
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.TemplateID,
-			&i.Version,
-			&i.Status,
-			&i.Definition,
-			&i.DefinitionChecksum,
-			&i.ChangeSummary,
-			&i.CreatedBy,
-			&i.PublishedBy,
-			&i.PublishedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.Revision,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listWorkflowTemplates = `-- name: ListWorkflowTemplates :many
-SELECT id, workspace_id, name, description, applies_to_kind, applies_to_type_key, status, latest_published_version_id, created_by, archived_at, created_at, updated_at FROM workflow_template
-WHERE workspace_id = $1
-  AND ($2::text IS NULL OR status = $2)
-ORDER BY updated_at DESC, id DESC
-`
-
-type ListWorkflowTemplatesParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Status      pgtype.Text `json:"status"`
-}
-
-func (q *Queries) ListWorkflowTemplates(ctx context.Context, arg ListWorkflowTemplatesParams) ([]WorkflowTemplate, error) {
-	rows, err := q.db.Query(ctx, listWorkflowTemplates, arg.WorkspaceID, arg.Status)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []WorkflowTemplate{}
-	for rows.Next() {
-		var i WorkflowTemplate
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.Name,
-			&i.Description,
-			&i.AppliesToKind,
-			&i.AppliesToTypeKey,
-			&i.Status,
-			&i.LatestPublishedVersionID,
-			&i.CreatedBy,
-			&i.ArchivedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -4746,8 +4639,131 @@ func (q *Queries) ListWorkflowVerdicts(ctx context.Context, arg ListWorkflowVerd
 	return items, nil
 }
 
+const listWorkflowVersions = `-- name: ListWorkflowVersions :many
+SELECT id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
+WHERE workflow_id = $1 AND workspace_id = $2
+ORDER BY version DESC
+`
+
+type ListWorkflowVersionsParams struct {
+	WorkflowID  pgtype.UUID `json:"workflow_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) ListWorkflowVersions(ctx context.Context, arg ListWorkflowVersionsParams) ([]WorkflowVersion, error) {
+	rows, err := q.db.Query(ctx, listWorkflowVersions, arg.WorkflowID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowVersion{}
+	for rows.Next() {
+		var i WorkflowVersion
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.WorkflowID,
+			&i.Version,
+			&i.Status,
+			&i.Definition,
+			&i.DefinitionChecksum,
+			&i.ChangeSummary,
+			&i.CreatedBy,
+			&i.PublishedBy,
+			&i.PublishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Revision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkflows = `-- name: ListWorkflows :many
+SELECT id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at FROM workflow
+WHERE workspace_id = $1
+  AND ($2::text IS NULL OR status = $2)
+ORDER BY updated_at DESC, id DESC
+`
+
+type ListWorkflowsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Status      pgtype.Text `json:"status"`
+}
+
+func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]Workflow, error) {
+	rows, err := q.db.Query(ctx, listWorkflows, arg.WorkspaceID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Workflow{}
+	for rows.Next() {
+		var i Workflow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Name,
+			&i.Description,
+			&i.Status,
+			&i.LatestPublishedVersionID,
+			&i.CreatedBy,
+			&i.ArchivedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockWorkflowDraft = `-- name: LockWorkflowDraft :one
+SELECT id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
+WHERE workflow_id = $1 AND workspace_id = $2 AND status = 'draft'
+LIMIT 1
+FOR UPDATE
+`
+
+type LockWorkflowDraftParams struct {
+	WorkflowID  pgtype.UUID `json:"workflow_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockWorkflowDraft(ctx context.Context, arg LockWorkflowDraftParams) (WorkflowVersion, error) {
+	row := q.db.QueryRow(ctx, lockWorkflowDraft, arg.WorkflowID, arg.WorkspaceID)
+	var i WorkflowVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowID,
+		&i.Version,
+		&i.Status,
+		&i.Definition,
+		&i.DefinitionChecksum,
+		&i.ChangeSummary,
+		&i.CreatedBy,
+		&i.PublishedBy,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+	)
+	return i, err
+}
+
 const lockWorkflowInstance = `-- name: LockWorkflowInstance :one
-SELECT id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
+SELECT id, workspace_id, workflow_id, workflow_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE
 `
@@ -4763,8 +4779,8 @@ func (q *Queries) LockWorkflowInstance(ctx context.Context, arg LockWorkflowInst
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.TemplateVersionID,
+		&i.WorkflowID,
+		&i.WorkflowVersionID,
 		&i.HostIssueID,
 		&i.Status,
 		&i.HostStatusMode,
@@ -4786,46 +4802,12 @@ func (q *Queries) LockWorkflowInstance(ctx context.Context, arg LockWorkflowInst
 	return i, err
 }
 
-const lockWorkflowTemplateDraft = `-- name: LockWorkflowTemplateDraft :one
-SELECT id, workspace_id, template_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_template_version
-WHERE template_id = $1 AND workspace_id = $2 AND status = 'draft'
-LIMIT 1
-FOR UPDATE
-`
-
-type LockWorkflowTemplateDraftParams struct {
-	TemplateID  pgtype.UUID `json:"template_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) LockWorkflowTemplateDraft(ctx context.Context, arg LockWorkflowTemplateDraftParams) (WorkflowTemplateVersion, error) {
-	row := q.db.QueryRow(ctx, lockWorkflowTemplateDraft, arg.TemplateID, arg.WorkspaceID)
-	var i WorkflowTemplateVersion
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.Version,
-		&i.Status,
-		&i.Definition,
-		&i.DefinitionChecksum,
-		&i.ChangeSummary,
-		&i.CreatedBy,
-		&i.PublishedBy,
-		&i.PublishedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Revision,
-	)
-	return i, err
-}
-
 const markWorkflowInstanceReconcilePending = `-- name: MarkWorkflowInstanceReconcilePending :one
 UPDATE workflow_instance
 SET last_reconciled_at = NULL,
     reconcile_after = NULL
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
+RETURNING id, workspace_id, workflow_id, workflow_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
 `
 
 type MarkWorkflowInstanceReconcilePendingParams struct {
@@ -4839,8 +4821,8 @@ func (q *Queries) MarkWorkflowInstanceReconcilePending(ctx context.Context, arg 
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.TemplateVersionID,
+		&i.WorkflowID,
+		&i.WorkflowVersionID,
 		&i.HostIssueID,
 		&i.Status,
 		&i.HostStatusMode,
@@ -4991,29 +4973,29 @@ func (q *Queries) MarkWorkflowNodeTaskMaterializing(ctx context.Context, arg Mar
 	return i, err
 }
 
-const publishWorkflowTemplateVersion = `-- name: PublishWorkflowTemplateVersion :one
-UPDATE workflow_template_version
+const publishWorkflowVersion = `-- name: PublishWorkflowVersion :one
+UPDATE workflow_version
 SET status = 'published',
     published_by = $1,
     published_at = now(),
     updated_at = now()
 WHERE id = $2 AND workspace_id = $3 AND status = 'draft'
-RETURNING id, workspace_id, template_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision
+RETURNING id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision
 `
 
-type PublishWorkflowTemplateVersionParams struct {
+type PublishWorkflowVersionParams struct {
 	PublishedBy pgtype.UUID `json:"published_by"`
 	ID          pgtype.UUID `json:"id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-func (q *Queries) PublishWorkflowTemplateVersion(ctx context.Context, arg PublishWorkflowTemplateVersionParams) (WorkflowTemplateVersion, error) {
-	row := q.db.QueryRow(ctx, publishWorkflowTemplateVersion, arg.PublishedBy, arg.ID, arg.WorkspaceID)
-	var i WorkflowTemplateVersion
+func (q *Queries) PublishWorkflowVersion(ctx context.Context, arg PublishWorkflowVersionParams) (WorkflowVersion, error) {
+	row := q.db.QueryRow(ctx, publishWorkflowVersion, arg.PublishedBy, arg.ID, arg.WorkspaceID)
+	var i WorkflowVersion
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.TemplateID,
+		&i.WorkflowID,
 		&i.Version,
 		&i.Status,
 		&i.Definition,
@@ -5284,31 +5266,29 @@ func (q *Queries) SetWorkflowNodeWaitingReasons(ctx context.Context, arg SetWork
 	return i, err
 }
 
-const setWorkflowTemplatePublishedVersion = `-- name: SetWorkflowTemplatePublishedVersion :one
-UPDATE workflow_template
+const setWorkflowPublishedVersion = `-- name: SetWorkflowPublishedVersion :one
+UPDATE workflow
 SET status = 'published',
     latest_published_version_id = $1,
     updated_at = now()
 WHERE id = $2 AND workspace_id = $3 AND status <> 'archived'
-RETURNING id, workspace_id, name, description, applies_to_kind, applies_to_type_key, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
+RETURNING id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
 `
 
-type SetWorkflowTemplatePublishedVersionParams struct {
+type SetWorkflowPublishedVersionParams struct {
 	LatestPublishedVersionID pgtype.UUID `json:"latest_published_version_id"`
 	ID                       pgtype.UUID `json:"id"`
 	WorkspaceID              pgtype.UUID `json:"workspace_id"`
 }
 
-func (q *Queries) SetWorkflowTemplatePublishedVersion(ctx context.Context, arg SetWorkflowTemplatePublishedVersionParams) (WorkflowTemplate, error) {
-	row := q.db.QueryRow(ctx, setWorkflowTemplatePublishedVersion, arg.LatestPublishedVersionID, arg.ID, arg.WorkspaceID)
-	var i WorkflowTemplate
+func (q *Queries) SetWorkflowPublishedVersion(ctx context.Context, arg SetWorkflowPublishedVersionParams) (Workflow, error) {
+	row := q.db.QueryRow(ctx, setWorkflowPublishedVersion, arg.LatestPublishedVersionID, arg.ID, arg.WorkspaceID)
+	var i Workflow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
 		&i.Name,
 		&i.Description,
-		&i.AppliesToKind,
-		&i.AppliesToTypeKey,
 		&i.Status,
 		&i.LatestPublishedVersionID,
 		&i.CreatedBy,
@@ -5345,6 +5325,58 @@ func (q *Queries) SupersedeWorkflowArtifact(ctx context.Context, arg SupersedeWo
 	return result.RowsAffected(), nil
 }
 
+const updateWorkflowDraft = `-- name: UpdateWorkflowDraft :one
+UPDATE workflow_version
+SET definition = $1,
+    definition_checksum = $2,
+    change_summary = $3,
+    revision = revision + 1,
+    updated_at = now()
+WHERE id = $4
+  AND workspace_id = $5
+  AND status = 'draft'
+  AND revision = $6
+RETURNING id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision
+`
+
+type UpdateWorkflowDraftParams struct {
+	Definition         []byte      `json:"definition"`
+	DefinitionChecksum string      `json:"definition_checksum"`
+	ChangeSummary      string      `json:"change_summary"`
+	ID                 pgtype.UUID `json:"id"`
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	ExpectedRevision   int64       `json:"expected_revision"`
+}
+
+func (q *Queries) UpdateWorkflowDraft(ctx context.Context, arg UpdateWorkflowDraftParams) (WorkflowVersion, error) {
+	row := q.db.QueryRow(ctx, updateWorkflowDraft,
+		arg.Definition,
+		arg.DefinitionChecksum,
+		arg.ChangeSummary,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.ExpectedRevision,
+	)
+	var i WorkflowVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowID,
+		&i.Version,
+		&i.Status,
+		&i.Definition,
+		&i.DefinitionChecksum,
+		&i.ChangeSummary,
+		&i.CreatedBy,
+		&i.PublishedBy,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+	)
+	return i, err
+}
+
 const updateWorkflowInstanceState = `-- name: UpdateWorkflowInstanceState :one
 UPDATE workflow_instance
 SET status = $1,
@@ -5356,7 +5388,7 @@ SET status = $1,
     last_reconciled_at = CASE WHEN $3::boolean THEN now() ELSE last_reconciled_at END,
     updated_at = now()
 WHERE id = $4 AND workspace_id = $5 AND revision = $6
-RETURNING id, workspace_id, template_id, template_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
+RETURNING id, workspace_id, workflow_id, workflow_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
 `
 
 type UpdateWorkflowInstanceStateParams struct {
@@ -5381,8 +5413,8 @@ func (q *Queries) UpdateWorkflowInstanceState(ctx context.Context, arg UpdateWor
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.TemplateVersionID,
+		&i.WorkflowID,
+		&i.WorkflowVersionID,
 		&i.HostIssueID,
 		&i.Status,
 		&i.HostStatusMode,
@@ -5400,6 +5432,45 @@ func (q *Queries) UpdateWorkflowInstanceState(ctx context.Context, arg UpdateWor
 		&i.UpdatedAt,
 		&i.ReconcileAfter,
 		&i.Title,
+	)
+	return i, err
+}
+
+const updateWorkflowMetadata = `-- name: UpdateWorkflowMetadata :one
+UPDATE workflow
+SET name = COALESCE($1, name),
+    description = COALESCE($2, description),
+    updated_at = now()
+WHERE id = $3 AND workspace_id = $4 AND status <> 'archived'
+RETURNING id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
+`
+
+type UpdateWorkflowMetadataParams struct {
+	Name        pgtype.Text `json:"name"`
+	Description pgtype.Text `json:"description"`
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) UpdateWorkflowMetadata(ctx context.Context, arg UpdateWorkflowMetadataParams) (Workflow, error) {
+	row := q.db.QueryRow(ctx, updateWorkflowMetadata,
+		arg.Name,
+		arg.Description,
+		arg.ID,
+		arg.WorkspaceID,
+	)
+	var i Workflow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Description,
+		&i.Status,
+		&i.LatestPublishedVersionID,
+		&i.CreatedBy,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -5454,102 +5525,6 @@ func (q *Queries) UpdateWorkflowNodeState(ctx context.Context, arg UpdateWorkflo
 		&i.CompletedAt,
 		&i.SupersededAt,
 		&i.LastReconciledAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const updateWorkflowTemplateDraft = `-- name: UpdateWorkflowTemplateDraft :one
-UPDATE workflow_template_version
-SET definition = $1,
-    definition_checksum = $2,
-    change_summary = $3,
-    revision = revision + 1,
-    updated_at = now()
-WHERE id = $4
-  AND workspace_id = $5
-  AND status = 'draft'
-  AND revision = $6
-RETURNING id, workspace_id, template_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision
-`
-
-type UpdateWorkflowTemplateDraftParams struct {
-	Definition         []byte      `json:"definition"`
-	DefinitionChecksum string      `json:"definition_checksum"`
-	ChangeSummary      string      `json:"change_summary"`
-	ID                 pgtype.UUID `json:"id"`
-	WorkspaceID        pgtype.UUID `json:"workspace_id"`
-	ExpectedRevision   int64       `json:"expected_revision"`
-}
-
-func (q *Queries) UpdateWorkflowTemplateDraft(ctx context.Context, arg UpdateWorkflowTemplateDraftParams) (WorkflowTemplateVersion, error) {
-	row := q.db.QueryRow(ctx, updateWorkflowTemplateDraft,
-		arg.Definition,
-		arg.DefinitionChecksum,
-		arg.ChangeSummary,
-		arg.ID,
-		arg.WorkspaceID,
-		arg.ExpectedRevision,
-	)
-	var i WorkflowTemplateVersion
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.TemplateID,
-		&i.Version,
-		&i.Status,
-		&i.Definition,
-		&i.DefinitionChecksum,
-		&i.ChangeSummary,
-		&i.CreatedBy,
-		&i.PublishedBy,
-		&i.PublishedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Revision,
-	)
-	return i, err
-}
-
-const updateWorkflowTemplateMetadata = `-- name: UpdateWorkflowTemplateMetadata :one
-UPDATE workflow_template
-SET name = COALESCE($1, name),
-    description = COALESCE($2, description),
-    applies_to_type_key = COALESCE($3, applies_to_type_key),
-    updated_at = now()
-WHERE id = $4 AND workspace_id = $5 AND status <> 'archived'
-RETURNING id, workspace_id, name, description, applies_to_kind, applies_to_type_key, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
-`
-
-type UpdateWorkflowTemplateMetadataParams struct {
-	Name             pgtype.Text `json:"name"`
-	Description      pgtype.Text `json:"description"`
-	AppliesToTypeKey pgtype.Text `json:"applies_to_type_key"`
-	ID               pgtype.UUID `json:"id"`
-	WorkspaceID      pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) UpdateWorkflowTemplateMetadata(ctx context.Context, arg UpdateWorkflowTemplateMetadataParams) (WorkflowTemplate, error) {
-	row := q.db.QueryRow(ctx, updateWorkflowTemplateMetadata,
-		arg.Name,
-		arg.Description,
-		arg.AppliesToTypeKey,
-		arg.ID,
-		arg.WorkspaceID,
-	)
-	var i WorkflowTemplate
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.Description,
-		&i.AppliesToKind,
-		&i.AppliesToTypeKey,
-		&i.Status,
-		&i.LatestPublishedVersionID,
-		&i.CreatedBy,
-		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

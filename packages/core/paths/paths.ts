@@ -25,9 +25,11 @@ function workspaceScoped(slug: string) {
     projects: () => `${ws}/projects`,
     projectDetail: (id: string) => `${ws}/projects/${encode(id)}`,
     workflows: () => `${ws}/workflows`,
-    workflowDetail: (id: string) => `${ws}/workflows/${encode(id)}`,
-    workflowTemplate: (id: string) =>
-      `${ws}/workflows/templates/${encode(id)}`,
+    // The workflow is the primary object; a run is an instance of one. Both
+    // used to sit at /workflows/:id with :id meaning a different entity in
+    // each, which is how "templates" ended up in the path to tell them apart.
+    workflow: (id: string) => `${ws}/workflows/${encode(id)}`,
+    workflowRun: (id: string) => `${ws}/workflows/runs/${encode(id)}`,
     autopilots: () => `${ws}/autopilots`,
     autopilotDetail: (id: string) => `${ws}/autopilots/${encode(id)}`,
     agents: () => `${ws}/agents`,

@@ -58,7 +58,7 @@ import { useFeatureEnabled } from "@multica/core/config";
 import { WORKFLOWS_ACTIVITY_ENGINE_FLAG } from "@multica/core/feature-flags";
 import {
   workflowInstanceListOptions,
-  workflowTemplateListOptions,
+  workflowListOptions,
 } from "@multica/core/workflows";
 import { memberListOptions, agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
@@ -116,7 +116,7 @@ function getActiveFilterCount(state: {
   labelFilters: string[];
   propertyFilters?: Record<string, string[]>;
   dateFilter?: IssueDateFilter | null;
-  workflowTemplateFilter?: string;
+  workflowFilter?: string;
   workflowInstanceFilter?: string;
   workflowActivityFilter?: string;
   workflowIssueOnly?: boolean;
@@ -132,7 +132,7 @@ function getActiveFilterCount(state: {
     if (selected.length > 0) count++;
   }
   if (state.dateFilter) count++;
-  if (state.workflowTemplateFilter) count++;
+  if (state.workflowFilter) count++;
   if (state.workflowInstanceFilter) count++;
   if (state.workflowActivityFilter) count++;
   if (state.workflowIssueOnly) count++;
@@ -899,7 +899,7 @@ export function IssueDisplayControls({
   const projectFilters = useViewStore((s) => s.projectFilters);
   const includeNoProject = useViewStore((s) => s.includeNoProject);
   const labelFilters = useViewStore((s) => s.labelFilters);
-  const workflowTemplateFilter = useViewStore((s) => s.workflowTemplateFilter);
+  const workflowFilter = useViewStore((s) => s.workflowFilter);
   const workflowInstanceFilter = useViewStore((s) => s.workflowInstanceFilter);
   const workflowActivityFilter = useViewStore((s) => s.workflowActivityFilter);
   const workflowIssueOnly = useViewStore((s) => s.workflowIssueOnly);
@@ -917,8 +917,8 @@ export function IssueDisplayControls({
     WORKFLOWS_ACTIVITY_ENGINE_FLAG,
     false,
   );
-  const { data: workflowTemplateData } = useQuery({
-    ...workflowTemplateListOptions(headerWsId),
+  const { data: workflowData } = useQuery({
+    ...workflowListOptions(headerWsId),
     enabled: workflowsEnabled,
   });
   const { data: workflowInstanceData } = useQuery({
@@ -931,13 +931,13 @@ export function IssueDisplayControls({
       const context = issue.workflow_context;
       if (!context) continue;
       if (
-        workflowTemplateFilter &&
-        context.workflow_template_id !== workflowTemplateFilter
+        workflowFilter &&
+        context.workflow_workflow_id !== workflowFilter
       ) continue;
       options.set(context.activity_key, context.activity_name || context.activity_key);
     }
     return [...options].map(([key, name]) => ({ key, name }));
-  }, [scopedIssues, workflowTemplateFilter]);
+  }, [scopedIssues, workflowFilter]);
   // Active custom-property catalog: drives the filter sections, dynamic
   // sort/grouping options, and the card-property toggles below.
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(headerWsId));
@@ -985,7 +985,7 @@ export function IssueDisplayControls({
     includeNoProject,
     labelFilters,
     dateFilter: showDateFilter ? dateFilter : null,
-    workflowTemplateFilter,
+    workflowFilter,
     workflowInstanceFilter,
     workflowActivityFilter,
     workflowIssueOnly,
@@ -1258,12 +1258,12 @@ export function IssueDisplayControls({
                   <span className="flex-1">
                     {t(($) => $.filters.section_workflow)}
                   </span>
-                  {(workflowIssueOnly || workflowTemplateFilter ||
+                  {(workflowIssueOnly || workflowFilter ||
                     workflowInstanceFilter || workflowActivityFilter) && (
                     <span className="text-xs font-medium text-primary">
                       {[
                         workflowIssueOnly,
-                        workflowTemplateFilter,
+                        workflowFilter,
                         workflowInstanceFilter,
                         workflowActivityFilter,
                       ].filter(Boolean).length}
@@ -1280,20 +1280,20 @@ export function IssueDisplayControls({
                     {t(($) => $.filters.workflow_issues_only)}
                   </DropdownMenuCheckboxItem>
 
-                  {(workflowTemplateData?.templates.length ?? 0) > 0 && (
+                  {(workflowData?.templates.length ?? 0) > 0 && (
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuLabel>
                         {t(($) => $.filters.workflow_template)}
                       </DropdownMenuLabel>
-                      {workflowTemplateData!.templates.map((template) => {
-                        const checked = workflowTemplateFilter === template.id;
+                      {workflowData!.templates.map((template) => {
+                        const checked = workflowFilter === template.id;
                         return (
                           <DropdownMenuCheckboxItem
                             key={template.id}
                             checked={checked}
                             onCheckedChange={() =>
-                              act.setWorkflowTemplateFilter(checked ? "" : template.id)}
+                              act.setWorkflowFilter(checked ? "" : template.id)}
                             className={FILTER_ITEM_CLASS}
                           >
                             <HoverCheck checked={checked} />
@@ -1312,8 +1312,8 @@ export function IssueDisplayControls({
                       </DropdownMenuLabel>
                       {workflowInstanceData!.instances
                         .filter((instance) =>
-                          !workflowTemplateFilter ||
-                          instance.template_id === workflowTemplateFilter
+                          !workflowFilter ||
+                          instance.workflow_id === workflowFilter
                         )
                         .map((instance) => {
                           const checked = workflowInstanceFilter === instance.id;

@@ -75,12 +75,12 @@ export const workflowInstanceIssuesOptions = (
     enabled: !!wsId && !!instanceId,
   });
 
-export const workflowTemplateOptions = (
+export const workflowOptions = (
   wsId: string | null,
   templateId: string,
 ) =>
   queryOptions({
     queryKey: workflowKeys.template(wsId, templateId),
-    queryFn: ({ signal }) => api.getWorkflowTemplate(templateId, { signal }),
+    queryFn: ({ signal }) => api.getWorkflow(templateId, { signal }),
     enabled: !!wsId && !!templateId,
   });

@@ -95,8 +95,8 @@ func (h *Handler) notifyWorkflowActionRequired(
 			slog.Warn(
 				"workflow inbox notification host lookup failed",
 				"workspace_id", uuidToString(instance.WorkspaceID),
-				"workflow_template_id", uuidToString(instance.TemplateID),
-				"workflow_version_id", uuidToString(instance.TemplateVersionID),
+				"workflow_template_id", uuidToString(instance.WorkflowID),
+				"workflow_version_id", uuidToString(instance.WorkflowVersionID),
 				"workflow_instance_id", uuidToString(instance.ID),
 				"host_issue_id", uuidToString(instance.HostIssueID),
 				"failure_type", "host_lookup_failed",
@@ -119,8 +119,8 @@ func (h *Handler) notifyWorkflowActionRequired(
 		slog.Warn(
 			"workflow inbox notification member lookup failed",
 			"workspace_id", uuidToString(instance.WorkspaceID),
-			"workflow_template_id", uuidToString(instance.TemplateID),
-			"workflow_version_id", uuidToString(instance.TemplateVersionID),
+			"workflow_template_id", uuidToString(instance.WorkflowID),
+			"workflow_version_id", uuidToString(instance.WorkflowVersionID),
 			"workflow_instance_id", uuidToString(instance.ID),
 			"host_issue_id", uuidToString(instance.HostIssueID),
 			"failure_type", "member_lookup_failed",
@@ -145,8 +145,8 @@ func (h *Handler) notifyWorkflowActionRequired(
 			slog.Warn(
 				"workflow inbox notification participant lookup failed",
 				"workspace_id", uuidToString(instance.WorkspaceID),
-				"workflow_template_id", uuidToString(instance.TemplateID),
-				"workflow_version_id", uuidToString(instance.TemplateVersionID),
+				"workflow_template_id", uuidToString(instance.WorkflowID),
+				"workflow_version_id", uuidToString(instance.WorkflowVersionID),
 				"workflow_instance_id", uuidToString(instance.ID),
 				"host_issue_id", uuidToString(instance.HostIssueID),
 				"node_key", node.NodeKey,
@@ -201,8 +201,8 @@ func (h *Handler) notifyWorkflowActionRequired(
 			slog.Warn(
 				"workflow inbox notification write failed",
 				"workspace_id", uuidToString(instance.WorkspaceID),
-				"workflow_template_id", uuidToString(instance.TemplateID),
-				"workflow_version_id", uuidToString(instance.TemplateVersionID),
+				"workflow_template_id", uuidToString(instance.WorkflowID),
+				"workflow_version_id", uuidToString(instance.WorkflowVersionID),
 				"workflow_instance_id", uuidToString(instance.ID),
 				"host_issue_id", uuidToString(instance.HostIssueID),
 				"recipient_id", uuidToString(recipientID),

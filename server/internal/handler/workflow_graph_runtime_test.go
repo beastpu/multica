@@ -13,7 +13,6 @@ func TestWorkflowNodeInputStateWaitsForAllImplicitMergePredecessors(t *testing.T
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Implicit merge",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{Key: "left", Kind: "activity", Name: "Left"},

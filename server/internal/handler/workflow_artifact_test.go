@@ -32,7 +32,6 @@ func startArtifactWorkflow(t *testing.T, key string) (string, string) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Artifact delivery",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true, AllowedActorTypes: []string{"member"},
 		}},
@@ -89,7 +88,7 @@ func startArtifactWorkflow(t *testing.T, key string) (string, string) {
 		http.MethodPost,
 		"/api/issues/"+hostID+"/workflow?workspace_id="+testWorkspaceID,
 		map[string]any{
-			"template_id": templateID,
+			"workflow_id": templateID,
 			"role_assignments": []map[string]any{{
 				"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
 			}},
@@ -349,7 +348,6 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Handoff delivery",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true, AllowedActorTypes: []string{"member"},
 		}},
@@ -392,7 +390,7 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 	request := withURLParam(newRequest(
 		http.MethodPost, "/api/issues/"+hostID+"/workflow?workspace_id="+testWorkspaceID,
 		map[string]any{
-			"template_id": templateID,
+			"workflow_id": templateID,
 			"role_assignments": []map[string]any{{
 				"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
 			}},
@@ -768,7 +766,6 @@ func TestDynamicNodeWaitsToBeDecomposed(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Decomposition " + t.Name(),
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -827,7 +824,7 @@ func TestDynamicNodeWaitsToBeDecomposed(t *testing.T) {
 		http.MethodPost,
 		"/api/issues/"+hostID+"/workflow?workspace_id="+testWorkspaceID,
 		map[string]any{
-			"template_id": templateID,
+			"workflow_id": templateID,
 			"role_assignments": []map[string]any{{
 				"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
 			}},

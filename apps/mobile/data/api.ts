@@ -61,7 +61,7 @@ import type {
   WorkflowInstanceDetail,
   WorkflowIssuesResponse,
   WorkflowNodeDetail,
-  WorkflowTemplateDetail,
+  WorkflowDetail,
 } from "@multica/core/workflows";
 import {
   EMPTY_LIST_ISSUES_RESPONSE,
@@ -77,7 +77,7 @@ import {
   WorkflowInstanceDetailSchema,
   WorkflowIssuesResponseSchema,
   WorkflowNodeDetailSchema,
-  WorkflowTemplateDetailSchema,
+  WorkflowDetailSchema,
 } from "@multica/core/api/workflow-schemas";
 import {
   ActiveTasksResponseSchema,
@@ -481,15 +481,15 @@ class ApiClient {
     );
   }
 
-  async getWorkflowTemplate(
+  async getWorkflow(
     templateId: string,
     opts?: { signal?: AbortSignal },
-  ): Promise<WorkflowTemplateDetail> {
+  ): Promise<WorkflowDetail> {
     return this.fetchValidated(
-      `/api/workflow-templates/${templateId}`,
-      WorkflowTemplateDetailSchema,
+      `/api/workflows/${templateId}`,
+      WorkflowDetailSchema,
       EMPTY_WORKFLOW_TEMPLATE_DETAIL,
-      { ...opts, endpoint: "GET /api/workflow-templates/:id" },
+      { ...opts, endpoint: "GET /api/workflows/:id" },
     );
   }
 

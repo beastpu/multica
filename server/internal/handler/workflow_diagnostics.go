@@ -29,10 +29,10 @@ func (h *Handler) GetWorkflowInstanceDiagnostics(
 	); !roleOK {
 		return
 	}
-	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(
+	version, err := h.Queries.GetWorkflowVersionInWorkspace(
 		r.Context(),
-		db.GetWorkflowTemplateVersionInWorkspaceParams{
-			ID: instance.TemplateVersionID, WorkspaceID: instance.WorkspaceID,
+		db.GetWorkflowVersionInWorkspaceParams{
+			ID: instance.WorkflowVersionID, WorkspaceID: instance.WorkspaceID,
 		},
 	)
 	if err != nil {

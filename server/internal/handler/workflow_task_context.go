@@ -262,10 +262,10 @@ func (h *Handler) workflowChoiceDuty(
 	instance db.WorkflowInstance,
 	node db.WorkflowNodeInstance,
 ) *WorkflowChoiceDuty {
-	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(
+	version, err := h.Queries.GetWorkflowVersionInWorkspace(
 		ctx,
-		db.GetWorkflowTemplateVersionInWorkspaceParams{
-			ID: instance.TemplateVersionID, WorkspaceID: instance.WorkspaceID,
+		db.GetWorkflowVersionInWorkspaceParams{
+			ID: instance.WorkflowVersionID, WorkspaceID: instance.WorkspaceID,
 		},
 	)
 	if err != nil {
@@ -384,10 +384,10 @@ func (h *Handler) workflowUpstreamContext(
 	node db.WorkflowNodeInstance,
 	live map[string]db.WorkflowNodeInstance,
 ) []WorkflowUpstreamContext {
-	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(
+	version, err := h.Queries.GetWorkflowVersionInWorkspace(
 		ctx,
-		db.GetWorkflowTemplateVersionInWorkspaceParams{
-			ID: instance.TemplateVersionID, WorkspaceID: instance.WorkspaceID,
+		db.GetWorkflowVersionInWorkspaceParams{
+			ID: instance.WorkflowVersionID, WorkspaceID: instance.WorkspaceID,
 		},
 	)
 	if err != nil {

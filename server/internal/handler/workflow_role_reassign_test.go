@@ -99,7 +99,6 @@ func TestWorkflowRolesCanBeReassignedWhileRunning(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Role reassign",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -118,7 +117,7 @@ func TestWorkflowRolesCanBeReassignedWhileRunning(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t, "Role reassign template", definition,
 	)
 	hostID := createWorkflowHostForTest(t, "Workflow role reassign host")
@@ -187,7 +186,6 @@ func TestWorkflowRolesRejectedAfterInstanceIsTerminal(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Role reassign terminal",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -203,7 +201,7 @@ func TestWorkflowRolesRejectedAfterInstanceIsTerminal(t *testing.T) {
 		},
 		Acceptance: workflowdomain.AcceptanceDefinition{Policy: "none"},
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t, "Role reassign terminal template", definition,
 	)
 	hostID := createWorkflowHostForTest(t, "Workflow role reassign terminal host")

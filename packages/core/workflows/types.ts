@@ -111,13 +111,11 @@ export interface BuiltinWorkflowTemplate {
   description: string;
 }
 
-export interface WorkflowTemplate {
+export interface Workflow {
   id: string;
   workspace_id: string;
   name: string;
   description: string;
-  applies_to_kind: string;
-  applies_to_type_key: string;
   status: string;
   latest_published_version_id: string | null;
   created_by: string;
@@ -134,10 +132,10 @@ export interface WorkflowTemplate {
   latest_change_summary: string;
 }
 
-export interface WorkflowTemplateVersion {
+export interface WorkflowVersion {
   id: string;
   workspace_id: string;
-  template_id: string;
+  workflow_id: string;
   version: number;
   revision: number;
   status: string;
@@ -154,8 +152,8 @@ export interface WorkflowTemplateVersion {
 export interface WorkflowInstance {
   id: string;
   workspace_id: string;
-  template_id: string;
-  template_version_id: string;
+  workflow_id: string;
+  workflow_version_id: string;
   host_issue_id: string;
   title: string;
   status: string;
@@ -178,8 +176,8 @@ export interface WorkflowInstance {
   host_issue_identifier: string;
   host_issue_priority: string;
   project_id: string | null;
-  template_name: string;
-  template_version: number;
+  workflow_name: string;
+  workflow_version: number;
   current_activities: WorkflowCurrentActivity[];
   activity_completed: number;
   activity_total: number;
@@ -326,14 +324,14 @@ export interface ListWorkflowInstancesResponse {
   next_cursor?: string | null;
 }
 
-export interface ListWorkflowTemplatesResponse {
-  templates: WorkflowTemplate[];
+export interface ListWorkflowsResponse {
+  templates: Workflow[];
   total: number;
 }
 
-export interface WorkflowTemplateDetail {
-  template: WorkflowTemplate;
-  versions: WorkflowTemplateVersion[];
+export interface WorkflowDetail {
+  workflow: Workflow;
+  versions: WorkflowVersion[];
 }
 
 export interface WorkflowIssuesResponse {
@@ -380,8 +378,8 @@ export interface WorkflowDiagnostics {
 }
 
 export interface StartWorkflowInput {
-  template_id: string;
-  template_version_id?: string;
+  workflow_id: string;
+  workflow_version_id?: string;
   host_status_mode?: string;
   input?: Record<string, unknown>;
   role_assignments: Array<{
@@ -393,17 +391,17 @@ export interface StartWorkflowInput {
   idempotency_key: string;
 }
 
-export interface CreateWorkflowInput extends Omit<StartWorkflowInput, "template_id"> {
+export interface CreateWorkflowInput extends Omit<StartWorkflowInput, "workflow_id"> {
   title: string;
   description?: string;
   priority?: string;
   project_id?: string;
-  template_id: string;
+  workflow_id: string;
 }
 
-export interface RunWorkflowTemplateInput {
+export interface RunWorkflowInput {
   title?: string;
-  template_version_id?: string;
+  workflow_version_id?: string;
   input?: Record<string, unknown>;
   role_assignments: StartWorkflowInput["role_assignments"];
   idempotency_key: string;

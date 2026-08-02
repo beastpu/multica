@@ -19,7 +19,7 @@ import { AutopilotsPage } from "@multica/views/autopilots/components";
 import {
   WorkflowDetailPage,
   WorkflowsRoute,
-  WorkflowTemplateRoute,
+  WorkflowRoute,
 } from "./pages/workflow-pages";
 import { MyIssuesPage } from "@multica/views/my-issues";
 import { SkillsPage } from "@multica/views/skills";
@@ -153,13 +153,13 @@ export const appRoutes: RouteObject[] = [
             handle: { title: "Workflows" },
           },
           {
-            path: "workflows/templates/:id",
-            element: <WorkflowTemplateRoute />,
-            handle: { title: "Workflow template" },
+            path: "workflows/runs/:id",
+            element: <WorkflowDetailPage />,
+            handle: { title: "Workflow run" },
           },
           {
             path: "workflows/:id",
-            element: <WorkflowDetailPage />,
+            element: <WorkflowRoute />,
             handle: { title: "Workflow" },
           },
           {

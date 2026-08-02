@@ -98,8 +98,8 @@ describe("issueMatchesListFilter", () => {
     const workflowIssue = makeIssue({
       workflow_context: {
         workflow_instance_id: "instance-1",
-        workflow_template_id: "template-1",
-        workflow_template_name: "Delivery",
+        workflow_workflow_id: "template-1",
+        workflow_workflow_name: "Delivery",
         workflow_node_instance_id: "node-1",
         activity_key: "build",
         activity_name: "Build",
@@ -112,7 +112,7 @@ describe("issueMatchesListFilter", () => {
     const filter = {
       workflow_issue_only: true,
       workflow_instance_id: "instance-1",
-      workflow_template_id: "template-1",
+      workflow_workflow_id: "template-1",
       workflow_activity: "build",
     } as const;
 

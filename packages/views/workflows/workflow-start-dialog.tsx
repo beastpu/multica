@@ -9,8 +9,8 @@ import { issueListOptions } from "@multica/core/issues/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   useStartIssueWorkflow,
-  workflowTemplateListOptions,
-  workflowTemplateOptions,
+  workflowListOptions,
+  workflowOptions,
   type WorkflowRoleDefinition,
 } from "@multica/core/workflows";
 import {
@@ -106,7 +106,7 @@ export function WorkflowStartDialog({ issueId }: { issueId?: string }) {
   const resolvedIssueId = issueId ?? selectedIssueId;
 
   const templatesQuery = useQuery({
-    ...workflowTemplateListOptions(wsId, { status: "published" }),
+    ...workflowListOptions(wsId, { status: "published" }),
     enabled: Boolean(wsId),
   });
   const templates = useMemo(
@@ -116,7 +116,7 @@ export function WorkflowStartDialog({ issueId }: { issueId?: string }) {
     [templatesQuery.data?.templates],
   );
   const templateQuery = useQuery({
-    ...workflowTemplateOptions(wsId, templateId),
+    ...workflowOptions(wsId, templateId),
     enabled: open && Boolean(templateId),
   });
   const publishedVersions = useMemo(
@@ -199,8 +199,8 @@ export function WorkflowStartDialog({ issueId }: { issueId?: string }) {
     ) return;
     setError("");
     start.mutate({
-      template_id: templateId,
-      template_version_id: selectedVersion.id,
+      workflow_id: templateId,
+      workflow_version_id: selectedVersion.id,
       host_status_mode: hostStatusMode,
       role_assignments: roles.flatMap((role) => {
         const actor = parseAssignment(assignments[role.key] ?? "");
@@ -217,7 +217,7 @@ export function WorkflowStartDialog({ issueId }: { issueId?: string }) {
     }, {
       onSuccess: (detail) => {
         close();
-        navigation.push(paths.workflowDetail(detail.instance.id));
+        navigation.push(paths.workflowRun(detail.instance.id));
       },
       onError: (cause) => {
         setError(

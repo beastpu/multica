@@ -178,10 +178,10 @@ import type {
 } from "../runtimes/cloud-runtime";
 import type {
   ListWorkflowInstancesResponse,
-  ListWorkflowTemplatesResponse,
+  ListWorkflowsResponse,
   StartWorkflowInput,
   CreateWorkflowInput,
-  RunWorkflowTemplateInput,
+  RunWorkflowInput,
   WorkflowAcceptance,
   WorkflowAcceptancesResponse,
   WorkflowDefinition,
@@ -196,9 +196,9 @@ import type {
   WorkflowNodeTask,
   WorkflowSubmission,
   WorkflowVerdict,
-  WorkflowTemplate,
-  WorkflowTemplateDetail,
-  WorkflowTemplateVersion,
+  Workflow,
+  WorkflowDetail,
+  WorkflowVersion,
 } from "../workflows/types";
 import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
@@ -341,12 +341,12 @@ import {
   EMPTY_LIST_WORKFLOW_TEMPLATES,
   EMPTY_WORKFLOW_INSTANCE_DETAIL,
   EMPTY_WORKFLOW_NODE_DETAIL,
-  EMPTY_WORKFLOW_TEMPLATE_DETAIL,
+  EMPTY_WORKFLOW_DETAIL,
   EMPTY_WORKFLOW_TEMPLATE_VERSION,
   EMPTY_WORKFLOW_ACCEPTANCES,
   ListBuiltinWorkflowTemplatesResponseSchema,
   ListWorkflowInstancesResponseSchema,
-  ListWorkflowTemplatesResponseSchema,
+  ListWorkflowsResponseSchema,
   WorkflowAcceptanceMutationResponseSchema,
   WorkflowAcceptancesResponseSchema,
   WorkflowExecutorResolutionMutationResponseSchema,
@@ -360,12 +360,12 @@ import {
   WorkflowSubmissionMutationResponseSchema,
   WorkflowVerdictMutationResponseSchema,
   WorkflowTaskMutationResponseSchema,
-  WorkflowTemplateCreateResponseSchema,
-  WorkflowTemplateDetailSchema,
-  WorkflowTemplatePublishResponseSchema,
-  WorkflowTemplateSaveResponseSchema,
-  WorkflowTemplateSchema,
-  WorkflowTemplateVersionSchema,
+  WorkflowCreateResponseSchema,
+  WorkflowDetailSchema,
+  WorkflowPublishResponseSchema,
+  WorkflowSaveResponseSchema,
+  WorkflowSchema,
+  WorkflowVersionSchema,
   WorkflowDefinitionValidationResponseSchema,
 } from "./workflow-schemas";
 
@@ -751,7 +751,7 @@ export class ApiClient {
     if (params?.project_ids?.length) search.set("project_ids", params.project_ids.join(","));
     if (params?.include_no_project) search.set("include_no_project", "true");
     if (params?.label_ids?.length) search.set("label_ids", params.label_ids.join(","));
-    if (params?.workflow_template_id) search.set("workflow_template_id", params.workflow_template_id);
+    if (params?.workflow_workflow_id) search.set("workflow_workflow_id", params.workflow_workflow_id);
     if (params?.workflow_instance_id) search.set("workflow_instance_id", params.workflow_instance_id);
     if (params?.workflow_activity) search.set("workflow_activity", params.workflow_activity);
     if (params?.workflow_issue_only) search.set("workflow_issue_only", "true");
@@ -796,7 +796,7 @@ export class ApiClient {
     if (params.project_ids?.length) search.set("project_ids", params.project_ids.join(","));
     if (params.include_no_project) search.set("include_no_project", "true");
     if (params.label_ids?.length) search.set("label_ids", params.label_ids.join(","));
-    if (params.workflow_template_id) search.set("workflow_template_id", params.workflow_template_id);
+    if (params.workflow_workflow_id) search.set("workflow_workflow_id", params.workflow_workflow_id);
     if (params.workflow_instance_id) search.set("workflow_instance_id", params.workflow_instance_id);
     if (params.workflow_activity) search.set("workflow_activity", params.workflow_activity);
     if (params.workflow_issue_only) search.set("workflow_issue_only", "true");
@@ -3189,7 +3189,7 @@ export class ApiClient {
     status?: string;
     related_to_me?: boolean;
     project_id?: string;
-    template_id?: string;
+    workflow_id?: string;
     current_node_key?: string;
     owner_type?: "member" | "agent" | "squad";
     owner_id?: string;
@@ -3201,7 +3201,7 @@ export class ApiClient {
     if (params?.status) search.set("status", params.status);
     if (params?.related_to_me) search.set("related_to_me", "true");
     if (params?.project_id) search.set("project_id", params.project_id);
-    if (params?.template_id) search.set("template_id", params.template_id);
+    if (params?.workflow_id) search.set("workflow_id", params.workflow_id);
     if (params?.current_node_key) search.set("current_node_key", params.current_node_key);
     if (params?.owner_type) search.set("owner_type", params.owner_type);
     if (params?.owner_id) search.set("owner_id", params.owner_id);
@@ -3241,7 +3241,7 @@ export class ApiClient {
     );
   }
 
-  async createWorkflow(input: CreateWorkflowInput): Promise<WorkflowInstanceDetail> {
+  async createWorkflowRun(input: CreateWorkflowInput): Promise<WorkflowInstanceDetail> {
     const raw = await this.fetch<unknown>("/api/workflow-instances", {
       method: "POST",
       body: JSON.stringify(input),
@@ -3254,11 +3254,11 @@ export class ApiClient {
     );
   }
 
-  async runWorkflowTemplate(
+  async runWorkflow(
     templateId: string,
-    input: RunWorkflowTemplateInput,
+    input: RunWorkflowInput,
   ): Promise<WorkflowInstanceDetail> {
-    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}/runs`, {
+    const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/runs`, {
       method: "POST",
       body: JSON.stringify(input),
     });
@@ -3266,7 +3266,7 @@ export class ApiClient {
       raw,
       WorkflowInstanceDetailSchema,
       EMPTY_WORKFLOW_INSTANCE_DETAIL,
-      { endpoint: "POST /api/workflow-templates/:id/runs" },
+      { endpoint: "POST /api/workflows/:id/runs" },
     );
   }
 
@@ -3639,119 +3639,118 @@ export class ApiClient {
     );
   }
 
-  async listWorkflowTemplates(params?: { status?: string }): Promise<ListWorkflowTemplatesResponse> {
+  async listWorkflows(params?: { status?: string }): Promise<ListWorkflowsResponse> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
     const suffix = search.size > 0 ? `?${search.toString()}` : "";
-    const raw = await this.fetch<unknown>(`/api/workflow-templates${suffix}`);
-    return parseWithFallback(raw, ListWorkflowTemplatesResponseSchema, EMPTY_LIST_WORKFLOW_TEMPLATES, {
-      endpoint: "GET /api/workflow-templates",
+    const raw = await this.fetch<unknown>(`/api/workflows${suffix}`);
+    return parseWithFallback(raw, ListWorkflowsResponseSchema, EMPTY_LIST_WORKFLOW_TEMPLATES, {
+      endpoint: "GET /api/workflows",
     });
   }
 
   async listBuiltinWorkflowTemplates(): Promise<{ templates: BuiltinWorkflowTemplate[] }> {
-    const raw = await this.fetch<unknown>("/api/workflow-templates/builtin");
+    const raw = await this.fetch<unknown>("/api/workflows/builtin");
     return parseWithFallback(
       raw,
       ListBuiltinWorkflowTemplatesResponseSchema,
       { templates: [] },
-      { endpoint: "GET /api/workflow-templates/builtin" },
+      { endpoint: "GET /api/workflows/builtin" },
     );
   }
 
   async createWorkflowTemplateFromBuiltin(
     key: string,
-  ): Promise<{ template: WorkflowTemplate; version: WorkflowTemplateVersion }> {
-    const raw = await this.fetch<unknown>("/api/workflow-templates/from-builtin", {
+  ): Promise<{ workflow: Workflow; version: WorkflowVersion }> {
+    const raw = await this.fetch<unknown>("/api/workflows/from-builtin", {
       method: "POST",
       body: JSON.stringify({ key }),
     });
     return parseWithFallback(
       raw,
-      WorkflowTemplatePublishResponseSchema,
+      WorkflowPublishResponseSchema,
       {
-        template: EMPTY_WORKFLOW_TEMPLATE_DETAIL.template,
+        workflow: EMPTY_WORKFLOW_DETAIL.workflow,
         version: { ...EMPTY_WORKFLOW_TEMPLATE_VERSION },
       },
-      { endpoint: "POST /api/workflow-templates/from-builtin" },
+      { endpoint: "POST /api/workflows/from-builtin" },
     );
   }
 
-  async getWorkflowTemplate(id: string): Promise<WorkflowTemplateDetail> {
-    const raw = await this.fetch<unknown>(`/api/workflow-templates/${id}`);
-    return parseWithFallback(raw, WorkflowTemplateDetailSchema, EMPTY_WORKFLOW_TEMPLATE_DETAIL, {
-      endpoint: "GET /api/workflow-templates/:id",
+  async getWorkflow(id: string): Promise<WorkflowDetail> {
+    const raw = await this.fetch<unknown>(`/api/workflows/${id}`);
+    return parseWithFallback(raw, WorkflowDetailSchema, EMPTY_WORKFLOW_DETAIL, {
+      endpoint: "GET /api/workflows/:id",
     });
   }
 
-  async createWorkflowTemplate(input: {
+  async createWorkflow(input: {
     name: string;
     description?: string;
-    applies_to_type_key?: string;
     definition: WorkflowDefinition;
     change_summary?: string;
-  }): Promise<{ template: WorkflowTemplate; draft: WorkflowTemplateVersion }> {
-    const raw = await this.fetch<unknown>("/api/workflow-templates", {
+  }): Promise<{ workflow: Workflow; draft: WorkflowVersion }> {
+    const raw = await this.fetch<unknown>("/api/workflows", {
       method: "POST",
       body: JSON.stringify(input),
     });
     return parseWithFallback(
       raw,
-      WorkflowTemplateCreateResponseSchema,
+      WorkflowCreateResponseSchema,
       {
-        template: EMPTY_WORKFLOW_TEMPLATE_DETAIL.template,
+        workflow: EMPTY_WORKFLOW_DETAIL.workflow,
         draft: { ...EMPTY_WORKFLOW_TEMPLATE_VERSION },
       },
-      { endpoint: "POST /api/workflow-templates" },
+      { endpoint: "POST /api/workflows" },
     );
   }
 
-  async updateWorkflowTemplate(
+  async updateWorkflow(
     templateId: string,
     input: {
       name?: string;
       description?: string;
       applies_to_type_key?: string;
     },
-  ): Promise<WorkflowTemplate> {
-    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}`, {
+  ): Promise<Workflow> {
+    const raw = await this.fetch<unknown>(`/api/workflows/${templateId}`, {
       method: "PATCH",
       body: JSON.stringify(input),
     });
     return parseWithFallback(
       raw,
-      WorkflowTemplateSchema,
+      WorkflowSchema,
       {
-        ...EMPTY_WORKFLOW_TEMPLATE_DETAIL.template,
+        ...EMPTY_WORKFLOW_DETAIL.workflow,
         id: templateId,
         name: input.name ?? "",
         description: input.description ?? "",
         applies_to_type_key: input.applies_to_type_key ?? "",
       },
-      { endpoint: "PATCH /api/workflow-templates/:id" },
+      { endpoint: "PATCH /api/workflows/:id" },
     );
   }
 
-  async updateWorkflowTemplateDraft(
+  async updateWorkflowDraft(
     templateId: string,
     input: { definition: WorkflowDefinition; change_summary?: string; revision: number },
-  ): Promise<WorkflowTemplateVersion> {
-    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}/draft`, {
+  ): Promise<WorkflowVersion> {
+    const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/draft`, {
       method: "PUT",
       body: JSON.stringify(input),
     });
-    return parseWithFallback(raw, WorkflowTemplateVersionSchema, {
-      id: "", workspace_id: "", template_id: templateId, version: 0, revision: input.revision,
+    return parseWithFallback(raw, WorkflowVersionSchema, {
+      id: "", workspace_id: "", workflow_id: templateId, version: 0, revision: input.revision,
       status: "draft", definition: input.definition, definition_checksum: "",
       change_summary: input.change_summary ?? "", created_by: "", published_by: null,
       published_at: null, created_at: "", updated_at: "",
-    }, { endpoint: "PUT /api/workflow-templates/:id/draft" });
+    }, { endpoint: "PUT /api/workflows/:id/draft" });
   }
 
   // One editing action: write the definition into a version and make it live
   // if it validates. `published` is false when it did not, and
   // `validation_error` says why — the version is stored either way.
-  async saveWorkflowTemplateDefinition(
+  async saveWorkflowDefinition(
     templateId: string,
     input: {
       definition: WorkflowDefinition;
@@ -3759,45 +3758,45 @@ export class ApiClient {
       revision?: number;
     },
   ): Promise<
-    { version: WorkflowTemplateVersion; published: boolean; validation_error: string }
+    { version: WorkflowVersion; published: boolean; validation_error: string }
   > {
     const raw = await this.fetch<unknown>(
-      `/api/workflow-templates/${templateId}/definition`,
+      `/api/workflows/${templateId}/definition`,
       { method: "PUT", body: JSON.stringify(input) },
     );
     return parseWithFallback(
       raw,
-      WorkflowTemplateSaveResponseSchema,
+      WorkflowSaveResponseSchema,
       {
         version: {
           ...EMPTY_WORKFLOW_TEMPLATE_VERSION,
-          template_id: templateId,
+          workflow_id: templateId,
           definition: input.definition,
         },
         published: false,
         validation_error: "",
       },
-      { endpoint: "PUT /api/workflow-templates/:id/definition" },
+      { endpoint: "PUT /api/workflows/:id/definition" },
     );
   }
 
-  async createWorkflowTemplateDraft(templateId: string): Promise<WorkflowTemplateVersion> {
-    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}/draft`, {
+  async createWorkflowDraft(templateId: string): Promise<WorkflowVersion> {
+    const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/draft`, {
       method: "POST",
     });
     return parseWithFallback(
       raw,
-      WorkflowTemplateVersionSchema,
-      { ...EMPTY_WORKFLOW_TEMPLATE_VERSION, template_id: templateId },
-      { endpoint: "POST /api/workflow-templates/:id/draft" },
+      WorkflowVersionSchema,
+      { ...EMPTY_WORKFLOW_TEMPLATE_VERSION, workflow_id: templateId },
+      { endpoint: "POST /api/workflows/:id/draft" },
     );
   }
 
-  async validateWorkflowTemplateDefinition(
+  async validateWorkflowDefinition(
     templateId: string,
     definition: WorkflowDefinition,
   ): Promise<{ valid: boolean; errors: string[] }> {
-    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}/validate`, {
+    const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/validate`, {
       method: "POST",
       body: JSON.stringify({ definition }),
     });
@@ -3805,19 +3804,19 @@ export class ApiClient {
       raw,
       WorkflowDefinitionValidationResponseSchema,
       { valid: false, errors: [] },
-      { endpoint: "POST /api/workflow-templates/:id/validate" },
+      { endpoint: "POST /api/workflows/:id/validate" },
     );
   }
 
-  async publishWorkflowTemplate(templateId: string): Promise<{ template: WorkflowTemplate; version: WorkflowTemplateVersion }> {
-    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}/publish`, { method: "POST" });
+  async publishWorkflow(templateId: string): Promise<{ workflow: Workflow; version: WorkflowVersion }> {
+    const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/publish`, { method: "POST" });
     return parseWithFallback(
       raw,
-      WorkflowTemplatePublishResponseSchema,
+      WorkflowPublishResponseSchema,
       {
-        template: EMPTY_WORKFLOW_TEMPLATE_DETAIL.template,
+        workflow: EMPTY_WORKFLOW_DETAIL.workflow,
         version: {
-          id: "", workspace_id: "", template_id: templateId, version: 0, revision: 1,
+          id: "", workspace_id: "", workflow_id: templateId, version: 0, revision: 1,
           status: "unknown", definition: {
             schema_version: 1, name: "", applies_to: { kind: "issue" },
             roles: [], nodes: [], edges: [], acceptance: {},
@@ -3825,14 +3824,14 @@ export class ApiClient {
           published_by: null, published_at: null, created_at: "", updated_at: "",
         },
       },
-      { endpoint: "POST /api/workflow-templates/:id/publish" },
+      { endpoint: "POST /api/workflows/:id/publish" },
     );
   }
 
-  async archiveWorkflowTemplate(templateId: string): Promise<WorkflowTemplate> {
-    const raw = await this.fetch<unknown>(`/api/workflow-templates/${templateId}/archive`, { method: "POST" });
-    return parseWithFallback(raw, WorkflowTemplateSchema, EMPTY_WORKFLOW_TEMPLATE_DETAIL.template, {
-      endpoint: "POST /api/workflow-templates/:id/archive",
+  async archiveWorkflow(templateId: string): Promise<Workflow> {
+    const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/archive`, { method: "POST" });
+    return parseWithFallback(raw, WorkflowSchema, EMPTY_WORKFLOW_DETAIL.workflow, {
+      endpoint: "POST /api/workflows/:id/archive",
     });
   }
 

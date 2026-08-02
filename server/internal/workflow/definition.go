@@ -26,17 +26,11 @@ const (
 type Definition struct {
 	SchemaVersion int                  `json:"schema_version"`
 	Name          string               `json:"name"`
-	AppliesTo     AppliesTo            `json:"applies_to"`
 	Roles         []RoleDefinition     `json:"roles"`
 	Nodes         []NodeDefinition     `json:"nodes"`
 	Edges         []EdgeDefinition     `json:"edges"`
 	Acceptance    AcceptanceDefinition `json:"acceptance"`
 	Layout        json.RawMessage      `json:"layout,omitempty"`
-}
-
-type AppliesTo struct {
-	Kind    string `json:"kind"`
-	TypeKey string `json:"type_key,omitempty"`
 }
 
 type RoleDefinition struct {
@@ -279,9 +273,6 @@ func ValidateDefinition(definition Definition) error {
 	}
 	if strings.TrimSpace(definition.Name) == "" {
 		return errors.New("name is required")
-	}
-	if definition.AppliesTo.Kind != "issue" {
-		return errors.New("applies_to.kind must be issue")
 	}
 	if len(definition.Roles) > maxRoles {
 		return fmt.Errorf("roles exceeds limit %d", maxRoles)

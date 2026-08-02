@@ -110,7 +110,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => {
   return {
     ...actual,
     useWorkspacePaths: () => ({
-      workflowDetail: (id: string) => `/workspace/workflows/${id}`,
+      workflowRun: (id: string) => `/workspace/workflows/runs/${id}`,
     }),
   };
 });
@@ -119,7 +119,9 @@ vi.mock("@multica/core/workflows", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/workflows")>();
   return {
     ...actual,
-    useCreateWorkflow: () => ({
+    // The dialog starts a run; creating a workflow definition is a separate
+    // hook now that "template" is gone.
+    useCreateWorkflowRun: () => ({
       mutate: (input: unknown) => mocks.createWorkflow(input),
       isPending: false,
     }),
@@ -202,8 +204,8 @@ describe("NewWorkflowDialog", () => {
           title: "Release 2.0",
           description:
             "Ship the release page with download links and release notes.",
-          template_id: "template-1",
-          template_version_id: "version-1",
+          workflow_id: "template-1",
+          workflow_version_id: "version-1",
           host_status_mode: "managed",
           role_assignments: [
             {

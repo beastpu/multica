@@ -6,7 +6,6 @@ func definitionWithArtifacts(artifacts string) []byte {
 	return []byte(`{
 	  "schema_version": 1,
 	  "name": "t",
-	  "applies_to": {"kind": "issue"},
 	  "roles": [{"key": "owner", "name": "Owner", "allowed_actor_types": ["member"]}],
 	  "nodes": [
 	    {"key":"start","kind":"start","name":"Start"},
@@ -83,7 +82,6 @@ func TestArtifactsRejectedOutsideActivities(t *testing.T) {
 	raw := []byte(`{
 	  "schema_version": 1,
 	  "name": "t",
-	  "applies_to": {"kind": "issue"},
 	  "roles": [],
 	  "nodes": [
 	    {"key":"start","kind":"start","name":"Start"},
@@ -138,7 +136,6 @@ func definitionWithReviewer(reviewer string) []byte {
 	return []byte(`{
 	  "schema_version": 1,
 	  "name": "t",
-	  "applies_to": {"kind": "issue"},
 	  "roles": [{"key": "owner", "name": "Owner", "allowed_actor_types": ["member"]}],
 	  "nodes": [
 	    {"key":"start","kind":"start","name":"Start"},
@@ -212,7 +209,6 @@ func TestNodeChoiceConditionSource(t *testing.T) {
 	raw := []byte(`{
 	  "schema_version": 1,
 	  "name": "t",
-	  "applies_to": {"kind": "issue"},
 	  "roles": [{"key": "owner", "name": "Owner", "allowed_actor_types": ["member"]}],
 	  "nodes": [
 	    {"key":"start","kind":"start","name":"Start"},

@@ -98,7 +98,7 @@ export interface IssueViewState {
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
-  workflowTemplateFilter: string;
+  workflowFilter: string;
   workflowInstanceFilter: string;
   workflowActivityFilter: string;
   workflowIssueOnly: boolean;
@@ -149,7 +149,7 @@ export interface IssueViewState {
   toggleProjectFilter: (projectId: string) => void;
   toggleNoProject: () => void;
   toggleLabelFilter: (labelId: string) => void;
-  setWorkflowTemplateFilter: (templateId: string) => void;
+  setWorkflowFilter: (templateId: string) => void;
   setWorkflowInstanceFilter: (instanceId: string) => void;
   setWorkflowActivityFilter: (activityKey: string) => void;
   toggleWorkflowIssueOnly: () => void;
@@ -183,7 +183,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   projectFilters: [],
   includeNoProject: false,
   labelFilters: [],
-  workflowTemplateFilter: "",
+  workflowFilter: "",
   workflowInstanceFilter: "",
   workflowActivityFilter: "",
   workflowIssueOnly: false,
@@ -270,9 +270,9 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
         ? state.labelFilters.filter((id) => id !== labelId)
         : [...state.labelFilters, labelId],
     })),
-  setWorkflowTemplateFilter: (templateId) =>
+  setWorkflowFilter: (templateId) =>
     set({
-      workflowTemplateFilter: templateId,
+      workflowFilter: templateId,
       workflowInstanceFilter: "",
       workflowActivityFilter: "",
     }),
@@ -322,7 +322,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       projectFilters: [],
       includeNoProject: false,
       labelFilters: [],
-      workflowTemplateFilter: "",
+      workflowFilter: "",
       workflowInstanceFilter: "",
       workflowActivityFilter: "",
       workflowIssueOnly: false,
@@ -391,7 +391,7 @@ export const viewStorePersistOptions = (name: string) => ({
     projectFilters: state.projectFilters,
     includeNoProject: state.includeNoProject,
     labelFilters: state.labelFilters,
-    workflowTemplateFilter: state.workflowTemplateFilter,
+    workflowFilter: state.workflowFilter,
     workflowInstanceFilter: state.workflowInstanceFilter,
     workflowActivityFilter: state.workflowActivityFilter,
     workflowIssueOnly: state.workflowIssueOnly,

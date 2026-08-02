@@ -5,12 +5,12 @@
     "active": "进行中",
     "mine": "与我相关",
     "completed": "已完成",
-    "templates": "模板",
+    "templates": "工作流",
     "builtin": "内置模板"
   },
   "actions": {
     "new_workflow": "新建工作流",
-    "new_template": "新建模板",
+    "new_template": "新建工作流",
     "run": "运行",
     "open": "打开工作流",
     "save": "保存",
@@ -130,23 +130,21 @@
     "current_node": "当前节点 Key"
   },
   "templates": {
-    "title": "工作流模板",
-    "empty_title": "创建第一个工作流模板",
-    "empty_description": "定义可复用的活动、角色、交付物与验收规则。",
+    "title": "工作流",
+    "empty_title": "还没有工作流",
+    "empty_description": "新建一个工作流，或从内置模板开始。",
     "admin_only": "只有工作区 Owner 和管理员可以管理模板。",
     "draft": "草稿",
     "published": "已发布",
     "archived": "已归档",
     "version": "版本 {{version}}",
     "activities": "活动数",
-    "runs": "运行实例",
+    "runs": "运行数",
     "copy_suffix": "副本",
     "metadata_title": "模板详情",
     "metadata_description": "修改模板名称、说明以及适用的 issue 类型。",
     "name": "模板名称",
     "description": "模板说明",
-    "applies_to_type": "issue 类型 Key",
-    "applies_to_placeholder": "留空表示适用于所有 issue 类型",
     "archive_title": "归档这个模板？",
     "archive_description": "归档后仍保留历史版本和已有运行实例，但不能再启动新的工作流。",
     "archived_help": "这个模板已归档并进入只读状态；已有运行实例和已发布版本仍然保留。",
@@ -161,7 +159,6 @@
   "workbench": {
     "title": "工作流工作台",
     "activity_map": "活动地图",
-    "template_version": "{{name}} · 版本 {{version}}",
     "host_priority": "宿主 issue 优先级：{{priority}}",
     "host_details": "需求内容与评论",
     "host_details_description": "查看需求描述、评论、附件和操作记录",
@@ -294,7 +291,8 @@
     "branch_choice_help": "「{{gateway}}」按这个选择路由。不选则走「{{fallback}}」。",
     "node_configuration": "节点配置",
     "tab_delivery": "交付",
-    "run_administration": "运行管理"
+    "run_administration": "运行管理",
+    "workflow_version": "{{name}} · 版本 {{version}}"
   },
   "editor": {
     "title": "工作流模板",

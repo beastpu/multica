@@ -135,7 +135,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => {
   return {
     ...actual,
     useWorkspacePaths: () => ({
-      workflowDetail: (id: string) => `/workspace/workflows/${id}`,
+      workflowRun: (id: string) => `/workspace/workflows/runs/${id}`,
     }),
   };
 });
@@ -202,8 +202,8 @@ describe("WorkflowStartDialog", () => {
       expect(mocks.start).toHaveBeenCalledWith(
         "host-1",
         expect.objectContaining({
-          template_id: "template-1",
-          template_version_id: "version-1",
+          workflow_id: "template-1",
+          workflow_version_id: "version-1",
           host_status_mode: "independent",
           role_assignments: [{
             role_key: "owner",

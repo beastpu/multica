@@ -17,13 +17,13 @@ import { ApiError } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
-  useArchiveWorkflowTemplate,
-  useUpdateWorkflowTemplate,
-  useSaveWorkflowTemplateDefinition,
-  workflowTemplateOptions,
+  useArchiveWorkflow,
+  useUpdateWorkflow,
+  useSaveWorkflowDefinition,
+  workflowOptions,
   type WorkflowDefinition,
   type WorkflowNodeDefinition,
-  type WorkflowTemplate,
+  type Workflow,
 } from "@multica/core/workflows";
 import {
   agentListOptions,
@@ -86,7 +86,7 @@ function TemplateMetadataDialog({
   open,
   onOpenChange,
 }: {
-  template: WorkflowTemplate;
+  template: Workflow;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -95,21 +95,16 @@ function TemplateMetadataDialog({
   const setOpen = onOpenChange;
   const [name, setName] = useState(template.name);
   const [description, setDescription] = useState(template.description);
-  const [appliesToTypeKey, setAppliesToTypeKey] = useState(
-    template.applies_to_type_key,
-  );
   const [error, setError] = useState("");
-  const update = useUpdateWorkflowTemplate(template.id);
+  const update = useUpdateWorkflow(template.id);
 
   useEffect(() => {
     if (open) return;
     setName(template.name);
     setDescription(template.description);
-    setAppliesToTypeKey(template.applies_to_type_key);
     setError("");
   }, [
     open,
-    template.applies_to_type_key,
     template.description,
     template.name,
   ]);
@@ -121,7 +116,6 @@ function TemplateMetadataDialog({
     update.mutate({
       name: normalizedName,
       description: description.trim(),
-      applies_to_type_key: appliesToTypeKey.trim(),
     }, {
       onSuccess: () => setOpen(false),
       onError: (cause) => setError(
@@ -160,17 +154,6 @@ function TemplateMetadataDialog({
               value={description}
               rows={3}
               onChange={(event) => setDescription(event.target.value)}
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="workflow-template-applies-to">
-              {t(($) => $.templates.applies_to_type)}
-            </Label>
-            <Input
-              id="workflow-template-applies-to"
-              value={appliesToTypeKey}
-              placeholder={t(($) => $.templates.applies_to_placeholder)}
-              onChange={(event) => setAppliesToTypeKey(event.target.value)}
             />
           </div>
           {error && (
@@ -406,13 +389,13 @@ function WorkflowEdgeInspector({
   );
 }
 
-export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
+export function WorkflowPage({ templateId }: { templateId: string }) {
   const { t } = useT("workflows");
   const { t: commonT } = useT("common");
   const wsId = useWorkspaceId();
   const isMobile = useIsMobile();
   const userId = useAuthStore((state) => state.user?.id);
-  const detailQuery = useQuery(workflowTemplateOptions(wsId, templateId));
+  const detailQuery = useQuery(workflowOptions(wsId, templateId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: squads = [] } = useQuery(squadListOptions(wsId));
@@ -453,8 +436,8 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [changeSummary, setChangeSummary] = useState("");
-  const saveDefinition = useSaveWorkflowTemplateDefinition(templateId);
-  const archive = useArchiveWorkflowTemplate(templateId);
+  const saveDefinition = useSaveWorkflowDefinition(templateId);
+  const archive = useArchiveWorkflow(templateId);
 
   const selectedVersion = versions.find(
     (version) => version.id === selectedVersionId,
@@ -465,7 +448,7 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
   const latestVersion = draft ?? published[0] ?? versions[0];
   const canEdit = canManage && !isMobile &&
     selectedVersion?.id === latestVersion?.id &&
-    detailQuery.data?.template.status !== "archived";
+    detailQuery.data?.workflow.status !== "archived";
 
   useEffect(() => {
     if (versions.length === 0) return;
@@ -594,7 +577,7 @@ export function WorkflowTemplatePage({ templateId }: { templateId: string }) {
     );
   }
 
-  const template = detailQuery.data.template;
+  const template = detailQuery.data.workflow;
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <CollectionPageHeader

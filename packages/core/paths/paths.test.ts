@@ -11,8 +11,8 @@ describe("paths.workspace(slug)", () => {
     expect(ws.projects()).toBe("/acme/projects");
     expect(ws.projectDetail("p1")).toBe("/acme/projects/p1");
     expect(ws.workflows()).toBe("/acme/workflows");
-    expect(ws.workflowDetail("wf1")).toBe("/acme/workflows/wf1");
-    expect(ws.workflowTemplate("tpl1")).toBe("/acme/workflows/templates/tpl1");
+    expect(ws.workflowRun("wf1")).toBe("/acme/workflows/runs/wf1");
+    expect(ws.workflow("wf1")).toBe("/acme/workflows/wf1");
     expect(ws.autopilots()).toBe("/acme/autopilots");
     expect(ws.autopilotDetail("a1")).toBe("/acme/autopilots/a1");
     expect(ws.agents()).toBe("/acme/agents");

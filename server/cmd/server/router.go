@@ -1219,31 +1219,31 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Native activity-container workflows. Read access follows workspace
 			// membership; template mutations require owner/admin and remain
 			// independently gated by the release flag in the handlers.
-			r.Route("/api/workflow-templates", func(r chi.Router) {
-				r.Get("/", h.ListWorkflowTemplates)
+			r.Route("/api/workflows", func(r chi.Router) {
+				r.Get("/", h.ListWorkflows)
 				r.Get("/builtin", h.ListBuiltinWorkflowTemplates)
-				r.Get("/{id}", h.GetWorkflowTemplate)
-				r.Get("/{id}/versions", h.ListWorkflowTemplateVersions)
-				r.Get("/{id}/versions/{version}", h.GetWorkflowTemplateVersion)
-				r.Post("/{id}/runs", h.StartWorkflowTemplateRun)
+				r.Get("/{id}", h.GetWorkflow)
+				r.Get("/{id}/versions", h.ListWorkflowVersions)
+				r.Get("/{id}/versions/{version}", h.GetWorkflowVersion)
+				r.Post("/{id}/runs", h.StartWorkflowRun)
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRole(queries, "owner", "admin"))
-					r.Post("/", h.CreateWorkflowTemplate)
-					r.Post("/from-builtin", h.CreateWorkflowTemplateFromBuiltin)
-					r.Patch("/{id}", h.UpdateWorkflowTemplateMetadata)
-					r.Post("/{id}/draft", h.CreateWorkflowTemplateDraft)
-					r.Put("/{id}/definition", h.SaveWorkflowTemplateDefinition)
-					r.Post("/{id}/validate", h.ValidateWorkflowTemplateDefinition)
-					r.Put("/{id}/draft", h.UpdateWorkflowTemplateDraft)
-					r.Post("/{id}/publish", h.PublishWorkflowTemplate)
-					r.Post("/{id}/archive", h.ArchiveWorkflowTemplate)
-					r.Delete("/{id}", h.ArchiveWorkflowTemplate)
+					r.Post("/", h.CreateWorkflow)
+					r.Post("/from-builtin", h.CreateWorkflowFromBuiltin)
+					r.Patch("/{id}", h.UpdateWorkflowMetadata)
+					r.Post("/{id}/draft", h.CreateWorkflowDraft)
+					r.Put("/{id}/definition", h.SaveWorkflowDefinition)
+					r.Post("/{id}/validate", h.ValidateWorkflowDefinition)
+					r.Put("/{id}/draft", h.UpdateWorkflowDraft)
+					r.Post("/{id}/publish", h.PublishWorkflow)
+					r.Post("/{id}/archive", h.ArchiveWorkflow)
+					r.Delete("/{id}", h.ArchiveWorkflow)
 				})
 			})
 
 			r.Route("/api/workflow-instances", func(r chi.Router) {
 				r.Get("/", h.ListWorkflowInstances)
-				r.Post("/", h.CreateWorkflow)
+				r.Post("/", h.CreateWorkflowRun)
 				r.Route("/{instanceId}", func(r chi.Router) {
 					r.Get("/", h.GetWorkflowInstance)
 					r.Get("/issues", h.ListWorkflowInstanceIssues)

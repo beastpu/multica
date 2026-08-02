@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import enCommon from "../locales/en/common.json";
 import enWorkflows from "../locales/en/workflows.json";
-import { WorkflowTemplatePage } from "./workflow-template-page";
+import { WorkflowPage } from "./workflow-definition-page";
 
 const mocks = vi.hoisted(() => ({
   save: vi.fn(),
@@ -35,13 +35,12 @@ const definition = {
 };
 
 const detail = {
-  template: {
+  workflow: {
     id: "template-1",
     workspace_id: "workspace-1",
     name: "Delivery workflow",
     description: "Ship a requirement safely",
     applies_to_kind: "issue",
-    applies_to_type_key: "requirement",
     status: "draft",
     latest_published_version_id: null,
     created_by: "user-1",
@@ -60,7 +59,7 @@ const detail = {
   versions: [{
     id: "version-1",
     workspace_id: "workspace-1",
-    template_id: "template-1",
+    workflow_id: "template-1",
     version: 1,
     revision: 1,
     status: "draft",
@@ -116,8 +115,8 @@ vi.mock("@multica/core/workspace/queries", () => ({
 }));
 
 vi.mock("@multica/core/workflows", () => ({
-  workflowTemplateOptions: () => ({ queryKey: ["workflow-template"] }),
-  useUpdateWorkflowTemplate: () => ({
+  workflowOptions: () => ({ queryKey: ["workflow-template"] }),
+  useUpdateWorkflow: () => ({
     isPending: false,
     mutate: (
       input: unknown,
@@ -127,7 +126,7 @@ vi.mock("@multica/core/workflows", () => ({
       options?.onSuccess?.();
     },
   }),
-  useSaveWorkflowTemplateDefinition: () => ({
+  useSaveWorkflowDefinition: () => ({
     isPending: false,
     mutate: (
       input: { definition: unknown; change_summary?: string },
@@ -147,7 +146,7 @@ vi.mock("@multica/core/workflows", () => ({
       });
     },
   }),
-  useArchiveWorkflowTemplate: () => ({
+  useArchiveWorkflow: () => ({
     isPending: false,
     mutate: (
       input: unknown,
@@ -231,12 +230,12 @@ function renderPage() {
         en: { common: enCommon, workflows: enWorkflows },
       }}
     >
-      <WorkflowTemplatePage templateId="template-1" />
+      <WorkflowPage templateId="template-1" />
     </I18nProvider>,
   );
 }
 
-describe("WorkflowTemplatePage", () => {
+describe("WorkflowPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.validation.valid = true;
@@ -308,7 +307,6 @@ describe("WorkflowTemplatePage", () => {
     expect(mocks.updateMetadata).toHaveBeenCalledWith({
       name: "Release workflow",
       description: "Ship a requirement safely",
-      applies_to_type_key: "requirement",
     });
   });
 
@@ -400,7 +398,7 @@ describe("WorkflowTemplatePage", () => {
   });
 });
 
-describe("WorkflowTemplatePage inspector", () => {
+describe("WorkflowPage inspector", () => {
   // The inspector used to stack template-level settings above the node being
   // edited, so every node edit began by scrolling past roles and acceptance.
   // Now it follows the selection — but a node is selected on load and the

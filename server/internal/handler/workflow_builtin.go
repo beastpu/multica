@@ -12,7 +12,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-type builtinWorkflowTemplateResponse struct {
+type builtinWorkflowResponse struct {
 	Key         string          `json:"key"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
@@ -24,9 +24,9 @@ type builtinWorkflowTemplateResponse struct {
 // membership like the other template reads.
 func (h *Handler) ListBuiltinWorkflowTemplates(w http.ResponseWriter, r *http.Request) {
 	builtins := workflowdomain.BuiltinTemplates()
-	templates := make([]builtinWorkflowTemplateResponse, 0, len(builtins))
+	templates := make([]builtinWorkflowResponse, 0, len(builtins))
 	for _, builtin := range builtins {
-		templates = append(templates, builtinWorkflowTemplateResponse{
+		templates = append(templates, builtinWorkflowResponse{
 			Key:         builtin.Key,
 			Name:        builtin.Name,
 			Description: builtin.Description,
@@ -36,19 +36,19 @@ func (h *Handler) ListBuiltinWorkflowTemplates(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]any{"templates": templates})
 }
 
-type createWorkflowTemplateFromBuiltinRequest struct {
+type createWorkflowFromBuiltinRequest struct {
 	Key string `json:"key"`
 }
 
-// CreateWorkflowTemplateFromBuiltin copies a builtin definition into a
+// CreateWorkflowFromBuiltin copies a builtin definition into a
 // workspace-owned template and publishes it as version 1 in one transaction,
 // so the template is immediately startable. Later edits go through the
 // regular draft flow.
-func (h *Handler) CreateWorkflowTemplateFromBuiltin(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) CreateWorkflowFromBuiltin(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return
 	}
-	var req createWorkflowTemplateFromBuiltinRequest
+	var req createWorkflowFromBuiltinRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -76,7 +76,7 @@ func (h *Handler) CreateWorkflowTemplateFromBuiltin(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusInternalServerError, "builtin workflow template definition invalid")
 		return
 	}
-	existing, err := h.Queries.ListWorkflowTemplates(r.Context(), db.ListWorkflowTemplatesParams{
+	existing, err := h.Queries.ListWorkflows(r.Context(), db.ListWorkflowsParams{
 		WorkspaceID: wsUUID, Status: pgtype.Text{},
 	})
 	if err != nil {
@@ -96,16 +96,15 @@ func (h *Handler) CreateWorkflowTemplateFromBuiltin(w http.ResponseWriter, r *ht
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
-	template, err := qtx.CreateWorkflowTemplate(r.Context(), db.CreateWorkflowTemplateParams{
+	template, err := qtx.CreateWorkflow(r.Context(), db.CreateWorkflowParams{
 		WorkspaceID: wsUUID, Name: builtin.Name, Description: builtin.Description,
-		AppliesToKind: "issue", CreatedBy: userUUID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create workflow template")
 		return
 	}
-	draft, err := qtx.CreateWorkflowTemplateVersion(r.Context(), db.CreateWorkflowTemplateVersionParams{
-		WorkspaceID: wsUUID, TemplateID: template.ID, Version: 1, Status: "draft",
+	draft, err := qtx.CreateWorkflowVersion(r.Context(), db.CreateWorkflowVersionParams{
+		WorkspaceID: wsUUID, WorkflowID: template.ID, Version: 1, Status: "draft",
 		Definition: definition, DefinitionChecksum: checksum,
 		ChangeSummary: "内置模板初始版本", CreatedBy: userUUID,
 	})
@@ -113,14 +112,14 @@ func (h *Handler) CreateWorkflowTemplateFromBuiltin(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusInternalServerError, "failed to create workflow template version")
 		return
 	}
-	published, err := qtx.PublishWorkflowTemplateVersion(r.Context(), db.PublishWorkflowTemplateVersionParams{
+	published, err := qtx.PublishWorkflowVersion(r.Context(), db.PublishWorkflowVersionParams{
 		PublishedBy: userUUID, ID: draft.ID, WorkspaceID: wsUUID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to publish workflow template version")
 		return
 	}
-	template, err = qtx.SetWorkflowTemplatePublishedVersion(r.Context(), db.SetWorkflowTemplatePublishedVersionParams{
+	template, err = qtx.SetWorkflowPublishedVersion(r.Context(), db.SetWorkflowPublishedVersionParams{
 		LatestPublishedVersionID: published.ID, ID: template.ID, WorkspaceID: wsUUID,
 	})
 	if err != nil {
@@ -132,18 +131,18 @@ func (h *Handler) CreateWorkflowTemplateFromBuiltin(w http.ResponseWriter, r *ht
 		return
 	}
 	h.publishWorkflowRealtime(
-		protocol.EventWorkflowTemplateCreated, workspaceID, "member", userID,
+		protocol.EventWorkflowCreated, workspaceID, "member", userID,
 		map[string]any{"workflow_template_id": uuidToString(template.ID)},
 	)
 	h.publishWorkflowRealtime(
-		protocol.EventWorkflowTemplatePublished, workspaceID, "member", userID,
+		protocol.EventWorkflowPublished, workspaceID, "member", userID,
 		map[string]any{
 			"workflow_template_id":         uuidToString(template.ID),
 			"workflow_template_version_id": uuidToString(published.ID),
 		},
 	)
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"template": workflowTemplateToResponse(template),
-		"version":  workflowTemplateVersionToResponse(published),
+		"workflow": workflowToResponse(template),
+		"version":  workflowWorkflowVersionToResponse(published),
 	})
 }

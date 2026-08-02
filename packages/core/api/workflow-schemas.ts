@@ -2,7 +2,7 @@ import { z } from "zod";
 import { IssueSchema } from "./schemas";
 import type {
   ListWorkflowInstancesResponse,
-  ListWorkflowTemplatesResponse,
+  ListWorkflowsResponse,
   WorkflowAcceptance,
   WorkflowDefinition,
   WorkflowInstance,
@@ -10,7 +10,7 @@ import type {
   WorkflowNodeDetail,
   WorkflowSubmission,
   WorkflowAcceptancesResponse,
-  WorkflowTemplateDetail,
+  WorkflowDetail,
 } from "../workflows/types";
 
 const arrayOrEmpty = <T extends z.ZodType>(schema: T) =>
@@ -125,13 +125,11 @@ export const WorkflowDefinitionSchema = z.object({
   layout: z.unknown().optional(),
 }).loose();
 
-export const WorkflowTemplateSchema = z.object({
+export const WorkflowSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
   name: z.string().optional().default("Untitled workflow"),
   description: z.string().optional().default(""),
-  applies_to_kind: z.string().optional().default("issue"),
-  applies_to_type_key: z.string().optional().default(""),
   status: z.string().optional().default("draft"),
   latest_published_version_id: nullableString,
   created_by: z.string().optional().default(""),
@@ -148,10 +146,10 @@ export const WorkflowTemplateSchema = z.object({
   latest_change_summary: z.string().optional().default(""),
 }).loose();
 
-export const WorkflowTemplateVersionSchema = z.object({
+export const WorkflowVersionSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
-  template_id: z.string(),
+  workflow_id: z.string(),
   version: z.number().optional().default(0),
   revision: z.number().optional().default(1),
   status: z.string().optional().default("draft"),
@@ -181,8 +179,8 @@ const WorkflowActorReferenceSchema = z.object({
 export const WorkflowInstanceSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
-  template_id: z.string(),
-  template_version_id: z.string(),
+  workflow_id: z.string(),
+  workflow_version_id: z.string(),
   host_issue_id: z.string(),
   title: z.string().optional().default(""),
   status: z.string().optional().default("unknown"),
@@ -205,8 +203,8 @@ export const WorkflowInstanceSchema = z.object({
   host_issue_identifier: z.string().optional().default(""),
   host_issue_priority: z.string().optional().default("none"),
   project_id: nullableString,
-  template_name: z.string().optional().default(""),
-  template_version: z.number().optional().default(0),
+  workflow_name: z.string().optional().default(""),
+  workflow_version: z.number().optional().default(0),
   current_activities: arrayOrEmpty(WorkflowCurrentActivitySchema),
   activity_completed: z.number().optional().default(0),
   activity_total: z.number().optional().default(0),
@@ -389,8 +387,8 @@ export const WorkflowNodeDetailSchema = z.object({
   executor_resolutions: arrayOrEmpty(WorkflowExecutorResolutionSchema),
 }).loose();
 
-export const ListWorkflowTemplatesResponseSchema = z.object({
-  templates: arrayOrEmpty(WorkflowTemplateSchema),
+export const ListWorkflowsResponseSchema = z.object({
+  workflows: arrayOrEmpty(WorkflowSchema),
   total: z.number().optional().default(0),
 }).loose();
 
@@ -404,25 +402,25 @@ export const ListBuiltinWorkflowTemplatesResponseSchema = z.object({
   templates: arrayOrEmpty(BuiltinWorkflowTemplateSchema),
 }).loose();
 
-export const WorkflowTemplateDetailSchema = z.object({
-  template: WorkflowTemplateSchema,
-  versions: arrayOrEmpty(WorkflowTemplateVersionSchema),
+export const WorkflowDetailSchema = z.object({
+  workflow: WorkflowSchema,
+  versions: arrayOrEmpty(WorkflowVersionSchema),
 }).loose();
 
-export const WorkflowTemplateCreateResponseSchema = z.object({
-  template: WorkflowTemplateSchema,
-  draft: WorkflowTemplateVersionSchema,
+export const WorkflowCreateResponseSchema = z.object({
+  workflow: WorkflowSchema,
+  draft: WorkflowVersionSchema,
 }).loose();
 
-export const WorkflowTemplateSaveResponseSchema = z.object({
-  version: WorkflowTemplateVersionSchema,
+export const WorkflowSaveResponseSchema = z.object({
+  version: WorkflowVersionSchema,
   published: z.boolean().optional().default(false),
   validation_error: z.string().optional().default(""),
 }).loose();
 
-export const WorkflowTemplatePublishResponseSchema = z.object({
-  template: WorkflowTemplateSchema,
-  version: WorkflowTemplateVersionSchema,
+export const WorkflowPublishResponseSchema = z.object({
+  workflow: WorkflowSchema,
+  version: WorkflowVersionSchema,
 }).loose();
 
 export const WorkflowDefinitionValidationResponseSchema = z.object({
@@ -483,14 +481,14 @@ export const WorkflowDiagnosticsSchema = z.object({
 }).loose();
 
 export const EMPTY_WORKFLOW_INSTANCE: WorkflowInstance = {
-  id: "", workspace_id: "", template_id: "", template_version_id: "", host_issue_id: "",
+  id: "", workspace_id: "", workflow_id: "", workflow_version_id: "", host_issue_id: "",
   title: "",
   status: "unknown", host_status_mode: "independent", input: {}, result: {}, revision: 0,
   started_by_type: "system", started_by_id: null, started_at: "", paused_at: null,
   completed_at: null, cancelled_at: null, last_reconciled_at: null, created_at: "",
   updated_at: "", next_action: "none", intervention_reason: "",
   host_issue_title: "", host_issue_identifier: "", host_issue_priority: "none",
-  project_id: null, template_name: "", template_version: 0,
+  project_id: null, workflow_name: "", workflow_version: 0,
   current_activities: [], activity_completed: 0, activity_total: 0,
   current_owners: [],
 };
@@ -503,7 +501,7 @@ export const EMPTY_LIST_WORKFLOW_INSTANCES: ListWorkflowInstancesResponse = {
 export const EMPTY_WORKFLOW_ACCEPTANCES: WorkflowAcceptancesResponse = {
   acceptances: [],
 };
-export const EMPTY_LIST_WORKFLOW_TEMPLATES: ListWorkflowTemplatesResponse = { templates: [], total: 0 };
+export const EMPTY_LIST_WORKFLOW_TEMPLATES: ListWorkflowsResponse = { templates: [], total: 0 };
 export const EMPTY_WORKFLOW_INSTANCE_DETAIL: WorkflowInstanceDetail = {
   instance: EMPTY_WORKFLOW_INSTANCE, role_assignments: [], nodes: [], tasks: [],
 };
@@ -518,10 +516,10 @@ export const EMPTY_WORKFLOW_NODE_DETAIL: WorkflowNodeDetail = {
   tasks: [], submissions: [], verdicts: [], participants: [],
   executor_resolutions: [],
 };
-export const EMPTY_WORKFLOW_TEMPLATE_DETAIL: WorkflowTemplateDetail = {
-  template: {
-    id: "", workspace_id: "", name: "", description: "", applies_to_kind: "issue",
-    applies_to_type_key: "", status: "unknown", latest_published_version_id: null,
+export const EMPTY_WORKFLOW_DETAIL: WorkflowDetail = {
+  workflow: {
+    id: "", workspace_id: "", name: "", description: "",
+    status: "unknown", latest_published_version_id: null,
     created_by: "", archived_at: null, created_at: "", updated_at: "",
     latest_published_version: 0, draft_version: 0, has_draft: false,
     activity_count: 0, run_count: 0, last_published_by: null,
@@ -533,7 +531,7 @@ export const EMPTY_WORKFLOW_TEMPLATE_DETAIL: WorkflowTemplateDetail = {
 export const EMPTY_WORKFLOW_TEMPLATE_VERSION = {
   id: "",
   workspace_id: "",
-  template_id: "",
+  workflow_id: "",
   version: 0,
   revision: 1,
   status: "unknown",
@@ -553,7 +551,7 @@ export const EMPTY_WORKFLOW_TEMPLATE_VERSION = {
   published_at: null,
   created_at: "",
   updated_at: "",
-} satisfies import("../workflows/types").WorkflowTemplateVersion;
+} satisfies import("../workflows/types").WorkflowVersion;
 
 export type ParsedWorkflowDefinition = z.infer<typeof WorkflowDefinitionSchema> & WorkflowDefinition;
 export type WorkflowSubmissionMutationResponse = {

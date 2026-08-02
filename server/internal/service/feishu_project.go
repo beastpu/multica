@@ -2658,7 +2658,7 @@ func (c *FeishuProjectClient) WorkItemStatusOptions(ctx context.Context, cfg db.
 	var statuses []FeishuProjectStatusOption
 	templates, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/template_list/%s", cfg.ProjectKey, workItemType), nil)
 	if err == nil {
-		for _, templateID := range parseFeishuProjectTemplateIDs(templates) {
+		for _, templateID := range parseFeishuProjectWorkflowIDs(templates) {
 			detail, err := c.openAPI(ctx, cfg, http.MethodGet, fmt.Sprintf("/open_api/%s/template_detail/%s", cfg.ProjectKey, templateID), nil)
 			if err != nil {
 				return nil, err
@@ -4418,13 +4418,13 @@ func feishuProjectStatusOptionsFromField(field map[string]any) []FeishuProjectSt
 	return out
 }
 
-func parseFeishuProjectTemplateIDs(payload map[string]any) []string {
+func parseFeishuProjectWorkflowIDs(payload map[string]any) []string {
 	rows, _ := payload["data"].([]any)
 	out := make([]string, 0, len(rows))
 	seen := map[string]bool{}
 	for _, rowAny := range rows {
 		row, _ := rowAny.(map[string]any)
-		id := firstNonEmpty(fmt.Sprint(row["template_id"]), fmt.Sprint(row["id"]))
+		id := firstNonEmpty(fmt.Sprint(row["workflow_id"]), fmt.Sprint(row["id"]))
 		if id == "" || seen[id] {
 			continue
 		}

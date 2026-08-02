@@ -284,8 +284,8 @@ describe("filterIssues", () => {
       id,
       workflow_context: {
         workflow_instance_id: instanceId,
-        workflow_template_id: templateId,
-        workflow_template_name: `Template ${templateId}`,
+        workflow_workflow_id: templateId,
+        workflow_workflow_name: `Template ${templateId}`,
         workflow_node_instance_id: `node-${id}`,
         activity_key: activityKey,
         activity_name: `Activity ${activityKey}`,
@@ -313,7 +313,7 @@ describe("filterIssues", () => {
     it("filters independently by template, instance, and activity", () => {
       expect(filterIssues(workflowIssues, {
         ...NO_FILTER,
-        workflowTemplateFilter: "template-1",
+        workflowFilter: "template-1",
       }).map((issue) => issue.id)).toEqual(["W1", "W2"]);
       expect(filterIssues(workflowIssues, {
         ...NO_FILTER,
@@ -332,7 +332,7 @@ describe("filterIssues", () => {
       const result = filterIssues(input, {
         ...NO_FILTER,
         statusFilters: ["todo"],
-        workflowTemplateFilter: "template-1",
+        workflowFilter: "template-1",
         workflowActivityFilter: "design",
       });
       expect(result).toEqual([]);
@@ -454,8 +454,8 @@ describe("filterAssigneeGroups", () => {
       id: "W1",
       workflow_context: {
         workflow_instance_id: "instance-1",
-        workflow_template_id: "template-1",
-        workflow_template_name: "Delivery",
+        workflow_workflow_id: "template-1",
+        workflow_workflow_name: "Delivery",
         workflow_node_instance_id: "node-1",
         activity_key: "review",
         activity_name: "Review",
@@ -470,7 +470,7 @@ describe("filterAssigneeGroups", () => {
       group("a2", [makeIssue({ id: "N2" })]),
     ];
     const result = filterAssigneeGroups(groups, {
-      workflowTemplateFilter: "template-1",
+      workflowFilter: "template-1",
       workflowActivityFilter: "review",
     });
     expect(

@@ -116,7 +116,7 @@ export function useIssueSurfaceData({
   projectFilters,
   includeNoProject,
   labelFilters,
-  workflowTemplateFilter,
+  workflowFilter,
   workflowInstanceFilter,
   workflowActivityFilter,
   workflowIssueOnly,
@@ -142,7 +142,7 @@ export function useIssueSurfaceData({
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
-  workflowTemplateFilter: string;
+  workflowFilter: string;
   workflowInstanceFilter: string;
   workflowActivityFilter: string;
   workflowIssueOnly: boolean;
@@ -167,7 +167,7 @@ export function useIssueSurfaceData({
       project_ids: projectFilters,
       include_no_project: includeNoProject,
       label_ids: labelFilters,
-      workflow_template_id: workflowTemplateFilter || undefined,
+      workflow_workflow_id: workflowFilter || undefined,
       workflow_instance_id: workflowInstanceFilter || undefined,
       workflow_activity: workflowActivityFilter || undefined,
       workflow_issue_only: workflowIssueOnly || undefined,
@@ -185,7 +185,7 @@ export function useIssueSurfaceData({
       workflowActivityFilter,
       workflowInstanceFilter,
       workflowIssueOnly,
-      workflowTemplateFilter,
+      workflowFilter,
       priorityFilters,
       projectFilters,
       queryPlan.groupedScopeFilter,
@@ -202,7 +202,7 @@ export function useIssueSurfaceData({
       project_ids: projectFilters,
       include_no_project: includeNoProject,
       label_ids: labelFilters,
-      workflow_template_id: workflowTemplateFilter || undefined,
+      workflow_workflow_id: workflowFilter || undefined,
       workflow_instance_id: workflowInstanceFilter || undefined,
       workflow_activity: workflowActivityFilter || undefined,
       workflow_issue_only: workflowIssueOnly || undefined,
@@ -217,7 +217,7 @@ export function useIssueSurfaceData({
     workflowActivityFilter,
     workflowInstanceFilter,
     workflowIssueOnly,
-    workflowTemplateFilter,
+    workflowFilter,
     priorityFilters,
     projectFilters,
   ]);
@@ -273,7 +273,7 @@ export function useIssueSurfaceData({
       projectFilters,
       includeNoProject,
       labelFilters,
-      workflowTemplateFilter,
+      workflowFilter,
       workflowInstanceFilter,
       workflowActivityFilter,
       workflowIssueOnly,
@@ -288,7 +288,7 @@ export function useIssueSurfaceData({
       includeNoAssignee,
       includeNoProject,
       labelFilters,
-      workflowTemplateFilter,
+      workflowFilter,
       workflowInstanceFilter,
       workflowActivityFilter,
       workflowIssueOnly,
@@ -337,7 +337,7 @@ export function useIssueSurfaceData({
         agentRunningFilter,
         runningIssueIds: activity.runningIssueIds,
         propertyFilters,
-        workflowTemplateFilter,
+        workflowFilter,
         workflowInstanceFilter,
         workflowActivityFilter,
         workflowIssueOnly,
@@ -351,7 +351,7 @@ export function useIssueSurfaceData({
       workflowActivityFilter,
       workflowInstanceFilter,
       workflowIssueOnly,
-      workflowTemplateFilter,
+      workflowFilter,
     ],
   );
 
@@ -401,7 +401,7 @@ export function useIssueSurfaceData({
           agentRunningFilter: true,
           runningIssueIds: activity.runningIssueIds,
           propertyFilters,
-          workflowTemplateFilter,
+          workflowFilter,
           workflowInstanceFilter,
           workflowActivityFilter,
           workflowIssueOnly,
@@ -428,7 +428,7 @@ export function useIssueSurfaceData({
     workflowActivityFilter,
     workflowInstanceFilter,
     workflowIssueOnly,
-    workflowTemplateFilter,
+    workflowFilter,
   ]);
 
   const { data: childProgressMap = EMPTY_CHILD_PROGRESS } = useQuery(
@@ -474,7 +474,7 @@ export function useIssueSurfaceData({
       workflowActivityFilter,
       workflowInstanceFilter,
       workflowIssueOnly,
-      workflowTemplateFilter,
+      workflowFilter,
       agentRunningFilter,
       showSubIssues,
     }),
@@ -489,7 +489,7 @@ export function useIssueSurfaceData({
       workflowActivityFilter,
       workflowInstanceFilter,
       workflowIssueOnly,
-      workflowTemplateFilter,
+      workflowFilter,
       priorityFilters,
       projectFilters,
       showSubIssues,

@@ -11,7 +11,7 @@ import {
   Play,
   Plus,
   Users,
-  Workflow,
+  Workflow as WorkflowIcon,
 } from "lucide-react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
@@ -19,20 +19,20 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { projectListOptions } from "@multica/core/projects";
 import {
-  useCreateWorkflowTemplate,
-  useCreateWorkflowTemplateFromBuiltin,
-  useCopyWorkflowTemplate,
   useCreateWorkflow,
-  useRunWorkflowTemplate,
+  useCreateWorkflowTemplateFromBuiltin,
+  useCopyWorkflow,
+  useCreateWorkflowRun,
+  useRunWorkflow,
   workflowBuiltinTemplateListOptions,
   workflowInstanceInfiniteListOptions,
-  workflowTemplateListOptions,
-  workflowTemplateOptions,
+  workflowListOptions,
+  workflowOptions,
   type WorkflowDefinition,
   type WorkflowInstanceFilters,
   type WorkflowInstance,
   type WorkflowRoleDefinition,
-  type WorkflowTemplate,
+  type Workflow,
 } from "@multica/core/workflows";
 import {
   agentListOptions,
@@ -76,7 +76,7 @@ import { useT, useTimeAgo } from "../i18n";
 import { WorkflowStatusBadge } from "./workflow-status";
 import { WorkflowStartDialog } from "./workflow-start-dialog";
 import {
-  canManageWorkflowTemplates,
+  canManageWorkflows,
   isWorkflowRunActionable,
   partitionWorkflowRuns,
   workflowStatusForTab,
@@ -201,15 +201,15 @@ function RunCard({
           </span>
           <span aria-hidden="true">·</span>
           <span className="truncate">
-            {run.template_name || run.template_id.slice(0, 8)}
-            {run.template_version > 0 ? ` v${run.template_version}` : ""}
+            {run.workflow_name || run.workflow_id.slice(0, 8)}
+            {run.workflow_version > 0 ? ` v${run.workflow_version}` : ""}
           </span>
         </CardDescription>
         <CardAction>
           <Button
             size="sm"
             variant={actionable ? "brandSubtle" : "ghost"}
-            render={<AppLink href={p.workflowDetail(run.id)} />}
+            render={<AppLink href={p.workflowRun(run.id)} />}
           >
             {t(($) => $.actions.open)}
             <ArrowRight />
@@ -286,7 +286,7 @@ function RunList({
   if (runs.length === 0) {
     return (
       <CollectionPageState
-        icon={Workflow}
+        icon={WorkflowIcon}
         title={t(($) => $.runs.empty_title)}
         description={t(($) => $.runs.empty_description)}
       />
@@ -349,7 +349,7 @@ function RunTemplateDialog({
   open,
   onOpenChange,
 }: {
-  template: WorkflowTemplate | null;
+  template: Workflow | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -365,7 +365,7 @@ function RunTemplateDialog({
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const templateQuery = useQuery({
-    ...workflowTemplateOptions(wsId, templateId),
+    ...workflowOptions(wsId, templateId),
     enabled: open && Boolean(templateId),
   });
   const { data: members = [] } = useQuery({
@@ -380,7 +380,7 @@ function RunTemplateDialog({
     ...squadListOptions(wsId),
     enabled: open,
   });
-  const run = useRunWorkflowTemplate(templateId);
+  const run = useRunWorkflow(templateId);
   const publishedVersions = useMemo(
     () => (templateQuery.data?.versions ?? [])
       .filter((version) => version.status === "published")
@@ -438,7 +438,7 @@ function RunTemplateDialog({
     setError("");
     run.mutate({
       title: title.trim(),
-      template_version_id: selectedVersion.id,
+      workflow_version_id: selectedVersion.id,
       input: instructions.trim() ? { instructions: instructions.trim() } : {},
       role_assignments: roles.flatMap((role) => {
         const actor = parseWorkflowAssignment(assignments[role.key] ?? "");
@@ -455,7 +455,7 @@ function RunTemplateDialog({
     }, {
       onSuccess: (detail) => {
         onOpenChange(false);
-        navigation.push(p.workflowDetail(detail.instance.id));
+        navigation.push(p.workflowRun(detail.instance.id));
       },
       onError: (cause) => setError(
         cause instanceof Error ? cause.message : t(($) => $.errors.load),
@@ -601,7 +601,7 @@ function RunTemplateDialog({
 type TemplateStatusFilter = "live" | "all" | "published" | "draft" | "archived";
 
 function matchesTemplateStatus(
-  template: WorkflowTemplate,
+  template: Workflow,
   filter: TemplateStatusFilter,
 ): boolean {
   switch (filter) {
@@ -653,8 +653,8 @@ function BuiltinTemplatesPanel({ canManage }: { canManage: boolean }) {
                 size="sm"
                 disabled={!canManage || createFromBuiltin.isPending}
                 onClick={() => createFromBuiltin.mutate(builtin.key, {
-                  onSuccess: ({ template }) => {
-                    if (template.id) navigation.push(p.workflowTemplate(template.id));
+                  onSuccess: ({ workflow }) => {
+                    if (workflow.id) navigation.push(p.workflow(workflow.id));
                   },
                 })}
               >
@@ -689,7 +689,7 @@ function TemplatesPanel({
   const navigation = useNavigation();
   const timeAgo = useTimeAgo();
   const { data, isLoading, isError } = useQuery(
-    workflowTemplateListOptions(wsId),
+    workflowListOptions(wsId),
   );
   // Archiving is how this product deletes, so a retired template sitting
   // beside live ones is what made "archive the old one, create a new one with
@@ -706,9 +706,9 @@ function TemplatesPanel({
   const visibleTemplates = allTemplates.filter((template) =>
     matchesTemplateStatus(template, statusFilter)
   );
-  const createTemplate = useCreateWorkflowTemplate();
-  const copyTemplate = useCopyWorkflowTemplate();
-  const [runTemplate, setRunTemplate] = useState<WorkflowTemplate | null>(null);
+  const createTemplate = useCreateWorkflow();
+  const copyTemplate = useCopyWorkflow();
+  const [runTemplate, setRunTemplate] = useState<Workflow | null>(null);
 
   const create = () => {
     const definition = defaultWorkflowDefinition();
@@ -717,8 +717,8 @@ function TemplatesPanel({
       description: "",
       definition,
     }, {
-      onSuccess: ({ template }) =>
-        navigation.push(p.workflowTemplate(template.id)),
+      onSuccess: ({ workflow }) =>
+        navigation.push(p.workflow(workflow.id)),
     });
   };
 
@@ -828,7 +828,7 @@ function TemplatesPanel({
                 <tr key={template.id} className="hover:bg-muted/30">
                   <td className="px-3 py-2">
                     <AppLink
-                      href={p.workflowTemplate(template.id)}
+                      href={p.workflow(template.id)}
                       className="block min-w-0 font-medium hover:underline"
                     >
                       <span className="block truncate">{template.name}</span>
@@ -889,8 +889,8 @@ function TemplatesPanel({
                               t(($) => $.templates.copy_suffix)
                             }`,
                           }, {
-                            onSuccess: ({ template: copied }) =>
-                              navigation.push(p.workflowTemplate(copied.id)),
+                            onSuccess: ({ workflow: copied }) =>
+                              navigation.push(p.workflow(copied.id)),
                           })}
                         >
                           <Copy />
@@ -949,10 +949,10 @@ export function NewWorkflowDialog() {
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const templatesQuery = useQuery(
-    workflowTemplateListOptions(wsId, { status: "published" }),
+    workflowListOptions(wsId, { status: "published" }),
   );
   const templateQuery = useQuery({
-    ...workflowTemplateOptions(wsId, templateId),
+    ...workflowOptions(wsId, templateId),
     enabled: open && Boolean(templateId),
   });
   const { data: members = [] } = useQuery({
@@ -967,7 +967,7 @@ export function NewWorkflowDialog() {
     ...squadListOptions(wsId),
     enabled: open,
   });
-  const create = useCreateWorkflow();
+  const create = useCreateWorkflowRun();
   const templates = useMemo(
     () => (templatesQuery.data?.templates ?? []).filter(
       (template) => template.status === "published",
@@ -1044,8 +1044,8 @@ export function NewWorkflowDialog() {
     create.mutate({
       title: title.trim(),
       description: description.trim(),
-      template_id: templateId,
-      template_version_id: selectedVersion.id,
+      workflow_id: templateId,
+      workflow_version_id: selectedVersion.id,
       host_status_mode: hostStatusMode,
       role_assignments: roles.flatMap((role) => {
         const actor = parseWorkflowAssignment(assignments[role.key] ?? "");
@@ -1062,7 +1062,7 @@ export function NewWorkflowDialog() {
     }, {
       onSuccess: (detail) => {
         close();
-        navigation.push(p.workflowDetail(detail.instance.id));
+        navigation.push(p.workflowRun(detail.instance.id));
       },
       onError: (cause) =>
         setError(cause instanceof Error ? cause.message : t(($) => $.errors.load)),
@@ -1337,9 +1337,9 @@ export function WorkflowsPage() {
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: squads = [] } = useQuery(squadListOptions(wsId));
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
-  const { data: templateData } = useQuery(workflowTemplateListOptions(wsId));
+  const { data: templateData } = useQuery(workflowListOptions(wsId));
   const currentMember = members.find((member) => member.user_id === userId);
-  const canManage = canManageWorkflowTemplates(currentMember?.role);
+  const canManage = canManageWorkflows(currentMember?.role);
   const actorNames = useMemo(() => {
     const names = new Map<string, string>();
     for (const member of members) {
@@ -1370,7 +1370,7 @@ export function WorkflowsPage() {
       status: workflowStatusForTab(tab, statusFilter),
       related_to_me: tab === "mine" || undefined,
       project_id: projectId || undefined,
-      template_id: templateId || undefined,
+      workflow_id: templateId || undefined,
       current_node_key: currentNodeKey.trim() || undefined,
       owner_type: ownerType || undefined,
       owner_id: ownerId || undefined,

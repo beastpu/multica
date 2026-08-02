@@ -14,8 +14,8 @@ function instanceShape() {
   return {
     id: "instance-1",
     workspace_id: "workspace-1",
-    template_id: "template-1",
-    template_version_id: "version-1",
+    workflow_id: "template-1",
+    workflow_version_id: "version-1",
     host_issue_id: "issue-1",
   };
 }
@@ -81,8 +81,8 @@ describe("workflow response schemas", () => {
         ...instanceShape(),
         host_issue_title: "Ship Workflow",
         host_issue_identifier: "MUL-42",
-        template_name: "Delivery",
-        template_version: 3,
+        workflow_name: "Delivery",
+        workflow_version: 3,
         current_activities: [{
           id: "node-1",
           node_key: "implementation",
@@ -236,7 +236,7 @@ describe("workflow response schemas", () => {
       { templates: { not: "an array" } },
       ListBuiltinWorkflowTemplatesResponseSchema,
       { templates: [] },
-      { endpoint: "GET /api/workflow-templates/builtin" },
+      { endpoint: "GET /api/workflows/builtin" },
     );
     expect(malformed.templates).toEqual([]);
 

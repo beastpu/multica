@@ -1,12 +1,12 @@
 -- =====================
--- Workflow templates
+-- Workflows: the versioned definition a run executes.
 -- =====================
 
--- Counts live templates already using a name. Archived ones are excluded:
--- replacing a template by archiving the old one and recreating it under the
+-- Counts live workflows already using a name. Archived ones are excluded:
+-- replacing a workflow by archiving the old one and recreating it under the
 -- same name is the normal revision path once runs depend on the old version.
--- name: CountLiveWorkflowTemplatesByName :one
-SELECT count(*) FROM workflow_template
+-- name: CountLiveWorkflowsByName :one
+SELECT count(*) FROM workflow
 WHERE workspace_id = @workspace_id
   AND lower(btrim(name)) = lower(btrim(@name::text))
   AND status <> 'archived'
@@ -14,15 +14,15 @@ WHERE workspace_id = @workspace_id
   -- true, which would filter every row out and make the check always pass.
   AND (@exclude_id::uuid IS NULL OR id <> @exclude_id);
 
--- name: ListWorkflowTemplates :many
-SELECT * FROM workflow_template
+-- name: ListWorkflows :many
+SELECT * FROM workflow
 WHERE workspace_id = @workspace_id
   AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status))
 ORDER BY updated_at DESC, id DESC;
 
--- name: ListWorkflowTemplateSummaries :many
+-- name: ListWorkflowSummaries :many
 SELECT
-  template.*,
+  workflow_def.*,
   COALESCE(published.version, 0)::integer AS latest_published_version,
   COALESCE(draft.version, 0)::integer AS draft_version,
   CAST(draft.id IS NOT NULL AS boolean) AS has_draft,
@@ -37,115 +37,112 @@ SELECT
   (
     SELECT count(*)::bigint
     FROM workflow_instance instance
-    WHERE instance.workspace_id = template.workspace_id
-      AND instance.template_id = template.id
+    WHERE instance.workspace_id = workflow_def.workspace_id
+      AND instance.workflow_id = workflow_def.id
   ) AS run_count,
   published.published_by AS last_published_by,
   published.published_at AS last_published_at,
   COALESCE(published.change_summary, draft.change_summary, '') AS latest_change_summary
-FROM workflow_template template
+FROM workflow workflow_def
 LEFT JOIN LATERAL (
   SELECT version.*
-  FROM workflow_template_version version
-  WHERE version.workspace_id = template.workspace_id
-    AND version.template_id = template.id
+  FROM workflow_version version
+  WHERE version.workspace_id = workflow_def.workspace_id
+    AND version.workflow_id = workflow_def.id
     AND version.status = 'published'
   ORDER BY version.version DESC
   LIMIT 1
 ) published ON true
 LEFT JOIN LATERAL (
   SELECT version.*
-  FROM workflow_template_version version
-  WHERE version.workspace_id = template.workspace_id
-    AND version.template_id = template.id
+  FROM workflow_version version
+  WHERE version.workspace_id = workflow_def.workspace_id
+    AND version.workflow_id = workflow_def.id
     AND version.status = 'draft'
   LIMIT 1
 ) draft ON true
-WHERE template.workspace_id = @workspace_id
+WHERE workflow_def.workspace_id = @workspace_id
   AND (
     sqlc.narg(status)::text IS NULL
-    OR template.status = sqlc.narg(status)
+    OR workflow_def.status = sqlc.narg(status)
   )
-ORDER BY template.updated_at DESC, template.id DESC;
+ORDER BY workflow_def.updated_at DESC, workflow_def.id DESC;
 
--- name: GetWorkflowTemplateInWorkspace :one
-SELECT * FROM workflow_template
+-- name: GetWorkflowInWorkspace :one
+SELECT * FROM workflow
 WHERE id = @id AND workspace_id = @workspace_id;
 
--- name: CreateWorkflowTemplate :one
-INSERT INTO workflow_template (
-    workspace_id, name, description, applies_to_kind, applies_to_type_key,
-    status, created_by
+-- name: CreateWorkflow :one
+INSERT INTO workflow (
+    workspace_id, name, description, status, created_by
 ) VALUES (
-    @workspace_id, @name, @description, @applies_to_kind, @applies_to_type_key,
-    'draft', @created_by
+    @workspace_id, @name, @description, 'draft', @created_by
 )
 RETURNING *;
 
--- name: UpdateWorkflowTemplateMetadata :one
-UPDATE workflow_template
+-- name: UpdateWorkflowMetadata :one
+UPDATE workflow
 SET name = COALESCE(sqlc.narg(name), name),
     description = COALESCE(sqlc.narg(description), description),
-    applies_to_type_key = COALESCE(sqlc.narg(applies_to_type_key), applies_to_type_key),
     updated_at = now()
 WHERE id = @id AND workspace_id = @workspace_id AND status <> 'archived'
 RETURNING *;
 
--- name: ArchiveWorkflowTemplate :one
-UPDATE workflow_template
+-- name: ArchiveWorkflow :one
+UPDATE workflow
 SET status = 'archived', archived_at = now(), updated_at = now()
 WHERE id = @id AND workspace_id = @workspace_id
 RETURNING *;
 
--- name: ListWorkflowTemplateVersions :many
-SELECT * FROM workflow_template_version
-WHERE template_id = @template_id AND workspace_id = @workspace_id
+-- name: ListWorkflowVersions :many
+SELECT * FROM workflow_version
+WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id
 ORDER BY version DESC;
 
--- name: GetWorkflowTemplateVersionInWorkspace :one
-SELECT * FROM workflow_template_version
+-- name: GetWorkflowVersionInWorkspace :one
+SELECT * FROM workflow_version
 WHERE id = @id AND workspace_id = @workspace_id;
 
--- name: GetWorkflowTemplateVersionByNumber :one
-SELECT * FROM workflow_template_version
-WHERE template_id = @template_id
+-- name: GetWorkflowVersionByNumber :one
+SELECT * FROM workflow_version
+WHERE workflow_id = @workflow_id
   AND workspace_id = @workspace_id
   AND version = @version;
 
--- name: GetWorkflowTemplateDraft :one
-SELECT * FROM workflow_template_version
-WHERE template_id = @template_id AND workspace_id = @workspace_id AND status = 'draft'
+-- name: GetWorkflowDraft :one
+SELECT * FROM workflow_version
+WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id AND status = 'draft'
 LIMIT 1;
 
--- name: LockWorkflowTemplateDraft :one
-SELECT * FROM workflow_template_version
-WHERE template_id = @template_id AND workspace_id = @workspace_id AND status = 'draft'
+-- name: LockWorkflowDraft :one
+SELECT * FROM workflow_version
+WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id AND status = 'draft'
 LIMIT 1
 FOR UPDATE;
 
--- name: GetLatestPublishedWorkflowTemplateVersion :one
-SELECT * FROM workflow_template_version
-WHERE template_id = @template_id AND workspace_id = @workspace_id AND status = 'published'
+-- name: GetLatestPublishedWorkflowVersion :one
+SELECT * FROM workflow_version
+WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id AND status = 'published'
 ORDER BY version DESC
 LIMIT 1;
 
--- name: GetNextWorkflowTemplateVersion :one
+-- name: GetNextWorkflowVersion :one
 SELECT COALESCE(max(version), 0)::integer + 1
-FROM workflow_template_version
-WHERE template_id = @template_id AND workspace_id = @workspace_id;
+FROM workflow_version
+WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id;
 
--- name: CreateWorkflowTemplateVersion :one
-INSERT INTO workflow_template_version (
-    workspace_id, template_id, version, status, definition,
+-- name: CreateWorkflowVersion :one
+INSERT INTO workflow_version (
+    workspace_id, workflow_id, version, status, definition,
     definition_checksum, change_summary, created_by
 ) VALUES (
-    @workspace_id, @template_id, @version, @status, @definition,
+    @workspace_id, @workflow_id, @version, @status, @definition,
     @definition_checksum, @change_summary, @created_by
 )
 RETURNING *;
 
--- name: UpdateWorkflowTemplateDraft :one
-UPDATE workflow_template_version
+-- name: UpdateWorkflowDraft :one
+UPDATE workflow_version
 SET definition = @definition,
     definition_checksum = @definition_checksum,
     change_summary = @change_summary,
@@ -157,8 +154,8 @@ WHERE id = @id
   AND revision = @expected_revision
 RETURNING *;
 
--- name: PublishWorkflowTemplateVersion :one
-UPDATE workflow_template_version
+-- name: PublishWorkflowVersion :one
+UPDATE workflow_version
 SET status = 'published',
     published_by = @published_by,
     published_at = now(),
@@ -166,8 +163,8 @@ SET status = 'published',
 WHERE id = @id AND workspace_id = @workspace_id AND status = 'draft'
 RETURNING *;
 
--- name: SetWorkflowTemplatePublishedVersion :one
-UPDATE workflow_template
+-- name: SetWorkflowPublishedVersion :one
+UPDATE workflow
 SET status = 'published',
     latest_published_version_id = @latest_published_version_id,
     updated_at = now()
@@ -182,8 +179,8 @@ RETURNING *;
 SELECT
   task.issue_id,
   instance.id AS workflow_instance_id,
-  template.id AS workflow_template_id,
-  template.name AS workflow_template_name,
+  workflow_def.id AS workflow_id,
+  workflow_def.name AS workflow_name,
   node.id AS workflow_node_instance_id,
   node.node_key AS activity_key,
   node.name_snapshot AS activity_name,
@@ -198,9 +195,9 @@ JOIN workflow_node_instance node
 JOIN workflow_instance instance
   ON instance.id = task.workflow_instance_id
  AND instance.workspace_id = task.workspace_id
-JOIN workflow_template template
-  ON template.id = instance.template_id
- AND template.workspace_id = task.workspace_id
+JOIN workflow workflow_def
+  ON workflow_def.id = instance.workflow_id
+ AND workflow_def.workspace_id = task.workspace_id
 LEFT JOIN issue host
   ON host.id = instance.host_issue_id
  AND host.workspace_id = task.workspace_id
@@ -215,8 +212,8 @@ SELECT
   COALESCE(host.number, 0)::integer AS host_issue_number,
   COALESCE(host.priority, '') AS host_issue_priority,
   host.project_id,
-  template.name AS template_name,
-  version.version AS template_version,
+  workflow_def.name AS workflow_name,
+  version.version AS workflow_version,
   CAST(COALESCE((
     SELECT count(*)::integer
     FROM workflow_node_instance node
@@ -250,11 +247,11 @@ FROM workflow_instance wi
 LEFT JOIN issue host
   ON host.id = wi.host_issue_id
  AND host.workspace_id = wi.workspace_id
-JOIN workflow_template template
-  ON template.id = wi.template_id
- AND template.workspace_id = wi.workspace_id
-JOIN workflow_template_version version
-  ON version.id = wi.template_version_id
+JOIN workflow workflow_def
+  ON workflow_def.id = wi.workflow_id
+ AND workflow_def.workspace_id = wi.workspace_id
+JOIN workflow_version version
+  ON version.id = wi.workflow_version_id
  AND version.workspace_id = wi.workspace_id
 WHERE wi.workspace_id = @workspace_id
   AND wi.id = ANY(@workflow_instance_ids::uuid[]);
@@ -601,7 +598,7 @@ WHERE wi.workspace_id = @workspace_id
       AND host.workspace_id = wi.workspace_id
       AND host.project_id = sqlc.narg(project_id)
   ))
-  AND (sqlc.narg(template_id)::uuid IS NULL OR wi.template_id = sqlc.narg(template_id))
+  AND (sqlc.narg(workflow_id)::uuid IS NULL OR wi.workflow_id = sqlc.narg(workflow_id))
   AND (sqlc.narg(current_node_key)::text IS NULL OR EXISTS (
     SELECT 1 FROM workflow_node_instance current_node
     WHERE current_node.workflow_instance_id = wi.id
@@ -954,7 +951,7 @@ WHERE wi.workspace_id = @workspace_id
       AND host.workspace_id = wi.workspace_id
       AND host.project_id = sqlc.narg(project_id)
   ))
-  AND (sqlc.narg(template_id)::uuid IS NULL OR wi.template_id = sqlc.narg(template_id))
+  AND (sqlc.narg(workflow_id)::uuid IS NULL OR wi.workflow_id = sqlc.narg(workflow_id))
   AND (sqlc.narg(current_node_key)::text IS NULL OR EXISTS (
     SELECT 1 FROM workflow_node_instance current_node
     WHERE current_node.workflow_instance_id = wi.id
@@ -1037,10 +1034,10 @@ FOR UPDATE;
 
 -- name: CreateWorkflowInstance :one
 INSERT INTO workflow_instance (
-    workspace_id, template_id, template_version_id, host_issue_id, title,
+    workspace_id, workflow_id, workflow_version_id, host_issue_id, title,
     status, host_status_mode, input, started_by_type, started_by_id
 ) VALUES (
-    @workspace_id, @template_id, @template_version_id,
+    @workspace_id, @workflow_id, @workflow_version_id,
     sqlc.narg(host_issue_id), @title,
     @status, @host_status_mode, @input, @started_by_type, sqlc.narg(started_by_id)
 )

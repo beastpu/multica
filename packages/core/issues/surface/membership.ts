@@ -131,11 +131,11 @@ export function issueMatchesListFilter(
     if (issue.workflow_context === undefined) unknown = true;
     else if (issue.workflow_context === null) return false;
   }
-  if (filter.workflow_template_id !== undefined) {
+  if (filter.workflow_workflow_id !== undefined) {
     if (issue.workflow_context === undefined) unknown = true;
     else if (
       issue.workflow_context === null ||
-      issue.workflow_context.workflow_template_id !== filter.workflow_template_id
+      issue.workflow_context.workflow_workflow_id !== filter.workflow_workflow_id
     ) {
       return false;
     }

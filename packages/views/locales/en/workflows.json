@@ -5,12 +5,12 @@
     "active": "Active",
     "mine": "Related to me",
     "completed": "Completed",
-    "templates": "Templates",
+    "templates": "Workflows",
     "builtin": "Starter templates"
   },
   "actions": {
     "new_workflow": "New workflow",
-    "new_template": "New template",
+    "new_template": "New workflow",
     "run": "Run",
     "open": "Open workflow",
     "save": "Save",
@@ -130,23 +130,21 @@
     "current_node": "Current node key"
   },
   "templates": {
-    "title": "Workflow templates",
-    "empty_title": "Create your first workflow template",
-    "empty_description": "Define reusable activities, roles, deliverables, and acceptance.",
+    "title": "Workflows",
+    "empty_title": "No workflows yet",
+    "empty_description": "Create one, or start from a template.",
     "admin_only": "Only workspace owners and admins can manage templates.",
     "draft": "Draft",
-    "published": "Published",
+    "published": "Active",
     "archived": "Archived",
     "version": "Version {{version}}",
-    "activities": "Activities",
+    "activities": "Nodes",
     "runs": "Runs",
-    "copy_suffix": "Copy",
+    "copy_suffix": "copy",
     "metadata_title": "Template details",
     "metadata_description": "Update the template name, description, and the issue type it applies to.",
     "name": "Template name",
     "description": "Description",
-    "applies_to_type": "Issue type key",
-    "applies_to_placeholder": "Leave blank to apply to any issue type",
     "archive_title": "Archive this template?",
     "archive_description": "Archived templates remain visible in history and existing runs, but cannot start new workflows.",
     "archived_help": "This template is archived and read-only. Existing runs and published versions remain available.",
@@ -161,7 +159,6 @@
   "workbench": {
     "title": "Workflow workbench",
     "activity_map": "Activity map",
-    "template_version": "{{name}} · version {{version}}",
     "host_priority": "Host issue priority: {{priority}}",
     "host_details": "Requirement details",
     "host_details_description": "Description, comments, attachments, and activity history",
@@ -294,7 +291,8 @@
     "branch_choice_help": "「{{gateway}}」routes on this. Leave it unset and the run goes to「{{fallback}}」.",
     "node_configuration": "Node configuration",
     "tab_delivery": "Delivery",
-    "run_administration": "Run administration"
+    "run_administration": "Run administration",
+    "workflow_version": "{{name}} · version {{version}}"
   },
   "editor": {
     "title": "Workflow template",

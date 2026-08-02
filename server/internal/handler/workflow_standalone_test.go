@@ -11,7 +11,7 @@ import (
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
 )
 
-func TestStartWorkflowTemplateRunCreatesIdempotentStandaloneRun(t *testing.T) {
+func TestStartWorkflowRunCreatesIdempotentStandaloneRun(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
 	ctx := context.Background()
@@ -19,7 +19,6 @@ func TestStartWorkflowTemplateRunCreatesIdempotentStandaloneRun(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Standalone delivery",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{Key: "end", Kind: "end", Name: "End"},
@@ -62,7 +61,7 @@ func TestStartWorkflowTemplateRunCreatesIdempotentStandaloneRun(t *testing.T) {
 			),
 			"id", templateID,
 		)
-		testHandler.StartWorkflowTemplateRun(recorder, request)
+		testHandler.StartWorkflowRun(recorder, request)
 		var response workflowInstanceDetailResponse
 		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 			t.Fatalf("decode standalone run response: %v; body=%s", err, recorder.Body.String())
@@ -72,7 +71,7 @@ func TestStartWorkflowTemplateRunCreatesIdempotentStandaloneRun(t *testing.T) {
 
 	firstStatus, first := start()
 	if firstStatus != http.StatusCreated {
-		t.Fatalf("StartWorkflowTemplateRun status = %d, run = %#v", firstStatus, first)
+		t.Fatalf("StartWorkflowRun status = %d, run = %#v", firstStatus, first)
 	}
 	if first.Instance.HostIssueID != "" {
 		t.Fatalf("standalone run host_issue_id = %q, want empty string", first.Instance.HostIssueID)
@@ -120,7 +119,6 @@ func TestStandaloneRunDispatchesIssueLessAgentNode(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Direct agent delivery",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{
@@ -178,9 +176,9 @@ func TestStandaloneRunDispatchesIssueLessAgentNode(t *testing.T) {
 		),
 		"id", templateID,
 	)
-	testHandler.StartWorkflowTemplateRun(recorder, request)
+	testHandler.StartWorkflowRun(recorder, request)
 	if recorder.Code != http.StatusCreated {
-		t.Fatalf("StartWorkflowTemplateRun status = %d, body = %s", recorder.Code, recorder.Body.String())
+		t.Fatalf("StartWorkflowRun status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	var started workflowInstanceDetailResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &started); err != nil {
@@ -389,7 +387,6 @@ func startDirectStandaloneRunForTest(
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Direct agent test",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{
@@ -440,9 +437,9 @@ func startDirectStandaloneRunForTest(
 		),
 		"id", templateID,
 	)
-	testHandler.StartWorkflowTemplateRun(recorder, request)
+	testHandler.StartWorkflowRun(recorder, request)
 	if recorder.Code != http.StatusCreated {
-		t.Fatalf("StartWorkflowTemplateRun status=%d body=%s", recorder.Code, recorder.Body.String())
+		t.Fatalf("StartWorkflowRun status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	var started workflowInstanceDetailResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &started); err != nil {

@@ -5,12 +5,12 @@
     "active": "進行中",
     "mine": "自分に関連",
     "completed": "完了",
-    "templates": "テンプレート",
+    "templates": "ワークフロー",
     "builtin": "組み込みテンプレート"
   },
   "actions": {
     "new_workflow": "新規ワークフロー",
-    "new_template": "新規テンプレート",
+    "new_template": "ワークフローを作成",
     "run": "実行",
     "open": "開く",
     "save": "保存",
@@ -145,8 +145,6 @@
     "metadata_description": "テンプレート名、説明、適用する Issue タイプを更新します。",
     "name": "テンプレート名",
     "description": "説明",
-    "applies_to_type": "Issue タイプキー",
-    "applies_to_placeholder": "空欄の場合はすべての Issue タイプに適用",
     "archive_title": "このテンプレートをアーカイブしますか？",
     "archive_description": "履歴と既存の実行には残りますが、新しいワークフローを開始できなくなります。",
     "archived_help": "このテンプレートはアーカイブ済みで読み取り専用です。既存の実行と公開バージョンは引き続き利用できます。",
@@ -161,7 +159,6 @@
   "workbench": {
     "title": "ワークフロー作業台",
     "activity_map": "アクティビティマップ",
-    "template_version": "{{name}} · バージョン {{version}}",
     "host_priority": "ホスト issue の優先度：{{priority}}",
     "host_details": "要件の詳細",
     "host_details_description": "説明、コメント、添付ファイル、操作履歴を表示",
@@ -294,7 +291,8 @@
     "branch_choice_help": "「{{gateway}}」がこの選択で分岐します。未選択の場合は「{{fallback}}」へ進みます。",
     "node_configuration": "ノード設定",
     "tab_delivery": "提出物",
-    "run_administration": "実行の管理"
+    "run_administration": "実行の管理",
+    "workflow_version": "{{name}} · バージョン {{version}}"
   },
   "editor": {
     "title": "ワークフローテンプレート",

@@ -158,8 +158,8 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
   it("keeps a valid workflow activity context", () => {
     const workflowContext = {
       workflow_instance_id: "workflow-1",
-      workflow_template_id: "template-1",
-      workflow_template_name: "Delivery",
+      workflow_workflow_id: "template-1",
+      workflow_workflow_name: "Delivery",
       workflow_node_instance_id: "node-1",
       activity_key: "implementation",
       activity_name: "Implementation",

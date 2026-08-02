@@ -13,22 +13,22 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-type startWorkflowTemplateRunRequest struct {
+type startWorkflowRunRequest struct {
 	Title             string                        `json:"title,omitempty"`
-	TemplateVersionID string                        `json:"template_version_id,omitempty"`
+	WorkflowVersionID string                        `json:"workflow_version_id,omitempty"`
 	Input             json.RawMessage               `json:"input,omitempty"`
 	RoleAssignments   []workflowRoleAssignmentInput `json:"role_assignments,omitempty"`
 	IdempotencyKey    string                        `json:"idempotency_key"`
 }
 
-// StartWorkflowTemplateRun starts a durable Run without manufacturing a host
+// StartWorkflowRun starts a durable Run without manufacturing a host
 // Issue. Nodes may still materialize Issues when their own issue_policy asks
 // for one; the run itself is the top-level execution record.
-func (h *Handler) StartWorkflowTemplateRun(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) StartWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowWriteEnabled(w, r) {
 		return
 	}
-	var req startWorkflowTemplateRunRequest
+	var req startWorkflowRunRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
@@ -66,12 +66,12 @@ func (h *Handler) StartWorkflowTemplateRun(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "template_id")
+	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workflow_id")
 	if !ok {
 		return
 	}
-	template, err := h.Queries.GetWorkflowTemplateInWorkspace(
-		r.Context(), db.GetWorkflowTemplateInWorkspaceParams{ID: templateID, WorkspaceID: wsUUID},
+	template, err := h.Queries.GetWorkflowInWorkspace(
+		r.Context(), db.GetWorkflowInWorkspaceParams{ID: templateID, WorkspaceID: wsUUID},
 	)
 	if errors.Is(err, pgx.ErrNoRows) || template.Status != "published" {
 		writeError(w, http.StatusNotFound, "published workflow template not found")
@@ -82,16 +82,16 @@ func (h *Handler) StartWorkflowTemplateRun(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	versionID := template.LatestPublishedVersionID
-	if strings.TrimSpace(req.TemplateVersionID) != "" {
-		versionID, ok = parseUUIDOrBadRequest(w, req.TemplateVersionID, "template_version_id")
+	if strings.TrimSpace(req.WorkflowVersionID) != "" {
+		versionID, ok = parseUUIDOrBadRequest(w, req.WorkflowVersionID, "workflow_version_id")
 		if !ok {
 			return
 		}
 	}
-	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(
-		r.Context(), db.GetWorkflowTemplateVersionInWorkspaceParams{ID: versionID, WorkspaceID: wsUUID},
+	version, err := h.Queries.GetWorkflowVersionInWorkspace(
+		r.Context(), db.GetWorkflowVersionInWorkspaceParams{ID: versionID, WorkspaceID: wsUUID},
 	)
-	if errors.Is(err, pgx.ErrNoRows) || version.TemplateID != template.ID || version.Status != "published" {
+	if errors.Is(err, pgx.ErrNoRows) || version.WorkflowID != template.ID || version.Status != "published" {
 		writeError(w, http.StatusBadRequest, "published template version not found")
 		return
 	}
@@ -139,7 +139,7 @@ func (h *Handler) StartWorkflowTemplateRun(w http.ResponseWriter, r *http.Reques
 	defer tx.Rollback(r.Context())
 	instance, activeNodes, err := h.createWorkflowRuntime(
 		r.Context(), h.Queries.WithTx(tx), workflowRuntimeStartParams{
-			WorkspaceID: wsUUID, TemplateID: template.ID, TemplateVersionID: version.ID,
+			WorkspaceID: wsUUID, WorkflowID: template.ID, WorkflowVersionID: version.ID,
 			HostIssueID: pgtype.UUID{}, Title: title, HostStatusMode: "independent",
 			Input: normalizedInput, StartedByID: userUUID, IdempotencyKey: req.IdempotencyKey,
 			Definition: definition, Plan: plan, Assignments: assignments, MissingRoles: missingRoles,

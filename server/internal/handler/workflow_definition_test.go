@@ -26,7 +26,7 @@ func TestWorkflowWriteFlagIsWorkspaceScoped(t *testing.T) {
 	})
 
 	allowed := httptest.NewRecorder()
-	testHandler.CreateWorkflowTemplate(
+	testHandler.CreateWorkflow(
 		allowed,
 		newRequest(
 			http.MethodPost,
@@ -50,7 +50,7 @@ func TestWorkflowWriteFlagIsWorkspaceScoped(t *testing.T) {
 	)
 	deniedRequest.Header.Set("X-Workspace-ID", deniedWorkspaceID)
 	denied := httptest.NewRecorder()
-	testHandler.CreateWorkflowTemplate(denied, deniedRequest)
+	testHandler.CreateWorkflow(denied, deniedRequest)
 	if denied.Code != http.StatusNotFound {
 		t.Fatalf(
 			"denied workspace status = %d, want %d, body = %s",
@@ -61,7 +61,7 @@ func TestWorkflowWriteFlagIsWorkspaceScoped(t *testing.T) {
 	}
 }
 
-func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
+func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
 	ctx := context.Background()
@@ -97,7 +97,6 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Template lifecycle",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{Key: "work", Kind: "activity", Name: "Work"},
@@ -123,7 +122,7 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 		},
 	)
 	forbiddenRequest.Header.Set("X-User-ID", memberID)
-	testHandler.CreateWorkflowTemplate(forbidden, forbiddenRequest)
+	testHandler.CreateWorkflow(forbidden, forbiddenRequest)
 	if forbidden.Code != http.StatusForbidden {
 		t.Fatalf(
 			"member template create status = %d, want %d, body = %s",
@@ -134,7 +133,7 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 	}
 
 	create := httptest.NewRecorder()
-	testHandler.CreateWorkflowTemplate(
+	testHandler.CreateWorkflow(
 		create,
 		newRequest(
 			http.MethodPost,
@@ -148,14 +147,14 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 	)
 	if create.Code != http.StatusCreated {
 		t.Fatalf(
-			"CreateWorkflowTemplate status = %d, body = %s",
+			"CreateWorkflow status = %d, body = %s",
 			create.Code,
 			create.Body.String(),
 		)
 	}
 	var created struct {
-		Template workflowTemplateResponse        `json:"template"`
-		Draft    workflowTemplateVersionResponse `json:"draft"`
+		Template workflowResponse                `json:"template"`
+		Draft    workflowWorkflowVersionResponse `json:"draft"`
 	}
 	if err := json.Unmarshal(create.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode created workflow template: %v", err)
@@ -172,10 +171,10 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 		"id",
 		created.Template.ID,
 	)
-	testHandler.PublishWorkflowTemplate(publish, publishRequest)
+	testHandler.PublishWorkflow(publish, publishRequest)
 	if publish.Code != http.StatusOK {
 		t.Fatalf(
-			"PublishWorkflowTemplate status = %d, body = %s",
+			"PublishWorkflow status = %d, body = %s",
 			publish.Code,
 			publish.Body.String(),
 		)
@@ -201,15 +200,15 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 		"id",
 		created.Template.ID,
 	)
-	testHandler.CreateWorkflowTemplateDraft(createDraft, createDraftRequest)
+	testHandler.CreateWorkflowDraft(createDraft, createDraftRequest)
 	if createDraft.Code != http.StatusCreated {
 		t.Fatalf(
-			"CreateWorkflowTemplateDraft status = %d, body = %s",
+			"CreateWorkflowDraft status = %d, body = %s",
 			createDraft.Code,
 			createDraft.Body.String(),
 		)
 	}
-	var draft workflowTemplateVersionResponse
+	var draft workflowWorkflowVersionResponse
 	if err := json.Unmarshal(createDraft.Body.Bytes(), &draft); err != nil {
 		t.Fatalf("decode workflow template draft: %v", err)
 	}
@@ -232,13 +231,13 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 			"id",
 			created.Template.ID,
 		)
-		testHandler.UpdateWorkflowTemplateDraft(recorder, request)
+		testHandler.UpdateWorkflowDraft(recorder, request)
 		return recorder
 	}
 	firstUpdate := updateDraft(draft.Revision, "Version two")
 	if firstUpdate.Code != http.StatusOK {
 		t.Fatalf(
-			"UpdateWorkflowTemplateDraft status = %d, body = %s",
+			"UpdateWorkflowDraft status = %d, body = %s",
 			firstUpdate.Code,
 			firstUpdate.Body.String(),
 		)
@@ -254,7 +253,7 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 	}
 	var conflict struct {
 		LatestRevision int64                           `json:"latest_revision"`
-		Draft          workflowTemplateVersionResponse `json:"draft"`
+		Draft          workflowWorkflowVersionResponse `json:"draft"`
 	}
 	if err := json.Unmarshal(staleUpdate.Body.Bytes(), &conflict); err != nil {
 		t.Fatalf("decode workflow draft conflict: %v", err)
@@ -292,7 +291,7 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 		created.Template.ID,
 	)
 	memberGetRequest.Header.Set("X-User-ID", memberID)
-	testHandler.GetWorkflowTemplate(memberGet, memberGetRequest)
+	testHandler.GetWorkflow(memberGet, memberGetRequest)
 	if memberGet.Code != http.StatusOK {
 		t.Fatalf(
 			"member workflow template read status = %d, body = %s",
@@ -301,7 +300,7 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 		)
 	}
 	var memberDetail struct {
-		Versions []workflowTemplateVersionResponse `json:"versions"`
+		Versions []workflowWorkflowVersionResponse `json:"versions"`
 	}
 	if err := json.Unmarshal(memberGet.Body.Bytes(), &memberDetail); err != nil {
 		t.Fatalf("decode member workflow template detail: %v", err)
@@ -322,10 +321,10 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 		"id",
 		created.Template.ID,
 	)
-	testHandler.ArchiveWorkflowTemplate(archive, archiveRequest)
+	testHandler.ArchiveWorkflow(archive, archiveRequest)
 	if archive.Code != http.StatusOK {
 		t.Fatalf(
-			"ArchiveWorkflowTemplate status = %d, body = %s",
+			"ArchiveWorkflow status = %d, body = %s",
 			archive.Code,
 			archive.Body.String(),
 		)
@@ -342,12 +341,12 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 			name: "metadata", method: http.MethodPatch,
 			path: "/api/workflow-templates/" + created.Template.ID,
 			body: map[string]any{"name": "Changed after archive"},
-			call: testHandler.UpdateWorkflowTemplateMetadata,
+			call: testHandler.UpdateWorkflowMetadata,
 		},
 		{
 			name: "draft", method: http.MethodPost,
 			path: "/api/workflow-templates/" + created.Template.ID + "/draft",
-			call: testHandler.CreateWorkflowTemplateDraft,
+			call: testHandler.CreateWorkflowDraft,
 		},
 		{
 			name: "update draft", method: http.MethodPut,
@@ -356,12 +355,12 @@ func TestWorkflowTemplatePermissionsImmutabilityAndDraftConcurrency(t *testing.T
 				"definition": updatedDefinition, "change_summary": "Archived",
 				"revision": draft.Revision + 1,
 			},
-			call: testHandler.UpdateWorkflowTemplateDraft,
+			call: testHandler.UpdateWorkflowDraft,
 		},
 		{
 			name: "publish", method: http.MethodPost,
 			path: "/api/workflow-templates/" + created.Template.ID + "/publish",
-			call: testHandler.PublishWorkflowTemplate,
+			call: testHandler.PublishWorkflow,
 		},
 	}
 	for _, mutation := range archivedMutations {

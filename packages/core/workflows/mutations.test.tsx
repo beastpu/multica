@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import {
-  useCreateWorkflow,
+  useCreateWorkflowRun,
   useCreateWorkflowSubmission,
 } from "./mutations";
 import { workflowKeys } from "./queries";
@@ -155,20 +155,20 @@ describe("workflow optimistic mutations", () => {
   });
 
   it("keeps an atomic workflow create retry-safe when callers regenerate keys", async () => {
-    const createWorkflow = vi.fn()
+    const createWorkflowRun = vi.fn()
       .mockRejectedValueOnce(new Error("response lost"))
       .mockResolvedValue({
         instance: { id: "instance-1" },
         nodes: [],
         role_assignments: [],
       });
-    setApiInstance({ createWorkflow } as unknown as ApiClient);
-    const { result } = renderHook(() => useCreateWorkflow(), {
+    setApiInstance({ createWorkflowRun } as unknown as ApiClient);
+    const { result } = renderHook(() => useCreateWorkflowRun(), {
       wrapper: wrapper(queryClient),
     });
     const payload = {
       title: "Release workflow",
-      template_id: "template-1",
+      workflow_id: "template-1",
       role_assignments: [],
     };
 
@@ -191,7 +191,7 @@ describe("workflow optimistic mutations", () => {
       });
     });
 
-    const keys = createWorkflow.mock.calls.map(
+    const keys = createWorkflowRun.mock.calls.map(
       ([request]) => request.idempotency_key,
     );
     expect(keys[0]).toBe(keys[1]);

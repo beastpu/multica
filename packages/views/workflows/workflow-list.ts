@@ -36,7 +36,7 @@ export function workflowStatusForTab(
   return tab === "completed" ? "terminal" : "active";
 }
 
-export function canManageWorkflowTemplates(
+export function canManageWorkflows(
   role: string | null | undefined,
 ): boolean {
   return role === "owner" || role === "admin";

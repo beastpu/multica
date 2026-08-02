@@ -33,7 +33,7 @@ import {
   workflowInstanceIssuesOptions,
   workflowInstanceOptions,
   workflowNodeOptions,
-  workflowTemplateOptions,
+  workflowOptions,
 } from "@/data/queries/workflows";
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { useActorLookup } from "@/data/use-actor-name";
@@ -89,12 +89,12 @@ export default function WorkflowReadOnlyScreen() {
   });
   const templateQuery = useQuery(
     {
-      ...workflowTemplateOptions(wsId, instance?.template_id ?? ""),
-      enabled: enabled && !!wsId && !!instance?.template_id,
+      ...workflowOptions(wsId, instance?.workflow_id ?? ""),
+      enabled: enabled && !!wsId && !!instance?.workflow_id,
     },
   );
   const templateVersion = templateQuery.data?.versions.find(
-    (version) => version.id === instance?.template_version_id,
+    (version) => version.id === instance?.workflow_version_id,
   );
   const visibleIssues = workflowIssuesForScope(
     issuesQuery.data?.issues ?? [],
@@ -178,10 +178,10 @@ export default function WorkflowReadOnlyScreen() {
           <View className="flex-row items-start justify-between gap-3">
             <View className="min-w-0 flex-1">
               <Text className="text-lg font-semibold" numberOfLines={2}>
-                {instance.host_issue_title || instance.template_name}
+                {instance.host_issue_title || instance.workflow_name}
               </Text>
               <Text className="mt-1 text-xs text-muted-foreground">
-                {instance.template_name} · v{instance.template_version}
+                {instance.workflow_name} · v{instance.workflow_version}
               </Text>
             </View>
             <WorkflowStatus status={instance.status} />

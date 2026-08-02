@@ -30,7 +30,7 @@ export function WorkflowActivityChip({
         <span className="truncate">{context.activity_name || context.activity_key}</span>
       </TooltipTrigger>
       <TooltipContent className="max-w-80 space-y-1">
-        <p className="font-medium">{context.workflow_template_name}</p>
+        <p className="font-medium">{context.workflow_workflow_name}</p>
         <p>
           {t(($) => $.workflow_context.host, {
             identifier: context.host_issue_identifier,

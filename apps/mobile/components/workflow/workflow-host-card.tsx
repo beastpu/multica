@@ -44,7 +44,7 @@ export function WorkflowHostCard({ issueId }: { issueId: string }) {
       onPress={() => router.push(`/${wsSlug}/workflow/${instance.id}`)}
       className="mx-4 mt-3 min-h-16 rounded-md border border-border bg-card p-3 active:bg-secondary"
       accessibilityRole="button"
-      accessibilityLabel={`Open workflow ${instance.template_name}`}
+      accessibilityLabel={`Open workflow ${instance.workflow_name}`}
     >
       <View className="flex-row items-center gap-3">
         <View className="size-9 items-center justify-center rounded-md bg-brand/10">
@@ -57,7 +57,7 @@ export function WorkflowHostCard({ issueId }: { issueId: string }) {
         <View className="min-w-0 flex-1">
           <View className="flex-row items-center justify-between gap-2">
             <Text className="min-w-0 flex-1 text-sm font-medium" numberOfLines={1}>
-              {instance.template_name || "Workflow"}
+              {instance.workflow_name || "Workflow"}
             </Text>
             <WorkflowStatus status={instance.status} compact />
           </View>

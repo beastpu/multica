@@ -54,7 +54,7 @@ import {
   workflowNodeOptions,
   workflowNodeArtifactsOptions,
   useReviewWorkflowArtifact,
-  workflowTemplateOptions,
+  workflowOptions,
   workflowCompletionMode,
   type WorkflowNodeInstance,
   type WorkflowNodeTask,
@@ -1884,8 +1884,8 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   );
   const acceptancesQuery = useQuery(workflowAcceptancesOptions(wsId, instanceId));
   const templateQuery = useQuery({
-    ...workflowTemplateOptions(wsId, instance?.template_id ?? ""),
-    enabled: Boolean(instance?.template_id),
+    ...workflowOptions(wsId, instance?.workflow_id ?? ""),
+    enabled: Boolean(instance?.workflow_id),
   });
   const hostIssueQuery = useQuery({
     ...issueDetailOptions(wsId, instance?.host_issue_id ?? ""),
@@ -1950,7 +1950,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
     [instanceId, issueScope, selectedNode?.node_key],
   );
   const templateVersion = templateQuery.data?.versions.find(
-    (version) => version.id === instance?.template_version_id,
+    (version) => version.id === instance?.workflow_version_id,
   );
   const acceptanceApproverRole =
     templateVersion?.definition.acceptance.approver_role;
@@ -2579,11 +2579,11 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             </span>
             {templateVersion && (
               <AppLink
-                href={p.workflowTemplate(instance.template_id)}
+                href={p.workflow(instance.workflow_id)}
                 className="rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                {t(($) => $.workbench.template_version, {
-                  name: templateQuery.data?.template.name ?? instance.template_name,
+                {t(($) => $.workbench.workflow_version, {
+                  name: templateQuery.data?.workflow.name ?? instance.workflow_name,
                   version: templateVersion.version,
                 })}
               </AppLink>

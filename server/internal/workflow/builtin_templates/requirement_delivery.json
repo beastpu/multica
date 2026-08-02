@@ -1,9 +1,6 @@
 {
   "schema_version": 1,
   "name": "产品需求研发",
-  "applies_to": {
-    "kind": "issue"
-  },
   "roles": [
     {
       "key": "product_owner",

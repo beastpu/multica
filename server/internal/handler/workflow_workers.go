@@ -143,8 +143,8 @@ func (w *WorkflowMaterializer) ProcessNext(ctx context.Context) (bool, error) {
 		slog.Warn(
 			"workflow materialization deferred",
 			"workspace_id", workspaceID,
-			"workflow_template_id", uuidToString(instance.TemplateID),
-			"workflow_version_id", uuidToString(instance.TemplateVersionID),
+			"workflow_template_id", uuidToString(instance.WorkflowID),
+			"workflow_version_id", uuidToString(instance.WorkflowVersionID),
 			"workflow_instance_id", uuidToString(instance.ID),
 			"host_issue_id", uuidToString(instance.HostIssueID),
 			"node_key", node.NodeKey,
@@ -265,8 +265,8 @@ func (w *WorkflowReconciler) ProcessNext(ctx context.Context) (bool, error) {
 		slog.Warn(
 			"workflow reconcile failed",
 			"workspace_id", workspaceID,
-			"workflow_template_id", uuidToString(instance.TemplateID),
-			"workflow_version_id", uuidToString(instance.TemplateVersionID),
+			"workflow_template_id", uuidToString(instance.WorkflowID),
+			"workflow_version_id", uuidToString(instance.WorkflowVersionID),
 			"workflow_instance_id", uuidToString(instance.ID),
 			"host_issue_id", uuidToString(instance.HostIssueID),
 			"failure_type", "reconcile_failed",

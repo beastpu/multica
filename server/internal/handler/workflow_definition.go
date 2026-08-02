@@ -19,13 +19,11 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-type workflowTemplateResponse struct {
+type workflowResponse struct {
 	ID                       string  `json:"id"`
 	WorkspaceID              string  `json:"workspace_id"`
 	Name                     string  `json:"name"`
 	Description              string  `json:"description"`
-	AppliesToKind            string  `json:"applies_to_kind"`
-	AppliesToTypeKey         string  `json:"applies_to_type_key"`
 	Status                   string  `json:"status"`
 	LatestPublishedVersionID *string `json:"latest_published_version_id"`
 	CreatedBy                string  `json:"created_by"`
@@ -42,14 +40,12 @@ type workflowTemplateResponse struct {
 	LatestChangeSummary      string  `json:"latest_change_summary"`
 }
 
-func workflowTemplateSummaryToResponse(
-	row db.ListWorkflowTemplateSummariesRow,
-) workflowTemplateResponse {
-	return workflowTemplateResponse{
+func workflowSummaryToResponse(
+	row db.ListWorkflowSummariesRow,
+) workflowResponse {
+	return workflowResponse{
 		ID: uuidToString(row.ID), WorkspaceID: uuidToString(row.WorkspaceID),
 		Name: row.Name, Description: row.Description,
-		AppliesToKind:    row.AppliesToKind,
-		AppliesToTypeKey: row.AppliesToTypeKey, Status: row.Status,
 		LatestPublishedVersionID: uuidToPtr(row.LatestPublishedVersionID),
 		CreatedBy:                uuidToString(row.CreatedBy),
 		ArchivedAt:               timestampToPtr(row.ArchivedAt),
@@ -64,10 +60,10 @@ func workflowTemplateSummaryToResponse(
 	}
 }
 
-type workflowTemplateVersionResponse struct {
+type workflowWorkflowVersionResponse struct {
 	ID                 string          `json:"id"`
 	WorkspaceID        string          `json:"workspace_id"`
-	TemplateID         string          `json:"template_id"`
+	WorkflowID         string          `json:"workflow_id"`
 	Version            int32           `json:"version"`
 	Revision           int64           `json:"revision"`
 	Status             string          `json:"status"`
@@ -81,14 +77,12 @@ type workflowTemplateVersionResponse struct {
 	UpdatedAt          string          `json:"updated_at"`
 }
 
-func workflowTemplateToResponse(row db.WorkflowTemplate) workflowTemplateResponse {
-	return workflowTemplateResponse{
+func workflowToResponse(row db.Workflow) workflowResponse {
+	return workflowResponse{
 		ID:                       uuidToString(row.ID),
 		WorkspaceID:              uuidToString(row.WorkspaceID),
 		Name:                     row.Name,
 		Description:              row.Description,
-		AppliesToKind:            row.AppliesToKind,
-		AppliesToTypeKey:         row.AppliesToTypeKey,
 		Status:                   row.Status,
 		LatestPublishedVersionID: uuidToPtr(row.LatestPublishedVersionID),
 		CreatedBy:                uuidToString(row.CreatedBy),
@@ -98,11 +92,11 @@ func workflowTemplateToResponse(row db.WorkflowTemplate) workflowTemplateRespons
 	}
 }
 
-func workflowTemplateVersionToResponse(row db.WorkflowTemplateVersion) workflowTemplateVersionResponse {
-	return workflowTemplateVersionResponse{
+func workflowWorkflowVersionToResponse(row db.WorkflowVersion) workflowWorkflowVersionResponse {
+	return workflowWorkflowVersionResponse{
 		ID:                 uuidToString(row.ID),
 		WorkspaceID:        uuidToString(row.WorkspaceID),
-		TemplateID:         uuidToString(row.TemplateID),
+		WorkflowID:         uuidToString(row.WorkflowID),
 		Version:            row.Version,
 		Revision:           row.Revision,
 		Status:             row.Status,
@@ -177,7 +171,7 @@ func workflowDefinitionBytes(raw json.RawMessage) ([]byte, string, error) {
 	return normalized, hex.EncodeToString(sum[:]), nil
 }
 
-func (h *Handler) ListWorkflowTemplates(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
@@ -203,9 +197,9 @@ func (h *Handler) ListWorkflowTemplates(w http.ResponseWriter, r *http.Request) 
 	} else if !isAdmin {
 		status = pgtype.Text{String: "published", Valid: true}
 	}
-	rows, err := h.Queries.ListWorkflowTemplateSummaries(
+	rows, err := h.Queries.ListWorkflowSummaries(
 		r.Context(),
-		db.ListWorkflowTemplateSummariesParams{
+		db.ListWorkflowSummariesParams{
 			WorkspaceID: wsUUID,
 			Status:      status,
 		},
@@ -214,18 +208,18 @@ func (h *Handler) ListWorkflowTemplates(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to list workflow templates")
 		return
 	}
-	items := make([]workflowTemplateResponse, len(rows))
+	items := make([]workflowResponse, len(rows))
 	for i, row := range rows {
-		items[i] = workflowTemplateSummaryToResponse(row)
+		items[i] = workflowSummaryToResponse(row)
 		if !isAdmin {
 			items[i].DraftVersion = 0
 			items[i].HasDraft = false
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"templates": items, "total": len(items)})
+	writeJSON(w, http.StatusOK, map[string]any{"workflows": items, "total": len(items)})
 }
 
-func (h *Handler) GetWorkflowTemplate(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
@@ -235,11 +229,11 @@ func (h *Handler) GetWorkflowTemplate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "template_id")
+	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workflow_id")
 	if !ok {
 		return
 	}
-	template, err := h.Queries.GetWorkflowTemplateInWorkspace(r.Context(), db.GetWorkflowTemplateInWorkspaceParams{
+	template, err := h.Queries.GetWorkflowInWorkspace(r.Context(), db.GetWorkflowInWorkspaceParams{
 		ID: templateID, WorkspaceID: wsUUID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -254,41 +248,40 @@ func (h *Handler) GetWorkflowTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "workflow template not found")
 		return
 	}
-	versions, err := h.Queries.ListWorkflowTemplateVersions(r.Context(), db.ListWorkflowTemplateVersionsParams{
-		TemplateID: templateID, WorkspaceID: wsUUID,
+	versions, err := h.Queries.ListWorkflowVersions(r.Context(), db.ListWorkflowVersionsParams{
+		WorkflowID: templateID, WorkspaceID: wsUUID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load workflow template versions")
 		return
 	}
-	versionResponses := make([]workflowTemplateVersionResponse, 0, len(versions))
+	versionResponses := make([]workflowWorkflowVersionResponse, 0, len(versions))
 	for _, version := range versions {
 		if !isAdmin && version.Status != "published" {
 			continue
 		}
 		versionResponses = append(
 			versionResponses,
-			workflowTemplateVersionToResponse(version),
+			workflowWorkflowVersionToResponse(version),
 		)
 		if version.Status == "draft" {
 			w.Header().Set("ETag", workflowDraftETag(version.Revision))
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"template": workflowTemplateToResponse(template),
+		"workflow": workflowToResponse(template),
 		"versions": versionResponses,
 	})
 }
 
-type createWorkflowTemplateRequest struct {
-	Name             string          `json:"name"`
-	Description      string          `json:"description"`
-	AppliesToTypeKey string          `json:"applies_to_type_key"`
-	Definition       json.RawMessage `json:"definition"`
-	ChangeSummary    string          `json:"change_summary"`
+type createWorkflowRequest struct {
+	Name          string          `json:"name"`
+	Description   string          `json:"description"`
+	Definition    json.RawMessage `json:"definition"`
+	ChangeSummary string          `json:"change_summary"`
 }
 
-// workflowTemplateNameTaken reports whether another live template in the
+// workflowWorkflowNameTaken reports whether another live template in the
 // workspace already answers to this name, writing the 409 when it does.
 //
 // Enforced here rather than only in the database because the message matters:
@@ -297,16 +290,16 @@ type createWorkflowTemplateRequest struct {
 //
 // excludeID keeps a rename to its own current name a no-op instead of a
 // self-collision.
-func (h *Handler) workflowTemplateNameTaken(
+func (h *Handler) workflowWorkflowNameTaken(
 	w http.ResponseWriter,
 	r *http.Request,
 	workspaceID pgtype.UUID,
 	name string,
 	excludeID pgtype.UUID,
 ) bool {
-	count, err := h.Queries.CountLiveWorkflowTemplatesByName(
+	count, err := h.Queries.CountLiveWorkflowsByName(
 		r.Context(),
-		db.CountLiveWorkflowTemplatesByNameParams{
+		db.CountLiveWorkflowsByNameParams{
 			WorkspaceID: workspaceID, Name: name, ExcludeID: excludeID,
 		},
 	)
@@ -321,11 +314,11 @@ func (h *Handler) workflowTemplateNameTaken(
 	return false
 }
 
-func (h *Handler) CreateWorkflowTemplate(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return
 	}
-	var req createWorkflowTemplateRequest
+	var req createWorkflowRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -353,7 +346,7 @@ func (h *Handler) CreateWorkflowTemplate(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if h.workflowTemplateNameTaken(w, r, wsUUID, req.Name, pgtype.UUID{}) {
+	if h.workflowWorkflowNameTaken(w, r, wsUUID, req.Name, pgtype.UUID{}) {
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -363,16 +356,16 @@ func (h *Handler) CreateWorkflowTemplate(w http.ResponseWriter, r *http.Request)
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
-	template, err := qtx.CreateWorkflowTemplate(r.Context(), db.CreateWorkflowTemplateParams{
+	template, err := qtx.CreateWorkflow(r.Context(), db.CreateWorkflowParams{
 		WorkspaceID: wsUUID, Name: req.Name, Description: req.Description,
-		AppliesToKind: "issue", AppliesToTypeKey: req.AppliesToTypeKey, CreatedBy: userUUID,
+		CreatedBy: userUUID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create workflow template")
 		return
 	}
-	version, err := qtx.CreateWorkflowTemplateVersion(r.Context(), db.CreateWorkflowTemplateVersionParams{
-		WorkspaceID: wsUUID, TemplateID: template.ID, Version: 1, Status: "draft",
+	version, err := qtx.CreateWorkflowVersion(r.Context(), db.CreateWorkflowVersionParams{
+		WorkspaceID: wsUUID, WorkflowID: template.ID, Version: 1, Status: "draft",
 		Definition: definition, DefinitionChecksum: checksum,
 		ChangeSummary: req.ChangeSummary, CreatedBy: userUUID,
 	})
@@ -385,17 +378,17 @@ func (h *Handler) CreateWorkflowTemplate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	h.publishWorkflowRealtime(
-		protocol.EventWorkflowTemplateCreated, workspaceID, "member", userID,
+		protocol.EventWorkflowCreated, workspaceID, "member", userID,
 		map[string]any{"workflow_template_id": uuidToString(template.ID)},
 	)
 	w.Header().Set("ETag", workflowDraftETag(version.Revision))
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"template": workflowTemplateToResponse(template),
-		"draft":    workflowTemplateVersionToResponse(version),
+		"workflow": workflowToResponse(template),
+		"draft":    workflowWorkflowVersionToResponse(version),
 	})
 }
 
-func (h *Handler) ListWorkflowTemplateVersions(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ListWorkflowVersions(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
@@ -405,11 +398,11 @@ func (h *Handler) ListWorkflowTemplateVersions(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "template_id")
+	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workflow_id")
 	if !ok {
 		return
 	}
-	template, err := h.Queries.GetWorkflowTemplateInWorkspace(r.Context(), db.GetWorkflowTemplateInWorkspaceParams{
+	template, err := h.Queries.GetWorkflowInWorkspace(r.Context(), db.GetWorkflowInWorkspaceParams{
 		ID: templateID, WorkspaceID: wsUUID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) ||
@@ -420,24 +413,24 @@ func (h *Handler) ListWorkflowTemplateVersions(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, "failed to load workflow template")
 		return
 	}
-	rows, err := h.Queries.ListWorkflowTemplateVersions(r.Context(), db.ListWorkflowTemplateVersionsParams{
-		TemplateID: templateID, WorkspaceID: wsUUID,
+	rows, err := h.Queries.ListWorkflowVersions(r.Context(), db.ListWorkflowVersionsParams{
+		WorkflowID: templateID, WorkspaceID: wsUUID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list workflow template versions")
 		return
 	}
-	items := make([]workflowTemplateVersionResponse, 0, len(rows))
+	items := make([]workflowWorkflowVersionResponse, 0, len(rows))
 	for _, row := range rows {
 		if !isAdmin && row.Status != "published" {
 			continue
 		}
-		items = append(items, workflowTemplateVersionToResponse(row))
+		items = append(items, workflowWorkflowVersionToResponse(row))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"versions": items})
 }
 
-func (h *Handler) GetWorkflowTemplateVersion(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetWorkflowVersion(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
@@ -447,13 +440,13 @@ func (h *Handler) GetWorkflowTemplateVersion(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "template_id")
+	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workflow_id")
 	if !ok {
 		return
 	}
-	template, err := h.Queries.GetWorkflowTemplateInWorkspace(
+	template, err := h.Queries.GetWorkflowInWorkspace(
 		r.Context(),
-		db.GetWorkflowTemplateInWorkspaceParams{
+		db.GetWorkflowInWorkspaceParams{
 			ID: templateID, WorkspaceID: wsUUID,
 		},
 	)
@@ -471,8 +464,8 @@ func (h *Handler) GetWorkflowTemplateVersion(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid workflow template version")
 		return
 	}
-	version, err := h.Queries.GetWorkflowTemplateVersionByNumber(r.Context(), db.GetWorkflowTemplateVersionByNumberParams{
-		TemplateID: templateID, WorkspaceID: wsUUID, Version: int32(versionNumber),
+	version, err := h.Queries.GetWorkflowVersionByNumber(r.Context(), db.GetWorkflowVersionByNumberParams{
+		WorkflowID: templateID, WorkspaceID: wsUUID, Version: int32(versionNumber),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "workflow template version not found")
@@ -489,7 +482,7 @@ func (h *Handler) GetWorkflowTemplateVersion(w http.ResponseWriter, r *http.Requ
 	if version.Status == "draft" {
 		w.Header().Set("ETag", workflowDraftETag(version.Revision))
 	}
-	writeJSON(w, http.StatusOK, workflowTemplateVersionToResponse(version))
+	writeJSON(w, http.StatusOK, workflowWorkflowVersionToResponse(version))
 }
 
 type updateWorkflowDraftRequest struct {
@@ -498,15 +491,15 @@ type updateWorkflowDraftRequest struct {
 	Revision      int64           `json:"revision,omitempty"`
 }
 
-func (h *Handler) ensureWorkflowTemplateWritable(
+func (h *Handler) ensureWorkflowWritable(
 	w http.ResponseWriter,
 	r *http.Request,
 	workspaceID pgtype.UUID,
 	templateID pgtype.UUID,
 ) bool {
-	template, err := h.Queries.GetWorkflowTemplateInWorkspace(
+	template, err := h.Queries.GetWorkflowInWorkspace(
 		r.Context(),
-		db.GetWorkflowTemplateInWorkspaceParams{
+		db.GetWorkflowInWorkspaceParams{
 			ID: templateID, WorkspaceID: workspaceID,
 		},
 	)
@@ -525,7 +518,7 @@ func (h *Handler) ensureWorkflowTemplateWritable(
 	return true
 }
 
-func (h *Handler) CreateWorkflowTemplateDraft(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) CreateWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return
 	}
@@ -534,11 +527,11 @@ func (h *Handler) CreateWorkflowTemplateDraft(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "template_id")
+	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workflow_id")
 	if !ok {
 		return
 	}
-	if !h.ensureWorkflowTemplateWritable(w, r, wsUUID, templateID) {
+	if !h.ensureWorkflowWritable(w, r, wsUUID, templateID) {
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -549,18 +542,18 @@ func (h *Handler) CreateWorkflowTemplateDraft(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	if existing, err := h.Queries.GetWorkflowTemplateDraft(r.Context(), db.GetWorkflowTemplateDraftParams{
-		TemplateID: templateID, WorkspaceID: wsUUID,
+	if existing, err := h.Queries.GetWorkflowDraft(r.Context(), db.GetWorkflowDraftParams{
+		WorkflowID: templateID, WorkspaceID: wsUUID,
 	}); err == nil {
 		w.Header().Set("ETag", workflowDraftETag(existing.Revision))
-		writeJSON(w, http.StatusOK, workflowTemplateVersionToResponse(existing))
+		writeJSON(w, http.StatusOK, workflowWorkflowVersionToResponse(existing))
 		return
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusInternalServerError, "failed to load workflow template draft")
 		return
 	}
-	published, err := h.Queries.GetLatestPublishedWorkflowTemplateVersion(r.Context(), db.GetLatestPublishedWorkflowTemplateVersionParams{
-		TemplateID: templateID, WorkspaceID: wsUUID,
+	published, err := h.Queries.GetLatestPublishedWorkflowVersion(r.Context(), db.GetLatestPublishedWorkflowVersionParams{
+		WorkflowID: templateID, WorkspaceID: wsUUID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, "workflow template has no published version")
@@ -570,15 +563,15 @@ func (h *Handler) CreateWorkflowTemplateDraft(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to load published workflow template")
 		return
 	}
-	version, err := h.Queries.GetNextWorkflowTemplateVersion(r.Context(), db.GetNextWorkflowTemplateVersionParams{
-		TemplateID: templateID, WorkspaceID: wsUUID,
+	version, err := h.Queries.GetNextWorkflowVersion(r.Context(), db.GetNextWorkflowVersionParams{
+		WorkflowID: templateID, WorkspaceID: wsUUID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to allocate workflow template version")
 		return
 	}
-	draft, err := h.Queries.CreateWorkflowTemplateVersion(r.Context(), db.CreateWorkflowTemplateVersionParams{
-		WorkspaceID: wsUUID, TemplateID: templateID, Version: version, Status: "draft",
+	draft, err := h.Queries.CreateWorkflowVersion(r.Context(), db.CreateWorkflowVersionParams{
+		WorkspaceID: wsUUID, WorkflowID: templateID, Version: version, Status: "draft",
 		Definition: published.Definition, DefinitionChecksum: published.DefinitionChecksum,
 		ChangeSummary: "", CreatedBy: userUUID,
 	})
@@ -588,23 +581,22 @@ func (h *Handler) CreateWorkflowTemplateDraft(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("ETag", workflowDraftETag(draft.Revision))
 	h.publishWorkflowRealtime(
-		protocol.EventWorkflowTemplateUpdated, workspaceID, "member", userID,
+		protocol.EventWorkflowUpdated, workspaceID, "member", userID,
 		map[string]any{"workflow_template_id": uuidToString(templateID)},
 	)
-	writeJSON(w, http.StatusCreated, workflowTemplateVersionToResponse(draft))
+	writeJSON(w, http.StatusCreated, workflowWorkflowVersionToResponse(draft))
 }
 
-type updateWorkflowTemplateMetadataRequest struct {
-	Name             *string `json:"name"`
-	Description      *string `json:"description"`
-	AppliesToTypeKey *string `json:"applies_to_type_key"`
+type updateWorkflowMetadataRequest struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
 }
 
-func (h *Handler) UpdateWorkflowTemplateMetadata(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) UpdateWorkflowMetadata(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return
 	}
-	var req updateWorkflowTemplateMetadataRequest
+	var req updateWorkflowMetadataRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -622,20 +614,20 @@ func (h *Handler) UpdateWorkflowTemplateMetadata(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "template_id")
+	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workflow_id")
 	if !ok {
 		return
 	}
-	if !h.ensureWorkflowTemplateWritable(w, r, wsUUID, templateID) {
+	if !h.ensureWorkflowWritable(w, r, wsUUID, templateID) {
 		return
 	}
 	if req.Name != nil &&
-		h.workflowTemplateNameTaken(w, r, wsUUID, *req.Name, templateID) {
+		h.workflowWorkflowNameTaken(w, r, wsUUID, *req.Name, templateID) {
 		return
 	}
-	template, err := h.Queries.UpdateWorkflowTemplateMetadata(r.Context(), db.UpdateWorkflowTemplateMetadataParams{
+	template, err := h.Queries.UpdateWorkflowMetadata(r.Context(), db.UpdateWorkflowMetadataParams{
 		Name: ptrToText(req.Name), Description: ptrToText(req.Description),
-		AppliesToTypeKey: ptrToText(req.AppliesToTypeKey), ID: templateID, WorkspaceID: wsUUID,
+		ID: templateID, WorkspaceID: wsUUID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "workflow template not found")
@@ -646,13 +638,13 @@ func (h *Handler) UpdateWorkflowTemplateMetadata(w http.ResponseWriter, r *http.
 		return
 	}
 	h.publishWorkflowRealtime(
-		protocol.EventWorkflowTemplateUpdated, workspaceID, "system", "",
+		protocol.EventWorkflowUpdated, workspaceID, "system", "",
 		map[string]any{"workflow_template_id": uuidToString(template.ID)},
 	)
-	writeJSON(w, http.StatusOK, workflowTemplateToResponse(template))
+	writeJSON(w, http.StatusOK, workflowToResponse(template))
 }
 
-func (h *Handler) UpdateWorkflowTemplateDraft(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) UpdateWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return
 	}
@@ -675,15 +667,15 @@ func (h *Handler) UpdateWorkflowTemplateDraft(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "template_id")
+	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workflow_id")
 	if !ok {
 		return
 	}
-	if !h.ensureWorkflowTemplateWritable(w, r, wsUUID, templateID) {
+	if !h.ensureWorkflowWritable(w, r, wsUUID, templateID) {
 		return
 	}
-	draft, err := h.Queries.GetWorkflowTemplateDraft(r.Context(), db.GetWorkflowTemplateDraftParams{
-		TemplateID: templateID, WorkspaceID: wsUUID,
+	draft, err := h.Queries.GetWorkflowDraft(r.Context(), db.GetWorkflowDraftParams{
+		WorkflowID: templateID, WorkspaceID: wsUUID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "workflow template draft not found")
@@ -693,15 +685,15 @@ func (h *Handler) UpdateWorkflowTemplateDraft(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to load workflow template draft")
 		return
 	}
-	updatedDraft, err := h.Queries.UpdateWorkflowTemplateDraft(r.Context(), db.UpdateWorkflowTemplateDraftParams{
+	updatedDraft, err := h.Queries.UpdateWorkflowDraft(r.Context(), db.UpdateWorkflowDraftParams{
 		Definition: definition, DefinitionChecksum: checksum, ChangeSummary: req.ChangeSummary,
 		ID: draft.ID, WorkspaceID: wsUUID, ExpectedRevision: req.Revision,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		latest, latestErr := h.Queries.GetWorkflowTemplateDraft(
+		latest, latestErr := h.Queries.GetWorkflowDraft(
 			r.Context(),
-			db.GetWorkflowTemplateDraftParams{
-				TemplateID: templateID, WorkspaceID: wsUUID,
+			db.GetWorkflowDraftParams{
+				WorkflowID: templateID, WorkspaceID: wsUUID,
 			},
 		)
 		if latestErr != nil {
@@ -712,7 +704,7 @@ func (h *Handler) UpdateWorkflowTemplateDraft(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error":           "workflow template draft changed; refresh and retry",
 			"latest_revision": latest.Revision,
-			"draft":           workflowTemplateVersionToResponse(latest),
+			"draft":           workflowWorkflowVersionToResponse(latest),
 		})
 		return
 	}
@@ -722,13 +714,13 @@ func (h *Handler) UpdateWorkflowTemplateDraft(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("ETag", workflowDraftETag(updatedDraft.Revision))
 	h.publishWorkflowRealtime(
-		protocol.EventWorkflowTemplateUpdated, workspaceID, "system", "",
+		protocol.EventWorkflowUpdated, workspaceID, "system", "",
 		map[string]any{"workflow_template_id": uuidToString(templateID)},
 	)
-	writeJSON(w, http.StatusOK, workflowTemplateVersionToResponse(updatedDraft))
+	writeJSON(w, http.StatusOK, workflowWorkflowVersionToResponse(updatedDraft))
 }
 
-func (h *Handler) ValidateWorkflowTemplateDefinition(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ValidateWorkflowDefinition(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return
 	}
@@ -754,7 +746,7 @@ type saveWorkflowDefinitionRequest struct {
 	Revision      int64           `json:"revision"`
 }
 
-// SaveWorkflowTemplateDefinition is the one editing action: it writes the
+// SaveWorkflowDefinition is the one editing action: it writes the
 // definition into a new version and makes that version live if it validates.
 //
 // It replaces a four-step sequence — create draft, save, validate, publish —
@@ -765,7 +757,7 @@ type saveWorkflowDefinitionRequest struct {
 // A definition that does not validate is still stored, on a version that stays
 // a draft. Refusing to save it would leave half-finished work nowhere to go,
 // which is the one thing the old draft state was genuinely good for.
-func (h *Handler) SaveWorkflowTemplateDefinition(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) SaveWorkflowDefinition(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return
 	}
@@ -784,11 +776,11 @@ func (h *Handler) SaveWorkflowTemplateDefinition(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "template_id")
+	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workflow_id")
 	if !ok {
 		return
 	}
-	if !h.ensureWorkflowTemplateWritable(w, r, wsUUID, templateID) {
+	if !h.ensureWorkflowWritable(w, r, wsUUID, templateID) {
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -812,23 +804,23 @@ func (h *Handler) SaveWorkflowTemplateDefinition(w http.ResponseWriter, r *http.
 	// version instead of allocating one per keystroke-batch. A published
 	// version is never written to — that is what keeps running instances,
 	// which pin a version id, unaffected by any amount of editing.
-	target, err := qtx.LockWorkflowTemplateDraft(r.Context(), db.LockWorkflowTemplateDraftParams{
-		TemplateID: templateID, WorkspaceID: wsUUID,
+	target, err := qtx.LockWorkflowDraft(r.Context(), db.LockWorkflowDraftParams{
+		WorkflowID: templateID, WorkspaceID: wsUUID,
 	})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		version, versionErr := qtx.GetNextWorkflowTemplateVersion(
+		version, versionErr := qtx.GetNextWorkflowVersion(
 			r.Context(),
-			db.GetNextWorkflowTemplateVersionParams{
-				TemplateID: templateID, WorkspaceID: wsUUID,
+			db.GetNextWorkflowVersionParams{
+				WorkflowID: templateID, WorkspaceID: wsUUID,
 			},
 		)
 		if versionErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to allocate workflow template version")
 			return
 		}
-		target, err = qtx.CreateWorkflowTemplateVersion(r.Context(), db.CreateWorkflowTemplateVersionParams{
-			WorkspaceID: wsUUID, TemplateID: templateID, Version: version, Status: "draft",
+		target, err = qtx.CreateWorkflowVersion(r.Context(), db.CreateWorkflowVersionParams{
+			WorkspaceID: wsUUID, WorkflowID: templateID, Version: version, Status: "draft",
 			Definition: definition, DefinitionChecksum: checksum,
 			ChangeSummary: req.ChangeSummary, CreatedBy: userUUID,
 		})
@@ -844,7 +836,7 @@ func (h *Handler) SaveWorkflowTemplateDefinition(w http.ResponseWriter, r *http.
 		if expected <= 0 {
 			expected = target.Revision
 		}
-		target, err = qtx.UpdateWorkflowTemplateDraft(r.Context(), db.UpdateWorkflowTemplateDraftParams{
+		target, err = qtx.UpdateWorkflowDraft(r.Context(), db.UpdateWorkflowDraftParams{
 			Definition: definition, DefinitionChecksum: checksum,
 			ChangeSummary: req.ChangeSummary,
 			ID:            target.ID, WorkspaceID: wsUUID, ExpectedRevision: expected,
@@ -864,14 +856,14 @@ func (h *Handler) SaveWorkflowTemplateDefinition(w http.ResponseWriter, r *http.
 	if _, parseErr := workflowdomain.ParseDefinition(definition); parseErr != nil {
 		validationErr = parseErr.Error()
 	} else {
-		target, err = qtx.PublishWorkflowTemplateVersion(r.Context(), db.PublishWorkflowTemplateVersionParams{
+		target, err = qtx.PublishWorkflowVersion(r.Context(), db.PublishWorkflowVersionParams{
 			PublishedBy: userUUID, ID: target.ID, WorkspaceID: wsUUID,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to publish workflow template version")
 			return
 		}
-		if _, err := qtx.SetWorkflowTemplatePublishedVersion(r.Context(), db.SetWorkflowTemplatePublishedVersionParams{
+		if _, err := qtx.SetWorkflowPublishedVersion(r.Context(), db.SetWorkflowPublishedVersionParams{
 			LatestPublishedVersionID: target.ID, ID: templateID, WorkspaceID: wsUUID,
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to update workflow template")
@@ -884,9 +876,9 @@ func (h *Handler) SaveWorkflowTemplateDefinition(w http.ResponseWriter, r *http.
 		return
 	}
 
-	event := protocol.EventWorkflowTemplateUpdated
+	event := protocol.EventWorkflowUpdated
 	if published {
-		event = protocol.EventWorkflowTemplatePublished
+		event = protocol.EventWorkflowPublished
 	}
 	h.publishWorkflowRealtime(
 		event, workspaceID, "member", userID,
@@ -897,13 +889,13 @@ func (h *Handler) SaveWorkflowTemplateDefinition(w http.ResponseWriter, r *http.
 	)
 	w.Header().Set("ETag", workflowDraftETag(target.Revision))
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":          workflowTemplateVersionToResponse(target),
+		"version":          workflowWorkflowVersionToResponse(target),
 		"published":        published,
 		"validation_error": validationErr,
 	})
 }
 
-func (h *Handler) PublishWorkflowTemplate(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) PublishWorkflow(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return
 	}
@@ -912,11 +904,11 @@ func (h *Handler) PublishWorkflowTemplate(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "template_id")
+	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workflow_id")
 	if !ok {
 		return
 	}
-	if !h.ensureWorkflowTemplateWritable(w, r, wsUUID, templateID) {
+	if !h.ensureWorkflowWritable(w, r, wsUUID, templateID) {
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -934,8 +926,8 @@ func (h *Handler) PublishWorkflowTemplate(w http.ResponseWriter, r *http.Request
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
-	draft, err := qtx.LockWorkflowTemplateDraft(r.Context(), db.LockWorkflowTemplateDraftParams{
-		TemplateID: templateID, WorkspaceID: wsUUID,
+	draft, err := qtx.LockWorkflowDraft(r.Context(), db.LockWorkflowDraftParams{
+		WorkflowID: templateID, WorkspaceID: wsUUID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "workflow template draft not found")
@@ -949,14 +941,14 @@ func (h *Handler) PublishWorkflowTemplate(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	published, err := qtx.PublishWorkflowTemplateVersion(r.Context(), db.PublishWorkflowTemplateVersionParams{
+	published, err := qtx.PublishWorkflowVersion(r.Context(), db.PublishWorkflowVersionParams{
 		PublishedBy: userUUID, ID: draft.ID, WorkspaceID: wsUUID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to publish workflow template version")
 		return
 	}
-	template, err := qtx.SetWorkflowTemplatePublishedVersion(r.Context(), db.SetWorkflowTemplatePublishedVersionParams{
+	template, err := qtx.SetWorkflowPublishedVersion(r.Context(), db.SetWorkflowPublishedVersionParams{
 		LatestPublishedVersionID: published.ID, ID: templateID, WorkspaceID: wsUUID,
 	})
 	if err != nil {
@@ -968,19 +960,19 @@ func (h *Handler) PublishWorkflowTemplate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	h.publishWorkflowRealtime(
-		protocol.EventWorkflowTemplatePublished, workspaceID, "member", userID,
+		protocol.EventWorkflowPublished, workspaceID, "member", userID,
 		map[string]any{
 			"workflow_template_id":         uuidToString(template.ID),
 			"workflow_template_version_id": uuidToString(published.ID),
 		},
 	)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"template": workflowTemplateToResponse(template),
-		"version":  workflowTemplateVersionToResponse(published),
+		"workflow": workflowToResponse(template),
+		"version":  workflowWorkflowVersionToResponse(published),
 	})
 }
 
-func (h *Handler) ArchiveWorkflowTemplate(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ArchiveWorkflow(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return
 	}
@@ -989,11 +981,11 @@ func (h *Handler) ArchiveWorkflowTemplate(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "template_id")
+	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workflow_id")
 	if !ok {
 		return
 	}
-	template, err := h.Queries.ArchiveWorkflowTemplate(r.Context(), db.ArchiveWorkflowTemplateParams{
+	template, err := h.Queries.ArchiveWorkflow(r.Context(), db.ArchiveWorkflowParams{
 		ID: templateID, WorkspaceID: wsUUID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1005,8 +997,8 @@ func (h *Handler) ArchiveWorkflowTemplate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	h.publishWorkflowRealtime(
-		protocol.EventWorkflowTemplateUpdated, workspaceID, "system", "",
+		protocol.EventWorkflowUpdated, workspaceID, "system", "",
 		map[string]any{"workflow_template_id": uuidToString(template.ID)},
 	)
-	writeJSON(w, http.StatusOK, workflowTemplateToResponse(template))
+	writeJSON(w, http.StatusOK, workflowToResponse(template))
 }

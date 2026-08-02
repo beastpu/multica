@@ -32,7 +32,7 @@ func TestFeishuProjectIssueStatusOptionsUsesTemplateStateFlow(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
 				"err_code": 0,
-				"data": [{"template_id": "template-1"}]
+				"data": [{"workflow_id": "template-1"}]
 			}`))
 		case "/open_api/project-key/template_detail/template-1":
 			sawTemplateDetail = true
@@ -350,7 +350,7 @@ func TestFeishuProjectIssueStatusOptionsFallsBackToScopedFieldAll(t *testing.T) 
 			_, _ = w.Write([]byte(`{"err_code":0,"data":{"plugin_token":"plugin-token"}}`))
 		case "/open_api/project-key/template_list/" + customType:
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"err_code":0,"data":[{"template_id":"template-1"}]}`))
+			_, _ = w.Write([]byte(`{"err_code":0,"data":[{"workflow_id":"template-1"}]}`))
 		case "/open_api/project-key/template_detail/template-1":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"err_code":0,"data":{"state_flow_confs":[]}}`))

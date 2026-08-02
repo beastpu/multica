@@ -12,14 +12,13 @@ import (
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
 )
 
-// createTemplateNamed posts a minimal valid template and returns the response
+// createWorkflowNamed posts a minimal valid template and returns the response
 // status plus the created id (empty when the create was rejected).
-func createTemplateNamed(t *testing.T, name string) (int, string) {
+func createWorkflowNamed(t *testing.T, name string) (int, string) {
 	t.Helper()
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          strings.TrimSpace(name),
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{Key: "end", Kind: "end", Name: "End"},
@@ -27,7 +26,7 @@ func createTemplateNamed(t *testing.T, name string) (int, string) {
 		Edges: []workflowdomain.EdgeDefinition{{From: "start", To: "end"}},
 	}
 	recorder := httptest.NewRecorder()
-	testHandler.CreateWorkflowTemplate(recorder, newRequest(
+	testHandler.CreateWorkflow(recorder, newRequest(
 		http.MethodPost,
 		"/api/workflow-templates?workspace_id="+testWorkspaceID,
 		map[string]any{"name": name, "description": "", "definition": definition},
@@ -49,7 +48,7 @@ func renameTemplate(t *testing.T, id, name string) int {
 		"/api/workflow-templates/"+id+"?workspace_id="+testWorkspaceID,
 		map[string]any{"name": name},
 	)
-	testHandler.UpdateWorkflowTemplateMetadata(
+	testHandler.UpdateWorkflowMetadata(
 		recorder, withURLParam(request, "id", id),
 	)
 	return recorder.Code
@@ -63,7 +62,7 @@ func archiveTemplateForTest(t *testing.T, id string) {
 		"/api/workflow-templates/"+id+"/archive?workspace_id="+testWorkspaceID,
 		nil,
 	)
-	testHandler.ArchiveWorkflowTemplate(recorder, withURLParam(request, "id", id))
+	testHandler.ArchiveWorkflow(recorder, withURLParam(request, "id", id))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf(
 			"archive template: got %d, body %s", recorder.Code, recorder.Body.String(),
@@ -71,7 +70,7 @@ func archiveTemplateForTest(t *testing.T, id string) {
 	}
 }
 
-func cleanupTemplateNames(t *testing.T, names ...string) {
+func cleanupWorkflowNames(t *testing.T, names ...string) {
 	t.Helper()
 	for _, name := range names {
 		if _, err := testPool.Exec(
@@ -101,22 +100,22 @@ func cleanupTemplateNames(t *testing.T, names ...string) {
 // replacement under the same name" is how a template gets revised once runs
 // depend on the old version, and forbidding it would push people into names
 // like "X (new)" — the exact confusion this rule exists to prevent.
-func TestWorkflowTemplateNameUniqueAmongLiveTemplates(t *testing.T) {
+func TestWorkflowNameUniqueAmongLiveTemplates(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
-	cleanupTemplateNames(t, "Delivery pipeline")
-	t.Cleanup(func() { cleanupTemplateNames(t, "Delivery pipeline") })
+	cleanupWorkflowNames(t, "Delivery pipeline")
+	t.Cleanup(func() { cleanupWorkflowNames(t, "Delivery pipeline") })
 
-	status, firstID := createTemplateNamed(t, "Delivery pipeline")
+	status, firstID := createWorkflowNamed(t, "Delivery pipeline")
 	if status != http.StatusOK && status != http.StatusCreated {
 		t.Fatalf("first create: got %d, want success", status)
 	}
 
-	if status, _ := createTemplateNamed(t, "Delivery pipeline"); status != http.StatusConflict {
+	if status, _ := createWorkflowNamed(t, "Delivery pipeline"); status != http.StatusConflict {
 		t.Fatalf("duplicate create: got %d, want %d", status, http.StatusConflict)
 	}
 
 	// Padding is invisible to a reader, so it must not buy a second copy.
-	if status, _ := createTemplateNamed(t, "  Delivery pipeline  "); status != http.StatusConflict {
+	if status, _ := createWorkflowNamed(t, "  Delivery pipeline  "); status != http.StatusConflict {
 		t.Fatalf(
 			"whitespace-padded duplicate: got %d, want %d",
 			status, http.StatusConflict,
@@ -125,7 +124,7 @@ func TestWorkflowTemplateNameUniqueAmongLiveTemplates(t *testing.T) {
 
 	archiveTemplateForTest(t, firstID)
 
-	status, _ = createTemplateNamed(t, "Delivery pipeline")
+	status, _ = createWorkflowNamed(t, "Delivery pipeline")
 	if status != http.StatusOK && status != http.StatusCreated {
 		t.Fatalf("reusing an archived name: got %d, want success", status)
 	}
@@ -133,13 +132,13 @@ func TestWorkflowTemplateNameUniqueAmongLiveTemplates(t *testing.T) {
 
 // Renaming is the other way to end up with two live templates called the same
 // thing, so it carries the same rule.
-func TestWorkflowTemplateRenameRejectsLiveName(t *testing.T) {
+func TestWorkflowRenameRejectsLiveName(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
-	cleanupTemplateNames(t, "Taken name", "Free name")
-	t.Cleanup(func() { cleanupTemplateNames(t, "Taken name", "Free name") })
+	cleanupWorkflowNames(t, "Taken name", "Free name")
+	t.Cleanup(func() { cleanupWorkflowNames(t, "Taken name", "Free name") })
 
-	createTemplateNamed(t, "Taken name")
-	_, otherID := createTemplateNamed(t, "Free name")
+	createWorkflowNamed(t, "Taken name")
+	_, otherID := createWorkflowNamed(t, "Free name")
 
 	if status := renameTemplate(t, otherID, "Taken name"); status != http.StatusConflict {
 		t.Fatalf("rename onto a live name: got %d, want %d", status, http.StatusConflict)

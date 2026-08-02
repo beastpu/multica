@@ -11,7 +11,7 @@ export interface IssueFilters {
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
-  workflowTemplateFilter?: string;
+  workflowFilter?: string;
   workflowInstanceFilter?: string;
   workflowActivityFilter?: string;
   workflowIssueOnly?: boolean;
@@ -40,7 +40,7 @@ export interface IssueFilterState {
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
-  workflowTemplateFilter?: string;
+  workflowFilter?: string;
   workflowInstanceFilter?: string;
   workflowActivityFilter?: string;
   workflowIssueOnly?: boolean;
@@ -122,8 +122,8 @@ export function applyIssueFilters(
     const workflowContext = issue.workflow_context;
     if (filters.workflowIssueOnly && !workflowContext) return false;
     if (
-      filters.workflowTemplateFilter &&
-      workflowContext?.workflow_template_id !== filters.workflowTemplateFilter
+      filters.workflowFilter &&
+      workflowContext?.workflow_workflow_id !== filters.workflowFilter
     ) return false;
     if (
       filters.workflowInstanceFilter &&
@@ -201,7 +201,7 @@ export function filterIssues(issues: Issue[], filters: IssueFilters): Issue[] {
       projectFilters: filters.projectFilters,
       includeNoProject: filters.includeNoProject,
       labelFilters: filters.labelFilters,
-      workflowTemplateFilter: filters.workflowTemplateFilter,
+      workflowFilter: filters.workflowFilter,
       workflowInstanceFilter: filters.workflowInstanceFilter,
       workflowActivityFilter: filters.workflowActivityFilter,
       workflowIssueOnly: filters.workflowIssueOnly,
@@ -228,7 +228,7 @@ export function filterAssigneeGroups(
     agentRunningFilter?: boolean;
     runningIssueIds?: ReadonlySet<string>;
     propertyFilters?: Record<string, string[]>;
-    workflowTemplateFilter?: string;
+    workflowFilter?: string;
     workflowInstanceFilter?: string;
     workflowActivityFilter?: string;
     workflowIssueOnly?: boolean;
@@ -240,7 +240,7 @@ export function filterAssigneeGroups(
     (selected) => selected.length > 0,
   );
   const hasWorkflowFilter = Boolean(
-    filters.workflowTemplateFilter ||
+    filters.workflowFilter ||
     filters.workflowInstanceFilter ||
     filters.workflowActivityFilter ||
     filters.workflowIssueOnly,
@@ -262,8 +262,8 @@ export function filterAssigneeGroups(
         const context = issue.workflow_context;
         if (filters.workflowIssueOnly && !context) return false;
         if (
-          filters.workflowTemplateFilter &&
-          context?.workflow_template_id !== filters.workflowTemplateFilter
+          filters.workflowFilter &&
+          context?.workflow_workflow_id !== filters.workflowFilter
         ) return false;
         if (
           filters.workflowInstanceFilter &&

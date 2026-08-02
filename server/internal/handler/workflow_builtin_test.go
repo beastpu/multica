@@ -11,7 +11,7 @@ import (
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
 )
 
-func deleteWorkflowTemplatesByName(t *testing.T, names []string) {
+func deleteWorkflowsByName(t *testing.T, names []string) {
 	t.Helper()
 	ctx := context.Background()
 	for _, name := range names {
@@ -67,16 +67,16 @@ func TestListBuiltinWorkflowTemplates(t *testing.T) {
 	}
 }
 
-func TestCreateWorkflowTemplateFromBuiltin(t *testing.T) {
+func TestCreateWorkflowFromBuiltin(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	builtin, ok := workflowdomain.FindBuiltinTemplate("bug_fix")
 	if !ok {
 		t.Fatal("builtin template bug_fix not found")
 	}
-	deleteWorkflowTemplatesByName(t, []string{builtin.Name})
+	deleteWorkflowsByName(t, []string{builtin.Name})
 
 	recorder := httptest.NewRecorder()
-	testHandler.CreateWorkflowTemplateFromBuiltin(
+	testHandler.CreateWorkflowFromBuiltin(
 		recorder,
 		newRequest(
 			http.MethodPost,
@@ -125,7 +125,7 @@ func TestCreateWorkflowTemplateFromBuiltin(t *testing.T) {
 	}
 
 	duplicate := httptest.NewRecorder()
-	testHandler.CreateWorkflowTemplateFromBuiltin(
+	testHandler.CreateWorkflowFromBuiltin(
 		duplicate,
 		newRequest(
 			http.MethodPost,
@@ -138,7 +138,7 @@ func TestCreateWorkflowTemplateFromBuiltin(t *testing.T) {
 	}
 
 	unknown := httptest.NewRecorder()
-	testHandler.CreateWorkflowTemplateFromBuiltin(
+	testHandler.CreateWorkflowFromBuiltin(
 		unknown,
 		newRequest(
 			http.MethodPost,

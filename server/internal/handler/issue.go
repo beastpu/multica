@@ -78,8 +78,8 @@ type IssueResponse struct {
 
 type IssueWorkflowContextResponse struct {
 	WorkflowInstanceID     string `json:"workflow_instance_id"`
-	WorkflowTemplateID     string `json:"workflow_template_id"`
-	WorkflowTemplateName   string `json:"workflow_template_name"`
+	WorkflowID     string `json:"workflow_template_id"`
+	WorkflowName   string `json:"workflow_template_name"`
 	WorkflowNodeInstanceID string `json:"workflow_node_instance_id"`
 	ActivityKey            string `json:"activity_key"`
 	ActivityName           string `json:"activity_name"`
@@ -182,8 +182,8 @@ func (h *Handler) issueWorkflowContextsByIssue(
 		issueID := uuidToString(row.IssueID)
 		contexts[issueID] = &IssueWorkflowContextResponse{
 			WorkflowInstanceID:     uuidToString(row.WorkflowInstanceID),
-			WorkflowTemplateID:     uuidToString(row.WorkflowTemplateID),
-			WorkflowTemplateName:   row.WorkflowTemplateName,
+			WorkflowID:     uuidToString(row.WorkflowID),
+			WorkflowName:   row.WorkflowName,
 			WorkflowNodeInstanceID: uuidToString(row.WorkflowNodeInstanceID),
 			ActivityKey:            row.ActivityKey,
 			ActivityName:           row.ActivityName,

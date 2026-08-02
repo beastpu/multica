@@ -35,7 +35,6 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Runtime delivery",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true, AllowedActorTypes: []string{"member"},
 		}},
@@ -98,7 +97,7 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 
 	startRecorder := httptest.NewRecorder()
 	startRequest := withURLParam(newRequest(http.MethodPost, "/api/issues/"+hostID+"/workflow?workspace_id="+testWorkspaceID, map[string]any{
-		"template_id": templateID,
+		"workflow_id": templateID,
 		"role_assignments": []map[string]any{{
 			"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
 		}},
@@ -661,7 +660,6 @@ func TestCreateWorkflowAtomicAndIdempotent(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Atomic workflow",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -720,7 +718,7 @@ func TestCreateWorkflowAtomicAndIdempotent(t *testing.T) {
 	}
 
 	body := map[string]any{
-		"title": "Atomic workflow host", "template_id": templateID,
+		"title": "Atomic workflow host", "workflow_id": templateID,
 		"idempotency_key": "atomic-create-test",
 	}
 	firstRecorder := httptest.NewRecorder()
@@ -782,7 +780,6 @@ func TestWorkflowConcurrentStartCreatesOneActiveInstance(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Concurrent start",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -803,7 +800,7 @@ func TestWorkflowConcurrentStartCreatesOneActiveInstance(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("concurrent start definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t,
 		"Concurrent start template",
 		definition,
@@ -824,7 +821,7 @@ func TestWorkflowConcurrentStartCreatesOneActiveInstance(t *testing.T) {
 					"/api/issues/"+hostID+
 						"/workflow?workspace_id="+testWorkspaceID,
 					map[string]any{
-						"template_id": templateID,
+						"workflow_id": templateID,
 						"role_assignments": []map[string]any{{
 							"role_key":   "owner",
 							"actor_type": "member",
@@ -1258,7 +1255,6 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "DAG delivery",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true, AllowedActorTypes: []string{"member"},
 		}},
@@ -1321,11 +1317,11 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("DAG definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(t, "DAG test template", definition)
+	templateID := createPublishedWorkflowForTest(t, "DAG test template", definition)
 
 	startRecorder := httptest.NewRecorder()
 	startRequest := withURLParam(newRequest(http.MethodPost, "/api/issues/"+hostID+"/workflow?workspace_id="+testWorkspaceID, map[string]any{
-		"template_id":      templateID,
+		"workflow_id":      templateID,
 		"host_status_mode": "managed",
 		"role_assignments": []map[string]any{{
 			"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
@@ -1478,7 +1474,6 @@ func TestWorkflowDAGAnyJoinDoesNotCancelOtherBranch(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Any join delivery",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true, AllowedActorTypes: []string{"member"},
 		}},
@@ -1502,10 +1497,10 @@ func TestWorkflowDAGAnyJoinDoesNotCancelOtherBranch(t *testing.T) {
 		},
 		Acceptance: workflowdomain.AcceptanceDefinition{Policy: "none"},
 	}
-	templateID := createPublishedWorkflowTemplateForTest(t, "Any join test template", definition)
+	templateID := createPublishedWorkflowForTest(t, "Any join test template", definition)
 	startRecorder := httptest.NewRecorder()
 	startRequest := withURLParam(newRequest(http.MethodPost, "/api/issues/"+hostID+"/workflow?workspace_id="+testWorkspaceID, map[string]any{
-		"template_id": templateID,
+		"workflow_id": templateID,
 		"role_assignments": []map[string]any{{
 			"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
 		}},
@@ -1567,7 +1562,6 @@ func TestWorkflowManualExecutorPausesAndResumesSetup(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Manual executor setup",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -1595,7 +1589,7 @@ func TestWorkflowManualExecutorPausesAndResumesSetup(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("manual executor definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(t, "Manual executor template", definition)
+	templateID := createPublishedWorkflowForTest(t, "Manual executor template", definition)
 	hostID := createWorkflowHostForTest(t, "Workflow executor manual host")
 	started := startWorkflowForTest(t, hostID, templateID, []map[string]any{{
 		"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
@@ -1718,7 +1712,6 @@ func TestWorkflowCapabilityMatchUsesStructuredEnabledSkill(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Capability executor",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "delivery_pool", Name: "Delivery pool", Required: true,
 			AllowedActorTypes: []string{"agent", "squad"},
@@ -1749,7 +1742,7 @@ func TestWorkflowCapabilityMatchUsesStructuredEnabledSkill(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("capability definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t, "Capability executor template", definition,
 	)
 	hostID := createWorkflowHostForTest(t, "Workflow executor capability host")
@@ -1802,7 +1795,6 @@ func TestWorkflowDirectExecutorDefaultsAndIssueOverrides(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Direct executor",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{
@@ -1836,7 +1828,7 @@ func TestWorkflowDirectExecutorDefaultsAndIssueOverrides(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("direct executor definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t,
 		"Direct executor template",
 		definition,
@@ -1915,7 +1907,6 @@ func TestWorkflowSquadExecutorMaterializationWakesLeader(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Squad executor",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"squad"},
@@ -1947,7 +1938,7 @@ func TestWorkflowSquadExecutorMaterializationWakesLeader(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("squad executor definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t,
 		"Squad executor template",
 		definition,
@@ -2007,7 +1998,6 @@ func TestWorkflowAgentSubmissionAndVerdictRemainControlledSuggestion(t *testing.
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Controlled agent suggestion",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "worker", Name: "Worker", Required: true,
 			AllowedActorTypes: []string{"agent"},
@@ -2042,7 +2032,7 @@ func TestWorkflowAgentSubmissionAndVerdictRemainControlledSuggestion(t *testing.
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("controlled suggestion definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t, "Controlled agent suggestion template", definition,
 	)
 	hostID := createWorkflowHostForTest(t, "Workflow executor agent suggestion host")
@@ -2151,7 +2141,6 @@ func TestWorkflowManualActivityWaitsForExplicitMemberCompletion(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Manual activity",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -2182,7 +2171,7 @@ func TestWorkflowManualActivityWaitsForExplicitMemberCompletion(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("manual definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t,
 		"Manual activity template",
 		definition,
@@ -2301,7 +2290,6 @@ func TestWorkflowDeterministicVerdictReevaluatesStructuredCondition(t *testing.T
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Deterministic verdict",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -2331,7 +2319,7 @@ func TestWorkflowDeterministicVerdictReevaluatesStructuredCondition(t *testing.T
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("deterministic definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t, "Deterministic verdict template", definition,
 	)
 	hostID := createWorkflowHostForTest(t, "Deterministic verdict host")
@@ -2402,7 +2390,6 @@ func TestWorkflowRequiredIssueCancellationPolicy(t *testing.T) {
 			definition := workflowdomain.Definition{
 				SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 				Name:          "Cancellation " + test.policy,
-				AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 				Roles: []workflowdomain.RoleDefinition{{
 					Key: "owner", Name: "Owner", Required: true,
 					AllowedActorTypes: []string{"member"},
@@ -2434,7 +2421,7 @@ func TestWorkflowRequiredIssueCancellationPolicy(t *testing.T) {
 			if err := workflowdomain.ValidateDefinition(definition); err != nil {
 				t.Fatalf("cancellation definition invalid: %v", err)
 			}
-			templateID := createPublishedWorkflowTemplateForTest(
+			templateID := createPublishedWorkflowForTest(
 				t,
 				"Cancellation "+test.policy,
 				definition,
@@ -2515,7 +2502,6 @@ func TestWorkflowBlockedVerdictBlocksNodeUntilPassingRevision(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Blocked verdict",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -2543,7 +2529,7 @@ func TestWorkflowBlockedVerdictBlocksNodeUntilPassingRevision(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("blocked verdict definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t,
 		"Blocked verdict template",
 		definition,
@@ -2621,7 +2607,6 @@ func TestWorkflowSubmissionReplayAfterNodeCompletion(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Submission replay",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -2646,7 +2631,7 @@ func TestWorkflowSubmissionReplayAfterNodeCompletion(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("submission replay definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t,
 		"Submission replay template",
 		definition,
@@ -2731,7 +2716,6 @@ func TestWorkflowInstanceListPersonalizesInterventionsAndCursorOrder(t *testing.
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Personalized list",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -2756,7 +2740,7 @@ func TestWorkflowInstanceListPersonalizesInterventionsAndCursorOrder(t *testing.
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("personalized list definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t,
 		"Personalized list template",
 		definition,
@@ -2874,7 +2858,6 @@ func TestWorkflowConcurrentReconcilersCommitOneTransition(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Concurrent reconcile",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -2911,7 +2894,7 @@ func TestWorkflowConcurrentReconcilersCommitOneTransition(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("concurrent reconcile definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t,
 		"Concurrent reconcile template",
 		definition,
@@ -3002,7 +2985,6 @@ func TestWorkflowPerRequiredTaskSubmissionPolicy(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Per task submissions",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -3034,7 +3016,7 @@ func TestWorkflowPerRequiredTaskSubmissionPolicy(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("per-task definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t, "Per-task submissions template", definition,
 	)
 	hostID := createWorkflowHostForTest(t, "Per-task submissions host")
@@ -3111,7 +3093,6 @@ func TestWorkflowMissingRoleCreatesInboxAction(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Needs setup",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -3133,7 +3114,7 @@ func TestWorkflowMissingRoleCreatesInboxAction(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("needs setup definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t, "Needs setup template", definition,
 	)
 	hostID := createWorkflowHostForTest(t, "Workflow needs setup host")
@@ -3252,7 +3233,6 @@ func TestWorkflowNodeOwnerCanCompleteButOnlyAdminCanRollback(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Owner rollback",
-		AppliesTo:     workflowdomain.AppliesTo{Kind: "issue"},
 		Roles: []workflowdomain.RoleDefinition{{
 			Key: "owner", Name: "Owner", Required: true,
 			AllowedActorTypes: []string{"member"},
@@ -3279,7 +3259,7 @@ func TestWorkflowNodeOwnerCanCompleteButOnlyAdminCanRollback(t *testing.T) {
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
 		t.Fatalf("owner rollback definition invalid: %v", err)
 	}
-	templateID := createPublishedWorkflowTemplateForTest(
+	templateID := createPublishedWorkflowForTest(
 		t, "Owner rollback template", definition,
 	)
 	hostID := createWorkflowHostForTest(t, "Workflow owner rollback host")
@@ -3401,7 +3381,7 @@ func startWorkflowForTest(
 			http.MethodPost,
 			"/api/issues/"+hostID+"/workflow?workspace_id="+testWorkspaceID,
 			map[string]any{
-				"template_id":      templateID,
+				"workflow_id":      templateID,
 				"role_assignments": roleAssignments,
 				"idempotency_key":  idempotencyKey,
 			},
@@ -3452,7 +3432,7 @@ func createWorkflowAgentSkillForTest(
 	})
 }
 
-func createPublishedWorkflowTemplateForTest(
+func createPublishedWorkflowForTest(
 	t *testing.T,
 	name string,
 	definition workflowdomain.Definition,

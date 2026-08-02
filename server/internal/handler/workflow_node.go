@@ -1072,8 +1072,8 @@ func (h *Handler) reconcileWorkflowInstance(
 			}
 			return locked, errWorkflowNoop
 		}
-		version, err := qtx.GetWorkflowTemplateVersionInWorkspace(ctx, db.GetWorkflowTemplateVersionInWorkspaceParams{
-			ID: locked.TemplateVersionID, WorkspaceID: workspaceID,
+		version, err := qtx.GetWorkflowVersionInWorkspace(ctx, db.GetWorkflowVersionInWorkspaceParams{
+			ID: locked.WorkflowVersionID, WorkspaceID: workspaceID,
 		})
 		if err != nil {
 			tx.Rollback(ctx)
@@ -1953,10 +1953,10 @@ func (h *Handler) workflowNodeChoiceTargets(
 	instance db.WorkflowInstance,
 	node db.WorkflowNodeInstance,
 ) (map[string]struct{}, error) {
-	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(
+	version, err := h.Queries.GetWorkflowVersionInWorkspace(
 		ctx,
-		db.GetWorkflowTemplateVersionInWorkspaceParams{
-			ID: instance.TemplateVersionID, WorkspaceID: instance.WorkspaceID,
+		db.GetWorkflowVersionInWorkspaceParams{
+			ID: instance.WorkflowVersionID, WorkspaceID: instance.WorkspaceID,
 		},
 	)
 	if err != nil {

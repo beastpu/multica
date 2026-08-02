@@ -372,10 +372,10 @@ func (h *Handler) ResolveWorkflowNodeExecutor(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "invalid workflow node snapshot")
 		return
 	}
-	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(
+	version, err := h.Queries.GetWorkflowVersionInWorkspace(
 		r.Context(),
-		db.GetWorkflowTemplateVersionInWorkspaceParams{
-			ID: instance.TemplateVersionID, WorkspaceID: instance.WorkspaceID,
+		db.GetWorkflowVersionInWorkspaceParams{
+			ID: instance.WorkflowVersionID, WorkspaceID: instance.WorkspaceID,
 		},
 	)
 	if err != nil {
@@ -752,10 +752,10 @@ func (h *Handler) transitionWorkflowNode(
 		writeError(w, http.StatusConflict, "workflow is not running")
 		return
 	}
-	version, err := qtx.GetWorkflowTemplateVersionInWorkspace(
+	version, err := qtx.GetWorkflowVersionInWorkspace(
 		r.Context(),
-		db.GetWorkflowTemplateVersionInWorkspaceParams{
-			ID: locked.TemplateVersionID, WorkspaceID: locked.WorkspaceID,
+		db.GetWorkflowVersionInWorkspaceParams{
+			ID: locked.WorkflowVersionID, WorkspaceID: locked.WorkspaceID,
 		},
 	)
 	if err != nil {

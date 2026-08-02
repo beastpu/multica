@@ -6,11 +6,11 @@ import { issueKeys } from "../issues/queries";
 import type {
   StartWorkflowInput,
   CreateWorkflowInput,
-  RunWorkflowTemplateInput,
+  RunWorkflowInput,
   WorkflowDefinition,
   WorkflowInstanceDetail,
   WorkflowNodeDetail,
-  WorkflowTemplateDetail,
+  WorkflowDetail,
   WorkflowSubmission,
 } from "./types";
 import { workflowKeys } from "./queries";
@@ -67,14 +67,14 @@ export function useStartIssueWorkflow(issueId: string) {
   });
 }
 
-export function useCreateWorkflow() {
+export function useCreateWorkflowRun() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   const idempotency = useRetrySafeMutationKey();
   return useMutation({
     mutationFn: (input: CreateWorkflowInput) => {
       const { idempotency_key: _callerKey, ...payload } = input;
-      return api.createWorkflow({
+      return api.createWorkflowRun({
         ...input,
         idempotency_key: idempotency.forPayload(payload),
       });
@@ -92,14 +92,14 @@ export function useCreateWorkflow() {
   });
 }
 
-export function useRunWorkflowTemplate(templateId: string) {
+export function useRunWorkflow(templateId: string) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   const idempotency = useRetrySafeMutationKey();
   return useMutation({
-    mutationFn: (input: RunWorkflowTemplateInput) => {
+    mutationFn: (input: RunWorkflowInput) => {
       const { idempotency_key: _callerKey, ...payload } = input;
-      return api.runWorkflowTemplate(templateId, {
+      return api.runWorkflow(templateId, {
         ...input,
         idempotency_key: idempotency.forPayload(payload),
       });
@@ -506,17 +506,16 @@ export function useDecideWorkflowAcceptance(instanceId: string) {
   });
 }
 
-export function useCreateWorkflowTemplate() {
+export function useCreateWorkflow() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
     mutationFn: (input: {
       name: string;
       description?: string;
-      applies_to_type_key?: string;
       definition: WorkflowDefinition;
       change_summary?: string;
-    }) => api.createWorkflowTemplate(input),
+    }) => api.createWorkflow(input),
     onSettled: () =>
       qc.invalidateQueries({ queryKey: workflowKeys.templates(wsId) }),
   });
@@ -532,19 +531,18 @@ export function useCreateWorkflowTemplateFromBuiltin() {
   });
 }
 
-export function useUpdateWorkflowTemplate(templateId: string) {
+export function useUpdateWorkflow(templateId: string) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
     mutationFn: (input: {
       name?: string;
       description?: string;
-      applies_to_type_key?: string;
-    }) => api.updateWorkflowTemplate(templateId, input),
+    }) => api.updateWorkflow(templateId, input),
     onSuccess: (template) => {
       qc.setQueryData(
         workflowKeys.template(wsId, templateId),
-        (current: WorkflowTemplateDetail | undefined) =>
+        (current: WorkflowDetail | undefined) =>
           current ? { ...current, template } : current,
       );
     },
@@ -555,7 +553,7 @@ export function useUpdateWorkflowTemplate(templateId: string) {
   });
 }
 
-export function useCopyWorkflowTemplate() {
+export function useCopyWorkflow() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
@@ -566,20 +564,19 @@ export function useCopyWorkflowTemplate() {
       templateId: string;
       name: string;
     }) => {
-      const detail = await api.getWorkflowTemplate(templateId);
+      const detail = await api.getWorkflow(templateId);
       const source = [...detail.versions]
         .sort((a, b) => b.version - a.version)
         .find((version) => version.status === "published") ??
         detail.versions.find((version) => version.status === "draft");
       if (!source) {
-        throw new Error("Workflow template has no version to copy");
+        throw new Error("Workflow has no version to copy");
       }
-      return api.createWorkflowTemplate({
+      return api.createWorkflow({
         name,
-        description: detail.template.description,
-        applies_to_type_key: detail.template.applies_to_type_key,
+        description: detail.workflow.description,
         definition: { ...source.definition, name },
-        change_summary: `Copied from ${detail.template.name} v${source.version}`,
+        change_summary: `Copied from ${detail.workflow.name} v${source.version}`,
       });
     },
     onSettled: () =>
@@ -590,7 +587,7 @@ export function useCopyWorkflowTemplate() {
 // Saving is the whole editing flow: it allocates or reuses a version, stores
 // the definition, and makes it live when it validates. Invalidates the
 // template list too, because the live version is what the list shows.
-export function useSaveWorkflowTemplateDefinition(templateId: string) {
+export function useSaveWorkflowDefinition(templateId: string) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
@@ -598,7 +595,7 @@ export function useSaveWorkflowTemplateDefinition(templateId: string) {
       definition: WorkflowDefinition;
       change_summary?: string;
       revision?: number;
-    }) => api.saveWorkflowTemplateDefinition(templateId, input),
+    }) => api.saveWorkflowDefinition(templateId, input),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: workflowKeys.template(wsId, templateId) });
       qc.invalidateQueries({ queryKey: workflowKeys.templates(wsId) });
@@ -606,11 +603,11 @@ export function useSaveWorkflowTemplateDefinition(templateId: string) {
   });
 }
 
-export function useArchiveWorkflowTemplate(templateId: string) {
+export function useArchiveWorkflow(templateId: string) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: () => api.archiveWorkflowTemplate(templateId),
+    mutationFn: () => api.archiveWorkflow(templateId),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: workflowKeys.template(wsId, templateId) });
       qc.invalidateQueries({ queryKey: workflowKeys.templates(wsId) });

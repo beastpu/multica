@@ -6,7 +6,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   WorkflowsPage,
-  WorkflowTemplatePage,
+  WorkflowPage,
   WorkflowWorkbench,
 } from "@multica/views/workflows";
 import { useDocumentTitle } from "@/hooks/use-document-title";
@@ -44,13 +44,13 @@ export function WorkflowDetailPage() {
   );
 }
 
-export function WorkflowTemplateRoute() {
+export function WorkflowRoute() {
   const { id } = useParams<{ id: string }>();
   useDocumentTitle("Workflow template");
   if (!id) return null;
   return (
     <WorkflowRouteGate>
-      <WorkflowTemplatePage templateId={id} />
+      <WorkflowPage templateId={id} />
     </WorkflowRouteGate>
   );
 }

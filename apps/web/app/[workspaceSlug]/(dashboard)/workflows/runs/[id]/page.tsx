@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { useWorkspaceFeatureState } from "@multica/core/config";
 import { WORKFLOWS_ACTIVITY_ENGINE_FLAG } from "@multica/core/feature-flags";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { WorkflowTemplatePage } from "@multica/views/workflows";
+import { WorkflowWorkbench } from "@multica/views/workflows";
 
 export default function Page({
   params,
@@ -20,5 +20,5 @@ export default function Page({
   );
   if (featureState === "loading") return null;
   if (featureState === "disabled") notFound();
-  return <WorkflowTemplatePage templateId={id} />;
+  return <WorkflowWorkbench instanceId={id} />;
 }

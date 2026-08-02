@@ -14,13 +14,13 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-type createWorkflowRequest struct {
+type createWorkflowRunRequest struct {
 	Title             string                        `json:"title"`
 	Description       string                        `json:"description,omitempty"`
 	Priority          string                        `json:"priority,omitempty"`
 	ProjectID         string                        `json:"project_id,omitempty"`
-	TemplateID        string                        `json:"template_id"`
-	TemplateVersionID string                        `json:"template_version_id,omitempty"`
+	WorkflowID        string                        `json:"workflow_id"`
+	WorkflowVersionID string                        `json:"workflow_version_id,omitempty"`
 	HostStatusMode    string                        `json:"host_status_mode,omitempty"`
 	Input             json.RawMessage               `json:"input,omitempty"`
 	RoleAssignments   []workflowRoleAssignmentInput `json:"role_assignments,omitempty"`
@@ -30,11 +30,11 @@ type createWorkflowRequest struct {
 // CreateWorkflow is the product-level "New workflow" entry point. The host
 // Issue and the workflow runtime are committed in one IssueService transaction:
 // a failure in either half leaves neither half behind.
-func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) CreateWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowWriteEnabled(w, r) {
 		return
 	}
-	var req createWorkflowRequest
+	var req createWorkflowRunRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
@@ -77,13 +77,13 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to check workflow request")
 		return
 	}
-	templateID, ok := parseUUIDOrBadRequest(w, req.TemplateID, "template_id")
+	templateID, ok := parseUUIDOrBadRequest(w, req.WorkflowID, "workflow_id")
 	if !ok {
 		return
 	}
-	template, err := h.Queries.GetWorkflowTemplateInWorkspace(
+	template, err := h.Queries.GetWorkflowInWorkspace(
 		r.Context(),
-		db.GetWorkflowTemplateInWorkspaceParams{ID: templateID, WorkspaceID: wsUUID},
+		db.GetWorkflowInWorkspaceParams{ID: templateID, WorkspaceID: wsUUID},
 	)
 	if errors.Is(err, pgx.ErrNoRows) || template.Status != "published" {
 		writeError(w, http.StatusNotFound, "published workflow template not found")
@@ -94,17 +94,17 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	versionID := template.LatestPublishedVersionID
-	if strings.TrimSpace(req.TemplateVersionID) != "" {
-		versionID, ok = parseUUIDOrBadRequest(w, req.TemplateVersionID, "template_version_id")
+	if strings.TrimSpace(req.WorkflowVersionID) != "" {
+		versionID, ok = parseUUIDOrBadRequest(w, req.WorkflowVersionID, "workflow_version_id")
 		if !ok {
 			return
 		}
 	}
-	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(
+	version, err := h.Queries.GetWorkflowVersionInWorkspace(
 		r.Context(),
-		db.GetWorkflowTemplateVersionInWorkspaceParams{ID: versionID, WorkspaceID: wsUUID},
+		db.GetWorkflowVersionInWorkspaceParams{ID: versionID, WorkspaceID: wsUUID},
 	)
-	if errors.Is(err, pgx.ErrNoRows) || version.TemplateID != template.ID ||
+	if errors.Is(err, pgx.ErrNoRows) || version.WorkflowID != template.ID ||
 		version.Status != "published" {
 		writeError(w, http.StatusBadRequest, "published template version not found")
 		return
@@ -199,8 +199,8 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 				var runtimeErr error
 				createdInstance, activeNodes, runtimeErr = h.createWorkflowRuntime(
 					ctx, qtx, workflowRuntimeStartParams{
-						WorkspaceID: wsUUID, TemplateID: template.ID,
-						TemplateVersionID: version.ID, HostIssueID: host.ID,
+						WorkspaceID: wsUUID, WorkflowID: template.ID,
+						WorkflowVersionID: version.ID, HostIssueID: host.ID,
 						Title:          host.Title,
 						HostStatusMode: hostStatusMode, Input: normalizedInput,
 						StartedByID: userUUID, IdempotencyKey: req.IdempotencyKey,

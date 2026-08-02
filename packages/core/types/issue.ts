@@ -36,8 +36,8 @@ export type IssueExternalFields = Record<string, string>;
 
 export interface IssueWorkflowContext {
   workflow_instance_id: string;
-  workflow_template_id: string;
-  workflow_template_name: string;
+  workflow_workflow_id: string;
+  workflow_workflow_name: string;
   workflow_node_instance_id: string;
   activity_key: string;
   activity_name: string;

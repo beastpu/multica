@@ -292,8 +292,8 @@ func (h *Handler) UpdateWorkflowInstanceRoles(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
-	version, err := h.Queries.GetWorkflowTemplateVersionInWorkspace(r.Context(), db.GetWorkflowTemplateVersionInWorkspaceParams{
-		ID: instance.TemplateVersionID, WorkspaceID: instance.WorkspaceID,
+	version, err := h.Queries.GetWorkflowVersionInWorkspace(r.Context(), db.GetWorkflowVersionInWorkspaceParams{
+		ID: instance.WorkflowVersionID, WorkspaceID: instance.WorkspaceID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load workflow definition")

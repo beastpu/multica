@@ -11,7 +11,6 @@ func validDefinition() Definition {
 	return Definition{
 		SchemaVersion: DefinitionSchemaVersion,
 		Name:          "Delivery",
-		AppliesTo:     AppliesTo{Kind: "issue"},
 		Roles: []RoleDefinition{
 			{Key: "owner", Name: "Owner", Required: true, AllowedActorTypes: []string{"member"}},
 			{Key: "executor", Name: "Executor", Required: true, AllowedActorTypes: []string{"agent"}},
@@ -596,7 +595,6 @@ func TestChoiceBranchesForNode(t *testing.T) {
 	definition := Definition{
 		SchemaVersion: 1,
 		Name:          "branching",
-		AppliesTo:     AppliesTo{Kind: "issue"},
 		Roles:         []RoleDefinition{{Key: "qa", Name: "QA", Required: true, AllowedActorTypes: []string{"member"}}},
 		Nodes: []NodeDefinition{
 			{Key: "start", Kind: "start", Name: "开始"},

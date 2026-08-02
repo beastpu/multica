@@ -1,9 +1,6 @@
 {
   "schema_version": 1,
   "name": "缺陷修复",
-  "applies_to": {
-    "kind": "issue"
-  },
   "roles": [
     {
       "key": "qa",
