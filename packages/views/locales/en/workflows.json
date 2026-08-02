@@ -444,6 +444,7 @@
     "failed": "Failed",
     "active": "Active",
     "waiting": "Waiting",
+    "in_review": "In review",
     "blocked": "Blocked",
     "skipped": "Skipped",
     "superseded": "Superseded",

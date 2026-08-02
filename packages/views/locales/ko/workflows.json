@@ -444,6 +444,7 @@
     "failed": "실패",
     "active": "진행 중",
     "waiting": "대기 중",
+    "in_review": "검토 중",
     "blocked": "차단됨",
     "skipped": "건너뜀",
     "superseded": "대체됨",

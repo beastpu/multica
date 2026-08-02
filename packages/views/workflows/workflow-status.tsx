@@ -22,6 +22,7 @@ const statusStyle: Record<string, string> = {
   running: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   active: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   waiting: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  in_review: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
   paused: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
   completed: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
   blocked: "border-destructive/30 bg-destructive/10 text-destructive",
@@ -82,6 +83,7 @@ function StatusIcon({ status }: { status: string }) {
     case "active":
       return <PlayCircle className={className} />;
     case "waiting":
+    case "in_review":
     case "pending":
     case "pending_materialization":
       return <Clock3 className={className} />;
@@ -137,6 +139,7 @@ export function WorkflowStatusBadge({
       case "failed": return t(($) => $.status.failed);
       case "active": return t(($) => $.status.active);
       case "waiting": return t(($) => $.status.waiting);
+      case "in_review": return t(($) => $.status.in_review);
       case "blocked": return t(($) => $.status.blocked);
       case "skipped": return t(($) => $.status.skipped);
       case "superseded": return t(($) => $.status.superseded);
