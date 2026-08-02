@@ -55,7 +55,7 @@ type NodeDefinition struct {
 	Color            string                `json:"color,omitempty"`
 	TimeoutMinutes   int                   `json:"timeout_minutes,omitempty"`
 	OwnerRole        string                `json:"owner_role,omitempty"`
-	Executor         ExecutorDefinition    `json:"executor,omitempty"`
+	Executor         *ExecutorDefinition   `json:"executor,omitempty"`
 	Reviewer         *ReviewerDefinition   `json:"reviewer,omitempty"`
 	IssuePolicy      string                `json:"issue_policy,omitempty"`
 	IssueTemplates   []IssueTemplate       `json:"issue_templates,omitempty"`
@@ -90,11 +90,15 @@ type ExecutorDefinition struct {
 	Fallback   *ExecutorDefinition `json:"fallback,omitempty"`
 }
 
-// HasExecutor reports whether the node names an executor at all. An empty
-// executor means manual pickup, which is also what an unresolvable one
-// degrades to.
-func HasExecutor(executor ExecutorDefinition) bool {
-	return strings.TrimSpace(executor.Kind) != ""
+// HasExecutor reports whether the node names an executor at all. Absent means
+// manual pickup, which is also what an unresolvable one degrades to.
+//
+// The field is a pointer because encoding/json ignores omitempty on a struct:
+// a value type would put "executor":{} on every start and end node, which is
+// meaningless in the stored definition and broke the client contract once
+// kind became required.
+func HasExecutor(executor *ExecutorDefinition) bool {
+	return executor != nil && strings.TrimSpace(executor.Kind) != ""
 }
 
 // ReviewerDefinition names who judges the node's output. Absent means the node
@@ -687,12 +691,12 @@ func RequiresManualCompletion(node NodeDefinition) bool {
 
 func validateExecutor(node NodeDefinition, roles map[string]RoleDefinition) error {
 	if !HasExecutor(node.Executor) {
-		if node.Executor.Fallback != nil {
+		if node.Executor != nil && node.Executor.Fallback != nil {
 			return fmt.Errorf("activity %q fallback requires an executor", node.Key)
 		}
 		return nil
 	}
-	if err := validateExecutorEntry(node.Key, "executor", node.Executor, roles); err != nil {
+	if err := validateExecutorEntry(node.Key, "executor", *node.Executor, roles); err != nil {
 		return err
 	}
 	fallback := node.Executor.Fallback
@@ -702,7 +706,7 @@ func validateExecutor(node NodeDefinition, roles map[string]RoleDefinition) erro
 	if fallback.Fallback != nil {
 		return fmt.Errorf("activity %q executor fallback cannot declare its own fallback", node.Key)
 	}
-	if !HasExecutor(*fallback) {
+	if !HasExecutor(fallback) {
 		return fmt.Errorf("activity %q executor fallback requires a kind", node.Key)
 	}
 	return validateExecutorEntry(node.Key, "executor fallback", *fallback, roles)
@@ -1053,7 +1057,8 @@ func PinsMemberOwner(node NodeDefinition) bool {
 	if node.OwnerRole != "" {
 		return false
 	}
-	return node.Executor.Kind == "actor" && node.Executor.ActorType == "member"
+	return node.Executor != nil && node.Executor.Kind == "actor" &&
+		node.Executor.ActorType == "member"
 }
 
 func roleResolvesOnlyToMember(role RoleDefinition) bool {

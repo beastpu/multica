@@ -630,9 +630,10 @@ function ExecutorEntryFields({
   onChange: (entry: WorkflowExecutorDefinition | undefined) => void;
 }) {
   const { t } = useT("workflows");
-  const kinds: Array<WorkflowExecutorDefinition["kind"]> = allowCapability
-    ? ["role", "actor", "capability", "manual"]
-    : ["role", "actor", "manual"];
+  const kinds: Array<NonNullable<WorkflowExecutorDefinition["kind"]>> =
+    allowCapability
+      ? ["role", "actor", "capability", "manual"]
+      : ["role", "actor", "manual"];
   const kindLabel = (kind: string) => {
     switch (kind) {
       case "role":

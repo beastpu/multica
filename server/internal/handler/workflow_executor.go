@@ -40,7 +40,7 @@ func resolveWorkflowNodeExecutor(
 		), nil
 	}
 	decision, resolved, err := resolveWorkflowExecutorEntry(
-		ctx, q, workspaceID, node.Executor, roles, false,
+		ctx, q, workspaceID, *node.Executor, roles, false,
 	)
 	if err != nil {
 		return workflowExecutorDecision{}, err

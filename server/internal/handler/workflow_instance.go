@@ -997,7 +997,7 @@ func writeWorkflowNodeParticipants(
 	if nodeDefinition.OwnerRole != "" {
 		return nil
 	}
-	if nodeDefinition.Executor.Kind != "actor" {
+	if nodeDefinition.Executor == nil || nodeDefinition.Executor.Kind != "actor" {
 		return nil
 	}
 	assignment, err := directWorkflowExecutorAssignment(

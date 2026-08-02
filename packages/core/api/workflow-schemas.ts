@@ -57,8 +57,12 @@ const WorkflowCompletionDefinitionSchema = z.object({
 
 // One level of fallback, matching the definition: a chain longer than
 // "who, and who instead" is not expressible and never was used.
+//
+// kind is optional here even though the definition requires it: a node that
+// names nobody is picked up manually, and an executor arriving without one
+// has to degrade to that rather than fail the whole response.
 const WorkflowExecutorEntrySchema = z.object({
-  kind: z.string(),
+  kind: z.string().optional(),
   role: z.string().optional(),
   actor_type: z.enum(["member", "agent", "squad"]).optional(),
   actor_id: z.string().optional(),
@@ -70,7 +74,7 @@ const WorkflowExecutorDefinitionSchema = WorkflowExecutorEntrySchema.extend({
 }).loose();
 
 const WorkflowReviewerDefinitionSchema = z.object({
-  kind: z.string(),
+  kind: z.string().optional(),
   role: z.string().optional(),
   actor_type: z.enum(["member", "agent", "squad"]).optional(),
   actor_id: z.string().optional(),

@@ -23,7 +23,7 @@ func validDefinition() Definition {
 				Kind:      "activity",
 				Name:      "Implementation",
 				OwnerRole: "owner",
-				Executor: ExecutorDefinition{
+				Executor: &ExecutorDefinition{
 					Kind: "role", Role: "executor",
 					Fallback: &ExecutorDefinition{Kind: "manual"},
 				},
@@ -166,7 +166,7 @@ func TestValidateDefinitionRejectsNestedExecutorFallback(t *testing.T) {
 
 func TestValidateDefinitionAcceptsExecutorWithoutFallback(t *testing.T) {
 	definition := validDefinition()
-	definition.Nodes[1].Executor = ExecutorDefinition{Kind: "role", Role: "executor"}
+	definition.Nodes[1].Executor = &ExecutorDefinition{Kind: "role", Role: "executor"}
 	if err := ValidateDefinition(definition); err != nil {
 		t.Fatalf("ValidateDefinition() error = %v", err)
 	}
@@ -178,7 +178,7 @@ func TestValidateDefinitionOwnerReviewerWithPinnedMember(t *testing.T) {
 	// participants, which the pinned actor creates.
 	pinned := validDefinition()
 	pinned.Nodes[1].OwnerRole = ""
-	pinned.Nodes[1].Executor = ExecutorDefinition{
+	pinned.Nodes[1].Executor = &ExecutorDefinition{
 		Kind: "actor", ActorType: "member",
 		ActorID:  "33333333-3333-3333-3333-333333333333",
 		Fallback: &ExecutorDefinition{Kind: "manual"},
@@ -190,7 +190,7 @@ func TestValidateDefinitionOwnerReviewerWithPinnedMember(t *testing.T) {
 
 	pinnedAgent := validDefinition()
 	pinnedAgent.Nodes[1].OwnerRole = ""
-	pinnedAgent.Nodes[1].Executor = ExecutorDefinition{
+	pinnedAgent.Nodes[1].Executor = &ExecutorDefinition{
 		Kind: "actor", ActorType: "agent",
 		ActorID:  "33333333-3333-3333-3333-333333333333",
 		Fallback: &ExecutorDefinition{Kind: "manual"},
@@ -622,7 +622,7 @@ func TestChoiceBranchesForNode(t *testing.T) {
 
 func TestValidateDefinitionAcceptsDirectActorExecutor(t *testing.T) {
 	definition := validDefinition()
-	definition.Nodes[1].Executor = ExecutorDefinition{
+	definition.Nodes[1].Executor = &ExecutorDefinition{
 		Kind:      "actor",
 		ActorType: "agent",
 		ActorID:   "550e8400-e29b-41d4-a716-446655440000",
@@ -642,7 +642,7 @@ func TestValidateDefinitionRejectsInvalidExecutor(t *testing.T) {
 		{
 			name: "actor type",
 			mutate: func(definition *Definition) {
-				definition.Nodes[1].Executor = ExecutorDefinition{
+				definition.Nodes[1].Executor = &ExecutorDefinition{
 					Kind:      "actor",
 					ActorType: "robot",
 					ActorID:   "550e8400-e29b-41d4-a716-446655440000",
@@ -653,7 +653,7 @@ func TestValidateDefinitionRejectsInvalidExecutor(t *testing.T) {
 		{
 			name: "actor id",
 			mutate: func(definition *Definition) {
-				definition.Nodes[1].Executor = ExecutorDefinition{
+				definition.Nodes[1].Executor = &ExecutorDefinition{
 					Kind:      "actor",
 					ActorType: "agent",
 					ActorID:   "not-a-uuid",
@@ -664,14 +664,14 @@ func TestValidateDefinitionRejectsInvalidExecutor(t *testing.T) {
 		{
 			name: "unknown kind",
 			mutate: func(definition *Definition) {
-				definition.Nodes[1].Executor = ExecutorDefinition{Kind: "whoever"}
+				definition.Nodes[1].Executor = &ExecutorDefinition{Kind: "whoever"}
 			},
 			want: "invalid executor kind",
 		},
 		{
 			name: "unknown role",
 			mutate: func(definition *Definition) {
-				definition.Nodes[1].Executor = ExecutorDefinition{
+				definition.Nodes[1].Executor = &ExecutorDefinition{
 					Kind: "role", Role: "nobody",
 				}
 			},
@@ -680,7 +680,7 @@ func TestValidateDefinitionRejectsInvalidExecutor(t *testing.T) {
 		{
 			name: "fallback without executor",
 			mutate: func(definition *Definition) {
-				definition.Nodes[1].Executor = ExecutorDefinition{
+				definition.Nodes[1].Executor = &ExecutorDefinition{
 					Fallback: &ExecutorDefinition{Kind: "manual"},
 				}
 			},

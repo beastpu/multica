@@ -41,7 +41,7 @@ func startArtifactWorkflow(t *testing.T, key string) (string, string) {
 			{
 				Key: "design", Kind: "activity", Name: "Design",
 				OwnerRole: "owner", IssuePolicy: "none",
-				Executor: workflowdomain.ExecutorDefinition{
+				Executor: &workflowdomain.ExecutorDefinition{
 					Kind: "role", Role: "owner",
 					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
@@ -337,7 +337,7 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 		return workflowdomain.NodeDefinition{
 			Key: nodeKey, Kind: "activity", Name: name,
 			OwnerRole: "owner", IssuePolicy: "none",
-			Executor: workflowdomain.ExecutorDefinition{
+			Executor: &workflowdomain.ExecutorDefinition{
 				Kind: "role", Role: "owner",
 				Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 			},
@@ -781,7 +781,7 @@ func TestDynamicNodeWaitsToBeDecomposed(t *testing.T) {
 				// Runtime decomposition with an automatic completion mode —
 				// exactly what the editor produced before this was retired.
 				IssuePolicy: "dynamic",
-				Executor: workflowdomain.ExecutorDefinition{
+				Executor: &workflowdomain.ExecutorDefinition{
 					Kind: "role", Role: "owner",
 					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},

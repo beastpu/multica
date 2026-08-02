@@ -22,7 +22,8 @@ export interface WorkflowIssueTemplate {
  * answer to give. `fallback` is one layer deep and cannot nest.
  */
 export interface WorkflowExecutorDefinition {
-  kind: "role" | "actor" | "capability" | "manual";
+  /** Absent means manual pickup — the same thing an unresolvable one degrades to. */
+  kind?: "role" | "actor" | "capability" | "manual";
   role?: string;
   actor_type?: "member" | "agent" | "squad";
   actor_id?: string;
@@ -35,7 +36,7 @@ export interface WorkflowExecutorDefinition {
  * present and required means delivery moves the node to in_review.
  */
 export interface WorkflowReviewerDefinition {
-  kind: "role" | "actor" | "api" | "owner" | "auto";
+  kind?: "role" | "actor" | "api" | "owner" | "auto";
   role?: string;
   actor_type?: "member" | "agent" | "squad";
   actor_id?: string;

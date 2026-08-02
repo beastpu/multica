@@ -44,7 +44,7 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 			{
 				Key: "work", Kind: "activity", Name: "Implementation", OwnerRole: "owner",
 				IssuePolicy: "fixed_and_dynamic", TimeoutMinutes: 1,
-				Executor: workflowdomain.ExecutorDefinition{
+				Executor: &workflowdomain.ExecutorDefinition{
 					Kind: "role", Role: "owner",
 					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
@@ -671,7 +671,7 @@ func TestCreateWorkflowAtomicAndIdempotent(t *testing.T) {
 			{
 				Key: "work", Kind: "activity",
 				Name: "Work", OwnerRole: "owner",
-				Executor: workflowdomain.ExecutorDefinition{
+				Executor: &workflowdomain.ExecutorDefinition{
 					Kind: "role", Role: "owner",
 					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
@@ -1266,7 +1266,7 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 			{Key: "start", Kind: "start", Name: "Start"},
 			{
 				Key: "analysis", Kind: "activity", Name: "Analysis", OwnerRole: "owner",
-				Executor: ownerExecutor, IssuePolicy: "fixed",
+				Executor: &ownerExecutor, IssuePolicy: "fixed",
 				IssueTemplates:   requiredIssue("analysis_issue", "Analyze {{host.title}}"),
 				SubmissionSchema: &workflowdomain.SubmissionSchema{},
 				Completion: workflowdomain.CompletionDefinition{
@@ -1275,7 +1275,7 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 			},
 			{
 				Key: "implementation", Kind: "activity", Name: "Implementation", OwnerRole: "owner",
-				Executor: ownerExecutor, IssuePolicy: "fixed",
+				Executor: &ownerExecutor, IssuePolicy: "fixed",
 				IssueTemplates: requiredIssue("implementation_issue", "Implement {{host.title}}"),
 				Completion:     workflowdomain.CompletionDefinition{RequiredIssueOutcome: "done"},
 			},
@@ -1283,13 +1283,13 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 			{Key: "route", Kind: "gateway", Name: "Review route"},
 			{
 				Key: "review", Kind: "activity", Name: "Review", OwnerRole: "owner",
-				Executor: ownerExecutor, IssuePolicy: "fixed",
+				Executor: &ownerExecutor, IssuePolicy: "fixed",
 				IssueTemplates: requiredIssue("review_issue", "Review {{host.title}}"),
 				Completion:     workflowdomain.CompletionDefinition{RequiredIssueOutcome: "done"},
 			},
 			{
 				Key: "direct", Kind: "activity", Name: "Direct", OwnerRole: "owner",
-				Executor: ownerExecutor, IssuePolicy: "fixed",
+				Executor: &ownerExecutor, IssuePolicy: "fixed",
 				IssueTemplates: requiredIssue("direct_issue", "Direct {{host.title}}"),
 				Completion:     workflowdomain.CompletionDefinition{RequiredIssueOutcome: "done"},
 			},
@@ -1464,7 +1464,7 @@ func TestWorkflowDAGAnyJoinDoesNotCancelOtherBranch(t *testing.T) {
 		return workflowdomain.NodeDefinition{
 			Key: key, Kind: "activity", Name: title, OwnerRole: "owner",
 			IssuePolicy: "fixed",
-			Executor: workflowdomain.ExecutorDefinition{
+			Executor: &workflowdomain.ExecutorDefinition{
 				Kind: "role", Role: "owner",
 				Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 			},
@@ -1577,7 +1577,7 @@ func TestWorkflowManualExecutorPausesAndResumesSetup(t *testing.T) {
 			{
 				Key: "work", Kind: "activity", Name: "Manual work",
 				OwnerRole: "owner", IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{Kind: "manual"},
+				Executor: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				IssueTemplates: []workflowdomain.IssueTemplate{{
 					Key: "manual_task", Title: "Manually assigned {{host.title}}",
 					Required: true,
@@ -1728,7 +1728,7 @@ func TestWorkflowCapabilityMatchUsesStructuredEnabledSkill(t *testing.T) {
 			{
 				Key: "work", Kind: "activity", Name: "Capability work",
 				IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{
+				Executor: &workflowdomain.ExecutorDefinition{
 					Kind: "capability", Role: "delivery_pool",
 					Capability: "release-engineering",
 					Fallback:   &workflowdomain.ExecutorDefinition{Kind: "manual"},
@@ -1808,7 +1808,7 @@ func TestWorkflowDirectExecutorDefaultsAndIssueOverrides(t *testing.T) {
 			{
 				Key: "work", Kind: "activity", Name: "Backend development",
 				IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{
+				Executor: &workflowdomain.ExecutorDefinition{
 					Kind: "actor", ActorType: "agent", ActorID: defaultAgentID,
 					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
@@ -1925,7 +1925,7 @@ func TestWorkflowSquadExecutorMaterializationWakesLeader(t *testing.T) {
 			{
 				Key: "work", Kind: "activity", Name: "Work",
 				OwnerRole: "owner", IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{
+				Executor: &workflowdomain.ExecutorDefinition{
 					Kind: "role", Role: "owner",
 					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
@@ -2017,7 +2017,7 @@ func TestWorkflowAgentSubmissionAndVerdictRemainControlledSuggestion(t *testing.
 			{
 				Key: "work", Kind: "activity", Name: "Agent work",
 				OwnerRole: "worker", IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{
+				Executor: &workflowdomain.ExecutorDefinition{
 					Kind: "role", Role: "worker",
 					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
@@ -2161,7 +2161,7 @@ func TestWorkflowManualActivityWaitsForExplicitMemberCompletion(t *testing.T) {
 			{
 				Key: "manual", Kind: "activity", Name: "Manual review",
 				OwnerRole: "owner", IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{
+				Executor: &workflowdomain.ExecutorDefinition{
 					Kind: "role", Role: "owner",
 					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
@@ -2412,7 +2412,7 @@ func TestWorkflowRequiredIssueCancellationPolicy(t *testing.T) {
 					{
 						Key: "work", Kind: "activity", Name: "Work",
 						OwnerRole: "owner", IssuePolicy: "fixed",
-						Executor: workflowdomain.ExecutorDefinition{
+						Executor: &workflowdomain.ExecutorDefinition{
 							Kind: "role", Role: "owner",
 							Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 						},
@@ -2884,7 +2884,7 @@ func TestWorkflowConcurrentReconcilersCommitOneTransition(t *testing.T) {
 			{
 				Key: "work", Kind: "activity", Name: "Work",
 				OwnerRole: "owner", IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{
+				Executor: &workflowdomain.ExecutorDefinition{
 					Kind: "role", Role: "owner",
 					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
@@ -3012,7 +3012,7 @@ func TestWorkflowPerRequiredTaskSubmissionPolicy(t *testing.T) {
 			{
 				Key: "work", Kind: "activity", Name: "Parallel work",
 				OwnerRole: "owner", IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{
+				Executor: &workflowdomain.ExecutorDefinition{
 					Kind: "role", Role: "owner",
 					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},

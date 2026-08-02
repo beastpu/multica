@@ -19,7 +19,7 @@ func executorTestRoles() map[string]validatedWorkflowRoleAssignment {
 
 func executorNode(executor workflowdomain.ExecutorDefinition) workflowdomain.NodeDefinition {
 	return workflowdomain.NodeDefinition{
-		Key: "implement", Kind: "activity", Name: "Implement", Executor: executor,
+		Key: "implement", Kind: "activity", Name: "Implement", Executor: &executor,
 	}
 }
 

@@ -142,6 +142,35 @@ describe("workflow response schemas", () => {
     expect(parsed.reviewer).toMatchObject({ kind: "role", role: "qa", required: true });
   });
 
+  it("keeps a control node that carries an empty executor object", () => {
+    // Go's omitempty does not apply to structs, so a start or end node used to
+    // arrive as {"executor":{}}. A required kind turned that into a whole-
+    // response validation failure and a blank canvas.
+    const parsed = WorkflowNodeDefinitionSchema.parse({
+      key: "start",
+      kind: "start",
+      name: "Start",
+      executor: {},
+      completion: {},
+    });
+
+    expect(parsed.key).toBe("start");
+    expect(parsed.executor?.kind).toBeUndefined();
+  });
+
+  it("downgrades an executor or reviewer whose kind is unknown", () => {
+    const parsed = WorkflowNodeDefinitionSchema.parse({
+      key: "work",
+      kind: "activity",
+      name: "Work",
+      executor: { kind: "round_robin", role: "owner" },
+      reviewer: { kind: "quorum", role: "qa" },
+    });
+
+    expect(parsed.executor?.kind).toBe("round_robin");
+    expect(parsed.reviewer?.kind).toBe("quorum");
+  });
+
   it("preserves known completion modes and ignores unknown future modes", () => {
     const manual = WorkflowNodeDefinitionSchema.parse({
       key: "review",
