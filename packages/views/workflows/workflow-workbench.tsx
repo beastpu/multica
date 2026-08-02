@@ -142,6 +142,7 @@ import { WorkflowCanvas } from "./workflow-canvas";
 import { Badge } from "@multica/ui/components/ui/badge";
 import {
   WorkflowStatusBadge,
+  isWorkflowNodeOpen,
   workflowNodeDisplayStatus,
 } from "./workflow-status";
 import { ReworkReasonFields } from "./rework-reason-fields";
@@ -202,9 +203,7 @@ export function SubmissionPanel({
       {/* A node with no schema still owes the next node a conclusion, and the
           default node shape has no schema — gating this panel on one left the
           most common node with nowhere to hand anything off from. */}
-      {canManage &&
-        (node.status === "active" || node.status === "waiting" ||
-          node.status === "blocked") && (
+      {canManage && isWorkflowNodeOpen(node.status) && (
         <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
           {taskScoped && (
             <div className="space-y-1.5">
@@ -510,8 +509,7 @@ export function VerdictPanel({
   const [reason, setReason] = useState("");
   const [confidence, setConfidence] = useState("");
   const record = useCreateWorkflowVerdict(instanceId, node.id);
-  const isOpen = node.status === "active" || node.status === "waiting" ||
-    node.status === "blocked";
+  const isOpen = isWorkflowNodeOpen(node.status);
   const reasonRequired = result === "fail" || result === "blocked";
 
   useEffect(() => {
@@ -1001,8 +999,7 @@ function DynamicIssuePanel({
   const [required, setRequired] = useState(false);
   const createIssue = useCreateWorkflowNodeIssue(instanceId, node.id);
   const policy = node.definition.issue_policy ?? "none";
-  const isOpen = node.status === "active" || node.status === "waiting" ||
-    node.status === "blocked";
+  const isOpen = isWorkflowNodeOpen(node.status);
   if (!canManage || !isOpen ||
     (policy !== "dynamic" && policy !== "fixed_and_dynamic")) {
     return null;
@@ -1136,8 +1133,7 @@ function NodeTransitionPanel({
   const [managementReason, setManagementReason] = useState("");
   const submit = useCreateWorkflowSubmission(instanceId, node.id);
   const transition = useTransitionWorkflowNode(instanceId, node.id);
-  const open = node.status === "active" || node.status === "waiting" ||
-    node.status === "blocked";
+  const open = isWorkflowNodeOpen(node.status);
   const manualCompletion = workflowCompletionMode(node.definition) === "manual";
   const canComplete = open && manualCompletion && canManage;
   const canRollback = canManage && instanceRunning &&
@@ -1851,10 +1847,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   useEffect(() => {
     if (nodes.length === 0) return;
     if (nodes.some((node) => node.id === selectedNodeId)) return;
-    const current = nodes.find((node) =>
-      node.status === "active" || node.status === "waiting" ||
-      node.status === "blocked"
-    );
+    const current = nodes.find((node) => isWorkflowNodeOpen(node.status));
     setSelectedNodeId((current ?? nodes[0])!.id);
   }, [nodes, selectedNodeId]);
 
@@ -1989,11 +1982,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   const selectedNodeAcceptsIssues = Boolean(
     selectedNode &&
       canManageSelectedNode &&
-      (
-        selectedNode.status === "active" ||
-        selectedNode.status === "waiting" ||
-        selectedNode.status === "blocked"
-      ) &&
+      isWorkflowNodeOpen(selectedNode.status) &&
       (
         selectedIssuePolicy === "dynamic" ||
         selectedIssuePolicy === "fixed_and_dynamic"
@@ -2051,13 +2040,18 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         selectedNode?.status === "blocked") ||
       resolution?.status !== "resolved";
   });
-  const sidebarDefaultTab = hasSubmissionPanel
-    ? "submission"
-    : hasVerdictPanel
-      ? "verdict"
-      : hasAcceptancePanel
-        ? "acceptance"
-        : "history";
+  // A node in review is waiting on exactly one action, so open on it. Every
+  // activity has a submission panel, so without this the reviewer always
+  // landed on the handoff form and had to go looking for the verdict.
+  const sidebarDefaultTab = hasVerdictPanel && selectedNode?.status === "in_review"
+    ? "verdict"
+    : hasSubmissionPanel
+      ? "submission"
+      : hasVerdictPanel
+        ? "verdict"
+        : hasAcceptancePanel
+          ? "acceptance"
+          : "history";
   const workflowIssueMenuActions = useMemo(() => [{
     id: "remove-from-workflow-node",
     label: t(($) => $.workbench.detach_issue_title),

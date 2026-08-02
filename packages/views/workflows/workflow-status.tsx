@@ -62,6 +62,19 @@ export function workflowNodeDisplayStatus(status: string): string {
   return status === "superseded" ? "pending" : status;
 }
 
+/**
+ * Whether a node is still in play — the flow has reached it and has not left.
+ *
+ * Mirrors workflowNodeIsOpen on the server. It is a function rather than the
+ * status list written out at each call site because the list grew an entry
+ * (in_review) and six hand-copied versions of it did not, which hid the
+ * verdict form from the reviewer the node was waiting on.
+ */
+export function isWorkflowNodeOpen(status: string): boolean {
+  return status === "active" || status === "in_review" ||
+    status === "waiting" || status === "blocked";
+}
+
 function StatusIcon({ status }: { status: string }) {
   const className = "size-3";
   switch (status) {
