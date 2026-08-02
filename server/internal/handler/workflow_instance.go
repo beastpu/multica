@@ -360,6 +360,7 @@ func workflowRuntimeNextAction(
 	}
 	reasonCodes := make(map[string]struct{})
 	blocked := false
+	hasOpenNode := false
 	for _, node := range nodes {
 		if node.Status == "blocked" {
 			blocked = true
@@ -367,6 +368,7 @@ func workflowRuntimeNextAction(
 		if !workflowNodeIsOpen(node) {
 			continue
 		}
+		hasOpenNode = true
 		var reasons []workflowdomain.WaitingReason
 		if json.Unmarshal(node.WaitingReasons, &reasons) != nil {
 			continue
@@ -383,13 +385,17 @@ func workflowRuntimeNextAction(
 		}
 		return false
 	}
+	// A running instance with nothing open has finished its work and is held
+	// only by acceptance. Acceptance is no longer a node, so there is no node
+	// waiting reason to read it off — the absence of open nodes is the signal.
+	if status == "running" && !hasOpenNode {
+		return "review_acceptance", "awaiting_acceptance"
+	}
 	switch {
 	case hasReason("executor_needs_setup", "executor_unresolved"):
 		return "configure_executor", "executor_unresolved"
 	case hasReason("required_task_not_materialized", "stale_materialization"):
 		return "retry_materialization", "materialization_failed"
-	case hasReason("awaiting_acceptance", "acceptance_not_approved"):
-		return "review_acceptance", "awaiting_acceptance"
 	case hasReason(
 		"task_submission_required",
 		"valid_submission_required",
@@ -398,13 +404,10 @@ func workflowRuntimeNextAction(
 	):
 		return "submit_result", "awaiting_submission"
 	case hasReason(
-		"member_verdict_required",
-		"verdict_definition_missing",
+		"review_required",
 		"verdict_not_passed",
 	):
 		return "record_verdict", "awaiting_verdict"
-	case hasReason("confirmation_required"):
-		return "confirm_activity", "awaiting_confirmation"
 	case hasReason("manual_completion_required"):
 		return "complete_activity", "awaiting_manual_completion"
 	case hasReason("node_timeout") || blocked:
@@ -478,18 +481,12 @@ func workflowPersonalizedNextAction(
 			"submission_field_type_invalid",
 		)
 	case "record_verdict":
-		allowed = nodeAllows(
-			"owner",
-			"member_verdict_required",
-			"verdict_definition_missing",
-			"verdict_not_passed",
-		)
+		allowed = nodeAllows("reviewer", "review_required", "verdict_not_passed") ||
+			nodeAllows("owner", "review_required", "verdict_not_passed")
 	case "review_acceptance":
-		allowed = nodeAllows(
-			"approver",
-			"awaiting_acceptance",
-			"acceptance_not_approved",
-		)
+		// Acceptance belongs to the run, so it is not gated on a node role.
+		// canDecideWorkflowAcceptance is what actually enforces the approver.
+		allowed = true
 	case "complete_activity":
 		allowed = nodeAllows("owner", "manual_completion_required")
 	case "recover_activity":
@@ -498,27 +495,6 @@ func workflowPersonalizedNextAction(
 				(node.Status == "blocked" ||
 					workflowNodeHasWaitingReason(node, "node_timeout")) {
 				allowed = true
-				break
-			}
-		}
-	case "confirm_activity":
-		for _, node := range nodes {
-			if !workflowNodeHasWaitingReason(node, "confirmation_required") {
-				continue
-			}
-			var definition workflowdomain.NodeDefinition
-			if json.Unmarshal(node.DefinitionSnapshot, &definition) != nil {
-				continue
-			}
-			switch definition.Completion.Confirmation {
-			case "member_any":
-				allowed = true
-			case "member_all":
-				allowed = len(roles[uuidToString(node.ID)]) > 0
-			case "owner_any", "owner_all":
-				allowed = hasRole(node.ID, "owner")
-			}
-			if allowed {
 				break
 			}
 		}
@@ -646,7 +622,6 @@ func (h *Handler) StartIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	req.RoleAssignments = applyWorkflowRoleDefaults(definition, req.RoleAssignments)
 	assignments, missingRoles, ok := h.validateWorkflowRoleAssignments(w, r, wsUUID, workspaceID, definition, req.RoleAssignments)
 	if !ok {
 		return
@@ -894,32 +869,6 @@ type validatedWorkflowRoleAssignment struct {
 	Source    string
 }
 
-// applyWorkflowRoleDefaults appends template-level default actors for roles
-// the caller left unassigned, so API starts get the same defaults as the
-// start dialog. Explicit assignments always win over the template default.
-func applyWorkflowRoleDefaults(
-	definition workflowdomain.Definition,
-	inputs []workflowRoleAssignmentInput,
-) []workflowRoleAssignmentInput {
-	assigned := make(map[string]struct{}, len(inputs))
-	for _, input := range inputs {
-		assigned[input.RoleKey] = struct{}{}
-	}
-	for _, role := range definition.Roles {
-		if role.DefaultActorType == "" || role.DefaultActorID == "" {
-			continue
-		}
-		if _, exists := assigned[role.Key]; exists {
-			continue
-		}
-		inputs = append(inputs, workflowRoleAssignmentInput{
-			RoleKey: role.Key, ActorType: role.DefaultActorType,
-			ActorID: role.DefaultActorID, Source: "fixed",
-		})
-	}
-	return inputs
-}
-
 func (h *Handler) validateWorkflowRoleAssignments(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -1002,33 +951,28 @@ type workflowParticipantRole struct {
 }
 
 // workflowNodeParticipantRoles lists the role slots a node materializes as
-// participants: its owner, its declared participants, and — on the acceptance
-// activity — the approver.
+// participants: its owner, and its reviewer when one is named by role. The
+// acceptance approver is gone from here because acceptance is no longer a node.
+//
+// The reviewer is seated rather than only read from the definition because the
+// canvas has to show who a node in review is waiting on, and "waiting on whom"
+// is answered from participants everywhere else.
 func workflowNodeParticipantRoles(
 	nodeDefinition workflowdomain.NodeDefinition,
-	definition workflowdomain.Definition,
 ) []workflowParticipantRole {
-	roles := make([]workflowParticipantRole, 0, len(nodeDefinition.ParticipantRoles)+2)
+	roles := make([]workflowParticipantRole, 0, 2)
 	if nodeDefinition.OwnerRole != "" {
 		roles = append(roles, workflowParticipantRole{nodeDefinition.OwnerRole, "owner"})
 	}
-	for _, key := range nodeDefinition.ParticipantRoles {
-		roles = append(roles, workflowParticipantRole{key, "participant"})
-	}
-	if workflowdomain.IsAcceptanceActivity(definition, nodeDefinition) &&
-		definition.Acceptance.ApproverRole != "" {
-		roles = append(
-			roles,
-			workflowParticipantRole{definition.Acceptance.ApproverRole, "approver"},
-		)
+	if nodeDefinition.Reviewer != nil && nodeDefinition.Reviewer.Kind == "role" {
+		roles = append(roles, workflowParticipantRole{nodeDefinition.Reviewer.Role, "reviewer"})
 	}
 	return roles
 }
 
 // writeWorkflowNodeParticipants resolves the node's role slots into
-// participant rows. A node without an owner role falls back to the pinned
-// fixed_actor executor, which is what makes a directly assigned member the
-// node owner.
+// participant rows. A node without an owner role falls back to a pinned actor
+// executor, which is what makes a directly assigned member the node owner.
 func writeWorkflowNodeParticipants(
 	ctx context.Context,
 	q *db.Queries,
@@ -1053,27 +997,24 @@ func writeWorkflowNodeParticipants(
 	if nodeDefinition.OwnerRole != "" {
 		return nil
 	}
-	for _, strategy := range nodeDefinition.Executor.Strategies {
-		if strategy.Kind != "fixed_actor" {
-			continue
-		}
-		assignment, err := directWorkflowExecutorAssignment(
-			strategy.ActorType,
-			strategy.ActorID,
-		)
-		if err != nil {
-			return fmt.Errorf("resolve direct node owner: %w", err)
-		}
-		if err := validateWorkflowExecutorActor(ctx, q, workspaceID, assignment); err != nil {
-			break
-		}
-		if _, err := q.CreateWorkflowNodeParticipant(ctx, db.CreateWorkflowNodeParticipantParams{
-			WorkspaceID: workspaceID, WorkflowNodeInstanceID: node.ID, Role: "owner",
-			ActorType: assignment.ActorType, ActorID: assignment.ActorID,
-		}); err != nil {
-			return fmt.Errorf("create direct node owner: %w", err)
-		}
-		break
+	if nodeDefinition.Executor.Kind != "actor" {
+		return nil
+	}
+	assignment, err := directWorkflowExecutorAssignment(
+		nodeDefinition.Executor.ActorType,
+		nodeDefinition.Executor.ActorID,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve direct node owner: %w", err)
+	}
+	if err := validateWorkflowExecutorActor(ctx, q, workspaceID, assignment); err != nil {
+		return nil
+	}
+	if _, err := q.CreateWorkflowNodeParticipant(ctx, db.CreateWorkflowNodeParticipantParams{
+		WorkspaceID: workspaceID, WorkflowNodeInstanceID: node.ID, Role: "owner",
+		ActorType: assignment.ActorType, ActorID: assignment.ActorID,
+	}); err != nil {
+		return fmt.Errorf("create direct node owner: %w", err)
 	}
 	return nil
 }
@@ -1093,7 +1034,7 @@ func refreshWorkflowNodeParticipants(
 ) error {
 	for _, node := range nodes {
 		switch node.Status {
-		case "pending", "ready", "active", "waiting", "blocked":
+		case "pending", "ready", "active", "in_review", "waiting", "blocked":
 		default:
 			continue
 		}
@@ -1111,7 +1052,7 @@ func refreshWorkflowNodeParticipants(
 		}
 		if err := writeWorkflowNodeParticipants(
 			ctx, q, workspaceID, node, nodeDefinition,
-			workflowNodeParticipantRoles(nodeDefinition, definition), roles,
+			workflowNodeParticipantRoles(nodeDefinition), roles,
 		); err != nil {
 			return err
 		}
@@ -1129,7 +1070,7 @@ func createWorkflowNodeActivationRecords(
 	definition workflowdomain.Definition,
 	roles map[string]validatedWorkflowRoleAssignment,
 ) (bool, error) {
-	participantRoles := workflowNodeParticipantRoles(nodeDefinition, definition)
+	participantRoles := workflowNodeParticipantRoles(nodeDefinition)
 	if err := writeWorkflowNodeParticipants(
 		ctx, q, workspaceID, node, nodeDefinition, participantRoles, roles,
 	); err != nil {
@@ -1147,9 +1088,8 @@ func createWorkflowNodeActivationRecords(
 		if err != nil {
 			return false, fmt.Errorf("create node task: %w", err)
 		}
-		decision, err := resolveWorkflowTaskExecutor(
-			ctx, q, workspaceID, instance, nodeDefinition, issueTemplate, roles,
-			newWorkflowConditionEvaluator(ctx, q, workspaceID, instance),
+		decision, err := resolveWorkflowNodeExecutor(
+			ctx, q, workspaceID, nodeDefinition, roles,
 		)
 		if err != nil {
 			return false, fmt.Errorf("resolve task executor: %w", err)
@@ -1160,21 +1100,6 @@ func createWorkflowNodeActivationRecords(
 			return false, fmt.Errorf("create executor resolution: %w", err)
 		}
 		needsSetup = needsSetup || decision.Assignment == nil
-	}
-	if workflowdomain.IsAcceptanceActivity(definition, nodeDefinition) && definition.Acceptance.Policy == "member" {
-		revision, err := q.GetNextWorkflowAcceptanceRevision(ctx, db.GetNextWorkflowAcceptanceRevisionParams{
-			WorkflowInstanceID: instance.ID, WorkspaceID: workspaceID,
-		})
-		if err != nil {
-			return false, fmt.Errorf("next acceptance revision: %w", err)
-		}
-		if _, err := q.CreateWorkflowAcceptance(ctx, db.CreateWorkflowAcceptanceParams{
-			WorkspaceID: workspaceID, WorkflowInstanceID: instance.ID, WorkflowNodeInstanceID: node.ID,
-			Revision: revision, Status: "pending", Evidence: []byte("[]"),
-			IdempotencyKey: "activation:" + uuidToString(node.ID),
-		}); err != nil {
-			return false, fmt.Errorf("create pending acceptance: %w", err)
-		}
 	}
 	return needsSetup, nil
 }
@@ -1237,9 +1162,8 @@ func ensureWorkflowNodeTasks(
 			return repaired, createErr
 		}
 		repaired = true
-		decision, resolutionErr := resolveWorkflowTaskExecutor(
-			ctx, q, workspaceID, instance, nodeDefinition, issueTemplate, roleMap,
-			newWorkflowConditionEvaluator(ctx, q, workspaceID, instance),
+		decision, resolutionErr := resolveWorkflowNodeExecutor(
+			ctx, q, workspaceID, nodeDefinition, roleMap,
 		)
 		if resolutionErr != nil {
 			return repaired, resolutionErr
@@ -1774,7 +1698,6 @@ func (h *Handler) ListWorkflowInstances(w http.ResponseWriter, r *http.Request) 
 			"review_acceptance",
 			"submit_result",
 			"record_verdict",
-			"confirm_activity",
 			"complete_activity",
 			"recover_activity",
 			"resume",

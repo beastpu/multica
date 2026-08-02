@@ -44,6 +44,11 @@ func (h *Handler) GetWorkflowInstanceDiagnostics(
 		writeError(w, http.StatusInternalServerError, "invalid workflow definition")
 		return
 	}
+	plan, err := workflowdomain.BuildGraphPlan(definition)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "invalid workflow graph")
+		return
+	}
 	nodes, err := h.Queries.ListWorkflowNodeInstances(
 		r.Context(),
 		db.ListWorkflowNodeInstancesParams{
@@ -96,16 +101,6 @@ func (h *Handler) GetWorkflowInstanceDiagnostics(
 			writeError(w, http.StatusInternalServerError, "failed to load verdicts")
 			return
 		}
-		confirmations, confirmationErr := h.Queries.ListWorkflowNodeConfirmations(
-			r.Context(),
-			db.ListWorkflowNodeConfirmationsParams{
-				WorkflowNodeInstanceID: node.ID, WorkspaceID: instance.WorkspaceID,
-			},
-		)
-		if confirmationErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load confirmations")
-			return
-		}
 		taskResponses := make([]workflowTaskResponse, len(tasks))
 		for i, task := range tasks {
 			taskResponses[i] = workflowTaskToResponse(task)
@@ -122,20 +117,12 @@ func (h *Handler) GetWorkflowInstanceDiagnostics(
 		for i, verdict := range verdicts {
 			verdictResponses[i] = workflowVerdictToResponse(verdict)
 		}
-		confirmationResponses := make(
-			[]workflowConfirmationResponse,
-			len(confirmations),
-		)
-		for i, confirmation := range confirmations {
-			confirmationResponses[i] = workflowConfirmationToResponse(confirmation)
-		}
 		nodeDiagnostics = append(nodeDiagnostics, map[string]any{
 			"node":                 workflowNodeToResponse(node),
 			"tasks":                taskResponses,
 			"executor_resolutions": resolutionResponses,
 			"submissions":          submissionResponses,
 			"verdicts":             verdictResponses,
-			"confirmations":        confirmationResponses,
 		})
 	}
 	acceptances, err := h.Queries.ListWorkflowAcceptances(
@@ -188,7 +175,7 @@ func (h *Handler) GetWorkflowInstanceDiagnostics(
 		"last_reconciled_at":     timestampToPtr(instance.LastReconciledAt),
 		"nodes":                  nodeDiagnostics,
 		"acceptances":            acceptanceResponses,
-		"allowed_rework_targets": definition.Acceptance.ReworkTargets,
+		"allowed_rework_targets": plan.AcceptanceReworkTargets(),
 		"recent_sweeper_events":  sweeperEvents,
 		"events":                 eventResponses,
 	})

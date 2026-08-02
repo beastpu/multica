@@ -2,29 +2,11 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"testing"
 
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
-
-func conditionalExecutorNode() workflowdomain.NodeDefinition {
-	return workflowdomain.NodeDefinition{
-		Key: "implement", Kind: "activity", Name: "Implement",
-		Executor: workflowdomain.ExecutorDefinition{Strategies: []workflowdomain.ExecutorStrategy{
-			{
-				Kind: "fixed_role", Role: "agent_role",
-				Condition: json.RawMessage(
-					`{"source":"node_choice","node":"triage","key":"choice","op":"eq","value":"review"}`,
-				),
-			},
-			{Kind: "fixed_role", Role: "human_role"},
-			{Kind: "manual"},
-		}},
-	}
-}
 
 func executorTestRoles() map[string]validatedWorkflowRoleAssignment {
 	agentID := parseUUID("11111111-1111-1111-1111-111111111111")
@@ -35,52 +17,89 @@ func executorTestRoles() map[string]validatedWorkflowRoleAssignment {
 	}
 }
 
-func staticConditionEvaluator(matched bool, err error) workflowConditionEvaluator {
-	return func(json.RawMessage) (bool, error) { return matched, err }
-}
-
-func TestResolveWorkflowTaskExecutorSkipsUnmatchedConditionalStrategy(t *testing.T) {
-	decision, err := resolveWorkflowTaskExecutor(
-		context.Background(), nil, db.Workspace{}.ID, db.WorkflowInstance{},
-		conditionalExecutorNode(), workflowdomain.IssueTemplate{Key: "impl", Title: "Implement"},
-		executorTestRoles(), staticConditionEvaluator(false, nil),
-	)
-	if err != nil {
-		t.Fatalf("resolveWorkflowTaskExecutor() error = %v", err)
-	}
-	if decision.Assignment == nil || decision.Assignment.RoleKey != "human_role" {
-		t.Fatalf(
-			"decision = %+v, want fallthrough to human_role when condition is false",
-			decision,
-		)
+func executorNode(executor workflowdomain.ExecutorDefinition) workflowdomain.NodeDefinition {
+	return workflowdomain.NodeDefinition{
+		Key: "implement", Kind: "activity", Name: "Implement", Executor: executor,
 	}
 }
 
-func TestResolveWorkflowTaskExecutorUsesMatchedConditionalStrategy(t *testing.T) {
-	decision, err := resolveWorkflowTaskExecutor(
-		context.Background(), nil, db.Workspace{}.ID, db.WorkflowInstance{},
-		conditionalExecutorNode(), workflowdomain.IssueTemplate{Key: "impl", Title: "Implement"},
-		executorTestRoles(), staticConditionEvaluator(true, nil),
+func TestResolveWorkflowNodeExecutorUsesTheNamedRole(t *testing.T) {
+	decision, err := resolveWorkflowNodeExecutor(
+		context.Background(), nil, db.Workspace{}.ID,
+		executorNode(workflowdomain.ExecutorDefinition{
+			Kind: "role", Role: "agent_role",
+			Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+		}),
+		executorTestRoles(),
 	)
 	if err != nil {
-		t.Fatalf("resolveWorkflowTaskExecutor() error = %v", err)
+		t.Fatalf("resolveWorkflowNodeExecutor() error = %v", err)
 	}
 	if decision.Assignment == nil || decision.Assignment.RoleKey != "agent_role" {
-		t.Fatalf(
-			"decision = %+v, want agent_role when condition matches",
-			decision,
-		)
+		t.Fatalf("decision = %+v, want agent_role", decision)
+	}
+	if decision.Strategy != "fixed_role" {
+		t.Fatalf("strategy = %q, want fixed_role", decision.Strategy)
 	}
 }
 
-func TestResolveWorkflowTaskExecutorPropagatesConditionErrors(t *testing.T) {
-	wantErr := errors.New("condition evaluation failed")
-	_, err := resolveWorkflowTaskExecutor(
-		context.Background(), nil, db.Workspace{}.ID, db.WorkflowInstance{},
-		conditionalExecutorNode(), workflowdomain.IssueTemplate{Key: "impl", Title: "Implement"},
-		executorTestRoles(), staticConditionEvaluator(false, wantErr),
+func TestResolveWorkflowNodeExecutorFallsBackWhenTheRoleIsUnassigned(t *testing.T) {
+	decision, err := resolveWorkflowNodeExecutor(
+		context.Background(), nil, db.Workspace{}.ID,
+		executorNode(workflowdomain.ExecutorDefinition{
+			Kind: "role", Role: "unassigned_role",
+			Fallback: &workflowdomain.ExecutorDefinition{Kind: "role", Role: "human_role"},
+		}),
+		executorTestRoles(),
 	)
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("resolveWorkflowTaskExecutor() error = %v, want %v", err, wantErr)
+	if err != nil {
+		t.Fatalf("resolveWorkflowNodeExecutor() error = %v", err)
+	}
+	if decision.Assignment == nil || decision.Assignment.RoleKey != "human_role" {
+		t.Fatalf("decision = %+v, want fallback to human_role", decision)
+	}
+	if decision.Strategy != "fallback_role" {
+		t.Fatalf("strategy = %q, want fallback_role", decision.Strategy)
+	}
+}
+
+func TestResolveWorkflowNodeExecutorFallsToManual(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		executor workflowdomain.ExecutorDefinition
+	}{
+		{
+			name:     "no executor at all",
+			executor: workflowdomain.ExecutorDefinition{},
+		},
+		{
+			name: "unassigned role with no fallback",
+			executor: workflowdomain.ExecutorDefinition{
+				Kind: "role", Role: "unassigned_role",
+			},
+		},
+		{
+			name: "unassigned role falling back to manual",
+			executor: workflowdomain.ExecutorDefinition{
+				Kind: "role", Role: "unassigned_role",
+				Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			decision, err := resolveWorkflowNodeExecutor(
+				context.Background(), nil, db.Workspace{}.ID,
+				executorNode(test.executor), executorTestRoles(),
+			)
+			if err != nil {
+				t.Fatalf("resolveWorkflowNodeExecutor() error = %v", err)
+			}
+			if decision.Assignment != nil {
+				t.Fatalf("decision = %+v, want manual selection", decision)
+			}
+			if decision.Strategy != "manual" {
+				t.Fatalf("strategy = %q, want manual", decision.Strategy)
+			}
+		})
 	}
 }

@@ -49,16 +49,6 @@ type workflowVerdictResponse struct {
 	CreatedAt              string          `json:"created_at"`
 }
 
-type workflowConfirmationResponse struct {
-	ID                     string `json:"id"`
-	WorkflowNodeInstanceID string `json:"workflow_node_instance_id"`
-	MemberID               string `json:"member_id"`
-	Decision               string `json:"decision"`
-	Comment                string `json:"comment"`
-	DecidedAt              string `json:"decided_at"`
-	UpdatedAt              string `json:"updated_at"`
-}
-
 type workflowAcceptanceResponse struct {
 	ID                     string          `json:"id"`
 	WorkflowNodeInstanceID string          `json:"workflow_node_instance_id"`
@@ -96,18 +86,6 @@ func workflowVerdictToResponse(row db.WorkflowNodeVerdict) workflowVerdictRespon
 		Evidence: json.RawMessage(row.Evidence), Basis: json.RawMessage(row.Basis),
 		EvaluatorType: row.EvaluatorType, EvaluatorID: uuidToPtr(row.EvaluatorID),
 		CreatedAt: timestampToString(row.CreatedAt),
-	}
-}
-
-func workflowConfirmationToResponse(row db.WorkflowNodeConfirmation) workflowConfirmationResponse {
-	return workflowConfirmationResponse{
-		ID:                     uuidToString(row.ID),
-		WorkflowNodeInstanceID: uuidToString(row.WorkflowNodeInstanceID),
-		MemberID:               uuidToString(row.MemberID),
-		Decision:               row.Decision,
-		Comment:                row.Comment,
-		DecidedAt:              timestampToString(row.DecidedAt),
-		UpdatedAt:              timestampToString(row.UpdatedAt),
 	}
 }
 
@@ -197,16 +175,6 @@ func (h *Handler) GetWorkflowNodeInstance(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to load workflow executor resolutions")
 		return
 	}
-	confirmations, err := h.Queries.ListWorkflowNodeConfirmations(
-		r.Context(),
-		db.ListWorkflowNodeConfirmationsParams{
-			WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
-		},
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load workflow confirmations")
-		return
-	}
 	taskResponses := make([]workflowTaskResponse, len(tasks))
 	for i, task := range tasks {
 		taskResponses[i] = workflowTaskToResponse(task)
@@ -232,15 +200,10 @@ func (h *Handler) GetWorkflowNodeInstance(w http.ResponseWriter, r *http.Request
 	for i, resolution := range resolutions {
 		resolutionResponses[i] = workflowExecutorResolutionToResponse(resolution)
 	}
-	confirmationResponses := make([]workflowConfirmationResponse, len(confirmations))
-	for i, confirmation := range confirmations {
-		confirmationResponses[i] = workflowConfirmationToResponse(confirmation)
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"instance": h.workflowInstanceToRuntimeResponse(r.Context(), instance), "node": workflowNodeToResponse(node),
 		"tasks": taskResponses, "submissions": submissionResponses, "verdicts": verdictResponses,
 		"participants": participantResponses, "executor_resolutions": resolutionResponses,
-		"confirmations": confirmationResponses,
 	})
 }
 
@@ -781,7 +744,7 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "invalid workflow node snapshot")
 		return
 	}
-	if nodeDefinition.Verdict == nil {
+	if nodeDefinition.Reviewer == nil {
 		writeError(w, http.StatusConflict, "workflow node does not accept verdicts")
 		return
 	}
@@ -803,7 +766,7 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 		eventAction = "agent_verdict_suggestion"
 		allowed, err = h.canAgentSubmitWorkflowNode(r.Context(), node, actorID)
 	} else {
-		if nodeDefinition.Verdict.Evaluator != "member" {
+		if !workflowdomain.ReviewerAcceptsMember(nodeDefinition) {
 			writeError(w, http.StatusConflict, "workflow node does not accept a member verdict")
 			return
 		}
@@ -928,7 +891,7 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 		"submission_id": uuidToString(submission.ID),
 		"kind":          eventAction,
 	})
-	definitionSnapshot, _ := json.Marshal(nodeDefinition.Verdict)
+	definitionSnapshot, _ := json.Marshal(nodeDefinition.Reviewer)
 	verdict, err := qtx.CreateWorkflowVerdict(
 		r.Context(),
 		db.CreateWorkflowVerdictParams{
@@ -1003,213 +966,6 @@ type confirmWorkflowNodeRequest struct {
 	Decision       string `json:"decision"`
 	Comment        string `json:"comment"`
 	IdempotencyKey string `json:"idempotency_key"`
-}
-
-func (h *Handler) ConfirmWorkflowNode(w http.ResponseWriter, r *http.Request) {
-	if !h.workflowWriteEnabled(w, r) {
-		return
-	}
-	var req confirmWorkflowNodeRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if req.Decision != "approved" && req.Decision != "rejected" {
-		writeError(w, http.StatusBadRequest, "decision must be approved or rejected")
-		return
-	}
-	req.IdempotencyKey = strings.TrimSpace(req.IdempotencyKey)
-	if req.IdempotencyKey == "" {
-		writeError(w, http.StatusBadRequest, "idempotency_key is required")
-		return
-	}
-	node, instance, ok := h.loadWorkflowNode(w, r)
-	if !ok {
-		return
-	}
-	var nodeDefinition workflowdomain.NodeDefinition
-	if err := json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition); err != nil {
-		writeError(w, http.StatusInternalServerError, "invalid workflow node snapshot")
-		return
-	}
-	policy := nodeDefinition.Completion.Confirmation
-	if policy == "" || policy == "none" {
-		writeError(w, http.StatusConflict, "workflow node does not require confirmation")
-		return
-	}
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user_id")
-	if !ok {
-		return
-	}
-	allowed, err := h.canConfirmWorkflowNode(r.Context(), node, policy, userUUID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to verify workflow confirmation permission")
-		return
-	}
-	if !allowed {
-		writeError(w, http.StatusForbidden, "you cannot confirm this workflow node")
-		return
-	}
-
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start workflow transaction")
-		return
-	}
-	defer tx.Rollback(r.Context())
-	qtx := h.Queries.WithTx(tx)
-	locked, err := qtx.LockWorkflowInstance(r.Context(), db.LockWorkflowInstanceParams{
-		ID: instance.ID, WorkspaceID: instance.WorkspaceID,
-	})
-	if err != nil {
-		writeError(w, http.StatusConflict, "workflow instance changed; refresh and try again")
-		return
-	}
-	if event, eventErr := qtx.GetWorkflowEventByIdempotencyKey(
-		r.Context(),
-		db.GetWorkflowEventByIdempotencyKeyParams{
-			WorkflowInstanceID: locked.ID,
-			WorkspaceID:        locked.WorkspaceID,
-			IdempotencyKey:     req.IdempotencyKey,
-		},
-	); eventErr == nil {
-		var payload struct {
-			Action         string `json:"action"`
-			ConfirmationID string `json:"confirmation_id"`
-		}
-		if json.Unmarshal(event.Payload, &payload) == nil && payload.Action == "confirm" {
-			existing, getErr := qtx.GetWorkflowNodeConfirmationForMember(
-				r.Context(),
-				db.GetWorkflowNodeConfirmationForMemberParams{
-					WorkflowNodeInstanceID: node.ID,
-					WorkspaceID:            node.WorkspaceID,
-					MemberID:               userUUID,
-				},
-			)
-			if getErr == nil && uuidToString(existing.ID) == payload.ConfirmationID {
-				h.Metrics.RecordWorkflowOperation("duplicate", "prevented")
-				writeJSON(w, http.StatusOK, map[string]any{
-					"confirmation": workflowConfirmationToResponse(existing),
-				})
-				return
-			}
-		}
-		writeError(w, http.StatusConflict, "idempotency_key was already used for another workflow action")
-		return
-	}
-	currentNode, err := qtx.GetWorkflowNodeInstanceInWorkspace(
-		r.Context(),
-		db.GetWorkflowNodeInstanceInWorkspaceParams{
-			ID: node.ID, WorkspaceID: node.WorkspaceID,
-		},
-	)
-	if err != nil ||
-		locked.Status != "running" ||
-		!workflowNodeIsOpen(currentNode) {
-		writeError(w, http.StatusConflict, "workflow node is not accepting confirmation")
-		return
-	}
-	confirmation, err := qtx.UpsertWorkflowNodeConfirmation(
-		r.Context(),
-		db.UpsertWorkflowNodeConfirmationParams{
-			WorkspaceID:            node.WorkspaceID,
-			WorkflowNodeInstanceID: node.ID,
-			MemberID:               userUUID,
-			Decision:               req.Decision,
-			Comment:                strings.TrimSpace(req.Comment),
-		},
-	)
-	if err != nil {
-		writeError(w, http.StatusConflict, "workflow confirmation changed; retry the request")
-		return
-	}
-	payload, _ := json.Marshal(map[string]any{
-		"action":          "confirm",
-		"confirmation_id": uuidToString(confirmation.ID),
-		"decision":        confirmation.Decision,
-	})
-	if _, err := qtx.CreateWorkflowEvent(r.Context(), db.CreateWorkflowEventParams{
-		WorkspaceID: locked.WorkspaceID, WorkflowInstanceID: locked.ID,
-		WorkflowNodeInstanceID: node.ID, EventType: "node.confirmation_recorded",
-		ActorType: "member", ActorID: userUUID,
-		IdempotencyKey: req.IdempotencyKey, Payload: payload,
-	}); err != nil {
-		writeError(w, http.StatusConflict, "workflow confirmation has already been recorded")
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit workflow confirmation")
-		return
-	}
-	h.Metrics.RecordWorkflowHumanIntervention("confirmation")
-	_, _ = h.reconcileWorkflowInstance(
-		r.Context(), node.WorkspaceID, instance.ID, "member", userUUID,
-		"confirmation:"+uuidToString(confirmation.ID),
-	)
-	h.publishWorkflowRealtime(
-		protocol.EventWorkflowConfirmationUpdated,
-		uuidToString(node.WorkspaceID), "member", userID,
-		map[string]any{
-			"workflow_instance_id":      uuidToString(instance.ID),
-			"workflow_node_instance_id": uuidToString(node.ID),
-			"workflow_confirmation_id":  uuidToString(confirmation.ID),
-		},
-	)
-	h.publishWorkflowNodeUpdated(
-		uuidToString(node.WorkspaceID), "member", userID,
-		uuidToString(instance.ID), uuidToString(node.ID),
-	)
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"confirmation": workflowConfirmationToResponse(confirmation),
-	})
-}
-
-func (h *Handler) canConfirmWorkflowNode(
-	ctx context.Context,
-	node db.WorkflowNodeInstance,
-	policy string,
-	userID pgtype.UUID,
-) (bool, error) {
-	switch policy {
-	case "member_any", "member_all":
-		return true, nil
-	case "admin_only":
-		member, err := h.Queries.GetMemberByUserAndWorkspace(
-			ctx,
-			db.GetMemberByUserAndWorkspaceParams{
-				UserID: userID, WorkspaceID: node.WorkspaceID,
-			},
-		)
-		if err != nil {
-			return false, err
-		}
-		return roleAllowed(member.Role, "owner", "admin"), nil
-	case "owner_any", "owner_all":
-		participants, err := h.Queries.ListWorkflowNodeParticipants(
-			ctx,
-			db.ListWorkflowNodeParticipantsParams{
-				WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
-			},
-		)
-		if err != nil {
-			return false, err
-		}
-		for _, participant := range participants {
-			if participant.Role == "owner" && participant.ActorType == "member" &&
-				participant.ActorID == userID {
-				return true, nil
-			}
-		}
-		return false, nil
-	default:
-		return false, nil
-	}
 }
 
 func (h *Handler) ReconcileWorkflowInstance(w http.ResponseWriter, r *http.Request) {
@@ -1442,8 +1198,11 @@ func (h *Handler) reconcileWorkflowInstance(
 			}
 			if !ready {
 				nextStatus := "waiting"
-				if workflowWaitingReasonsBlockNode(reasons) {
+				switch {
+				case workflowWaitingReasonsBlockNode(reasons):
 					nextStatus = "blocked"
+				case workflowWaitingReasonsAwaitReview(reasons):
+					nextStatus = "in_review"
 				}
 				updatedNode, err := qtx.UpdateWorkflowNodeState(ctx, db.UpdateWorkflowNodeStateParams{
 					Status: nextStatus, WaitingReasons: workflowdomain.EncodeWaitingReasons(reasons),
@@ -1582,7 +1341,7 @@ func currentWorkflowNode(nodes []db.WorkflowNodeInstance) (db.WorkflowNodeInstan
 	found := false
 	for _, node := range nodes {
 		switch node.Status {
-		case "active", "waiting", "blocked":
+		case "active", "in_review", "waiting", "blocked":
 			if !found || node.DisplayOrder < selected.DisplayOrder || (node.NodeKey == selected.NodeKey && node.Attempt > selected.Attempt) {
 				selected = node
 				found = true
@@ -1672,22 +1431,6 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 	definition workflowdomain.Definition,
 	includeManualCompletion bool,
 ) (bool, []workflowdomain.WaitingReason, db.WorkflowNodeSubmission, db.WorkflowNodeVerdict, error) {
-	if workflowdomain.IsAcceptanceActivity(definition, nodeDefinition) && definition.Acceptance.Policy == "member" {
-		acceptance, err := q.GetLatestWorkflowAcceptance(ctx, db.GetLatestWorkflowAcceptanceParams{
-			WorkflowInstanceID: instance.ID, WorkspaceID: workspaceID,
-		})
-		if errors.Is(err, pgx.ErrNoRows) || acceptance.WorkflowNodeInstanceID != node.ID || acceptance.Status == "pending" {
-			return false, []workflowdomain.WaitingReason{{
-				Code: "awaiting_acceptance", Message: "Waiting for member acceptance",
-			}}, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, nil
-		}
-		if err != nil {
-			return false, nil, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, err
-		}
-		return acceptance.Status == "approved", []workflowdomain.WaitingReason{{
-			Code: "acceptance_not_approved", Message: "Acceptance did not pass",
-		}}, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, nil
-	}
 	tasks, err := q.ListWorkflowNodeTasks(ctx, db.ListWorkflowNodeTasksParams{
 		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
 	})
@@ -1845,20 +1588,11 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 			}}, submission, db.WorkflowNodeVerdict{}, nil
 		}
 	}
-	verdictRequired := nodeDefinition.Completion.VerdictRequired
-	if verdictRequired == "" {
-		if nodeDefinition.Verdict == nil {
-			verdictRequired = "none"
-		} else if nodeDefinition.Verdict.RequiredResult != "" {
-			verdictRequired = nodeDefinition.Verdict.RequiredResult
-		} else {
-			verdictRequired = "pass"
-		}
-	}
+	reviewRequired := workflowdomain.RequiresReview(nodeDefinition)
 	submissionRequired := nodeDefinition.Completion.SubmissionRequired ||
 		submissionPolicy != "none"
 	if !submission.ID.Valid && nodeDefinition.SubmissionSchema == nil &&
-		(submissionRequired || verdictRequired != "none") {
+		(submissionRequired || reviewRequired) {
 		revision, err := q.GetNextWorkflowSubmissionRevision(ctx, db.GetNextWorkflowSubmissionRevisionParams{
 			WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
 		})
@@ -1902,24 +1636,13 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 			Message: "A handoff summary is required before this node can complete",
 		}}, submission, db.WorkflowNodeVerdict{}, nil
 	}
-	if verdictRequired == "none" {
-		confirmationReady, confirmationReasons, err := h.evaluateWorkflowConfirmation(
-			ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
-		)
-		if err != nil || !confirmationReady {
-			return confirmationReady, confirmationReasons, submission, db.WorkflowNodeVerdict{}, err
-		}
+	if !reviewRequired {
 		return h.evaluateWorkflowManualCompletion(
 			ctx, q, workspaceID, node, nodeDefinition, submission,
 			db.WorkflowNodeVerdict{}, includeManualCompletion,
 		)
 	}
-	if nodeDefinition.Verdict == nil {
-		return false, []workflowdomain.WaitingReason{{
-			Code: "verdict_definition_missing", Message: "The node requires a verdict but has no evaluator",
-		}}, submission, db.WorkflowNodeVerdict{}, nil
-	}
-	if nodeDefinition.Verdict.Evaluator == "member" {
+	if workflowdomain.ReviewerAcceptsMember(nodeDefinition) {
 		verdicts, err := q.ListWorkflowVerdicts(ctx, db.ListWorkflowVerdictsParams{
 			WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
 		})
@@ -1936,37 +1659,25 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 		}
 		if !verdict.ID.Valid {
 			return false, []workflowdomain.WaitingReason{{
-				Code: "member_verdict_required", Message: "Waiting for a member check result",
+				Code: "review_required", Message: "Waiting for the reviewer",
 			}}, submission, db.WorkflowNodeVerdict{}, nil
 		}
-		if !workflowVerdictSatisfies(verdict.Result, verdictRequired) {
+		if !workflowVerdictSatisfies(verdict.Result) {
 			return false, []workflowdomain.WaitingReason{
 				workflowVerdictWaitingReason(verdict),
 			}, submission, verdict, nil
-		}
-		confirmationReady, confirmationReasons, err := h.evaluateWorkflowConfirmation(
-			ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
-		)
-		if err != nil || !confirmationReady {
-			return confirmationReady, confirmationReasons, submission, verdict, err
 		}
 		return h.evaluateWorkflowManualCompletion(
 			ctx, q, workspaceID, node, nodeDefinition, submission, verdict,
 			includeManualCompletion,
 		)
 	}
-	if nodeDefinition.Verdict.Evaluator == "api" {
-		result, reason := h.evaluateAPIWorkflowVerdict(ctx, nodeDefinition.Verdict.APIURL)
-		if !workflowVerdictSatisfies(result, verdictRequired) {
+	if nodeDefinition.Reviewer.Kind == "api" {
+		result, reason := h.evaluateAPIWorkflowVerdict(ctx, nodeDefinition.Reviewer.APIURL)
+		if !workflowVerdictSatisfies(result) {
 			return false, []workflowdomain.WaitingReason{{
 				Code: "api_verdict_not_passed", Message: reason,
 			}}, submission, db.WorkflowNodeVerdict{}, nil
-		}
-		confirmationReady, confirmationReasons, err := h.evaluateWorkflowConfirmation(
-			ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
-		)
-		if err != nil || !confirmationReady {
-			return confirmationReady, confirmationReasons, submission, db.WorkflowNodeVerdict{}, err
 		}
 		return h.evaluateWorkflowManualCompletion(
 			ctx, q, workspaceID, node, nodeDefinition, submission,
@@ -1979,7 +1690,7 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 			q,
 			workspaceID,
 			instance,
-			nodeDefinition.Verdict.Condition,
+			nodeDefinition.Reviewer.Condition,
 		)
 	if err != nil {
 		return false, nil, submission, db.WorkflowNodeVerdict{}, err
@@ -2003,17 +1714,10 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 			sameEvaluation = basis["condition_matched"] == matched
 		}
 		if sameInput && sameEvaluation {
-			if !workflowVerdictSatisfies(candidate.Result, verdictRequired) {
+			if !workflowVerdictSatisfies(candidate.Result) {
 				return false, []workflowdomain.WaitingReason{
 					workflowVerdictWaitingReason(candidate),
 				}, submission, candidate, nil
-			}
-			confirmationReady, confirmationReasons, confirmationErr :=
-				h.evaluateWorkflowConfirmation(
-					ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
-				)
-			if confirmationErr != nil || !confirmationReady {
-				return confirmationReady, confirmationReasons, submission, candidate, confirmationErr
 			}
 			return h.evaluateWorkflowManualCompletion(
 				ctx, q, workspaceID, node, nodeDefinition, submission, candidate,
@@ -2035,7 +1739,7 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 		basisMap[key] = value
 	}
 	basis, _ := json.Marshal(basisMap)
-	definitionSnapshot, _ := json.Marshal(nodeDefinition.Verdict)
+	definitionSnapshot, _ := json.Marshal(nodeDefinition.Reviewer)
 	verdict, err := q.CreateWorkflowVerdict(ctx, db.CreateWorkflowVerdictParams{
 		WorkspaceID: workspaceID, WorkflowInstanceID: instance.ID, WorkflowNodeInstanceID: node.ID,
 		Revision: revision, Result: verdictResult, Reason: verdictReason,
@@ -2050,16 +1754,10 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 	}); err != nil {
 		return false, nil, submission, verdict, err
 	}
-	if !workflowVerdictSatisfies(verdict.Result, verdictRequired) {
+	if !workflowVerdictSatisfies(verdict.Result) {
 		return false, []workflowdomain.WaitingReason{
 			workflowVerdictWaitingReason(verdict),
 		}, submission, verdict, nil
-	}
-	confirmationReady, confirmationReasons, err := h.evaluateWorkflowConfirmation(
-		ctx, q, workspaceID, node, nodeDefinition.Completion.Confirmation,
-	)
-	if err != nil || !confirmationReady {
-		return confirmationReady, confirmationReasons, submission, verdict, err
 	}
 	return h.evaluateWorkflowManualCompletion(
 		ctx, q, workspaceID, node, nodeDefinition, submission, verdict,
@@ -2107,6 +1805,20 @@ func workflowVerdictIsManualCompletion(verdict db.WorkflowNodeVerdict) bool {
 	var basis map[string]any
 	_ = json.Unmarshal(verdict.Basis, &basis)
 	return basis["kind"] == "manual_completion"
+}
+
+// workflowWaitingReasonsAwaitReview reports whether the node is stopped on its
+// reviewer rather than on its own work. The distinction is what the canvas
+// renders: the executor has delivered, and the flow is waiting on someone else.
+func workflowWaitingReasonsAwaitReview(
+	reasons []workflowdomain.WaitingReason,
+) bool {
+	for _, reason := range reasons {
+		if reason.Code == "review_required" || reason.Code == "verdict_not_passed" {
+			return true
+		}
+	}
+	return false
 }
 
 func workflowWaitingReasonsBlockNode(
@@ -2182,105 +1894,12 @@ func (h *Handler) evaluateDeterministicWorkflowVerdict(
 	return result, reason, basis, nil
 }
 
-func workflowVerdictSatisfies(result, required string) bool {
-	switch required {
-	case "not_blocked":
-		return result == "pass" || result == "fail"
-	case "pass":
-		return result == "pass"
-	default:
-		return true
-	}
-}
-
-func (h *Handler) evaluateWorkflowConfirmation(
-	ctx context.Context,
-	q *db.Queries,
-	workspaceID pgtype.UUID,
-	node db.WorkflowNodeInstance,
-	policy string,
-) (bool, []workflowdomain.WaitingReason, error) {
-	if policy == "" || policy == "none" {
-		return true, nil, nil
-	}
-	confirmations, err := q.ListWorkflowNodeConfirmations(
-		ctx,
-		db.ListWorkflowNodeConfirmationsParams{
-			WorkflowNodeInstanceID: node.ID,
-			WorkspaceID:            workspaceID,
-		},
-	)
-	if err != nil {
-		return false, nil, err
-	}
-	approved := make(map[pgtype.UUID]struct{}, len(confirmations))
-	for _, confirmation := range confirmations {
-		if confirmation.Decision == "approved" {
-			approved[confirmation.MemberID] = struct{}{}
-		}
-	}
-	switch policy {
-	case "member_any":
-		if len(approved) > 0 {
-			return true, nil, nil
-		}
-	case "admin_only":
-		for memberID := range approved {
-			member, memberErr := q.GetMemberByUserAndWorkspace(
-				ctx,
-				db.GetMemberByUserAndWorkspaceParams{
-					UserID: memberID, WorkspaceID: workspaceID,
-				},
-			)
-			if memberErr == nil && roleAllowed(member.Role, "owner", "admin") {
-				return true, nil, nil
-			}
-		}
-	case "owner_any", "owner_all", "member_all":
-		participants, participantErr := q.ListWorkflowNodeParticipants(
-			ctx,
-			db.ListWorkflowNodeParticipantsParams{
-				WorkflowNodeInstanceID: node.ID,
-				WorkspaceID:            workspaceID,
-			},
-		)
-		if participantErr != nil {
-			return false, nil, participantErr
-		}
-		required := make(map[pgtype.UUID]struct{})
-		for _, participant := range participants {
-			if participant.ActorType != "member" {
-				continue
-			}
-			if policy == "owner_any" || policy == "owner_all" {
-				if participant.Role != "owner" {
-					continue
-				}
-			}
-			required[participant.ActorID] = struct{}{}
-		}
-		if policy == "owner_any" {
-			for memberID := range required {
-				if _, exists := approved[memberID]; exists {
-					return true, nil, nil
-				}
-			}
-		} else if len(required) > 0 {
-			allApproved := true
-			for memberID := range required {
-				if _, exists := approved[memberID]; !exists {
-					allApproved = false
-					break
-				}
-			}
-			if allApproved {
-				return true, nil, nil
-			}
-		}
-	}
-	return false, []workflowdomain.WaitingReason{{
-		Code: "confirmation_required", Message: "Waiting for the configured member confirmation",
-	}}, nil
+// workflowVerdictSatisfies reports whether a verdict releases the node. A
+// reviewer either passed the output or did not; the old required_result knob
+// let a template accept a failing verdict, which no template ever did and
+// which made "reviewed" mean two different things.
+func workflowVerdictSatisfies(result string) bool {
+	return result == "pass"
 }
 
 func decodeWorkflowObject(raw []byte) map[string]any {

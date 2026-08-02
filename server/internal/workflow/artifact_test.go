@@ -10,14 +10,14 @@ func definitionWithArtifacts(artifacts string) []byte {
 	  "roles": [{"key": "owner", "name": "Owner", "allowed_actor_types": ["member"]}],
 	  "nodes": [
 	    {"key":"start","kind":"start","name":"Start"},
-	    {"key":"design","kind":"activity","activity_mode":"work","name":"Design",
+	    {"key":"design","kind":"activity","name":"Design",
 	     "owner_role":"owner","issue_policy":"none",
 	     "completion":{"mode":"manual","required_issue_outcome":"none"},
 	     "artifacts": ` + artifacts + `},
 	    {"key":"end","kind":"end","name":"End"}
 	  ],
 	  "edges": [{"from":"start","to":"design"},{"from":"design","to":"end"}],
-	  "acceptance": {"policy":"none","rework_targets":[]}
+	  "acceptance": {"policy":"none"}
 	}`)
 }
 
@@ -97,7 +97,7 @@ func TestArtifactsRejectedOutsideActivities(t *testing.T) {
 	    {"from":"gate","to":"end","default":true},
 	    {"from":"gate","to":"other","condition":{"source":"host_issue","key":"status","op":"eq","value":"done"}}
 	  ],
-	  "acceptance": {"policy":"none","rework_targets":[]}
+	  "acceptance": {"policy":"none"}
 	}`)
 	definition, err := ParseDefinition(raw)
 	if err != nil {
@@ -134,7 +134,7 @@ func TestRequiredArtifactsFiltersOptionalOnes(t *testing.T) {
 	}
 }
 
-func definitionWithVerdict(verdict string) []byte {
+func definitionWithReviewer(reviewer string) []byte {
 	return []byte(`{
 	  "schema_version": 1,
 	  "name": "t",
@@ -142,53 +142,53 @@ func definitionWithVerdict(verdict string) []byte {
 	  "roles": [{"key": "owner", "name": "Owner", "allowed_actor_types": ["member"]}],
 	  "nodes": [
 	    {"key":"start","kind":"start","name":"Start"},
-	    {"key":"check","kind":"activity","activity_mode":"work","name":"Check",
+	    {"key":"check","kind":"activity","name":"Check",
 	     "owner_role":"owner","issue_policy":"none",
-	     "completion":{"mode":"manual","required_issue_outcome":"none","verdict_required":"pass"},
-	     "verdict": ` + verdict + `},
+	     "completion":{"mode":"manual","required_issue_outcome":"none"},
+	     "reviewer": ` + reviewer + `},
 	    {"key":"end","kind":"end","name":"End"}
 	  ],
 	  "edges": [{"from":"start","to":"check"},{"from":"check","to":"end"}],
-	  "acceptance": {"policy":"none","rework_targets":[]}
+	  "acceptance": {"policy":"none"}
 	}`)
 }
 
-// An api verdict is what replaces the objective signal lost when user-defined
+// An api reviewer is what replaces the objective signal lost when user-defined
 // fields go away, so its address has to be trustworthy: https only, and only
 // ever from the template.
-func TestAPIVerdictEvaluatorValidation(t *testing.T) {
+func TestAPIReviewerValidation(t *testing.T) {
 	tests := []struct {
-		name    string
-		verdict string
-		wantErr bool
+		name     string
+		reviewer string
+		wantErr  bool
 	}{
 		{
-			name:    "https endpoint is accepted",
-			verdict: `{"evaluator":"api","required_result":"pass","api_url":"https://ci.example.com/verdict"}`,
+			name:     "https endpoint is accepted",
+			reviewer: `{"kind":"api","required":true,"api_url":"https://ci.example.com/verdict"}`,
 		},
 		{
-			name:    "plaintext http is rejected",
-			verdict: `{"evaluator":"api","required_result":"pass","api_url":"http://ci.example.com/verdict"}`,
-			wantErr: true,
+			name:     "plaintext http is rejected",
+			reviewer: `{"kind":"api","required":true,"api_url":"http://ci.example.com/verdict"}`,
+			wantErr:  true,
 		},
 		{
-			name:    "api without a url is rejected",
-			verdict: `{"evaluator":"api","required_result":"pass"}`,
-			wantErr: true,
+			name:     "api without a url is rejected",
+			reviewer: `{"kind":"api","required":true}`,
+			wantErr:  true,
 		},
 		{
-			name:    "a non-api evaluator may not carry a url",
-			verdict: `{"evaluator":"member","required_result":"pass","api_url":"https://ci.example.com"}`,
-			wantErr: true,
+			name:     "a non-api evaluator may not carry a url",
+			reviewer: `{"kind":"role","role":"owner","required":true,"api_url":"https://ci.example.com"}`,
+			wantErr:  true,
 		},
 		{
-			name:    "member evaluator still works",
-			verdict: `{"evaluator":"member","required_result":"pass"}`,
+			name:     "member evaluator still works",
+			reviewer: `{"kind":"role","role":"owner","required":true}`,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			definition, err := ParseDefinition(definitionWithVerdict(test.verdict))
+			definition, err := ParseDefinition(definitionWithReviewer(test.reviewer))
 			if err != nil {
 				if !test.wantErr {
 					t.Fatalf("ParseDefinition() error = %v", err)
@@ -216,7 +216,7 @@ func TestNodeChoiceConditionSource(t *testing.T) {
 	  "roles": [{"key": "owner", "name": "Owner", "allowed_actor_types": ["member"]}],
 	  "nodes": [
 	    {"key":"start","kind":"start","name":"Start"},
-	    {"key":"triage","kind":"activity","activity_mode":"work","name":"Triage",
+	    {"key":"triage","kind":"activity","name":"Triage",
 	     "owner_role":"owner","issue_policy":"none",
 	     "completion":{"mode":"manual","required_issue_outcome":"none"}},
 	    {"key":"gate","kind":"gateway","name":"Gate"},
@@ -229,7 +229,7 @@ func TestNodeChoiceConditionSource(t *testing.T) {
 	    {"from":"gate","to":"fix","condition":{"source":"node_choice","node":"triage","key":"choice","op":"eq","value":"fix"}},
 	    {"from":"gate","to":"reject","default":true}
 	  ],
-	  "acceptance": {"policy":"none","rework_targets":[]}
+	  "acceptance": {"policy":"none"}
 	}`)
 	definition, err := ParseDefinition(raw)
 	if err != nil {

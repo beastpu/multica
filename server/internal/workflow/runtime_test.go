@@ -10,12 +10,12 @@ func TestBuildSerialPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildSerialPlan() error = %v", err)
 	}
-	if len(plan.Ordered) != 4 {
-		t.Fatalf("len(Ordered) = %d, want 4", len(plan.Ordered))
+	if len(plan.Ordered) != 3 {
+		t.Fatalf("len(Ordered) = %d, want 3", len(plan.Ordered))
 	}
 	next, ok := plan.Next("implementation")
-	if !ok || next.Key != "acceptance" {
-		t.Fatalf("Next(implementation) = (%q, %v), want acceptance", next.Key, ok)
+	if !ok || next.Key != "end" {
+		t.Fatalf("Next(implementation) = (%q, %v), want end", next.Key, ok)
 	}
 }
 

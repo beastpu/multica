@@ -123,7 +123,6 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	req.RoleAssignments = applyWorkflowRoleDefaults(definition, req.RoleAssignments)
 	req.RoleAssignments = defaultWorkflowOwnerAssignment(
 		definition, req.RoleAssignments, userID,
 	)

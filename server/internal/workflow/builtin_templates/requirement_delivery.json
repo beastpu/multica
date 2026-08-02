@@ -44,12 +44,18 @@
       "name": "需求评审",
       "description": "确认需求范围、优先级和验收标准。",
       "owner_role": "product_owner",
+      "executor": {
+        "kind": "role",
+        "role": "product_owner",
+        "fallback": {
+          "kind": "manual"
+        }
+      },
       "issue_policy": "fixed",
       "issue_templates": [
         {
           "key": "review_requirement",
           "title": "需求评审：{{host.title}}",
-          "assignee_role": "product_owner",
           "required": true,
           "initial_status": "todo"
         }
@@ -68,22 +74,21 @@
       "description": "产出技术方案，由产品负责人确认后进入实施。",
       "owner_role": "product_owner",
       "executor": {
-        "strategies": [
-          {
-            "kind": "fixed_role",
-            "role": "developer"
-          },
-          {
-            "kind": "manual"
-          }
-        ]
+        "kind": "role",
+        "role": "developer",
+        "fallback": {
+          "kind": "manual"
+        }
+      },
+      "reviewer": {
+        "kind": "owner",
+        "required": true
       },
       "issue_policy": "fixed",
       "issue_templates": [
         {
           "key": "design_solution",
           "title": "方案设计：{{host.title}}",
-          "assignee_role": "developer",
           "required": true,
           "initial_status": "todo"
         }
@@ -91,7 +96,6 @@
       "completion": {
         "mode": "automatic",
         "required_issue_outcome": "done",
-        "confirmation": "owner_any",
         "handoff_required": true
       },
       "artifacts": [
@@ -112,22 +116,17 @@
       "description": "按方案实现，支持在节点内继续拆分子任务。",
       "owner_role": "developer",
       "executor": {
-        "strategies": [
-          {
-            "kind": "fixed_role",
-            "role": "developer"
-          },
-          {
-            "kind": "manual"
-          }
-        ]
+        "kind": "role",
+        "role": "developer",
+        "fallback": {
+          "kind": "manual"
+        }
       },
       "issue_policy": "fixed",
       "issue_templates": [
         {
           "key": "implement_solution",
           "title": "实现：{{host.title}}",
-          "assignee_role": "developer",
           "required": true,
           "initial_status": "todo"
         }
@@ -137,15 +136,6 @@
         "required_issue_outcome": "done",
         "handoff_required": true
       },
-      "timeout_minutes": 1440
-    },
-    {
-      "key": "acceptance",
-      "kind": "activity",
-      "activity_mode": "acceptance",
-      "name": "验收",
-      "description": "验收人确认业务结果，不通过可退回方案设计或代码实施。",
-      "owner_role": "approver",
       "timeout_minutes": 1440
     },
     {
@@ -169,20 +159,11 @@
     },
     {
       "from": "implement",
-      "to": "acceptance"
-    },
-    {
-      "from": "acceptance",
       "to": "end"
     }
   ],
   "acceptance": {
     "policy": "member",
-    "approver_role": "approver",
-    "node_key": "acceptance",
-    "rework_targets": [
-      "plan",
-      "implement"
-    ]
+    "approver_role": "approver"
   }
 }

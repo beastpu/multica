@@ -44,30 +44,23 @@ type RoleDefinition struct {
 	Name              string   `json:"name"`
 	Required          bool     `json:"required"`
 	AllowedActorTypes []string `json:"allowed_actor_types"`
-	// DefaultActorType/DefaultActorID optionally pin a template-level default
-	// assignee for the role. Starting an instance pre-fills the role with this
-	// actor (source "fixed") unless the caller assigns someone else.
-	DefaultActorType string `json:"default_actor_type,omitempty"`
-	DefaultActorID   string `json:"default_actor_id,omitempty"`
 }
 
 type NodeDefinition struct {
 	Key              string                `json:"key"`
 	Kind             string                `json:"kind"`
 	JoinMode         string                `json:"join_mode,omitempty"`
-	ActivityMode     string                `json:"activity_mode,omitempty"`
 	Name             string                `json:"name"`
 	Description      string                `json:"description,omitempty"`
 	Color            string                `json:"color,omitempty"`
 	TimeoutMinutes   int                   `json:"timeout_minutes,omitempty"`
 	OwnerRole        string                `json:"owner_role,omitempty"`
-	ParticipantRoles []string              `json:"participant_roles,omitempty"`
 	Executor         ExecutorDefinition    `json:"executor,omitempty"`
+	Reviewer         *ReviewerDefinition   `json:"reviewer,omitempty"`
 	IssuePolicy      string                `json:"issue_policy,omitempty"`
 	IssueTemplates   []IssueTemplate       `json:"issue_templates,omitempty"`
 	Artifacts        []ArtifactRequirement `json:"artifacts,omitempty"`
 	SubmissionSchema *SubmissionSchema     `json:"submission_schema,omitempty"`
-	Verdict          *VerdictDefinition    `json:"verdict,omitempty"`
 	Completion       CompletionDefinition  `json:"completion,omitempty"`
 	// OnEnter/OnComplete run controlled side effects when an activity
 	// activates or completes. Only white-listed action kinds are allowed;
@@ -81,23 +74,46 @@ type NodeActionDefinition struct {
 	Status string `json:"status,omitempty"`
 }
 
+// ExecutorDefinition names who is expected to produce the node's output. It is
+// the single entry point: an issue template no longer carries an assignee, so
+// there is exactly one place to read and one answer to give.
+//
+// Fallback is one layer deep and cannot nest. A chain longer than "who, and
+// who instead" was available before and never used past two links, and each
+// extra link is another rule the template author has to keep in their head.
 type ExecutorDefinition struct {
-	Strategies []ExecutorStrategy `json:"strategies,omitempty"`
+	Kind       string              `json:"kind,omitempty"`
+	Role       string              `json:"role,omitempty"`
+	ActorType  string              `json:"actor_type,omitempty"`
+	ActorID    string              `json:"actor_id,omitempty"`
+	Capability string              `json:"capability,omitempty"`
+	Fallback   *ExecutorDefinition `json:"fallback,omitempty"`
 }
 
-type ExecutorStrategy struct {
-	Kind       string `json:"kind"`
-	Role       string `json:"role,omitempty"`
-	Capability string `json:"capability,omitempty"`
-	Node       string `json:"node,omitempty"`
-	Field      string `json:"field,omitempty"`
-	ActorType  string `json:"actor_type,omitempty"`
-	ActorID    string `json:"actor_id,omitempty"`
-	// Condition gates the strategy: when set, the strategy is only
-	// considered while resolving an executor if the condition evaluates to
-	// true against upstream submissions, verdicts, and host fields. It uses
-	// the same structured condition DSL as gateway edges.
+// HasExecutor reports whether the node names an executor at all. An empty
+// executor means manual pickup, which is also what an unresolvable one
+// degrades to.
+func HasExecutor(executor ExecutorDefinition) bool {
+	return strings.TrimSpace(executor.Kind) != ""
+}
+
+// ReviewerDefinition names who judges the node's output. Absent means the node
+// completes on delivery; present means delivery moves the node to in_review and
+// the reviewer's verdict is what releases it.
+type ReviewerDefinition struct {
+	Kind      string `json:"kind"`
+	Role      string `json:"role,omitempty"`
+	ActorType string `json:"actor_type,omitempty"`
+	ActorID   string `json:"actor_id,omitempty"`
+	// APIURL is the endpoint an "api" reviewer calls. It is template
+	// configuration, never taken from a submission or an agent, because an
+	// address supplied by the thing under review would let it choose its own
+	// judge.
+	APIURL string `json:"api_url,omitempty"`
+	// Condition carries an "auto" reviewer's rule, evaluated against upstream
+	// submissions, verdicts, and host fields.
 	Condition json.RawMessage `json:"condition,omitempty"`
+	Required  bool            `json:"required,omitempty"`
 }
 
 // HasCondition reports whether a raw condition document carries a value.
@@ -105,13 +121,32 @@ func HasCondition(raw json.RawMessage) bool {
 	return hasJSONValue(raw)
 }
 
+// ReviewerAcceptsMember reports whether a person records this node's verdict.
+// An api or auto reviewer decides on its own, so a member posting a verdict
+// there would be overruling a judge the template chose deliberately.
+func ReviewerAcceptsMember(node NodeDefinition) bool {
+	if node.Reviewer == nil {
+		return false
+	}
+	switch node.Reviewer.Kind {
+	case "role", "actor", "owner":
+		return true
+	default:
+		return false
+	}
+}
+
+// RequiresReview reports whether delivery must wait for a verdict. A reviewer
+// that is present but not required may still record one; it just does not hold
+// the node.
+func RequiresReview(node NodeDefinition) bool {
+	return node.Reviewer != nil && node.Reviewer.Required
+}
+
 type IssueTemplate struct {
 	Key           string `json:"key"`
 	Title         string `json:"title"`
 	Description   string `json:"description,omitempty"`
-	AssigneeRole  string `json:"assignee_role,omitempty"`
-	AssigneeType  string `json:"assignee_type,omitempty"`
-	AssigneeID    string `json:"assignee_id,omitempty"`
 	Required      bool   `json:"required"`
 	InitialStatus string `json:"initial_status,omitempty"`
 	Priority      string `json:"priority,omitempty"`
@@ -159,17 +194,6 @@ type SubmissionSchema struct {
 	Policy string `json:"policy,omitempty"`
 }
 
-type VerdictDefinition struct {
-	Evaluator      string          `json:"evaluator"`
-	RequiredResult string          `json:"required_result,omitempty"`
-	Condition      json.RawMessage `json:"condition,omitempty"`
-	// APIURL is the endpoint an "api" evaluator calls. It is workspace
-	// configuration, never taken from a submission or an agent, because an
-	// address supplied by the thing under review would let it choose its own
-	// judge — and would make the server a request forwarder.
-	APIURL string `json:"api_url,omitempty"`
-}
-
 type CompletionDefinition struct {
 	Mode                 string `json:"mode,omitempty"`
 	RequiredIssueOutcome string `json:"required_issue_outcome,omitempty"`
@@ -178,9 +202,7 @@ type CompletionDefinition struct {
 	// handoff summary. It is separate from SubmissionRequired because a node
 	// can owe a structured result without owing a conclusion, and far more
 	// often owes the conclusion alone.
-	HandoffRequired bool   `json:"handoff_required,omitempty"`
-	VerdictRequired string `json:"verdict_required,omitempty"`
-	Confirmation    string `json:"confirmation,omitempty"`
+	HandoffRequired bool `json:"handoff_required,omitempty"`
 	// AuthorizedRoles lists workflow roles whose resolved member actors may
 	// force-complete, skip, or roll back this node in addition to the
 	// defaults (workspace admins always; the node owner for manual
@@ -200,11 +222,17 @@ type EdgeDefinition struct {
 	Default   bool            `json:"default,omitempty"`
 }
 
+// AcceptanceDefinition gates the run as a whole, not any one node. It has no
+// node_key: acceptance judges whether the requirement is done, which is a
+// property of the instance and its host issue, and giving it a position on the
+// canvas only ever meant an activity nobody worked.
+//
+// It also has no rework_targets. Where a rejection sends the flow is a property
+// of the graph — any activity that precedes the rejection point — not a list
+// the template maintains alongside the graph and forgets to update.
 type AcceptanceDefinition struct {
-	Policy        string   `json:"policy,omitempty"`
-	ApproverRole  string   `json:"approver_role,omitempty"`
-	NodeKey       string   `json:"node_key,omitempty"`
-	ReworkTargets []string `json:"rework_targets,omitempty"`
+	Policy       string `json:"policy,omitempty"`
+	ApproverRole string `json:"approver_role,omitempty"`
 }
 
 func ParseDefinition(raw []byte) (Definition, error) {
@@ -278,10 +306,7 @@ func ValidateDefinition(definition Definition) error {
 	if err := validateGraph(nodes, startKey, definition.Edges); err != nil {
 		return err
 	}
-	if err := validateVerdictConditions(definition.Nodes, nodes, definition.Edges); err != nil {
-		return err
-	}
-	if err := validateExecutorReferences(definition.Nodes, nodes, roles, definition.Edges); err != nil {
+	if err := validateReviewerConditions(definition.Nodes, nodes, definition.Edges); err != nil {
 		return err
 	}
 	if err := validateAcceptance(definition.Acceptance, nodes, roles, definition.Edges); err != nil {
@@ -314,18 +339,6 @@ func validateRoles(definitions []RoleDefinition) (map[string]RoleDefinition, err
 				return nil, fmt.Errorf("role %q has duplicate actor type %q", role.Key, actorType)
 			}
 			actorTypes[actorType] = struct{}{}
-		}
-		if err := validateDirectActor(role.DefaultActorType, role.DefaultActorID); err != nil {
-			return nil, fmt.Errorf("role %q default actor: %w", role.Key, err)
-		}
-		if role.DefaultActorType != "" {
-			if _, allowed := actorTypes[role.DefaultActorType]; !allowed {
-				return nil, fmt.Errorf(
-					"role %q default actor type %q is not in allowed_actor_types",
-					role.Key,
-					role.DefaultActorType,
-				)
-			}
 		}
 		roles[role.Key] = role
 	}
@@ -402,9 +415,6 @@ func validateActivity(
 	roles map[string]RoleDefinition,
 	versionTaskKeys map[string]string,
 ) error {
-	if node.ActivityMode != "" && node.ActivityMode != "work" && node.ActivityMode != "acceptance" {
-		return fmt.Errorf("activity %q has invalid activity_mode %q", node.Key, node.ActivityMode)
-	}
 	if node.TimeoutMinutes < 0 || node.TimeoutMinutes > 525600 {
 		return fmt.Errorf("activity %q has invalid timeout_minutes", node.Key)
 	}
@@ -413,12 +423,10 @@ func validateActivity(
 			return fmt.Errorf("activity %q references unknown owner role %q", node.Key, node.OwnerRole)
 		}
 	}
-	for _, role := range node.ParticipantRoles {
-		if _, ok := roles[role]; !ok {
-			return fmt.Errorf("activity %q references unknown participant role %q", node.Key, role)
-		}
-	}
 	if err := validateExecutor(node, roles); err != nil {
+		return err
+	}
+	if err := validateReviewer(node, roles); err != nil {
 		return err
 	}
 	if err := validateNodeActions(node.Key, "on_enter", node.OnEnter); err != nil {
@@ -460,22 +468,6 @@ func validateActivity(
 			return fmt.Errorf("activity %q task %q title is required", node.Key, task.Key)
 		}
 		if err := validateIssueTitleTemplate(task.Title); err != nil {
-			return fmt.Errorf("activity %q task %q: %w", node.Key, task.Key, err)
-		}
-		if task.AssigneeRole != "" {
-			if _, ok := roles[task.AssigneeRole]; !ok {
-				return fmt.Errorf("activity %q task %q references unknown assignee role %q", node.Key, task.Key, task.AssigneeRole)
-			}
-		}
-		if task.AssigneeRole != "" &&
-			(task.AssigneeType != "" || task.AssigneeID != "") {
-			return fmt.Errorf(
-				"activity %q task %q cannot declare both assignee_role and a direct assignee",
-				node.Key,
-				task.Key,
-			)
-		}
-		if err := validateDirectActor(task.AssigneeType, task.AssigneeID); err != nil {
 			return fmt.Errorf("activity %q task %q: %w", node.Key, task.Key, err)
 		}
 		switch task.InitialStatus {
@@ -526,33 +518,6 @@ func validateActivity(
 			)
 		}
 	}
-	if node.Verdict != nil {
-		switch node.Verdict.Evaluator {
-		case "deterministic", "member", "api":
-		default:
-			return fmt.Errorf("activity %q has invalid verdict evaluator %q", node.Key, node.Verdict.Evaluator)
-		}
-		if node.Verdict.Evaluator == "api" {
-			if err := validateVerdictAPIURL(node.Key, node.Verdict.APIURL); err != nil {
-				return err
-			}
-		} else if strings.TrimSpace(node.Verdict.APIURL) != "" {
-			return fmt.Errorf(
-				"activity %q only an api verdict can declare api_url", node.Key,
-			)
-		}
-		if node.Verdict.RequiredResult != "" && node.Verdict.RequiredResult != "pass" &&
-			node.Verdict.RequiredResult != "not_blocked" {
-			return fmt.Errorf("activity %q has invalid verdict required_result %q", node.Key, node.Verdict.RequiredResult)
-		}
-		if node.Verdict.Evaluator != "deterministic" &&
-			hasJSONValue(node.Verdict.Condition) {
-			return fmt.Errorf(
-				"activity %q only a deterministic verdict can declare condition",
-				node.Key,
-			)
-		}
-	}
 	switch node.Completion.RequiredIssueOutcome {
 	case "", "done", "terminal", "none":
 	default:
@@ -571,19 +536,6 @@ func validateActivity(
 			node.Completion.Mode,
 		)
 	}
-	switch node.Completion.VerdictRequired {
-	case "", "none":
-	case "pass", "not_blocked":
-		if node.Verdict == nil {
-			return fmt.Errorf("activity %q completion requires a verdict definition", node.Key)
-		}
-	default:
-		return fmt.Errorf(
-			"activity %q has invalid verdict_required %q",
-			node.Key,
-			node.Completion.VerdictRequired,
-		)
-	}
 	for _, roleKey := range node.Completion.AuthorizedRoles {
 		if _, ok := roles[roleKey]; !ok {
 			return fmt.Errorf(
@@ -593,16 +545,44 @@ func validateActivity(
 			)
 		}
 	}
-	switch node.Completion.Confirmation {
-	case "", "none", "member_any", "member_all", "admin_only":
-	case "owner_any", "owner_all":
-		// Owners come from node participants at runtime, so either a
-		// member-only owner role or a directly pinned member owner can carry
-		// the confirmation.
+	return nil
+}
+
+// validateReviewer checks the one field that says who judges the node. The
+// per-kind rules are the same ones the old verdict and confirmation switches
+// enforced separately: an api reviewer needs a template-supplied https endpoint,
+// an owner reviewer needs an owner that resolves to a member, and an auto
+// reviewer is the only kind that carries a rule instead of a person.
+func validateReviewer(node NodeDefinition, roles map[string]RoleDefinition) error {
+	reviewer := node.Reviewer
+	if reviewer == nil {
+		return nil
+	}
+	switch reviewer.Kind {
+	case "role":
+		if _, ok := roles[reviewer.Role]; !ok {
+			return fmt.Errorf(
+				"activity %q reviewer references unknown role %q", node.Key, reviewer.Role,
+			)
+		}
+	case "actor":
+		if err := validateDirectActor(reviewer.ActorType, reviewer.ActorID); err != nil {
+			return fmt.Errorf("activity %q reviewer: %w", node.Key, err)
+		}
+		if reviewer.ActorType == "" {
+			return fmt.Errorf("activity %q actor reviewer requires an actor", node.Key)
+		}
+	case "api":
+		if err := validateReviewerAPIURL(node.Key, reviewer.APIURL); err != nil {
+			return err
+		}
+	case "owner":
+		// The owner is a runtime participant, so either a member-only owner
+		// role or a directly pinned member executor can carry the review.
 		if node.OwnerRole == "" {
 			if !PinsMemberOwner(node) {
 				return fmt.Errorf(
-					"activity %q owner confirmation requires an owner role or a pinned member owner",
+					"activity %q owner reviewer requires an owner role or a pinned member owner",
 					node.Key,
 				)
 			}
@@ -610,20 +590,25 @@ func validateActivity(
 		}
 		role, ok := roles[node.OwnerRole]
 		if !ok {
-			return fmt.Errorf("activity %q owner confirmation requires owner_role", node.Key)
+			return fmt.Errorf("activity %q owner reviewer requires owner_role", node.Key)
 		}
 		if !roleResolvesOnlyToMember(role) {
 			return fmt.Errorf(
-				"activity %q owner confirmation role must resolve only to member",
-				node.Key,
+				"activity %q owner reviewer role must resolve only to member", node.Key,
 			)
 		}
+	case "auto":
+		if !hasJSONValue(reviewer.Condition) {
+			return fmt.Errorf("activity %q auto reviewer requires a condition", node.Key)
+		}
 	default:
-		return fmt.Errorf(
-			"activity %q has invalid confirmation %q",
-			node.Key,
-			node.Completion.Confirmation,
-		)
+		return fmt.Errorf("activity %q has invalid reviewer kind %q", node.Key, reviewer.Kind)
+	}
+	if reviewer.Kind != "api" && strings.TrimSpace(reviewer.APIURL) != "" {
+		return fmt.Errorf("activity %q only an api reviewer can declare api_url", node.Key)
+	}
+	if reviewer.Kind != "auto" && hasJSONValue(reviewer.Condition) {
+		return fmt.Errorf("activity %q only an auto reviewer can declare condition", node.Key)
 	}
 	return nil
 }
@@ -679,7 +664,7 @@ func SubmissionPolicy(node NodeDefinition) string {
 }
 
 func RequiresManualCompletion(node NodeDefinition) bool {
-	if node.Kind != "activity" || node.ActivityMode == "acceptance" {
+	if node.Kind != "activity" {
 		return false
 	}
 	switch node.Completion.Mode {
@@ -689,15 +674,7 @@ func RequiresManualCompletion(node NodeDefinition) bool {
 		return false
 	}
 	if node.SubmissionSchema != nil || node.Completion.SubmissionRequired ||
-		node.Verdict != nil {
-		return false
-	}
-	if node.Completion.VerdictRequired != "" &&
-		node.Completion.VerdictRequired != "none" {
-		return false
-	}
-	if node.Completion.Confirmation != "" &&
-		node.Completion.Confirmation != "none" {
+		node.Reviewer != nil {
 		return false
 	}
 	for _, task := range node.IssueTemplates {
@@ -709,58 +686,71 @@ func RequiresManualCompletion(node NodeDefinition) bool {
 }
 
 func validateExecutor(node NodeDefinition, roles map[string]RoleDefinition) error {
-	if len(node.Executor.Strategies) == 0 {
+	if !HasExecutor(node.Executor) {
+		if node.Executor.Fallback != nil {
+			return fmt.Errorf("activity %q fallback requires an executor", node.Key)
+		}
 		return nil
 	}
-	hasFallback := false
-	for _, strategy := range node.Executor.Strategies {
-		switch strategy.Kind {
-		case "fixed_actor":
-			if err := validateDirectActor(strategy.ActorType, strategy.ActorID); err != nil {
-				return fmt.Errorf("activity %q executor: %w", node.Key, err)
-			}
-		case "fixed_role", "fallback_role":
-			if _, ok := roles[strategy.Role]; !ok {
-				return fmt.Errorf("activity %q executor references unknown role %q", node.Key, strategy.Role)
-			}
-			if strategy.Kind == "fallback_role" && !hasJSONValue(strategy.Condition) {
-				hasFallback = true
-			}
-		case "manual":
-			if !hasJSONValue(strategy.Condition) {
-				hasFallback = true
-			}
-		case "capability_match":
-			if strings.TrimSpace(strategy.Capability) == "" {
-				return fmt.Errorf("activity %q capability_match requires capability", node.Key)
-			}
-			role, ok := roles[strategy.Role]
-			if !ok {
-				return fmt.Errorf(
-					"activity %q capability_match references unknown pool role %q",
-					node.Key,
-					strategy.Role,
-				)
-			}
-			allowedPoolActor := false
-			for _, actorType := range role.AllowedActorTypes {
-				allowedPoolActor = allowedPoolActor || actorType == "agent" || actorType == "squad"
-			}
-			if !allowedPoolActor {
-				return fmt.Errorf(
-					"activity %q capability_match pool role must allow agent or squad",
-					node.Key,
-				)
-			}
-		default:
-			return fmt.Errorf("activity %q has invalid executor strategy %q", node.Key, strategy.Kind)
-		}
+	if err := validateExecutorEntry(node.Key, "executor", node.Executor, roles); err != nil {
+		return err
 	}
-	if !hasFallback {
-		return fmt.Errorf(
-			"activity %q executor requires an unconditional fallback_role or manual",
-			node.Key,
-		)
+	fallback := node.Executor.Fallback
+	if fallback == nil {
+		return nil
+	}
+	if fallback.Fallback != nil {
+		return fmt.Errorf("activity %q executor fallback cannot declare its own fallback", node.Key)
+	}
+	if !HasExecutor(*fallback) {
+		return fmt.Errorf("activity %q executor fallback requires a kind", node.Key)
+	}
+	return validateExecutorEntry(node.Key, "executor fallback", *fallback, roles)
+}
+
+func validateExecutorEntry(
+	nodeKey string,
+	label string,
+	executor ExecutorDefinition,
+	roles map[string]RoleDefinition,
+) error {
+	switch executor.Kind {
+	case "role":
+		if _, ok := roles[executor.Role]; !ok {
+			return fmt.Errorf("activity %q %s references unknown role %q", nodeKey, label, executor.Role)
+		}
+	case "actor":
+		if err := validateDirectActor(executor.ActorType, executor.ActorID); err != nil {
+			return fmt.Errorf("activity %q %s: %w", nodeKey, label, err)
+		}
+		if executor.ActorType == "" {
+			return fmt.Errorf("activity %q %s requires an actor", nodeKey, label)
+		}
+	case "capability":
+		if strings.TrimSpace(executor.Capability) == "" {
+			return fmt.Errorf("activity %q %s requires a capability", nodeKey, label)
+		}
+		role, ok := roles[executor.Role]
+		if !ok {
+			return fmt.Errorf(
+				"activity %q %s references unknown pool role %q", nodeKey, label, executor.Role,
+			)
+		}
+		allowedPoolActor := false
+		for _, actorType := range role.AllowedActorTypes {
+			allowedPoolActor = allowedPoolActor || actorType == "agent" || actorType == "squad"
+		}
+		if !allowedPoolActor {
+			return fmt.Errorf(
+				"activity %q %s pool role must allow agent or squad", nodeKey, label,
+			)
+		}
+	case "manual":
+	default:
+		return fmt.Errorf("activity %q has invalid %s kind %q", nodeKey, label, executor.Kind)
+	}
+	if executor.Kind != "capability" && strings.TrimSpace(executor.Capability) != "" {
+		return fmt.Errorf("activity %q only a capability %s can declare capability", nodeKey, label)
 	}
 	return nil
 }
@@ -783,88 +773,34 @@ func validateDirectActor(actorType, actorID string) error {
 	return nil
 }
 
-func validateExecutorReferences(
-	nodeDefinitions []NodeDefinition,
-	nodes map[string]NodeDefinition,
-	_ map[string]RoleDefinition,
-	edges []EdgeDefinition,
-) error {
-	for _, node := range nodeDefinitions {
-		for _, strategy := range node.Executor.Strategies {
-			if hasJSONValue(strategy.Condition) {
-				if err := ValidateCondition(strategy.Condition, nodes); err != nil {
-					return fmt.Errorf(
-						"activity %q executor strategy condition: %w",
-						node.Key,
-						err,
-					)
-				}
-				references, err := ConditionReferences(strategy.Condition)
-				if err != nil {
-					return fmt.Errorf(
-						"activity %q executor strategy condition: %w",
-						node.Key,
-						err,
-					)
-				}
-				for _, reference := range references {
-					// Executor resolution runs when the node activates, so
-					// the node's own submissions and verdicts do not exist
-					// yet; conditions may only read upstream nodes.
-					if reference.Node == node.Key ||
-						!workflowPathExists(reference.Node, node.Key, edges) {
-						return fmt.Errorf(
-							"activity %q executor condition node %q must be upstream",
-							node.Key,
-							reference.Node,
-						)
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func validateVerdictConditions(
+func validateReviewerConditions(
 	nodeDefinitions []NodeDefinition,
 	nodes map[string]NodeDefinition,
 	edges []EdgeDefinition,
 ) error {
 	for _, node := range nodeDefinitions {
-		if node.Verdict == nil || !hasJSONValue(node.Verdict.Condition) {
+		if node.Reviewer == nil || !hasJSONValue(node.Reviewer.Condition) {
 			continue
 		}
-		if err := ValidateCondition(node.Verdict.Condition, nodes); err != nil {
-			return fmt.Errorf(
-				"activity %q deterministic verdict condition: %w",
-				node.Key,
-				err,
-			)
+		if err := ValidateCondition(node.Reviewer.Condition, nodes); err != nil {
+			return fmt.Errorf("activity %q auto reviewer condition: %w", node.Key, err)
 		}
-		references, err := ConditionReferences(node.Verdict.Condition)
+		references, err := ConditionReferences(node.Reviewer.Condition)
 		if err != nil {
-			return fmt.Errorf(
-				"activity %q deterministic verdict condition: %w",
-				node.Key,
-				err,
-			)
+			return fmt.Errorf("activity %q auto reviewer condition: %w", node.Key, err)
 		}
 		for _, reference := range references {
 			if reference.Node == node.Key {
 				if reference.Source == "node_verdict" {
 					return fmt.Errorf(
-						"activity %q deterministic verdict cannot reference itself",
-						node.Key,
+						"activity %q auto reviewer cannot reference itself", node.Key,
 					)
 				}
 				continue
 			}
 			if !workflowPathExists(reference.Node, node.Key, edges) {
 				return fmt.Errorf(
-					"activity %q deterministic verdict node %q must be upstream",
-					node.Key,
-					reference.Node,
+					"activity %q auto reviewer node %q must be upstream", node.Key, reference.Node,
 				)
 			}
 		}
@@ -1062,10 +998,6 @@ func validateAcceptance(
 	if acceptance.Policy != "member" && acceptance.Policy != "node_verdict" {
 		return fmt.Errorf("invalid acceptance policy %q", acceptance.Policy)
 	}
-	node, ok := nodes[acceptance.NodeKey]
-	if !ok || node.Kind != "activity" || node.ActivityMode != "acceptance" {
-		return errors.New("acceptance.node_key must reference a visible acceptance activity")
-	}
 	if acceptance.Policy == "member" {
 		role, ok := roles[acceptance.ApproverRole]
 		if !ok {
@@ -1073,19 +1005,6 @@ func validateAcceptance(
 		}
 		if !roleResolvesOnlyToMember(role) {
 			return errors.New("acceptance approver role must resolve only to member")
-		}
-	}
-	for _, target := range acceptance.ReworkTargets {
-		node, ok := nodes[target]
-		if !ok || node.Kind != "activity" {
-			return fmt.Errorf("acceptance rework target %q must reference an activity", target)
-		}
-		if !workflowPathExists(target, acceptance.NodeKey, edges) {
-			return fmt.Errorf(
-				"acceptance rework target %q must reach acceptance node %q",
-				target,
-				acceptance.NodeKey,
-			)
 		}
 	}
 	return nil
@@ -1127,19 +1046,14 @@ func validKey(value string) bool {
 }
 
 // PinsMemberOwner reports whether the node designates a concrete member as
-// its owner through a fixed_actor executor strategy. Activation turns that
-// actor into the node's "owner" participant, which is what owner
-// confirmations and node-owner permissions read.
+// its owner through an actor executor. Activation turns that actor into the
+// node's "owner" participant, which is what an owner reviewer and node-owner
+// permissions read.
 func PinsMemberOwner(node NodeDefinition) bool {
 	if node.OwnerRole != "" {
 		return false
 	}
-	for _, strategy := range node.Executor.Strategies {
-		if strategy.Kind == "fixed_actor" && strategy.ActorType == "member" {
-			return true
-		}
-	}
-	return false
+	return node.Executor.Kind == "actor" && node.Executor.ActorType == "member"
 }
 
 func roleResolvesOnlyToMember(role RoleDefinition) bool {
@@ -1155,13 +1069,13 @@ func validateIssueTitleTemplate(title string) error {
 	return nil
 }
 
-// validateVerdictAPIURL keeps an api verdict pointed at a real external
+// validateReviewerAPIURL keeps an api reviewer pointed at a real external
 // endpoint. The scheme check is the meaningful one: anything but https would
 // send the workflow's state over a channel the workspace cannot vouch for.
-func validateVerdictAPIURL(nodeKey, raw string) error {
+func validateReviewerAPIURL(nodeKey, raw string) error {
 	value := strings.TrimSpace(raw)
 	if value == "" {
-		return fmt.Errorf("activity %q api verdict requires api_url", nodeKey)
+		return fmt.Errorf("activity %q api reviewer requires api_url", nodeKey)
 	}
 	parsed, err := url.Parse(value)
 	if err != nil {

@@ -135,3 +135,22 @@ func (p GraphPlan) ValidateReworkTarget(target, current string) error {
 	}
 	return nil
 }
+
+// AcceptanceReworkTargets lists every activity an acceptance rejection may send
+// the run back to. Acceptance judges the finished run, so that is every
+// activity in the graph: validation already guarantees each one is reachable
+// from start and reaches an end.
+//
+// Derived rather than configured. A template-maintained whitelist is a second
+// copy of the graph that has to be updated alongside it, and the failure is
+// silent — add a node, forget the list, and it simply cannot be rolled back to
+// with no indication why.
+func (p GraphPlan) AcceptanceReworkTargets() []string {
+	targets := make([]string, 0, len(p.Ordered))
+	for _, node := range p.Ordered {
+		if node.Kind == "activity" {
+			targets = append(targets, node.Key)
+		}
+	}
+	return targets
+}

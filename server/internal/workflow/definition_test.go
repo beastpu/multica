@@ -23,25 +23,21 @@ func validDefinition() Definition {
 				Kind:      "activity",
 				Name:      "Implementation",
 				OwnerRole: "owner",
-				Executor: ExecutorDefinition{Strategies: []ExecutorStrategy{
-					{Kind: "fixed_role", Role: "executor"},
-					{Kind: "manual"},
-				}},
+				Executor: ExecutorDefinition{
+					Kind: "role", Role: "executor",
+					Fallback: &ExecutorDefinition{Kind: "manual"},
+				},
 				IssueTemplates: []IssueTemplate{{Key: "implement", Title: "Implement {{host.title}}", Required: true}},
 			},
-			{Key: "acceptance", Kind: "activity", ActivityMode: "acceptance", Name: "Acceptance", OwnerRole: "owner"},
 			{Key: "end", Kind: "end", Name: "End"},
 		},
 		Edges: []EdgeDefinition{
 			{From: "start", To: "implementation"},
-			{From: "implementation", To: "acceptance"},
-			{From: "acceptance", To: "end"},
+			{From: "implementation", To: "end"},
 		},
 		Acceptance: AcceptanceDefinition{
-			Policy:        "member",
-			ApproverRole:  "owner",
-			NodeKey:       "acceptance",
-			ReworkTargets: []string{"implementation"},
+			Policy:       "member",
+			ApproverRole: "owner",
 		},
 	}
 }
@@ -110,7 +106,7 @@ func TestValidateDefinitionAcceptsImplicitParallelOutgoingEdges(t *testing.T) {
 
 func TestValidateDefinitionRejectsCycle(t *testing.T) {
 	definition := validDefinition()
-	definition.Edges = append(definition.Edges, EdgeDefinition{From: "acceptance", To: "implementation"})
+	definition.Edges = append(definition.Edges, EdgeDefinition{From: "end", To: "implementation"})
 	if err := ValidateDefinition(definition); err == nil || !strings.Contains(err.Error(), "acyclic") {
 		t.Fatalf("ValidateDefinition() error = %v, want acyclic error", err)
 	}
@@ -156,94 +152,59 @@ func TestValidateDefinitionRejectsInvalidRole(t *testing.T) {
 	}
 }
 
-func TestValidateDefinitionRequiresVisibleAcceptanceActivity(t *testing.T) {
+func TestValidateDefinitionRejectsNestedExecutorFallback(t *testing.T) {
 	definition := validDefinition()
-	definition.Nodes[2].ActivityMode = ""
-	if err := ValidateDefinition(definition); err == nil || !strings.Contains(err.Error(), "visible acceptance activity") {
-		t.Fatalf("ValidateDefinition() error = %v, want visible acceptance error", err)
+	definition.Nodes[1].Executor.Fallback = &ExecutorDefinition{
+		Kind: "role", Role: "executor",
+		Fallback: &ExecutorDefinition{Kind: "manual"},
+	}
+	if err := ValidateDefinition(definition); err == nil ||
+		!strings.Contains(err.Error(), "own fallback") {
+		t.Fatalf("ValidateDefinition() error = %v, want nested fallback error", err)
 	}
 }
 
-func TestValidateDefinitionRequiresExecutorFallback(t *testing.T) {
+func TestValidateDefinitionAcceptsExecutorWithoutFallback(t *testing.T) {
 	definition := validDefinition()
-	definition.Nodes[1].Executor.Strategies = []ExecutorStrategy{{Kind: "fixed_role", Role: "executor"}}
-	if err := ValidateDefinition(definition); err == nil || !strings.Contains(err.Error(), "fallback") {
-		t.Fatalf("ValidateDefinition() error = %v, want fallback error", err)
+	definition.Nodes[1].Executor = ExecutorDefinition{Kind: "role", Role: "executor"}
+	if err := ValidateDefinition(definition); err != nil {
+		t.Fatalf("ValidateDefinition() error = %v", err)
 	}
 }
 
-func conditionalDeliveryDefinition() Definition {
-	definition := validDefinition()
-	// Give the implementation node an upstream submission the executor
-	// condition can reference: start -> triage -> implementation -> ...
-	triage := NodeDefinition{
-		Key: "triage", Kind: "activity", Name: "Triage", OwnerRole: "owner",
-		IssueTemplates: []IssueTemplate{{
-			Key: "triage_task", Title: "Triage {{host.title}}", Required: true,
-		}},
-	}
-	definition.Nodes = []NodeDefinition{
-		definition.Nodes[0], // start
-		triage,
-		definition.Nodes[1], // implementation
-		definition.Nodes[2], // acceptance
-		definition.Nodes[3], // end
-	}
-	definition.Edges = []EdgeDefinition{
-		{From: "start", To: "triage"},
-		{From: "triage", To: "implementation"},
-		{From: "implementation", To: "acceptance"},
-		{From: "acceptance", To: "end"},
-	}
-	return definition
-}
-
-// executorCondition gates an executor strategy on an upstream node's branch
-// choice. The key is always "choice" — a node carries exactly one.
-func executorCondition(node, value string) json.RawMessage {
-	return json.RawMessage(fmt.Sprintf(
-		`{"source":"node_choice","node":%q,"key":"choice","op":"eq","value":%q}`,
-		node, value,
-	))
-}
-
-func TestValidateDefinitionOwnerConfirmationWithPinnedMember(t *testing.T) {
+func TestValidateDefinitionOwnerReviewerWithPinnedMember(t *testing.T) {
 	// A node that pins a concrete member owner instead of using a role can
-	// still require owner confirmation: the runtime resolves owners from
-	// node participants, which the pinned actor creates.
+	// still carry an owner reviewer: the runtime resolves owners from node
+	// participants, which the pinned actor creates.
 	pinned := validDefinition()
 	pinned.Nodes[1].OwnerRole = ""
-	pinned.Nodes[1].Executor.Strategies = []ExecutorStrategy{
-		{
-			Kind: "fixed_actor", ActorType: "member",
-			ActorID: "33333333-3333-3333-3333-333333333333",
-		},
-		{Kind: "manual"},
+	pinned.Nodes[1].Executor = ExecutorDefinition{
+		Kind: "actor", ActorType: "member",
+		ActorID:  "33333333-3333-3333-3333-333333333333",
+		Fallback: &ExecutorDefinition{Kind: "manual"},
 	}
-	pinned.Nodes[1].Completion.Confirmation = "owner_any"
+	pinned.Nodes[1].Reviewer = &ReviewerDefinition{Kind: "owner", Required: true}
 	if err := ValidateDefinition(pinned); err != nil {
 		t.Fatalf("ValidateDefinition() error = %v", err)
 	}
 
 	pinnedAgent := validDefinition()
 	pinnedAgent.Nodes[1].OwnerRole = ""
-	pinnedAgent.Nodes[1].Executor.Strategies = []ExecutorStrategy{
-		{
-			Kind: "fixed_actor", ActorType: "agent",
-			ActorID: "33333333-3333-3333-3333-333333333333",
-		},
-		{Kind: "manual"},
+	pinnedAgent.Nodes[1].Executor = ExecutorDefinition{
+		Kind: "actor", ActorType: "agent",
+		ActorID:  "33333333-3333-3333-3333-333333333333",
+		Fallback: &ExecutorDefinition{Kind: "manual"},
 	}
-	pinnedAgent.Nodes[1].Completion.Confirmation = "owner_any"
+	pinnedAgent.Nodes[1].Reviewer = &ReviewerDefinition{Kind: "owner", Required: true}
 	if err := ValidateDefinition(pinnedAgent); err == nil {
-		t.Fatal("ValidateDefinition() accepted owner confirmation pinned to an agent")
+		t.Fatal("ValidateDefinition() accepted an owner reviewer pinned to an agent")
 	}
 
 	noOwner := validDefinition()
 	noOwner.Nodes[1].OwnerRole = ""
-	noOwner.Nodes[1].Completion.Confirmation = "owner_any"
+	noOwner.Nodes[1].Reviewer = &ReviewerDefinition{Kind: "owner", Required: true}
 	if err := ValidateDefinition(noOwner); err == nil {
-		t.Fatal("ValidateDefinition() accepted owner confirmation without any owner")
+		t.Fatal("ValidateDefinition() accepted an owner reviewer without any owner")
 	}
 }
 
@@ -299,186 +260,6 @@ func TestValidateDefinitionNodeActions(t *testing.T) {
 	}
 }
 
-func TestValidateDefinitionRoleDefaultActor(t *testing.T) {
-	valid := validDefinition()
-	valid.Roles[0].DefaultActorType = "member"
-	valid.Roles[0].DefaultActorID = "33333333-3333-3333-3333-333333333333"
-	if err := ValidateDefinition(valid); err != nil {
-		t.Fatalf("ValidateDefinition() error = %v", err)
-	}
-
-	typeNotAllowed := validDefinition()
-	// Role "owner" only allows member actors.
-	typeNotAllowed.Roles[0].DefaultActorType = "agent"
-	typeNotAllowed.Roles[0].DefaultActorID = "33333333-3333-3333-3333-333333333333"
-	if err := ValidateDefinition(typeNotAllowed); err == nil ||
-		!strings.Contains(err.Error(), "default actor") {
-		t.Fatalf("ValidateDefinition() error = %v, want default actor type error", err)
-	}
-
-	half := validDefinition()
-	half.Roles[0].DefaultActorType = "member"
-	if err := ValidateDefinition(half); err == nil {
-		t.Fatal("ValidateDefinition() accepted default actor type without id")
-	}
-}
-
-func TestValidateDefinitionAcceptsConditionalExecutorStrategies(t *testing.T) {
-	definition := conditionalDeliveryDefinition()
-	for index, node := range definition.Nodes {
-		if node.Key != "implementation" {
-			continue
-		}
-		definition.Nodes[index].Executor.Strategies = []ExecutorStrategy{
-			{
-				Kind: "fixed_role", Role: "executor",
-				Condition: executorCondition("triage", "needs_agent"),
-			},
-			{Kind: "manual"},
-		}
-	}
-	if err := ValidateDefinition(definition); err != nil {
-		t.Fatalf("ValidateDefinition() error = %v", err)
-	}
-}
-
-func TestValidateDefinitionRejectsAllConditionalExecutorStrategies(t *testing.T) {
-	definition := conditionalDeliveryDefinition()
-	for index, node := range definition.Nodes {
-		if node.Key != "implementation" {
-			continue
-		}
-		definition.Nodes[index].Executor.Strategies = []ExecutorStrategy{
-			{
-				Kind: "fixed_role", Role: "executor",
-				Condition: executorCondition("triage", "needs_agent"),
-			},
-			{
-				Kind:      "manual",
-				Condition: executorCondition("triage", "needs_agent"),
-			},
-		}
-	}
-	if err := ValidateDefinition(definition); err == nil ||
-		!strings.Contains(err.Error(), "fallback") {
-		t.Fatalf("ValidateDefinition() error = %v, want unconditional fallback error", err)
-	}
-}
-
-func TestValidateDefinitionRejectsExecutorConditionOnNonUpstreamNode(t *testing.T) {
-	definition := conditionalDeliveryDefinition()
-	for index, node := range definition.Nodes {
-		switch node.Key {
-		case "implementation":
-		case "triage":
-			// The triage executor references the downstream implementation node.
-			definition.Nodes[index].Executor.Strategies = []ExecutorStrategy{
-				{
-					Kind: "fixed_role", Role: "executor",
-					Condition: executorCondition("implementation", "approved"),
-				},
-				{Kind: "manual"},
-			}
-		}
-	}
-	if err := ValidateDefinition(definition); err == nil ||
-		!strings.Contains(err.Error(), "upstream") {
-		t.Fatalf("ValidateDefinition() error = %v, want upstream error", err)
-	}
-}
-
-func TestValidateDefinitionAcceptsDirectNodeAndIssueExecutors(t *testing.T) {
-	definition := validDefinition()
-	definition.Nodes[1].Executor.Strategies = []ExecutorStrategy{
-		{
-			Kind:      "fixed_actor",
-			ActorType: "agent",
-			ActorID:   "550e8400-e29b-41d4-a716-446655440000",
-		},
-		{Kind: "manual"},
-	}
-	definition.Nodes[1].IssueTemplates[0].AssigneeType = "squad"
-	definition.Nodes[1].IssueTemplates[0].AssigneeID =
-		"550e8400-e29b-41d4-a716-446655440001"
-	definition.Nodes[1].IssueTemplates[0].AssigneeRole = ""
-
-	if err := ValidateDefinition(definition); err != nil {
-		t.Fatalf("ValidateDefinition() error = %v", err)
-	}
-}
-
-func TestValidateDefinitionRejectsInvalidDirectExecutor(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*Definition)
-		want   string
-	}{
-		{
-			name: "node actor type",
-			mutate: func(definition *Definition) {
-				definition.Nodes[1].Executor.Strategies = []ExecutorStrategy{
-					{
-						Kind:      "fixed_actor",
-						ActorType: "robot",
-						ActorID:   "550e8400-e29b-41d4-a716-446655440000",
-					},
-					{Kind: "manual"},
-				}
-			},
-			want: "invalid actor type",
-		},
-		{
-			name: "node actor id",
-			mutate: func(definition *Definition) {
-				definition.Nodes[1].Executor.Strategies = []ExecutorStrategy{
-					{
-						Kind:      "fixed_actor",
-						ActorType: "agent",
-						ActorID:   "not-a-uuid",
-					},
-					{Kind: "manual"},
-				}
-			},
-			want: "invalid actor id",
-		},
-		{
-			name: "issue actor pair",
-			mutate: func(definition *Definition) {
-				definition.Nodes[1].IssueTemplates[0].AssigneeType = "agent"
-			},
-			want: "assignee_type and assignee_id",
-		},
-		{
-			name: "issue actor and role",
-			mutate: func(definition *Definition) {
-				definition.Nodes[1].IssueTemplates[0].AssigneeRole = "executor"
-				definition.Nodes[1].IssueTemplates[0].AssigneeType = "agent"
-				definition.Nodes[1].IssueTemplates[0].AssigneeID =
-					"550e8400-e29b-41d4-a716-446655440000"
-			},
-			want: "cannot declare both",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			definition := validDefinition()
-			test.mutate(&definition)
-			err := ValidateDefinition(definition)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("ValidateDefinition() error = %v, want %q", err, test.want)
-			}
-		})
-	}
-}
-
-func TestValidateDefinitionRejectsInvalidCompletionPolicy(t *testing.T) {
-	definition := validDefinition()
-	definition.Nodes[1].Completion.Confirmation = "agent_any"
-	if err := ValidateDefinition(definition); err == nil || !strings.Contains(err.Error(), "confirmation") {
-		t.Fatalf("ValidateDefinition() error = %v, want confirmation error", err)
-	}
-}
-
 func TestValidateDefinitionRejectsInvalidCompletionMode(t *testing.T) {
 	definition := validDefinition()
 	definition.Nodes[1].Completion.Mode = "on_demand"
@@ -492,35 +273,33 @@ func TestRequiresManualCompletionSupportsExplicitModeWithConditions(t *testing.T
 	node := validDefinition().Nodes[1]
 	node.Completion.Mode = "manual"
 	node.SubmissionSchema = &SubmissionSchema{Policy: "single"}
-	node.Verdict = &VerdictDefinition{
-		Evaluator: "deterministic", RequiredResult: "pass",
-	}
+	node.Reviewer = &ReviewerDefinition{Kind: "role", Role: "owner", Required: true}
 	if !RequiresManualCompletion(node) {
 		t.Fatal("explicit manual mode must remain manual with completion conditions")
 	}
 
 	node.Completion.Mode = "automatic"
 	node.SubmissionSchema = nil
-	node.Verdict = nil
+	node.Reviewer = nil
 	node.IssueTemplates = nil
 	if RequiresManualCompletion(node) {
 		t.Fatal("explicit automatic mode must override the legacy manual heuristic")
 	}
 }
 
-func TestValidateDefinitionRequiresMemberOwnerForOwnerConfirmation(t *testing.T) {
+func TestValidateDefinitionRequiresMemberOwnerForOwnerReviewer(t *testing.T) {
 	definition := validDefinition()
 	definition.Nodes[1].OwnerRole = "executor"
-	definition.Nodes[1].Completion.Confirmation = "owner_any"
+	definition.Nodes[1].Reviewer = &ReviewerDefinition{Kind: "owner", Required: true}
 	if err := ValidateDefinition(definition); err == nil || !strings.Contains(err.Error(), "only to member") {
 		t.Fatalf("ValidateDefinition() error = %v, want member owner error", err)
 	}
 }
 
-func TestValidateDefinitionRequiresOwnerConfirmationRoleToBeMemberOnly(t *testing.T) {
+func TestValidateDefinitionRequiresOwnerReviewerRoleToBeMemberOnly(t *testing.T) {
 	definition := validDefinition()
 	definition.Roles[0].AllowedActorTypes = []string{"member", "agent"}
-	definition.Nodes[1].Completion.Confirmation = "owner_any"
+	definition.Nodes[1].Reviewer = &ReviewerDefinition{Kind: "owner", Required: true}
 	err := ValidateDefinition(definition)
 	if err == nil || !strings.Contains(err.Error(), "only to member") {
 		t.Fatalf("ValidateDefinition() error = %v, want member-only error", err)
@@ -529,10 +308,18 @@ func TestValidateDefinitionRequiresOwnerConfirmationRoleToBeMemberOnly(t *testin
 
 func TestValidateDefinitionRejectsDuplicateTaskKeyAcrossActivities(t *testing.T) {
 	definition := validDefinition()
-	definition.Nodes[2].IssuePolicy = "fixed"
-	definition.Nodes[2].IssueTemplates = []IssueTemplate{{
-		Key: "implement", Title: "Accept {{host.title}}", Required: true,
-	}}
+	definition.Nodes = append(definition.Nodes[:2], NodeDefinition{
+		Key: "review", Kind: "activity", Name: "Review", OwnerRole: "owner",
+		IssuePolicy: "fixed",
+		IssueTemplates: []IssueTemplate{{
+			Key: "implement", Title: "Review {{host.title}}", Required: true,
+		}},
+	}, definition.Nodes[2])
+	definition.Edges = []EdgeDefinition{
+		{From: "start", To: "implementation"},
+		{From: "implementation", To: "review"},
+		{From: "review", To: "end"},
+	}
 	err := ValidateDefinition(definition)
 	if err == nil || !strings.Contains(err.Error(), "already used") {
 		t.Fatalf("ValidateDefinition() error = %v, want duplicate task error", err)
@@ -557,10 +344,10 @@ func TestValidateDefinitionRejectsInvalidSubmissionPolicy(t *testing.T) {
 	}
 }
 
-func TestValidateDefinitionAcceptsStructuredDeterministicVerdict(t *testing.T) {
+func TestValidateDefinitionAcceptsStructuredAutoReviewer(t *testing.T) {
 	definition := validDefinition()
-	definition.Nodes[1].Verdict = &VerdictDefinition{
-		Evaluator: "deterministic", RequiredResult: "pass",
+	definition.Nodes[1].Reviewer = &ReviewerDefinition{
+		Kind: "auto",
 		Condition: json.RawMessage(
 			`{"source":"host_issue","key":"status","op":"eq","value":"done"}`,
 		),
@@ -572,33 +359,15 @@ func TestValidateDefinitionAcceptsStructuredDeterministicVerdict(t *testing.T) {
 
 func TestValidateDefinitionRejectsDownstreamConditionReference(t *testing.T) {
 	definition := validDefinition()
-	definition.Nodes[1].Verdict = &VerdictDefinition{
-		Evaluator: "deterministic",
+	definition.Nodes[1].Reviewer = &ReviewerDefinition{
+		Kind: "auto",
 		Condition: json.RawMessage(
-			`{"source":"node_choice","node":"acceptance","key":"choice","op":"eq","value":"end"}`,
+			`{"source":"node_choice","node":"end","key":"choice","op":"eq","value":"done"}`,
 		),
 	}
 	err := ValidateDefinition(definition)
 	if err == nil || !strings.Contains(err.Error(), "must be upstream") {
 		t.Fatalf("ValidateDefinition() error = %v, want upstream reference error", err)
-	}
-}
-
-func TestValidateDefinitionRejectsUnreachableAcceptanceReworkTarget(t *testing.T) {
-	definition := validDefinition()
-	definition.Nodes = append(
-		definition.Nodes,
-		NodeDefinition{Key: "post_acceptance", Kind: "activity", Name: "Post acceptance"},
-	)
-	definition.Edges[2] = EdgeDefinition{From: "acceptance", To: "post_acceptance"}
-	definition.Edges = append(
-		definition.Edges,
-		EdgeDefinition{From: "post_acceptance", To: "end"},
-	)
-	definition.Acceptance.ReworkTargets = []string{"post_acceptance"}
-	err := ValidateDefinition(definition)
-	if err == nil || !strings.Contains(err.Error(), "must reach acceptance") {
-		t.Fatalf("ValidateDefinition() error = %v, want rework reachability error", err)
 	}
 }
 
@@ -614,13 +383,6 @@ func TestValidateDefinitionRejectsInvalidIssueDefaults(t *testing.T) {
 				task.InitialStatus = "ready_to_ship"
 			},
 			want: "invalid initial_status",
-		},
-		{
-			name: "assignee",
-			mutate: func(task *IssueTemplate) {
-				task.AssigneeRole = "unknown"
-			},
-			want: "unknown assignee role",
 		},
 		{
 			name: "priority",
@@ -855,5 +617,158 @@ func TestChoiceBranchesForNode(t *testing.T) {
 	// decision is worse than none.
 	if _, found := ChoiceBranchesForNode(definition, "fix"); found {
 		t.Fatal("fix has no downstream gateway reading it, but reported a choice duty")
+	}
+}
+
+func TestValidateDefinitionAcceptsDirectActorExecutor(t *testing.T) {
+	definition := validDefinition()
+	definition.Nodes[1].Executor = ExecutorDefinition{
+		Kind:      "actor",
+		ActorType: "agent",
+		ActorID:   "550e8400-e29b-41d4-a716-446655440000",
+		Fallback:  &ExecutorDefinition{Kind: "manual"},
+	}
+	if err := ValidateDefinition(definition); err != nil {
+		t.Fatalf("ValidateDefinition() error = %v", err)
+	}
+}
+
+func TestValidateDefinitionRejectsInvalidExecutor(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Definition)
+		want   string
+	}{
+		{
+			name: "actor type",
+			mutate: func(definition *Definition) {
+				definition.Nodes[1].Executor = ExecutorDefinition{
+					Kind:      "actor",
+					ActorType: "robot",
+					ActorID:   "550e8400-e29b-41d4-a716-446655440000",
+				}
+			},
+			want: "invalid actor type",
+		},
+		{
+			name: "actor id",
+			mutate: func(definition *Definition) {
+				definition.Nodes[1].Executor = ExecutorDefinition{
+					Kind:      "actor",
+					ActorType: "agent",
+					ActorID:   "not-a-uuid",
+				}
+			},
+			want: "invalid actor id",
+		},
+		{
+			name: "unknown kind",
+			mutate: func(definition *Definition) {
+				definition.Nodes[1].Executor = ExecutorDefinition{Kind: "whoever"}
+			},
+			want: "invalid executor kind",
+		},
+		{
+			name: "unknown role",
+			mutate: func(definition *Definition) {
+				definition.Nodes[1].Executor = ExecutorDefinition{
+					Kind: "role", Role: "nobody",
+				}
+			},
+			want: "unknown role",
+		},
+		{
+			name: "fallback without executor",
+			mutate: func(definition *Definition) {
+				definition.Nodes[1].Executor = ExecutorDefinition{
+					Fallback: &ExecutorDefinition{Kind: "manual"},
+				}
+			},
+			want: "fallback requires an executor",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			definition := validDefinition()
+			test.mutate(&definition)
+			err := ValidateDefinition(definition)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateDefinition() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateDefinitionReviewer(t *testing.T) {
+	tests := []struct {
+		name     string
+		reviewer ReviewerDefinition
+		want     string
+	}{
+		{name: "role", reviewer: ReviewerDefinition{Kind: "role", Role: "owner"}},
+		{
+			name:     "api",
+			reviewer: ReviewerDefinition{Kind: "api", APIURL: "https://review.example.com/check"},
+		},
+		{
+			name:     "unknown role",
+			reviewer: ReviewerDefinition{Kind: "role", Role: "nobody"},
+			want:     "unknown role",
+		},
+		{
+			name:     "api without url",
+			reviewer: ReviewerDefinition{Kind: "api"},
+			want:     "api reviewer requires api_url",
+		},
+		{
+			name:     "api over http",
+			reviewer: ReviewerDefinition{Kind: "api", APIURL: "http://review.example.com"},
+			want:     "must use https",
+		},
+		{
+			name:     "url on a non-api reviewer",
+			reviewer: ReviewerDefinition{Kind: "role", Role: "owner", APIURL: "https://x.example.com"},
+			want:     "only an api reviewer",
+		},
+		{
+			name:     "auto without condition",
+			reviewer: ReviewerDefinition{Kind: "auto"},
+			want:     "auto reviewer requires a condition",
+		},
+		{
+			name:     "unknown kind",
+			reviewer: ReviewerDefinition{Kind: "vibes"},
+			want:     "invalid reviewer kind",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			definition := validDefinition()
+			reviewer := test.reviewer
+			definition.Nodes[1].Reviewer = &reviewer
+			err := ValidateDefinition(definition)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("ValidateDefinition() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateDefinition() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestAcceptanceReworkTargetsComeFromTheGraph(t *testing.T) {
+	// Every activity is a legitimate destination, and it is the graph that
+	// says so — nothing in the template lists them.
+	plan, err := BuildGraphPlan(validDefinition())
+	if err != nil {
+		t.Fatalf("BuildGraphPlan() error = %v", err)
+	}
+	targets := plan.AcceptanceReworkTargets()
+	if len(targets) != 1 || targets[0] != "implementation" {
+		t.Fatalf("AcceptanceReworkTargets() = %v, want [implementation]", targets)
 	}
 }

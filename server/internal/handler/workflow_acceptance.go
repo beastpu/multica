@@ -98,8 +98,9 @@ func (h *Handler) DecideWorkflowAcceptance(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusConflict, "workflow does not use member acceptance")
 		return
 	}
-	if req.Status != "approved" && !stringInSlice(req.ReworkTargetNodeKey, definition.Acceptance.ReworkTargets) {
-		writeError(w, http.StatusBadRequest, "rework target is not allowed by the published template")
+	if req.Status != "approved" &&
+		!stringInSlice(req.ReworkTargetNodeKey, plan.AcceptanceReworkTargets()) {
+		writeError(w, http.StatusBadRequest, "rework target must be an activity in this workflow")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -155,12 +156,6 @@ func (h *Handler) DecideWorkflowAcceptance(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to load workflow nodes")
 		return
 	}
-	acceptanceNode, err := latestNodeByKey(nodes, definition.Acceptance.NodeKey)
-	if err != nil || acceptanceNode.ID != pending.WorkflowNodeInstanceID ||
-		(acceptanceNode.Status != "active" && acceptanceNode.Status != "waiting") {
-		writeError(w, http.StatusConflict, "pending acceptance is not attached to the current acceptance activity")
-		return
-	}
 	revision, err := qtx.GetNextWorkflowAcceptanceRevision(r.Context(), db.GetNextWorkflowAcceptanceRevisionParams{
 		WorkflowInstanceID: locked.ID, WorkspaceID: locked.WorkspaceID,
 	})
@@ -174,7 +169,7 @@ func (h *Handler) DecideWorkflowAcceptance(w http.ResponseWriter, r *http.Reques
 	}
 	decision, err := qtx.CreateWorkflowAcceptance(r.Context(), db.CreateWorkflowAcceptanceParams{
 		WorkspaceID: locked.WorkspaceID, WorkflowInstanceID: locked.ID,
-		WorkflowNodeInstanceID: acceptanceNode.ID, Revision: revision, Status: req.Status,
+		Revision: revision, Status: req.Status,
 		DecidedByType: pgtype.Text{String: "member", Valid: true}, DecidedByID: userUUID,
 		Reason: strings.TrimSpace(req.Reason), ReworkTargetNodeKey: reworkTarget,
 		Evidence: evidence, IdempotencyKey: idempotencyKey,
@@ -193,10 +188,7 @@ func (h *Handler) DecideWorkflowAcceptance(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusBadRequest, "invalid rework target")
 			return
 		}
-		if err := plan.ValidateReworkTarget(targetDefinition.Key, acceptanceNode.NodeKey); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+
 		targetNode, err := latestNodeByKey(nodes, targetDefinition.Key)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "rework target node not found")
@@ -209,7 +201,7 @@ func (h *Handler) DecideWorkflowAcceptance(w http.ResponseWriter, r *http.Reques
 				continue
 			}
 			switch node.Status {
-			case "completed", "active", "waiting", "blocked", "skipped":
+			case "completed", "active", "in_review", "waiting", "blocked", "skipped":
 				if _, err := qtx.UpdateWorkflowNodeState(r.Context(), db.UpdateWorkflowNodeStateParams{
 					Status: "superseded", WaitingReasons: []byte("[]"), ID: node.ID,
 					WorkspaceID: locked.WorkspaceID, ExpectedStatus: node.Status,
@@ -289,7 +281,7 @@ func (h *Handler) DecideWorkflowAcceptance(w http.ResponseWriter, r *http.Reques
 	})
 	if _, err := qtx.CreateWorkflowEvent(r.Context(), db.CreateWorkflowEventParams{
 		WorkspaceID: locked.WorkspaceID, WorkflowInstanceID: locked.ID,
-		WorkflowNodeInstanceID: acceptanceNode.ID, EventType: eventType,
+		WorkflowNodeInstanceID: activatedNode.ID, EventType: eventType,
 		ActorType: "member", ActorID: userUUID, IdempotencyKey: idempotencyKey, Payload: payload,
 	}); err != nil {
 		writeError(w, http.StatusConflict, "acceptance decision has already been recorded")
@@ -334,13 +326,13 @@ func (h *Handler) DecideWorkflowAcceptance(w http.ResponseWriter, r *http.Reques
 		uuidToString(locked.WorkspaceID), "member", userID,
 		map[string]any{
 			"workflow_instance_id":      uuidToString(locked.ID),
-			"workflow_node_instance_id": uuidToString(acceptanceNode.ID),
+			"workflow_node_instance_id": uuidToString(activatedNode.ID),
 			"workflow_acceptance_id":    uuidToString(decision.ID),
 		},
 	)
 	h.publishWorkflowInstanceUpdated(
 		uuidToString(locked.WorkspaceID), "member", userID,
-		uuidToString(locked.ID), uuidToString(acceptanceNode.ID),
+		uuidToString(locked.ID), uuidToString(activatedNode.ID),
 	)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"acceptance": workflowAcceptanceToResponse(decision),

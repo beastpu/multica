@@ -22,174 +22,136 @@ type workflowExecutorDecision struct {
 	Snapshot   []byte
 }
 
-// workflowConditionEvaluator lazily evaluates an executor strategy condition
-// against the running instance. It is only invoked for strategies that
-// actually declare a condition, so the common unconditional path performs no
-// extra queries.
-type workflowConditionEvaluator func(condition json.RawMessage) (bool, error)
-
-func newWorkflowConditionEvaluator(
+// resolveWorkflowNodeExecutor answers "who does this node" from the node's one
+// executor field, falling back once if it names nobody available. The issue
+// template no longer carries an assignee, so there is a single place to look
+// and the answer no longer depends on which of three fields the author filled
+// in last.
+func resolveWorkflowNodeExecutor(
 	ctx context.Context,
 	q *db.Queries,
 	workspaceID pgtype.UUID,
-	instance db.WorkflowInstance,
-) workflowConditionEvaluator {
-	var resolver workflowdomain.ConditionResolver
-	return func(condition json.RawMessage) (bool, error) {
-		if resolver == nil {
-			nodeRows, err := q.ListWorkflowNodeInstances(ctx, db.ListWorkflowNodeInstancesParams{
-				WorkflowInstanceID: instance.ID, WorkspaceID: workspaceID,
-			})
-			if err != nil {
-				return false, fmt.Errorf("list workflow nodes for executor condition: %w", err)
-			}
-			resolver, err = workflowConditionResolver(
-				ctx, q, workspaceID, instance, latestWorkflowNodesByKey(nodeRows),
-			)
-			if err != nil {
-				return false, err
-			}
+	node workflowdomain.NodeDefinition,
+	roles map[string]validatedWorkflowRoleAssignment,
+) (workflowExecutorDecision, error) {
+	if !workflowdomain.HasExecutor(node.Executor) {
+		return workflowExecutorManualDecision(
+			"The node names no executor; manual selection is required",
+		), nil
+	}
+	decision, resolved, err := resolveWorkflowExecutorEntry(
+		ctx, q, workspaceID, node.Executor, roles, false,
+	)
+	if err != nil {
+		return workflowExecutorDecision{}, err
+	}
+	if resolved {
+		return decision, nil
+	}
+	fallback := node.Executor.Fallback
+	if fallback == nil {
+		return decision, nil
+	}
+	fallbackDecision, resolved, err := resolveWorkflowExecutorEntry(
+		ctx, q, workspaceID, *fallback, roles, true,
+	)
+	if err != nil {
+		return workflowExecutorDecision{}, err
+	}
+	if resolved {
+		return fallbackDecision, nil
+	}
+	return fallbackDecision, nil
+}
+
+// resolveWorkflowExecutorEntry resolves one executor entry. The bool reports
+// whether it produced an actor, which is what tells the caller to stop rather
+// than reach for the fallback.
+func resolveWorkflowExecutorEntry(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	executor workflowdomain.ExecutorDefinition,
+	roles map[string]validatedWorkflowRoleAssignment,
+	isFallback bool,
+) (workflowExecutorDecision, bool, error) {
+	origin := "node executor"
+	if isFallback {
+		origin = "node executor fallback"
+	}
+	switch executor.Kind {
+	case "actor":
+		assignment, err := directWorkflowExecutorAssignment(executor.ActorType, executor.ActorID)
+		if err != nil {
+			return workflowExecutorDecision{}, false, err
 		}
-		return workflowdomain.EvaluateCondition(condition, resolver)
+		snapshot := workflowDirectActorSnapshot(
+			executor.Kind, executor.ActorType, executor.ActorID,
+		)
+		if err := validateWorkflowExecutorActor(ctx, q, workspaceID, assignment); err != nil {
+			return workflowExecutorDecision{
+				Strategy:   "manual",
+				Candidates: workflowExecutorCandidates(assignment),
+				Reason:     "The " + origin + " actor is unavailable",
+				Snapshot:   snapshot,
+			}, false, nil
+		}
+		return workflowExecutorDecision{
+			Assignment: &assignment,
+			Strategy:   "fixed_actor",
+			Candidates: workflowExecutorCandidates(assignment),
+			Reason:     "Resolved from the " + origin,
+			Snapshot:   snapshot,
+		}, true, nil
+	case "role":
+		strategy := "fixed_role"
+		if isFallback {
+			strategy = "fallback_role"
+		}
+		assignment, ok := roles[executor.Role]
+		if !ok {
+			return workflowExecutorDecision{
+				Strategy: "manual", Candidates: []byte("[]"),
+				Reason:   "Workflow role " + executor.Role + " is unassigned",
+				Snapshot: workflowExecutorSnapshot(strategy, executor.Role, "", "", ""),
+			}, false, nil
+		}
+		return workflowExecutorDecision{
+			Assignment: &assignment, Strategy: strategy,
+			Candidates: workflowExecutorCandidates(assignment),
+			Reason:     "Resolved from workflow role " + executor.Role,
+			Snapshot:   workflowExecutorSnapshot(strategy, executor.Role, "", "", ""),
+		}, true, nil
+	case "capability":
+		assignment, candidates, reason, err := resolveCapabilityExecutor(
+			ctx, q, workspaceID, roles[executor.Role], executor.Capability,
+		)
+		if err != nil {
+			return workflowExecutorDecision{}, false, err
+		}
+		snapshot := workflowExecutorSnapshot(
+			"capability_match", executor.Role, executor.Capability, "", "",
+		)
+		if assignment == nil {
+			return workflowExecutorDecision{
+				Strategy: "manual", Candidates: candidates,
+				Reason: reason, Snapshot: snapshot,
+			}, false, nil
+		}
+		return workflowExecutorDecision{
+			Assignment: assignment, Strategy: "capability_match",
+			Candidates: candidates, Reason: reason, Snapshot: snapshot,
+		}, true, nil
+	default:
+		return workflowExecutorManualDecision("Manual executor selection is required"), false, nil
 	}
 }
 
-func resolveWorkflowTaskExecutor(
-	ctx context.Context,
-	q *db.Queries,
-	workspaceID pgtype.UUID,
-	instance db.WorkflowInstance,
-	node workflowdomain.NodeDefinition,
-	task workflowdomain.IssueTemplate,
-	roles map[string]validatedWorkflowRoleAssignment,
-	conditions workflowConditionEvaluator,
-) (workflowExecutorDecision, error) {
-	if task.AssigneeType != "" && task.AssigneeID != "" {
-		assignment, err := directWorkflowExecutorAssignment(
-			task.AssigneeType,
-			task.AssigneeID,
-		)
-		if err != nil {
-			return workflowExecutorDecision{}, err
-		}
-		if err := validateWorkflowExecutorActor(
-			ctx,
-			q,
-			workspaceID,
-			assignment,
-		); err == nil {
-			return workflowExecutorDecision{
-				Assignment: &assignment,
-				Strategy:   "fixed_actor",
-				Candidates: workflowExecutorCandidates(assignment),
-				Reason:     "Resolved from the issue template direct assignee",
-				Snapshot: workflowDirectActorSnapshot(
-					"fixed_actor",
-					task.AssigneeType,
-					task.AssigneeID,
-				),
-			}, nil
-		}
-		return workflowExecutorDecision{
-			Strategy:   "manual",
-			Candidates: workflowExecutorCandidates(assignment),
-			Reason:     "The issue template direct assignee is unavailable",
-			Snapshot: workflowDirectActorSnapshot(
-				"fixed_actor",
-				task.AssigneeType,
-				task.AssigneeID,
-			),
-		}, nil
-	}
-	if task.AssigneeRole != "" {
-		if assignment, ok := roles[task.AssigneeRole]; ok {
-			return workflowExecutorDecision{
-				Assignment: &assignment, Strategy: "fixed_role",
-				Candidates: workflowExecutorCandidates(assignment),
-				Reason:     "Resolved from the issue template assignee role",
-				Snapshot:   workflowExecutorSnapshot("fixed_role", task.AssigneeRole, "", "", ""),
-			}, nil
-		}
-	}
-	for _, strategy := range node.Executor.Strategies {
-		if workflowdomain.HasCondition(strategy.Condition) {
-			matched, err := conditions(strategy.Condition)
-			if err != nil {
-				return workflowExecutorDecision{}, err
-			}
-			// Unknown or missing data fails closed, matching gateway
-			// semantics: the strategy is skipped, never guessed.
-			if !matched {
-				continue
-			}
-		}
-		switch strategy.Kind {
-		case "fixed_actor":
-			assignment, err := directWorkflowExecutorAssignment(
-				strategy.ActorType,
-				strategy.ActorID,
-			)
-			if err != nil {
-				return workflowExecutorDecision{}, err
-			}
-			if err := validateWorkflowExecutorActor(
-				ctx,
-				q,
-				workspaceID,
-				assignment,
-			); err == nil {
-				return workflowExecutorDecision{
-					Assignment: &assignment,
-					Strategy:   strategy.Kind,
-					Candidates: workflowExecutorCandidates(assignment),
-					Reason:     "Resolved from the node direct executor",
-					Snapshot: workflowDirectActorSnapshot(
-						strategy.Kind,
-						strategy.ActorType,
-						strategy.ActorID,
-					),
-				}, nil
-			}
-		case "fixed_role", "fallback_role":
-			if assignment, ok := roles[strategy.Role]; ok {
-				return workflowExecutorDecision{
-					Assignment: &assignment, Strategy: strategy.Kind,
-					Candidates: workflowExecutorCandidates(assignment),
-					Reason:     "Resolved from workflow role " + strategy.Role,
-					Snapshot: workflowExecutorSnapshot(
-						strategy.Kind, strategy.Role, "", "", "",
-					),
-				}, nil
-			}
-		case "capability_match":
-			assignment, candidates, reason, err := resolveCapabilityExecutor(
-				ctx, q, workspaceID, roles[strategy.Role], strategy.Capability,
-			)
-			if err != nil {
-				return workflowExecutorDecision{}, err
-			}
-			if assignment != nil {
-				return workflowExecutorDecision{
-					Assignment: assignment, Strategy: strategy.Kind,
-					Candidates: candidates, Reason: reason,
-					Snapshot: workflowExecutorSnapshot(
-						strategy.Kind, strategy.Role, strategy.Capability, "", "",
-					),
-				}, nil
-			}
-		case "manual":
-			return workflowExecutorDecision{
-				Strategy: "manual", Candidates: []byte("[]"),
-				Reason:   "Manual executor selection is required",
-				Snapshot: workflowExecutorSnapshot("manual", "", "", "", ""),
-			}, nil
-		}
-	}
+func workflowExecutorManualDecision(reason string) workflowExecutorDecision {
 	return workflowExecutorDecision{
-		Strategy: "manual", Candidates: []byte("[]"),
-		Reason:   "No executor strategy resolved; manual selection is required",
+		Strategy: "manual", Candidates: []byte("[]"), Reason: reason,
 		Snapshot: workflowExecutorSnapshot("manual", "", "", "", ""),
-	}, nil
+	}
 }
 
 func directWorkflowExecutorAssignment(

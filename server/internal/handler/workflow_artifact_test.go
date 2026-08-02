@@ -39,11 +39,12 @@ func startArtifactWorkflow(t *testing.T, key string) (string, string) {
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{
-				Key: "design", Kind: "activity", ActivityMode: "work", Name: "Design",
+				Key: "design", Kind: "activity", Name: "Design",
 				OwnerRole: "owner", IssuePolicy: "none",
-				Executor: workflowdomain.ExecutorDefinition{Strategies: []workflowdomain.ExecutorStrategy{
-					{Kind: "fixed_role", Role: "owner"}, {Kind: "manual"},
-				}},
+				Executor: workflowdomain.ExecutorDefinition{
+					Kind: "role", Role: "owner",
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+				},
 				Artifacts: []workflowdomain.ArtifactRequirement{{
 					Key: "design_doc", Name: "Technical design", Required: true,
 				}},
@@ -334,11 +335,12 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 
 	activity := func(nodeKey, name string, handoff bool) workflowdomain.NodeDefinition {
 		return workflowdomain.NodeDefinition{
-			Key: nodeKey, Kind: "activity", ActivityMode: "work", Name: name,
+			Key: nodeKey, Kind: "activity", Name: name,
 			OwnerRole: "owner", IssuePolicy: "none",
-			Executor: workflowdomain.ExecutorDefinition{Strategies: []workflowdomain.ExecutorStrategy{
-				{Kind: "fixed_role", Role: "owner"}, {Kind: "manual"},
-			}},
+			Executor: workflowdomain.ExecutorDefinition{
+				Kind: "role", Role: "owner",
+				Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+			},
 			Completion: workflowdomain.CompletionDefinition{
 				Mode: "manual", RequiredIssueOutcome: "none", HandoffRequired: handoff,
 			},
@@ -774,15 +776,14 @@ func TestDynamicNodeWaitsToBeDecomposed(t *testing.T) {
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{
-				Key: "work", Kind: "activity", ActivityMode: "work",
+				Key: "work", Kind: "activity",
 				Name: "Work", OwnerRole: "owner",
 				// Runtime decomposition with an automatic completion mode —
 				// exactly what the editor produced before this was retired.
 				IssuePolicy: "dynamic",
 				Executor: workflowdomain.ExecutorDefinition{
-					Strategies: []workflowdomain.ExecutorStrategy{
-						{Kind: "fixed_role", Role: "owner"}, {Kind: "manual"},
-					},
+					Kind: "role", Role: "owner",
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
 				Completion: workflowdomain.CompletionDefinition{Mode: "automatic"},
 			},

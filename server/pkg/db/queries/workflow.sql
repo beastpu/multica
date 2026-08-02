@@ -1568,34 +1568,6 @@ UPDATE workflow_node_instance
 SET latest_verdict_id = @latest_verdict_id, updated_at = now()
 WHERE id = @id AND workspace_id = @workspace_id;
 
--- name: ListWorkflowNodeConfirmations :many
-SELECT * FROM workflow_node_confirmation
-WHERE workflow_node_instance_id = @workflow_node_instance_id
-  AND workspace_id = @workspace_id
-ORDER BY decided_at, id;
-
--- name: GetWorkflowNodeConfirmationForMember :one
-SELECT * FROM workflow_node_confirmation
-WHERE workflow_node_instance_id = @workflow_node_instance_id
-  AND workspace_id = @workspace_id
-  AND member_id = @member_id;
-
--- name: UpsertWorkflowNodeConfirmation :one
-INSERT INTO workflow_node_confirmation (
-    workspace_id, workflow_node_instance_id, member_id,
-    decision, comment, decided_at
-) VALUES (
-    @workspace_id, @workflow_node_instance_id, @member_id,
-    @decision, @comment, now()
-)
-ON CONFLICT (workflow_node_instance_id, member_id)
-DO UPDATE SET
-    decision = EXCLUDED.decision,
-    comment = EXCLUDED.comment,
-    decided_at = EXCLUDED.decided_at,
-    updated_at = now()
-RETURNING *;
-
 -- name: CreateWorkflowAcceptance :one
 INSERT INTO workflow_acceptance (
     workspace_id, workflow_instance_id, workflow_node_instance_id, revision,
@@ -1742,19 +1714,6 @@ WHERE acceptance.workspace_id = @workspace_id
   AND acceptance.workflow_instance_id IN (
     SELECT id FROM workflow_instance
     WHERE workspace_id = @workspace_id AND host_issue_id = @host_issue_id
-  );
-
--- name: DeleteWorkflowConfirmationsByHost :exec
-DELETE FROM workflow_node_confirmation confirmation
-WHERE confirmation.workspace_id = @workspace_id
-  AND confirmation.workflow_node_instance_id IN (
-    SELECT node.id
-    FROM workflow_node_instance node
-    JOIN workflow_instance instance
-      ON instance.id = node.workflow_instance_id
-     AND instance.workspace_id = node.workspace_id
-    WHERE node.workspace_id = @workspace_id
-      AND instance.host_issue_id = @host_issue_id
   );
 
 -- name: DeleteWorkflowVerdictsByHost :exec

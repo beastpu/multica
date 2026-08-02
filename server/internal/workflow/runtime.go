@@ -109,11 +109,6 @@ func (p SerialPlan) Node(nodeKey string) (NodeDefinition, bool) {
 	return p.Ordered[index], true
 }
 
-func IsAcceptanceActivity(definition Definition, node NodeDefinition) bool {
-	return node.Kind == "activity" &&
-		(node.ActivityMode == "acceptance" || definition.Acceptance.NodeKey == node.Key)
-}
-
 func submissionValueMatches(fieldType string, value any) bool {
 	switch fieldType {
 	case "text", "member", "agent", "squad":

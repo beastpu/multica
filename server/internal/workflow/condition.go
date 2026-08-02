@@ -67,7 +67,7 @@ func ValidateCondition(raw json.RawMessage, nodes map[string]NodeDefinition) err
 			}
 		case "node_verdict":
 			node, ok := nodes[expression.Node]
-			if !ok || node.Kind != "activity" || node.Verdict == nil {
+			if !ok || node.Kind != "activity" || node.Reviewer == nil {
 				return fmt.Errorf("node_verdict references unknown verdict node %q", expression.Node)
 			}
 			switch expression.Key {

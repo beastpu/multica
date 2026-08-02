@@ -183,10 +183,8 @@ func (h *Handler) CreateWorkflowNodeIssue(w http.ResponseWriter, r *http.Request
 			),
 		}
 	} else {
-		decision, err = resolveWorkflowTaskExecutor(
-			r.Context(), qtx, locked.WorkspaceID, locked,
-			nodeDefinition, taskDefinition, roleMap,
-			newWorkflowConditionEvaluator(r.Context(), qtx, locked.WorkspaceID, locked),
+		decision, err = resolveWorkflowNodeExecutor(
+			r.Context(), qtx, locked.WorkspaceID, nodeDefinition, roleMap,
 		)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to resolve workflow executor")
@@ -974,7 +972,7 @@ func (h *Handler) transitionWorkflowNode(
 				continue
 			}
 			switch candidate.Status {
-			case "active", "waiting", "blocked", "completed", "skipped":
+			case "active", "in_review", "waiting", "blocked", "completed", "skipped":
 				if _, updateErr := qtx.UpdateWorkflowNodeState(
 					r.Context(),
 					db.UpdateWorkflowNodeStateParams{

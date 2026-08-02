@@ -42,29 +42,30 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{
-				Key: "work", Kind: "activity", ActivityMode: "work", Name: "Implementation", OwnerRole: "owner",
+				Key: "work", Kind: "activity", Name: "Implementation", OwnerRole: "owner",
 				IssuePolicy: "fixed_and_dynamic", TimeoutMinutes: 1,
-				Executor: workflowdomain.ExecutorDefinition{Strategies: []workflowdomain.ExecutorStrategy{
-					{Kind: "fixed_role", Role: "owner"}, {Kind: "manual"},
-				}},
+				Executor: workflowdomain.ExecutorDefinition{
+					Kind: "role", Role: "owner",
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+				},
 				IssueTemplates: []workflowdomain.IssueTemplate{{
-					Key: "implementation", Title: "Implement {{host.title}}", AssigneeRole: "owner", Required: true,
+					Key: "implementation", Title: "Implement {{host.title}}", Required: true,
 				}},
 				SubmissionSchema: &workflowdomain.SubmissionSchema{},
-				Verdict:          &workflowdomain.VerdictDefinition{Evaluator: "member", RequiredResult: "pass"},
+				Reviewer: &workflowdomain.ReviewerDefinition{
+					Kind: "owner", Required: true,
+				},
 				Completion: workflowdomain.CompletionDefinition{
 					RequiredIssueOutcome: "done", SubmissionRequired: true,
-					VerdictRequired: "pass", Confirmation: "owner_any",
 				},
 			},
-			{Key: "acceptance", Kind: "activity", ActivityMode: "acceptance", Name: "Acceptance", OwnerRole: "owner"},
 			{Key: "end", Kind: "end", Name: "End"},
 		},
 		Edges: []workflowdomain.EdgeDefinition{
-			{From: "start", To: "work"}, {From: "work", To: "acceptance"}, {From: "acceptance", To: "end"},
+			{From: "start", To: "work"}, {From: "work", To: "end"},
 		},
 		Acceptance: workflowdomain.AcceptanceDefinition{
-			Policy: "member", ApproverRole: "owner", NodeKey: "acceptance", ReworkTargets: []string{"work"},
+			Policy: "member", ApproverRole: "owner",
 		},
 	}
 	if err := workflowdomain.ValidateDefinition(definition); err != nil {
@@ -537,23 +538,16 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 		t.Fatalf("workflow issue completion created %d legacy parent comments, want 0", hostCommentCount)
 	}
 	postSubmission(t, firstWorkNode.ID, "runtime-test-submission-1", "first result")
+	// The executor has delivered and the node is now stopped on its reviewer,
+	// which is what in_review means.
 	nodeBeforeVerdict := latestWorkflowNodeForTest(t, instanceID, "work")
-	if nodeBeforeVerdict.Status != "waiting" ||
-		!jsonContainsWaitingReason(nodeBeforeVerdict.WaitingReasons, "member_verdict_required") {
+	if nodeBeforeVerdict.Status != "in_review" ||
+		!jsonContainsWaitingReason(nodeBeforeVerdict.WaitingReasons, "review_required") {
 		t.Fatalf("work node before verdict = %#v", nodeBeforeVerdict)
 	}
 	postWorkflowVerdict(t, firstWorkNode.ID, "runtime-test-verdict-1")
-	nodeBeforeConfirmation := latestWorkflowNodeForTest(t, instanceID, "work")
-	if nodeBeforeConfirmation.Status != "waiting" ||
-		!jsonContainsWaitingReason(nodeBeforeConfirmation.WaitingReasons, "confirmation_required") {
-		t.Fatalf("work node before confirmation = %#v", nodeBeforeConfirmation)
-	}
-	confirmWorkflowNode(t, firstWorkNode.ID, "runtime-test-confirm-1")
 
-	acceptanceNode := latestWorkflowNodeForTest(t, instanceID, "acceptance")
-	if acceptanceNode.Attempt != 1 || acceptanceNode.Status != "waiting" {
-		t.Fatalf("first acceptance node = %#v", acceptanceNode)
-	}
+	assertPendingWorkflowAcceptance(t, instanceID, 1)
 	var firstAttemptIssueID string
 	if err := testPool.QueryRow(ctx, `
 		SELECT issue_id::text FROM workflow_node_task
@@ -627,12 +621,8 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 	}
 	postSubmission(t, uuidToString(secondWorkNode.ID), "runtime-test-submission-2", "reworked result")
 	postWorkflowVerdict(t, uuidToString(secondWorkNode.ID), "runtime-test-verdict-2")
-	confirmWorkflowNode(t, uuidToString(secondWorkNode.ID), "runtime-test-confirm-2")
 
-	secondAcceptanceNode := latestWorkflowNodeForTest(t, instanceID, "acceptance")
-	if secondAcceptanceNode.Attempt != 2 || secondAcceptanceNode.Status != "waiting" {
-		t.Fatalf("second acceptance node = %#v", secondAcceptanceNode)
-	}
+	assertPendingWorkflowAcceptance(t, instanceID, 2)
 	decideAcceptance(t, instanceID, map[string]any{
 		"status": "changes_requested", "reason": "Needs another pass",
 		"rework_target_node_key": "work", "idempotency_key": "runtime-test-rework",
@@ -644,10 +634,7 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 	}
 	transitionWorkflowNode(t, uuidToString(thirdWorkNode.ID), "skip", "runtime-test-skip")
 
-	thirdAcceptanceNode := latestWorkflowNodeForTest(t, instanceID, "acceptance")
-	if thirdAcceptanceNode.Attempt != 3 || thirdAcceptanceNode.Status != "waiting" {
-		t.Fatalf("third acceptance node = %#v", thirdAcceptanceNode)
-	}
+	assertPendingWorkflowAcceptance(t, instanceID, 3)
 	decideAcceptance(t, instanceID, map[string]any{
 		"status": "approved", "reason": "Accepted", "idempotency_key": "runtime-test-approved",
 	})
@@ -682,20 +669,19 @@ func TestCreateWorkflowAtomicAndIdempotent(t *testing.T) {
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{
-				Key: "work", Kind: "activity", ActivityMode: "work",
+				Key: "work", Kind: "activity",
 				Name: "Work", OwnerRole: "owner",
 				Executor: workflowdomain.ExecutorDefinition{
-					Strategies: []workflowdomain.ExecutorStrategy{
-						{Kind: "fixed_role", Role: "owner"}, {Kind: "manual"},
-					},
+					Kind: "role", Role: "owner",
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
 				IssueTemplates: []workflowdomain.IssueTemplate{{
 					Key: "work_item", Title: "Do {{host.title}}",
-					AssigneeRole: "owner", Required: true,
+					Required: true,
 				}},
 			},
 			{
-				Key: "acceptance", Kind: "activity", ActivityMode: "acceptance",
+				Key: "acceptance", Kind: "activity",
 				Name: "Acceptance", OwnerRole: "owner",
 			},
 			{Key: "end", Kind: "end", Name: "End"},
@@ -707,7 +693,6 @@ func TestCreateWorkflowAtomicAndIdempotent(t *testing.T) {
 		},
 		Acceptance: workflowdomain.AcceptanceDefinition{
 			Policy: "member", ApproverRole: "owner",
-			NodeKey: "acceptance", ReworkTargets: []string{"work"},
 		},
 	}
 	definitionJSON, _ := json.Marshal(definition)
@@ -805,7 +790,7 @@ func TestWorkflowConcurrentStartCreatesOneActiveInstance(t *testing.T) {
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{
-				Key: "work", Kind: "activity", ActivityMode: "work",
+				Key: "work", Kind: "activity",
 				Name: "Work", OwnerRole: "owner", IssuePolicy: "none",
 			},
 			{Key: "end", Kind: "end", Name: "End"},
@@ -1261,12 +1246,13 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 	`, testWorkspaceID, testUserID, nextWorkspaceIssueNumber(t)).Scan(&hostID); err != nil {
 		t.Fatalf("create DAG host issue: %v", err)
 	}
-	ownerExecutor := workflowdomain.ExecutorDefinition{Strategies: []workflowdomain.ExecutorStrategy{
-		{Kind: "fixed_role", Role: "owner"}, {Kind: "manual"},
-	}}
+	ownerExecutor := workflowdomain.ExecutorDefinition{
+		Kind: "role", Role: "owner",
+		Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+	}
 	requiredIssue := func(key, title string) []workflowdomain.IssueTemplate {
 		return []workflowdomain.IssueTemplate{{
-			Key: key, Title: title, AssigneeRole: "owner", Required: true,
+			Key: key, Title: title, Required: true,
 		}}
 	}
 	definition := workflowdomain.Definition{
@@ -1478,12 +1464,13 @@ func TestWorkflowDAGAnyJoinDoesNotCancelOtherBranch(t *testing.T) {
 		return workflowdomain.NodeDefinition{
 			Key: key, Kind: "activity", Name: title, OwnerRole: "owner",
 			IssuePolicy: "fixed",
-			Executor: workflowdomain.ExecutorDefinition{Strategies: []workflowdomain.ExecutorStrategy{
-				{Kind: "fixed_role", Role: "owner"}, {Kind: "manual"},
-			}},
+			Executor: workflowdomain.ExecutorDefinition{
+				Kind: "role", Role: "owner",
+				Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+			},
 			IssueTemplates: []workflowdomain.IssueTemplate{{
 				Key: key + "_issue", Title: title + " {{host.title}}",
-				AssigneeRole: "owner", Required: true,
+				Required: true,
 			}},
 			Completion: workflowdomain.CompletionDefinition{RequiredIssueOutcome: "done"},
 		}
@@ -1590,9 +1577,7 @@ func TestWorkflowManualExecutorPausesAndResumesSetup(t *testing.T) {
 			{
 				Key: "work", Kind: "activity", Name: "Manual work",
 				OwnerRole: "owner", IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{Strategies: []workflowdomain.ExecutorStrategy{
-					{Kind: "manual"},
-				}},
+				Executor: workflowdomain.ExecutorDefinition{Kind: "manual"},
 				IssueTemplates: []workflowdomain.IssueTemplate{{
 					Key: "manual_task", Title: "Manually assigned {{host.title}}",
 					Required: true,
@@ -1743,13 +1728,11 @@ func TestWorkflowCapabilityMatchUsesStructuredEnabledSkill(t *testing.T) {
 			{
 				Key: "work", Kind: "activity", Name: "Capability work",
 				IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{Strategies: []workflowdomain.ExecutorStrategy{
-					{
-						Kind: "capability_match", Role: "delivery_pool",
-						Capability: "release-engineering",
-					},
-					{Kind: "manual"},
-				}},
+				Executor: workflowdomain.ExecutorDefinition{
+					Kind: "capability", Role: "delivery_pool",
+					Capability: "release-engineering",
+					Fallback:   &workflowdomain.ExecutorDefinition{Kind: "manual"},
+				},
 				IssueTemplates: []workflowdomain.IssueTemplate{{
 					Key: "capability_task", Title: "Capability {{host.title}}", Required: true,
 				}},
@@ -1826,13 +1809,8 @@ func TestWorkflowDirectExecutorDefaultsAndIssueOverrides(t *testing.T) {
 				Key: "work", Kind: "activity", Name: "Backend development",
 				IssuePolicy: "fixed",
 				Executor: workflowdomain.ExecutorDefinition{
-					Strategies: []workflowdomain.ExecutorStrategy{
-						{
-							Kind: "fixed_actor", ActorType: "agent",
-							ActorID: defaultAgentID,
-						},
-						{Kind: "manual"},
-					},
+					Kind: "actor", ActorType: "agent", ActorID: defaultAgentID,
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
 				IssueTemplates: []workflowdomain.IssueTemplate{
 					{
@@ -1841,7 +1819,6 @@ func TestWorkflowDirectExecutorDefaultsAndIssueOverrides(t *testing.T) {
 					},
 					{
 						Key: "verification", Title: "Verify {{host.title}}",
-						AssigneeType: "agent", AssigneeID: overrideAgentID,
 						Required: true,
 					},
 				},
@@ -1949,14 +1926,12 @@ func TestWorkflowSquadExecutorMaterializationWakesLeader(t *testing.T) {
 				Key: "work", Kind: "activity", Name: "Work",
 				OwnerRole: "owner", IssuePolicy: "fixed",
 				Executor: workflowdomain.ExecutorDefinition{
-					Strategies: []workflowdomain.ExecutorStrategy{
-						{Kind: "fixed_role", Role: "owner"},
-						{Kind: "manual"},
-					},
+					Kind: "role", Role: "owner",
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
 				IssueTemplates: []workflowdomain.IssueTemplate{{
 					Key: "squad_work", Title: "Squad work for {{host.title}}",
-					AssigneeRole: "owner", Required: true,
+					Required: true,
 				}},
 				Completion: workflowdomain.CompletionDefinition{
 					RequiredIssueOutcome: "done",
@@ -2042,20 +2017,20 @@ func TestWorkflowAgentSubmissionAndVerdictRemainControlledSuggestion(t *testing.
 			{
 				Key: "work", Kind: "activity", Name: "Agent work",
 				OwnerRole: "worker", IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{Strategies: []workflowdomain.ExecutorStrategy{
-					{Kind: "fixed_role", Role: "worker"}, {Kind: "manual"},
-				}},
+				Executor: workflowdomain.ExecutorDefinition{
+					Kind: "role", Role: "worker",
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+				},
 				IssueTemplates: []workflowdomain.IssueTemplate{{
 					Key: "agent_task", Title: "Agent {{host.title}}",
-					AssigneeRole: "worker", Required: true,
+					Required: true,
 				}},
 				SubmissionSchema: &workflowdomain.SubmissionSchema{},
-				Verdict: &workflowdomain.VerdictDefinition{
-					Evaluator: "member", RequiredResult: "pass",
+				Reviewer: &workflowdomain.ReviewerDefinition{
+					Kind: "role", Role: "owner", Required: true,
 				},
 				Completion: workflowdomain.CompletionDefinition{
 					RequiredIssueOutcome: "done", SubmissionRequired: true,
-					VerdictRequired: "pass",
 				},
 			},
 			{Key: "end", Kind: "end", Name: "End"},
@@ -2187,14 +2162,12 @@ func TestWorkflowManualActivityWaitsForExplicitMemberCompletion(t *testing.T) {
 				Key: "manual", Kind: "activity", Name: "Manual review",
 				OwnerRole: "owner", IssuePolicy: "fixed",
 				Executor: workflowdomain.ExecutorDefinition{
-					Strategies: []workflowdomain.ExecutorStrategy{
-						{Kind: "fixed_role", Role: "owner"},
-						{Kind: "manual"},
-					},
+					Kind: "role", Role: "owner",
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
 				IssueTemplates: []workflowdomain.IssueTemplate{{
 					Key: "review", Title: "Review {{host.title}}", Required: true,
-					InitialStatus: "todo", AssigneeRole: "owner",
+					InitialStatus: "todo",
 				}},
 				Completion: workflowdomain.CompletionDefinition{
 					Mode: "manual", RequiredIssueOutcome: "done",
@@ -2339,14 +2312,14 @@ func TestWorkflowDeterministicVerdictReevaluatesStructuredCondition(t *testing.T
 				Key: "decision", Kind: "activity", Name: "Decision",
 				OwnerRole: "owner", IssuePolicy: "none",
 				SubmissionSchema: &workflowdomain.SubmissionSchema{Policy: "single"},
-				Verdict: &workflowdomain.VerdictDefinition{
-					Evaluator: "deterministic", RequiredResult: "pass",
+				Reviewer: &workflowdomain.ReviewerDefinition{
+					Kind: "auto", Required: true,
 					Condition: json.RawMessage(
 						`{"source":"node_choice","node":"decision","key":"choice","op":"eq","value":"end"}`,
 					),
 				},
 				Completion: workflowdomain.CompletionDefinition{
-					SubmissionRequired: true, VerdictRequired: "pass",
+					SubmissionRequired: true,
 				},
 			},
 			{Key: "end", Kind: "end", Name: "End"},
@@ -2440,14 +2413,12 @@ func TestWorkflowRequiredIssueCancellationPolicy(t *testing.T) {
 						Key: "work", Kind: "activity", Name: "Work",
 						OwnerRole: "owner", IssuePolicy: "fixed",
 						Executor: workflowdomain.ExecutorDefinition{
-							Strategies: []workflowdomain.ExecutorStrategy{
-								{Kind: "fixed_role", Role: "owner"},
-								{Kind: "manual"},
-							},
+							Kind: "role", Role: "owner",
+							Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 						},
 						IssueTemplates: []workflowdomain.IssueTemplate{{
 							Key: "required_work", Title: "Work on {{host.title}}",
-							AssigneeRole: "owner", Required: true,
+							Required: true,
 						}},
 						Completion: workflowdomain.CompletionDefinition{
 							RequiredIssueOutcome: test.policy,
@@ -2555,12 +2526,11 @@ func TestWorkflowBlockedVerdictBlocksNodeUntilPassingRevision(t *testing.T) {
 				Key: "review", Kind: "activity", Name: "Review",
 				OwnerRole: "owner", IssuePolicy: "none",
 				SubmissionSchema: &workflowdomain.SubmissionSchema{Policy: "single"},
-				Verdict: &workflowdomain.VerdictDefinition{
-					Evaluator: "member", RequiredResult: "pass",
+				Reviewer: &workflowdomain.ReviewerDefinition{
+					Kind: "role", Role: "owner", Required: true,
 				},
 				Completion: workflowdomain.CompletionDefinition{
 					SubmissionRequired: true,
-					VerdictRequired:    "pass",
 				},
 			},
 			{Key: "end", Kind: "end", Name: "End"},
@@ -2915,21 +2885,19 @@ func TestWorkflowConcurrentReconcilersCommitOneTransition(t *testing.T) {
 				Key: "work", Kind: "activity", Name: "Work",
 				OwnerRole: "owner", IssuePolicy: "fixed",
 				Executor: workflowdomain.ExecutorDefinition{
-					Strategies: []workflowdomain.ExecutorStrategy{
-						{Kind: "fixed_role", Role: "owner"},
-						{Kind: "manual"},
-					},
+					Kind: "role", Role: "owner",
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 				},
 				IssueTemplates: []workflowdomain.IssueTemplate{{
 					Key: "work", Title: "Complete {{host.title}}",
-					AssigneeRole: "owner", Required: true,
+					Required: true,
 				}},
 				Completion: workflowdomain.CompletionDefinition{
 					RequiredIssueOutcome: "done",
 				},
 			},
 			{
-				Key: "review", Kind: "activity", ActivityMode: "work",
+				Key: "review", Kind: "activity",
 				Name: "Review", OwnerRole: "owner", IssuePolicy: "none",
 			},
 			{Key: "end", Kind: "end", Name: "End"},
@@ -3044,9 +3012,10 @@ func TestWorkflowPerRequiredTaskSubmissionPolicy(t *testing.T) {
 			{
 				Key: "work", Kind: "activity", Name: "Parallel work",
 				OwnerRole: "owner", IssuePolicy: "fixed",
-				Executor: workflowdomain.ExecutorDefinition{Strategies: []workflowdomain.ExecutorStrategy{
-					{Kind: "fixed_role", Role: "owner"}, {Kind: "manual"},
-				}},
+				Executor: workflowdomain.ExecutorDefinition{
+					Kind: "role", Role: "owner",
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+				},
 				IssueTemplates: []workflowdomain.IssueTemplate{
 					{Key: "first", Title: "First {{host.title}}", Required: true},
 					{Key: "second", Title: "Second {{host.title}}", Required: true},
@@ -3698,24 +3667,32 @@ func decideAcceptance(t *testing.T, instanceID string, body map[string]any) {
 	}
 }
 
-func confirmWorkflowNode(t *testing.T, nodeID, idempotencyKey string) {
+// assertPendingWorkflowAcceptance checks the run stopped at its end gate.
+// Acceptance is no longer a node, so what proves the run is waiting is a
+// pending acceptance row plus an instance that has not completed.
+func assertPendingWorkflowAcceptance(t *testing.T, instanceID string, wantRevision int32) {
 	t.Helper()
-	recorder := httptest.NewRecorder()
-	request := withURLParam(newRequest(http.MethodPost, "/api/workflow-node-instances/"+nodeID+"/confirm?workspace_id="+testWorkspaceID, map[string]any{
-		"decision": "approved", "comment": "Reviewed", "idempotency_key": idempotencyKey,
-	}), "nodeInstanceId", nodeID)
-	testHandler.ConfirmWorkflowNode(recorder, request)
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("ConfirmWorkflowNode status = %d, body = %s", recorder.Code, recorder.Body.String())
+	acceptance, err := testHandler.Queries.GetLatestWorkflowAcceptance(
+		context.Background(),
+		db.GetLatestWorkflowAcceptanceParams{
+			WorkflowInstanceID: parseUUID(instanceID),
+			WorkspaceID:        parseUUID(testWorkspaceID),
+		},
+	)
+	if err != nil {
+		t.Fatalf("load pending acceptance: %v", err)
 	}
-
-	replayRecorder := httptest.NewRecorder()
-	replayRequest := withURLParam(newRequest(http.MethodPost, "/api/workflow-node-instances/"+nodeID+"/confirm?workspace_id="+testWorkspaceID, map[string]any{
-		"decision": "approved", "comment": "Reviewed", "idempotency_key": idempotencyKey,
-	}), "nodeInstanceId", nodeID)
-	testHandler.ConfirmWorkflowNode(replayRecorder, replayRequest)
-	if replayRecorder.Code != http.StatusOK {
-		t.Fatalf("ConfirmWorkflowNode replay status = %d, body = %s", replayRecorder.Code, replayRecorder.Body.String())
+	if acceptance.Status != "pending" || acceptance.Revision != wantRevision {
+		t.Fatalf("acceptance = %#v, want pending revision %d", acceptance, wantRevision)
+	}
+	instance, err := testHandler.Queries.GetWorkflowInstanceInWorkspace(
+		context.Background(),
+		db.GetWorkflowInstanceInWorkspaceParams{
+			ID: parseUUID(instanceID), WorkspaceID: parseUUID(testWorkspaceID),
+		},
+	)
+	if err != nil || instance.Status != "running" {
+		t.Fatalf("instance awaiting acceptance = %#v, err = %v", instance, err)
 	}
 }
 

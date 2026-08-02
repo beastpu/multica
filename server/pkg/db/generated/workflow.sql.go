@@ -1514,30 +1514,6 @@ func (q *Queries) DeleteWorkflowArtifactsByHost(ctx context.Context, arg DeleteW
 	return err
 }
 
-const deleteWorkflowConfirmationsByHost = `-- name: DeleteWorkflowConfirmationsByHost :exec
-DELETE FROM workflow_node_confirmation confirmation
-WHERE confirmation.workspace_id = $1
-  AND confirmation.workflow_node_instance_id IN (
-    SELECT node.id
-    FROM workflow_node_instance node
-    JOIN workflow_instance instance
-      ON instance.id = node.workflow_instance_id
-     AND instance.workspace_id = node.workspace_id
-    WHERE node.workspace_id = $1
-      AND instance.host_issue_id = $2
-  )
-`
-
-type DeleteWorkflowConfirmationsByHostParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	HostIssueID pgtype.UUID `json:"host_issue_id"`
-}
-
-func (q *Queries) DeleteWorkflowConfirmationsByHost(ctx context.Context, arg DeleteWorkflowConfirmationsByHostParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowConfirmationsByHost, arg.WorkspaceID, arg.HostIssueID)
-	return err
-}
-
 const deleteWorkflowEventsByHost = `-- name: DeleteWorkflowEventsByHost :exec
 DELETE FROM workflow_event event
 WHERE event.workspace_id = $1
@@ -2445,36 +2421,6 @@ func (q *Queries) GetWorkflowInstanceInWorkspace(ctx context.Context, arg GetWor
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReconcileAfter,
-	)
-	return i, err
-}
-
-const getWorkflowNodeConfirmationForMember = `-- name: GetWorkflowNodeConfirmationForMember :one
-SELECT id, workspace_id, workflow_node_instance_id, member_id, decision, comment, decided_at, created_at, updated_at FROM workflow_node_confirmation
-WHERE workflow_node_instance_id = $1
-  AND workspace_id = $2
-  AND member_id = $3
-`
-
-type GetWorkflowNodeConfirmationForMemberParams struct {
-	WorkflowNodeInstanceID pgtype.UUID `json:"workflow_node_instance_id"`
-	WorkspaceID            pgtype.UUID `json:"workspace_id"`
-	MemberID               pgtype.UUID `json:"member_id"`
-}
-
-func (q *Queries) GetWorkflowNodeConfirmationForMember(ctx context.Context, arg GetWorkflowNodeConfirmationForMemberParams) (WorkflowNodeConfirmation, error) {
-	row := q.db.QueryRow(ctx, getWorkflowNodeConfirmationForMember, arg.WorkflowNodeInstanceID, arg.WorkspaceID, arg.MemberID)
-	var i WorkflowNodeConfirmation
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.WorkflowNodeInstanceID,
-		&i.MemberID,
-		&i.Decision,
-		&i.Comment,
-		&i.DecidedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -4055,48 +4001,6 @@ func (q *Queries) ListWorkflowNodeArtifacts(ctx context.Context, arg ListWorkflo
 	return items, nil
 }
 
-const listWorkflowNodeConfirmations = `-- name: ListWorkflowNodeConfirmations :many
-SELECT id, workspace_id, workflow_node_instance_id, member_id, decision, comment, decided_at, created_at, updated_at FROM workflow_node_confirmation
-WHERE workflow_node_instance_id = $1
-  AND workspace_id = $2
-ORDER BY decided_at, id
-`
-
-type ListWorkflowNodeConfirmationsParams struct {
-	WorkflowNodeInstanceID pgtype.UUID `json:"workflow_node_instance_id"`
-	WorkspaceID            pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) ListWorkflowNodeConfirmations(ctx context.Context, arg ListWorkflowNodeConfirmationsParams) ([]WorkflowNodeConfirmation, error) {
-	rows, err := q.db.Query(ctx, listWorkflowNodeConfirmations, arg.WorkflowNodeInstanceID, arg.WorkspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []WorkflowNodeConfirmation{}
-	for rows.Next() {
-		var i WorkflowNodeConfirmation
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.WorkflowNodeInstanceID,
-			&i.MemberID,
-			&i.Decision,
-			&i.Comment,
-			&i.DecidedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listWorkflowNodeInstances = `-- name: ListWorkflowNodeInstances :many
 SELECT id, workspace_id, workflow_instance_id, node_key, node_kind, attempt, name_snapshot, display_order, definition_snapshot, status, waiting_reasons, latest_submission_id, latest_verdict_id, activated_at, completed_at, superseded_at, last_reconciled_at, created_at, updated_at FROM workflow_node_instance
 WHERE workflow_instance_id = $1 AND workspace_id = $2
@@ -5558,54 +5462,6 @@ func (q *Queries) UpdateWorkflowTemplateMetadata(ctx context.Context, arg Update
 		&i.LatestPublishedVersionID,
 		&i.CreatedBy,
 		&i.ArchivedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const upsertWorkflowNodeConfirmation = `-- name: UpsertWorkflowNodeConfirmation :one
-INSERT INTO workflow_node_confirmation (
-    workspace_id, workflow_node_instance_id, member_id,
-    decision, comment, decided_at
-) VALUES (
-    $1, $2, $3,
-    $4, $5, now()
-)
-ON CONFLICT (workflow_node_instance_id, member_id)
-DO UPDATE SET
-    decision = EXCLUDED.decision,
-    comment = EXCLUDED.comment,
-    decided_at = EXCLUDED.decided_at,
-    updated_at = now()
-RETURNING id, workspace_id, workflow_node_instance_id, member_id, decision, comment, decided_at, created_at, updated_at
-`
-
-type UpsertWorkflowNodeConfirmationParams struct {
-	WorkspaceID            pgtype.UUID `json:"workspace_id"`
-	WorkflowNodeInstanceID pgtype.UUID `json:"workflow_node_instance_id"`
-	MemberID               pgtype.UUID `json:"member_id"`
-	Decision               string      `json:"decision"`
-	Comment                string      `json:"comment"`
-}
-
-func (q *Queries) UpsertWorkflowNodeConfirmation(ctx context.Context, arg UpsertWorkflowNodeConfirmationParams) (WorkflowNodeConfirmation, error) {
-	row := q.db.QueryRow(ctx, upsertWorkflowNodeConfirmation,
-		arg.WorkspaceID,
-		arg.WorkflowNodeInstanceID,
-		arg.MemberID,
-		arg.Decision,
-		arg.Comment,
-	)
-	var i WorkflowNodeConfirmation
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.WorkflowNodeInstanceID,
-		&i.MemberID,
-		&i.Decision,
-		&i.Comment,
-		&i.DecidedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

@@ -228,12 +228,66 @@ func (h *Handler) propagateWorkflowGraph(
 			endReached = true
 		}
 		switch node.Status {
-		case "pending", "ready", "active", "waiting", "blocked":
+		case "pending", "ready", "active", "in_review", "waiting", "blocked":
 			open = true
 		}
 	}
-	result.CanComplete = endReached && !open
+	if !endReached || open {
+		result.CanComplete = false
+		return result, nil
+	}
+	// Acceptance is the last gate and it belongs to the run, not to a node:
+	// the work is finished, and what is left is whether the requirement is.
+	// This is where the acceptance activity used to sit on the canvas.
+	approved, err := h.settleWorkflowAcceptance(ctx, q, workspaceID, instance, definition)
+	if err != nil {
+		return result, err
+	}
+	result.CanComplete = approved
 	return result, nil
+}
+
+// settleWorkflowAcceptance opens a pending acceptance the first time a run
+// reaches its end, and reports whether the run is cleared to complete. A
+// workflow with no acceptance policy is cleared immediately.
+func (h *Handler) settleWorkflowAcceptance(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	instance db.WorkflowInstance,
+	definition workflowdomain.Definition,
+) (bool, error) {
+	if definition.Acceptance.Policy != "member" {
+		return true, nil
+	}
+	latest, err := q.GetLatestWorkflowAcceptance(ctx, db.GetLatestWorkflowAcceptanceParams{
+		WorkflowInstanceID: instance.ID, WorkspaceID: workspaceID,
+	})
+	switch {
+	case err == nil && latest.Status == "approved":
+		return true, nil
+	case err == nil && latest.Status == "pending":
+		return false, nil
+	case err != nil && !errors.Is(err, pgx.ErrNoRows):
+		return false, fmt.Errorf("load latest acceptance: %w", err)
+	}
+	revision, err := q.GetNextWorkflowAcceptanceRevision(
+		ctx,
+		db.GetNextWorkflowAcceptanceRevisionParams{
+			WorkflowInstanceID: instance.ID, WorkspaceID: workspaceID,
+		},
+	)
+	if err != nil {
+		return false, fmt.Errorf("next acceptance revision: %w", err)
+	}
+	if _, err := q.CreateWorkflowAcceptance(ctx, db.CreateWorkflowAcceptanceParams{
+		WorkspaceID: workspaceID, WorkflowInstanceID: instance.ID,
+		Revision: revision, Status: "pending", Evidence: []byte("[]"),
+		IdempotencyKey: fmt.Sprintf("end_reached:%s:%d", uuidToString(instance.ID), revision),
+	}); err != nil {
+		return false, fmt.Errorf("create pending acceptance: %w", err)
+	}
+	return false, nil
 }
 
 func (h *Handler) workflowNodeInputState(
@@ -453,7 +507,7 @@ func workflowConditionResolver(
 
 func workflowNodeIsOpen(node db.WorkflowNodeInstance) bool {
 	switch node.Status {
-	case "active", "waiting", "blocked":
+	case "active", "in_review", "waiting", "blocked":
 		return true
 	default:
 		return false

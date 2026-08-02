@@ -77,11 +77,6 @@ func cleanupWorkflowRelationshipsForIssue(ctx context.Context, q *db.Queries, is
 	}); err != nil {
 		return fmt.Errorf("delete workflow acceptances: %w", err)
 	}
-	if err := q.DeleteWorkflowConfirmationsByHost(ctx, db.DeleteWorkflowConfirmationsByHostParams{
-		WorkspaceID: issue.WorkspaceID, HostIssueID: issue.ID,
-	}); err != nil {
-		return fmt.Errorf("delete workflow confirmations: %w", err)
-	}
 	if err := q.DeleteWorkflowVerdictsByHost(ctx, db.DeleteWorkflowVerdictsByHostParams{
 		WorkspaceID: issue.WorkspaceID, HostIssueID: issue.ID,
 	}); err != nil {

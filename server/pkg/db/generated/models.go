@@ -1404,18 +1404,6 @@ type WorkflowInstanceRoleAssignment struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
-type WorkflowNodeConfirmation struct {
-	ID                     pgtype.UUID        `json:"id"`
-	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
-	WorkflowNodeInstanceID pgtype.UUID        `json:"workflow_node_instance_id"`
-	MemberID               pgtype.UUID        `json:"member_id"`
-	Decision               string             `json:"decision"`
-	Comment                string             `json:"comment"`
-	DecidedAt              pgtype.Timestamptz `json:"decided_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-}
-
 type WorkflowNodeInstance struct {
 	ID                 pgtype.UUID        `json:"id"`
 	WorkspaceID        pgtype.UUID        `json:"workspace_id"`

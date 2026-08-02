@@ -1270,7 +1270,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/artifacts/{artifactId}/review", h.ReviewWorkflowArtifact)
 				r.Get("/verdicts", h.ListWorkflowNodeVerdicts)
 				r.Post("/verdicts", h.CreateWorkflowNodeVerdict)
-				r.Post("/confirm", h.ConfirmWorkflowNode)
 				r.Post("/complete", h.CompleteWorkflowNode)
 				r.Post("/skip", h.SkipWorkflowNode)
 				r.Post("/rollback", h.RollbackWorkflowNode)
