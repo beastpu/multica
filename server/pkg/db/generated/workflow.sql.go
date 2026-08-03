@@ -102,6 +102,91 @@ func (q *Queries) CancelOpenWorkflowNodes(ctx context.Context, arg CancelOpenWor
 	return err
 }
 
+const cancelOpenWorkflowNodesByHost = `-- name: CancelOpenWorkflowNodesByHost :exec
+UPDATE workflow_node_instance node
+SET status = 'cancelled',
+    waiting_reasons = '[]'::jsonb,
+    updated_at = now()
+FROM workflow_instance instance
+WHERE node.workflow_instance_id = instance.id
+  AND node.workspace_id = instance.workspace_id
+  AND instance.host_issue_id = $1
+  AND instance.workspace_id = $2
+  AND instance.status = 'cancelled'
+  AND node.status IN ('pending', 'ready', 'active', 'in_review', 'waiting', 'blocked')
+`
+
+type CancelOpenWorkflowNodesByHostParams struct {
+	HostIssueID pgtype.UUID `json:"host_issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) CancelOpenWorkflowNodesByHost(ctx context.Context, arg CancelOpenWorkflowNodesByHostParams) error {
+	_, err := q.db.Exec(ctx, cancelOpenWorkflowNodesByHost, arg.HostIssueID, arg.WorkspaceID)
+	return err
+}
+
+const cancelWorkflowInstancesByHost = `-- name: CancelWorkflowInstancesByHost :many
+UPDATE workflow_instance
+SET status = 'cancelled',
+    result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('reason', 'host_issue_deleted'),
+    revision = revision + 1,
+    cancelled_at = now(),
+    reconcile_after = NULL,
+    updated_at = now()
+WHERE host_issue_id = $1
+  AND workspace_id = $2
+  AND status IN ('needs_setup', 'running', 'paused')
+RETURNING id, workspace_id, workflow_id, workflow_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
+`
+
+type CancelWorkflowInstancesByHostParams struct {
+	HostIssueID pgtype.UUID `json:"host_issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) CancelWorkflowInstancesByHost(ctx context.Context, arg CancelWorkflowInstancesByHostParams) ([]WorkflowInstance, error) {
+	rows, err := q.db.Query(ctx, cancelWorkflowInstancesByHost, arg.HostIssueID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowInstance{}
+	for rows.Next() {
+		var i WorkflowInstance
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.WorkflowID,
+			&i.WorkflowVersionID,
+			&i.HostIssueID,
+			&i.Status,
+			&i.HostStatusMode,
+			&i.Input,
+			&i.Result,
+			&i.Revision,
+			&i.StartedByType,
+			&i.StartedByID,
+			&i.StartedAt,
+			&i.PausedAt,
+			&i.CompletedAt,
+			&i.CancelledAt,
+			&i.LastReconciledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ReconcileAfter,
+			&i.Title,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimWorkflowInstanceForReconcile = `-- name: ClaimWorkflowInstanceForReconcile :one
 WITH candidate AS (
     SELECT instance.id
@@ -1524,98 +1609,6 @@ func (q *Queries) DeletePendingWorkflowAcceptance(ctx context.Context, arg Delet
 	return err
 }
 
-const deleteWorkflowAcceptancesByHost = `-- name: DeleteWorkflowAcceptancesByHost :exec
-DELETE FROM workflow_acceptance acceptance
-WHERE acceptance.workspace_id = $1
-  AND acceptance.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = $1 AND host_issue_id = $2
-  )
-`
-
-type DeleteWorkflowAcceptancesByHostParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	HostIssueID pgtype.UUID `json:"host_issue_id"`
-}
-
-func (q *Queries) DeleteWorkflowAcceptancesByHost(ctx context.Context, arg DeleteWorkflowAcceptancesByHostParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowAcceptancesByHost, arg.WorkspaceID, arg.HostIssueID)
-	return err
-}
-
-const deleteWorkflowArtifactsByHost = `-- name: DeleteWorkflowArtifactsByHost :exec
-DELETE FROM workflow_artifact artifact
-WHERE artifact.workspace_id = $1
-  AND artifact.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = $1 AND host_issue_id = $2
-  )
-`
-
-type DeleteWorkflowArtifactsByHostParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	HostIssueID pgtype.UUID `json:"host_issue_id"`
-}
-
-func (q *Queries) DeleteWorkflowArtifactsByHost(ctx context.Context, arg DeleteWorkflowArtifactsByHostParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowArtifactsByHost, arg.WorkspaceID, arg.HostIssueID)
-	return err
-}
-
-const deleteWorkflowEventsByHost = `-- name: DeleteWorkflowEventsByHost :exec
-DELETE FROM workflow_event event
-WHERE event.workspace_id = $1
-  AND event.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = $1 AND host_issue_id = $2
-  )
-`
-
-type DeleteWorkflowEventsByHostParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	HostIssueID pgtype.UUID `json:"host_issue_id"`
-}
-
-func (q *Queries) DeleteWorkflowEventsByHost(ctx context.Context, arg DeleteWorkflowEventsByHostParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowEventsByHost, arg.WorkspaceID, arg.HostIssueID)
-	return err
-}
-
-const deleteWorkflowExecutorResolutionsByHost = `-- name: DeleteWorkflowExecutorResolutionsByHost :exec
-DELETE FROM workflow_executor_resolution resolution
-WHERE resolution.workspace_id = $1
-  AND resolution.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = $1 AND host_issue_id = $2
-  )
-`
-
-type DeleteWorkflowExecutorResolutionsByHostParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	HostIssueID pgtype.UUID `json:"host_issue_id"`
-}
-
-func (q *Queries) DeleteWorkflowExecutorResolutionsByHost(ctx context.Context, arg DeleteWorkflowExecutorResolutionsByHostParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowExecutorResolutionsByHost, arg.WorkspaceID, arg.HostIssueID)
-	return err
-}
-
-const deleteWorkflowInstancesByHost = `-- name: DeleteWorkflowInstancesByHost :exec
-DELETE FROM workflow_instance
-WHERE workspace_id = $1
-  AND host_issue_id = $2
-`
-
-type DeleteWorkflowInstancesByHostParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	HostIssueID pgtype.UUID `json:"host_issue_id"`
-}
-
-func (q *Queries) DeleteWorkflowInstancesByHost(ctx context.Context, arg DeleteWorkflowInstancesByHostParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowInstancesByHost, arg.WorkspaceID, arg.HostIssueID)
-	return err
-}
-
 const deleteWorkflowNodeParticipants = `-- name: DeleteWorkflowNodeParticipants :exec
 DELETE FROM workflow_node_participant
 WHERE workflow_node_instance_id = $1
@@ -1632,123 +1625,60 @@ func (q *Queries) DeleteWorkflowNodeParticipants(ctx context.Context, arg Delete
 	return err
 }
 
-const deleteWorkflowNodeParticipantsByHost = `-- name: DeleteWorkflowNodeParticipantsByHost :exec
-DELETE FROM workflow_node_participant participant
-WHERE participant.workspace_id = $1
-  AND participant.workflow_node_instance_id IN (
-    SELECT node.id
-    FROM workflow_node_instance node
-    JOIN workflow_instance instance
-      ON instance.id = node.workflow_instance_id
-     AND instance.workspace_id = node.workspace_id
-    WHERE node.workspace_id = $1
-      AND instance.host_issue_id = $2
-  )
+const detachWorkflowInstancesByHost = `-- name: DetachWorkflowInstancesByHost :many
+UPDATE workflow_instance
+SET host_issue_id = NULL,
+    updated_at = now()
+WHERE host_issue_id = $1
+  AND workspace_id = $2
+RETURNING id, workspace_id, workflow_id, workflow_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title
 `
 
-type DeleteWorkflowNodeParticipantsByHostParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
+type DetachWorkflowInstancesByHostParams struct {
 	HostIssueID pgtype.UUID `json:"host_issue_id"`
-}
-
-func (q *Queries) DeleteWorkflowNodeParticipantsByHost(ctx context.Context, arg DeleteWorkflowNodeParticipantsByHostParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowNodeParticipantsByHost, arg.WorkspaceID, arg.HostIssueID)
-	return err
-}
-
-const deleteWorkflowNodeTasksByHost = `-- name: DeleteWorkflowNodeTasksByHost :exec
-DELETE FROM workflow_node_task task
-WHERE task.workspace_id = $1
-  AND task.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = $1 AND host_issue_id = $2
-  )
-`
-
-type DeleteWorkflowNodeTasksByHostParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	HostIssueID pgtype.UUID `json:"host_issue_id"`
 }
 
-func (q *Queries) DeleteWorkflowNodeTasksByHost(ctx context.Context, arg DeleteWorkflowNodeTasksByHostParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowNodeTasksByHost, arg.WorkspaceID, arg.HostIssueID)
-	return err
-}
-
-const deleteWorkflowNodesByHost = `-- name: DeleteWorkflowNodesByHost :exec
-DELETE FROM workflow_node_instance node
-WHERE node.workspace_id = $1
-  AND node.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = $1 AND host_issue_id = $2
-  )
-`
-
-type DeleteWorkflowNodesByHostParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	HostIssueID pgtype.UUID `json:"host_issue_id"`
-}
-
-func (q *Queries) DeleteWorkflowNodesByHost(ctx context.Context, arg DeleteWorkflowNodesByHostParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowNodesByHost, arg.WorkspaceID, arg.HostIssueID)
-	return err
-}
-
-const deleteWorkflowRoleAssignmentsByHost = `-- name: DeleteWorkflowRoleAssignmentsByHost :exec
-DELETE FROM workflow_instance_role_assignment assignment
-WHERE assignment.workspace_id = $1
-  AND assignment.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = $1 AND host_issue_id = $2
-  )
-`
-
-type DeleteWorkflowRoleAssignmentsByHostParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	HostIssueID pgtype.UUID `json:"host_issue_id"`
-}
-
-func (q *Queries) DeleteWorkflowRoleAssignmentsByHost(ctx context.Context, arg DeleteWorkflowRoleAssignmentsByHostParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowRoleAssignmentsByHost, arg.WorkspaceID, arg.HostIssueID)
-	return err
-}
-
-const deleteWorkflowSubmissionsByHost = `-- name: DeleteWorkflowSubmissionsByHost :exec
-DELETE FROM workflow_node_submission submission
-WHERE submission.workspace_id = $1
-  AND submission.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = $1 AND host_issue_id = $2
-  )
-`
-
-type DeleteWorkflowSubmissionsByHostParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	HostIssueID pgtype.UUID `json:"host_issue_id"`
-}
-
-func (q *Queries) DeleteWorkflowSubmissionsByHost(ctx context.Context, arg DeleteWorkflowSubmissionsByHostParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowSubmissionsByHost, arg.WorkspaceID, arg.HostIssueID)
-	return err
-}
-
-const deleteWorkflowVerdictsByHost = `-- name: DeleteWorkflowVerdictsByHost :exec
-DELETE FROM workflow_node_verdict verdict
-WHERE verdict.workspace_id = $1
-  AND verdict.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = $1 AND host_issue_id = $2
-  )
-`
-
-type DeleteWorkflowVerdictsByHostParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	HostIssueID pgtype.UUID `json:"host_issue_id"`
-}
-
-func (q *Queries) DeleteWorkflowVerdictsByHost(ctx context.Context, arg DeleteWorkflowVerdictsByHostParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkflowVerdictsByHost, arg.WorkspaceID, arg.HostIssueID)
-	return err
+func (q *Queries) DetachWorkflowInstancesByHost(ctx context.Context, arg DetachWorkflowInstancesByHostParams) ([]WorkflowInstance, error) {
+	rows, err := q.db.Query(ctx, detachWorkflowInstancesByHost, arg.HostIssueID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowInstance{}
+	for rows.Next() {
+		var i WorkflowInstance
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.WorkflowID,
+			&i.WorkflowVersionID,
+			&i.HostIssueID,
+			&i.Status,
+			&i.HostStatusMode,
+			&i.Input,
+			&i.Result,
+			&i.Revision,
+			&i.StartedByType,
+			&i.StartedByID,
+			&i.StartedAt,
+			&i.PausedAt,
+			&i.CompletedAt,
+			&i.CancelledAt,
+			&i.LastReconciledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ReconcileAfter,
+			&i.Title,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const detachWorkflowIssuesByHost = `-- name: DetachWorkflowIssuesByHost :exec
@@ -1785,7 +1715,7 @@ type DetachWorkflowIssuesByHostParams struct {
 }
 
 // =====================
-// Host issue deletion cleanup
+// Host issue deletion preservation
 // =====================
 func (q *Queries) DetachWorkflowIssuesByHost(ctx context.Context, arg DetachWorkflowIssuesByHostParams) error {
 	_, err := q.db.Exec(ctx, detachWorkflowIssuesByHost, arg.HostIssueID, arg.WorkspaceID)

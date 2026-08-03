@@ -78,8 +78,8 @@ type IssueResponse struct {
 
 type IssueWorkflowContextResponse struct {
 	WorkflowInstanceID     string `json:"workflow_instance_id"`
-	WorkflowID     string `json:"workflow_template_id"`
-	WorkflowName   string `json:"workflow_template_name"`
+	WorkflowID             string `json:"workflow_template_id"`
+	WorkflowName           string `json:"workflow_template_name"`
 	WorkflowNodeInstanceID string `json:"workflow_node_instance_id"`
 	ActivityKey            string `json:"activity_key"`
 	ActivityName           string `json:"activity_name"`
@@ -182,8 +182,8 @@ func (h *Handler) issueWorkflowContextsByIssue(
 		issueID := uuidToString(row.IssueID)
 		contexts[issueID] = &IssueWorkflowContextResponse{
 			WorkflowInstanceID:     uuidToString(row.WorkflowInstanceID),
-			WorkflowID:     uuidToString(row.WorkflowID),
-			WorkflowName:   row.WorkflowName,
+			WorkflowID:             uuidToString(row.WorkflowID),
+			WorkflowName:           row.WorkflowName,
 			WorkflowNodeInstanceID: uuidToString(row.WorkflowNodeInstanceID),
 			ActivityKey:            row.ActivityKey,
 			ActivityName:           row.ActivityName,
@@ -3408,24 +3408,17 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 	// publish issue:deleted) and is shared with the Feishu orphan reconcile.
 	userID := requestUserID(r)
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
-	var cancelledWorkflowTasks []db.AgentTaskQueue
-	if err := service.HardDeleteIssue(
+	workflowCleanup, err := service.HardDeleteIssue(
 		r.Context(), h.Queries, h.TaskService, h.Storage, h.Bus, issue, actorType, actorID,
 		service.HardDeleteIssueOptions{
 			TxStarter: h.TxStarter,
-			WithinDeleteTransaction: func(ctx context.Context, q *db.Queries, issue db.Issue) error {
-				var cleanupErr error
-				cancelledWorkflowTasks, cleanupErr = cleanupWorkflowRelationshipsForIssue(
-					ctx, q, issue,
-				)
-				return cleanupErr
-			},
 		},
-	); err != nil {
+	)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete issue")
 		return
 	}
-	h.TaskService.BroadcastCancelledTasks(r.Context(), cancelledWorkflowTasks)
+	h.publishWorkflowIssueDeleteResult(r.Context(), actorType, actorID, workflowCleanup)
 	slog.Info("issue deleted", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "workspace_id", uuidToString(issue.WorkspaceID))...)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -3875,24 +3868,17 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		}
 
 		actorType, actorID := h.resolveActor(r, userID, workspaceID)
-		var cancelledWorkflowTasks []db.AgentTaskQueue
-		if err := service.HardDeleteIssue(
+		workflowCleanup, err := service.HardDeleteIssue(
 			r.Context(), h.Queries, h.TaskService, h.Storage, h.Bus, issue, actorType, actorID,
 			service.HardDeleteIssueOptions{
 				TxStarter: h.TxStarter,
-				WithinDeleteTransaction: func(ctx context.Context, q *db.Queries, issue db.Issue) error {
-					var cleanupErr error
-					cancelledWorkflowTasks, cleanupErr = cleanupWorkflowRelationshipsForIssue(
-						ctx, q, issue,
-					)
-					return cleanupErr
-				},
 			},
-		); err != nil {
+		)
+		if err != nil {
 			slog.Warn("batch delete issue failed", "issue_id", issueID, "error", err)
 			continue
 		}
-		h.TaskService.BroadcastCancelledTasks(r.Context(), cancelledWorkflowTasks)
+		h.publishWorkflowIssueDeleteResult(r.Context(), actorType, actorID, workflowCleanup)
 
 		deleted++
 	}

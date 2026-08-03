@@ -1203,15 +1203,22 @@ func TestWorkflowIssueRelationshipGuardsAndHostCleanup(t *testing.T) {
 		t.Fatalf("DeleteIssue workflow host status = %d, body = %s", deleteHost.Code, deleteHost.Body.String())
 	}
 
-	var hostCount, instanceCount int
+	var hostCount int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM issue WHERE id = $1`, hostID).Scan(&hostCount); err != nil {
 		t.Fatalf("count deleted workflow host: %v", err)
 	}
-	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM workflow_instance WHERE id = $1`, instanceID).Scan(&instanceCount); err != nil {
-		t.Fatalf("count deleted workflow runtime: %v", err)
+	if hostCount != 0 {
+		t.Fatalf("workflow host was not deleted: count=%d", hostCount)
 	}
-	if hostCount != 0 || instanceCount != 0 {
-		t.Fatalf("workflow host cleanup left rows: host=%d instance=%d", hostCount, instanceCount)
+	var instanceStatus string
+	var detachedHostID *string
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, host_issue_id::text FROM workflow_instance WHERE id = $1
+	`, instanceID).Scan(&instanceStatus, &detachedHostID); err != nil {
+		t.Fatalf("load preserved workflow runtime: %v", err)
+	}
+	if instanceStatus != "cancelled" || detachedHostID != nil {
+		t.Fatalf("preserved workflow runtime status=%q host=%v", instanceStatus, detachedHostID)
 	}
 
 	var optionalOriginType, optionalParentID *string

@@ -45,8 +45,7 @@ type IssueAttachmentDeleter interface {
 }
 
 // HardDeleteIssueOptions lets callers extend the issue deletion transaction
-// with application-owned relationship cleanup. Workflow uses it because its
-// runtime tables intentionally have no foreign keys or database cascades.
+// with additional application-owned relationship cleanup.
 type HardDeleteIssueOptions struct {
 	TxStarter TxStarter
 	// WithinDeleteTransaction runs immediately before the issue row is
@@ -55,15 +54,16 @@ type HardDeleteIssueOptions struct {
 	WithinDeleteTransaction func(ctx context.Context, qtx *db.Queries, issue db.Issue) error
 }
 
-// HardDeleteIssue permanently deletes an issue and all its dependents, matching
-// the cascade the HTTP delete handler performs: cancel running agent tasks,
-// fail linked autopilot runs, delete the issue (the DB cascade removes
-// comments, attachments rows, and external bindings), clean up S3 blobs, and
-// publish issue:deleted so connected clients drop it from their caches.
+// HardDeleteIssue permanently deletes an issue and its issue-owned dependents.
+// Workflow runs are preserved as audit history: active runs are cancelled and
+// every run is detached from the deleted host before the issue row is removed.
+// It also cancels issue tasks, fails linked autopilot runs, cleans up attachment
+// blobs, and publishes issue:deleted so connected clients drop the issue.
 //
-// tasks, store, and pub may be nil — the corresponding step is skipped. Task
-// cancellation and autopilot failure are best-effort (matching the handler);
-// only a failed issue delete is returned as an error.
+// tasks, store, and pub may be nil — the corresponding step is skipped. Issue
+// task cancellation and autopilot failure are best-effort (matching the
+// handler); workflow preservation and issue deletion are transactional when a
+// TxStarter is provided. The result contains post-commit workflow fanout data.
 func HardDeleteIssue(
 	ctx context.Context,
 	q *db.Queries,
@@ -73,36 +73,56 @@ func HardDeleteIssue(
 	issue db.Issue,
 	actorType, actorID string,
 	options ...HardDeleteIssueOptions,
-) error {
+) (WorkflowIssueDeleteResult, error) {
+	var workflowResult WorkflowIssueDeleteResult
 	if tasks != nil {
 		_ = tasks.CancelTasksForIssue(ctx, issue.ID)
+	}
+	var actorUUID pgtype.UUID
+	if actorID != "" {
+		if err := actorUUID.Scan(actorID); err != nil {
+			return workflowResult, fmt.Errorf("parse issue delete actor: %w", err)
+		}
 	}
 
 	var opts HardDeleteIssueOptions
 	if len(options) > 0 {
 		opts = options[0]
 	}
+	preserveWorkflow := func(ctx context.Context, qtx *db.Queries, issue db.Issue) error {
+		var err error
+		workflowResult, err = PreserveWorkflowHistoryForIssue(
+			ctx, qtx, issue, actorType, actorUUID,
+		)
+		if err != nil {
+			return err
+		}
+		if opts.WithinDeleteTransaction != nil {
+			return opts.WithinDeleteTransaction(ctx, qtx, issue)
+		}
+		return nil
+	}
 
 	var attachmentURLs []string
 	if opts.TxStarter != nil {
 		tx, err := opts.TxStarter.Begin(ctx)
 		if err != nil {
-			return fmt.Errorf("begin issue delete transaction: %w", err)
+			return workflowResult, fmt.Errorf("begin issue delete transaction: %w", err)
 		}
 		defer tx.Rollback(ctx)
 		qtx := q.WithTx(tx)
-		attachmentURLs, err = hardDeleteIssueRecords(ctx, qtx, issue, opts.WithinDeleteTransaction)
+		attachmentURLs, err = hardDeleteIssueRecords(ctx, qtx, issue, preserveWorkflow)
 		if err != nil {
-			return err
+			return workflowResult, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit issue delete transaction: %w", err)
+			return workflowResult, fmt.Errorf("commit issue delete transaction: %w", err)
 		}
 	} else {
 		var err error
-		attachmentURLs, err = hardDeleteIssueRecords(ctx, q, issue, opts.WithinDeleteTransaction)
+		attachmentURLs, err = hardDeleteIssueRecords(ctx, q, issue, preserveWorkflow)
 		if err != nil {
-			return err
+			return workflowResult, err
 		}
 	}
 
@@ -123,7 +143,7 @@ func HardDeleteIssue(
 			Payload:     map[string]any{"issue_id": UUIDString(issue.ID)},
 		})
 	}
-	return nil
+	return workflowResult, nil
 }
 
 func hardDeleteIssueRecords(
@@ -232,11 +252,19 @@ func (s *FeishuProjectSyncService) ReconcileOrphans(ctx context.Context, cfg db.
 			return err
 		}
 		for _, b := range orphans {
-			if err := HardDeleteIssue(ctx, s.Queries, s.TaskService, s.Storage, s.Events, db.Issue{ID: b.IssueID, WorkspaceID: b.WorkspaceID}, "system", ""); err != nil {
+			workflowResult, err := HardDeleteIssue(
+				ctx, s.Queries, s.TaskService, s.Storage, s.Events,
+				db.Issue{ID: b.IssueID, WorkspaceID: b.WorkspaceID}, "system", "",
+				HardDeleteIssueOptions{TxStarter: s.Tx},
+			)
+			if err != nil {
 				slog.Warn("Feishu Project orphan delete failed", "integration_id", UUIDString(cfg.ID), "issue_id", UUIDString(b.IssueID), "work_item_id", b.WorkItemID, "error", err)
 				failed++
 				continue
 			}
+			publishWorkflowIssueDeleteResult(
+				ctx, s.TaskService, s.Events, "system", "", workflowResult,
+			)
 			deleted++
 		}
 

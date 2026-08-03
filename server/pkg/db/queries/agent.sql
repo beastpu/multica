@@ -530,8 +530,8 @@ WHERE agent_task.workflow_node_task_id = node_task.id
 RETURNING agent_task.*;
 
 -- name: CancelAgentTasksByWorkflowHost :many
--- Host deletion removes the workflow runtime, so active direct executions must
--- be stopped before their ownership rows disappear.
+-- Deleting a host issue preserves the workflow runtime for audit, but active
+-- direct executions still have to stop before the host relationship is cleared.
 UPDATE agent_task_queue agent_task
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 FROM workflow_node_task node_task
@@ -543,19 +543,6 @@ WHERE agent_task.workflow_node_task_id = node_task.id
   AND instance.workspace_id = @workspace_id
   AND agent_task.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
 RETURNING agent_task.*;
-
--- name: DetachAgentTasksByWorkflowHost :exec
--- Historical terminal tasks survive for audit, but must not retain a dangling
--- workflow_node_task_id after host cleanup deletes the workflow runtime.
-UPDATE agent_task_queue agent_task
-SET workflow_node_task_id = NULL
-FROM workflow_node_task node_task
-JOIN workflow_instance instance
-  ON instance.id = node_task.workflow_instance_id
- AND instance.workspace_id = node_task.workspace_id
-WHERE agent_task.workflow_node_task_id = node_task.id
-  AND instance.host_issue_id = @host_issue_id
-  AND instance.workspace_id = @workspace_id;
 
 -- name: CancelAgentTasksByIssueAndAgent :many
 -- Cancels active tasks for a single (issue, agent) pair without touching

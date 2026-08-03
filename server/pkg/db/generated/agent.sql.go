@@ -680,8 +680,8 @@ type CancelAgentTasksByWorkflowHostParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-// Host deletion removes the workflow runtime, so active direct executions must
-// be stopped before their ownership rows disappear.
+// Deleting a host issue preserves the workflow runtime for audit, but active
+// direct executions still have to stop before the host relationship is cleared.
 func (q *Queries) CancelAgentTasksByWorkflowHost(ctx context.Context, arg CancelAgentTasksByWorkflowHostParams) ([]AgentTaskQueue, error) {
 	rows, err := q.db.Query(ctx, cancelAgentTasksByWorkflowHost, arg.HostIssueID, arg.WorkspaceID)
 	if err != nil {
@@ -2448,30 +2448,6 @@ WHERE id = $1 AND kind = 'system' AND system_key LIKE 'agent_builder:%'
 // path from ever deleting a user-authored agent.
 func (q *Queries) DeleteSystemAgentByID(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteSystemAgentByID, id)
-	return err
-}
-
-const detachAgentTasksByWorkflowHost = `-- name: DetachAgentTasksByWorkflowHost :exec
-UPDATE agent_task_queue agent_task
-SET workflow_node_task_id = NULL
-FROM workflow_node_task node_task
-JOIN workflow_instance instance
-  ON instance.id = node_task.workflow_instance_id
- AND instance.workspace_id = node_task.workspace_id
-WHERE agent_task.workflow_node_task_id = node_task.id
-  AND instance.host_issue_id = $1
-  AND instance.workspace_id = $2
-`
-
-type DetachAgentTasksByWorkflowHostParams struct {
-	HostIssueID pgtype.UUID `json:"host_issue_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-// Historical terminal tasks survive for audit, but must not retain a dangling
-// workflow_node_task_id after host cleanup deletes the workflow runtime.
-func (q *Queries) DetachAgentTasksByWorkflowHost(ctx context.Context, arg DetachAgentTasksByWorkflowHostParams) error {
-	_, err := q.db.Exec(ctx, detachAgentTasksByWorkflowHost, arg.HostIssueID, arg.WorkspaceID)
 	return err
 }
 

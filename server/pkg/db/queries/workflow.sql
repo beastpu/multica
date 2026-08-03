@@ -1668,7 +1668,7 @@ WHERE we.workspace_id = @workspace_id
 LIMIT 1;
 
 -- =====================
--- Host issue deletion cleanup
+-- Host issue deletion preservation
 -- =====================
 
 -- name: DetachWorkflowIssuesByHost :exec
@@ -1697,6 +1697,40 @@ WHERE child.workspace_id = @workspace_id
       AND instance.host_issue_id = @host_issue_id
   );
 
+-- name: CancelOpenWorkflowNodesByHost :exec
+UPDATE workflow_node_instance node
+SET status = 'cancelled',
+    waiting_reasons = '[]'::jsonb,
+    updated_at = now()
+FROM workflow_instance instance
+WHERE node.workflow_instance_id = instance.id
+  AND node.workspace_id = instance.workspace_id
+  AND instance.host_issue_id = @host_issue_id
+  AND instance.workspace_id = @workspace_id
+  AND instance.status = 'cancelled'
+  AND node.status IN ('pending', 'ready', 'active', 'in_review', 'waiting', 'blocked');
+
+-- name: CancelWorkflowInstancesByHost :many
+UPDATE workflow_instance
+SET status = 'cancelled',
+    result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('reason', 'host_issue_deleted'),
+    revision = revision + 1,
+    cancelled_at = now(),
+    reconcile_after = NULL,
+    updated_at = now()
+WHERE host_issue_id = @host_issue_id
+  AND workspace_id = @workspace_id
+  AND status IN ('needs_setup', 'running', 'paused')
+RETURNING *;
+
+-- name: DetachWorkflowInstancesByHost :many
+UPDATE workflow_instance
+SET host_issue_id = NULL,
+    updated_at = now()
+WHERE host_issue_id = @host_issue_id
+  AND workspace_id = @workspace_id
+RETURNING *;
+
 -- Finds the judgement that sent a node back, so a rework attempt can tell its
 -- executor why it is running again. Acceptance rejections name the node they
 -- rework; manual rollbacks name the node they target.
@@ -1710,14 +1744,6 @@ WHERE workspace_id = @workspace_id
 ORDER BY created_at DESC
 LIMIT 1;
 
--- name: DeleteWorkflowEventsByHost :exec
-DELETE FROM workflow_event event
-WHERE event.workspace_id = @workspace_id
-  AND event.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = @workspace_id AND host_issue_id = @host_issue_id
-  );
-
 -- Clears an undecided acceptance when the run leaves its end gate. The row is
 -- an unanswered question about a state that a rollback has undone; leaving it
 -- pending makes a run that is mid-rework read as waiting for a decision.
@@ -1728,80 +1754,6 @@ DELETE FROM workflow_acceptance
 WHERE workflow_instance_id = @workflow_instance_id
   AND workspace_id = @workspace_id
   AND status = 'pending';
-
--- name: DeleteWorkflowAcceptancesByHost :exec
-DELETE FROM workflow_acceptance acceptance
-WHERE acceptance.workspace_id = @workspace_id
-  AND acceptance.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = @workspace_id AND host_issue_id = @host_issue_id
-  );
-
--- name: DeleteWorkflowVerdictsByHost :exec
-DELETE FROM workflow_node_verdict verdict
-WHERE verdict.workspace_id = @workspace_id
-  AND verdict.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = @workspace_id AND host_issue_id = @host_issue_id
-  );
-
--- name: DeleteWorkflowSubmissionsByHost :exec
-DELETE FROM workflow_node_submission submission
-WHERE submission.workspace_id = @workspace_id
-  AND submission.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = @workspace_id AND host_issue_id = @host_issue_id
-  );
-
--- name: DeleteWorkflowExecutorResolutionsByHost :exec
-DELETE FROM workflow_executor_resolution resolution
-WHERE resolution.workspace_id = @workspace_id
-  AND resolution.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = @workspace_id AND host_issue_id = @host_issue_id
-  );
-
--- name: DeleteWorkflowNodeTasksByHost :exec
-DELETE FROM workflow_node_task task
-WHERE task.workspace_id = @workspace_id
-  AND task.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = @workspace_id AND host_issue_id = @host_issue_id
-  );
-
--- name: DeleteWorkflowNodeParticipantsByHost :exec
-DELETE FROM workflow_node_participant participant
-WHERE participant.workspace_id = @workspace_id
-  AND participant.workflow_node_instance_id IN (
-    SELECT node.id
-    FROM workflow_node_instance node
-    JOIN workflow_instance instance
-      ON instance.id = node.workflow_instance_id
-     AND instance.workspace_id = node.workspace_id
-    WHERE node.workspace_id = @workspace_id
-      AND instance.host_issue_id = @host_issue_id
-  );
-
--- name: DeleteWorkflowNodesByHost :exec
-DELETE FROM workflow_node_instance node
-WHERE node.workspace_id = @workspace_id
-  AND node.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = @workspace_id AND host_issue_id = @host_issue_id
-  );
-
--- name: DeleteWorkflowRoleAssignmentsByHost :exec
-DELETE FROM workflow_instance_role_assignment assignment
-WHERE assignment.workspace_id = @workspace_id
-  AND assignment.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = @workspace_id AND host_issue_id = @host_issue_id
-  );
-
--- name: DeleteWorkflowInstancesByHost :exec
-DELETE FROM workflow_instance
-WHERE workspace_id = @workspace_id
-  AND host_issue_id = @host_issue_id;
 
 -- name: SupersedeWorkflowArtifact :execrows
 -- Retires the live row for one (node instance, key) so a replacement can take
@@ -1859,11 +1811,3 @@ SET review_status = @review_status,
     updated_at = now()
 WHERE id = @id AND workspace_id = @workspace_id AND superseded_at IS NULL
 RETURNING *;
-
--- name: DeleteWorkflowArtifactsByHost :exec
-DELETE FROM workflow_artifact artifact
-WHERE artifact.workspace_id = @workspace_id
-  AND artifact.workflow_instance_id IN (
-    SELECT id FROM workflow_instance
-    WHERE workspace_id = @workspace_id AND host_issue_id = @host_issue_id
-  );

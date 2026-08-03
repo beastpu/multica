@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -326,16 +327,31 @@ func TestRetryDirectAgentTaskCreatesNewAttempt(t *testing.T) {
 	}
 }
 
-func TestDeleteWorkflowHostCancelsAndDetachesDirectAgentTask(t *testing.T) {
+func TestDeleteWorkflowHostCancelsRunAndPreservesHistory(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
 	ctx := context.Background()
 	started := startDirectStandaloneRunForTest(t, "delete-direct-host", "Delete direct host")
 	hostID := createWorkflowHostForTest(t, "Direct workflow host")
 	if _, err := testPool.Exec(ctx, `
-		UPDATE workflow_instance SET host_issue_id = $1 WHERE id = $2
+		UPDATE workflow_instance
+		SET host_issue_id = $1, result = '{"partial":"keep"}'::jsonb
+		WHERE id = $2
 	`, hostID, started.Instance.ID); err != nil {
 		t.Fatalf("attach direct run host: %v", err)
+	}
+	var completedRunID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workflow_instance (
+			workspace_id, workflow_id, workflow_version_id, host_issue_id, title,
+			status, host_status_mode, started_by_type, started_by_id, completed_at
+		)
+		SELECT workspace_id, workflow_id, workflow_version_id, $1, 'Completed history',
+		       'completed', host_status_mode, started_by_type, started_by_id, now()
+		FROM workflow_instance WHERE id = $2
+		RETURNING id
+	`, hostID, started.Instance.ID).Scan(&completedRunID); err != nil {
+		t.Fatalf("create completed workflow history: %v", err)
 	}
 
 	var agentTaskID string
@@ -343,6 +359,20 @@ func TestDeleteWorkflowHostCancelsAndDetachesDirectAgentTask(t *testing.T) {
 		SELECT id FROM agent_task_queue WHERE workflow_node_task_id = $1
 	`, started.Tasks[0].ID).Scan(&agentTaskID); err != nil {
 		t.Fatalf("load direct task before host delete: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO workflow_artifact (
+			workspace_id, workflow_instance_id, workflow_node_instance_id,
+			artifact_key, attempt, kind, name, content, submitted_by_type
+		) VALUES ($1, $2, $3, 'history', 1, 'document', 'History', 'Keep me', 'system')
+	`, testWorkspaceID, started.Instance.ID, started.Tasks[0].WorkflowNodeInstanceID); err != nil {
+		t.Fatalf("create workflow artifact history: %v", err)
+	}
+	var eventCountBefore int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM workflow_event WHERE workflow_instance_id = $1
+	`, started.Instance.ID).Scan(&eventCountBefore); err != nil {
+		t.Fatalf("count workflow events before host delete: %v", err)
 	}
 	recorder := httptest.NewRecorder()
 	request := withURLParam(
@@ -365,8 +395,61 @@ func TestDeleteWorkflowHostCancelsAndDetachesDirectAgentTask(t *testing.T) {
 	`, agentTaskID).Scan(&status, &linked); err != nil {
 		t.Fatalf("load direct task after host delete: %v", err)
 	}
-	if status != "cancelled" || linked {
+	if status != "cancelled" || !linked {
 		t.Fatalf("direct task after host delete status=%q linked=%v", status, linked)
+	}
+
+	var runStatus string
+	var hostIssueID *string
+	var title string
+	var partialResult string
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, host_issue_id::text, title, result->>'partial'
+		FROM workflow_instance WHERE id = $1
+	`, started.Instance.ID).Scan(&runStatus, &hostIssueID, &title, &partialResult); err != nil {
+		t.Fatalf("load preserved workflow run: %v", err)
+	}
+	if runStatus != "cancelled" || hostIssueID != nil || title != started.Instance.Title || partialResult != "keep" {
+		t.Fatalf("preserved run status=%q host=%v title=%q partial_result=%q", runStatus, hostIssueID, title, partialResult)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, host_issue_id::text
+		FROM workflow_instance WHERE id = $1
+	`, completedRunID).Scan(&runStatus, &hostIssueID); err != nil {
+		t.Fatalf("load completed workflow history: %v", err)
+	}
+	if runStatus != "completed" || hostIssueID != nil {
+		t.Fatalf("completed run after host delete status=%q host=%v", runStatus, hostIssueID)
+	}
+
+	for table := range map[string]struct{}{
+		"workflow_node_instance": {},
+		"workflow_node_task":     {},
+		"workflow_artifact":      {},
+	} {
+		var count int
+		if err := testPool.QueryRow(ctx, fmt.Sprintf(
+			"SELECT count(*) FROM %s WHERE workflow_instance_id = $1", table,
+		), started.Instance.ID).Scan(&count); err != nil {
+			t.Fatalf("count preserved %s history: %v", table, err)
+		}
+		if count == 0 {
+			t.Fatalf("workflow host deletion removed %s history", table)
+		}
+	}
+
+	var eventCountAfter, cancellationEvents int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*), count(*) FILTER (WHERE event_type = 'workflow.cancelled')
+		FROM workflow_event WHERE workflow_instance_id = $1
+	`, started.Instance.ID).Scan(&eventCountAfter, &cancellationEvents); err != nil {
+		t.Fatalf("count workflow events after host delete: %v", err)
+	}
+	if eventCountAfter != eventCountBefore+1 || cancellationEvents != 1 {
+		t.Fatalf(
+			"preserved workflow events before=%d after=%d cancellations=%d",
+			eventCountBefore, eventCountAfter, cancellationEvents,
+		)
 	}
 }
 
