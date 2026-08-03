@@ -1173,6 +1173,9 @@ function ReviewerEditor({
 }) {
   const { t } = useT("workflows");
   const reviewer = node.reviewer;
+  const reviewerMode = reviewer?.kind === "actor"
+    ? (reviewer.actor_type === "member" ? "human" : "agent")
+    : (reviewer?.kind ?? "");
   const ownerRole = definition.roles.find((role) => role.key === node.owner_role);
   // An owner reviewer needs an owner that resolves to a member: either a
   // member-only role or a directly pinned member owner.
@@ -1196,7 +1199,7 @@ function ReviewerEditor({
       </p>
       <select
         id={`node-reviewer-${node.key}`}
-        value={reviewer?.kind ?? ""}
+        value={reviewerMode}
         disabled={readOnly}
         className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
         onChange={(event) => {
@@ -1204,22 +1207,44 @@ function ReviewerEditor({
             setReviewer(undefined);
             return;
           }
+          const mode = event.target.value;
+          if (mode === "human" || mode === "agent") {
+            setReviewer({
+              kind: "actor",
+              actor_type: mode === "human" ? "member" : "agent",
+              required: true,
+            });
+            return;
+          }
           setReviewer({
-            kind: event.target.value as WorkflowReviewerDefinition["kind"],
-            required: reviewer?.required ?? true,
+            kind: mode as WorkflowReviewerDefinition["kind"],
+            required: true,
           });
         }}
       >
         <option value="">{t(($) => $.editor.reviewer_kind_none)}</option>
+        <option value="human">{t(($) => $.editor.reviewer_kind_human)}</option>
+        <option value="agent">{t(($) => $.editor.reviewer_kind_agent)}</option>
         <option value="role">{t(($) => $.editor.reviewer_kind_role)}</option>
-        <option value="actor">{t(($) => $.editor.reviewer_kind_actor)}</option>
         <option value="owner" disabled={!ownerCanReview}>
           {t(($) => $.editor.reviewer_kind_owner)}
         </option>
-        <option value="api">{t(($) => $.editor.reviewer_kind_api)}</option>
-        <option value="auto">{t(($) => $.editor.reviewer_kind_auto)}</option>
+        <optgroup label={t(($) => $.editor.reviewer_advanced)}>
+          <option value="api">{t(($) => $.editor.reviewer_kind_api)}</option>
+          <option value="auto">{t(($) => $.editor.reviewer_kind_auto)}</option>
+        </optgroup>
       </select>
-      {!ownerCanReview && (
+      {reviewerMode === "agent" && (
+        <p className="text-xs text-muted-foreground">
+          {t(($) => $.editor.reviewer_agent_protocol_hint)}
+        </p>
+      )}
+      {reviewerMode === "human" && (
+        <p className="text-xs text-muted-foreground">
+          {t(($) => $.editor.reviewer_human_hint)}
+        </p>
+      )}
+      {reviewerMode === "owner" && !ownerCanReview && (
         <p className="text-xs text-muted-foreground">
           {t(($) => $.editor.owner_confirmation_member_only)}
         </p>
@@ -1243,7 +1268,9 @@ function ReviewerEditor({
       )}
       {reviewer?.kind === "actor" && (
         <select
-          aria-label={t(($) => $.editor.reviewer_kind_actor)}
+          aria-label={reviewerMode === "human"
+            ? t(($) => $.editor.reviewer_kind_human)
+            : t(($) => $.editor.reviewer_kind_agent)}
           value={reviewer.actor_type && reviewer.actor_id
             ? actorOptionValue({ type: reviewer.actor_type, id: reviewer.actor_id })
             : ""}
@@ -1259,14 +1286,18 @@ function ReviewerEditor({
           }}
         >
           <option value="">—</option>
-          {actorOptions.map((actor) => (
-            <option
-              key={actorOptionValue(actor)}
-              value={actorOptionValue(actor)}
-            >
-              {actor.name} · {actor.type}
-            </option>
-          ))}
+          {actorOptions
+            .filter((actor) => reviewerMode === "human"
+              ? actor.type === "member"
+              : actor.type === "agent" || actor.type === "squad")
+            .map((actor) => (
+              <option
+                key={actorOptionValue(actor)}
+                value={actorOptionValue(actor)}
+              >
+                {actor.name} · {actor.type}
+              </option>
+            ))}
         </select>
       )}
       {reviewer?.kind === "api" && (
@@ -1295,22 +1326,6 @@ function ReviewerEditor({
           placeholder={'{"source":"node_submission","node":"review","key":"approved","op":"eq","value":true}'}
           onChange={(condition) => setReviewer({ ...reviewer, condition })}
         />
-      )}
-      {reviewer && (
-        <>
-          <label className="flex min-h-9 items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={reviewer.required ?? false}
-              disabled={readOnly}
-              onChange={(event) => setReviewer({
-                ...reviewer,
-                required: event.target.checked,
-              })}
-            />
-            {t(($) => $.editor.reviewer_required)}
-          </label>
-        </>
       )}
     </div>
   );

@@ -53,7 +53,6 @@ import {
   workflowInstanceOptions,
   workflowNodeOptions,
   workflowNodeArtifactsOptions,
-  useReviewWorkflowArtifact,
   workflowOptions,
   workflowCompletionMode,
   type WorkflowNodeInstance,
@@ -346,24 +345,18 @@ export function SubmissionPanel({
   );
 }
 
-// ArtifactPanel is the human half of artifacts. Agents submit through the CLI;
-// members need to read what was produced and say whether it passes, because a
-// required artifact that nobody can see is a gate nobody can clear.
+// ArtifactPanel is the readable delivery snapshot. Reviewers inspect every
+// artifact here, then record one node verdict; the server applies that verdict
+// to the snapshot atomically instead of making the browser write each row.
 export function ArtifactPanel({
-  instanceId,
   node,
-  canManage,
 }: {
-  instanceId: string;
   node: WorkflowNodeInstance;
-  canManage: boolean;
 }) {
   const { t } = useT("workflows");
   const wsId = useWorkspaceId();
   const [expanded, setExpanded] = useState<string>("");
-  const [comment, setComment] = useState("");
   const artifactsQuery = useQuery(workflowNodeArtifactsOptions(wsId, node.id));
-  const review = useReviewWorkflowArtifact(instanceId, node.id);
   const required = node.definition.artifacts ?? [];
   const artifacts = artifactsQuery.data?.artifacts ?? [];
   const delivered = new Set(artifacts.map((artifact) => artifact.artifact_key));
@@ -451,46 +444,6 @@ export function ArtifactPanel({
             <p className="text-xs text-muted-foreground">
               {artifact.review_comment}
             </p>
-          )}
-          {canManage && (
-            <div className="space-y-2">
-              <Textarea
-                value={expanded === artifact.id ? comment : ""}
-                rows={2}
-                placeholder={t(($) => $.workbench.artifact_review_comment)}
-                onChange={(event) => {
-                  setExpanded(artifact.id);
-                  setComment(event.target.value);
-                }}
-              />
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  className="min-h-11"
-                  disabled={review.isPending}
-                  onClick={() => review.mutate({
-                    artifactId: artifact.id,
-                    status: "approved",
-                    comment: comment.trim() || undefined,
-                  }, { onSuccess: () => setComment("") })}
-                >
-                  {t(($) => $.actions.approve)}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  className="min-h-11"
-                  disabled={review.isPending}
-                  onClick={() => review.mutate({
-                    artifactId: artifact.id,
-                    status: "rejected",
-                    comment: comment.trim() || undefined,
-                  }, { onSuccess: () => setComment("") })}
-                >
-                  {t(($) => $.actions.reject)}
-                </Button>
-              </div>
-            </div>
           )}
         </div>
       ))}
@@ -2393,9 +2346,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             />
           )}
           <ArtifactPanel
-            instanceId={instanceId}
             node={selectedNode}
-            canManage={canManageSelectedNode}
           />
         </TabsContent>
         {hasVerdictPanel && (

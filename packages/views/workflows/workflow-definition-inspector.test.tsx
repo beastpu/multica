@@ -308,6 +308,64 @@ describe("WorkflowNodeDefinitionInspector", () => {
       reviewer: expect.objectContaining({ kind: "owner", required: true }),
     }));
   });
+
+  it("stores an agent reviewer and explains the built-in Critic protocol", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderInspector(onChange);
+
+    await user.click(
+      screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
+    );
+    await user.selectOptions(
+      screen.getByLabelText(enWorkflows.editor.reviewer),
+      "agent",
+    );
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      reviewer: {
+        kind: "actor",
+        actor_type: "agent",
+        required: true,
+      },
+    }));
+  });
+
+  it("keeps members out of the agent reviewer picker", async () => {
+    const user = userEvent.setup();
+    render(
+      <I18nProvider locale="en" resources={{ en: { workflows: enWorkflows } }}>
+        <WorkflowNodeDefinitionInspector
+          node={{
+            ...node,
+            reviewer: {
+              kind: "actor",
+              actor_type: "agent",
+              actor_id: "agent-default",
+              required: true,
+            },
+          }}
+          definition={definition}
+          actorOptions={[
+            ...actorOptions,
+            { type: "member", id: "member-1", name: "Ada" },
+          ]}
+          readOnly={false}
+          onChange={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    await user.click(
+      screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
+    );
+    const picker = screen.getByLabelText(enWorkflows.editor.reviewer_kind_agent);
+    expect(picker).toHaveTextContent("Backend Agent");
+    expect(picker).toHaveTextContent("Review Squad");
+    expect(picker).not.toHaveTextContent("Ada");
+    expect(screen.getByText(enWorkflows.editor.reviewer_agent_protocol_hint))
+      .toBeInTheDocument();
+  });
 });
 
 describe("artifact declarations", () => {
