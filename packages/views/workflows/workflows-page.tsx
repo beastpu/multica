@@ -61,6 +61,7 @@ import {
 } from "@multica/ui/components/ui/tabs";
 import { AppLink, useNavigation } from "../navigation";
 import {
+  CollectionPageHeaderAction,
   CollectionPageHeader,
   CollectionPageState,
 } from "../layout/collection-page";
@@ -410,12 +411,6 @@ function RunTemplateDialog({
 
 type TemplateStatusFilter = "all" | "published" | "archived";
 
-// The newest version is the one the editor opens and the one an unsaved draft
-// belongs to, so it is the number worth showing next to the name.
-function latestVersionOf(workflow: Workflow): number {
-  return workflow.latest_published_version;
-}
-
 function matchesTemplateStatus(
   template: Workflow,
   filter: TemplateStatusFilter,
@@ -426,6 +421,32 @@ function matchesTemplateStatus(
     default:
       return template.status === filter;
   }
+}
+
+function CreateWorkflowButton() {
+  const { t } = useT("workflows");
+  const navigation = useNavigation();
+  const p = useWorkspacePaths();
+  const createTemplate = useCreateWorkflow();
+  const create = () => {
+    const definition = defaultWorkflowDefinition();
+    createTemplate.mutate({
+      name: definition.name,
+      description: "",
+      definition,
+    }, {
+      onSuccess: ({ workflow }) => navigation.push(p.workflow(workflow.id)),
+    });
+  };
+
+  return (
+    <CollectionPageHeaderAction
+      icon={Plus}
+      label={t(($) => $.actions.new_template)}
+      onClick={create}
+      disabled={createTemplate.isPending}
+    />
+  );
 }
 
 // The starter library: definitions shipped with the server that a workspace
@@ -504,27 +525,11 @@ function TemplatesPanel({
   );
   const [statusFilter, setStatusFilter] = useState<TemplateStatusFilter>("all");
   const allTemplates = data?.workflows ?? [];
-  const countFor = (filter: TemplateStatusFilter) =>
-    allTemplates.filter((template) => matchesTemplateStatus(template, filter))
-      .length;
   const visibleTemplates = allTemplates.filter((template) =>
     matchesTemplateStatus(template, statusFilter)
   );
-  const createTemplate = useCreateWorkflow();
   const copyTemplate = useCopyWorkflow();
   const [runTemplate, setRunTemplate] = useState<Workflow | null>(null);
-
-  const create = () => {
-    const definition = defaultWorkflowDefinition();
-    createTemplate.mutate({
-      name: definition.name,
-      description: "",
-      definition,
-    }, {
-      onSuccess: ({ workflow }) =>
-        navigation.push(p.workflow(workflow.id)),
-    });
-  };
 
   if (isError) {
     return (
@@ -539,32 +544,8 @@ function TemplatesPanel({
 
   return (
     <div>
-      {/* The header keeps the page's own padding; the table below runs to the
-          edges, so the two align on the same left rule. */}
-      <div className="flex items-center justify-between gap-3 px-3 py-4">
-        <div>
-          <h2 className="text-sm font-medium">{t(($) => $.templates.title)}</h2>
-          {!canManage && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t(($) => $.templates.admin_only)}
-            </p>
-          )}
-        </div>
-        {canManage && (
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              onClick={create}
-              disabled={createTemplate.isPending}
-            >
-              <Plus />
-              {t(($) => $.actions.new_template)}
-            </Button>
-          </div>
-        )}
-      </div>
       {isLoading ? (
-        <div className="space-y-2">
+        <div className="space-y-2 px-3 py-3">
           <Skeleton className="h-12 rounded-lg" />
           <Skeleton className="h-12 rounded-lg" />
         </div>
@@ -619,9 +600,6 @@ function TemplatesPanel({
                           )}
                         >
                           {label}
-                          <span className="ml-1.5 tabular-nums opacity-60">
-                            {countFor(value)}
-                          </span>
                         </button>
                       ),
                     )}
@@ -631,7 +609,7 @@ function TemplatesPanel({
               {visibleTemplates.map((template) => (
                 <tr
                   key={template.id}
-                  className="h-16 transition-colors hover:bg-muted/30"
+                  className="h-12 transition-colors hover:bg-muted/30"
                 >
                   <td className="max-w-[26rem] px-3 py-2">
                     <div className="flex min-w-0 items-center gap-3">
@@ -640,31 +618,12 @@ function TemplatesPanel({
                         className="size-4 shrink-0 text-muted-foreground"
                       />
                       <div className="min-w-0">
-                        {/*
-                          The version rides with the name rather than owning a
-                          column or a control at the top of the editor: it is
-                          something you check, not something you set.
-                        */}
-                        <div className="flex min-w-0 items-baseline gap-1.5">
-                          <AppLink
-                            href={p.workflow(template.id)}
-                            className="truncate font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            {template.name}
-                          </AppLink>
-                          {latestVersionOf(template) > 0 && (
-                            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                              {t(($) => $.editor.version_short, {
-                                version: latestVersionOf(template),
-                              })}
-                            </span>
-                          )}
-                        </div>
-                        {template.description && (
-                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                            {template.description}
-                          </span>
-                        )}
+                        <AppLink
+                          href={p.workflow(template.id)}
+                          className="block truncate font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {template.name}
+                        </AppLink>
                       </div>
                     </div>
                   </td>
@@ -720,17 +679,6 @@ function TemplatesPanel({
           icon={LayoutTemplate}
           title={t(($) => $.templates.empty_title)}
           description={t(($) => $.templates.empty_description)}
-          actions={canManage ? (
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={create}
-                disabled={createTemplate.isPending}
-              >
-                <Plus />
-                {t(($) => $.actions.new_template)}
-              </Button>
-            </div>
-          ) : undefined}
         />
       )}
       <RunTemplateDialog
@@ -1150,7 +1098,9 @@ export function WorkflowsPage() {
       <CollectionPageHeader
         icon={GitBranch}
         title={t(($) => $.title)}
-        description={t(($) => $.description)}
+        actions={tab === "workflows" && canManage
+          ? <CreateWorkflowButton />
+          : undefined}
       />
       <nav aria-label={t(($) => $.title)} className="border-b px-5">
         <Tabs

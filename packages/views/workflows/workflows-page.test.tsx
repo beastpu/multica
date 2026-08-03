@@ -51,7 +51,7 @@ const templateSummary = {
   id: "template-1",
   status: "published",
   name: "Delivery workflow",
-  description: "",
+  description: "A long explanation that belongs in workflow details.",
   activity_count: 2,
   run_count: 4,
   last_published_by: null,
@@ -295,11 +295,14 @@ describe("WorkflowsPage", () => {
       .toHaveAttribute("href", "/workspace/workflows/template-1");
   });
 
-  // The version is the one number that says whether what you are looking at
-  // is what runs. It rides with the name instead of costing a column.
-  it("marks each workflow with its newest version next to the name", () => {
+  it("keeps secondary workflow metadata out of the operational list", () => {
     render(<WorkflowsPage />, { wrapper });
 
-    expect(screen.getByText("v3")).toBeInTheDocument();
+    expect(screen.queryByText("v3")).toBeNull();
+    expect(
+      screen.queryByText("A long explanation that belongs in workflow details."),
+    ).toBeNull();
+    expect(screen.getAllByRole("button", { name: "New workflow" }))
+      .toHaveLength(1);
   });
 });
