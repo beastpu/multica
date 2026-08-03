@@ -196,6 +196,12 @@ vi.mock("./workflow-canvas", () => ({
       <button type="button" onClick={() => onSelectKey?.("work")}>
         Work node
       </button>
+      <button type="button" onClick={() => onSelectKey?.("start")}>
+        Start node
+      </button>
+      <button type="button" onClick={() => onSelectKey?.("end")}>
+        End node
+      </button>
       <button
         type="button"
         onClick={() => onInsertNode?.("activity", {
@@ -472,5 +478,16 @@ describe("WorkflowPage node deletion", () => {
     };
     expect(input.definition.nodes.map((node) => node.key))
       .toEqual(["start", "end"]);
+  });
+
+  it("does not offer deletion for Start or End", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Start node" }));
+    expect(screen.queryByRole("button", { name: "Delete node" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "End node" }));
+    expect(screen.queryByRole("button", { name: "Delete node" })).toBeNull();
   });
 });

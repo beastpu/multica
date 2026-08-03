@@ -153,7 +153,7 @@ func workflowDefinitionBytes(raw json.RawMessage) ([]byte, string, error) {
 	if len(raw) == 0 {
 		return nil, "", errors.New("definition is required")
 	}
-	definition, err := workflowdomain.ParseDefinition(raw)
+	definition, err := workflowdomain.ParseAuthoringDefinition(raw)
 	if err != nil {
 		return nil, "", err
 	}

@@ -79,6 +79,7 @@ import {
   nextWorkflowNodeKey,
   removeWorkflowEdge,
   removeWorkflowNode,
+  workflowNodeIsBoundary,
 } from "./workflow-graph-editor";
 import {
   WorkflowNodeDefinitionInspector,
@@ -493,7 +494,9 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
     setSaveError("");
   };
   const changeNode = (next: WorkflowNodeDefinition) => {
-    if (!definition || !selectedNode) return;
+    if (!definition || !selectedNode || workflowNodeIsBoundary(selectedNode)) {
+      return;
+    }
     changeDefinition({
       ...definition,
       nodes: definition.nodes.map((node) =>
@@ -563,7 +566,9 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
   };
   const removeSelected = () => {
     setRemoveOpen(false);
-    if (!definition || !selectedNode || selectedNode.kind === "start") return;
+    if (!definition || !selectedNode || workflowNodeIsBoundary(selectedNode)) {
+      return;
+    }
     const next = removeWorkflowNode(definition, selectedNode.key);
     if (!next) return;
     changeDefinition(next);
@@ -784,7 +789,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
                     actorOptions={actorOptions}
                     readOnly={!canEdit}
                     onChange={changeNode}
-                    onRemove={canEdit && selectedNode.kind !== "start"
+                    onRemove={canEdit && !workflowNodeIsBoundary(selectedNode)
                       ? () => setRemoveOpen(true)
                       : undefined}
                   />

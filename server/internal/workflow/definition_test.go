@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -558,6 +559,42 @@ func TestParseDefinitionRejectsUnknownField(t *testing.T) {
 	raw = append(raw[:len(raw)-1], []byte(`,"surprise":true}`)...)
 	if _, err := ParseDefinition(raw); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("ParseDefinition() error = %v, want unknown field error", err)
+	}
+}
+
+func TestParseAuthoringDefinitionDropsRetiredAppliesTo(t *testing.T) {
+	raw, err := json.Marshal(validDefinition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = append(
+		raw[:len(raw)-1],
+		[]byte(`,"applies_to":{"kind":"issue","type_key":"requirement"}}`)...,
+	)
+
+	definition, err := ParseAuthoringDefinition(raw)
+	if err != nil {
+		t.Fatalf("ParseAuthoringDefinition() error = %v", err)
+	}
+	encoded, err := json.Marshal(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte(`"applies_to"`)) {
+		t.Fatalf("ParseAuthoringDefinition() retained applies_to: %s", encoded)
+	}
+}
+
+func TestParseAuthoringDefinitionStillRejectsUnknownFields(t *testing.T) {
+	raw, err := json.Marshal(validDefinition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = append(raw[:len(raw)-1], []byte(`,"surprise":true}`)...)
+
+	if _, err := ParseAuthoringDefinition(raw); err == nil ||
+		!strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("ParseAuthoringDefinition() error = %v, want unknown field error", err)
 	}
 }
 

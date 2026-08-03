@@ -25,6 +25,7 @@ import {
 } from "@multica/ui/components/ui/tabs";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { useT } from "../i18n";
+import { workflowNodeIsBoundary } from "./workflow-graph-editor";
 
 // The template editor is a dense desktop surface: field labels sit one step
 // below body text so option values never outweigh the field they belong to.
@@ -1151,6 +1152,13 @@ export function WorkflowNodeDefinitionInspector({
 }) {
   const { t } = useT("workflows");
   const activity = node.kind === "activity";
+
+  // Start and End are structural anchors. Their identity and behavior come
+  // from the graph, so rendering ordinary node fields suggests configuration
+  // that the author should never need to make.
+  if (workflowNodeIsBoundary(node)) {
+    return <NodeInspectorHeader node={node} />;
+  }
 
   const basicFields = (
     <>

@@ -75,6 +75,34 @@ function renderInspector(onChange: (value: WorkflowNodeDefinition) => void) {
 }
 
 describe("WorkflowNodeDefinitionInspector", () => {
+  it.each([
+    { key: "start", kind: "start", name: "Start" },
+    { key: "end", kind: "end", name: "End" },
+  ] satisfies WorkflowNodeDefinition[])(
+    "keeps the $kind boundary node free of editable fields and deletion",
+    (boundaryNode) => {
+      render(
+        <I18nProvider
+          locale="en"
+          resources={{ en: { workflows: enWorkflows } }}
+        >
+          <WorkflowNodeDefinitionInspector
+            node={boundaryNode}
+            definition={definition}
+            readOnly={false}
+            onChange={vi.fn()}
+            onRemove={vi.fn()}
+          />
+        </I18nProvider>,
+      );
+
+      expect(screen.getByText(boundaryNode.name)).toBeInTheDocument();
+      expect(screen.queryByLabelText("Activity name")).toBeNull();
+      expect(screen.queryByLabelText("Description")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Remove node" })).toBeNull();
+    },
+  );
+
   // node.color was written by this field and read by nothing — not the canvas,
   // not the workbench, not mobile. A control whose only effect is a diff in
   // the stored definition is a question the author has to answer for nothing.

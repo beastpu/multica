@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -12,7 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
-func TestWorkflowDefinitionBytesNormalizesLegacyAuthoringGates(t *testing.T) {
+func TestWorkflowDefinitionBytesNormalizesLegacyAuthoringDefinition(t *testing.T) {
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Normalized authoring",
@@ -39,6 +40,7 @@ func TestWorkflowDefinitionBytesNormalizesLegacyAuthoringGates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal legacy definition: %v", err)
 	}
+	raw = append(raw[:len(raw)-1], []byte(`,"applies_to":{"kind":"issue"}}`)...)
 	normalized, _, err := workflowDefinitionBytes(raw)
 	if err != nil {
 		t.Fatalf("normalize workflow definition: %v", err)
@@ -49,6 +51,9 @@ func TestWorkflowDefinitionBytesNormalizesLegacyAuthoringGates(t *testing.T) {
 	}
 	if saved.Acceptance != (workflowdomain.AcceptanceDefinition{}) {
 		t.Fatalf("saved acceptance = %#v, want none", saved.Acceptance)
+	}
+	if bytes.Contains(normalized, []byte(`"applies_to"`)) {
+		t.Fatalf("saved definition retained applies_to: %s", normalized)
 	}
 	work := saved.Nodes[1]
 	if work.Completion.Mode != "automatic" || work.Reviewer == nil ||

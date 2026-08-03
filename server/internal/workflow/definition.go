@@ -235,18 +235,43 @@ type AcceptanceDefinition struct {
 
 func ParseDefinition(raw []byte) (Definition, error) {
 	var definition Definition
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&definition); err != nil {
-		return Definition{}, fmt.Errorf("decode workflow definition: %w", err)
-	}
-	if err := ensureJSONEOF(decoder); err != nil {
+	if err := decodeDefinition(raw, &definition); err != nil {
 		return Definition{}, err
 	}
 	if err := ValidateDefinition(definition); err != nil {
 		return Definition{}, err
 	}
 	return definition, nil
+}
+
+// ParseAuthoringDefinition accepts fields retired from old authoring schemas
+// while preserving strict unknown-field validation for everything else. Runtime
+// paths should continue to use ParseDefinition after stored definitions have
+// been normalized.
+func ParseAuthoringDefinition(raw []byte) (Definition, error) {
+	var input struct {
+		Definition
+		AppliesTo json.RawMessage `json:"applies_to,omitempty"`
+	}
+	if err := decodeDefinition(raw, &input); err != nil {
+		return Definition{}, err
+	}
+	if err := ValidateDefinition(input.Definition); err != nil {
+		return Definition{}, err
+	}
+	return input.Definition, nil
+}
+
+func decodeDefinition(raw []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return fmt.Errorf("decode workflow definition: %w", err)
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return err
+	}
+	return nil
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {

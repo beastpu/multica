@@ -11,6 +11,10 @@ export interface WorkflowCanvasEdgeTarget {
   to: string;
 }
 
+export function workflowNodeIsBoundary(node: WorkflowNodeDefinition) {
+  return node.kind === "start" || node.kind === "end";
+}
+
 function outgoingByNode(definition: WorkflowDefinition) {
   const outgoing = new Map<string, string[]>();
   for (const edge of definition.edges) {
@@ -213,7 +217,7 @@ export function removeWorkflowNode(
   nodeKey: string,
 ) {
   const node = definition.nodes.find((candidate) => candidate.key === nodeKey);
-  if (!node || node.kind === "start") return null;
+  if (!node || workflowNodeIsBoundary(node)) return null;
 
   const incoming = definition.edges.filter((edge) => edge.to === nodeKey);
   const outgoing = definition.edges.filter((edge) => edge.from === nodeKey);

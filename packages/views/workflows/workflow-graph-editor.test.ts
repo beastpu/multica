@@ -234,7 +234,7 @@ describe("workflow graph editor", () => {
     ]);
   });
 
-  it("leaves acceptance alone on deletion and never deletes Start", () => {
+  it("leaves acceptance alone and never deletes boundary nodes", () => {
     const definition = {
       ...workflow(
         [start, activity("accept"), end],
@@ -247,6 +247,7 @@ describe("workflow graph editor", () => {
     } satisfies WorkflowDefinition;
 
     expect(removeWorkflowNode(definition, "start")).toBeNull();
+    expect(removeWorkflowNode(definition, "end")).toBeNull();
     // Acceptance belongs to the run, and its rework destinations come from the
     // graph — deleting a node updates them by definition.
     expect(removeWorkflowNode(definition, "accept")?.acceptance).toEqual({
