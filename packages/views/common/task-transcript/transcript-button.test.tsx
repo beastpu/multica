@@ -102,6 +102,24 @@ afterEach(() => {
 });
 
 describe("TranscriptButton", () => {
+  it("can render a visible label without changing its accessible title", () => {
+    const qc = newClient();
+    renderWith(
+      qc,
+      <TranscriptButton
+        task={baseTask}
+        agentName="Codex"
+        label="Execution log"
+        title="Open execution log"
+        items={[]}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Open execution log" }),
+    ).toHaveTextContent("Execution log");
+  });
+
   it("closes the transcript dialog when desktop navigation starts", async () => {
     const items: TimelineItem[] = [{ seq: 1, type: "text", content: "hello" }];
     const qc = newClient();

@@ -36,6 +36,7 @@ interface TranscriptButtonProps {
   isLive?: boolean;
   className?: string;
   title?: string;
+  label?: string;
   /**
    * Optional content rendered above the transcript event list. Used to
    * surface autopilot webhook payloads inline with the run history.
@@ -64,6 +65,7 @@ export function TranscriptButton({
   isLive = false,
   className,
   title = "View transcript",
+  label,
   headerSlot,
 }: TranscriptButtonProps) {
   const [open, setOpen] = useState(false);
@@ -140,7 +142,7 @@ export function TranscriptButton({
           disabled={loading}
           aria-label={title}
           className={cn(
-            "flex items-center justify-center rounded p-1 text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors disabled:opacity-50",
+            "flex items-center justify-center gap-1.5 rounded p-1 text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors disabled:opacity-50",
             className,
           )}
         >
@@ -149,6 +151,7 @@ export function TranscriptButton({
           ) : (
             <ScrollText className="h-3.5 w-3.5" />
           )}
+          {label && <span>{label}</span>}
         </TooltipTrigger>
         <TooltipContent>{title}</TooltipContent>
       </Tooltip>
