@@ -81,3 +81,7 @@ data/
 *.keychain
 *.keychain-db
 .gstack/
+
+# Throwaway kustomize overlay written by scripts/deploy-test.sh. It is removed
+# on exit; this entry only covers a killed run leaving one behind.
+deploy/k8s/.rollout/

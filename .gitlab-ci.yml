@@ -1,33 +1,76 @@
 # GitLab CI for the internal Lilith Multica fork.
 #
-# Active responsibility (fires only on semver tag pushes):
-#   - `mirror-to-github` — push the tag (and main HEAD) to the
-#     `CopilotDemo/multica` mirror on GitHub. That mirror's
-#     `.github/workflows/lilith-desktop-release.yml` does the
-#     desktop build + Aliyun OSS publish on its own runners.
+# Two responsibilities, on two different triggers:
 #
-# Day-to-day testing / build / lint runs on the GitHub mirror's
-# `.github/workflows/ci.yml`, not here.
+#   1. Build + deploy to the `multica-test` namespace on ACK.
+#      Fires on pushes to the default branch, and on a manual
+#      "Run pipeline" for any branch (deploy is a second click there).
+#      Jobs: `preflight` → `build-server` / `build-web` → `deploy-test`.
 #
-# Runner requirement: SHELL executor on a Linux VM with these tools
-# on $PATH for the runner user (`gitlab-runner` by default):
-#   - bash >= 4
-#   - git
-#   - ssh + ssh-keyscan          (mirror-to-github)
-# (apt: `apt-get install -y bash git openssh-client`;
-#  yum/dnf: same; apk: `apk add bash git openssh-client`.)
+#   2. `mirror-to-github` — on semver tag pushes only, push the tag (and
+#      main HEAD) to the `CopilotDemo/multica` mirror on GitHub. That
+#      mirror's `.github/workflows/lilith-desktop-release.yml` does the
+#      desktop build + Aliyun OSS publish on its own runners.
 #
-# To switch to a docker executor later, add `image: alpine:3.21` to a
-# job and put `apk add --no-cache bash git openssh-client` in
-# before_script — both are valid configs.
+# Unit tests / lint / typecheck run on the GitHub mirror's
+# `.github/workflows/ci.yml`, not here. The Dockerfiles compile both the Go
+# server and the Next.js bundle, so `build-*` failing IS the compile gate.
+#
+# ── Runners ─────────────────────────────────────────────────────────────
+# The project has two registered runners and BOTH carry the `multica` tag:
+#
+#   3256  multica-ack-runner (host `wenxue-dev`)  linux/amd64  shell  [multica]
+#   3285  macmini for local runner                darwin/arm64 shell  [macos, multica]
+#
+# There is no tag that selects 3256 alone, so `tags: [multica]` can dispatch
+# to the Mac mini. Every job here therefore asserts it is on Linux before it
+# does anything (`.assert-linux-host`). Once ops adds a distinct tag to 3256
+# (e.g. `ack`), swap `*multica_runner` for it and the guard can go.
+#
+# ── Runner host requirements (shell executor, no `image:`) ──────────────
+#   mirror-to-github : bash, git, ssh, ssh-keyscan
+#   build-*          : docker (daemon reachable by the `gitlab-runner` user)
+#   deploy-test      : kubectl with reach to the ACK cluster
+#
+# ── Required CI/CD variables (Settings → CI/CD → Variables) ─────────────
+#   GITHUB_MIRROR_DEPLOY_KEY  mirror only; see scripts/mirror-to-github.sh
+#   ACR_USERNAME / ACR_PASSWORD
+#                             OPTIONAL. ACR Enterprise push credentials
+#                             (masked). Omit them if the runner host is
+#                             already `docker login`-ed to the registry.
+#   KUBECONFIG_TEST           OPTIONAL, type "File". A kubeconfig with write
+#                             access to the `multica-test` namespace. Omit it
+#                             if the runner host already has a working
+#                             ambient kubeconfig.
+#
+# Both optional pairs follow the same rule: the CI variable wins when set,
+# otherwise the job uses whatever the runner host already has. `preflight`
+# reports which of the two is in play for each.
 
 workflow:
   rules:
-    # Only run pipelines for tag pushes — never for branch pushes or MRs.
+    # Tag pushes → the mirror pipeline.
     - if: '$CI_COMMIT_TAG'
+    # Default-branch pushes → build + auto-deploy to test.
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    # "Run pipeline" in the UI (or the pipelines API) → build any branch,
+    # deploy behind a manual gate.
+    - if: '$CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
 
 stages:
+  - preflight
+  - build
+  - deploy
   - mirror
+
+variables:
+  REGISTRY: lilith-registry.cn-shanghai.cr.aliyuncs.com
+  IMAGE_NAMESPACE: devops
+  TEST_NAMESPACE: multica-test
+  # Baked into the web bundle at build time — a missing one fails the build
+  # rather than degrading at runtime. Values mirror deploy/k8s/base/configmap.yaml.
+  NEXT_PUBLIC_FEISHU_APP_ID: cli_a739addb39e41013
+  REMOTE_API_URL: http://multica-server:8080
 
 # Shared release-tag rule. Accepts three tag shapes, all routed to the
 # same mirror-to-github job:
@@ -43,11 +86,37 @@ stages:
 .semver-tag-rule: &semver_tag_rule
   - if: '$CI_COMMIT_TAG =~ /^(v?|mobile-v)[0-9]+\.[0-9]+\.[0-9]+$/'
 
-# Shared runner pin. The project has one registered runner tagged
-# `multica`; pinning here keeps dispatch unambiguous even if the
-# runner's "Run untagged jobs" toggle flips.
+# Build + deploy never run on a tag pipeline — a tag is a desktop release,
+# not a server rollout.
+.test-pipeline-rule: &test_pipeline_rule
+  - if: '$CI_COMMIT_TAG'
+    when: never
+  - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  - if: '$CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+
+# Same, but deploying a non-default branch to the shared test namespace is a
+# deliberate act, so it costs a second click.
+.deploy-rule: &deploy_rule
+  - if: '$CI_COMMIT_TAG'
+    when: never
+  - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  - if: '$CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+    when: manual
+
 .multica-runner: &multica_runner
   - multica
+
+# Both registered runners answer to `multica`, and the Mac mini has neither
+# the architecture nor the cluster reach for these jobs. Fail in one second
+# with the reason instead of ten minutes into a cross-arch docker build.
+.assert-linux-host: &assert_linux_host
+  - |
+    test "$(uname -s)" = "Linux" || {
+      echo "❌ This job landed on $(uname -s) ($(hostname)). It needs the Linux"
+      echo "   runner (3256 multica-ack-runner). Retry, or give that runner a"
+      echo "   distinct tag and pin it here."
+      exit 1
+    }
 
 # Shared variables. Full history is required by the jobs:
 #   - mirror-to-github explicitly fetches `refs/heads/main` so it can
@@ -58,6 +127,176 @@ stages:
   GIT_DEPTH: "0"
   GIT_STRATEGY: "clone"
 
+# ── preflight ───────────────────────────────────────────────────────────
+# Resolves the image tag every later job shares, and reports the host's
+# toolchain. On a fresh runner this is the job that tells you exactly what is
+# missing, rather than letting `build-web` discover it eight minutes in.
+preflight:
+  stage: preflight
+  tags: *multica_runner
+  rules: *test_pipeline_rule
+  script:
+    - *assert_linux_host
+    # Matches the tag shape already in overlays/test/kustomization.yaml's
+    # history (test-20260803-a364c09e6), so the two are readable side by side.
+    - echo "IMAGE_TAG=test-$(date -u +%Y%m%d)-${CI_COMMIT_SHORT_SHA}" > build.env
+    - cat build.env
+    - |
+      missing=0
+      for tool in docker kubectl; do
+        if command -v "$tool" >/dev/null; then
+          echo "✅ $tool → $(command -v "$tool")"
+        else
+          echo "❌ $tool is not on PATH for the runner user"; missing=1
+        fi
+      done
+      # `docker info` is not proof the runtime works: under podman's shim it can
+      # exit 0 on a host where every build fails for want of a writable runtime
+      # dir. Touching the image store is the cheapest call that exercises the
+      # path a build actually takes.
+      if store_err="$(docker images 2>&1 >/dev/null)"; then
+        echo "✅ container runtime usable by $(id -un)"
+      else
+        echo "❌ container runtime unusable by $(id -un):"
+        echo "   $store_err"
+        echo "   For rootless podman the user needs a /etc/subuid + /etc/subgid"
+        echo "   range and a runtime dir: 'usermod --add-subuids ... --add-subgids ...'"
+        echo "   plus 'loginctl enable-linger $(id -un)'."
+        missing=1
+      fi
+      if [ -n "${KUBECONFIG_TEST:-}" ]; then
+        echo "ℹ️  using the KUBECONFIG_TEST CI variable"
+        export KUBECONFIG="$KUBECONFIG_TEST"
+      else
+        echo "ℹ️  no KUBECONFIG_TEST set — relying on the host's ambient kubeconfig"
+        echo "ℹ️  runner user: $(id -un)  home: $HOME"
+        if [ -f "$HOME/.kube/config" ]; then
+          echo "ℹ️  $HOME/.kube/config exists"
+        else
+          echo "ℹ️  $HOME/.kube/config does NOT exist"
+        fi
+      fi
+      # Print the real reason. "cannot read" covers a missing kubeconfig, an
+      # unreachable endpoint and an RBAC denial, and the three need different
+      # fixes — swallowing stderr here makes the job guess for you.
+      if kube_err="$(kubectl -n "$TEST_NAMESPACE" get deploy multica-server 2>&1 >/dev/null)"; then
+        echo "✅ kubectl reaches $TEST_NAMESPACE"
+      else
+        echo "❌ kubectl cannot read $TEST_NAMESPACE:"
+        echo "   $kube_err"
+        missing=1
+      fi
+      # `docker` on this runner is podman's compatibility shim, and podman does
+      # not store credentials where docker does. Check every location either
+      # runtime reads, or the check reports "not logged in" for a host that is.
+      echo "ℹ️  container runtime: $(docker --version 2>&1 | tail -1)"
+      if [ -n "${ACR_USERNAME:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
+        echo "✅ ACR: using the ACR_USERNAME / ACR_PASSWORD CI variables"
+      else
+        acr_auth=""
+        for candidate in \
+          "$HOME/.docker/config.json" \
+          "$HOME/.config/containers/auth.json" \
+          "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/containers/auth.json"; do
+          if [ -f "$candidate" ] && grep -q "$REGISTRY" "$candidate"; then
+            acr_auth="$candidate"
+            break
+          fi
+        done
+        if [ -n "$acr_auth" ]; then
+          echo "✅ ACR: host is already logged in to $REGISTRY ($acr_auth)"
+        else
+          echo "❌ ACR: no ACR_USERNAME / ACR_PASSWORD, and no stored login for"
+          echo "   $REGISTRY under $(id -un)'s home or runtime dir. Either set the"
+          echo "   CI variables, or log in once as the runner user."
+          missing=1
+        fi
+      fi
+      test "$missing" -eq 0 || { echo; echo "Preflight failed — see the ❌ lines above."; exit 1; }
+      echo "✅ preflight clean"
+  artifacts:
+    reports:
+      dotenv: build.env
+
+# ── build ───────────────────────────────────────────────────────────────
+# `--platform linux/amd64` is explicit rather than implied: the ACK nodes are
+# amd64, and an image built for another arch pushes fine and then fails at
+# pull time with a message that points at the registry instead of the builder.
+.docker-login: &docker_login
+  - |
+    if [ -n "${ACR_USERNAME:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
+      printf '%s' "$ACR_PASSWORD" | docker login "$REGISTRY" -u "$ACR_USERNAME" --password-stdin
+    else
+      echo "no ACR CI variables — relying on the host's existing docker login"
+    fi
+
+build-server:
+  stage: build
+  tags: *multica_runner
+  rules: *test_pipeline_rule
+  needs: [preflight]
+  script:
+    - *assert_linux_host
+    - *docker_login
+    - IMAGE="$REGISTRY/$IMAGE_NAMESPACE/multica-server:$IMAGE_TAG"
+    - |
+      docker build --platform linux/amd64 -f Dockerfile \
+        --build-arg VERSION="$IMAGE_TAG" \
+        --build-arg COMMIT="$CI_COMMIT_SHA" \
+        --build-arg DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        -t "$IMAGE" .
+    - docker push "$IMAGE"
+    - echo "pushed $IMAGE"
+  after_script:
+    # Only drop the session this job created. When the build fell back to the
+    # host's existing login, a logout here would wipe the runner user's cached
+    # registry credentials and break every later build.
+    - |
+      if [ -n "${ACR_USERNAME:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
+        docker logout "$REGISTRY" || true
+      fi
+
+build-web:
+  stage: build
+  tags: *multica_runner
+  rules: *test_pipeline_rule
+  needs: [preflight]
+  script:
+    - *assert_linux_host
+    - *docker_login
+    - IMAGE="$REGISTRY/$IMAGE_NAMESPACE/multica-web:$IMAGE_TAG"
+    - |
+      docker build --platform linux/amd64 -f Dockerfile.web \
+        --build-arg NEXT_PUBLIC_FEISHU_APP_ID="$NEXT_PUBLIC_FEISHU_APP_ID" \
+        --build-arg REMOTE_API_URL="$REMOTE_API_URL" \
+        --build-arg NEXT_PUBLIC_APP_VERSION="$IMAGE_TAG" \
+        -t "$IMAGE" .
+    - docker push "$IMAGE"
+    - echo "pushed $IMAGE"
+  after_script:
+    # Only drop the session this job created. When the build fell back to the
+    # host's existing login, a logout here would wipe the runner user's cached
+    # registry credentials and break every later build.
+    - |
+      if [ -n "${ACR_USERNAME:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
+        docker logout "$REGISTRY" || true
+      fi
+
+# ── deploy ──────────────────────────────────────────────────────────────
+deploy-test:
+  stage: deploy
+  tags: *multica_runner
+  rules: *deploy_rule
+  needs: [preflight, build-server, build-web]
+  environment:
+    name: test
+    url: https://multica-test.lilithgames.com
+  script:
+    - *assert_linux_host
+    - if [ -n "${KUBECONFIG_TEST:-}" ]; then export KUBECONFIG="$KUBECONFIG_TEST"; fi
+    - bash scripts/deploy-test.sh "$IMAGE_TAG"
+
+# ── mirror ──────────────────────────────────────────────────────────────
 mirror-to-github:
   stage: mirror
   tags: *multica_runner
@@ -65,6 +304,7 @@ mirror-to-github:
   variables:
     <<: *full_clone_vars
   before_script:
+    - *assert_linux_host
     - for tool in bash git ssh ssh-keyscan; do command -v "$tool" >/dev/null || { echo "❌ Runner host is missing '$tool' — install it (apt/yum/apk) and retry."; exit 1; }; done
     # GITHUB_MIRROR_DEPLOY_KEY must be configured under
     # Project Settings → CI/CD → Variables. Either a "Variable" type
