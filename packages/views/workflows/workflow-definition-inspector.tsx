@@ -643,6 +643,11 @@ function isDeprecatedIssuePolicy(policy: string | undefined): policy is string {
   return policy === "dynamic" || policy === "fixed_and_dynamic";
 }
 
+function issuePolicyForEditor(node: WorkflowNodeDefinition): string {
+  if (node.issue_policy) return node.issue_policy;
+  return (node.issue_templates?.length ?? 0) > 0 ? "fixed" : "none";
+}
+
 function IssueTemplateEditor({
   node,
   readOnly,
@@ -654,8 +659,8 @@ function IssueTemplateEditor({
 }) {
   const { t } = useT("workflows");
   const templates = node.issue_templates ?? [];
-  const canDeclareFixed = node.issue_policy === "fixed" ||
-    node.issue_policy === "fixed_and_dynamic";
+  const policy = issuePolicyForEditor(node);
+  const canDeclareFixed = policy === "fixed" || policy === "fixed_and_dynamic";
   const update = (index: number, template: WorkflowIssueTemplate) => {
     const next = [...templates];
     next[index] = template;
@@ -883,6 +888,26 @@ function CompletionEditor({
           </p>
         </fieldset>
       )}
+      {/*
+        Which buttons an activity grows is derived, not configured: a reviewer
+        means someone passes or sends back, no reviewer means nobody clicks
+        anything, and rollback exists either way. Authors could not see that
+        from a reviewer select and a roles checklist, so rollback in particular
+        read as missing.
+      */}
+      <div className="rounded-lg border bg-muted/20 p-2.5">
+        <p className="mb-1.5 text-xs font-medium">
+          {t(($) => $.editor.runtime_buttons)}
+        </p>
+        <ul className="space-y-1 text-xs text-muted-foreground">
+          <li>
+            {reviewerForEditor(node)
+              ? t(($) => $.editor.runtime_button_review)
+              : t(($) => $.editor.runtime_button_auto)}
+          </li>
+          <li>{t(($) => $.editor.runtime_button_rollback)}</li>
+        </ul>
+      </div>
       <div className="border-t pt-3">
         <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {t(($) => $.editor.completion_conditions)}
@@ -1152,6 +1177,7 @@ export function WorkflowNodeDefinitionInspector({
 }) {
   const { t } = useT("workflows");
   const activity = node.kind === "activity";
+  const issuePolicy = issuePolicyForEditor(node);
 
   // Start and End are structural anchors. Their identity and behavior come
   // from the graph, so rendering ordinary node fields suggests configuration
@@ -1286,19 +1312,32 @@ export function WorkflowNodeDefinitionInspector({
         </TabsContent>
         <TabsContent value="work" className="space-y-3">
           <div className="space-y-1.5">
-            <Label>{t(($) => $.editor.issue_policy)}</Label>
+            <Label htmlFor="workflow-node-issue-policy">
+              {t(($) => $.editor.issue_policy)}
+            </Label>
             <select
-              value={node.issue_policy ?? "none"}
+              id="workflow-node-issue-policy"
+              value={issuePolicy}
               disabled={readOnly}
               className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
               onChange={(event) => {
                 const policy = event.target.value;
+                const withoutFixedIssues = policy === "none" || policy === "dynamic";
+                const requiredIssueOutcome = withoutFixedIssues
+                  ? "none"
+                  : node.completion?.required_issue_outcome === "none"
+                  ? "done"
+                  : node.completion?.required_issue_outcome ?? "done";
                 onChange({
                   ...node,
                   issue_policy: policy,
-                  issue_templates: policy === "none" || policy === "dynamic"
+                  issue_templates: withoutFixedIssues
                     ? []
                     : node.issue_templates,
+                  completion: {
+                    ...node.completion,
+                    required_issue_outcome: requiredIssueOutcome,
+                  },
                 });
               }}
             >
@@ -1332,14 +1371,15 @@ export function WorkflowNodeDefinitionInspector({
               </p>
             )}
           </div>
-          <IssueTemplateEditor
-            node={node}
-            readOnly={readOnly}
-            onChange={onChange}
-          />
-          {/* Artifacts sit under the same tab as the issues: the issue is the
-              work, the artifact is what comes out of it, and both are this
-              node's contract with the ones after it. */}
+          {issuePolicy !== "none" && (
+            <IssueTemplateEditor
+              node={node}
+              readOnly={readOnly}
+              onChange={onChange}
+            />
+          )}
+          {/* Artifacts are independent of issue generation. A run-only node
+              can still owe the following nodes a formal deliverable. */}
           <div className="space-y-1.5 border-t pt-3">
             <Label>{t(($) => $.editor.artifacts)}</Label>
             <p className="text-xs text-muted-foreground">

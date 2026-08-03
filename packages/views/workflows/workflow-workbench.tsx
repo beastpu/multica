@@ -135,6 +135,7 @@ import { IssueDisplayControls } from "../issues/components/issues-header";
 import { IssueSurface } from "../issues/surface/issue-surface";
 import { PriorityIcon } from "../issues/components/priority-icon";
 import { WorkflowIssuePanel } from "./workflow-issue-panel";
+import { WorkflowExecutionHistory } from "./workflow-execution-history";
 import { WorkflowNodeIssues } from "./workflow-node-issues";
 import { ActorAvatar } from "../common/actor-avatar";
 import { WorkflowCanvas } from "./workflow-canvas";
@@ -1077,7 +1078,18 @@ function DynamicIssuePanel({
   );
 }
 
-function NodeTransitionPanel({
+// The five things a member can do to a node, whether they push it forward
+// (verdict, manual completion), send it back (verdict fail, rollback) or step
+// over it (force-complete, skip). They share one dialog because they differ
+// only in which reason the action owes.
+type NodeAction =
+  | "complete"
+  | "skip"
+  | "rollback"
+  | "verdict_pass"
+  | "verdict_fail";
+
+export function NodeTransitionPanel({
   instanceId,
   node,
   submissions,
@@ -1097,18 +1109,26 @@ function NodeTransitionPanel({
   const [completionNote, setCompletionNote] = useState("");
   const [completionValues, setCompletionValues] = useState<Record<string, unknown>>({});
   const [reworkDraft, setReworkDraft] = useState(emptyReworkReasonDraft);
-  const [managementAction, setManagementAction] = useState<
-    "complete" | "skip" | "rollback" | null
-  >(null);
+  const [managementAction, setManagementAction] = useState<NodeAction | null>(
+    null,
+  );
   const [managementReason, setManagementReason] = useState("");
   const submit = useCreateWorkflowSubmission(instanceId, node.id);
   const transition = useTransitionWorkflowNode(instanceId, node.id);
+  const recordVerdict = useCreateWorkflowVerdict(instanceId, node.id);
   const open = isWorkflowNodeOpen(node.status);
   const manualCompletion = workflowCompletionMode(node.definition) === "manual";
-  const canComplete = open && manualCompletion && canManage;
+  // A published node always completes automatically now, so a member's only
+  // way to push one forward is the verdict. That made the primary button slot
+  // permanently empty and left force-complete — an admin bypass — as the most
+  // visible action on a node waiting for its reviewer.
+  const canReview = canManage && node.status === "in_review" &&
+    reviewerAcceptsMember(node.definition);
+  const canComplete = open && manualCompletion && canManage && !canReview;
   const canRollback = canManage && instanceRunning &&
     (node.status === "completed" || node.status === "skipped");
-  const canOpenManagement = (canAdmin && open) || canRollback;
+  const hasPrimaryAction = canReview || canComplete || canRollback;
+  const canOpenManagement = canAdmin && open;
   const schema = node.definition.submission_schema;
   const singleCompletionForm = schema?.policy === "single";
   const taskScopedCompletionForm = schema?.policy === "per_required_task" ||
@@ -1157,20 +1177,68 @@ function NodeTransitionPanel({
   // A rollback sends work back to an executor; force-complete and skip end it.
   // Only the first has someone downstream who needs to know what to change.
   const isReworkAction = managementAction === "rollback";
+  const isVerdictAction = managementAction === "verdict_pass" ||
+    managementAction === "verdict_fail";
   const managementReasonValue = isReworkAction
     ? composeReworkReason(reworkDraft)
     : managementReason.trim();
+  // Passing is the one action that owes nothing: the node met every condition
+  // and the reviewer is agreeing with it. Everything else redirects work and
+  // has to say why.
   const managementReasonReady = isReworkAction
     ? isReworkReasonComplete(reworkDraft)
-    : managementReason.trim().length > 0;
+    : managementAction === "verdict_pass" ||
+      managementReason.trim().length > 0;
+
+  const managementConfirm = (() => {
+    switch (managementAction) {
+      case "verdict_pass":
+        return {
+          label: t(($) => $.actions.review_pass),
+          icon: <Check aria-hidden="true" />,
+          variant: "default" as const,
+        };
+      case "verdict_fail":
+        return {
+          label: t(($) => $.actions.review_reject),
+          icon: <RotateCcw aria-hidden="true" />,
+          variant: "outline" as const,
+        };
+      case "rollback":
+        return {
+          label: t(($) => $.actions.rollback),
+          icon: <Undo2 aria-hidden="true" />,
+          variant: "outline" as const,
+        };
+      case "skip":
+        return {
+          label: t(($) => $.actions.skip),
+          icon: <SkipForward aria-hidden="true" />,
+          variant: "default" as const,
+        };
+      default:
+        return {
+          label: t(($) => $.actions.force_complete),
+          icon: <Check aria-hidden="true" />,
+          variant: "default" as const,
+        };
+    }
+  })();
 
   const runManagementAction = async () => {
     if (!managementAction || !managementReasonReady) return;
     try {
-      await transition.mutateAsync({
-        action: managementAction,
-        reason: managementReasonValue,
-      });
+      if (isVerdictAction) {
+        await recordVerdict.mutateAsync({
+          result: managementAction === "verdict_pass" ? "pass" : "fail",
+          reason: managementReasonValue || undefined,
+        });
+      } else {
+        await transition.mutateAsync({
+          action: managementAction,
+          reason: managementReasonValue,
+        });
+      }
       setManagementAction(null);
       setManagementReason("");
       setReworkDraft(emptyReworkReasonDraft);
@@ -1179,15 +1247,38 @@ function NodeTransitionPanel({
     }
   };
 
-  if (!canComplete && !canOpenManagement) return null;
+  if (!hasPrimaryAction && !canOpenManagement) return null;
 
   return (
     // No card, no "node operations" heading: this is the action the panel
     // builds up to, and wrapping it in chrome made it read as one more
-    // reference block. The primary button carries the meaning; the rest of the
-    // node's transitions stay behind the overflow menu.
+    // reference block. The primary button says what the node is waiting for;
+    // the admin bypasses stay behind the overflow menu.
     <div className="flex items-center gap-1.5">
       <div className="flex flex-1 items-center gap-1.5">
+        {canReview && (
+          <>
+            <Button
+              size="sm"
+              className="min-h-11 sm:min-h-8"
+              disabled={recordVerdict.isPending}
+              onClick={() => setManagementAction("verdict_pass")}
+            >
+              <Check aria-hidden="true" />
+              {t(($) => $.actions.review_pass)}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="min-h-11 sm:min-h-8"
+              disabled={recordVerdict.isPending}
+              onClick={() => setManagementAction("verdict_fail")}
+            >
+              <RotateCcw aria-hidden="true" />
+              {t(($) => $.actions.review_reject)}
+            </Button>
+          </>
+        )}
         {canComplete && (
           <Button
             size="sm"
@@ -1199,6 +1290,18 @@ function NodeTransitionPanel({
             {t(($) => $.actions.complete)}
           </Button>
         )}
+        {canRollback && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="min-h-11 sm:min-h-8"
+            disabled={transition.isPending}
+            onClick={() => setManagementAction("rollback")}
+          >
+            <Undo2 aria-hidden="true" />
+            {t(($) => $.actions.rollback)}
+          </Button>
+        )}
         {canOpenManagement && (
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -1206,34 +1309,24 @@ function NodeTransitionPanel({
                 <Button
                   type="button"
                   variant="ghost"
-                  size={canComplete ? "icon-sm" : "sm"}
+                  size={hasPrimaryAction ? "icon-sm" : "sm"}
                   className="min-h-11 sm:min-h-8"
                   aria-label={t(($) => $.workbench.manage_node)}
                 >
                   <MoreHorizontal aria-hidden="true" />
-                  {!canComplete && t(($) => $.workbench.manage_node)}
+                  {!hasPrimaryAction && t(($) => $.workbench.manage_node)}
                 </Button>
               }
             />
             <DropdownMenuContent align="end">
-              {canAdmin && open && (
-                <DropdownMenuItem onClick={() => setManagementAction("complete")}>
-                  <Check aria-hidden="true" />
-                  {t(($) => $.actions.force_complete)}
-                </DropdownMenuItem>
-              )}
-              {canAdmin && open && (
-                <DropdownMenuItem onClick={() => setManagementAction("skip")}>
-                  <SkipForward aria-hidden="true" />
-                  {t(($) => $.actions.skip)}
-                </DropdownMenuItem>
-              )}
-              {canRollback && (
-                <DropdownMenuItem onClick={() => setManagementAction("rollback")}>
-                  <Undo2 aria-hidden="true" />
-                  {t(($) => $.actions.rollback)}
-                </DropdownMenuItem>
-              )}
+              <DropdownMenuItem onClick={() => setManagementAction("complete")}>
+                <Check aria-hidden="true" />
+                {t(($) => $.actions.force_complete)}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setManagementAction("skip")}>
+                <SkipForward aria-hidden="true" />
+                {t(($) => $.actions.skip)}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -1323,9 +1416,15 @@ function NodeTransitionPanel({
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{t(($) => $.workbench.admin_actions)}</DialogTitle>
+            <DialogTitle>
+              {isVerdictAction
+                ? t(($) => $.workbench.review_decision)
+                : t(($) => $.workbench.admin_actions)}
+            </DialogTitle>
             <DialogDescription>
-              {t(($) => $.workbench.admin_actions_help)}
+              {isVerdictAction
+                ? t(($) => $.workbench.review_decision_help)
+                : t(($) => $.workbench.admin_actions_help)}
             </DialogDescription>
           </DialogHeader>
           {isReworkAction
@@ -1339,7 +1438,12 @@ function NodeTransitionPanel({
             : (
               <div className="space-y-1.5">
                 <Label htmlFor={`workflow-management-reason-${node.id}`}>
-                  {t(($) => $.workbench.action_reason)}
+                  {isVerdictAction
+                    ? t(($) => $.workbench.verdict_reason)
+                    : t(($) => $.workbench.action_reason)}
+                  {managementAction !== "verdict_pass" && (
+                    <span className="ml-0.5 text-destructive">*</span>
+                  )}
                 </Label>
                 <Textarea
                   id={`workflow-management-reason-${node.id}`}
@@ -1349,7 +1453,7 @@ function NodeTransitionPanel({
                 />
               </div>
             )}
-          {transition.isError && (
+          {(transition.isError || recordVerdict.isError) && (
             <p role="alert" className="text-xs text-destructive">
               {t(($) => $.errors.action_failed)}
             </p>
@@ -1364,18 +1468,13 @@ function NodeTransitionPanel({
             </Button>
             <Button
               type="button"
-              variant={managementAction === "rollback" ? "outline" : "default"}
-              disabled={!managementReasonReady || transition.isPending}
+              variant={managementConfirm.variant}
+              disabled={!managementReasonReady || transition.isPending ||
+                recordVerdict.isPending}
               onClick={() => void runManagementAction()}
             >
-              {managementAction === "rollback" && <Undo2 aria-hidden="true" />}
-              {managementAction === "skip" && <SkipForward aria-hidden="true" />}
-              {managementAction === "complete" && <Check aria-hidden="true" />}
-              {managementAction === "rollback"
-                ? t(($) => $.actions.rollback)
-                : managementAction === "skip"
-                  ? t(($) => $.actions.skip)
-                  : t(($) => $.actions.force_complete)}
+              {managementConfirm.icon}
+              {managementConfirm.label}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2218,8 +2317,11 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         )}
       </div>
 
+      <WorkflowExecutionHistory
+        executions={nodeQuery.data.executions}
+        agentName={(agentId) => actorName("agent", agentId)}
+      />
 
-      
       {taskInterventions.length > 0 && (
         <section className="space-y-2">
           <h3 className={SECTION_HEADING}>
@@ -2319,7 +2421,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
           )}
           <TabsTrigger value="history">
             <History />
-            {t(($) => $.workbench.history)}
+            {t(($) => $.workbench.node_events)}
           </TabsTrigger>
         </TabsList>
         {/*

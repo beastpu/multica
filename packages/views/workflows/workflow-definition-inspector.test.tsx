@@ -210,6 +210,48 @@ describe("WorkflowNodeDefinitionInspector", () => {
       .not.toBeInTheDocument();
   });
 
+  it("says which buttons an activity grows at run time", async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderInspector(vi.fn());
+
+    await user.click(
+      screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
+    );
+    expect(screen.getByText(enWorkflows.editor.runtime_button_auto))
+      .toBeInTheDocument();
+    expect(screen.getByText(enWorkflows.editor.runtime_button_rollback))
+      .toBeInTheDocument();
+    unmount();
+
+    render(
+      <I18nProvider locale="en" resources={{ en: { workflows: enWorkflows } }}>
+        <WorkflowNodeDefinitionInspector
+          node={{
+            ...node,
+            reviewer: { kind: "role", role: "owner", required: true },
+          }}
+          definition={{
+            ...definition,
+            roles: [{
+              key: "owner",
+              name: "Owner",
+              required: true,
+              allowed_actor_types: ["member"],
+            }],
+          }}
+          actorOptions={actorOptions}
+          readOnly={false}
+          onChange={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+    await user.click(
+      screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
+    );
+    expect(screen.getByText(enWorkflows.editor.runtime_button_review))
+      .toBeInTheDocument();
+  });
+
   it("shows a legacy manual owner as the transition reviewer and can remove it", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -397,6 +439,75 @@ describe("WorkflowNodeDefinitionInspector", () => {
         actor_type: "agent",
         required: true,
       },
+    }));
+  });
+
+  it("shows only the issue policy when the activity does not create issues", async () => {
+    const user = userEvent.setup();
+    render(
+      <I18nProvider locale="en" resources={{ en: { workflows: enWorkflows } }}>
+        <WorkflowNodeDefinitionInspector
+          node={{
+            ...node,
+            issue_policy: "none",
+            issue_templates: [],
+            completion: { mode: "automatic", required_issue_outcome: "none" },
+          }}
+          definition={definition}
+          actorOptions={actorOptions}
+          readOnly={false}
+          onChange={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    await user.click(screen.getByRole("tab", { name: enWorkflows.editor.tab_work }));
+
+    expect(screen.getByLabelText(enWorkflows.editor.issue_policy)).toHaveValue("none");
+    expect(screen.queryByText(enWorkflows.editor.issue_title)).toBeNull();
+    expect(screen.queryByText(enWorkflows.editor.issue_description)).toBeNull();
+    expect(screen.queryByText(enWorkflows.editor.priority)).toBeNull();
+    expect(screen.queryByText(enWorkflows.editor.required_task)).toBeNull();
+    expect(screen.queryByText(enWorkflows.editor.fixed_tasks_disabled)).toBeNull();
+  });
+
+  it("shows legacy nodes with issue templates as fixed tasks", async () => {
+    const user = userEvent.setup();
+    render(
+      <I18nProvider locale="en" resources={{ en: { workflows: enWorkflows } }}>
+        <WorkflowNodeDefinitionInspector
+          node={{ ...node, issue_policy: undefined }}
+          definition={definition}
+          actorOptions={actorOptions}
+          readOnly={false}
+          onChange={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    await user.click(screen.getByRole("tab", { name: enWorkflows.editor.tab_work }));
+
+    expect(screen.getByLabelText(enWorkflows.editor.issue_policy)).toHaveValue("fixed");
+    expect(screen.getByText(enWorkflows.editor.issue_title)).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Implement {{host.title}}"))
+      .toBeInTheDocument();
+  });
+
+  it("clears issue-only configuration when switching to no issues", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderInspector(onChange);
+
+    await user.click(screen.getByRole("tab", { name: enWorkflows.editor.tab_work }));
+    await user.selectOptions(
+      screen.getByLabelText(enWorkflows.editor.issue_policy),
+      "none",
+    );
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      issue_policy: "none",
+      issue_templates: [],
+      completion: expect.objectContaining({ required_issue_outcome: "none" }),
     }));
   });
 
