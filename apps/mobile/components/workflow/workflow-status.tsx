@@ -5,7 +5,6 @@ import { THEME } from "@/lib/theme";
 import { useColorScheme } from "@/lib/use-color-scheme";
 
 const LABELS: Record<string, string> = {
-  draft: "Draft",
   pending: "Pending",
   needs_setup: "Needs setup",
   running: "Running",

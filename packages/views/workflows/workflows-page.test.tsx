@@ -58,7 +58,6 @@ const templateSummary = {
   last_published_by: null,
   last_published_at: null,
   latest_published_version: 3,
-  draft_version: 0,
 };
 
 const templateDetail = {

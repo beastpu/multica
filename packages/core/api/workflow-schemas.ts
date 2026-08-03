@@ -130,15 +130,13 @@ export const WorkflowSchema = z.object({
   workspace_id: z.string(),
   name: z.string().optional().default("Untitled workflow"),
   description: z.string().optional().default(""),
-  status: z.string().optional().default("draft"),
+  status: z.string().optional().default("published"),
   latest_published_version_id: nullableString,
   created_by: z.string().optional().default(""),
   archived_at: nullableString,
   created_at: z.string().optional().default(""),
   updated_at: z.string().optional().default(""),
   latest_published_version: z.number().optional().default(0),
-  draft_version: z.number().optional().default(0),
-  has_draft: z.boolean().optional().default(false),
   activity_count: z.number().optional().default(0),
   run_count: z.number().optional().default(0),
   last_published_by: nullableString,
@@ -152,7 +150,6 @@ export const WorkflowVersionSchema = z.object({
   workflow_id: z.string(),
   version: z.number().optional().default(0),
   revision: z.number().optional().default(1),
-  status: z.string().optional().default("draft"),
   definition: WorkflowDefinitionSchema,
   definition_checksum: z.string().optional().default(""),
   change_summary: z.string().optional().default(""),
@@ -409,13 +406,11 @@ export const WorkflowDetailSchema = z.object({
 
 export const WorkflowCreateResponseSchema = z.object({
   workflow: WorkflowSchema,
-  draft: WorkflowVersionSchema,
+  version: WorkflowVersionSchema,
 }).loose();
 
 export const WorkflowSaveResponseSchema = z.object({
   version: WorkflowVersionSchema,
-  published: z.boolean().optional().default(false),
-  validation_error: z.string().optional().default(""),
 }).loose();
 
 export const WorkflowPublishResponseSchema = z.object({
@@ -521,7 +516,7 @@ export const EMPTY_WORKFLOW_DETAIL: WorkflowDetail = {
     id: "", workspace_id: "", name: "", description: "",
     status: "unknown", latest_published_version_id: null,
     created_by: "", archived_at: null, created_at: "", updated_at: "",
-    latest_published_version: 0, draft_version: 0, has_draft: false,
+    latest_published_version: 0,
     activity_count: 0, run_count: 0, last_published_by: null,
     last_published_at: null, latest_change_summary: "",
   },
@@ -534,7 +529,6 @@ export const EMPTY_WORKFLOW_TEMPLATE_VERSION = {
   workflow_id: "",
   version: 0,
   revision: 1,
-  status: "unknown",
   definition: {
     schema_version: 1,
     name: "",

@@ -123,8 +123,6 @@ export interface Workflow {
   created_at: string;
   updated_at: string;
   latest_published_version: number;
-  draft_version: number;
-  has_draft: boolean;
   activity_count: number;
   run_count: number;
   last_published_by: string | null;
@@ -138,7 +136,6 @@ export interface WorkflowVersion {
   workflow_id: string;
   version: number;
   revision: number;
-  status: string;
   definition: WorkflowDefinition;
   definition_checksum: string;
   change_summary: string;

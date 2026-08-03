@@ -134,7 +134,6 @@
     "empty_title": "还没有工作流",
     "empty_description": "新建一个工作流，或从内置模板开始。",
     "admin_only": "只有工作区 Owner 和管理员可以管理模板。",
-    "draft": "草稿",
     "published": "已发布",
     "archived": "已归档",
     "version": "版本 {{version}}",
@@ -302,12 +301,11 @@
     "owner_role": "负责角色",
     "issue_title": "默认 issue 标题",
     "unsaved": "有未保存改动",
-    "saved": "草稿已保存",
-    "conflict": "草稿已在其他位置更新，请刷新后再保存。",
+    "saved": "已保存",
+    "conflict": "这个工作流已在别处保存过，请刷新后再保存。",
     "active_runs_unchanged": "已经运行的工作流实例不会被修改。",
     "mobile_read_only": "移动端仅支持只读查看模板，请使用更大屏幕编辑流程图。",
     "version_selector": "模板版本",
-    "version_option": "版本 {{version}} · {{status}}",
     "version_short": "v{{version}}",
     "graph": "流程图",
     "graph_help": "节点是活动容器或控制节点；连线决定实际推进路径。",
@@ -448,7 +446,7 @@
     "reviewer_required": "交付后必须等判定",
     "reviewer_api_url": "接口地址",
     "rework_targets_hint": "驳回时可以退回到它前面的任意活动节点，由驳回的人当场选；选中之后，它后面的节点全部一起回滚。",
-    "saved_not_live": "已保存，但尚未生效——这份定义没有通过校验。"
+    "save_rejected": "未保存——这份定义还没通过校验。"
   },
   "status": {
     "needs_setup": "待配置",

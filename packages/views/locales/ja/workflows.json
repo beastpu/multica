@@ -134,7 +134,6 @@
     "empty_title": "最初のテンプレートを作成",
     "empty_description": "再利用可能なアクティビティ、役割、成果物、承認を定義します。",
     "admin_only": "テンプレートを管理できるのは Owner と管理者のみです。",
-    "draft": "下書き",
     "published": "公開済み",
     "archived": "アーカイブ",
     "version": "バージョン {{version}}",
@@ -302,12 +301,11 @@
     "owner_role": "担当ロール",
     "issue_title": "既定の Issue タイトル",
     "unsaved": "未保存の変更",
-    "saved": "下書きを保存しました",
-    "conflict": "別の場所で下書きが更新されました。再読み込みしてください。",
+    "saved": "保存済み",
+    "conflict": "このワークフローは別の場所で保存されました。再読み込みしてください。",
     "active_runs_unchanged": "実行中のワークフローは変更されません。",
     "mobile_read_only": "モバイルではテンプレートは読み取り専用です。編集には大きな画面を使用してください。",
     "version_selector": "テンプレートバージョン",
-    "version_option": "バージョン {{version}} · {{status}}",
     "version_short": "v{{version}}",
     "graph": "ワークフローグラフ",
     "graph_help": "ノードはアクティビティコンテナまたは制御ノードで、接続が実行経路を定義します。",
@@ -448,7 +446,7 @@
     "reviewer_required": "判定を待ってから完了する",
     "reviewer_api_url": "エンドポイント URL",
     "rework_targets_hint": "差し戻し時点より前のアクティビティならどれでも指定でき、差し戻す人がその場で選びます。選んだノード以降はまとめてロールバックされます。",
-    "saved_not_live": "保存しましたが、まだ有効になっていません — この定義は検証を通っていません。"
+    "save_rejected": "保存していません — この定義はまだ検証を通っていません。"
   },
   "status": {
     "needs_setup": "設定が必要",

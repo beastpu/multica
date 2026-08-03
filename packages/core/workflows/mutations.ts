@@ -565,10 +565,10 @@ export function useCopyWorkflow() {
       name: string;
     }) => {
       const detail = await api.getWorkflow(templateId);
+      // Every stored version is runnable, so copying means copying the
+      // newest one.
       const source = [...detail.versions]
-        .sort((a, b) => b.version - a.version)
-        .find((version) => version.status === "published") ??
-        detail.versions.find((version) => version.status === "draft");
+        .sort((a, b) => b.version - a.version)[0];
       if (!source) {
         throw new Error("Workflow has no version to copy");
       }

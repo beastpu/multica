@@ -41,15 +41,13 @@ const detail = {
     name: "Delivery workflow",
     description: "Ship a requirement safely",
     applies_to_kind: "issue",
-    status: "draft",
-    latest_published_version_id: null,
+    status: "published",
+    latest_published_version_id: "version-1",
     created_by: "user-1",
     archived_at: null,
     created_at: "2026-07-23T00:00:00Z",
     updated_at: "2026-07-23T00:00:00Z",
-    latest_published_version: 0,
-    draft_version: 1,
-    has_draft: true,
+    latest_published_version: 1,
     activity_count: 1,
     run_count: 0,
     last_published_by: null,
@@ -62,7 +60,6 @@ const detail = {
     workflow_id: "template-1",
     version: 1,
     revision: 1,
-    status: "draft",
     definition,
     definition_checksum: "checksum",
     change_summary: "Initial delivery workflow",
@@ -130,19 +127,22 @@ vi.mock("@multica/core/workflows", () => ({
     isPending: false,
     mutate: (
       input: { definition: unknown; change_summary?: string },
-      options?: { onSuccess?: (result: unknown) => void },
+      options?: {
+        onSuccess?: (result: unknown) => void;
+        onError?: (error: Error) => void;
+      },
     ) => {
       mocks.save(input);
+      if (!mocks.validation.valid) {
+        options?.onError?.(new Error(mocks.validation.errors[0] ?? "invalid"));
+        return;
+      }
       options?.onSuccess?.({
         version: {
           ...detail.versions[0],
           definition: input.definition,
           change_summary: input.change_summary ?? "",
         },
-        published: mocks.validation.valid,
-        validation_error: mocks.validation.valid
-          ? ""
-          : mocks.validation.errors[0] ?? "",
       });
     },
   }),
@@ -269,9 +269,9 @@ describe("WorkflowPage", () => {
     expect(input.definition.nodes).toHaveLength(4);
   });
 
-  it("says the definition was stored but is not live when it fails to validate", async () => {
-    // Refusing the save would leave half-finished work nowhere to go, so it is
-    // kept on a version that stays a draft — and the panel has to say so.
+  it("refuses to save a definition that does not validate", async () => {
+    // Storing it would mean carrying a version nobody can run. The edits stay
+    // in the editor instead, next to the message naming what to fix.
     mocks.validation.valid = false;
     mocks.validation.errors = ['node "work" has no outgoing edge'];
     const user = userEvent.setup();
@@ -285,7 +285,7 @@ describe("WorkflowPage", () => {
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
     expect(
       await screen.findByText(
-        "Saved, but not live yet — this definition does not validate.",
+        "Not saved — this definition does not validate yet.",
       ),
     ).toBeInTheDocument();
     expect(

@@ -169,9 +169,8 @@ export class TestApiClient {
   }
 
   /**
-   * Publish a workflow template in one call. Templates are created as a draft
-   * and only a published version can start a run, so a test that skipped the
-   * publish would fail on a state the product never lets a user reach.
+   * Create a runnable workflow. Creation validates the definition and
+   * publishes version 1, so there is no separate publish step to skip.
    */
   async publishWorkflow(name: string, definition: Record<string, unknown>) {
     const created = await (await this.authedFetch("/api/workflows", {
@@ -180,14 +179,6 @@ export class TestApiClient {
     })).json();
     const templateId = created.workflow?.id ?? created.id;
     this.createdWorkflowIds.push(templateId);
-    await this.authedFetch(`/api/workflows/${templateId}/definition`, {
-      method: "PUT",
-      body: JSON.stringify({
-        definition,
-        change_summary: "e2e",
-        revision: created.version?.revision ?? 1,
-      }),
-    });
     return templateId;
   }
 

@@ -134,7 +134,6 @@
     "empty_title": "No workflows yet",
     "empty_description": "Create one, or start from a template.",
     "admin_only": "Only workspace owners and admins can manage templates.",
-    "draft": "Draft",
     "published": "Active",
     "archived": "Archived",
     "version": "Version {{version}}",
@@ -302,12 +301,11 @@
     "owner_role": "Owner role",
     "issue_title": "Default issue title",
     "unsaved": "Unsaved changes",
-    "saved": "Draft saved",
-    "conflict": "The draft changed elsewhere. Refresh before saving again.",
+    "saved": "Saved",
+    "conflict": "This workflow was saved elsewhere. Refresh before saving again.",
     "active_runs_unchanged": "This will not modify workflow instances already running.",
     "mobile_read_only": "Template editing is read-only on mobile. Use a larger screen to change the graph.",
     "version_selector": "Template version",
-    "version_option": "Version {{version}} · {{status}}",
     "version_short": "v{{version}}",
     "graph": "Workflow graph",
     "graph_help": "Nodes are activity containers or controls; edges define the actual execution path.",
@@ -448,7 +446,7 @@
     "reviewer_required": "Delivery waits for the verdict",
     "reviewer_api_url": "Endpoint URL",
     "rework_targets_hint": "Any activity before the rejection point can be the destination; whoever rejects picks it, and everything after it rolls back with it.",
-    "saved_not_live": "Saved, but not live yet — this definition does not validate."
+    "save_rejected": "Not saved — this definition does not validate yet."
   },
   "status": {
     "needs_setup": "Needs setup",

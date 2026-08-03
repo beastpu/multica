@@ -119,9 +119,9 @@ export function WorkflowStartDialog({ issueId }: { issueId?: string }) {
     ...workflowOptions(wsId, templateId),
     enabled: open && Boolean(templateId),
   });
+  // Every stored version is runnable, so the whole history is startable.
   const publishedVersions = useMemo(
-    () => (templateQuery.data?.versions ?? [])
-      .filter((version) => version.status === "published")
+    () => [...(templateQuery.data?.versions ?? [])]
       .sort((left, right) => right.version - left.version),
     [templateQuery.data?.versions],
   );

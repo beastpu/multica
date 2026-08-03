@@ -365,7 +365,6 @@ import {
   WorkflowPublishResponseSchema,
   WorkflowSaveResponseSchema,
   WorkflowSchema,
-  WorkflowVersionSchema,
   WorkflowDefinitionValidationResponseSchema,
 } from "./workflow-schemas";
 
@@ -3689,7 +3688,7 @@ export class ApiClient {
     description?: string;
     definition: WorkflowDefinition;
     change_summary?: string;
-  }): Promise<{ workflow: Workflow; draft: WorkflowVersion }> {
+  }): Promise<{ workflow: Workflow; version: WorkflowVersion }> {
     const raw = await this.fetch<unknown>("/api/workflows", {
       method: "POST",
       body: JSON.stringify(input),
@@ -3699,7 +3698,7 @@ export class ApiClient {
       WorkflowCreateResponseSchema,
       {
         workflow: EMPTY_WORKFLOW_DETAIL.workflow,
-        draft: { ...EMPTY_WORKFLOW_TEMPLATE_VERSION },
+        version: { ...EMPTY_WORKFLOW_TEMPLATE_VERSION },
       },
       { endpoint: "POST /api/workflows" },
     );
@@ -3731,35 +3730,17 @@ export class ApiClient {
     );
   }
 
-  async updateWorkflowDraft(
-    templateId: string,
-    input: { definition: WorkflowDefinition; change_summary?: string; revision: number },
-  ): Promise<WorkflowVersion> {
-    const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/draft`, {
-      method: "PUT",
-      body: JSON.stringify(input),
-    });
-    return parseWithFallback(raw, WorkflowVersionSchema, {
-      id: "", workspace_id: "", workflow_id: templateId, version: 0, revision: input.revision,
-      status: "draft", definition: input.definition, definition_checksum: "",
-      change_summary: input.change_summary ?? "", created_by: "", published_by: null,
-      published_at: null, created_at: "", updated_at: "",
-    }, { endpoint: "PUT /api/workflows/:id/draft" });
-  }
-
-  // One editing action: write the definition into a version and make it live
-  // if it validates. `published` is false when it did not, and
-  // `validation_error` says why — the version is stored either way.
+  // The one editing action: validate the definition and, if it holds up,
+  // write it as the next version and make that version live. A definition
+  // that does not validate is rejected — the request throws with the reason
+  // and nothing is stored.
   async saveWorkflowDefinition(
     templateId: string,
     input: {
       definition: WorkflowDefinition;
       change_summary?: string;
-      revision?: number;
     },
-  ): Promise<
-    { version: WorkflowVersion; published: boolean; validation_error: string }
-  > {
+  ): Promise<{ version: WorkflowVersion }> {
     const raw = await this.fetch<unknown>(
       `/api/workflows/${templateId}/definition`,
       { method: "PUT", body: JSON.stringify(input) },
@@ -3773,22 +3754,8 @@ export class ApiClient {
           workflow_id: templateId,
           definition: input.definition,
         },
-        published: false,
-        validation_error: "",
       },
       { endpoint: "PUT /api/workflows/:id/definition" },
-    );
-  }
-
-  async createWorkflowDraft(templateId: string): Promise<WorkflowVersion> {
-    const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/draft`, {
-      method: "POST",
-    });
-    return parseWithFallback(
-      raw,
-      WorkflowVersionSchema,
-      { ...EMPTY_WORKFLOW_TEMPLATE_VERSION, workflow_id: templateId },
-      { endpoint: "POST /api/workflows/:id/draft" },
     );
   }
 
@@ -3808,25 +3775,6 @@ export class ApiClient {
     );
   }
 
-  async publishWorkflow(templateId: string): Promise<{ workflow: Workflow; version: WorkflowVersion }> {
-    const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/publish`, { method: "POST" });
-    return parseWithFallback(
-      raw,
-      WorkflowPublishResponseSchema,
-      {
-        workflow: EMPTY_WORKFLOW_DETAIL.workflow,
-        version: {
-          id: "", workspace_id: "", workflow_id: templateId, version: 0, revision: 1,
-          status: "unknown", definition: {
-            schema_version: 1, name: "", applies_to: { kind: "issue" },
-            roles: [], nodes: [], edges: [], acceptance: {},
-          }, definition_checksum: "", change_summary: "", created_by: "",
-          published_by: null, published_at: null, created_at: "", updated_at: "",
-        },
-      },
-      { endpoint: "POST /api/workflows/:id/publish" },
-    );
-  }
 
   async archiveWorkflow(templateId: string): Promise<Workflow> {
     const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/archive`, { method: "POST" });

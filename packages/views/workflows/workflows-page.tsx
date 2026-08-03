@@ -191,9 +191,9 @@ function RunTemplateDialog({
     enabled: open,
   });
   const run = useRunWorkflow(templateId);
+  // Every stored version is runnable, so the whole history is startable.
   const publishedVersions = useMemo(
-    () => (templateQuery.data?.versions ?? [])
-      .filter((version) => version.status === "published")
+    () => [...(templateQuery.data?.versions ?? [])]
       .sort((left, right) => right.version - left.version),
     [templateQuery.data?.versions],
   );
@@ -408,12 +408,12 @@ function RunTemplateDialog({
   );
 }
 
-type TemplateStatusFilter = "all" | "published" | "draft" | "archived";
+type TemplateStatusFilter = "all" | "published" | "archived";
 
 // The newest version is the one the editor opens and the one an unsaved draft
 // belongs to, so it is the number worth showing next to the name.
 function latestVersionOf(workflow: Workflow): number {
-  return Math.max(workflow.draft_version, workflow.latest_published_version);
+  return workflow.latest_published_version;
 }
 
 function matchesTemplateStatus(
@@ -603,7 +603,6 @@ function TemplatesPanel({
                     {([
                       ["all", t(($) => $.filters.all_statuses)],
                       ["published", t(($) => $.templates.published)],
-                      ["draft", t(($) => $.templates.draft)],
                       ["archived", t(($) => $.templates.archived)],
                     ] as Array<[TemplateStatusFilter, string]>).map(
                       ([value, label]) => (
@@ -787,9 +786,9 @@ export function NewWorkflowDialog() {
     ),
     [templatesQuery.data?.workflows],
   );
+  // Every stored version is runnable, so the whole history is startable.
   const publishedVersions = useMemo(
-    () => (templateQuery.data?.versions ?? [])
-      .filter((version) => version.status === "published")
+    () => [...(templateQuery.data?.versions ?? [])]
       .sort((left, right) => right.version - left.version),
     [templateQuery.data?.versions],
   );
