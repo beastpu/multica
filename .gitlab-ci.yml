@@ -190,6 +190,13 @@ preflight:
       else
         echo "❌ kubectl cannot read $TEST_NAMESPACE:"
         echo "   $kube_err"
+        # Which cluster answered matters more than the error text: the usual
+        # cause is a kubeconfig for a different cluster, and the endpoint plus
+        # the namespaces that do exist says so at a glance. Endpoints and
+        # namespace names are not secrets; the kubeconfig itself is never
+        # printed.
+        echo "   cluster: $(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null)"
+        echo "   namespaces it can see: $(kubectl get ns -o name 2>/dev/null | head -12 | tr '\n' ' ')"
         missing=1
       fi
       # `docker` on this runner is podman's compatibility shim, and podman does
