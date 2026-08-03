@@ -189,20 +189,31 @@ function TemplateMetadataDialog({
 
 function newActivity(definition: WorkflowDefinition): WorkflowNodeDefinition {
   const key = nextWorkflowNodeKey(definition, "activity");
+  // The owner has to be a role this workflow actually declares. Defaulting to
+  // a literal "owner" produced a node referencing a role that does not exist
+  // on any workflow whose roles are named for the work — both shipped
+  // starters are — and the definition would not validate the moment you
+  // inserted a node.
+  const ownerRole = definition.roles.find((role) => role.key === "owner")?.key ??
+    definition.roles[0]?.key ?? "";
   return {
     key,
     kind: "activity",
     name: "New activity",
-    owner_role: "owner",
+    ...(ownerRole ? { owner_role: ownerRole } : {}),
     // A new activity is a process step first. Producing issues is an explicit
     // opt-in, so building a flow does not fill the issue list with steps the
     // author has not decided to track as work items yet.
     issue_policy: "none",
-    executor: {
-      kind: "role",
-      role: "owner",
-      fallback: { kind: "manual" },
-    },
+    ...(ownerRole
+      ? {
+        executor: {
+          kind: "role" as const,
+          role: ownerRole,
+          fallback: { kind: "manual" as const },
+        },
+      }
+      : { executor: { kind: "manual" as const } }),
     // Without issues there is nothing to observe, so the owner completes the
     // activity explicitly. An automatic node here would satisfy its (empty)
     // issue condition immediately and complete the moment it activates.
@@ -433,10 +444,6 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
     () => detailQuery.data?.versions ?? [],
     [detailQuery.data?.versions],
   );
-  const draft = versions.find((version) => version.status === "draft");
-  const published = detailQuery.data?.versions.filter(
-    (version) => version.status === "published",
-  ) ?? [];
   const [definition, setDefinition] = useState<WorkflowDefinition | null>(null);
   const [tab, setTab] = useState<WorkflowEditorTab>("graph");
   const [selectedKey, setSelectedKey] = useState("");
@@ -454,9 +461,10 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
     (version) => version.id === selectedVersionId,
   );
   // Editing the newest version is how you author the next one — saving writes
-  // into a version rather than mutating the one that is live, so there is no
-  // draft to create first. Older versions stay read-only history.
-  const latestVersion = draft ?? published[0] ?? versions[0];
+  // a new version rather than mutating the live one. Older versions stay
+  // read-only history: a run that started on one is still executing it.
+  const latestVersion = [...versions]
+    .sort((left, right) => right.version - left.version)[0];
   const canEdit = canManage && !isMobile &&
     selectedVersion?.id === latestVersion?.id &&
     detailQuery.data?.workflow.status !== "archived";
@@ -464,8 +472,8 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
   useEffect(() => {
     if (versions.length === 0) return;
     if (versions.some((version) => version.id === selectedVersionId)) return;
-    setSelectedVersionId(draft?.id ?? versions[0]!.id);
-  }, [draft?.id, selectedVersionId, versions]);
+    setSelectedVersionId(versions[0]!.id);
+  }, [selectedVersionId, versions]);
 
   useEffect(() => {
     if (!selectedVersion || selectedVersion.id === loadedVersionId) return;
@@ -504,7 +512,6 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
     saveDefinition.mutate({
       definition,
       change_summary: changeSummary.trim(),
-      revision: selectedVersion?.revision,
     }, {
       onSuccess: (result) => {
         setLoadedVersionId(result.version.id);
@@ -512,11 +519,10 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
         setDefinition(result.version.definition);
         setChangeSummary(result.version.change_summary);
         setDirty(false);
-        // A definition that does not validate is still stored; it just does
-        // not go live. Saying so where the errors already render beats a
-        // silent save that changes nothing anyone can run.
-        setSaveError(result.validation_error);
+        setSaveError("");
       },
+      // A definition that does not validate is refused, so the edits are still
+      // in the editor and the message names what to fix.
       onError: (error) => {
         setSaveError(
           error instanceof ApiError && error.status === 409
@@ -622,12 +628,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
           >
             {versions.map((version) => (
               <option key={version.id} value={version.id}>
-                {t(($) => $.editor.version_option, {
-                  version: version.version,
-                  status: version.status === "draft"
-                    ? t(($) => $.templates.draft)
-                    : t(($) => $.templates.published),
-                })}
+                {t(($) => $.editor.version_short, { version: version.version })}
               </option>
             ))}
           </select>
@@ -715,14 +716,15 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
         </Alert>
       )}
       {/*
-        Saving validates, so this is where a bad definition surfaces. The node
-        name in the message is a link: the error names a node key, and the
-        point of reading it is to go fix that node.
+        Saving validates and refuses, so this is where a bad definition
+        surfaces — with the edits still in the editor. The node name in the
+        message is a link: the error names a node key, and the point of
+        reading it is to go fix that node.
       */}
       {saveError && (
         <Alert variant="destructive" className="mx-3 mt-3">
           <AlertCircle />
-          <AlertTitle>{t(($) => $.editor.saved_not_live)}</AlertTitle>
+          <AlertTitle>{t(($) => $.editor.save_rejected)}</AlertTitle>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
             <li>
               {(() => {
