@@ -1513,7 +1513,6 @@ type WorkflowVersion struct {
 	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
 	WorkflowID         pgtype.UUID        `json:"workflow_id"`
 	Version            int32              `json:"version"`
-	Status             string             `json:"status"`
 	Definition         []byte             `json:"definition"`
 	DefinitionChecksum string             `json:"definition_checksum"`
 	ChangeSummary      string             `json:"change_summary"`

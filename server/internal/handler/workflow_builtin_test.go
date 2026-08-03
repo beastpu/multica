@@ -97,7 +97,6 @@ func TestCreateWorkflowFromBuiltin(t *testing.T) {
 		Version struct {
 			ID      string `json:"id"`
 			Version int    `json:"version"`
-			Status  string `json:"status"`
 		} `json:"version"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -109,12 +108,8 @@ func TestCreateWorkflowFromBuiltin(t *testing.T) {
 	if response.Workflow.Status != "published" {
 		t.Fatalf("template status = %q, want published", response.Workflow.Status)
 	}
-	if response.Version.Status != "published" || response.Version.Version != 1 {
-		t.Fatalf(
-			"version = %d status %q, want version 1 published",
-			response.Version.Version,
-			response.Version.Status,
-		)
+	if response.Version.Version != 1 {
+		t.Fatalf("version = %d, want 1", response.Version.Version)
 	}
 	if response.Workflow.LatestPublishedVersionID != response.Version.ID {
 		t.Fatalf(

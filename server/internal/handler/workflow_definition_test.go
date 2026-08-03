@@ -61,7 +61,7 @@ func TestWorkflowWriteFlagIsWorkspaceScoped(t *testing.T) {
 	}
 }
 
-func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
+func TestWorkflowPermissionsImmutabilityAndSaveValidation(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
 	ctx := context.Background()
@@ -154,29 +154,18 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 	}
 	var created struct {
 		Workflow workflowResponse                `json:"workflow"`
-		Draft    workflowWorkflowVersionResponse `json:"draft"`
+		Version  workflowWorkflowVersionResponse `json:"version"`
 	}
 	if err := json.Unmarshal(create.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode created workflow template: %v", err)
 	}
 
-	publish := httptest.NewRecorder()
-	publishRequest := withURLParam(
-		newRequest(
-			http.MethodPost,
-			"/api/workflow-templates/"+created.Workflow.ID+
-				"/publish?workspace_id="+testWorkspaceID,
-			nil,
-		),
-		"id",
-		created.Workflow.ID,
-	)
-	testHandler.PublishWorkflow(publish, publishRequest)
-	if publish.Code != http.StatusOK {
+	// Creating a workflow makes it runnable. There is no second step: the
+	// definition validated on the way in, so version 1 is already live.
+	if created.Workflow.Status != "published" || created.Version.Version != 1 {
 		t.Fatalf(
-			"PublishWorkflow status = %d, body = %s",
-			publish.Code,
-			publish.Body.String(),
+			"created workflow status = %q, version = %d, want published version 1",
+			created.Workflow.Status, created.Version.Version,
 		)
 	}
 
@@ -189,80 +178,72 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 		t.Fatalf("load published workflow definition: %v", err)
 	}
 
-	createDraft := httptest.NewRecorder()
-	createDraftRequest := withURLParam(
-		newRequest(
-			http.MethodPost,
-			"/api/workflow-templates/"+created.Workflow.ID+
-				"/draft?workspace_id="+testWorkspaceID,
-			nil,
-		),
-		"id",
-		created.Workflow.ID,
-	)
-	testHandler.CreateWorkflowDraft(createDraft, createDraftRequest)
-	if createDraft.Code != http.StatusCreated {
+	save := func(body any) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		testHandler.SaveWorkflowDefinition(recorder, withURLParam(
+			newRequest(
+				http.MethodPut,
+				"/api/workflows/"+created.Workflow.ID+
+					"/definition?workspace_id="+testWorkspaceID,
+				body,
+			),
+			"id",
+			created.Workflow.ID,
+		))
+		return recorder
+	}
+
+	// A definition that does not validate is refused outright. The author is
+	// in the editor with the error in front of them, so there is nothing to
+	// gain by storing a version nobody can run.
+	broken := definition
+	broken.Nodes = []workflowdomain.NodeDefinition{
+		{Key: "start", Kind: "start", Name: "Start"},
+		{Key: "work", Kind: "activity", Name: "Work", OwnerRole: "nobody"},
+		{Key: "end", Kind: "end", Name: "End"},
+	}
+	rejected := save(map[string]any{
+		"definition": broken, "change_summary": "Broken",
+	})
+	if rejected.Code != http.StatusBadRequest {
 		t.Fatalf(
-			"CreateWorkflowDraft status = %d, body = %s",
-			createDraft.Code,
-			createDraft.Body.String(),
+			"invalid save status = %d, want %d, body = %s",
+			rejected.Code, http.StatusBadRequest, rejected.Body.String(),
 		)
 	}
-	var draft workflowWorkflowVersionResponse
-	if err := json.Unmarshal(createDraft.Body.Bytes(), &draft); err != nil {
-		t.Fatalf("decode workflow template draft: %v", err)
+	var versionCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM workflow_version WHERE workflow_id = $1
+	`, created.Workflow.ID).Scan(&versionCount); err != nil {
+		t.Fatalf("count workflow versions: %v", err)
+	}
+	if versionCount != 1 {
+		t.Fatalf("rejected save left %d versions, want 1", versionCount)
 	}
 
 	updatedDefinition := definition
 	updatedDefinition.Name = "Template lifecycle v2"
-	updateDraft := func(revision int64, summary string) *httptest.ResponseRecorder {
-		recorder := httptest.NewRecorder()
-		request := withURLParam(
-			newRequest(
-				http.MethodPut,
-				"/api/workflow-templates/"+created.Workflow.ID+
-					"/draft?workspace_id="+testWorkspaceID,
-				map[string]any{
-					"definition":     updatedDefinition,
-					"change_summary": summary,
-					"revision":       revision,
-				},
-			),
-			"id",
-			created.Workflow.ID,
-		)
-		testHandler.UpdateWorkflowDraft(recorder, request)
-		return recorder
-	}
-	firstUpdate := updateDraft(draft.Revision, "Version two")
-	if firstUpdate.Code != http.StatusOK {
+	accepted := save(map[string]any{
+		"definition": updatedDefinition, "change_summary": "Version two",
+	})
+	if accepted.Code != http.StatusOK {
 		t.Fatalf(
-			"UpdateWorkflowDraft status = %d, body = %s",
-			firstUpdate.Code,
-			firstUpdate.Body.String(),
+			"SaveWorkflowDefinition status = %d, body = %s",
+			accepted.Code, accepted.Body.String(),
 		)
 	}
-	staleUpdate := updateDraft(draft.Revision, "Stale overwrite")
-	if staleUpdate.Code != http.StatusConflict {
-		t.Fatalf(
-			"stale workflow draft status = %d, want %d, body = %s",
-			staleUpdate.Code,
-			http.StatusConflict,
-			staleUpdate.Body.String(),
-		)
+	var savedVersion workflowWorkflowVersionResponse
+	if err := json.Unmarshal(accepted.Body.Bytes(), &struct {
+		Version *workflowWorkflowVersionResponse `json:"version"`
+	}{Version: &savedVersion}); err != nil {
+		t.Fatalf("decode saved workflow version: %v", err)
 	}
-	var conflict struct {
-		LatestRevision int64                           `json:"latest_revision"`
-		Draft          workflowWorkflowVersionResponse `json:"draft"`
-	}
-	if err := json.Unmarshal(staleUpdate.Body.Bytes(), &conflict); err != nil {
-		t.Fatalf("decode workflow draft conflict: %v", err)
-	}
-	if conflict.LatestRevision != draft.Revision+1 ||
-		conflict.Draft.Revision != draft.Revision+1 {
-		t.Fatalf("workflow draft conflict = %#v", conflict)
+	if savedVersion.Version != 2 {
+		t.Fatalf("saved version = %d, want 2", savedVersion.Version)
 	}
 
+	// Version 1 is what any run started before this edit is still executing,
+	// so saving must not have touched it.
 	var publishedAfter []byte
 	if err := testPool.QueryRow(ctx, `
 		SELECT definition
@@ -273,7 +254,7 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 	}
 	if string(publishedAfter) != string(publishedDefinition) {
 		t.Fatalf(
-			"published definition changed while editing draft: before=%s after=%s",
+			"version 1 changed while saving version 2: before=%s after=%s",
 			publishedDefinition,
 			publishedAfter,
 		)
@@ -305,9 +286,13 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 	if err := json.Unmarshal(memberGet.Body.Bytes(), &memberDetail); err != nil {
 		t.Fatalf("decode member workflow template detail: %v", err)
 	}
-	if len(memberDetail.Versions) != 1 ||
-		memberDetail.Versions[0].Status != "published" {
-		t.Fatalf("member-visible workflow versions = %#v", memberDetail.Versions)
+	// Every stored version is runnable, so there is nothing left to hide from
+	// a member: they see the same history an admin does.
+	if len(memberDetail.Versions) != 2 {
+		t.Fatalf(
+			"member-visible workflow versions = %d, want 2",
+			len(memberDetail.Versions),
+		)
 	}
 
 	archive := httptest.NewRecorder()
@@ -344,23 +329,12 @@ func TestWorkflowPermissionsImmutabilityAndDraftConcurrency(t *testing.T) {
 			call: testHandler.UpdateWorkflowMetadata,
 		},
 		{
-			name: "draft", method: http.MethodPost,
-			path: "/api/workflow-templates/" + created.Workflow.ID + "/draft",
-			call: testHandler.CreateWorkflowDraft,
-		},
-		{
-			name: "update draft", method: http.MethodPut,
-			path: "/api/workflow-templates/" + created.Workflow.ID + "/draft",
+			name: "save definition", method: http.MethodPut,
+			path: "/api/workflows/" + created.Workflow.ID + "/definition",
 			body: map[string]any{
 				"definition": updatedDefinition, "change_summary": "Archived",
-				"revision": draft.Revision + 1,
 			},
-			call: testHandler.UpdateWorkflowDraft,
-		},
-		{
-			name: "publish", method: http.MethodPost,
-			path: "/api/workflow-templates/" + created.Workflow.ID + "/publish",
-			call: testHandler.PublishWorkflow,
+			call: testHandler.SaveWorkflowDefinition,
 		},
 	}
 	for _, mutation := range archivedMutations {

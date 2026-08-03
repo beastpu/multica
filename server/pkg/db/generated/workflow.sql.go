@@ -718,7 +718,7 @@ const createWorkflow = `-- name: CreateWorkflow :one
 INSERT INTO workflow (
     workspace_id, name, description, status, created_by
 ) VALUES (
-    $1, $2, $3, 'draft', $4
+    $1, $2, $3, 'published', $4
 )
 RETURNING id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
 `
@@ -1406,32 +1406,35 @@ func (q *Queries) CreateWorkflowVerdict(ctx context.Context, arg CreateWorkflowV
 
 const createWorkflowVersion = `-- name: CreateWorkflowVersion :one
 INSERT INTO workflow_version (
-    workspace_id, workflow_id, version, status, definition,
-    definition_checksum, change_summary, created_by
+    workspace_id, workflow_id, version, definition,
+    definition_checksum, change_summary, created_by,
+    published_by, published_at
 ) VALUES (
-    $1, $2, $3, $4, $5,
-    $6, $7, $8
+    $1, $2, $3, $4,
+    $5, $6, $7,
+    $7, now()
 )
-RETURNING id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision
+RETURNING id, workspace_id, workflow_id, version, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision
 `
 
 type CreateWorkflowVersionParams struct {
 	WorkspaceID        pgtype.UUID `json:"workspace_id"`
 	WorkflowID         pgtype.UUID `json:"workflow_id"`
 	Version            int32       `json:"version"`
-	Status             string      `json:"status"`
 	Definition         []byte      `json:"definition"`
 	DefinitionChecksum string      `json:"definition_checksum"`
 	ChangeSummary      string      `json:"change_summary"`
 	CreatedBy          pgtype.UUID `json:"created_by"`
 }
 
+// A version is only ever written once it validates, so it is born published
+// and never edited in place: running instances pin a version id, and the
+// definition they pinned has to stay exactly what they started with.
 func (q *Queries) CreateWorkflowVersion(ctx context.Context, arg CreateWorkflowVersionParams) (WorkflowVersion, error) {
 	row := q.db.QueryRow(ctx, createWorkflowVersion,
 		arg.WorkspaceID,
 		arg.WorkflowID,
 		arg.Version,
-		arg.Status,
 		arg.Definition,
 		arg.DefinitionChecksum,
 		arg.ChangeSummary,
@@ -1443,7 +1446,6 @@ func (q *Queries) CreateWorkflowVersion(ctx context.Context, arg CreateWorkflowV
 		&i.WorkspaceID,
 		&i.WorkflowID,
 		&i.Version,
-		&i.Status,
 		&i.Definition,
 		&i.DefinitionChecksum,
 		&i.ChangeSummary,
@@ -1951,8 +1953,8 @@ func (q *Queries) GetActiveWorkflowIssueBinding(ctx context.Context, arg GetActi
 }
 
 const getLatestPublishedWorkflowVersion = `-- name: GetLatestPublishedWorkflowVersion :one
-SELECT id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
-WHERE workflow_id = $1 AND workspace_id = $2 AND status = 'published'
+SELECT id, workspace_id, workflow_id, version, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
+WHERE workflow_id = $1 AND workspace_id = $2
 ORDER BY version DESC
 LIMIT 1
 `
@@ -1970,7 +1972,6 @@ func (q *Queries) GetLatestPublishedWorkflowVersion(ctx context.Context, arg Get
 		&i.WorkspaceID,
 		&i.WorkflowID,
 		&i.Version,
-		&i.Status,
 		&i.Definition,
 		&i.DefinitionChecksum,
 		&i.ChangeSummary,
@@ -2322,39 +2323,6 @@ func (q *Queries) GetWorkflowArtifact(ctx context.Context, arg GetWorkflowArtifa
 		&i.SupersededAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getWorkflowDraft = `-- name: GetWorkflowDraft :one
-SELECT id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
-WHERE workflow_id = $1 AND workspace_id = $2 AND status = 'draft'
-LIMIT 1
-`
-
-type GetWorkflowDraftParams struct {
-	WorkflowID  pgtype.UUID `json:"workflow_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) GetWorkflowDraft(ctx context.Context, arg GetWorkflowDraftParams) (WorkflowVersion, error) {
-	row := q.db.QueryRow(ctx, getWorkflowDraft, arg.WorkflowID, arg.WorkspaceID)
-	var i WorkflowVersion
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.WorkflowID,
-		&i.Version,
-		&i.Status,
-		&i.Definition,
-		&i.DefinitionChecksum,
-		&i.ChangeSummary,
-		&i.CreatedBy,
-		&i.PublishedBy,
-		&i.PublishedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Revision,
 	)
 	return i, err
 }
@@ -2781,7 +2749,7 @@ func (q *Queries) GetWorkflowVerdictInWorkspace(ctx context.Context, arg GetWork
 }
 
 const getWorkflowVersionByNumber = `-- name: GetWorkflowVersionByNumber :one
-SELECT id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
+SELECT id, workspace_id, workflow_id, version, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
 WHERE workflow_id = $1
   AND workspace_id = $2
   AND version = $3
@@ -2801,7 +2769,6 @@ func (q *Queries) GetWorkflowVersionByNumber(ctx context.Context, arg GetWorkflo
 		&i.WorkspaceID,
 		&i.WorkflowID,
 		&i.Version,
-		&i.Status,
 		&i.Definition,
 		&i.DefinitionChecksum,
 		&i.ChangeSummary,
@@ -2816,7 +2783,7 @@ func (q *Queries) GetWorkflowVersionByNumber(ctx context.Context, arg GetWorkflo
 }
 
 const getWorkflowVersionInWorkspace = `-- name: GetWorkflowVersionInWorkspace :one
-SELECT id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
+SELECT id, workspace_id, workflow_id, version, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -2833,7 +2800,6 @@ func (q *Queries) GetWorkflowVersionInWorkspace(ctx context.Context, arg GetWork
 		&i.WorkspaceID,
 		&i.WorkflowID,
 		&i.Version,
-		&i.Status,
 		&i.Definition,
 		&i.DefinitionChecksum,
 		&i.ChangeSummary,
@@ -4465,13 +4431,10 @@ const listWorkflowSummaries = `-- name: ListWorkflowSummaries :many
 SELECT
   workflow_def.id, workflow_def.workspace_id, workflow_def.name, workflow_def.description, workflow_def.status, workflow_def.latest_published_version_id, workflow_def.created_by, workflow_def.archived_at, workflow_def.created_at, workflow_def.updated_at,
   COALESCE(published.version, 0)::integer AS latest_published_version,
-  COALESCE(draft.version, 0)::integer AS draft_version,
-  CAST(draft.id IS NOT NULL AS boolean) AS has_draft,
   COALESCE((
     SELECT count(*)::integer
     FROM jsonb_array_elements(
-      COALESCE(published.definition, draft.definition, '{"nodes":[]}'::jsonb)
-        -> 'nodes'
+      COALESCE(published.definition, '{"nodes":[]}'::jsonb) -> 'nodes'
     ) node
     WHERE node->>'kind' = 'activity'
   ), 0)::integer AS activity_count,
@@ -4483,25 +4446,16 @@ SELECT
   ) AS run_count,
   published.published_by AS last_published_by,
   published.published_at AS last_published_at,
-  COALESCE(published.change_summary, draft.change_summary, '') AS latest_change_summary
+  COALESCE(published.change_summary, '') AS latest_change_summary
 FROM workflow workflow_def
 LEFT JOIN LATERAL (
-  SELECT version.id, version.workspace_id, version.workflow_id, version.version, version.status, version.definition, version.definition_checksum, version.change_summary, version.created_by, version.published_by, version.published_at, version.created_at, version.updated_at, version.revision
+  SELECT version.id, version.workspace_id, version.workflow_id, version.version, version.definition, version.definition_checksum, version.change_summary, version.created_by, version.published_by, version.published_at, version.created_at, version.updated_at, version.revision
   FROM workflow_version version
   WHERE version.workspace_id = workflow_def.workspace_id
     AND version.workflow_id = workflow_def.id
-    AND version.status = 'published'
   ORDER BY version.version DESC
   LIMIT 1
 ) published ON true
-LEFT JOIN LATERAL (
-  SELECT version.id, version.workspace_id, version.workflow_id, version.version, version.status, version.definition, version.definition_checksum, version.change_summary, version.created_by, version.published_by, version.published_at, version.created_at, version.updated_at, version.revision
-  FROM workflow_version version
-  WHERE version.workspace_id = workflow_def.workspace_id
-    AND version.workflow_id = workflow_def.id
-    AND version.status = 'draft'
-  LIMIT 1
-) draft ON true
 WHERE workflow_def.workspace_id = $1
   AND (
     $2::text IS NULL
@@ -4527,8 +4481,6 @@ type ListWorkflowSummariesRow struct {
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
 	LatestPublishedVersion   int32              `json:"latest_published_version"`
-	DraftVersion             int32              `json:"draft_version"`
-	HasDraft                 bool               `json:"has_draft"`
 	ActivityCount            int32              `json:"activity_count"`
 	RunCount                 int64              `json:"run_count"`
 	LastPublishedBy          pgtype.UUID        `json:"last_published_by"`
@@ -4557,8 +4509,6 @@ func (q *Queries) ListWorkflowSummaries(ctx context.Context, arg ListWorkflowSum
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LatestPublishedVersion,
-			&i.DraftVersion,
-			&i.HasDraft,
 			&i.ActivityCount,
 			&i.RunCount,
 			&i.LastPublishedBy,
@@ -4674,7 +4624,7 @@ func (q *Queries) ListWorkflowVerdicts(ctx context.Context, arg ListWorkflowVerd
 }
 
 const listWorkflowVersions = `-- name: ListWorkflowVersions :many
-SELECT id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
+SELECT id, workspace_id, workflow_id, version, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
 WHERE workflow_id = $1 AND workspace_id = $2
 ORDER BY version DESC
 `
@@ -4698,7 +4648,6 @@ func (q *Queries) ListWorkflowVersions(ctx context.Context, arg ListWorkflowVers
 			&i.WorkspaceID,
 			&i.WorkflowID,
 			&i.Version,
-			&i.Status,
 			&i.Definition,
 			&i.DefinitionChecksum,
 			&i.ChangeSummary,
@@ -4760,40 +4709,6 @@ func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([
 		return nil, err
 	}
 	return items, nil
-}
-
-const lockWorkflowDraft = `-- name: LockWorkflowDraft :one
-SELECT id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision FROM workflow_version
-WHERE workflow_id = $1 AND workspace_id = $2 AND status = 'draft'
-LIMIT 1
-FOR UPDATE
-`
-
-type LockWorkflowDraftParams struct {
-	WorkflowID  pgtype.UUID `json:"workflow_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) LockWorkflowDraft(ctx context.Context, arg LockWorkflowDraftParams) (WorkflowVersion, error) {
-	row := q.db.QueryRow(ctx, lockWorkflowDraft, arg.WorkflowID, arg.WorkspaceID)
-	var i WorkflowVersion
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.WorkflowID,
-		&i.Version,
-		&i.Status,
-		&i.Definition,
-		&i.DefinitionChecksum,
-		&i.ChangeSummary,
-		&i.CreatedBy,
-		&i.PublishedBy,
-		&i.PublishedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Revision,
-	)
-	return i, err
 }
 
 const lockWorkflowInstance = `-- name: LockWorkflowInstance :one
@@ -5003,44 +4918,6 @@ func (q *Queries) MarkWorkflowNodeTaskMaterializing(ctx context.Context, arg Mar
 		&i.CreatedByID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const publishWorkflowVersion = `-- name: PublishWorkflowVersion :one
-UPDATE workflow_version
-SET status = 'published',
-    published_by = $1,
-    published_at = now(),
-    updated_at = now()
-WHERE id = $2 AND workspace_id = $3 AND status = 'draft'
-RETURNING id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision
-`
-
-type PublishWorkflowVersionParams struct {
-	PublishedBy pgtype.UUID `json:"published_by"`
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) PublishWorkflowVersion(ctx context.Context, arg PublishWorkflowVersionParams) (WorkflowVersion, error) {
-	row := q.db.QueryRow(ctx, publishWorkflowVersion, arg.PublishedBy, arg.ID, arg.WorkspaceID)
-	var i WorkflowVersion
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.WorkflowID,
-		&i.Version,
-		&i.Status,
-		&i.Definition,
-		&i.DefinitionChecksum,
-		&i.ChangeSummary,
-		&i.CreatedBy,
-		&i.PublishedBy,
-		&i.PublishedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Revision,
 	)
 	return i, err
 }
@@ -5357,58 +5234,6 @@ func (q *Queries) SupersedeWorkflowArtifact(ctx context.Context, arg SupersedeWo
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const updateWorkflowDraft = `-- name: UpdateWorkflowDraft :one
-UPDATE workflow_version
-SET definition = $1,
-    definition_checksum = $2,
-    change_summary = $3,
-    revision = revision + 1,
-    updated_at = now()
-WHERE id = $4
-  AND workspace_id = $5
-  AND status = 'draft'
-  AND revision = $6
-RETURNING id, workspace_id, workflow_id, version, status, definition, definition_checksum, change_summary, created_by, published_by, published_at, created_at, updated_at, revision
-`
-
-type UpdateWorkflowDraftParams struct {
-	Definition         []byte      `json:"definition"`
-	DefinitionChecksum string      `json:"definition_checksum"`
-	ChangeSummary      string      `json:"change_summary"`
-	ID                 pgtype.UUID `json:"id"`
-	WorkspaceID        pgtype.UUID `json:"workspace_id"`
-	ExpectedRevision   int64       `json:"expected_revision"`
-}
-
-func (q *Queries) UpdateWorkflowDraft(ctx context.Context, arg UpdateWorkflowDraftParams) (WorkflowVersion, error) {
-	row := q.db.QueryRow(ctx, updateWorkflowDraft,
-		arg.Definition,
-		arg.DefinitionChecksum,
-		arg.ChangeSummary,
-		arg.ID,
-		arg.WorkspaceID,
-		arg.ExpectedRevision,
-	)
-	var i WorkflowVersion
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.WorkflowID,
-		&i.Version,
-		&i.Status,
-		&i.Definition,
-		&i.DefinitionChecksum,
-		&i.ChangeSummary,
-		&i.CreatedBy,
-		&i.PublishedBy,
-		&i.PublishedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Revision,
-	)
-	return i, err
 }
 
 const updateWorkflowInstanceState = `-- name: UpdateWorkflowInstanceState :one

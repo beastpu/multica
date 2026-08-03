@@ -24,13 +24,10 @@ ORDER BY updated_at DESC, id DESC;
 SELECT
   workflow_def.*,
   COALESCE(published.version, 0)::integer AS latest_published_version,
-  COALESCE(draft.version, 0)::integer AS draft_version,
-  CAST(draft.id IS NOT NULL AS boolean) AS has_draft,
   COALESCE((
     SELECT count(*)::integer
     FROM jsonb_array_elements(
-      COALESCE(published.definition, draft.definition, '{"nodes":[]}'::jsonb)
-        -> 'nodes'
+      COALESCE(published.definition, '{"nodes":[]}'::jsonb) -> 'nodes'
     ) node
     WHERE node->>'kind' = 'activity'
   ), 0)::integer AS activity_count,
@@ -42,25 +39,16 @@ SELECT
   ) AS run_count,
   published.published_by AS last_published_by,
   published.published_at AS last_published_at,
-  COALESCE(published.change_summary, draft.change_summary, '') AS latest_change_summary
+  COALESCE(published.change_summary, '') AS latest_change_summary
 FROM workflow workflow_def
 LEFT JOIN LATERAL (
   SELECT version.*
   FROM workflow_version version
   WHERE version.workspace_id = workflow_def.workspace_id
     AND version.workflow_id = workflow_def.id
-    AND version.status = 'published'
   ORDER BY version.version DESC
   LIMIT 1
 ) published ON true
-LEFT JOIN LATERAL (
-  SELECT version.*
-  FROM workflow_version version
-  WHERE version.workspace_id = workflow_def.workspace_id
-    AND version.workflow_id = workflow_def.id
-    AND version.status = 'draft'
-  LIMIT 1
-) draft ON true
 WHERE workflow_def.workspace_id = @workspace_id
   AND (
     sqlc.narg(status)::text IS NULL
@@ -76,7 +64,7 @@ WHERE id = @id AND workspace_id = @workspace_id;
 INSERT INTO workflow (
     workspace_id, name, description, status, created_by
 ) VALUES (
-    @workspace_id, @name, @description, 'draft', @created_by
+    @workspace_id, @name, @description, 'published', @created_by
 )
 RETURNING *;
 
@@ -109,20 +97,9 @@ WHERE workflow_id = @workflow_id
   AND workspace_id = @workspace_id
   AND version = @version;
 
--- name: GetWorkflowDraft :one
-SELECT * FROM workflow_version
-WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id AND status = 'draft'
-LIMIT 1;
-
--- name: LockWorkflowDraft :one
-SELECT * FROM workflow_version
-WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id AND status = 'draft'
-LIMIT 1
-FOR UPDATE;
-
 -- name: GetLatestPublishedWorkflowVersion :one
 SELECT * FROM workflow_version
-WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id AND status = 'published'
+WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id
 ORDER BY version DESC
 LIMIT 1;
 
@@ -131,36 +108,19 @@ SELECT COALESCE(max(version), 0)::integer + 1
 FROM workflow_version
 WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id;
 
+-- A version is only ever written once it validates, so it is born published
+-- and never edited in place: running instances pin a version id, and the
+-- definition they pinned has to stay exactly what they started with.
 -- name: CreateWorkflowVersion :one
 INSERT INTO workflow_version (
-    workspace_id, workflow_id, version, status, definition,
-    definition_checksum, change_summary, created_by
+    workspace_id, workflow_id, version, definition,
+    definition_checksum, change_summary, created_by,
+    published_by, published_at
 ) VALUES (
-    @workspace_id, @workflow_id, @version, @status, @definition,
-    @definition_checksum, @change_summary, @created_by
+    @workspace_id, @workflow_id, @version, @definition,
+    @definition_checksum, @change_summary, @created_by,
+    @created_by, now()
 )
-RETURNING *;
-
--- name: UpdateWorkflowDraft :one
-UPDATE workflow_version
-SET definition = @definition,
-    definition_checksum = @definition_checksum,
-    change_summary = @change_summary,
-    revision = revision + 1,
-    updated_at = now()
-WHERE id = @id
-  AND workspace_id = @workspace_id
-  AND status = 'draft'
-  AND revision = @expected_revision
-RETURNING *;
-
--- name: PublishWorkflowVersion :one
-UPDATE workflow_version
-SET status = 'published',
-    published_by = @published_by,
-    published_at = now(),
-    updated_at = now()
-WHERE id = @id AND workspace_id = @workspace_id AND status = 'draft'
 RETURNING *;
 
 -- name: SetWorkflowPublishedVersion :one

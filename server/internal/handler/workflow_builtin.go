@@ -43,7 +43,7 @@ type createWorkflowFromBuiltinRequest struct {
 // CreateWorkflowFromBuiltin copies a builtin definition into a
 // workspace-owned template and publishes it as version 1 in one transaction,
 // so the template is immediately startable. Later edits go through the
-// regular draft flow.
+// regular save, which allocates the next version.
 func (h *Handler) CreateWorkflowFromBuiltin(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return
@@ -104,20 +104,13 @@ func (h *Handler) CreateWorkflowFromBuiltin(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to create workflow template")
 		return
 	}
-	draft, err := qtx.CreateWorkflowVersion(r.Context(), db.CreateWorkflowVersionParams{
-		WorkspaceID: wsUUID, WorkflowID: template.ID, Version: 1, Status: "draft",
+	published, err := qtx.CreateWorkflowVersion(r.Context(), db.CreateWorkflowVersionParams{
+		WorkspaceID: wsUUID, WorkflowID: template.ID, Version: 1,
 		Definition: definition, DefinitionChecksum: checksum,
 		ChangeSummary: "内置模板初始版本", CreatedBy: userUUID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create workflow template version")
-		return
-	}
-	published, err := qtx.PublishWorkflowVersion(r.Context(), db.PublishWorkflowVersionParams{
-		PublishedBy: userUUID, ID: draft.ID, WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to publish workflow template version")
 		return
 	}
 	template, err = qtx.SetWorkflowPublishedVersion(r.Context(), db.SetWorkflowPublishedVersionParams{
