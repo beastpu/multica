@@ -18,7 +18,6 @@ const RESOURCES = {
 const definition: WorkflowDefinition = {
   schema_version: 1,
   name: "Parallel delivery",
-  applies_to: { kind: "issue" },
   roles: [],
   nodes: [
     { key: "start", kind: "start", name: "Start" },

@@ -26,7 +26,6 @@ function workflow(
   return {
     schema_version: 1,
     name: "Layout test",
-    applies_to: { kind: "issue" },
     roles: [],
     nodes,
     edges,

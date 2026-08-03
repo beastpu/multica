@@ -74,7 +74,6 @@ function defaultWorkflowDefinition(): WorkflowDefinition {
   return {
     schema_version: 1,
     name: "New workflow",
-    applies_to: { kind: "issue" },
     roles: [{
       key: "owner",
       name: "Owner",

@@ -106,10 +106,6 @@ export const WorkflowNodeDefinitionSchema = z.object({
 export const WorkflowDefinitionSchema = z.object({
   schema_version: z.number().optional().default(1),
   name: z.string().optional().default(""),
-  applies_to: z.object({
-    kind: z.string().optional().default("issue"),
-    type_key: z.string().optional(),
-  }).loose().optional().default({ kind: "issue" }),
   roles: arrayOrEmpty(WorkflowRoleDefinitionSchema),
   nodes: arrayOrEmpty(WorkflowNodeDefinitionSchema),
   edges: arrayOrEmpty(z.object({
@@ -532,7 +528,6 @@ export const EMPTY_WORKFLOW_TEMPLATE_VERSION = {
   definition: {
     schema_version: 1,
     name: "",
-    applies_to: { kind: "issue" },
     roles: [],
     nodes: [],
     edges: [],

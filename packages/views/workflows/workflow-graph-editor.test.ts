@@ -21,7 +21,6 @@ function workflow(
   return {
     schema_version: 1,
     name: "Test",
-    applies_to: { kind: "issue" },
     roles: [],
     nodes,
     edges,

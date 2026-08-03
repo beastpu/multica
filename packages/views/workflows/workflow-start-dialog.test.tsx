@@ -17,7 +17,6 @@ const mocks = vi.hoisted(() => ({
 const definition = {
   schema_version: 1,
   name: "Delivery",
-  applies_to: { kind: "issue" },
   roles: [{
     key: "owner",
     name: "Owner",

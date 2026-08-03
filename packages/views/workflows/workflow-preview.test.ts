@@ -9,7 +9,6 @@ function definition(
   return {
     schema_version: 1,
     name: "Preview",
-    applies_to: { kind: "issue" },
     roles: [],
     nodes,
     edges,

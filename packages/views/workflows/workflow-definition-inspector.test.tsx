@@ -37,7 +37,6 @@ const node: WorkflowNodeDefinition = {
 const definition: WorkflowDefinition = {
   schema_version: 1,
   name: "Delivery",
-  applies_to: { kind: "issue" },
   roles: [],
   nodes: [
     { key: "start", kind: "start", name: "Start" },

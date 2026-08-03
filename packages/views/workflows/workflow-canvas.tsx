@@ -57,7 +57,6 @@ function fallbackDefinition(instances: WorkflowNodeInstance[]): WorkflowDefiniti
   return {
     schema_version: 1,
     name: "",
-    applies_to: { kind: "issue" },
     roles: [],
     nodes: sorted.map((node) => node.definition),
     edges: sorted.slice(1).map((node, index) => ({

@@ -12,7 +12,6 @@ let api: TestApiClient;
 const definition = {
   schema_version: 1,
   name: "E2E delivery",
-  applies_to: { kind: "issue" },
   roles: [{
     key: "owner",
     name: "Owner",

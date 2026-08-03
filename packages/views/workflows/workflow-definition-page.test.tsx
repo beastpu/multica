@@ -20,7 +20,6 @@ const mocks = vi.hoisted(() => ({
 const definition = {
   schema_version: 1,
   name: "Delivery workflow",
-  applies_to: { kind: "issue" },
   roles: [],
   nodes: [
     { key: "start", kind: "start", name: "Start" },
@@ -40,7 +39,6 @@ const detail = {
     workspace_id: "workspace-1",
     name: "Delivery workflow",
     description: "Ship a requirement safely",
-    applies_to_kind: "issue",
     status: "published",
     latest_published_version_id: "version-1",
     created_by: "user-1",

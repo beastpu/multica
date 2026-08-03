@@ -3709,7 +3709,6 @@ export class ApiClient {
     input: {
       name?: string;
       description?: string;
-      applies_to_type_key?: string;
     },
   ): Promise<Workflow> {
     const raw = await this.fetch<unknown>(`/api/workflows/${templateId}`, {
@@ -3724,7 +3723,6 @@ export class ApiClient {
         id: templateId,
         name: input.name ?? "",
         description: input.description ?? "",
-        applies_to_type_key: input.applies_to_type_key ?? "",
       },
       { endpoint: "PATCH /api/workflows/:id" },
     );

@@ -94,7 +94,6 @@ export interface WorkflowNodeDefinition {
 export interface WorkflowDefinition {
   schema_version: number;
   name: string;
-  applies_to: { kind: string; type_key?: string };
   roles: WorkflowRoleDefinition[];
   nodes: WorkflowNodeDefinition[];
   edges: Array<{ from: string; to: string; condition?: unknown; default?: boolean }>;
