@@ -17,15 +17,16 @@
 # server and the Next.js bundle, so `build-*` failing IS the compile gate.
 #
 # ── Runners ─────────────────────────────────────────────────────────────
-# The project has two registered runners and BOTH carry the `multica` tag:
+# Three runners are registered and ALL THREE answer to `multica`:
 #
 #   3256  multica-ack-runner (host `wenxue-dev`)  linux/amd64  shell  [multica]
 #   3285  macmini for local runner                darwin/arm64 shell  [macos, multica]
+#   3305  zstack multica shell runner             linux/amd64  shell  [multica, multica-web-build]
 #
-# There is no tag that selects 3256 alone, so `tags: [multica]` can dispatch
-# to the Mac mini. Every job here therefore asserts it is on Linux before it
-# does anything (`.assert-linux-host`). Once ops adds a distinct tag to 3256
-# (e.g. `ack`), swap `*multica_runner` for it and the guard can go.
+# Build and deploy pin `multica-web-build`, which only 3305 carries, so they
+# dispatch deterministically. `mirror-to-github` still asks for the ambiguous
+# `multica` and can therefore land on the Mac mini — the Linux assertion below
+# is what stops that from becoming a confusing half-run.
 #
 # ── Runner host requirements (shell executor, no `image:`) ──────────────
 #   mirror-to-github : bash, git, ssh, ssh-keyscan
@@ -103,12 +104,17 @@ variables:
   - if: '$CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
     when: manual
 
+# Build and deploy: the one tag that identifies a single runner.
+.build-runner: &build_runner
+  - multica-web-build
+
+# mirror-to-github keeps the tag it has always used.
 .multica-runner: &multica_runner
   - multica
 
-# Both registered runners answer to `multica`, and the Mac mini has neither
-# the architecture nor the cluster reach for these jobs. Fail in one second
-# with the reason instead of ten minutes into a cross-arch docker build.
+# `multica` alone still matches the Mac mini, which has neither the
+# architecture nor the cluster reach for these jobs. Fail in one second with
+# the reason instead of ten minutes into a cross-arch docker build.
 .assert-linux-host: &assert_linux_host
   - |
     test "$(uname -s)" = "Linux" || {
@@ -133,7 +139,7 @@ variables:
 # missing, rather than letting `build-web` discover it eight minutes in.
 preflight:
   stage: preflight
-  tags: *multica_runner
+  tags: *build_runner
   rules: *test_pipeline_rule
   script:
     - *assert_linux_host
@@ -232,7 +238,7 @@ preflight:
 
 build-server:
   stage: build
-  tags: *multica_runner
+  tags: *build_runner
   rules: *test_pipeline_rule
   needs: [preflight]
   script:
@@ -258,7 +264,7 @@ build-server:
 
 build-web:
   stage: build
-  tags: *multica_runner
+  tags: *build_runner
   rules: *test_pipeline_rule
   needs: [preflight]
   script:
@@ -285,7 +291,7 @@ build-web:
 # ── deploy ──────────────────────────────────────────────────────────────
 deploy-test:
   stage: deploy
-  tags: *multica_runner
+  tags: *build_runner
   rules: *deploy_rule
   needs: [preflight, build-server, build-web]
   environment:
