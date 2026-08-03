@@ -2,10 +2,16 @@
 #
 # Two responsibilities, on two different triggers:
 #
-#   1. Build + deploy to the `multica-test` namespace on ACK.
+#   1. Build the server and web images and push them to ACR.
 #      Fires on pushes to the default branch, and on a manual
-#      "Run pipeline" for any branch (deploy is a second click there).
-#      Jobs: `preflight` → `build-server` / `build-web` → `deploy-test`.
+#      "Run pipeline" for any branch.
+#      Jobs: `preflight` → `build-server` / `build-web`.
+#
+#      Rolling a tag into a namespace is deliberately NOT here. The only
+#      kubeconfig available to this runner is for a different cluster than
+#      the one running `multica-test`, and a rollout job that cannot reach
+#      its own target is worse than no job at all. Deploy by hand with
+#      `scripts/deploy-test.sh <tag>` from somewhere that can.
 #
 #   2. `mirror-to-github` — on semver tag pushes only, push the tag (and
 #      main HEAD) to the `CopilotDemo/multica` mirror on GitHub. That
@@ -23,7 +29,7 @@
 #   3285  macmini for local runner                darwin/arm64 shell  [macos, multica]
 #   3305  zstack multica shell runner             linux/amd64  shell  [multica, multica-web-build]
 #
-# Build and deploy pin `multica-web-build`, which only 3305 carries, so they
+# The build jobs pin `multica-web-build`, which only 3305 carries, so they
 # dispatch deterministically. `mirror-to-github` still asks for the ambiguous
 # `multica` and can therefore land on the Mac mini — the Linux assertion below
 # is what stops that from becoming a confusing half-run.
@@ -31,7 +37,6 @@
 # ── Runner host requirements (shell executor, no `image:`) ──────────────
 #   mirror-to-github : bash, git, ssh, ssh-keyscan
 #   build-*          : docker (daemon reachable by the `gitlab-runner` user)
-#   deploy-test      : kubectl with reach to the ACK cluster
 #
 # ── Required CI/CD variables (Settings → CI/CD → Variables) ─────────────
 #   GITHUB_MIRROR_DEPLOY_KEY  mirror only; see scripts/mirror-to-github.sh
@@ -39,35 +44,28 @@
 #                             OPTIONAL. ACR Enterprise push credentials
 #                             (masked). Omit them if the runner host is
 #                             already `docker login`-ed to the registry.
-#   KUBECONFIG_TEST           OPTIONAL, type "File". A kubeconfig with write
-#                             access to the `multica-test` namespace. Omit it
-#                             if the runner host already has a working
-#                             ambient kubeconfig.
 #
-# Both optional pairs follow the same rule: the CI variable wins when set,
-# otherwise the job uses whatever the runner host already has. `preflight`
-# reports which of the two is in play for each.
+# The ACR pair is optional in both directions: set the variables and they win,
+# omit them and the job uses the runner host's existing `docker login`.
+# `preflight` reports which of the two is in play.
 
 workflow:
   rules:
     # Tag pushes → the mirror pipeline.
     - if: '$CI_COMMIT_TAG'
-    # Default-branch pushes → build + auto-deploy to test.
+    # Default-branch pushes → build and publish images.
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    # "Run pipeline" in the UI (or the pipelines API) → build any branch,
-    # deploy behind a manual gate.
+    # "Run pipeline" in the UI (or the pipelines API) → build any branch.
     - if: '$CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
 
 stages:
   - preflight
   - build
-  - deploy
   - mirror
 
 variables:
   REGISTRY: lilith-registry.cn-shanghai.cr.aliyuncs.com
   IMAGE_NAMESPACE: devops
-  TEST_NAMESPACE: multica-test
   # Baked into the web bundle at build time — a missing one fails the build
   # rather than degrading at runtime. Values mirror deploy/k8s/base/configmap.yaml.
   NEXT_PUBLIC_FEISHU_APP_ID: cli_a739addb39e41013
@@ -87,24 +85,15 @@ variables:
 .semver-tag-rule: &semver_tag_rule
   - if: '$CI_COMMIT_TAG =~ /^(v?|mobile-v)[0-9]+\.[0-9]+\.[0-9]+$/'
 
-# Build + deploy never run on a tag pipeline — a tag is a desktop release,
-# not a server rollout.
+# The build never runs on a tag pipeline — a tag is a desktop release, not a
+# server image.
 .test-pipeline-rule: &test_pipeline_rule
   - if: '$CI_COMMIT_TAG'
     when: never
   - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   - if: '$CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
 
-# Same, but deploying a non-default branch to the shared test namespace is a
-# deliberate act, so it costs a second click.
-.deploy-rule: &deploy_rule
-  - if: '$CI_COMMIT_TAG'
-    when: never
-  - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-  - if: '$CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
-    when: manual
-
-# Build and deploy: the one tag that identifies a single runner.
+# The build jobs: the one tag that identifies a single runner.
 .build-runner: &build_runner
   - multica-web-build
 
@@ -149,7 +138,7 @@ preflight:
     - cat build.env
     - |
       missing=0
-      for tool in docker kubectl; do
+      for tool in docker; do
         if command -v "$tool" >/dev/null; then
           echo "✅ $tool → $(command -v "$tool")"
         else
@@ -168,35 +157,6 @@ preflight:
         echo "   For rootless podman the user needs a /etc/subuid + /etc/subgid"
         echo "   range and a runtime dir: 'usermod --add-subuids ... --add-subgids ...'"
         echo "   plus 'loginctl enable-linger $(id -un)'."
-        missing=1
-      fi
-      if [ -n "${KUBECONFIG_TEST:-}" ]; then
-        echo "ℹ️  using the KUBECONFIG_TEST CI variable"
-        export KUBECONFIG="$KUBECONFIG_TEST"
-      else
-        echo "ℹ️  no KUBECONFIG_TEST set — relying on the host's ambient kubeconfig"
-        echo "ℹ️  runner user: $(id -un)  home: $HOME"
-        if [ -f "$HOME/.kube/config" ]; then
-          echo "ℹ️  $HOME/.kube/config exists"
-        else
-          echo "ℹ️  $HOME/.kube/config does NOT exist"
-        fi
-      fi
-      # Print the real reason. "cannot read" covers a missing kubeconfig, an
-      # unreachable endpoint and an RBAC denial, and the three need different
-      # fixes — swallowing stderr here makes the job guess for you.
-      if kube_err="$(kubectl -n "$TEST_NAMESPACE" get deploy multica-server 2>&1 >/dev/null)"; then
-        echo "✅ kubectl reaches $TEST_NAMESPACE"
-      else
-        echo "❌ kubectl cannot read $TEST_NAMESPACE:"
-        echo "   $kube_err"
-        # Which cluster answered matters more than the error text: the usual
-        # cause is a kubeconfig for a different cluster, and the endpoint plus
-        # the namespaces that do exist says so at a glance. Endpoints and
-        # namespace names are not secrets; the kubeconfig itself is never
-        # printed.
-        echo "   cluster: $(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null)"
-        echo "   namespaces it can see: $(kubectl get ns -o name 2>/dev/null | head -12 | tr '\n' ' ')"
         missing=1
       fi
       # `docker` on this runner is podman's compatibility shim, and podman does
@@ -294,20 +254,6 @@ build-web:
       if [ -n "${ACR_USERNAME:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
         docker logout "$REGISTRY" || true
       fi
-
-# ── deploy ──────────────────────────────────────────────────────────────
-deploy-test:
-  stage: deploy
-  tags: *build_runner
-  rules: *deploy_rule
-  needs: [preflight, build-server, build-web]
-  environment:
-    name: test
-    url: https://multica-test.lilithgames.com
-  script:
-    - *assert_linux_host
-    - if [ -n "${KUBECONFIG_TEST:-}" ]; then export KUBECONFIG="$KUBECONFIG_TEST"; fi
-    - bash scripts/deploy-test.sh "$IMAGE_TAG"
 
 # ── mirror ──────────────────────────────────────────────────────────────
 mirror-to-github:
