@@ -106,7 +106,8 @@ export type WorkflowRealtimePrefix =
   | "workflow_submission"
   | "workflow_verdict"
   | "workflow_confirmation"
-  | "workflow_acceptance";
+  | "workflow_acceptance"
+  | "workflow_artifact";
 
 // Workflow events are invalidation-only. Replays and out-of-order delivery
 // therefore cannot roll a cached instance backward; the next query reads the
@@ -749,6 +750,10 @@ export function useRealtimeSync(
       workflow_acceptance: () => {
         const wsId = getCurrentWsId();
         if (wsId) invalidateWorkflowRealtime(qc, wsId, "workflow_acceptance");
+      },
+      workflow_artifact: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) invalidateWorkflowRealtime(qc, wsId, "workflow_artifact");
       },
       // Powers the agent presence cache: any task lifecycle change
       // (dispatch / completed / failed / cancelled) refreshes the

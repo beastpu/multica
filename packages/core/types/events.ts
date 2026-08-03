@@ -96,7 +96,9 @@ export type WSEventType =
   | "workflow_submission:created"
   | "workflow_verdict:created"
   | "workflow_confirmation:updated"
-  | "workflow_acceptance:updated";
+  | "workflow_acceptance:updated"
+  | "workflow_artifact:submitted"
+  | "workflow_artifact:reviewed";
 
 export interface WSMessage<T = unknown> {
   type: WSEventType;

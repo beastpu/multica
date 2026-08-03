@@ -24,6 +24,8 @@ const WORKFLOW_EVENTS = [
   "workflow_verdict:created",
   "workflow_confirmation:updated",
   "workflow_acceptance:updated",
+  "workflow_artifact:submitted",
+  "workflow_artifact:reviewed",
 ] as const satisfies readonly WSEventType[];
 
 export function useWorkflowRealtime(enabled = true) {

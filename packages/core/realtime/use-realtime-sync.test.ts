@@ -57,9 +57,10 @@ describe("invalidateWorkflowRealtime", () => {
     invalidateWorkflowRealtime(qc, wsId, "workflow_node");
     invalidateWorkflowRealtime(qc, wsId, "workflow_instance");
     invalidateWorkflowRealtime(qc, wsId, "workflow_node");
+    invalidateWorkflowRealtime(qc, wsId, "workflow_artifact");
 
     expect(qc.getQueryData(instanceKey)).toBe(cached);
-    expect(invalidate).toHaveBeenCalledTimes(3);
+    expect(invalidate).toHaveBeenCalledTimes(4);
     for (const call of invalidate.mock.calls) {
       expect(call[0]).toEqual({ queryKey: workflowKeys.all(wsId) });
     }
