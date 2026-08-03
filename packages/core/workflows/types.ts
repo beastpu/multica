@@ -1,4 +1,5 @@
 import type { Issue } from "../types";
+import type { AgentTask } from "../types/agent";
 
 export interface WorkflowRoleDefinition {
   key: string;
@@ -124,9 +125,18 @@ export interface Workflow {
   latest_published_version: number;
   activity_count: number;
   run_count: number;
+  recent_runs: WorkflowRecentRun[];
   last_published_by: string | null;
   last_published_at: string | null;
   latest_change_summary: string;
+}
+
+export interface WorkflowRecentRun {
+  id: string;
+  title: string;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
 }
 
 export interface WorkflowVersion {
@@ -308,6 +318,7 @@ export interface WorkflowNodeDetail {
   instance: WorkflowInstance;
   node: WorkflowNodeInstance;
   tasks: WorkflowNodeTask[];
+  executions: AgentTask[];
   submissions: WorkflowSubmission[];
   verdicts: WorkflowVerdict[];
   participants: WorkflowNodeParticipant[];

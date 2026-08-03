@@ -3,6 +3,7 @@ import { parseWithFallback } from "./schema";
 import {
   EMPTY_WORKFLOW_INSTANCE_DETAIL,
   ListBuiltinWorkflowTemplatesResponseSchema,
+  ListWorkflowsResponseSchema,
   WorkflowInstanceDetailSchema,
   WorkflowNodeDefinitionSchema,
   WorkflowNodeDetailSchema,
@@ -135,6 +136,7 @@ describe("workflow response schemas", () => {
         },
       },
       tasks: null,
+      executions: "invalid",
       submissions: "invalid",
       verdicts: null,
       participants: null,
@@ -143,10 +145,23 @@ describe("workflow response schemas", () => {
     });
 
     expect(parsed.tasks).toEqual([]);
+    expect(parsed.executions).toEqual([]);
     expect(parsed.submissions).toEqual([]);
     expect(parsed.verdicts).toEqual([]);
     expect(parsed.participants).toEqual([]);
     expect(parsed.executor_resolutions).toEqual([]);
+  });
+
+  it("normalizes malformed recent workflow runs without losing the workflow", () => {
+    const parsed = ListWorkflowsResponseSchema.parse({
+      workflows: [{
+        id: "workflow-1",
+        workspace_id: "workspace-1",
+        recent_runs: "invalid",
+      }],
+    });
+
+    expect(parsed.workflows[0]?.recent_runs).toEqual([]);
   });
 
   it("preserves the node executor and its single fallback", () => {

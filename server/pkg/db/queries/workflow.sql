@@ -56,6 +56,23 @@ WHERE workflow_def.workspace_id = @workspace_id
   )
 ORDER BY workflow_def.updated_at DESC, workflow_def.id DESC;
 
+-- name: ListRecentWorkflowRuns :many
+SELECT recent.id, recent.workflow_id, recent.title, recent.status,
+       recent.started_at, recent.completed_at
+FROM (
+  SELECT instance.id, instance.workflow_id, instance.title, instance.status,
+         instance.started_at, instance.completed_at,
+         row_number() OVER (
+           PARTITION BY instance.workflow_id
+           ORDER BY instance.started_at DESC, instance.id DESC
+         ) AS run_rank
+  FROM workflow_instance instance
+  WHERE instance.workspace_id = @workspace_id
+    AND instance.workflow_id = ANY(@workflow_ids::uuid[])
+) recent
+WHERE recent.run_rank <= 8
+ORDER BY recent.workflow_id, recent.started_at DESC, recent.id DESC;
+
 -- name: GetWorkflowInWorkspace :one
 SELECT * FROM workflow
 WHERE id = @id AND workspace_id = @workspace_id;

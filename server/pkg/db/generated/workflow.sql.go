@@ -2829,6 +2829,65 @@ func (q *Queries) ListIssueWorkflowContexts(ctx context.Context, arg ListIssueWo
 	return items, nil
 }
 
+const listRecentWorkflowRuns = `-- name: ListRecentWorkflowRuns :many
+SELECT recent.id, recent.workflow_id, recent.title, recent.status,
+       recent.started_at, recent.completed_at
+FROM (
+  SELECT instance.id, instance.workflow_id, instance.title, instance.status,
+         instance.started_at, instance.completed_at,
+         row_number() OVER (
+           PARTITION BY instance.workflow_id
+           ORDER BY instance.started_at DESC, instance.id DESC
+         ) AS run_rank
+  FROM workflow_instance instance
+  WHERE instance.workspace_id = $1
+    AND instance.workflow_id = ANY($2::uuid[])
+) recent
+WHERE recent.run_rank <= 8
+ORDER BY recent.workflow_id, recent.started_at DESC, recent.id DESC
+`
+
+type ListRecentWorkflowRunsParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	WorkflowIds []pgtype.UUID `json:"workflow_ids"`
+}
+
+type ListRecentWorkflowRunsRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkflowID  pgtype.UUID        `json:"workflow_id"`
+	Title       string             `json:"title"`
+	Status      string             `json:"status"`
+	StartedAt   pgtype.Timestamptz `json:"started_at"`
+	CompletedAt pgtype.Timestamptz `json:"completed_at"`
+}
+
+func (q *Queries) ListRecentWorkflowRuns(ctx context.Context, arg ListRecentWorkflowRunsParams) ([]ListRecentWorkflowRunsRow, error) {
+	rows, err := q.db.Query(ctx, listRecentWorkflowRuns, arg.WorkspaceID, arg.WorkflowIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRecentWorkflowRunsRow{}
+	for rows.Next() {
+		var i ListRecentWorkflowRunsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkflowID,
+			&i.Title,
+			&i.Status,
+			&i.StartedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStaleWorkflowMaterializations = `-- name: ListStaleWorkflowMaterializations :many
 SELECT task.id, task.workspace_id, task.workflow_instance_id, task.workflow_node_instance_id, task.task_key, task.source, task.required, task.definition_snapshot, task.materialization_status, task.issue_id, task.executor_resolution_id, task.attempt_count, task.last_error, task.claimed_at, task.created_by_type, task.created_by_id, task.created_at, task.updated_at
 FROM workflow_node_task task

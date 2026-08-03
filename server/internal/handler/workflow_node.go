@@ -142,6 +142,17 @@ func (h *Handler) GetWorkflowNodeInstance(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to load workflow node tasks")
 		return
 	}
+	executions, err := h.Queries.ListWorkflowNodeWorkerAgentTasks(
+		r.Context(),
+		db.ListWorkflowNodeWorkerAgentTasksParams{
+			WorkspaceID:            node.WorkspaceID,
+			WorkflowNodeInstanceID: node.ID,
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow node executions")
+		return
+	}
 	submissions, err := h.Queries.ListWorkflowSubmissions(r.Context(), db.ListWorkflowSubmissionsParams{
 		WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
 	})
@@ -180,6 +191,14 @@ func (h *Handler) GetWorkflowNodeInstance(w http.ResponseWriter, r *http.Request
 	for i, task := range tasks {
 		taskResponses[i] = workflowTaskToResponse(task)
 	}
+	executionResponses := make([]AgentTaskResponse, len(executions))
+	for i, execution := range executions {
+		executionResponses[i] = taskToResponse(execution, uuidToString(node.WorkspaceID))
+	}
+	h.hydrateTaskAttributions(
+		r.Context(),
+		attributionsOf(executionResponses),
+	)
 	submissionResponses := make([]workflowSubmissionResponse, len(submissions))
 	for i, submission := range submissions {
 		submissionResponses[i] = workflowSubmissionToResponse(submission)
@@ -203,7 +222,8 @@ func (h *Handler) GetWorkflowNodeInstance(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"instance": h.workflowInstanceToRuntimeResponse(r.Context(), instance), "node": workflowNodeToResponse(node),
-		"tasks": taskResponses, "submissions": submissionResponses, "verdicts": verdictResponses,
+		"tasks": taskResponses, "executions": executionResponses,
+		"submissions": submissionResponses, "verdicts": verdictResponses,
 		"participants": participantResponses, "executor_resolutions": resolutionResponses,
 	})
 }

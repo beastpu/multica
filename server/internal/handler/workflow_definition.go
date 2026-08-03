@@ -19,22 +19,31 @@ import (
 )
 
 type workflowResponse struct {
-	ID                       string  `json:"id"`
-	WorkspaceID              string  `json:"workspace_id"`
-	Name                     string  `json:"name"`
-	Description              string  `json:"description"`
-	Status                   string  `json:"status"`
-	LatestPublishedVersionID *string `json:"latest_published_version_id"`
-	CreatedBy                string  `json:"created_by"`
-	ArchivedAt               *string `json:"archived_at"`
-	CreatedAt                string  `json:"created_at"`
-	UpdatedAt                string  `json:"updated_at"`
-	LatestPublishedVersion   int32   `json:"latest_published_version"`
-	ActivityCount            int32   `json:"activity_count"`
-	RunCount                 int64   `json:"run_count"`
-	LastPublishedBy          *string `json:"last_published_by"`
-	LastPublishedAt          *string `json:"last_published_at"`
-	LatestChangeSummary      string  `json:"latest_change_summary"`
+	ID                       string                      `json:"id"`
+	WorkspaceID              string                      `json:"workspace_id"`
+	Name                     string                      `json:"name"`
+	Description              string                      `json:"description"`
+	Status                   string                      `json:"status"`
+	LatestPublishedVersionID *string                     `json:"latest_published_version_id"`
+	CreatedBy                string                      `json:"created_by"`
+	ArchivedAt               *string                     `json:"archived_at"`
+	CreatedAt                string                      `json:"created_at"`
+	UpdatedAt                string                      `json:"updated_at"`
+	LatestPublishedVersion   int32                       `json:"latest_published_version"`
+	ActivityCount            int32                       `json:"activity_count"`
+	RunCount                 int64                       `json:"run_count"`
+	RecentRuns               []workflowRecentRunResponse `json:"recent_runs"`
+	LastPublishedBy          *string                     `json:"last_published_by"`
+	LastPublishedAt          *string                     `json:"last_published_at"`
+	LatestChangeSummary      string                      `json:"latest_change_summary"`
+}
+
+type workflowRecentRunResponse struct {
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	Status      string  `json:"status"`
+	StartedAt   string  `json:"started_at"`
+	CompletedAt *string `json:"completed_at"`
 }
 
 func workflowSummaryToResponse(
@@ -50,6 +59,7 @@ func workflowSummaryToResponse(
 		UpdatedAt:                timestampToString(row.UpdatedAt),
 		LatestPublishedVersion:   row.LatestPublishedVersion,
 		ActivityCount:            row.ActivityCount, RunCount: row.RunCount,
+		RecentRuns:          []workflowRecentRunResponse{},
 		LastPublishedBy:     uuidToPtr(row.LastPublishedBy),
 		LastPublishedAt:     timestampToPtr(row.LastPublishedAt),
 		LatestChangeSummary: row.LatestChangeSummary,
@@ -84,6 +94,7 @@ func workflowToResponse(row db.Workflow) workflowResponse {
 		ArchivedAt:               timestampToPtr(row.ArchivedAt),
 		CreatedAt:                timestampToString(row.CreatedAt),
 		UpdatedAt:                timestampToString(row.UpdatedAt),
+		RecentRuns:               []workflowRecentRunResponse{},
 	}
 }
 
@@ -207,9 +218,42 @@ func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := make([]workflowResponse, len(rows))
+	workflowIDs := make([]pgtype.UUID, len(rows))
 	for i, row := range rows {
 		items[i] = workflowSummaryToResponse(row)
+		workflowIDs[i] = row.ID
 		if !isAdmin {
+		}
+	}
+	if len(workflowIDs) > 0 {
+		recentRuns, recentErr := h.Queries.ListRecentWorkflowRuns(
+			r.Context(),
+			db.ListRecentWorkflowRunsParams{
+				WorkspaceID: wsUUID,
+				WorkflowIds: workflowIDs,
+			},
+		)
+		if recentErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list recent workflow runs")
+			return
+		}
+		itemByWorkflowID := make(map[string]int, len(items))
+		for index := range items {
+			itemByWorkflowID[items[index].ID] = index
+		}
+		for _, run := range recentRuns {
+			index, exists := itemByWorkflowID[uuidToString(run.WorkflowID)]
+			if !exists {
+				continue
+			}
+			items[index].RecentRuns = append(
+				items[index].RecentRuns,
+				workflowRecentRunResponse{
+					ID: uuidToString(run.ID), Title: run.Title, Status: run.Status,
+					StartedAt:   timestampToString(run.StartedAt),
+					CompletedAt: timestampToPtr(run.CompletedAt),
+				},
+			)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"workflows": items, "total": len(items)})

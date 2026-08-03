@@ -54,6 +54,22 @@ const templateSummary = {
   description: "A long explanation that belongs in workflow details.",
   activity_count: 2,
   run_count: 4,
+  recent_runs: [
+    {
+      id: "run-running",
+      title: "Release run",
+      status: "running",
+      started_at: "2026-08-03T10:00:00.000Z",
+      completed_at: null,
+    },
+    {
+      id: "run-failed",
+      title: "Failed run",
+      status: "failed",
+      started_at: "2026-08-02T10:00:00.000Z",
+      completed_at: "2026-08-02T10:05:00.000Z",
+    },
+  ],
   last_published_by: null,
   last_published_at: null,
   latest_published_version: 3,
@@ -289,10 +305,16 @@ describe("WorkflowsPage", () => {
       .toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Nodes" }))
       .toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Runs" }))
+    expect(screen.getByRole("columnheader", { name: "Run history" }))
       .toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Delivery workflow" }))
       .toHaveAttribute("href", "/workspace/workflows/template-1");
+    expect(
+      screen.getByRole("link", { name: "Open Release run (running)" }),
+    ).toHaveAttribute("href", "/workspace/workflows/runs/run-running");
+    expect(
+      screen.getByRole("link", { name: "Open Failed run (failed)" }),
+    ).toHaveAttribute("href", "/workspace/workflows/runs/run-failed");
   });
 
   it("keeps secondary workflow metadata out of the operational list", () => {

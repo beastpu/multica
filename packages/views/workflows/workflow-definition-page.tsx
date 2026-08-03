@@ -3,9 +3,11 @@
 import {
   AlertCircle,
   Archive,
+  ArrowLeft,
   GitBranch,
   MoreHorizontal,
   Pencil,
+  Play,
   Save,
   Trash2,
   Waypoints,
@@ -15,6 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ApiError } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspacePaths } from "@multica/core/paths";
 import {
   useArchiveWorkflow,
   useUpdateWorkflow,
@@ -23,6 +26,7 @@ import {
   type WorkflowDefinition,
   type WorkflowNodeDefinition,
   type Workflow,
+  type WorkflowVersion,
 } from "@multica/core/workflows";
 import {
   agentListOptions,
@@ -68,6 +72,7 @@ import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { cn } from "@multica/ui/lib/utils";
 import { CollectionPageState } from "../layout/collection-page";
 import { useT } from "../i18n";
+import { useNavigation } from "../navigation";
 import { WorkflowCanvas } from "./workflow-canvas";
 import {
   addWorkflowBranch,
@@ -85,6 +90,7 @@ import {
   WorkflowNodeDefinitionInspector,
   WorkflowRoleEditor,
 } from "./workflow-definition-inspector";
+import { WorkflowRunDialog } from "./workflow-run-dialog";
 
 function TemplateMetadataDialog({
   template,
@@ -408,6 +414,8 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
   const { t } = useT("workflows");
   const { t: commonT } = useT("common");
   const wsId = useWorkspaceId();
+  const paths = useWorkspacePaths();
+  const navigation = useNavigation();
   const isMobile = useIsMobile();
   const userId = useAuthStore((state) => state.user?.id);
   const detailQuery = useQuery(workflowOptions(wsId, templateId));
@@ -447,6 +455,9 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [metadataOpen, setMetadataOpen] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [runOpen, setRunOpen] = useState(false);
+  const [runVersion, setRunVersion] = useState<WorkflowVersion | null>(null);
   const [saveError, setSaveError] = useState("");
   const [changeSummary, setChangeSummary] = useState("");
   const saveDefinition = useSaveWorkflowDefinition(templateId);
@@ -504,7 +515,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
       ),
     });
   };
-  const save = () => {
+  const save = (onSaved?: (version: WorkflowVersion) => void) => {
     if (!definition || !canEdit) return;
     saveDefinition.mutate({
       // The server canonicalizes legacy owner/manual/acceptance gates before
@@ -519,6 +530,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
         setChangeSummary(result.version.change_summary);
         setDirty(false);
         setSaveError("");
+        onSaved?.(result.version);
       },
       // A definition that does not validate is refused, so the edits are still
       // in the editor and the message names what to fix.
@@ -530,6 +542,27 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
         );
       },
     });
+  };
+  const returnToList = () => {
+    if (dirty) {
+      setLeaveOpen(true);
+      return;
+    }
+    navigation.push(paths.workflows());
+  };
+  const openRun = () => {
+    if (!selectedVersion || detailQuery.data?.workflow.status !== "published") {
+      return;
+    }
+    if (dirty && canEdit) {
+      save((version) => {
+        setRunVersion(version);
+        setRunOpen(true);
+      });
+      return;
+    }
+    setRunVersion(selectedVersion);
+    setRunOpen(true);
   };
   const insertNode = (
     kind: WorkflowCanvasInsertKind,
@@ -609,6 +642,16 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
         is the page here, so everything else has to earn its vertical space.
       */}
       <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="-ml-2"
+          aria-label={t(($) => $.editor.back_to_workflows)}
+          onClick={returnToList}
+        >
+          <ArrowLeft aria-hidden="true" />
+        </Button>
         <GitBranch
           aria-hidden="true"
           className="size-4 shrink-0 text-muted-foreground"
@@ -651,60 +694,70 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
           </Tabs>
         </nav>
         <div className="flex shrink-0 items-center gap-2">
-          {canManage && !isMobile && (
+          {canEdit && (
             <>
-              {canEdit && (
-                <>
-                  <span className={cn(
-                    "hidden text-xs text-muted-foreground md:inline",
-                    dirty && "text-amber-700 dark:text-amber-300",
-                  )}>
-                    {dirty ? t(($) => $.editor.unsaved) : t(($) => $.editor.saved)}
-                  </span>
-                  <Button
-                    size="sm"
-                    onClick={save}
-                    disabled={!dirty || saveDefinition.isPending}
-                  >
-                    <Save />
-                    {t(($) => $.actions.save)}
-                  </Button>
-                </>
-              )}
-              {/*
-                Editing the name and archiving are rare and never urgent, so
-                they sit behind the overflow rather than competing with save.
-              */}
-              {template.status !== "archived" && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={t(($) => $.editor.more_actions)}
-                      >
-                        <MoreHorizontal aria-hidden="true" />
-                      </Button>
-                    }
-                  />
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => setMetadataOpen(true)}>
-                      <Pencil />
-                      {t(($) => $.actions.edit_metadata)}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setArchiveOpen(true)}
-                      disabled={archive.isPending}
-                    >
-                      <Archive />
-                      {t(($) => $.actions.archive)}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+              <span className={cn(
+                "hidden text-xs text-muted-foreground md:inline",
+                dirty && "text-amber-700 dark:text-amber-300",
+              )}>
+                {dirty ? t(($) => $.editor.unsaved) : t(($) => $.editor.saved)}
+              </span>
+              <Button
+                size="sm"
+                onClick={() => save()}
+                disabled={!dirty || saveDefinition.isPending}
+              >
+                <Save />
+                {t(($) => $.actions.save)}
+              </Button>
             </>
+          )}
+          {template.status === "published" && selectedVersion && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={openRun}
+              disabled={saveDefinition.isPending}
+            >
+              <Play aria-hidden="true" />
+              {dirty
+                ? t(($) => $.actions.save_and_run)
+                : t(($) => $.actions.run)}
+            </Button>
+          )}
+          {/*
+            Editing the name and archiving are rare and never urgent, so
+            they sit behind the overflow rather than competing with save.
+          */}
+          {canManage && !isMobile && template.status !== "archived" && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t(($) => $.editor.more_actions)}
+                  >
+                    <MoreHorizontal aria-hidden="true" />
+                  </Button>
+                }
+              />
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setMetadataOpen(true)}>
+                  <Pencil />
+                  {t(($) => $.actions.edit_metadata)}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setArchiveOpen(true)}
+                  disabled={archive.isPending}
+                >
+                  <Archive />
+                  {t(($) => $.actions.archive)}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       </header>
@@ -844,6 +897,34 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
           onOpenChange={setMetadataOpen}
         />
       )}
+      <WorkflowRunDialog
+        workflow={template}
+        preferredVersion={runVersion}
+        open={runOpen}
+        onOpenChange={setRunOpen}
+      />
+      <AlertDialog open={leaveOpen} onOpenChange={setLeaveOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t(($) => $.editor.leave_title)}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(($) => $.editor.leave_description)}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              {t(($) => $.editor.keep_editing)}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => navigation.push(paths.workflows())}
+            >
+              {t(($) => $.editor.discard_and_leave)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {/*
         Deleting a node also rewires the edges around it, and the editor has
         no undo — the only way back is discarding every unsaved edit. One

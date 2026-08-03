@@ -352,6 +352,28 @@ WHERE workflow_node_task_id = @workflow_node_task_id
 ORDER BY attempt DESC, created_at DESC, id DESC
 LIMIT 1;
 
+-- name: ListWorkflowNodeWorkerAgentTasks :many
+-- A workflow activity can execute without an issue (durable task ownership)
+-- or through an issue-backed task. Return both shapes from the node boundary,
+-- while keeping critic executions in the review surface instead of mixing
+-- them into the worker transcript history.
+SELECT DISTINCT agent_task.*
+FROM agent_task_queue agent_task
+JOIN workflow_node_task node_task
+  ON node_task.workspace_id = @workspace_id
+ AND node_task.workflow_node_instance_id = @workflow_node_instance_id
+ AND node_task.source <> 'critic'
+ AND (
+   agent_task.workflow_node_task_id = node_task.id
+   OR (
+     node_task.issue_id IS NOT NULL
+     AND agent_task.issue_id = node_task.issue_id
+     AND agent_task.workflow_node_task_id IS NULL
+   )
+ )
+ORDER BY agent_task.created_at DESC, agent_task.id DESC
+LIMIT 20;
+
 -- name: CreateDeferredAgentTask :one
 -- Deferred tasks are inert until PromoteDueDeferredTasksForRuntime flips them
 -- to queued. Used for comment-routing escalation: a thread-owner primary task

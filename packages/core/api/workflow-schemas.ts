@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { IssueSchema } from "./schemas";
+import { AgentTaskSchema, IssueSchema } from "./schemas";
 import type {
   ListWorkflowInstancesResponse,
   ListWorkflowsResponse,
@@ -22,6 +22,14 @@ const objectOrEmpty = z.preprocess(
 );
 
 const nullableString = z.string().nullable().optional().default(null);
+
+const WorkflowRecentRunSchema = z.object({
+  id: z.string(),
+  title: z.string().optional().default("Untitled run"),
+  status: z.string().optional().default("unknown"),
+  started_at: z.string().optional().default(""),
+  completed_at: nullableString,
+}).loose();
 
 const WorkflowRoleDefinitionSchema = z.object({
   key: z.string(),
@@ -135,6 +143,7 @@ export const WorkflowSchema = z.object({
   latest_published_version: z.number().optional().default(0),
   activity_count: z.number().optional().default(0),
   run_count: z.number().optional().default(0),
+  recent_runs: arrayOrEmpty(WorkflowRecentRunSchema),
   last_published_by: nullableString,
   last_published_at: nullableString,
   latest_change_summary: z.string().optional().default(""),
@@ -374,6 +383,7 @@ export const WorkflowNodeDetailSchema = z.object({
   instance: WorkflowInstanceSchema,
   node: WorkflowNodeInstanceSchema,
   tasks: arrayOrEmpty(WorkflowNodeTaskSchema),
+  executions: arrayOrEmpty(AgentTaskSchema),
   submissions: arrayOrEmpty(WorkflowSubmissionSchema),
   verdicts: arrayOrEmpty(WorkflowVerdictSchema),
   participants: arrayOrEmpty(WorkflowNodeParticipantSchema),
@@ -504,7 +514,7 @@ export const EMPTY_WORKFLOW_NODE_DETAIL: WorkflowNodeDetail = {
     status: "unknown", waiting_reasons: [], latest_submission_id: null,
     latest_verdict_id: null, activated_at: null, completed_at: null,
   },
-  tasks: [], submissions: [], verdicts: [], participants: [],
+  tasks: [], executions: [], submissions: [], verdicts: [], participants: [],
   executor_resolutions: [],
 };
 export const EMPTY_WORKFLOW_DETAIL: WorkflowDetail = {
@@ -513,7 +523,7 @@ export const EMPTY_WORKFLOW_DETAIL: WorkflowDetail = {
     status: "unknown", latest_published_version_id: null,
     created_by: "", archived_at: null, created_at: "", updated_at: "",
     latest_published_version: 0,
-    activity_count: 0, run_count: 0, last_published_by: null,
+    activity_count: 0, run_count: 0, recent_runs: [], last_published_by: null,
     last_published_at: null, latest_change_summary: "",
   },
   versions: [],

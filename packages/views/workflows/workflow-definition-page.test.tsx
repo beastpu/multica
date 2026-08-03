@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   updateMetadata: vi.fn(),
   archive: vi.fn(),
+  navigate: vi.fn(),
   validation: { valid: true, errors: [] as string[] },
 }));
 
@@ -48,6 +49,7 @@ const detail = {
     latest_published_version: 1,
     activity_count: 1,
     run_count: 0,
+    recent_runs: [],
     last_published_by: null,
     last_published_at: null,
     latest_change_summary: "",
@@ -101,6 +103,12 @@ vi.mock("@multica/core/auth", () => ({
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "workspace-1",
+}));
+
+vi.mock("@multica/core/paths", () => ({
+  useWorkspacePaths: () => ({
+    workflows: () => "/workspace/workflows",
+  }),
 }));
 
 vi.mock("@multica/core/workspace/queries", () => ({
@@ -158,6 +166,10 @@ vi.mock("@multica/core/workflows", () => ({
 
 vi.mock("@multica/ui/hooks/use-mobile", () => ({
   useIsMobile: () => false,
+}));
+
+vi.mock("../navigation", () => ({
+  useNavigation: () => ({ push: mocks.navigate }),
 }));
 
 vi.mock("../layout/collection-page", () => ({
@@ -237,6 +249,22 @@ vi.mock("./workflow-definition-inspector", () => ({
   WorkflowRoleEditor: () => <div>Role editor</div>,
 }));
 
+vi.mock("./workflow-run-dialog", () => ({
+  WorkflowRunDialog: ({
+    open,
+    preferredVersion,
+  }: {
+    open: boolean;
+    preferredVersion?: { id: string } | null;
+  }) => open
+    ? (
+      <div role="dialog" data-version-id={preferredVersion?.id}>
+        Run workflow
+      </div>
+    )
+    : null,
+}));
+
 function renderPage() {
   return render(
     <I18nProvider
@@ -281,6 +309,65 @@ describe("WorkflowPage", () => {
       definition: typeof definition;
     };
     expect(input.definition.nodes).toHaveLength(4);
+  });
+
+  it("returns to the workflow list from the editor header", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", {
+      name: "Back to workflows",
+    }));
+
+    expect(mocks.navigate).toHaveBeenCalledWith("/workspace/workflows");
+  });
+
+  it("opens the run dialog directly for the saved version", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Run" }));
+
+    expect(await screen.findByRole("dialog")).toHaveAttribute(
+      "data-version-id",
+      "version-1",
+    );
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it("saves pending edits before opening the run dialog", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", {
+      name: "Insert activity between Work and End",
+    }));
+    await user.click(screen.getByRole("button", { name: "Save and run" }));
+
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("dialog")).toHaveAttribute(
+      "data-version-id",
+      "version-1",
+    );
+  });
+
+  it("asks before returning with unsaved edits", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", {
+      name: "Insert activity between Work and End",
+    }));
+    await user.click(screen.getByRole("button", {
+      name: "Back to workflows",
+    }));
+
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", {
+      name: "Discard and leave",
+    }));
+    expect(mocks.navigate).toHaveBeenCalledWith("/workspace/workflows");
   });
 
   it("refuses to save a definition that does not validate", async () => {

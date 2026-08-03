@@ -4946,6 +4946,103 @@ func (q *Queries) ListTasksByIssue(ctx context.Context, issueID pgtype.UUID) ([]
 	return items, nil
 }
 
+const listWorkflowNodeWorkerAgentTasks = `-- name: ListWorkflowNodeWorkerAgentTasks :many
+SELECT DISTINCT agent_task.id, agent_task.agent_id, agent_task.issue_id, agent_task.status, agent_task.priority, agent_task.dispatched_at, agent_task.started_at, agent_task.completed_at, agent_task.result, agent_task.error, agent_task.created_at, agent_task.context, agent_task.runtime_id, agent_task.session_id, agent_task.work_dir, agent_task.trigger_comment_id, agent_task.chat_session_id, agent_task.autopilot_run_id, agent_task.attempt, agent_task.max_attempts, agent_task.parent_task_id, agent_task.failure_reason, agent_task.trigger_summary, agent_task.force_fresh_session, agent_task.is_leader_task, agent_task.wait_reason, agent_task.initiator_user_id, agent_task.handoff_note, agent_task.prepare_lease_expires_at, agent_task.squad_id, agent_task.runtime_mcp_overlay, agent_task.escalation_for_task_id, agent_task.fire_at, agent_task.originator_user_id, agent_task.runtime_connected_apps, agent_task.coalesced_comment_ids, agent_task.delivered_comment_ids, agent_task.chat_input_task_id, agent_task.chat_finalize_deferred_at, agent_task.originator_source, agent_task.delegated_from_task_id, agent_task.retry_of_task_id, agent_task.rerun_of_task_id, agent_task.rule_version_id, agent_task.trigger_evidence_kind, agent_task.trigger_evidence_ref_id, agent_task.accountable_user_id, agent_task.workflow_node_task_id
+FROM agent_task_queue agent_task
+JOIN workflow_node_task node_task
+  ON node_task.workspace_id = $1
+ AND node_task.workflow_node_instance_id = $2
+ AND node_task.source <> 'critic'
+ AND (
+   agent_task.workflow_node_task_id = node_task.id
+   OR (
+     node_task.issue_id IS NOT NULL
+     AND agent_task.issue_id = node_task.issue_id
+     AND agent_task.workflow_node_task_id IS NULL
+   )
+ )
+ORDER BY agent_task.created_at DESC, agent_task.id DESC
+LIMIT 20
+`
+
+type ListWorkflowNodeWorkerAgentTasksParams struct {
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
+	WorkflowNodeInstanceID pgtype.UUID `json:"workflow_node_instance_id"`
+}
+
+// A workflow activity can execute without an issue (durable task ownership)
+// or through an issue-backed task. Return both shapes from the node boundary,
+// while keeping critic executions in the review surface instead of mixing
+// them into the worker transcript history.
+func (q *Queries) ListWorkflowNodeWorkerAgentTasks(ctx context.Context, arg ListWorkflowNodeWorkerAgentTasksParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listWorkflowNodeWorkerAgentTasks, arg.WorkspaceID, arg.WorkflowNodeInstanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.ChatFinalizeDeferredAt,
+			&i.OriginatorSource,
+			&i.DelegatedFromTaskID,
+			&i.RetryOfTaskID,
+			&i.RerunOfTaskID,
+			&i.RuleVersionID,
+			&i.TriggerEvidenceKind,
+			&i.TriggerEvidenceRefID,
+			&i.AccountableUserID,
+			&i.WorkflowNodeTaskID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkspaceAgentFixes = `-- name: ListWorkspaceAgentFixes :many
 WITH latest AS (
   SELECT DISTINCT ON (atq.issue_id)

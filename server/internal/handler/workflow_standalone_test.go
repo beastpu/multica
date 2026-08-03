@@ -37,9 +37,9 @@ func TestStartWorkflowRunCreatesIdempotentStandaloneRun(t *testing.T) {
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workflow_version (
-			workspace_id, workflow_id, version, status, definition,
+			workspace_id, workflow_id, version, definition,
 			definition_checksum, created_by, published_by, published_at
-		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
+		) VALUES ($1, $2, 1, $3, 'test', $4, $4, now())
 		RETURNING id
 	`, testWorkspaceID, templateID, definitionJSON, testUserID).Scan(&versionID); err != nil {
 		t.Fatalf("create template version: %v", err)
@@ -105,6 +105,91 @@ func TestStartWorkflowRunCreatesIdempotentStandaloneRun(t *testing.T) {
 	}
 }
 
+func TestListWorkflowsIncludesRecentRuns(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+	started := startDirectStandaloneRunForTest(t, "recent-runs", "Latest workflow run")
+
+	if _, err := testPool.Exec(ctx, `
+		UPDATE workflow_instance
+		SET status = 'completed', completed_at = now()
+		WHERE id = $1
+	`, started.Instance.ID); err != nil {
+		t.Fatalf("complete latest workflow run: %v", err)
+	}
+	var olderRunID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workflow_instance (
+			workspace_id, workflow_id, workflow_version_id, title, status,
+			host_status_mode, started_by_type, started_by_id, started_at,
+			completed_at
+		)
+		SELECT workspace_id, workflow_id, workflow_version_id,
+		       'Older workflow run', 'failed', host_status_mode,
+		       started_by_type, started_by_id, now() - interval '1 day',
+		       now() - interval '23 hours'
+		FROM workflow_instance WHERE id = $1
+		RETURNING id
+	`, started.Instance.ID).Scan(&olderRunID); err != nil {
+		t.Fatalf("create older workflow run: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	testHandler.ListWorkflows(
+		recorder,
+		newRequest(
+			http.MethodGet,
+			"/api/workflow-templates?workspace_id="+testWorkspaceID,
+			nil,
+		),
+	)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("ListWorkflows status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Workflows []struct {
+			ID         string `json:"id"`
+			RunCount   int64  `json:"run_count"`
+			RecentRuns []struct {
+				ID     string `json:"id"`
+				Title  string `json:"title"`
+				Status string `json:"status"`
+			} `json:"recent_runs"`
+		} `json:"workflows"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode workflow summaries: %v", err)
+	}
+	var summary *struct {
+		ID         string `json:"id"`
+		RunCount   int64  `json:"run_count"`
+		RecentRuns []struct {
+			ID     string `json:"id"`
+			Title  string `json:"title"`
+			Status string `json:"status"`
+		} `json:"recent_runs"`
+	}
+	for index := range response.Workflows {
+		if response.Workflows[index].ID == started.Instance.WorkflowID {
+			summary = &response.Workflows[index]
+			break
+		}
+	}
+	if summary == nil {
+		t.Fatalf("workflow %s missing from summaries", started.Instance.WorkflowID)
+	}
+	if summary.RunCount != 2 || len(summary.RecentRuns) != 2 {
+		t.Fatalf("workflow runs count=%d recent=%#v", summary.RunCount, summary.RecentRuns)
+	}
+	if summary.RecentRuns[0].ID != started.Instance.ID ||
+		summary.RecentRuns[0].Title != "Latest workflow run" ||
+		summary.RecentRuns[0].Status != "completed" ||
+		summary.RecentRuns[1].ID != olderRunID {
+		t.Fatalf("recent workflow runs = %#v", summary.RecentRuns)
+	}
+}
+
 func TestStandaloneRunDispatchesIssueLessAgentNode(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
@@ -153,9 +238,9 @@ func TestStandaloneRunDispatchesIssueLessAgentNode(t *testing.T) {
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workflow_version (
-			workspace_id, workflow_id, version, status, definition,
+			workspace_id, workflow_id, version, definition,
 			definition_checksum, created_by, published_by, published_at
-		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
+		) VALUES ($1, $2, 1, $3, 'test', $4, $4, now())
 		RETURNING id
 	`, testWorkspaceID, templateID, definitionJSON, testUserID).Scan(&versionID); err != nil {
 		t.Fatalf("create template version: %v", err)
@@ -206,6 +291,31 @@ func TestStandaloneRunDispatchesIssueLessAgentNode(t *testing.T) {
 	}
 	if prompt != "Focus on the checkout regression.\n\nInspect the repository and report the root cause." {
 		t.Fatalf("direct agent prompt = %q", prompt)
+	}
+	nodeRecorder := httptest.NewRecorder()
+	nodeRequest := withURLParam(
+		newRequest(
+			http.MethodGet,
+			"/api/workflow-node-instances/"+started.Tasks[0].WorkflowNodeInstanceID+
+				"?workspace_id="+testWorkspaceID,
+			nil,
+		),
+		"nodeInstanceId",
+		started.Tasks[0].WorkflowNodeInstanceID,
+	)
+	testHandler.GetWorkflowNodeInstance(nodeRecorder, nodeRequest)
+	if nodeRecorder.Code != http.StatusOK {
+		t.Fatalf("GetWorkflowNodeInstance status=%d body=%s", nodeRecorder.Code, nodeRecorder.Body.String())
+	}
+	var nodeDetail struct {
+		Executions []AgentTaskResponse `json:"executions"`
+	}
+	if err := json.Unmarshal(nodeRecorder.Body.Bytes(), &nodeDetail); err != nil {
+		t.Fatalf("decode workflow node executions: %v", err)
+	}
+	if len(nodeDetail.Executions) != 1 || nodeDetail.Executions[0].ID != agentTaskID ||
+		nodeDetail.Executions[0].IssueID != "" {
+		t.Fatalf("workflow node executions = %#v", nodeDetail.Executions)
 	}
 	reconcileWorkflowForTest(t, started.Instance.ID, "direct-agent-running")
 	if _, err := testPool.Exec(ctx, `
@@ -499,9 +609,9 @@ func startDirectStandaloneRunForTest(
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workflow_version (
-			workspace_id, workflow_id, version, status, definition,
+			workspace_id, workflow_id, version, definition,
 			definition_checksum, created_by, published_by, published_at
-		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
+		) VALUES ($1, $2, 1, $3, 'test', $4, $4, now())
 		RETURNING id
 	`, testWorkspaceID, templateID, definitionJSON, testUserID).Scan(&versionID); err != nil {
 		t.Fatalf("create direct template version: %v", err)
