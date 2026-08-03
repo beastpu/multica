@@ -310,6 +310,133 @@ func ValidateDefinition(definition Definition) error {
 	return nil
 }
 
+// NormalizeAuthoringDefinition folds the two legacy sign-off gates into the
+// node reviewer before a new immutable workflow version is written. Runtime
+// parsing intentionally does not call this function: published versions and
+// runs that still carry workflow-level acceptance or manual completion keep
+// their original behavior until they finish.
+func NormalizeAuthoringDefinition(definition Definition) (Definition, error) {
+	for index := range definition.Nodes {
+		node := &definition.Nodes[index]
+		if node.Kind != "activity" {
+			continue
+		}
+		requiresManualReview := node.Completion.Mode == "manual" ||
+			(node.Completion.Mode == "" && RequiresManualCompletion(*node) &&
+				(node.OwnerRole != "" || PinsMemberOwner(*node)))
+		if node.Reviewer != nil && node.Reviewer.Kind == "owner" {
+			reviewer, err := reviewerFromLegacyOwner(*node)
+			if err != nil {
+				return Definition{}, err
+			}
+			node.Reviewer = reviewer
+		}
+		if requiresManualReview && node.Reviewer == nil {
+			reviewer, err := reviewerFromLegacyOwner(*node)
+			if err != nil {
+				return Definition{}, fmt.Errorf(
+					"activity %q manual completion requires a reviewer: %w",
+					node.Key,
+					err,
+				)
+			}
+			node.Reviewer = reviewer
+		}
+		if requiresManualReview {
+			node.Reviewer.Required = true
+		}
+		node.Completion.Mode = "automatic"
+	}
+	if definition.Acceptance.Policy == "member" {
+		terminalActivities := terminalActivityIndexes(definition)
+		if len(terminalActivities) == 0 {
+			return Definition{}, errors.New(
+				"member acceptance requires a terminal activity reviewer",
+			)
+		}
+		for _, index := range terminalActivities {
+			node := &definition.Nodes[index]
+			switch {
+			case node.Reviewer == nil:
+				node.Reviewer = &ReviewerDefinition{
+					Kind: "role", Role: definition.Acceptance.ApproverRole,
+					Required: true,
+				}
+			case node.Reviewer.Kind == "role" &&
+				node.Reviewer.Role == definition.Acceptance.ApproverRole:
+				node.Reviewer.Required = true
+			default:
+				return Definition{}, fmt.Errorf(
+					"activity %q reviewer conflicts with legacy acceptance approver role %q",
+					node.Key,
+					definition.Acceptance.ApproverRole,
+				)
+			}
+		}
+	}
+	definition.Acceptance = AcceptanceDefinition{}
+	if err := ValidateDefinition(definition); err != nil {
+		return Definition{}, err
+	}
+	return definition, nil
+}
+
+func terminalActivityIndexes(definition Definition) []int {
+	nodeIndexes := make(map[string]int, len(definition.Nodes))
+	incoming := make(map[string][]string, len(definition.Nodes))
+	queue := make([]string, 0)
+	for index, node := range definition.Nodes {
+		nodeIndexes[node.Key] = index
+		if node.Kind == "end" {
+			queue = append(queue, node.Key)
+		}
+	}
+	for _, edge := range definition.Edges {
+		incoming[edge.To] = append(incoming[edge.To], edge.From)
+	}
+	seen := make(map[string]struct{}, len(definition.Nodes))
+	terminal := make(map[int]struct{})
+	for len(queue) > 0 {
+		key := queue[0]
+		queue = queue[1:]
+		if _, visited := seen[key]; visited {
+			continue
+		}
+		seen[key] = struct{}{}
+		index, exists := nodeIndexes[key]
+		if !exists {
+			continue
+		}
+		if definition.Nodes[index].Kind == "activity" {
+			terminal[index] = struct{}{}
+			continue
+		}
+		queue = append(queue, incoming[key]...)
+	}
+	indexes := make([]int, 0, len(terminal))
+	for index := range definition.Nodes {
+		if _, exists := terminal[index]; exists {
+			indexes = append(indexes, index)
+		}
+	}
+	return indexes
+}
+
+func reviewerFromLegacyOwner(node NodeDefinition) (*ReviewerDefinition, error) {
+	if node.OwnerRole != "" {
+		return &ReviewerDefinition{
+			Kind: "role", Role: node.OwnerRole, Required: true,
+		}, nil
+	}
+	if PinsMemberOwner(node) {
+		return &ReviewerDefinition{
+			Kind: "actor", ActorType: "member", ActorID: node.Executor.ActorID,
+			Required: true,
+		}, nil
+	}
+	return nil, errors.New("legacy node owner is not assigned")
+}
+
 func validateRoles(definitions []RoleDefinition) (map[string]RoleDefinition, error) {
 	roles := make(map[string]RoleDefinition, len(definitions))
 	for _, role := range definitions {

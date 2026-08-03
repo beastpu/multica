@@ -1,11 +1,11 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type {
   WorkflowDefinition,
   WorkflowNodeInstance,
 } from "@multica/core/workflows";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import enCommon from "../locales/en/common.json";
 import enWorkflows from "../locales/en/workflows.json";
@@ -90,6 +90,61 @@ function renderCanvas(onSelect = vi.fn()) {
     ),
   };
 }
+
+describe("WorkflowCanvas fill mode", () => {
+  // The editor hands the canvas the whole viewport. Before this the drawing
+  // was a fixed 420px-tall card that left the bottom half of the page empty
+  // and read as a picture of a graph rather than a surface you edit.
+  function renderFilled(viewportHeight: number) {
+    const observers: Array<(height: number) => void> = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(
+          private readonly callback: (
+            entries: Array<{ contentRect: { height: number } }>,
+          ) => void,
+        ) {
+          observers.push((height) =>
+            this.callback([{ contentRect: { height } }])
+          );
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const view = render(
+      <I18nProvider locale="en" resources={RESOURCES}>
+        <WorkflowCanvas definition={definition} nodes={[]} fill />
+      </I18nProvider>,
+    );
+    act(() => {
+      for (const notify of observers) notify(viewportHeight);
+    });
+    return view;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("grows the drawing to the height it was given", () => {
+    renderFilled(900);
+
+    const region = screen.getByRole("region", { name: "Activity map" });
+    expect(region).toHaveClass("size-full");
+    expect(region.firstElementChild).toHaveStyle({ height: "900px" });
+  });
+
+  it("scrolls rather than squashing when the container is shorter than the graph", () => {
+    renderFilled(120);
+
+    const drawing = screen.getByRole("region", { name: "Activity map" })
+      .firstElementChild as HTMLElement;
+    expect(Number.parseInt(drawing.style.height, 10)).toBeGreaterThan(120);
+  });
+});
 
 describe("WorkflowCanvas", () => {
   it("renders compact nodes with status dots and accessible status labels", () => {

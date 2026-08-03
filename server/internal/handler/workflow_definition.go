@@ -157,6 +157,10 @@ func workflowDefinitionBytes(raw json.RawMessage) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	definition, err = workflowdomain.NormalizeAuthoringDefinition(definition)
+	if err != nil {
+		return nil, "", err
+	}
 	normalized, err := json.Marshal(definition)
 	if err != nil {
 		return nil, "", err

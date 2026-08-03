@@ -16,13 +16,14 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-func createWorkflowCriticRework(
+func createWorkflowVerdictRework(
 	ctx context.Context,
 	q *db.Queries,
 	locked db.WorkflowInstance,
 	currentNode db.WorkflowNodeInstance,
 	nodeDefinition workflowdomain.NodeDefinition,
 	reason string,
+	actorType string,
 	actorID pgtype.UUID,
 	idempotencyKey string,
 ) (db.WorkflowInstance, db.WorkflowNodeInstance, error) {
@@ -123,12 +124,36 @@ func createWorkflowCriticRework(
 	if _, err := q.CreateWorkflowEvent(ctx, db.CreateWorkflowEventParams{
 		WorkspaceID: locked.WorkspaceID, WorkflowInstanceID: locked.ID,
 		WorkflowNodeInstanceID: currentNode.ID, EventType: "node.rollback",
-		ActorType: "agent", ActorID: actorID,
+		ActorType: actorType, ActorID: actorID,
 		IdempotencyKey: idempotencyKey, Payload: payload,
 	}); err != nil {
 		return locked, db.WorkflowNodeInstance{}, err
 	}
 	return updated, reworkNode, nil
+}
+
+func (h *Handler) activateWorkflowVerdictRework(
+	ctx context.Context,
+	previous db.WorkflowInstance,
+	updated db.WorkflowInstance,
+	reworkNode db.WorkflowNodeInstance,
+) {
+	h.recordWorkflowInstanceStatusTransition(previous.Status, updated.Status)
+	h.recordWorkflowNodesActivated(ctx, []db.WorkflowNodeInstance{reworkNode})
+	version, err := h.Queries.GetWorkflowVersionInWorkspace(
+		ctx,
+		db.GetWorkflowVersionInWorkspaceParams{
+			ID: updated.WorkflowVersionID, WorkspaceID: updated.WorkspaceID,
+		},
+	)
+	if err == nil {
+		if definition, parseErr := workflowdomain.ParseDefinition(version.Definition); parseErr == nil {
+			h.applyWorkflowNodeEnterActions(
+				ctx, updated, definition, []db.WorkflowNodeInstance{reworkNode},
+			)
+		}
+	}
+	h.materializeWorkflowNodeTasks(ctx, updated.WorkspaceID, updated, reworkNode)
 }
 
 func (h *Handler) ensureWorkflowAgentCriticTask(
@@ -383,8 +408,8 @@ func (h *Handler) recordWorkflowAgentCriticVerdict(
 	updatedInstance := locked
 	var reworkNode db.WorkflowNodeInstance
 	if result == "fail" {
-		updatedInstance, reworkNode, err = createWorkflowCriticRework(
-			ctx, qtx, locked, currentNode, nodeDefinition, reason, task.AgentID,
+		updatedInstance, reworkNode, err = createWorkflowVerdictRework(
+			ctx, qtx, locked, currentNode, nodeDefinition, reason, "agent", task.AgentID,
 			"critic-rework:"+uuidToString(task.ID),
 		)
 		if err != nil {
@@ -406,22 +431,7 @@ func (h *Handler) recordWorkflowAgentCriticVerdict(
 	)
 	h.Metrics.RecordWorkflowVerdict("agent", verdict.Result)
 	if reworkNode.ID.Valid {
-		h.recordWorkflowInstanceStatusTransition(locked.Status, updatedInstance.Status)
-		h.recordWorkflowNodesActivated(ctx, []db.WorkflowNodeInstance{reworkNode})
-		version, versionErr := h.Queries.GetWorkflowVersionInWorkspace(
-			ctx,
-			db.GetWorkflowVersionInWorkspaceParams{
-				ID: updatedInstance.WorkflowVersionID, WorkspaceID: workspaceID,
-			},
-		)
-		if versionErr == nil {
-			if definition, parseErr := workflowdomain.ParseDefinition(version.Definition); parseErr == nil {
-				h.applyWorkflowNodeEnterActions(
-					ctx, updatedInstance, definition, []db.WorkflowNodeInstance{reworkNode},
-				)
-			}
-		}
-		h.materializeWorkflowNodeTasks(ctx, workspaceID, updatedInstance, reworkNode)
+		h.activateWorkflowVerdictRework(ctx, locked, updatedInstance, reworkNode)
 	} else {
 		_, _ = h.reconcileWorkflowInstance(
 			ctx, workspaceID, locked.ID, "agent", task.AgentID,

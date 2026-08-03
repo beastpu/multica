@@ -152,8 +152,5 @@
       "to": "end"
     }
   ],
-  "acceptance": {
-    "policy": "member",
-    "approver_role": "qa"
-  }
+  "acceptance": {}
 }

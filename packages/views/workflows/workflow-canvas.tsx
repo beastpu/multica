@@ -10,7 +10,7 @@ import {
   Signpost,
   Trash2,
 } from "lucide-react";
-import { useId, useMemo } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type {
   WorkflowDefinition,
   WorkflowNodeInstance,
@@ -92,6 +92,7 @@ export function WorkflowCanvas({
   onAddBranch,
   onConnectNode,
   minHeight,
+  fill = false,
 }: {
   definition?: WorkflowDefinition;
   nodes: WorkflowNodeInstance[];
@@ -107,14 +108,40 @@ export function WorkflowCanvas({
   onAddBranch?: (kind: WorkflowCanvasBranchKind, from: string) => void;
   onConnectNode?: (target: WorkflowCanvasEdgeTarget) => void;
   minHeight?: number;
+  /**
+   * The editor hands the canvas the whole viewport, so the drawing has to be
+   * as tall as whatever space it was given rather than a fixed 420px card
+   * floating in the top half of an empty page. Measuring the container and
+   * feeding it back as the layout's minimum height is what makes the graph
+   * sit in the middle of the room instead of at the top of it.
+   */
+  fill?: boolean;
 }) {
   const { t } = useT("workflows");
   const markerId = `workflow-arrow-${useId().replaceAll(":", "")}`;
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [viewportHeight, setViewportHeight] = useState(0);
   const resolvedDefinition = definition ?? fallbackDefinition(nodes);
+  const effectiveMinHeight = fill && viewportHeight > 0
+    ? viewportHeight
+    : minHeight;
   const layout = useMemo(
-    () => buildWorkflowCanvasLayout(resolvedDefinition, nodes, { minHeight }),
-    [resolvedDefinition, nodes, minHeight],
+    () => buildWorkflowCanvasLayout(resolvedDefinition, nodes, {
+      minHeight: effectiveMinHeight,
+    }),
+    [resolvedDefinition, nodes, effectiveMinHeight],
   );
+
+  useEffect(() => {
+    const element = viewportRef.current;
+    if (!fill || !element) return;
+    const observer = new ResizeObserver((entries) => {
+      const height = entries[0]?.contentRect.height ?? 0;
+      if (height > 0) setViewportHeight(height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [fill]);
   const byKey = useMemo(
     () => new Map(layout.nodes.map((node) => [node.definition.key, node])),
     [layout.nodes],
@@ -130,7 +157,22 @@ export function WorkflowCanvas({
 
   return (
     <div
-      className="overflow-auto rounded-xl border bg-background shadow-xs"
+      ref={viewportRef}
+      className={cn(
+        "overflow-auto",
+        fill
+          ? "size-full bg-muted/20"
+          : "rounded-xl border bg-background shadow-xs",
+      )}
+      // A full-bleed dotted surface reads as a canvas the way every graph
+      // editor's does; the bordered card was a frame around a picture.
+      style={fill
+        ? {
+          backgroundImage:
+            "radial-gradient(var(--color-border) 1px, transparent 0)",
+          backgroundSize: "22px 22px",
+        }
+        : undefined}
       role="region"
       aria-label={t(($) => $.workbench.activity_map)}
       tabIndex={0}

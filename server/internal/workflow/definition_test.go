@@ -303,6 +303,87 @@ func TestRequiresManualCompletionSupportsExplicitModeWithConditions(t *testing.T
 	}
 }
 
+func TestNormalizeAuthoringDefinitionUnifiesLegacySignOffGates(t *testing.T) {
+	definition := validDefinition()
+	node := &definition.Nodes[1]
+	node.Completion.Mode = "manual"
+	node.Reviewer = &ReviewerDefinition{Kind: "owner", Required: true}
+
+	normalized, err := NormalizeAuthoringDefinition(definition)
+	if err != nil {
+		t.Fatalf("NormalizeAuthoringDefinition() error = %v", err)
+	}
+	if normalized.Acceptance != (AcceptanceDefinition{}) {
+		t.Fatalf("acceptance = %#v, want removed", normalized.Acceptance)
+	}
+	got := normalized.Nodes[1]
+	if got.Completion.Mode != "automatic" {
+		t.Fatalf("completion mode = %q, want automatic", got.Completion.Mode)
+	}
+	if got.Reviewer == nil || got.Reviewer.Kind != "role" ||
+		got.Reviewer.Role != "owner" || !got.Reviewer.Required {
+		t.Fatalf("reviewer = %#v, want required owner role reviewer", got.Reviewer)
+	}
+}
+
+func TestNormalizeAuthoringDefinitionMovesAcceptanceToTerminalActivities(t *testing.T) {
+	definition := validDefinition()
+	definition.Nodes[1].Reviewer = nil
+	definition.Nodes[1].Completion.Mode = "automatic"
+
+	normalized, err := NormalizeAuthoringDefinition(definition)
+	if err != nil {
+		t.Fatalf("NormalizeAuthoringDefinition() error = %v", err)
+	}
+	got := normalized.Nodes[1].Reviewer
+	if got == nil || got.Kind != "role" || got.Role != "owner" || !got.Required {
+		t.Fatalf("terminal reviewer = %#v, want required acceptance role", got)
+	}
+}
+
+func TestNormalizeAuthoringDefinitionRejectsConflictingFinalReviewers(t *testing.T) {
+	definition := validDefinition()
+	definition.Nodes[1].Reviewer = &ReviewerDefinition{
+		Kind: "role", Role: "executor", Required: true,
+	}
+
+	_, err := NormalizeAuthoringDefinition(definition)
+	if err == nil || !strings.Contains(err.Error(), "conflicts with legacy acceptance") {
+		t.Fatalf("NormalizeAuthoringDefinition() error = %v", err)
+	}
+}
+
+func TestNormalizeAuthoringDefinitionRejectsUnassignedManualCompletion(t *testing.T) {
+	definition := validDefinition()
+	node := &definition.Nodes[1]
+	node.OwnerRole = ""
+	node.Completion.Mode = "manual"
+	node.Reviewer = nil
+
+	_, err := NormalizeAuthoringDefinition(definition)
+	if err == nil || !strings.Contains(err.Error(), "manual completion requires a reviewer") {
+		t.Fatalf("NormalizeAuthoringDefinition() error = %v", err)
+	}
+}
+
+func TestNormalizeAuthoringDefinitionPreservesImplicitLegacyConfirmation(t *testing.T) {
+	definition := validDefinition()
+	node := &definition.Nodes[1]
+	node.Completion = CompletionDefinition{}
+	node.IssueTemplates = nil
+	node.Reviewer = nil
+
+	normalized, err := NormalizeAuthoringDefinition(definition)
+	if err != nil {
+		t.Fatalf("NormalizeAuthoringDefinition() error = %v", err)
+	}
+	got := normalized.Nodes[1]
+	if got.Completion.Mode != "automatic" || got.Reviewer == nil ||
+		got.Reviewer.Kind != "role" || got.Reviewer.Role != "owner" {
+		t.Fatalf("normalized node = %#v, want legacy confirmation as role approval", got)
+	}
+}
+
 func TestValidateDefinitionRequiresMemberOwnerForOwnerReviewer(t *testing.T) {
 	definition := validDefinition()
 	definition.Nodes[1].OwnerRole = "executor"

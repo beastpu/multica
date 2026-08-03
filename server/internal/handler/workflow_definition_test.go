@@ -12,6 +12,52 @@ import (
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
+func TestWorkflowDefinitionBytesNormalizesLegacyAuthoringGates(t *testing.T) {
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Normalized authoring",
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true,
+			AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "work", Kind: "activity", Name: "Work", OwnerRole: "owner",
+				Completion: workflowdomain.CompletionDefinition{Mode: "manual"},
+			},
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "work"}, {From: "work", To: "end"},
+		},
+		Acceptance: workflowdomain.AcceptanceDefinition{
+			Policy: "member", ApproverRole: "owner",
+		},
+	}
+	raw, err := json.Marshal(definition)
+	if err != nil {
+		t.Fatalf("marshal legacy definition: %v", err)
+	}
+	normalized, _, err := workflowDefinitionBytes(raw)
+	if err != nil {
+		t.Fatalf("normalize workflow definition: %v", err)
+	}
+	var saved workflowdomain.Definition
+	if err := json.Unmarshal(normalized, &saved); err != nil {
+		t.Fatalf("decode normalized definition: %v", err)
+	}
+	if saved.Acceptance != (workflowdomain.AcceptanceDefinition{}) {
+		t.Fatalf("saved acceptance = %#v, want none", saved.Acceptance)
+	}
+	work := saved.Nodes[1]
+	if work.Completion.Mode != "automatic" || work.Reviewer == nil ||
+		work.Reviewer.Kind != "role" || work.Reviewer.Role != "owner" ||
+		!work.Reviewer.Required {
+		t.Fatalf("saved work node = %#v, want required owner role approval", work)
+	}
+}
+
 func TestWorkflowWriteFlagIsWorkspaceScoped(t *testing.T) {
 	provider := featureflag.NewStaticProvider()
 	provider.Set(featureflags.WorkflowsActivityEngine, featureflag.Rule{

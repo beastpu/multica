@@ -216,8 +216,18 @@ vi.mock("./workflow-canvas", () => ({
 }));
 
 vi.mock("./workflow-definition-inspector", () => ({
-  WorkflowDefinitionInspector: () => <div>Definition inspector</div>,
-  WorkflowNodeDefinitionInspector: () => <div>Node inspector</div>,
+  WorkflowNodeDefinitionInspector: ({
+    onRemove,
+  }: {
+    onRemove?: () => void;
+  }) => (
+    <div>
+      Node inspector
+      {onRemove && (
+        <button type="button" onClick={onRemove}>Delete node</button>
+      )}
+    </div>
+  ),
   WorkflowRoleEditor: () => <div>Role editor</div>,
 }));
 
@@ -359,10 +369,11 @@ describe("WorkflowPage", () => {
     expect(inserted).toMatchObject({
       kind: "activity",
       name: "New activity",
-      // A new activity produces no issues until the author opts in, and it
-      // completes manually so it does not self-complete on activation.
+      // A new activity produces no issues until the author opts in. Manual
+      // confirmation is represented by a reviewer, not a second completion
+      // mode, so authored nodes always use the automatic engine mode.
       issue_policy: "none",
-      completion: { mode: "manual", required_issue_outcome: "none" },
+      completion: { mode: "automatic", required_issue_outcome: "none" },
     });
     expect(inserted).not.toHaveProperty("issue_templates");
     expect(input.definition.edges).toEqual([
@@ -406,26 +417,59 @@ describe("WorkflowPage", () => {
 });
 
 describe("WorkflowPage sections", () => {
-  // Roles and acceptance describe the workflow, not the selected node, so they
-  // are tabs beside the graph rather than a second panel behind a segmented
-  // switch in the node inspector. That switch sat directly above the node's
-  // own tab row and read as a tab bar nobody had explained.
-  it("keeps the graph, roles, and acceptance as sibling editor tabs", async () => {
+  // Roles describe the workflow, not the selected node, so they are a tab
+  // beside the graph rather than a second panel behind a segmented switch in
+  // the node inspector. That switch sat directly above the node's own tab row
+  // and read as a tab bar nobody had explained.
+  it("keeps the graph and roles as the only editor tabs", async () => {
     const user = userEvent.setup();
     renderPage();
 
+    // Workflow-level acceptance is gone: reviewing is a per-node concern, and
+    // a second sign-off gate meant the same idea explained twice.
     expect((await screen.findAllByRole("tab")).map((tab) => tab.textContent))
-      .toEqual(["Graph", "Roles", "Acceptance"]);
+      .toEqual(["Graph", "Roles"]);
 
     await user.click(screen.getByRole("tab", { name: "Roles" }));
     expect(await screen.findByText("Role editor")).toBeInTheDocument();
     expect(screen.queryByText("Node inspector")).toBeNull();
 
-    await user.click(screen.getByRole("tab", { name: "Acceptance" }));
-    expect(await screen.findByText("Definition inspector")).toBeInTheDocument();
-
     // And back, so opening a section is not a one-way door out of the graph.
     await user.click(screen.getByRole("tab", { name: "Graph" }));
     expect(await screen.findByText("Node inspector")).toBeInTheDocument();
+  });
+});
+
+describe("WorkflowPage node deletion", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Deleting rewires the edges around the node and the editor has no undo, so
+  // the icon in the panel header asks before it acts.
+  it("does not remove the node until the deletion is confirmed", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Work node" }));
+    await user.click(screen.getByRole("button", { name: "Delete node" }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    // Nothing changed, so there is nothing to save.
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Delete node" }));
+    await user.click(
+      within(await screen.findByRole("alertdialog"))
+        .getByRole("button", { name: "Remove" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const input = mocks.save.mock.calls[0]![0] as {
+      definition: typeof definition;
+    };
+    expect(input.definition.nodes.map((node) => node.key))
+      .toEqual(["start", "end"]);
   });
 });

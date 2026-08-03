@@ -78,7 +78,8 @@
         }
       },
       "reviewer": {
-        "kind": "owner",
+        "kind": "role",
+        "role": "product_owner",
         "required": true
       },
       "issue_policy": "fixed",
@@ -118,6 +119,11 @@
         "fallback": {
           "kind": "manual"
         }
+      },
+      "reviewer": {
+        "kind": "role",
+        "role": "approver",
+        "required": true
       },
       "issue_policy": "fixed",
       "issue_templates": [
@@ -159,8 +165,5 @@
       "to": "end"
     }
   ],
-  "acceptance": {
-    "policy": "member",
-    "approver_role": "approver"
-  }
+  "acceptance": {}
 }

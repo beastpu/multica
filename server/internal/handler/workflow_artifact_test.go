@@ -317,14 +317,9 @@ func TestWorkflowArtifactGatesNodeCompletion(t *testing.T) {
 	}
 }
 
-// A Human Critic's node verdict is the atomic review action for the delivery:
-// the artifact statuses and the node verdict must describe the same snapshot.
-func TestWorkflowHumanCriticVerdictReviewsCurrentArtifacts(t *testing.T) {
-	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
-	cleanupWorkflowRuntimeTest(t)
-	instanceID, nodeID := startArtifactWorkflow(t, "human-critic")
+func configureHumanCriticArtifactWorkflow(t *testing.T, instanceID, nodeID string) {
+	t.Helper()
 	ctx := context.Background()
-
 	var snapshot []byte
 	if err := testPool.QueryRow(ctx, `
 		SELECT definition_snapshot FROM workflow_node_instance WHERE id = $1
@@ -372,6 +367,16 @@ func TestWorkflowHumanCriticVerdictReviewsCurrentArtifacts(t *testing.T) {
 	`, versionID, versionDefinitionJSON); err != nil {
 		t.Fatalf("configure Human Critic workflow version: %v", err)
 	}
+}
+
+// A Human Critic's node verdict is the atomic review action for the delivery:
+// the artifact statuses and the node verdict must describe the same snapshot.
+func TestWorkflowHumanCriticVerdictReviewsCurrentArtifacts(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	instanceID, nodeID := startArtifactWorkflow(t, "human-critic")
+	configureHumanCriticArtifactWorkflow(t, instanceID, nodeID)
+	ctx := context.Background()
 
 	if recorder := submitArtifact(t, nodeID, map[string]any{
 		"artifact_key": "design_doc", "content": "The reviewed design.",
@@ -426,6 +431,53 @@ func TestWorkflowHumanCriticVerdictReviewsCurrentArtifacts(t *testing.T) {
 	)
 	if err != nil || instance.Status != "completed" {
 		t.Fatalf("instance status = %q, want completed, err=%v", instance.Status, err)
+	}
+}
+
+func TestWorkflowHumanCriticRejectionStartsRework(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	instanceID, nodeID := startArtifactWorkflow(t, "human-critic-rework")
+	configureHumanCriticArtifactWorkflow(t, instanceID, nodeID)
+	ctx := context.Background()
+
+	if recorder := submitArtifact(t, nodeID, map[string]any{
+		"artifact_key": "design_doc", "content": "A design that needs revision.",
+	}); recorder.Code != http.StatusOK {
+		t.Fatalf("submit status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	postWorkflowSubmissionPayload(
+		t, nodeID, "human-critic-rework-delivery", map[string]any{},
+	)
+	postWorkflowVerdictResult(
+		t, nodeID, "fail", "Add the rollback design.", "human-critic-rework-verdict",
+	)
+
+	rejectedArtifacts := listNodeArtifacts(t, nodeID)
+	if len(rejectedArtifacts) != 1 || rejectedArtifacts[0].ReviewStatus != "rejected" {
+		t.Fatalf("rejected artifacts = %#v, want one rejected artifact", rejectedArtifacts)
+	}
+	previous, err := testHandler.Queries.GetWorkflowNodeInstanceInWorkspace(
+		ctx,
+		db.GetWorkflowNodeInstanceInWorkspaceParams{
+			ID: parseUUID(nodeID), WorkspaceID: parseUUID(testWorkspaceID),
+		},
+	)
+	if err != nil || previous.Status != "superseded" {
+		t.Fatalf("rejected node status = %q, want superseded, err=%v", previous.Status, err)
+	}
+	rework := latestWorkflowNodeForTest(t, instanceID, "design")
+	if rework.Attempt != 2 || uuidToString(rework.ID) == nodeID || rework.Status != "active" {
+		t.Fatalf("rework node = %#v, want a new active attempt 2", rework)
+	}
+	instance, err := testHandler.Queries.GetWorkflowInstanceInWorkspace(
+		ctx,
+		db.GetWorkflowInstanceInWorkspaceParams{
+			ID: parseUUID(instanceID), WorkspaceID: parseUUID(testWorkspaceID),
+		},
+	)
+	if err != nil || instance.Status != "running" {
+		t.Fatalf("rework instance status = %q, want running, err=%v", instance.Status, err)
 	}
 }
 

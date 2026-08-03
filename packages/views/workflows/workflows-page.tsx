@@ -106,10 +106,11 @@ function defaultWorkflowDefinition(): WorkflowDefinition {
       { from: "start", to: "work" },
       { from: "work", to: "end" },
     ],
-    acceptance: {
-      policy: "member",
-      approver_role: "owner",
-    },
+    // Workflow-level acceptance is no longer something the editor exposes:
+    // reviewing is a per-node concern, and a starter that shipped with a
+    // member sign-off gate would be an approval step nobody could see or
+    // turn off. Definitions that already declare one keep running.
+    acceptance: {},
   };
 }
 

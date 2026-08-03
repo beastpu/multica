@@ -1000,6 +1000,19 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusConflict, "verdict has already been recorded")
 		return
 	}
+	updatedInstance := locked
+	var reworkNode db.WorkflowNodeInstance
+	if req.Result == "fail" {
+		updatedInstance, reworkNode, err = createWorkflowVerdictRework(
+			r.Context(), qtx, locked, currentNode, nodeDefinition,
+			strings.TrimSpace(req.Reason), actorType, actorID,
+			"verdict-rework:"+req.IdempotencyKey,
+		)
+		if err != nil {
+			writeError(w, http.StatusConflict, "failed to create workflow rework")
+			return
+		}
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit workflow verdict")
 		return
@@ -1015,10 +1028,16 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 		artifactIDs, reviewStatus,
 	)
 	h.Metrics.RecordWorkflowVerdict(actorType, verdict.Result)
-	_, _ = h.reconcileWorkflowInstance(
-		r.Context(), node.WorkspaceID, instance.ID, actorType, actorID,
-		"verdict:"+uuidToString(verdict.ID),
-	)
+	if reworkNode.ID.Valid {
+		h.activateWorkflowVerdictRework(
+			r.Context(), locked, updatedInstance, reworkNode,
+		)
+	} else {
+		_, _ = h.reconcileWorkflowInstance(
+			r.Context(), node.WorkspaceID, instance.ID, actorType, actorID,
+			"verdict:"+uuidToString(verdict.ID),
+		)
+	}
 	h.publishWorkflowRealtime(
 		protocol.EventWorkflowVerdictCreated,
 		uuidToString(node.WorkspaceID), actorType, actorIDText,
@@ -1032,6 +1051,12 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 		uuidToString(node.WorkspaceID), actorType, actorIDText,
 		uuidToString(instance.ID), uuidToString(node.ID),
 	)
+	if reworkNode.ID.Valid {
+		h.publishWorkflowInstanceUpdated(
+			uuidToString(node.WorkspaceID), actorType, actorIDText,
+			uuidToString(instance.ID), uuidToString(reworkNode.ID),
+		)
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"verdict": workflowVerdictToResponse(verdict),
 	})

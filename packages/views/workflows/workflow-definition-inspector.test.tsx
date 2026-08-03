@@ -10,10 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import enWorkflows from "../locales/en/workflows.json";
-import {
-  WorkflowDefinitionInspector,
-  WorkflowNodeDefinitionInspector,
-} from "./workflow-definition-inspector";
+import { WorkflowNodeDefinitionInspector } from "./workflow-definition-inspector";
 
 const node: WorkflowNodeDefinition = {
   key: "backend",
@@ -77,29 +74,46 @@ function renderInspector(onChange: (value: WorkflowNodeDefinition) => void) {
   );
 }
 
-describe("WorkflowDefinitionInspector", () => {
-  it("keeps role management out of workflow settings", () => {
+describe("WorkflowNodeDefinitionInspector", () => {
+  // node.color was written by this field and read by nothing — not the canvas,
+  // not the workbench, not mobile. A control whose only effect is a diff in
+  // the stored definition is a question the author has to answer for nothing.
+  it("offers no display colour, which nothing ever rendered", () => {
+    renderInspector(vi.fn());
+
+    expect(screen.queryByLabelText(/colou?r/i)).not.toBeInTheDocument();
+  });
+
+  it("deletes from the panel header rather than the bottom of the form", async () => {
+    const user = userEvent.setup();
+    const onRemove = vi.fn();
     render(
-      <I18nProvider
-        locale="en"
-        resources={{ en: { workflows: enWorkflows } }}
-      >
-        <WorkflowDefinitionInspector
+      <I18nProvider locale="en" resources={{ en: { workflows: enWorkflows } }}>
+        <WorkflowNodeDefinitionInspector
+          node={node}
           definition={definition}
+          actorOptions={actorOptions}
           readOnly={false}
           onChange={vi.fn()}
+          onRemove={onRemove}
         />
       </I18nProvider>,
     );
 
-    expect(screen.queryByText(enWorkflows.editor.workflow_roles))
-      .not.toBeInTheDocument();
-    expect(screen.getByText(enWorkflows.editor.workflow_acceptance))
-      .toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: enWorkflows.editor.remove_node }),
+    );
+    expect(onRemove).toHaveBeenCalledTimes(1);
   });
-});
 
-describe("WorkflowNodeDefinitionInspector", () => {
+  it("hides deletion entirely when the node cannot be removed", () => {
+    renderInspector(vi.fn());
+
+    expect(
+      screen.queryByRole("button", { name: enWorkflows.editor.remove_node }),
+    ).not.toBeInTheDocument();
+  });
+
   it("splits the activity config into info, work, and transition tabs", () => {
     renderInspector(vi.fn());
 
@@ -156,30 +170,19 @@ describe("WorkflowNodeDefinitionInspector", () => {
     }));
   });
 
-  it("shows the legacy completion behavior and stores an explicit manual mode", async () => {
+  it("uses one transition method instead of a second completion gate", async () => {
     const user = userEvent.setup();
-    const onChange = vi.fn();
-    renderInspector(onChange);
+    renderInspector(vi.fn());
 
     await user.click(
       screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
     );
-    expect(screen.getByLabelText("Completion trigger")).toHaveValue("automatic");
-    expect(screen.getByText("Completion form")).toBeInTheDocument();
-
-    await user.selectOptions(
-      screen.getByLabelText("Completion trigger"),
-      "manual",
-    );
-
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
-      completion: expect.objectContaining({ mode: "manual" }),
-    }));
+    expect(screen.getByLabelText(enWorkflows.editor.reviewer)).toHaveValue("");
+    expect(screen.queryByLabelText(enWorkflows.editor.completion_mode_advanced))
+      .not.toBeInTheDocument();
   });
 
-  it("pins a workspace member as the node owner", async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
+  it("shows only the executor in the node responsibility section", () => {
     render(
       <I18nProvider
         locale="en"
@@ -193,28 +196,17 @@ describe("WorkflowNodeDefinitionInspector", () => {
             { type: "member" as const, id: "member-1", name: "Ada" },
           ]}
           readOnly={false}
-          onChange={onChange}
+          onChange={vi.fn()}
         />
       </I18nProvider>,
     );
 
-    await user.selectOptions(
-      screen.getByLabelText(enWorkflows.editor.node_owner_by_actor),
-      "member:member-1",
-    );
-
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
-      owner_role: undefined,
-      executor: {
-        kind: "actor",
-        actor_type: "member",
-        actor_id: "member-1",
-        fallback: { kind: "manual" },
-      },
-    }));
+    expect(screen.getByLabelText(enWorkflows.editor.executor)).toBeInTheDocument();
+    expect(screen.queryByText(enWorkflows.editor.node_owner))
+      .not.toBeInTheDocument();
   });
 
-  it("enables the owner reviewer for a pinned member owner", async () => {
+  it("keeps the legacy owner transition legible until the version is saved", async () => {
     const user = userEvent.setup();
     render(
       <I18nProvider
@@ -224,15 +216,18 @@ describe("WorkflowNodeDefinitionInspector", () => {
         <WorkflowNodeDefinitionInspector
           node={{
             ...node,
-            owner_role: undefined,
-            executor: {
-              kind: "actor",
-              actor_type: "member",
-              actor_id: "member-1",
-              fallback: { kind: "manual" },
-            },
+            owner_role: "owner",
+            reviewer: { kind: "owner", required: true },
           }}
-          definition={definition}
+          definition={{
+            ...definition,
+            roles: [{
+              key: "owner",
+              name: "Owner",
+              required: true,
+              allowed_actor_types: ["member"],
+            }],
+          }}
           actorOptions={actorOptions}
           readOnly={false}
           onChange={vi.fn()}
@@ -247,7 +242,7 @@ describe("WorkflowNodeDefinitionInspector", () => {
       screen.getByRole("option", {
         name: enWorkflows.editor.reviewer_kind_owner,
       }),
-    ).toBeEnabled();
+    ).toBeInTheDocument();
   });
 
   it("stores host-status node events from the transition tab", async () => {
@@ -268,7 +263,7 @@ describe("WorkflowNodeDefinitionInspector", () => {
     }));
   });
 
-  it("stores a reviewer that holds the node until it rules", async () => {
+  it("stores role approval as the node transition method", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const memberOwnerDefinition: WorkflowDefinition = {
@@ -300,11 +295,11 @@ describe("WorkflowNodeDefinitionInspector", () => {
     );
     await user.selectOptions(
       screen.getByLabelText(enWorkflows.editor.reviewer),
-      "owner",
+      "role",
     );
 
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
-      reviewer: expect.objectContaining({ kind: "owner", required: true }),
+      reviewer: expect.objectContaining({ kind: "role", required: true }),
     }));
   });
 

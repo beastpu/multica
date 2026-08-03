@@ -81,7 +81,6 @@ import {
   removeWorkflowNode,
 } from "./workflow-graph-editor";
 import {
-  WorkflowDefinitionInspector,
   WorkflowNodeDefinitionInspector,
   WorkflowRoleEditor,
 } from "./workflow-definition-inspector";
@@ -189,35 +188,34 @@ function TemplateMetadataDialog({
 
 function newActivity(definition: WorkflowDefinition): WorkflowNodeDefinition {
   const key = nextWorkflowNodeKey(definition, "activity");
-  // The owner has to be a role this workflow actually declares. Defaulting to
-  // a literal "owner" produced a node referencing a role that does not exist
-  // on any workflow whose roles are named for the work — both shipped
-  // starters are — and the definition would not validate the moment you
-  // inserted a node.
-  const ownerRole = definition.roles.find((role) => role.key === "owner")?.key ??
+  // A blank activity has no observable work yet, so use the first declared
+  // role as both its initial executor and reviewer. This keeps it from
+  // completing immediately while the author fills in the real assignment.
+  const initialRole = definition.roles.find((role) => role.key === "owner")?.key ??
     definition.roles[0]?.key ?? "";
   return {
     key,
     kind: "activity",
     name: "New activity",
-    ...(ownerRole ? { owner_role: ownerRole } : {}),
     // A new activity is a process step first. Producing issues is an explicit
     // opt-in, so building a flow does not fill the issue list with steps the
     // author has not decided to track as work items yet.
     issue_policy: "none",
-    ...(ownerRole
+    ...(initialRole
       ? {
         executor: {
           kind: "role" as const,
-          role: ownerRole,
+          role: initialRole,
           fallback: { kind: "manual" as const },
+        },
+        reviewer: {
+          kind: "role" as const,
+          role: initialRole,
+          required: true,
         },
       }
       : { executor: { kind: "manual" as const } }),
-    // Without issues there is nothing to observe, so the owner completes the
-    // activity explicitly. An automatic node here would satisfy its (empty)
-    // issue condition immediately and complete the moment it activates.
-    completion: { mode: "manual", required_issue_outcome: "none" },
+    completion: { mode: "automatic", required_issue_outcome: "none" },
   };
 }
 
@@ -407,8 +405,8 @@ function WorkflowEdgeInspector({
 
 // The editor is a canvas tool, so its sections are top-level tabs rather than
 // panels stacked down a scrolling page: the graph needs the whole viewport,
-// and roles and acceptance describe the workflow, not the selected node.
-type WorkflowEditorTab = "graph" | "roles" | "acceptance";
+// and roles describe the workflow, not the selected node.
+type WorkflowEditorTab = "graph" | "roles";
 
 export function WorkflowPage({ templateId }: { templateId: string }) {
   const { t } = useT("workflows");
@@ -451,6 +449,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
   const [loadedVersionId, setLoadedVersionId] = useState("");
   const [dirty, setDirty] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [changeSummary, setChangeSummary] = useState("");
@@ -510,6 +509,8 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
   const save = () => {
     if (!definition || !canEdit) return;
     saveDefinition.mutate({
+      // The server canonicalizes legacy owner/manual/acceptance gates before
+      // writing the immutable version and returns that canonical definition.
       definition,
       change_summary: changeSummary.trim(),
     }, {
@@ -566,6 +567,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
     if (next) changeDefinition(next);
   };
   const removeSelected = () => {
+    setRemoveOpen(false);
     if (!definition || !selectedNode || selectedNode.kind === "start") return;
     const next = removeWorkflowNode(definition, selectedNode.key);
     if (!next) return;
@@ -644,9 +646,6 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
               </TabsTrigger>
               <TabsTrigger value="roles">
                 {t(($) => $.editor.tab_roles)}
-              </TabsTrigger>
-              <TabsTrigger value="acceptance">
-                {t(($) => $.editor.tab_acceptance)}
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -758,7 +757,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
               fixed-height card inside a scrolling page. Nothing here is
               centred in a max-width column: the graph is the page.
             */}
-            <section className="relative min-w-0 flex-1 overflow-auto p-4">
+            <section className="relative min-h-0 min-w-0 flex-1">
               <WorkflowCanvas
                 definition={definition}
                 nodes={[]}
@@ -768,18 +767,19 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
                 onRemoveEdge={canEdit ? removeEdge : undefined}
                 onAddBranch={canEdit ? addBranch : undefined}
                 onConnectNode={canEdit ? connectNode : undefined}
+                fill
               />
             </section>
             {/*
               The inspector belongs to the selection, the way every canvas
-              editor's right panel does. Roles and acceptance describe the
-              workflow rather than the node, so they are tabs now — which is
-              also what frees this panel of the segmented switch that used to
-              sit on top of the node's own tab row looking like a second one.
+              editor's right panel does. Roles describe the workflow rather
+              than the node, so they are a tab now — which is also what frees
+              this panel of the segmented switch that used to sit on top of
+              the node's own tab row looking like a second one.
             */}
             <aside
               data-tab-scroll-root="workflow-editor"
-              className="w-90 shrink-0 overflow-y-auto border-l bg-muted/10 p-4"
+              className="w-90 shrink-0 overflow-y-auto border-l bg-background p-4"
             >
               {selectedNode ? (
                 <div className="space-y-5">
@@ -789,6 +789,9 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
                     actorOptions={actorOptions}
                     readOnly={!canEdit}
                     onChange={changeNode}
+                    onRemove={canEdit && selectedNode.kind !== "start"
+                      ? () => setRemoveOpen(true)
+                      : undefined}
                   />
                   <WorkflowEdgeInspector
                     definition={definition}
@@ -796,53 +799,39 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
                     readOnly={!canEdit}
                     onChange={changeDefinition}
                   />
-                  {canEdit && selectedNode.kind !== "start" && (
-                    <div className="flex justify-end border-t pt-4">
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={removeSelected}
-                      >
-                        <Trash2 />
-                        {t(($) => $.actions.remove)}
-                      </Button>
-                    </div>
-                  )}
                 </div>
               ) : (
-                <p className="px-1 py-6 text-xs text-muted-foreground">
-                  {t(($) => $.editor.select_node)}
-                </p>
+                <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+                  <Waypoints
+                    aria-hidden="true"
+                    className="size-5 text-muted-foreground/60"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t(($) => $.editor.select_node)}
+                  </p>
+                </div>
               )}
             </aside>
           </div>
         ) : (
           <main className="min-h-0 flex-1 overflow-y-auto p-5">
             <div className="mx-auto max-w-3xl">
-              {tab === "roles" ? (
-                <section className="space-y-4">
-                  <div>
-                    <h2 className="text-sm font-medium">
-                      {t(($) => $.editor.workflow_roles)}
-                    </h2>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t(($) => $.editor.roles_help)}
-                    </p>
-                  </div>
-                  <WorkflowRoleEditor
-                    roles={definition.roles}
-                    readOnly={!canEdit}
-                    onChange={(roles) =>
-                      changeDefinition({ ...definition, roles })}
-                  />
-                </section>
-              ) : (
-                <WorkflowDefinitionInspector
-                  definition={definition}
+              <section className="space-y-4">
+                <div>
+                  <h2 className="text-sm font-medium">
+                    {t(($) => $.editor.workflow_roles)}
+                  </h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t(($) => $.editor.roles_help)}
+                  </p>
+                </div>
+                <WorkflowRoleEditor
+                  roles={definition.roles}
                   readOnly={!canEdit}
-                  onChange={changeDefinition}
+                  onChange={(roles) =>
+                    changeDefinition({ ...definition, roles })}
                 />
-              )}
+              </section>
             </div>
           </main>
         )
@@ -855,6 +844,32 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
           onOpenChange={setMetadataOpen}
         />
       )}
+      {/*
+        Deleting a node also rewires the edges around it, and the editor has
+        no undo — the only way back is discarding every unsaved edit. One
+        confirmation is what makes the icon in the panel header safe to sit
+        next to the name it destroys.
+      */}
+      <AlertDialog open={removeOpen} onOpenChange={setRemoveOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t(($) => $.editor.remove_node_title)}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(($) => $.editor.remove_node_description, {
+                node: selectedNode?.name || selectedNode?.key || "",
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{commonT(($) => $.cancel)}</AlertDialogCancel>
+            <AlertDialogAction onClick={removeSelected}>
+              {t(($) => $.actions.remove)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={archiveOpen} onOpenChange={setArchiveOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

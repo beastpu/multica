@@ -31,12 +31,26 @@ func TestBuiltinTemplatesAreValid(t *testing.T) {
 				definition.Name,
 			)
 		}
-		if definition.Acceptance.Policy != "member" {
+		if definition.Acceptance != (AcceptanceDefinition{}) {
 			t.Fatalf(
-				"builtin template %q must ship a member acceptance policy, got %q",
+				"builtin template %q must not ship a hidden run acceptance, got %#v",
 				template.Key,
-				definition.Acceptance.Policy,
+				definition.Acceptance,
 			)
+		}
+		for _, edge := range definition.Edges {
+			if edge.To != "end" {
+				continue
+			}
+			for _, node := range definition.Nodes {
+				if node.Key == edge.From &&
+					(node.Reviewer == nil || !node.Reviewer.Required) {
+					t.Fatalf(
+						"builtin template %q final activity %q requires a reviewer",
+						template.Key, node.Key,
+					)
+				}
+			}
 		}
 	}
 	for _, key := range []string{"requirement_delivery", "bug_fix"} {

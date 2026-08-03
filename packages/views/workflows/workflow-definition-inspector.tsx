@@ -12,7 +12,6 @@ import type {
   WorkflowReviewerDefinition,
   WorkflowRoleDefinition,
 } from "@multica/core/workflows";
-import { workflowCompletionMode } from "@multica/core/workflows";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label as UILabel } from "@multica/ui/components/ui/label";
@@ -104,115 +103,6 @@ function HostStatusActionSelect({
           <option key={status} value={status}>{status}</option>
         ))}
       </select>
-    </div>
-  );
-}
-
-// The node owner is either a workflow role (resolved per instance) or a
-// pinned actor. Pinning writes a fixed_actor executor strategy, which
-// activation turns into the node's "owner" participant — the same record an
-// owner reviewer reads.
-function NodeOwnerEditor({
-  node,
-  definition,
-  actorOptions,
-  readOnly,
-  onChange,
-}: {
-  node: WorkflowNodeDefinition;
-  definition: WorkflowDefinition;
-  actorOptions: WorkflowActorOption[];
-  readOnly: boolean;
-  onChange: (node: WorkflowNodeDefinition) => void;
-}) {
-  const { t } = useT("workflows");
-  const executor = node.executor;
-  const pinned = node.owner_role || executor?.kind !== "actor"
-    ? undefined
-    : executor;
-  const mode = node.owner_role ? "role" : "actor";
-
-  const setPinnedActor = (value: string) => {
-    const actor = parseActorOption(value);
-    if (!actor) {
-      onChange({ ...node, executor: undefined });
-      return;
-    }
-    // A pinned owner still needs somewhere to land so resolution never
-    // dead-ends if the actor becomes unavailable.
-    onChange({
-      ...node,
-      owner_role: undefined,
-      executor: {
-        kind: "actor",
-        actor_type: actor.type,
-        actor_id: actor.id,
-        fallback: executor?.fallback ?? { kind: "manual" },
-      },
-    });
-  };
-
-  return (
-    <div className="space-y-2">
-      <Label htmlFor={`node-owner-mode-${node.key}`}>
-        {t(($) => $.editor.node_owner)}
-      </Label>
-      <select
-        id={`node-owner-mode-${node.key}`}
-        value={mode}
-        disabled={readOnly}
-        className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-        onChange={(event) => {
-          if (event.target.value === "role") {
-            setPinnedActor("");
-            return;
-          }
-          onChange({ ...node, owner_role: undefined });
-        }}
-      >
-        <option value="role">{t(($) => $.editor.node_owner_by_role)}</option>
-        <option value="actor">{t(($) => $.editor.node_owner_by_actor)}</option>
-      </select>
-      {mode === "role" ? (
-        <select
-          aria-label={t(($) => $.editor.owner_role)}
-          value={node.owner_role ?? ""}
-          disabled={readOnly}
-          className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-          onChange={(event) => onChange({
-            ...node,
-            owner_role: event.target.value || undefined,
-          })}
-        >
-          <option value="">—</option>
-          {definition.roles.map((role) => (
-            <option key={role.key} value={role.key}>{role.name}</option>
-          ))}
-        </select>
-      ) : (
-        <select
-          aria-label={t(($) => $.editor.node_owner_by_actor)}
-          value={pinned?.actor_type && pinned.actor_id
-            ? actorOptionValue({ type: pinned.actor_type, id: pinned.actor_id })
-            : ""}
-          disabled={readOnly}
-          className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-          onChange={(event) => setPinnedActor(event.target.value)}
-        >
-          <option value="">—</option>
-          {actorOptions.map((actor) => (
-            <option
-              key={actorOptionValue(actor)}
-              value={actorOptionValue(actor)}
-            >
-              {actor.name} · {actor.type}
-            </option>
-          ))}
-        </select>
-      )}
-      <p className="text-[11px] leading-snug text-muted-foreground">
-        {t(($) => $.editor.node_owner_hint)}
-      </p>
     </div>
   );
 }
@@ -446,109 +336,6 @@ export function WorkflowRoleEditor({
         </Button>
       )}
     </div>
-  );
-}
-
-function AcceptanceEditor({
-  definition,
-  readOnly,
-  onChange,
-}: {
-  definition: WorkflowDefinition;
-  readOnly: boolean;
-  onChange: (definition: WorkflowDefinition) => void;
-}) {
-  const { t } = useT("workflows");
-  const acceptance = definition.acceptance;
-  const policy = acceptance.policy ?? "none";
-
-  return (
-    <div className="space-y-3">
-      <div className="space-y-1.5">
-        <Label htmlFor="workflow-acceptance-policy">
-          {t(($) => $.editor.acceptance_policy)}
-        </Label>
-        <select
-          id="workflow-acceptance-policy"
-          value={policy}
-          disabled={readOnly}
-          className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-          onChange={(event) => onChange({
-            ...definition,
-            acceptance: event.target.value === "none"
-              ? {}
-              : { ...acceptance, policy: event.target.value },
-          })}
-        >
-          <option value="none">{t(($) => $.editor.acceptance_none)}</option>
-          <option value="member">{t(($) => $.editor.acceptance_member)}</option>
-          <option value="node_verdict">{t(($) => $.editor.acceptance_verdict)}</option>
-        </select>
-      </div>
-      {policy !== "none" && (
-        <>
-          {policy === "member" && (
-            <div className="space-y-1.5">
-              <Label htmlFor="workflow-acceptance-role">
-                {t(($) => $.editor.approver_role)}
-              </Label>
-              <select
-                id="workflow-acceptance-role"
-                value={acceptance.approver_role ?? ""}
-                disabled={readOnly}
-                className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-                onChange={(event) => onChange({
-                  ...definition,
-                  acceptance: {
-                    ...acceptance,
-                    approver_role: event.target.value || undefined,
-                  },
-                })}
-              >
-                <option value="">—</option>
-                {definition.roles.map((role) => (
-                  <option key={role.key} value={role.key}>{role.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          <p className="text-xs text-muted-foreground">
-            {t(($) => $.editor.rework_targets_hint)}
-          </p>
-        </>
-      )}
-    </div>
-  );
-}
-
-export function WorkflowDefinitionInspector({
-  definition,
-  readOnly,
-  onChange,
-}: {
-  definition: WorkflowDefinition;
-  readOnly: boolean;
-  onChange: (definition: WorkflowDefinition) => void;
-}) {
-  const { t } = useT("workflows");
-  // A whole editor tab of its own, so the heading states what the tab is
-  // rather than acting as a disclosure the reader has to open first.
-  return (
-    <section className="space-y-4">
-      <div>
-        <h2 className="text-sm font-medium">
-          {t(($) => $.editor.workflow_acceptance)}
-        </h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {t(($) => $.editor.acceptance_help)}
-        </p>
-      </div>
-      <AcceptanceEditor
-        definition={definition}
-        readOnly={readOnly}
-        onChange={onChange}
-      />
-    </section>
   );
 }
 
@@ -1046,7 +833,6 @@ function CompletionEditor({
   const { t } = useT("workflows");
   const roles = definition.roles;
   const completion = node.completion ?? {};
-  const completionMode = workflowCompletionMode(node);
 
   return (
     <div className="space-y-3">
@@ -1122,43 +908,6 @@ function CompletionEditor({
           <option value="terminal">{t(($) => $.editor.issue_outcome_terminal)}</option>
         </select>
       </div>
-      <details className="rounded-lg border bg-muted/10">
-        <summary className="min-h-9 cursor-pointer select-none px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          {t(($) => $.editor.advanced_completion_conditions)}
-        </summary>
-        <div className="space-y-3 border-t p-2.5">
-          <div className="space-y-1.5">
-            <Label htmlFor={`completion-mode-${node.key}`}>
-              {t(($) => $.editor.completion_mode_advanced)}
-            </Label>
-            <select
-              id={`completion-mode-${node.key}`}
-              value={completionMode}
-              disabled={readOnly}
-              className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-              onChange={(event) => onChange({
-                ...node,
-                completion: {
-                  ...completion,
-                  mode: event.target.value as "automatic" | "manual",
-                },
-              })}
-            >
-              <option value="automatic">
-                {t(($) => $.editor.completion_mode_automatic)}
-              </option>
-              <option value="manual">
-                {t(($) => $.editor.completion_mode_manual)}
-              </option>
-            </select>
-            <p className="text-xs text-muted-foreground">
-              {completionMode === "automatic"
-                ? t(($) => $.editor.completion_mode_automatic_help)
-                : t(($) => $.editor.completion_mode_manual_help)}
-            </p>
-          </div>
-        </div>
-      </details>
     </div>
   );
 }
@@ -1184,16 +933,6 @@ function ReviewerEditor({
   const reviewerMode = reviewer?.kind === "actor"
     ? (reviewer.actor_type === "member" ? "human" : "agent")
     : (reviewer?.kind ?? "");
-  const ownerRole = definition.roles.find((role) => role.key === node.owner_role);
-  // An owner reviewer needs an owner that resolves to a member: either a
-  // member-only role or a directly pinned member owner.
-  const pinsMemberOwner = !node.owner_role &&
-    node.executor?.kind === "actor" &&
-    node.executor.actor_type === "member";
-  const ownerCanReview = pinsMemberOwner || (
-    ownerRole?.allowed_actor_types.length === 1 &&
-    ownerRole.allowed_actor_types[0] === "member"
-  );
   const setReviewer = (next: WorkflowReviewerDefinition | undefined) =>
     onChange({ ...node, reviewer: next });
 
@@ -1234,9 +973,9 @@ function ReviewerEditor({
         <option value="human">{t(($) => $.editor.reviewer_kind_human)}</option>
         <option value="agent">{t(($) => $.editor.reviewer_kind_agent)}</option>
         <option value="role">{t(($) => $.editor.reviewer_kind_role)}</option>
-        <option value="owner" disabled={!ownerCanReview}>
-          {t(($) => $.editor.reviewer_kind_owner)}
-        </option>
+        {reviewerMode === "owner" && (
+          <option value="owner">{t(($) => $.editor.reviewer_kind_owner)}</option>
+        )}
         <optgroup label={t(($) => $.editor.reviewer_advanced)}>
           <option value="api">{t(($) => $.editor.reviewer_kind_api)}</option>
           <option value="auto">{t(($) => $.editor.reviewer_kind_auto)}</option>
@@ -1250,11 +989,6 @@ function ReviewerEditor({
       {reviewerMode === "human" && (
         <p className="text-xs text-muted-foreground">
           {t(($) => $.editor.reviewer_human_hint)}
-        </p>
-      )}
-      {reviewerMode === "owner" && !ownerCanReview && (
-        <p className="text-xs text-muted-foreground">
-          {t(($) => $.editor.owner_confirmation_member_only)}
         </p>
       )}
       {reviewer?.kind === "role" && (
@@ -1339,18 +1073,57 @@ function ReviewerEditor({
   );
 }
 
+// The node's identity and the one action that applies to the node as a whole.
+// Deleting used to sit at the very bottom of the panel as a full-width red
+// button, which meant scrolling past every field to reach it and reading a
+// destructive control as the panel's conclusion. It belongs beside the name it
+// destroys.
+function NodeInspectorHeader({
+  node,
+  onRemove,
+}: {
+  node: WorkflowNodeDefinition;
+  onRemove?: () => void;
+}) {
+  const { t } = useT("workflows");
+  return (
+    <div className="flex items-start justify-between gap-2">
+      <div className="min-w-0">
+        <h2 className="truncate text-sm font-medium">{node.name}</h2>
+        <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+          {node.key}
+        </p>
+      </div>
+      {onRemove && (
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          aria-label={t(($) => $.editor.remove_node)}
+          onClick={onRemove}
+        >
+          <Trash2 />
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function WorkflowNodeDefinitionInspector({
   node,
   definition,
   actorOptions = [],
   readOnly,
   onChange,
+  onRemove,
 }: {
   node: WorkflowNodeDefinition;
   definition: WorkflowDefinition;
   actorOptions?: WorkflowActorOption[];
   readOnly: boolean;
   onChange: (node: WorkflowNodeDefinition) => void;
+  onRemove?: () => void;
 }) {
   const { t } = useT("workflows");
   const activity = node.kind === "activity";
@@ -1383,51 +1156,25 @@ export function WorkflowNodeDefinitionInspector({
         />
       </div>
       {activity && (
-        <>
-          <div className="grid grid-cols-[minmax(0,1fr)_3rem] gap-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="workflow-node-color">{t(($) => $.editor.node_color)}</Label>
-              <Input
-                id="workflow-node-color"
-                value={node.color ?? ""}
-                disabled={readOnly}
-                placeholder="#6366f1"
-                className="min-h-9 text-xs"
-                onChange={(event) => onChange({
-                  ...node,
-                  color: event.target.value || undefined,
-                })}
-              />
-            </div>
-            <input
-              type="color"
-              aria-label={t(($) => $.editor.node_color)}
-              value={node.color?.match(/^#[0-9a-fA-F]{6}$/) ? node.color : "#6366f1"}
-              disabled={readOnly}
-              className="mt-5 size-9 rounded-md border bg-background p-1"
-              onChange={(event) => onChange({ ...node, color: event.target.value })}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="workflow-node-timeout">{t(($) => $.editor.timeout_minutes)}</Label>
-            <Input
-              id="workflow-node-timeout"
-              type="number"
-              min={0}
-              max={525600}
-              value={node.timeout_minutes ?? 0}
-              disabled={readOnly}
-              className="min-h-9 text-xs"
-              onChange={(event) => onChange({
-                ...node,
-                timeout_minutes: Number(event.target.value) || undefined,
-              })}
-            />
-            <p className="text-xs text-muted-foreground">
-              {t(($) => $.editor.timeout_minutes_hint)}
-            </p>
-          </div>
-        </>
+        <div className="space-y-1.5">
+          <Label htmlFor="workflow-node-timeout">{t(($) => $.editor.timeout_minutes)}</Label>
+          <Input
+            id="workflow-node-timeout"
+            type="number"
+            min={0}
+            max={525600}
+            value={node.timeout_minutes ?? 0}
+            disabled={readOnly}
+            className="min-h-9 text-xs"
+            onChange={(event) => onChange({
+              ...node,
+              timeout_minutes: Number(event.target.value) || undefined,
+            })}
+          />
+          <p className="text-xs text-muted-foreground">
+            {t(($) => $.editor.timeout_minutes_hint)}
+          </p>
+        </div>
       )}
       {node.kind === "parallel_join" && (
         <div className="space-y-1.5">
@@ -1449,10 +1196,7 @@ export function WorkflowNodeDefinitionInspector({
   if (!activity) {
     return (
       <div className="space-y-3">
-        <div>
-          <h2 className="text-sm font-medium">{node.name}</h2>
-          <p className="mt-1 font-mono text-xs text-muted-foreground">{node.key}</p>
-        </div>
+        <NodeInspectorHeader node={node} onRemove={onRemove} />
         <InspectorSection title={t(($) => $.editor.section_basic)} open>
           {basicFields}
         </InspectorSection>
@@ -1462,10 +1206,7 @@ export function WorkflowNodeDefinitionInspector({
 
   return (
     <div className="space-y-3">
-      <div>
-        <h2 className="text-sm font-medium">{node.name}</h2>
-        <p className="mt-1 font-mono text-xs text-muted-foreground">{node.key}</p>
-      </div>
+      <NodeInspectorHeader node={node} onRemove={onRemove} />
       <Tabs key={node.key} defaultValue="info" className="gap-3">
         <TabsList variant="line" className="w-full justify-start">
           <TabsTrigger value="info">{t(($) => $.editor.tab_info)}</TabsTrigger>
@@ -1480,13 +1221,6 @@ export function WorkflowNodeDefinitionInspector({
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t(($) => $.editor.section_responsibility)}
             </p>
-            <NodeOwnerEditor
-              node={node}
-              definition={definition}
-              actorOptions={actorOptions}
-              readOnly={readOnly}
-              onChange={onChange}
-            />
             <ExecutorEditor
               key={node.key}
               node={node}
