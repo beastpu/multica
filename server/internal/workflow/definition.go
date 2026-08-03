@@ -342,7 +342,7 @@ func NormalizeAuthoringDefinition(definition Definition) (Definition, error) {
 			}
 			node.Reviewer = reviewer
 		}
-		if requiresManualReview {
+		if node.Reviewer != nil {
 			node.Reviewer.Required = true
 		}
 		node.Completion.Mode = "automatic"
@@ -362,15 +362,11 @@ func NormalizeAuthoringDefinition(definition Definition) (Definition, error) {
 					Kind: "role", Role: definition.Acceptance.ApproverRole,
 					Required: true,
 				}
-			case node.Reviewer.Kind == "role" &&
-				node.Reviewer.Role == definition.Acceptance.ApproverRole:
-				node.Reviewer.Required = true
 			default:
-				return Definition{}, fmt.Errorf(
-					"activity %q reviewer conflicts with legacy acceptance approver role %q",
-					node.Key,
-					definition.Acceptance.ApproverRole,
-				)
+				// A node reviewer is visible and editable in the current authoring
+				// model, so it wins over the removed workflow-level acceptance
+				// field. Acceptance only fills a missing terminal reviewer.
+				node.Reviewer.Required = true
 			}
 		}
 	}

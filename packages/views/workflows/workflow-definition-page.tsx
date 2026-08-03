@@ -188,9 +188,9 @@ function TemplateMetadataDialog({
 
 function newActivity(definition: WorkflowDefinition): WorkflowNodeDefinition {
   const key = nextWorkflowNodeKey(definition, "activity");
-  // A blank activity has no observable work yet, so use the first declared
-  // role as both its initial executor and reviewer. This keeps it from
-  // completing immediately while the author fills in the real assignment.
+  // Give a blank activity an initial executor when the template has roles.
+  // Review is an explicit quality gate: defaulting it to the executor's role
+  // would silently make the worker review their own output.
   const initialRole = definition.roles.find((role) => role.key === "owner")?.key ??
     definition.roles[0]?.key ?? "";
   return {
@@ -207,11 +207,6 @@ function newActivity(definition: WorkflowDefinition): WorkflowNodeDefinition {
           kind: "role" as const,
           role: initialRole,
           fallback: { kind: "manual" as const },
-        },
-        reviewer: {
-          kind: "role" as const,
-          role: initialRole,
-          required: true,
         },
       }
       : { executor: { kind: "manual" as const } }),

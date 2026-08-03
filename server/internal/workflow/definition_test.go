@@ -341,15 +341,39 @@ func TestNormalizeAuthoringDefinitionMovesAcceptanceToTerminalActivities(t *test
 	}
 }
 
-func TestNormalizeAuthoringDefinitionRejectsConflictingFinalReviewers(t *testing.T) {
+func TestNormalizeAuthoringDefinitionPrefersVisibleReviewerOverLegacyAcceptance(t *testing.T) {
 	definition := validDefinition()
 	definition.Nodes[1].Reviewer = &ReviewerDefinition{
-		Kind: "role", Role: "executor", Required: true,
+		Kind: "role", Role: "executor",
 	}
 
-	_, err := NormalizeAuthoringDefinition(definition)
-	if err == nil || !strings.Contains(err.Error(), "conflicts with legacy acceptance") {
+	normalized, err := NormalizeAuthoringDefinition(definition)
+	if err != nil {
 		t.Fatalf("NormalizeAuthoringDefinition() error = %v", err)
+	}
+	if normalized.Acceptance != (AcceptanceDefinition{}) {
+		t.Fatalf("acceptance = %#v, want removed", normalized.Acceptance)
+	}
+	got := normalized.Nodes[1].Reviewer
+	if got == nil || got.Kind != "role" || got.Role != "executor" || !got.Required {
+		t.Fatalf("reviewer = %#v, want required visible reviewer", got)
+	}
+}
+
+func TestNormalizeAuthoringDefinitionMakesEveryReviewerRequired(t *testing.T) {
+	definition := validDefinition()
+	definition.Acceptance = AcceptanceDefinition{}
+	definition.Nodes[1].Completion.Mode = "automatic"
+	definition.Nodes[1].Reviewer = &ReviewerDefinition{
+		Kind: "role", Role: "owner", Required: false,
+	}
+
+	normalized, err := NormalizeAuthoringDefinition(definition)
+	if err != nil {
+		t.Fatalf("NormalizeAuthoringDefinition() error = %v", err)
+	}
+	if normalized.Nodes[1].Reviewer == nil || !normalized.Nodes[1].Reviewer.Required {
+		t.Fatalf("reviewer = %#v, want required reviewer", normalized.Nodes[1].Reviewer)
 	}
 }
 

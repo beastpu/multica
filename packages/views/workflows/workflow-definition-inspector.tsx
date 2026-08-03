@@ -2,15 +2,16 @@
 
 import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import type {
-  WorkflowArtifactRequirement,
-  WorkflowDefinition,
-  WorkflowExecutorDefinition,
-  WorkflowIssueTemplate,
-  WorkflowNodeAction,
-  WorkflowNodeDefinition,
-  WorkflowReviewerDefinition,
-  WorkflowRoleDefinition,
+import {
+  workflowCompletionMode,
+  type WorkflowArtifactRequirement,
+  type WorkflowDefinition,
+  type WorkflowExecutorDefinition,
+  type WorkflowIssueTemplate,
+  type WorkflowNodeAction,
+  type WorkflowNodeDefinition,
+  type WorkflowReviewerDefinition,
+  type WorkflowRoleDefinition,
 } from "@multica/core/workflows";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
@@ -915,6 +916,25 @@ function CompletionEditor({
 // ReviewerEditor is the whole of "who checks this". It replaced a verdict
 // evaluator select, a required-verdict select, and a six-value confirmation
 // select that could disagree with each other.
+function reviewerForEditor(
+  node: WorkflowNodeDefinition,
+): WorkflowReviewerDefinition | undefined {
+  if (node.reviewer) return node.reviewer;
+  if (workflowCompletionMode(node) !== "manual") return undefined;
+  if (node.owner_role) {
+    return { kind: "role", role: node.owner_role, required: true };
+  }
+  if (node.executor?.kind === "actor" && node.executor.actor_type === "member") {
+    return {
+      kind: "actor",
+      actor_type: "member",
+      actor_id: node.executor.actor_id,
+      required: true,
+    };
+  }
+  return undefined;
+}
+
 function ReviewerEditor({
   node,
   definition,
@@ -929,12 +949,16 @@ function ReviewerEditor({
   onChange: (node: WorkflowNodeDefinition) => void;
 }) {
   const { t } = useT("workflows");
-  const reviewer = node.reviewer;
+  const reviewer = reviewerForEditor(node);
   const reviewerMode = reviewer?.kind === "actor"
     ? (reviewer.actor_type === "member" ? "human" : "agent")
     : (reviewer?.kind ?? "");
   const setReviewer = (next: WorkflowReviewerDefinition | undefined) =>
-    onChange({ ...node, reviewer: next });
+    onChange({
+      ...node,
+      reviewer: next,
+      completion: { ...(node.completion ?? {}), mode: "automatic" },
+    });
 
   return (
     <div className="space-y-2">

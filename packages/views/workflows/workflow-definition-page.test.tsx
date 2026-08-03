@@ -375,6 +375,7 @@ describe("WorkflowPage", () => {
       issue_policy: "none",
       completion: { mode: "automatic", required_issue_outcome: "none" },
     });
+    expect(inserted).not.toHaveProperty("reviewer");
     expect(inserted).not.toHaveProperty("issue_templates");
     expect(input.definition.edges).toEqual([
       { from: "start", to: "work" },

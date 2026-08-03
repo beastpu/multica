@@ -182,6 +182,53 @@ describe("WorkflowNodeDefinitionInspector", () => {
       .not.toBeInTheDocument();
   });
 
+  it("shows a legacy manual owner as the transition reviewer and can remove it", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{ en: { workflows: enWorkflows } }}
+      >
+        <WorkflowNodeDefinitionInspector
+          node={{
+            ...node,
+            owner_role: "owner",
+            completion: { mode: "manual" },
+            reviewer: undefined,
+          }}
+          definition={{
+            ...definition,
+            roles: [{
+              key: "owner",
+              name: "Owner",
+              required: true,
+              allowed_actor_types: ["member"],
+            }],
+          }}
+          actorOptions={actorOptions}
+          readOnly={false}
+          onChange={onChange}
+        />
+      </I18nProvider>,
+    );
+
+    await user.click(
+      screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
+    );
+    const reviewerSelect = screen.getByLabelText(enWorkflows.editor.reviewer);
+    expect(reviewerSelect).toHaveValue("role");
+    expect(
+      screen.getByLabelText(enWorkflows.editor.reviewer_kind_role),
+    ).toHaveValue("owner");
+
+    await user.selectOptions(reviewerSelect, "");
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      reviewer: undefined,
+      completion: expect.objectContaining({ mode: "automatic" }),
+    }));
+  });
+
   it("shows only the executor in the node responsibility section", () => {
     render(
       <I18nProvider
