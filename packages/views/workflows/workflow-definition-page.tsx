@@ -4,7 +4,6 @@ import {
   AlertCircle,
   Archive,
   GitBranch,
-  GitFork,
   MoreHorizontal,
   Pencil,
   Save,
@@ -59,10 +58,15 @@ import {
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from "@multica/ui/components/ui/tabs";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { cn } from "@multica/ui/lib/utils";
-import { CollectionPageHeader, CollectionPageState } from "../layout/collection-page";
+import { CollectionPageState } from "../layout/collection-page";
 import { useT } from "../i18n";
 import { WorkflowCanvas } from "./workflow-canvas";
 import {
@@ -79,6 +83,7 @@ import {
 import {
   WorkflowDefinitionInspector,
   WorkflowNodeDefinitionInspector,
+  WorkflowRoleEditor,
 } from "./workflow-definition-inspector";
 
 function TemplateMetadataDialog({
@@ -389,6 +394,11 @@ function WorkflowEdgeInspector({
   );
 }
 
+// The editor is a canvas tool, so its sections are top-level tabs rather than
+// panels stacked down a scrolling page: the graph needs the whole viewport,
+// and roles and acceptance describe the workflow, not the selected node.
+type WorkflowEditorTab = "graph" | "roles" | "acceptance";
+
 export function WorkflowPage({ templateId }: { templateId: string }) {
   const { t } = useT("workflows");
   const { t: commonT } = useT("common");
@@ -428,6 +438,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
     (version) => version.status === "published",
   ) ?? [];
   const [definition, setDefinition] = useState<WorkflowDefinition | null>(null);
+  const [tab, setTab] = useState<WorkflowEditorTab>("graph");
   const [selectedKey, setSelectedKey] = useState("");
   const [selectedVersionId, setSelectedVersionId] = useState("");
   const [loadedVersionId, setLoadedVersionId] = useState("");
@@ -473,9 +484,6 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
   }, [loadedVersionId, selectedVersion]);
 
   const selectedNode = definition?.nodes.find((node) => node.key === selectedKey);
-  const firstNodeKey = definition?.nodes.find(
-    (node) => node.kind === "activity",
-  )?.key ?? definition?.nodes[0]?.key ?? "";
   const changeDefinition = (next: WorkflowDefinition) => {
     if (!canEdit) return;
     setDefinition(next);
@@ -578,85 +586,132 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
   }
 
   const template = detailQuery.data.workflow;
+  const readOnlyNotice = !canManage
+    ? t(($) => $.templates.admin_only)
+    : isMobile
+    ? t(($) => $.editor.mobile_read_only)
+    : template.status === "archived"
+    ? t(($) => $.templates.archived_help)
+    : "";
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <CollectionPageHeader
-        icon={GitBranch}
-        title={template.name}
-        description={template.description || t(($) => $.editor.description)}
-        actions={canManage && !isMobile ? (
-          <>
-            {canEdit && (
-              <>
-                <span className={cn(
-                  "hidden text-xs text-muted-foreground md:inline",
-                  dirty && "text-amber-700 dark:text-amber-300",
-                )}>
-                  {dirty ? t(($) => $.editor.unsaved) : t(($) => $.editor.saved)}
-                </span>
-                <Button
-                  size="sm"
-                  onClick={save}
-                  disabled={!dirty || saveDefinition.isPending}
-                >
-                  <Save />
-                  {t(($) => $.actions.save)}
-                </Button>
-              </>
-            )}
-            {/*
-              Editing the name and archiving are rare and never urgent, so they
-              sit behind the overflow rather than competing with publish. Five
-              controls in a row left no visual answer to "which one ships it".
-            */}
-            {template.status !== "archived" && (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={t(($) => $.editor.more_actions)}
-                    >
-                      <MoreHorizontal aria-hidden="true" />
-                    </Button>
-                  }
-                />
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setMetadataOpen(true)}>
-                    <Pencil />
-                    {t(($) => $.actions.edit_metadata)}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => setArchiveOpen(true)}
-                    disabled={archive.isPending}
+      {/*
+        One 48px bar carries what used to be three stacked rows: the page
+        header, the version row, and the graph card's own heading. The canvas
+        is the page here, so everything else has to earn its vertical space.
+      */}
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
+        <GitBranch
+          aria-hidden="true"
+          className="size-4 shrink-0 text-muted-foreground"
+        />
+        <h1 className="max-w-[18rem] truncate text-sm font-semibold">
+          {template.name}
+        </h1>
+        {/*
+          The version is a label you glance at, not a control you reach for —
+          most sessions edit the newest one. It reads as small muted text and
+          only behaves as a picker when you go looking for history.
+        */}
+        {selectedVersion && versions.length > 0 && (
+          <select
+            aria-label={t(($) => $.editor.version_selector)}
+            value={selectedVersion.id}
+            onChange={(event) => setSelectedVersionId(event.target.value)}
+            className="min-h-7 shrink-0 rounded-md border-none bg-transparent px-1 text-xs text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {versions.map((version) => (
+              <option key={version.id} value={version.id}>
+                {t(($) => $.editor.version_option, {
+                  version: version.version,
+                  status: version.status === "draft"
+                    ? t(($) => $.templates.draft)
+                    : t(($) => $.templates.published),
+                })}
+              </option>
+            ))}
+          </select>
+        )}
+        <nav aria-label={t(($) => $.editor.description)} className="mx-auto">
+          <Tabs
+            value={tab}
+            onValueChange={(value) => setTab(value as WorkflowEditorTab)}
+          >
+            <TabsList variant="line" className="h-12">
+              <TabsTrigger value="graph">
+                {t(($) => $.editor.tab_graph)}
+              </TabsTrigger>
+              <TabsTrigger value="roles">
+                {t(($) => $.editor.tab_roles)}
+              </TabsTrigger>
+              <TabsTrigger value="acceptance">
+                {t(($) => $.editor.tab_acceptance)}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </nav>
+        <div className="flex shrink-0 items-center gap-2">
+          {canManage && !isMobile && (
+            <>
+              {canEdit && (
+                <>
+                  <span className={cn(
+                    "hidden text-xs text-muted-foreground md:inline",
+                    dirty && "text-amber-700 dark:text-amber-300",
+                  )}>
+                    {dirty ? t(($) => $.editor.unsaved) : t(($) => $.editor.saved)}
+                  </span>
+                  <Button
+                    size="sm"
+                    onClick={save}
+                    disabled={!dirty || saveDefinition.isPending}
                   >
-                    <Archive />
-                    {t(($) => $.actions.archive)}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </>
-        ) : undefined}
-      />
-      {!canManage && (
-        <Alert className="m-5 mb-0">
-          <AlertCircle />
-          <AlertTitle>{t(($) => $.templates.admin_only)}</AlertTitle>
-        </Alert>
-      )}
-      {canManage && isMobile && (
-        <Alert className="m-5 mb-0">
-          <AlertCircle />
-          <AlertTitle>{t(($) => $.editor.mobile_read_only)}</AlertTitle>
-        </Alert>
-      )}
-      {template.status === "archived" && (
-        <Alert className="m-5 mb-0">
-          <Archive />
-          <AlertTitle>{t(($) => $.templates.archived_help)}</AlertTitle>
+                    <Save />
+                    {t(($) => $.actions.save)}
+                  </Button>
+                </>
+              )}
+              {/*
+                Editing the name and archiving are rare and never urgent, so
+                they sit behind the overflow rather than competing with save.
+              */}
+              {template.status !== "archived" && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={t(($) => $.editor.more_actions)}
+                      >
+                        <MoreHorizontal aria-hidden="true" />
+                      </Button>
+                    }
+                  />
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => setMetadataOpen(true)}>
+                      <Pencil />
+                      {t(($) => $.actions.edit_metadata)}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setArchiveOpen(true)}
+                      disabled={archive.isPending}
+                    >
+                      <Archive />
+                      {t(($) => $.actions.archive)}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </>
+          )}
+        </div>
+      </header>
+      {readOnlyNotice && (
+        <Alert className="mx-3 mt-3">
+          {template.status === "archived" ? <Archive /> : <AlertCircle />}
+          <AlertTitle>{readOnlyNotice}</AlertTitle>
         </Alert>
       )}
       {/*
@@ -665,7 +720,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
         point of reading it is to go fix that node.
       */}
       {saveError && (
-        <Alert variant="destructive" className="mx-5 mt-5">
+        <Alert variant="destructive" className="mx-3 mt-3">
           <AlertCircle />
           <AlertTitle>{t(($) => $.editor.saved_not_live)}</AlertTitle>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
@@ -679,7 +734,10 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
                     <button
                       type="button"
                       className="text-left underline underline-offset-2"
-                      onClick={() => setSelectedKey(node.key)}
+                      onClick={() => {
+                        setTab("graph");
+                        setSelectedKey(node.key);
+                      }}
                     >
                       {saveError}
                     </button>
@@ -690,56 +748,53 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
           </ul>
         </Alert>
       )}
-      <main
-        data-tab-scroll-root="workflow-template"
-        className="min-h-0 flex-1 overflow-y-auto p-5"
-      >
-        <div className="mx-auto max-w-7xl space-y-4">
-          {selectedVersion && definition ? (
-            <>
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <select
-                    aria-label={t(($) => $.editor.version_selector)}
-                    value={selectedVersion.id}
-                    onChange={(event) => setSelectedVersionId(event.target.value)}
-                    className="min-h-9 rounded-lg border border-input bg-background px-3 text-sm"
-                  >
-                    {versions.map((version) => (
-                      <option key={version.id} value={version.id}>
-                        {t(($) => $.editor.version_option, {
-                          version: version.version,
-                          status: version.status === "draft"
-                            ? t(($) => $.templates.draft)
-                            : t(($) => $.templates.published),
-                        })}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="grid min-h-[34rem] overflow-hidden rounded-xl border bg-surface lg:grid-cols-[minmax(0,1fr)_360px]">
-                <section className="min-w-0 space-y-4 border-b p-5 lg:border-r lg:border-b-0">
-                  <div>
-                    <h2 className="flex items-center gap-2 text-sm font-medium">
-                      <GitFork className="size-4" />
-                      {t(($) => $.editor.graph)}
-                    </h2>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t(($) => $.editor.graph_help)}
-                    </p>
-                  </div>
-                  <WorkflowCanvas
+      {definition && selectedVersion && (
+        tab === "graph" ? (
+          <div className="flex min-h-0 flex-1">
+            {/*
+              The canvas takes every pixel left over instead of sitting in a
+              fixed-height card inside a scrolling page. Nothing here is
+              centred in a max-width column: the graph is the page.
+            */}
+            <section className="relative min-w-0 flex-1 overflow-auto p-4">
+              <WorkflowCanvas
+                definition={definition}
+                nodes={[]}
+                selectedKey={selectedKey}
+                onSelectKey={setSelectedKey}
+                onInsertNode={canEdit ? insertNode : undefined}
+                onRemoveEdge={canEdit ? removeEdge : undefined}
+                onAddBranch={canEdit ? addBranch : undefined}
+                onConnectNode={canEdit ? connectNode : undefined}
+              />
+            </section>
+            {/*
+              The inspector belongs to the selection, the way every canvas
+              editor's right panel does. Roles and acceptance describe the
+              workflow rather than the node, so they are tabs now — which is
+              also what frees this panel of the segmented switch that used to
+              sit on top of the node's own tab row looking like a second one.
+            */}
+            <aside
+              data-tab-scroll-root="workflow-editor"
+              className="w-90 shrink-0 overflow-y-auto border-l bg-muted/10 p-4"
+            >
+              {selectedNode ? (
+                <div className="space-y-5">
+                  <WorkflowNodeDefinitionInspector
+                    node={selectedNode}
                     definition={definition}
-                    nodes={[]}
-                    selectedKey={selectedKey}
-                    onSelectKey={setSelectedKey}
-                    onInsertNode={canEdit ? insertNode : undefined}
-                    onRemoveEdge={canEdit ? removeEdge : undefined}
-                    onAddBranch={canEdit ? addBranch : undefined}
-                    onConnectNode={canEdit ? connectNode : undefined}
+                    actorOptions={actorOptions}
+                    readOnly={!canEdit}
+                    onChange={changeNode}
                   />
-                  {canEdit && selectedNode && selectedNode.kind !== "start" && (
+                  <WorkflowEdgeInspector
+                    definition={definition}
+                    nodeKey={selectedNode.key}
+                    readOnly={!canEdit}
+                    onChange={changeDefinition}
+                  />
+                  {canEdit && selectedNode.kind !== "start" && (
                     <div className="flex justify-end border-t pt-4">
                       <Button
                         size="sm"
@@ -751,83 +806,45 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
                       </Button>
                     </div>
                   )}
-                </section>
-                {/*
-                  The inspector follows the selection, the way every canvas
-                  editor's does: a node when one is selected, the template's own
-                  settings when none is. They used to stack, so editing a node
-                  meant scrolling past two collapsed blocks of roles and
-                  acceptance policy that had nothing to do with it.
-                */}
-                <aside className="max-h-[46rem] overflow-y-auto bg-muted/10 p-5">
-                  {/*
-                    A node is selected on load and the canvas has no empty
-                    space to click, so the template's own settings need a door
-                    of their own — otherwise moving the inspector behind the
-                    selection would hide roles and acceptance for good.
-                  */}
-                  {/*
-                    Two segments rather than one button whose label flips: a
-                    single button had to be read to know what it would do, and
-                    it sat directly above the node's own tab row, so it looked
-                    like a selected tab in a second, unexplained tab bar. Here
-                    the outer choice ("inspect what") is visibly a choice, and
-                    the inner tabs stay the only tabs.
-                  */}
-                  <div className="mb-4 flex rounded-lg bg-muted p-0.5 text-xs font-medium">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedKey(firstNodeKey)}
-                      aria-pressed={Boolean(selectedNode)}
-                      className={cn(
-                        "min-h-8 flex-1 rounded-md px-2 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        selectedNode && "bg-background text-foreground shadow-xs",
-                      )}
-                    >
-                      {t(($) => $.editor.inspect_node)}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedKey("")}
-                      aria-pressed={!selectedNode}
-                      className={cn(
-                        "min-h-8 flex-1 rounded-md px-2 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        !selectedNode && "bg-background text-foreground shadow-xs",
-                      )}
-                    >
-                      {t(($) => $.editor.template_settings)}
-                    </button>
+                </div>
+              ) : (
+                <p className="px-1 py-6 text-xs text-muted-foreground">
+                  {t(($) => $.editor.select_node)}
+                </p>
+              )}
+            </aside>
+          </div>
+        ) : (
+          <main className="min-h-0 flex-1 overflow-y-auto p-5">
+            <div className="mx-auto max-w-3xl">
+              {tab === "roles" ? (
+                <section className="space-y-4">
+                  <div>
+                    <h2 className="text-sm font-medium">
+                      {t(($) => $.editor.workflow_roles)}
+                    </h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t(($) => $.editor.roles_help)}
+                    </p>
                   </div>
-                  {!selectedNode && (
-                    <WorkflowDefinitionInspector
-                      definition={definition}
-                      readOnly={!canEdit}
-                      onChange={changeDefinition}
-                    />
-                  )}
-                  {selectedNode && (
-                    <div className="space-y-5">
-                      <WorkflowNodeDefinitionInspector
-                        node={selectedNode}
-                        definition={definition}
-                        actorOptions={actorOptions}
-                        readOnly={!canEdit}
-                        onChange={changeNode}
-                      />
-                      <WorkflowEdgeInspector
-                        definition={definition}
-                        nodeKey={selectedNode.key}
-                        readOnly={!canEdit}
-                        onChange={changeDefinition}
-                      />
-                    </div>
-                  )}
-                </aside>
-              </div>
-            </>
-          ) : null}
-        </div>
-      </main>
+                  <WorkflowRoleEditor
+                    roles={definition.roles}
+                    readOnly={!canEdit}
+                    onChange={(roles) =>
+                      changeDefinition({ ...definition, roles })}
+                  />
+                </section>
+              ) : (
+                <WorkflowDefinitionInspector
+                  definition={definition}
+                  readOnly={!canEdit}
+                  onChange={changeDefinition}
+                />
+              )}
+            </div>
+          </main>
+        )
+      )}
 
       {template && template.status !== "archived" && (
         <TemplateMetadataDialog

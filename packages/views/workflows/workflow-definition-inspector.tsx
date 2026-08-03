@@ -531,16 +531,24 @@ export function WorkflowDefinitionInspector({
   onChange: (definition: WorkflowDefinition) => void;
 }) {
   const { t } = useT("workflows");
+  // A whole editor tab of its own, so the heading states what the tab is
+  // rather than acting as a disclosure the reader has to open first.
   return (
-    <div className="space-y-3">
-      <InspectorSection title={t(($) => $.editor.workflow_acceptance)}>
-        <AcceptanceEditor
-          definition={definition}
-          readOnly={readOnly}
-          onChange={onChange}
-        />
-      </InspectorSection>
-    </div>
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-sm font-medium">
+          {t(($) => $.editor.workflow_acceptance)}
+        </h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t(($) => $.editor.acceptance_help)}
+        </p>
+      </div>
+      <AcceptanceEditor
+        definition={definition}
+        readOnly={readOnly}
+        onChange={onChange}
+      />
+    </section>
   );
 }
 

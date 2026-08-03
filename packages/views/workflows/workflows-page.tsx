@@ -21,7 +21,6 @@ import {
   useCopyWorkflow,
   useCreateWorkflowRun,
   useRunWorkflow,
-  useSaveWorkflowDefinition,
   workflowBuiltinTemplateListOptions,
   workflowListOptions,
   workflowOptions,
@@ -69,7 +68,6 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../i18n";
 import { WorkflowStatusBadge } from "./workflow-status";
 import { canManageWorkflows } from "./workflow-list";
-import { WorkflowRoleEditor } from "./workflow-definition-inspector";
 import { workflowPreviewActivities } from "./workflow-preview";
 
 function defaultWorkflowDefinition(): WorkflowDefinition {
@@ -412,6 +410,12 @@ function RunTemplateDialog({
 
 type TemplateStatusFilter = "all" | "published" | "draft" | "archived";
 
+// The newest version is the one the editor opens and the one an unsaved draft
+// belongs to, so it is the number worth showing next to the name.
+function latestVersionOf(workflow: Workflow): number {
+  return Math.max(workflow.draft_version, workflow.latest_published_version);
+}
+
 function matchesTemplateStatus(
   template: Workflow,
   filter: TemplateStatusFilter,
@@ -637,12 +641,26 @@ function TemplatesPanel({
                         className="size-4 shrink-0 text-muted-foreground"
                       />
                       <div className="min-w-0">
-                        <AppLink
-                          href={p.workflow(template.id)}
-                          className="block truncate font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          {template.name}
-                        </AppLink>
+                        {/*
+                          The version rides with the name rather than owning a
+                          column or a control at the top of the editor: it is
+                          something you check, not something you set.
+                        */}
+                        <div className="flex min-w-0 items-baseline gap-1.5">
+                          <AppLink
+                            href={p.workflow(template.id)}
+                            className="truncate font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            {template.name}
+                          </AppLink>
+                          {latestVersionOf(template) > 0 && (
+                            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                              {t(($) => $.editor.version_short, {
+                                version: latestVersionOf(template),
+                              })}
+                            </span>
+                          )}
+                        </div>
                         {template.description && (
                           <span className="mt-0.5 block truncate text-xs text-muted-foreground">
                             {template.description}
@@ -724,177 +742,6 @@ function TemplatesPanel({
         }}
       />
     </div>
-  );
-}
-
-function RolesPanel({ canManage }: { canManage: boolean }) {
-  const { t } = useT("workflows");
-  const wsId = useWorkspaceId();
-  const workflowsQuery = useQuery(workflowListOptions(wsId));
-  const workflows = useMemo(
-    () => (workflowsQuery.data?.workflows ?? []).filter(
-      (workflow) => workflow.status !== "archived",
-    ),
-    [workflowsQuery.data?.workflows],
-  );
-  const [workflowId, setWorkflowId] = useState("");
-  const detailQuery = useQuery({
-    ...workflowOptions(wsId, workflowId),
-    enabled: Boolean(workflowId),
-  });
-  const versions = useMemo(
-    () => [...(detailQuery.data?.versions ?? [])].sort(
-      (left, right) => right.version - left.version,
-    ),
-    [detailQuery.data?.versions],
-  );
-  const latestVersion = versions.find((version) => version.status === "draft") ??
-    versions.find((version) => version.status === "published") ??
-    versions[0];
-  const [definition, setDefinition] = useState<WorkflowDefinition | null>(null);
-  const [loadedVersionId, setLoadedVersionId] = useState("");
-  const [dirty, setDirty] = useState(false);
-  const [saveError, setSaveError] = useState("");
-  const saveDefinition = useSaveWorkflowDefinition(workflowId);
-  const readOnly = !canManage ||
-    detailQuery.data?.workflow.status === "archived";
-
-  useEffect(() => {
-    if (workflowId && workflows.some((workflow) => workflow.id === workflowId)) {
-      return;
-    }
-    setWorkflowId(workflows[0]?.id ?? "");
-    setLoadedVersionId("");
-    setDefinition(null);
-    setDirty(false);
-    setSaveError("");
-  }, [workflowId, workflows]);
-
-  useEffect(() => {
-    if (!latestVersion || latestVersion.id === loadedVersionId) return;
-    setDefinition(latestVersion.definition);
-    setLoadedVersionId(latestVersion.id);
-    setDirty(false);
-    setSaveError("");
-  }, [latestVersion, loadedVersionId]);
-
-  const save = () => {
-    if (!definition || !latestVersion || readOnly || !dirty) return;
-    setSaveError("");
-    saveDefinition.mutate({
-      definition,
-      revision: latestVersion.revision,
-    }, {
-      onSuccess: (result) => {
-        setDefinition(result.version.definition);
-        setLoadedVersionId(result.version.id);
-        setDirty(false);
-        setSaveError(result.validation_error);
-      },
-      onError: (cause) => setSaveError(
-        cause instanceof Error ? cause.message : t(($) => $.errors.load),
-      ),
-    });
-  };
-
-  if (workflowsQuery.isError || detailQuery.isError) {
-    return (
-      <CollectionPageState
-        icon={AlertTriangle}
-        title={t(($) => $.errors.load)}
-        tone="destructive"
-        role="alert"
-      />
-    );
-  }
-
-  if (!workflowsQuery.isLoading && workflows.length === 0) {
-    return (
-      <CollectionPageState
-        icon={Users}
-        title={t(($) => $.templates.empty_title)}
-        description={t(($) => $.templates.empty_description)}
-      />
-    );
-  }
-
-  return (
-    <section aria-labelledby="workflow-roles-title" className="space-y-5">
-      <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0 flex-1 space-y-1.5">
-          <h2 id="workflow-roles-title" className="text-base font-semibold">
-            {t(($) => $.editor.workflow_roles)}
-          </h2>
-          <Label htmlFor="workflow-role-workflow" className="sr-only">
-            {t(($) => $.templates.title)}
-          </Label>
-          {workflowsQuery.isLoading ? (
-            <Skeleton className="h-10 w-full max-w-md rounded-lg" />
-          ) : (
-            <select
-              id="workflow-role-workflow"
-              value={workflowId}
-              onChange={(event) => {
-                setWorkflowId(event.target.value);
-                setLoadedVersionId("");
-                setDefinition(null);
-                setDirty(false);
-                setSaveError("");
-              }}
-              className="min-h-10 w-full max-w-md rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              {workflows.map((workflow) => (
-                <option key={workflow.id} value={workflow.id}>
-                  {workflow.name}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-        {canManage && (
-          <Button
-            size="sm"
-            onClick={save}
-            disabled={!definition || !dirty || readOnly || saveDefinition.isPending}
-          >
-            {saveDefinition.isPending && (
-              <Loader2 className="animate-spin motion-reduce:animate-none" />
-            )}
-            {t(($) => $.actions.save)}
-          </Button>
-        )}
-      </div>
-
-      {detailQuery.isLoading || !definition ? (
-        <div className="grid gap-3 md:grid-cols-2">
-          <Skeleton className="h-40 rounded-lg" />
-          <Skeleton className="h-40 rounded-lg" />
-        </div>
-      ) : (
-        <div className="max-w-3xl">
-          <WorkflowRoleEditor
-            roles={definition.roles}
-            readOnly={readOnly}
-            onChange={(roles) => {
-              if (readOnly) return;
-              setDefinition({ ...definition, roles });
-              setDirty(true);
-              setSaveError("");
-            }}
-          />
-          {dirty && (
-            <p className="mt-3 text-xs text-muted-foreground">
-              {t(($) => $.editor.unsaved)}
-            </p>
-          )}
-          {saveError && (
-            <p role="alert" className="mt-3 text-xs text-destructive">
-              {saveError}
-            </p>
-          )}
-        </div>
-      )}
-    </section>
   );
 }
 
@@ -1289,7 +1136,7 @@ export function NewWorkflowDialog() {
   );
 }
 
-type WorkflowPageTab = "workflows" | "roles" | "builtin";
+type WorkflowPageTab = "workflows" | "builtin";
 
 export function WorkflowsPage() {
   const { t } = useT("workflows");
@@ -1315,9 +1162,6 @@ export function WorkflowsPage() {
             <TabsTrigger value="workflows">
               {t(($) => $.tabs.templates)}
             </TabsTrigger>
-            <TabsTrigger value="roles">
-              {t(($) => $.tabs.roles)}
-            </TabsTrigger>
             <TabsTrigger value="builtin">
               {t(($) => $.tabs.builtin)}
             </TabsTrigger>
@@ -1333,8 +1177,6 @@ export function WorkflowsPage() {
         <div className={cn("w-full", tab !== "workflows" && "mx-auto max-w-7xl px-5 py-5")}>
           {tab === "builtin" ? (
             <BuiltinTemplatesPanel canManage={canManage} />
-          ) : tab === "roles" ? (
-            <RolesPanel canManage={canManage} />
           ) : (
             <TemplatesPanel canManage={canManage} />
           )}

@@ -220,6 +220,7 @@ vi.mock("./workflow-canvas", () => ({
 vi.mock("./workflow-definition-inspector", () => ({
   WorkflowDefinitionInspector: () => <div>Definition inspector</div>,
   WorkflowNodeDefinitionInspector: () => <div>Node inspector</div>,
+  WorkflowRoleEditor: () => <div>Role editor</div>,
 }));
 
 function renderPage() {
@@ -406,32 +407,27 @@ describe("WorkflowPage", () => {
   });
 });
 
-describe("WorkflowPage inspector", () => {
-  // The inspector used to stack template-level settings above the node being
-  // edited, so every node edit began by scrolling past roles and acceptance.
-  // Now it follows the selection — but a node is selected on load and the
-  // canvas has no empty space to click, so the template settings need their
-  // own door or they become unreachable.
-  it("swaps the inspector between node and template settings", async () => {
+describe("WorkflowPage sections", () => {
+  // Roles and acceptance describe the workflow, not the selected node, so they
+  // are tabs beside the graph rather than a second panel behind a segmented
+  // switch in the node inspector. That switch sat directly above the node's
+  // own tab row and read as a tab bar nobody had explained.
+  it("keeps the graph, roles, and acceptance as sibling editor tabs", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    // A node is selected on load, so the Node segment is the active one.
-    const nodeSeg = await screen.findByRole("button", { name: "Node" });
-    const templateSeg = screen.getByRole("button", { name: "Template settings" });
-    expect(nodeSeg).toHaveAttribute("aria-pressed", "true");
-    expect(templateSeg).toHaveAttribute("aria-pressed", "false");
-    expect(screen.queryByText("Definition inspector")).toBeNull();
+    expect((await screen.findAllByRole("tab")).map((tab) => tab.textContent))
+      .toEqual(["Graph", "Roles", "Acceptance"]);
 
-    await user.click(templateSeg);
+    await user.click(screen.getByRole("tab", { name: "Roles" }));
+    expect(await screen.findByText("Role editor")).toBeInTheDocument();
+    expect(screen.queryByText("Node inspector")).toBeNull();
+
+    await user.click(screen.getByRole("tab", { name: "Acceptance" }));
     expect(await screen.findByText("Definition inspector")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Template settings" }))
-      .toHaveAttribute("aria-pressed", "true");
 
-    // And back again, so selecting a node is not a one-way door.
-    await user.click(screen.getByRole("button", { name: "Node" }));
-    await waitFor(() =>
-      expect(screen.queryByText("Definition inspector")).toBeNull()
-    );
+    // And back, so opening a section is not a one-way door out of the graph.
+    await user.click(screen.getByRole("tab", { name: "Graph" }));
+    expect(await screen.findByText("Node inspector")).toBeInTheDocument();
   });
 });

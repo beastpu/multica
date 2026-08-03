@@ -57,6 +57,8 @@ const templateSummary = {
   run_count: 4,
   last_published_by: null,
   last_published_at: null,
+  latest_published_version: 3,
+  draft_version: 0,
 };
 
 const templateDetail = {
@@ -264,12 +266,17 @@ describe("WorkflowsPage", () => {
     mocks.saveDefinition.mockReset();
   });
 
-  it("keeps definitions, roles, and starter templates as the only page tabs", () => {
+  // Roles were their own tab with their own workflow picker and their own
+  // save button, editing the same definition the editor page edits. They now
+  // live inside that editor, which leaves the list page with the two things
+  // that are genuinely list-level: the workflows, and what you can start from.
+  it("keeps definitions and starter templates as the only page tabs", () => {
     render(<WorkflowsPage />, { wrapper });
 
     expect(
       screen.getAllByRole("tab").map((tab) => tab.textContent),
-    ).toEqual(["Workflows", "Roles", "Starter templates"]);
+    ).toEqual(["Workflows", "Starter templates"]);
+    expect(screen.queryByRole("tab", { name: "Roles" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Active" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Related to me" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Completed" })).toBeNull();
@@ -290,15 +297,11 @@ describe("WorkflowsPage", () => {
       .toHaveAttribute("href", "/workspace/workflows/template-1");
   });
 
-  it("moves workflow role management into its own page tab", async () => {
-    const user = userEvent.setup();
+  // The version is the one number that says whether what you are looking at
+  // is what runs. It rides with the name instead of costing a column.
+  it("marks each workflow with its newest version next to the name", () => {
     render(<WorkflowsPage />, { wrapper });
 
-    await user.click(screen.getByRole("tab", { name: "Roles" }));
-
-    expect(await screen.findByText("Workflow roles")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Owner")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add role" }))
-      .toBeInTheDocument();
+    expect(screen.getByText("v3")).toBeInTheDocument();
   });
 });
