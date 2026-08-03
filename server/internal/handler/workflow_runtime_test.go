@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/internal/service"
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
@@ -1991,7 +1992,7 @@ func TestWorkflowSquadExecutorMaterializationWakesLeader(t *testing.T) {
 	}
 }
 
-func TestWorkflowAgentSubmissionAndVerdictRemainControlledSuggestion(t *testing.T) {
+func TestWorkflowAgentSubmissionCannotSelfApprove(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
 	ctx := context.Background()
@@ -2108,30 +2109,213 @@ func TestWorkflowAgentSubmissionAndVerdictRemainControlledSuggestion(t *testing.
 	verdictRequest.Header.Set("X-Agent-ID", agentID)
 	verdictRequest.Header.Set("X-Task-ID", agentTaskID)
 	testHandler.CreateWorkflowNodeVerdict(verdictRecorder, verdictRequest)
-	if verdictRecorder.Code != http.StatusCreated {
+	if verdictRecorder.Code != http.StatusConflict {
 		t.Fatalf(
-			"agent verdict status = %d, body = %s",
+			"agent self-verdict status = %d, body = %s",
 			verdictRecorder.Code,
 			verdictRecorder.Body.String(),
 		)
 	}
-	var verdictResponse struct {
-		Verdict workflowVerdictResponse `json:"verdict"`
-	}
-	if err := json.Unmarshal(verdictRecorder.Body.Bytes(), &verdictResponse); err != nil {
-		t.Fatalf("decode agent verdict: %v", err)
-	}
-	if verdictResponse.Verdict.EvaluatorType != "agent" ||
-		verdictResponse.Verdict.EvaluatorID == nil ||
-		*verdictResponse.Verdict.EvaluatorID != agentID {
-		t.Fatalf("agent verdict actor = %#v", verdictResponse.Verdict)
-	}
 	currentNode := latestWorkflowNodeForTest(t, started.Instance.ID, "work")
 	if currentNode.LatestVerdictID.Valid {
 		t.Fatalf(
-			"agent suggestion became current workflow truth: %s",
+			"worker self-verdict became current workflow truth: %s",
 			uuidToString(currentNode.LatestVerdictID),
 		)
+	}
+}
+
+func TestWorkflowAgentCriticCompletion(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		output      string
+		wantStatus  string
+		wantAttempt int32
+	}{
+		{name: "approval advances", output: `{"approved":true,"comment":"meets the acceptance criteria"}`, wantStatus: "completed", wantAttempt: 1},
+		{name: "rejection starts rework", output: `{"approved":false,"comment":"add the missing regression test"}`, wantStatus: "running", wantAttempt: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+			cleanupWorkflowRuntimeTest(t)
+			ctx := context.Background()
+			workerID := createHandlerTestAgent(t, "workflow-critic-worker-"+test.name, nil)
+			criticID := createHandlerTestAgent(t, "workflow-critic-reviewer-"+test.name, nil)
+
+			definition := workflowdomain.Definition{
+				SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+				Name:          "Agent Critic completion",
+				Nodes: []workflowdomain.NodeDefinition{
+					{Key: "start", Kind: "start", Name: "Start"},
+					{
+						Key: "work", Kind: "activity", Name: "Agent work",
+						IssuePolicy: "none",
+						Executor: &workflowdomain.ExecutorDefinition{
+							Kind: "actor", ActorType: "agent", ActorID: workerID,
+							Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+						},
+						Reviewer: &workflowdomain.ReviewerDefinition{
+							Kind: "actor", ActorType: "agent", ActorID: criticID,
+							Required: true,
+						},
+						Artifacts: []workflowdomain.ArtifactRequirement{{
+							Key: "implementation", Name: "Implementation", Required: true,
+						}},
+					},
+					{Key: "end", Kind: "end", Name: "End"},
+				},
+				Edges: []workflowdomain.EdgeDefinition{
+					{From: "start", To: "work"}, {From: "work", To: "end"},
+				},
+			}
+			if err := workflowdomain.ValidateDefinition(definition); err != nil {
+				t.Fatalf("critic workflow definition invalid: %v", err)
+			}
+			templateID := createPublishedWorkflowForTest(
+				t, "Agent Critic template "+test.name, definition,
+			)
+			hostID := createWorkflowHostForTest(t, "Agent Critic host "+test.name)
+			started := startWorkflowForTest(
+				t, hostID, templateID, nil, "agent-critic-start-"+test.name,
+			)
+			work := findWorkflowNodeResponse(t, started.Nodes, "work", 1)
+
+			var executionTaskID string
+			if err := testPool.QueryRow(ctx, `
+				SELECT id FROM workflow_node_task
+				WHERE workflow_node_instance_id = $1 AND source = 'execution'
+			`, work.ID).Scan(&executionTaskID); err != nil {
+				t.Fatalf("load direct Worker task: %v", err)
+			}
+			if _, err := testPool.Exec(ctx, `
+					UPDATE agent_task_queue
+					SET status = 'completed', result = $2, completed_at = now()
+					WHERE workflow_node_task_id = $1
+				`, executionTaskID, []byte(`{"output":"implemented the requested behavior"}`)); err != nil {
+				t.Fatalf("complete direct Worker task: %v", err)
+			}
+			artifact, err := testHandler.Queries.CreateWorkflowArtifact(
+				ctx,
+				db.CreateWorkflowArtifactParams{
+					WorkspaceID:            parseUUID(testWorkspaceID),
+					WorkflowInstanceID:     parseUUID(started.Instance.ID),
+					WorkflowNodeInstanceID: parseUUID(work.ID),
+					ArtifactKey:            "implementation", Attempt: 1,
+					Kind: "document", Name: "Implementation",
+					Content:         "implemented the requested behavior",
+					SubmittedByType: "agent", SubmittedByID: parseUUID(workerID),
+				},
+			)
+			if err != nil {
+				t.Fatalf("submit Worker artifact: %v", err)
+			}
+			if _, err := testHandler.reconcileWorkflowInstance(
+				ctx, parseUUID(testWorkspaceID), parseUUID(started.Instance.ID),
+				"system", pgtype.UUID{}, "agent-critic-delivered-"+test.name,
+			); err != nil && !errors.Is(err, errWorkflowNoop) {
+				t.Fatalf("reconcile Worker delivery: %v", err)
+			}
+
+			var criticCarrierID string
+			if err := testPool.QueryRow(ctx, `
+				SELECT id FROM workflow_node_task
+				WHERE workflow_node_instance_id = $1 AND source = 'critic'
+			`, work.ID).Scan(&criticCarrierID); err != nil {
+				t.Fatalf("load Critic task carrier: %v", err)
+			}
+			criticTask, err := testHandler.Queries.GetLatestAgentTaskForWorkflowNodeTask(
+				ctx, parseUUID(criticCarrierID),
+			)
+			if err != nil {
+				t.Fatalf("load Critic agent task: %v", err)
+			}
+			direct, ok := service.ParseWorkflowNodeTaskContext(criticTask)
+			if !ok || direct.Phase != service.WorkflowNodeTaskPhaseCritic ||
+				uuidToString(criticTask.AgentID) != criticID {
+				t.Fatalf("unexpected Critic task: task=%#v context=%#v", criticTask, direct)
+			}
+			if err := testHandler.recordWorkflowAgentCriticVerdict(
+				ctx, criticTask, test.output,
+			); err != nil {
+				t.Fatalf("record Critic verdict: %v", err)
+			}
+
+			instance, err := testHandler.Queries.GetWorkflowInstanceInWorkspace(
+				ctx,
+				db.GetWorkflowInstanceInWorkspaceParams{
+					ID: parseUUID(started.Instance.ID), WorkspaceID: parseUUID(testWorkspaceID),
+				},
+			)
+			if err != nil || instance.Status != test.wantStatus {
+				t.Fatalf("instance status = %q, want %q, err=%v", instance.Status, test.wantStatus, err)
+			}
+			latest := latestWorkflowNodeForTest(t, started.Instance.ID, "work")
+			if latest.Attempt != test.wantAttempt {
+				t.Fatalf("latest work attempt = %d, want %d", latest.Attempt, test.wantAttempt)
+			}
+			reviewedArtifact, err := testHandler.Queries.GetWorkflowArtifact(
+				ctx,
+				db.GetWorkflowArtifactParams{
+					ID: artifact.ID, WorkspaceID: parseUUID(testWorkspaceID),
+				},
+			)
+			if err != nil {
+				t.Fatalf("load reviewed artifact: %v", err)
+			}
+			wantArtifactStatus := "approved"
+			if test.wantAttempt == 2 {
+				wantArtifactStatus = "rejected"
+			}
+			if reviewedArtifact.ReviewStatus != wantArtifactStatus {
+				t.Fatalf(
+					"artifact review status = %q, want %q",
+					reviewedArtifact.ReviewStatus,
+					wantArtifactStatus,
+				)
+			}
+			verdicts, err := testHandler.Queries.ListWorkflowVerdicts(
+				ctx,
+				db.ListWorkflowVerdictsParams{
+					WorkflowNodeInstanceID: parseUUID(work.ID),
+					WorkspaceID:            parseUUID(testWorkspaceID),
+				},
+			)
+			if err != nil || len(verdicts) == 0 {
+				t.Fatalf("load Critic verdicts: count=%d err=%v", len(verdicts), err)
+			}
+			var verdictBasis struct {
+				ArtifactIDs []string `json:"artifact_ids"`
+			}
+			if err := json.Unmarshal(verdicts[0].Basis, &verdictBasis); err != nil {
+				t.Fatalf("decode Critic verdict basis: %v", err)
+			}
+			if len(verdictBasis.ArtifactIDs) != 1 ||
+				verdictBasis.ArtifactIDs[0] != uuidToString(artifact.ID) {
+				t.Fatalf("Critic verdict artifact snapshot = %#v", verdictBasis.ArtifactIDs)
+			}
+			if test.wantAttempt == 2 {
+				var reworkTaskID string
+				if err := testPool.QueryRow(ctx, `
+					SELECT queue.id
+					FROM agent_task_queue queue
+					JOIN workflow_node_task task ON task.id = queue.workflow_node_task_id
+					WHERE task.workflow_node_instance_id = $1 AND task.source = 'execution'
+					ORDER BY queue.created_at DESC LIMIT 1
+				`, uuidToString(latest.ID)).Scan(&reworkTaskID); err != nil {
+					t.Fatalf("load rework Worker task: %v", err)
+				}
+				reworkTask, err := testHandler.Queries.GetAgentTask(ctx, parseUUID(reworkTaskID))
+				if err != nil {
+					t.Fatalf("load rework Worker context: %v", err)
+				}
+				workflowContext := testHandler.workflowTaskContextForDirectTask(ctx, reworkTask)
+				if workflowContext == nil || workflowContext.Rework == nil ||
+					workflowContext.Rework.Source != "critic" ||
+					workflowContext.Rework.Reason != "add the missing regression test" {
+					t.Fatalf("unexpected rework context: %#v", workflowContext)
+				}
+			}
+		})
 	}
 }
 

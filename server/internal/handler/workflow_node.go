@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/internal/util"
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -653,6 +654,70 @@ func (h *Handler) canAgentSubmitWorkflowNode(
 	return false, nil
 }
 
+func workflowReviewerAssignment(
+	ctx context.Context,
+	q *db.Queries,
+	node db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+) (string, pgtype.UUID, bool, error) {
+	reviewer := nodeDefinition.Reviewer
+	if reviewer == nil {
+		return "", pgtype.UUID{}, false, nil
+	}
+	role := "reviewer"
+	if reviewer.Kind == "owner" {
+		role = "owner"
+	}
+	if reviewer.Kind == "actor" {
+		actorID, err := util.ParseUUID(reviewer.ActorID)
+		if err != nil {
+			return "", pgtype.UUID{}, false, err
+		}
+		return reviewer.ActorType, actorID, true, nil
+	}
+	if reviewer.Kind != "role" && reviewer.Kind != "owner" {
+		return "", pgtype.UUID{}, false, nil
+	}
+	participants, err := q.ListWorkflowNodeParticipants(
+		ctx,
+		db.ListWorkflowNodeParticipantsParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	)
+	if err != nil {
+		return "", pgtype.UUID{}, false, err
+	}
+	for _, participant := range participants {
+		if participant.Role == role {
+			return participant.ActorType, participant.ActorID, true, nil
+		}
+	}
+	return "", pgtype.UUID{}, false, nil
+}
+
+func workflowActorMatchesReviewer(
+	ctx context.Context,
+	q *db.Queries,
+	reviewerType string,
+	reviewerID pgtype.UUID,
+	actorType string,
+	actorID pgtype.UUID,
+) (bool, error) {
+	switch reviewerType {
+	case "member", "agent":
+		return reviewerType == actorType && reviewerID == actorID, nil
+	case "squad":
+		if actorType != "agent" {
+			return false, nil
+		}
+		return q.IsSquadMember(ctx, db.IsSquadMemberParams{
+			SquadID: reviewerID, MemberType: "agent", MemberID: actorID,
+		})
+	default:
+		return false, nil
+	}
+}
+
 func normalizeWorkflowJSONArray(w http.ResponseWriter, raw json.RawMessage, field string) ([]byte, bool) {
 	if len(raw) == 0 {
 		return []byte("[]"), true
@@ -759,30 +824,25 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	allowed := false
-	var err error
-	eventAction := "member_verdict"
 	if actorType == "agent" {
-		eventAction = "agent_verdict_suggestion"
-		allowed, err = h.canAgentSubmitWorkflowNode(r.Context(), node, actorID)
-	} else {
-		if !workflowdomain.ReviewerAcceptsMember(nodeDefinition) {
-			writeError(w, http.StatusConflict, "workflow node does not accept a member verdict")
-			return
-		}
-		allowed, err = h.canSubmitWorkflowNode(
-			r.Context(), instance, node, nodeDefinition, actorID,
-		)
-		if err == nil && !allowed {
-			member, memberErr := h.Queries.GetMemberByUserAndWorkspace(
-				r.Context(),
-				db.GetMemberByUserAndWorkspaceParams{
-					UserID: actorID, WorkspaceID: node.WorkspaceID,
-				},
-			)
-			allowed = memberErr == nil && roleAllowed(member.Role, "owner", "admin")
-		}
+		writeError(w, http.StatusConflict, "agent reviewer verdicts are recorded from Critic task completion")
+		return
 	}
+	reviewerType, reviewerID, resolved, err := workflowReviewerAssignment(
+		r.Context(), h.Queries, node, nodeDefinition,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve workflow reviewer")
+		return
+	}
+	if !resolved {
+		writeError(w, http.StatusConflict, "workflow reviewer is not assigned")
+		return
+	}
+	eventAction := "member_verdict"
+	allowed, err := workflowActorMatchesReviewer(
+		r.Context(), h.Queries, reviewerType, reviewerID, actorType, actorID,
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to verify workflow verdict permission")
 		return
@@ -873,6 +933,14 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusConflict, "a valid submission is required before recording a verdict")
 		return
 	}
+	artifactIDs, err := reviewWorkflowArtifactsForVerdict(
+		r.Context(), qtx, node.WorkspaceID, currentNode, nodeDefinition,
+		req.Result, strings.TrimSpace(req.Reason), actorID,
+	)
+	if err != nil {
+		writeError(w, http.StatusConflict, "workflow artifacts are not ready for review: "+err.Error())
+		return
+	}
 	revision, err := qtx.GetNextWorkflowVerdictRevision(
 		r.Context(),
 		db.GetNextWorkflowVerdictRevisionParams{
@@ -890,6 +958,7 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 	basis, _ := json.Marshal(map[string]any{
 		"submission_id": uuidToString(submission.ID),
 		"kind":          eventAction,
+		"artifact_ids":  artifactIDs,
 	})
 	definitionSnapshot, _ := json.Marshal(nodeDefinition.Reviewer)
 	verdict, err := qtx.CreateWorkflowVerdict(
@@ -907,16 +976,14 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusConflict, "verdict revision changed; retry the request")
 		return
 	}
-	if actorType == "member" {
-		if err := qtx.SetWorkflowNodeLatestVerdict(
-			r.Context(),
-			db.SetWorkflowNodeLatestVerdictParams{
-				LatestVerdictID: verdict.ID, ID: node.ID, WorkspaceID: node.WorkspaceID,
-			},
-		); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update current verdict")
-			return
-		}
+	if err := qtx.SetWorkflowNodeLatestVerdict(
+		r.Context(),
+		db.SetWorkflowNodeLatestVerdictParams{
+			LatestVerdictID: verdict.ID, ID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update current verdict")
+		return
 	}
 	payload, _ := json.Marshal(map[string]any{
 		"action":     eventAction,
@@ -937,13 +1004,21 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to commit workflow verdict")
 		return
 	}
-	h.Metrics.RecordWorkflowVerdict(actorType, verdict.Result)
-	if actorType == "member" {
-		_, _ = h.reconcileWorkflowInstance(
-			r.Context(), node.WorkspaceID, instance.ID, actorType, actorID,
-			"verdict:"+uuidToString(verdict.ID),
-		)
+	reviewStatus := ""
+	if req.Result == "pass" {
+		reviewStatus = "approved"
+	} else if req.Result == "fail" {
+		reviewStatus = "rejected"
 	}
+	h.publishWorkflowArtifactsReviewed(
+		node.WorkspaceID, instance.ID, node.ID, actorType, actorIDText,
+		artifactIDs, reviewStatus,
+	)
+	h.Metrics.RecordWorkflowVerdict(actorType, verdict.Result)
+	_, _ = h.reconcileWorkflowInstance(
+		r.Context(), node.WorkspaceID, instance.ID, actorType, actorID,
+		"verdict:"+uuidToString(verdict.ID),
+	)
 	h.publishWorkflowRealtime(
 		protocol.EventWorkflowVerdictCreated,
 		uuidToString(node.WorkspaceID), actorType, actorIDText,
@@ -1021,6 +1096,11 @@ func (h *Handler) ReconcileWorkflowInstance(w http.ResponseWriter, r *http.Reque
 }
 
 var errWorkflowNoop = errors.New("workflow reconciliation made no transition")
+
+type workflowCriticDispatch struct {
+	node       db.WorkflowNodeInstance
+	definition workflowdomain.NodeDefinition
+}
 
 func (h *Handler) reconcileWorkflowInstance(
 	ctx context.Context,
@@ -1120,6 +1200,7 @@ func (h *Handler) reconcileWorkflowInstance(
 		var blockedNodes []db.WorkflowNodeInstance
 		var createdSubmissions []db.WorkflowNodeSubmission
 		var createdVerdicts []db.WorkflowNodeVerdict
+		var criticDispatches []workflowCriticDispatch
 		for _, active := range workflowActiveNodes(propagated.Nodes, plan) {
 			nodeDefinition, exists := plan.Node(active.NodeKey)
 			if !exists || nodeDefinition.Kind != "activity" {
@@ -1201,7 +1282,7 @@ func (h *Handler) reconcileWorkflowInstance(
 				switch {
 				case workflowWaitingReasonsBlockNode(reasons):
 					nextStatus = "blocked"
-				case workflowdomain.ReviewerAcceptsMember(nodeDefinition) &&
+				case workflowdomain.ReviewerAcceptsActor(nodeDefinition) &&
 					workflowWaitingReasonsAwaitReview(reasons):
 					nextStatus = "in_review"
 				}
@@ -1215,6 +1296,11 @@ func (h *Handler) reconcileWorkflowInstance(
 					return locked, err
 				}
 				propagated.Nodes[active.NodeKey] = updatedNode
+				if workflowWaitingReasonsNeedReviewer(reasons) {
+					criticDispatches = append(criticDispatches, workflowCriticDispatch{
+						node: updatedNode, definition: nodeDefinition,
+					})
+				}
 				if nextStatus == "blocked" && active.Status != "blocked" {
 					blockedNodes = append(blockedNodes, updatedNode)
 				}
@@ -1320,6 +1406,13 @@ func (h *Handler) reconcileWorkflowInstance(
 		h.applyWorkflowNodeEnterActions(ctx, updated, definition, activated)
 		for _, node := range activated {
 			h.materializeWorkflowNodeTasks(ctx, workspaceID, updated, node)
+		}
+		for _, dispatch := range criticDispatches {
+			if err := h.ensureWorkflowAgentCriticTask(
+				ctx, updated, dispatch.node, dispatch.definition,
+			); err != nil {
+				return updated, err
+			}
 		}
 		if repairedTasks && h.WorkflowMaterializer != nil {
 			h.WorkflowMaterializer.Notify()
@@ -1554,9 +1647,10 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 				continue
 			}
 			// A rejected artifact is an explicit "not acceptable", so it blocks
-			// exactly like a missing one. Submitted and approved both pass:
-			// requiring approval here would stall every node whose artifacts
-			// nobody was asked to review.
+			// exactly like a missing one. Submitted and approved both let the
+			// delivery enter review; actor-reviewed nodes have a stricter
+			// post-verdict gate below and cannot leave until required artifacts
+			// are approved.
 			if artifact.ReviewStatus == "rejected" {
 				reasons = append(reasons, workflowdomain.WaitingReason{
 					Code: "required_artifact_rejected", Field: requirement.Key,
@@ -1680,7 +1774,18 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 			db.WorkflowNodeVerdict{}, includeManualCompletion,
 		)
 	}
-	if workflowdomain.ReviewerAcceptsMember(nodeDefinition) {
+	if workflowdomain.ReviewerAcceptsActor(nodeDefinition) {
+		reviewerType, reviewerID, resolved, err := workflowReviewerAssignment(
+			ctx, q, node, nodeDefinition,
+		)
+		if err != nil {
+			return false, nil, submission, db.WorkflowNodeVerdict{}, err
+		}
+		if !resolved {
+			return false, []workflowdomain.WaitingReason{{
+				Code: "review_required", Message: "Waiting for a reviewer assignment",
+			}}, submission, db.WorkflowNodeVerdict{}, nil
+		}
 		verdicts, err := q.ListWorkflowVerdicts(ctx, db.ListWorkflowVerdictsParams{
 			WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
 		})
@@ -1689,8 +1794,14 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 		}
 		var verdict db.WorkflowNodeVerdict
 		for _, candidate := range verdicts {
-			if candidate.EvaluatorType == "member" &&
-				!workflowVerdictIsManualCompletion(candidate) {
+			matches, matchErr := workflowActorMatchesReviewer(
+				ctx, q, reviewerType, reviewerID,
+				candidate.EvaluatorType, candidate.EvaluatorID,
+			)
+			if matchErr != nil {
+				return false, nil, submission, db.WorkflowNodeVerdict{}, matchErr
+			}
+			if matches && !workflowVerdictIsManualCompletion(candidate) {
 				verdict = candidate
 				break
 			}
@@ -1704,6 +1815,15 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 			return false, []workflowdomain.WaitingReason{
 				workflowVerdictWaitingReason(verdict),
 			}, submission, verdict, nil
+		}
+		artifactReasons, err := workflowArtifactApprovalReasons(
+			ctx, q, workspaceID, node, nodeDefinition,
+		)
+		if err != nil {
+			return false, nil, submission, verdict, err
+		}
+		if len(artifactReasons) > 0 {
+			return false, artifactReasons, submission, verdict, nil
 		}
 		return h.evaluateWorkflowManualCompletion(
 			ctx, q, workspaceID, node, nodeDefinition, submission, verdict,
@@ -1849,14 +1969,25 @@ func workflowVerdictIsManualCompletion(verdict db.WorkflowNodeVerdict) bool {
 // reviewer rather than on its own work. The distinction is what the canvas
 // renders: the executor has delivered, and the flow is waiting on someone else.
 //
-// Callers pair this with ReviewerAcceptsMember, because "someone else" has to
-// be a person. An api or auto reviewer already answered — a rule that
+// Callers pair this with ReviewerAcceptsActor, because "someone else" has to
+// be a member or agent. An api or auto reviewer already answered — a rule that
 // evaluated to no is a node that is waiting, not one under review.
 func workflowWaitingReasonsAwaitReview(
 	reasons []workflowdomain.WaitingReason,
 ) bool {
 	for _, reason := range reasons {
 		if reason.Code == "review_required" || reason.Code == "verdict_not_passed" {
+			return true
+		}
+	}
+	return false
+}
+
+func workflowWaitingReasonsNeedReviewer(
+	reasons []workflowdomain.WaitingReason,
+) bool {
+	for _, reason := range reasons {
+		if reason.Code == "review_required" {
 			return true
 		}
 	}

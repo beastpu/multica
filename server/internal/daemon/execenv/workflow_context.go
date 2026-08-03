@@ -1,6 +1,7 @@
 package execenv
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -14,19 +15,29 @@ import (
 // nothing and the daemon renders no protocol section, which is the same
 // observable result as a non-workflow issue.
 type WorkflowTaskContext struct {
-	InstanceID      string                    `json:"instance_id"`
-	NodeInstanceID  string                    `json:"node_instance_id"`
-	NodeKey         string                    `json:"node_key"`
-	NodeName        string                    `json:"node_name,omitempty"`
-	RunTitle        string                    `json:"run_title,omitempty"`
-	Instructions    string                    `json:"instructions,omitempty"`
-	DirectExecution bool                      `json:"direct_execution,omitempty"`
-	HostIssue       string                    `json:"host_issue,omitempty"`
-	HandoffRequired bool                      `json:"handoff_required,omitempty"`
-	Artifacts       []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
-	Upstream        []WorkflowUpstreamContext `json:"upstream,omitempty"`
-	Rework          *WorkflowReworkContext    `json:"rework,omitempty"`
-	Choice          *WorkflowChoiceDuty       `json:"choice,omitempty"`
+	InstanceID       string                    `json:"instance_id"`
+	Phase            string                    `json:"phase,omitempty"`
+	NodeInstanceID   string                    `json:"node_instance_id"`
+	NodeKey          string                    `json:"node_key"`
+	NodeName         string                    `json:"node_name,omitempty"`
+	RunTitle         string                    `json:"run_title,omitempty"`
+	Instructions     string                    `json:"instructions,omitempty"`
+	DirectExecution  bool                      `json:"direct_execution,omitempty"`
+	HostIssue        string                    `json:"host_issue,omitempty"`
+	NodeIssues       []string                  `json:"node_issues,omitempty"`
+	HandoffRequired  bool                      `json:"handoff_required,omitempty"`
+	Artifacts        []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
+	Upstream         []WorkflowUpstreamContext `json:"upstream,omitempty"`
+	Rework           *WorkflowReworkContext    `json:"rework,omitempty"`
+	Choice           *WorkflowChoiceDuty       `json:"choice,omitempty"`
+	ReviewSubmission *WorkflowReviewSubmission `json:"review_submission,omitempty"`
+}
+
+type WorkflowReviewSubmission struct {
+	ID           string          `json:"id"`
+	Summary      string          `json:"summary,omitempty"`
+	WorkerOutput string          `json:"worker_output,omitempty"`
+	Evidence     json.RawMessage `json:"evidence,omitempty"`
 }
 
 // WorkflowChoiceDuty is the routing decision this node owes a downstream
@@ -61,6 +72,7 @@ type WorkflowReworkContext struct {
 
 // WorkflowArtifactDuty is one artifact the node owes plus its delivery state.
 type WorkflowArtifactDuty struct {
+	ID           string `json:"id,omitempty"`
 	Key          string `json:"key"`
 	Name         string `json:"name"`
 	Description  string `json:"description,omitempty"`
@@ -100,6 +112,10 @@ func renderWorkflowProtocol(b *strings.Builder, workflow *WorkflowTaskContext) {
 	if workflow == nil || workflow.NodeKey == "" {
 		return
 	}
+	if workflow.Phase == "critic" {
+		renderWorkflowCriticProtocol(b, workflow)
+		return
+	}
 	b.WriteString("## Workflow Protocol\n\n")
 	name := workflow.NodeName
 	if name == "" {
@@ -132,6 +148,56 @@ func renderWorkflowProtocol(b *strings.Builder, workflow *WorkflowTaskContext) {
 	renderWorkflowDuties(b, workflow)
 }
 
+// renderWorkflowCriticProtocol is a built-in, versioned review contract. The
+// selected agent supplies domain expertise through its own Instructions; the
+// workflow supplies the evidence and keeps the verdict schema stable.
+func renderWorkflowCriticProtocol(b *strings.Builder, workflow *WorkflowTaskContext) {
+	b.WriteString("## Workflow Critic Protocol (v1)\n\n")
+	name := workflow.NodeName
+	if name == "" {
+		name = workflow.NodeKey
+	}
+	fmt.Fprintf(b, "You are the Critic for node **%s** (`%s`) in workflow run `%s`. Review the Worker output; do not redo the Worker task.\n\n", name, workflow.NodeKey, workflow.InstanceID)
+	b.WriteString("Judge the result using all applicable business context:\n\n")
+	if workflow.HostIssue != "" {
+		fmt.Fprintf(b, "- Requirement Issue `%s`: read its description and acceptance criteria with `multica issue get %s --output json`.\n", workflow.HostIssue, workflow.HostIssue)
+	}
+	if workflow.Instructions != "" {
+		fmt.Fprintf(b, "- Node name and description:\n\n%s\n\n", workflow.Instructions)
+	}
+	for _, issue := range workflow.NodeIssues {
+		fmt.Fprintf(b, "- Worker Issue `%s`: inspect its description, comments, deliverables, and linked PR/MR.\n", issue)
+	}
+	if submission := workflow.ReviewSubmission; submission != nil {
+		fmt.Fprintf(b, "- Worker submission `%s`", submission.ID)
+		if strings.TrimSpace(submission.Summary) != "" {
+			fmt.Fprintf(b, ": %s", strings.TrimSpace(submission.Summary))
+		}
+		b.WriteString(".\n")
+		if strings.TrimSpace(submission.WorkerOutput) != "" {
+			b.WriteString("\nWorker final output:\n\n")
+			for line := range strings.SplitSeq(submission.WorkerOutput, "\n") {
+				fmt.Fprintf(b, "> %s\n", line)
+			}
+			b.WriteString("\n")
+		}
+	}
+	for _, artifact := range workflow.Artifacts {
+		if !artifact.Delivered {
+			continue
+		}
+		fmt.Fprintf(b, "- Deliverable `%s` — %s (%s)", artifact.Key, artifact.Name, artifact.Kind)
+		if artifact.ID != "" {
+			fmt.Fprintf(b, ", id `%s`; inspect with `multica workflow artifact get %s`", artifact.ID, artifact.ID)
+		}
+		b.WriteString(".\n")
+	}
+	b.WriteString("\nAlso apply your own agent Instructions as domain-specific review guidance. Approve only when the delivered result satisfies the requirement and node obligations. On rejection, give a concise, actionable reason the Worker can use for rework.\n\n")
+	b.WriteString("Your final output must be exactly one JSON object with no prose or Markdown fence:\n\n")
+	b.WriteString("```json\n{\"approved\":true,\"comment\":\"short review opinion\"}\n```\n\n")
+	b.WriteString("Use `approved: false` when rejecting; `comment` must explain what must change. The server records this object as the node verdict: approval advances the workflow, rejection sends the node to rework.\n")
+}
+
 // renderWorkflowRework writes why this node is being executed again. It comes
 // before the upstream conclusions because it changes what the agent should do
 // with them: on a retry the upstream has not moved, and the thing that has is
@@ -146,6 +212,8 @@ func renderWorkflowRework(b *strings.Builder, rework *WorkflowReworkContext) {
 	switch rework.Source {
 	case "acceptance":
 		b.WriteString("退回来源：**验收驳回**\n\n")
+	case "critic":
+		b.WriteString("退回来源：**智能体评审驳回**\n\n")
 	case "manual_rollback":
 		b.WriteString("退回来源：**人工回滚**\n\n")
 	}

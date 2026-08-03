@@ -359,6 +359,9 @@ func workflowNodeNeedsExecutorSetup(
 		return false, err
 	}
 	for _, task := range tasks {
+		if task.Source == "critic" {
+			continue
+		}
 		if task.MaterializationStatus != "cancelled" && !task.ExecutorResolutionID.Valid {
 			return true, nil
 		}
@@ -390,6 +393,9 @@ func workflowInstanceNeedsExecutorSetup(
 		return false, err
 	}
 	for _, task := range tasks {
+		if task.Source == "critic" {
+			continue
+		}
 		if _, open := openNodes[task.WorkflowNodeInstanceID]; open &&
 			task.MaterializationStatus != "cancelled" &&
 			!task.ExecutorResolutionID.Valid {

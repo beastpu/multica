@@ -2913,6 +2913,11 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if err := h.recordWorkflowAgentCriticVerdict(r.Context(), *task, req.Output); err != nil {
+		slog.Warn("record workflow critic verdict failed", "task_id", taskID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to record workflow critic verdict")
+		return
+	}
 
 	h.emitIssueExecutedOnFirstCompletion(r, task)
 

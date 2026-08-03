@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,6 +77,145 @@ func workflowArtifactsResponse(rows []db.WorkflowArtifact) []workflowArtifactRes
 		items[index] = workflowArtifactToResponse(row)
 	}
 	return items
+}
+
+// reviewWorkflowArtifactsForVerdict applies one Critic decision to the exact
+// live artifact revisions reviewed with the node submission. Callers run this
+// inside the same transaction that records the node verdict, so a partial
+// artifact review can never survive a failed verdict write.
+//
+// A passing verdict approves every delivered artifact and requires every
+// required slot to be present. A failing verdict rejects the delivered set so
+// the Worker knows each revision belongs to the rejected delivery. A blocked
+// verdict records the snapshot without judging the artifacts: the blocker may
+// be external rather than a defect in the delivery.
+func reviewWorkflowArtifactsForVerdict(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	node db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+	result string,
+	comment string,
+	reviewerID pgtype.UUID,
+) ([]string, error) {
+	artifacts, err := q.ListWorkflowNodeArtifacts(ctx, db.ListWorkflowNodeArtifactsParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	delivered := make(map[string]db.WorkflowArtifact, len(artifacts))
+	artifactIDs := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		delivered[artifact.ArtifactKey] = artifact
+		artifactIDs = append(artifactIDs, uuidToString(artifact.ID))
+	}
+	if result == "pass" {
+		for _, requirement := range workflowdomain.RequiredArtifacts(nodeDefinition) {
+			if _, exists := delivered[requirement.Key]; !exists {
+				return nil, fmt.Errorf("required artifact %q has not been submitted", requirement.Key)
+			}
+		}
+	}
+
+	targetStatus := ""
+	switch result {
+	case "pass":
+		targetStatus = "approved"
+	case "fail":
+		targetStatus = "rejected"
+	}
+	if targetStatus == "" {
+		return artifactIDs, nil
+	}
+	for _, artifact := range artifacts {
+		if artifact.ReviewStatus == targetStatus && artifact.ReviewComment == comment &&
+			artifact.ReviewedBy == reviewerID {
+			continue
+		}
+		if _, err := q.ReviewWorkflowArtifact(ctx, db.ReviewWorkflowArtifactParams{
+			ID: artifact.ID, WorkspaceID: workspaceID,
+			ReviewStatus: targetStatus, ReviewComment: comment,
+			ReviewedBy: reviewerID,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return artifactIDs, nil
+}
+
+// workflowArtifactApprovalReasons is the final post-verdict gate. Submission is
+// enough to enter review, but never enough to leave it: every required artifact
+// revision must carry the same Critic approval as the passing node verdict.
+func workflowArtifactApprovalReasons(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	node db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+) ([]workflowdomain.WaitingReason, error) {
+	required := workflowdomain.RequiredArtifacts(nodeDefinition)
+	if len(required) == 0 {
+		return nil, nil
+	}
+	artifacts, err := q.ListWorkflowNodeArtifacts(ctx, db.ListWorkflowNodeArtifactsParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	delivered := make(map[string]db.WorkflowArtifact, len(artifacts))
+	for _, artifact := range artifacts {
+		delivered[artifact.ArtifactKey] = artifact
+	}
+	reasons := make([]workflowdomain.WaitingReason, 0)
+	for _, requirement := range required {
+		artifact, exists := delivered[requirement.Key]
+		if !exists {
+			reasons = append(reasons, workflowdomain.WaitingReason{
+				Code: "required_artifact_missing", Field: requirement.Key,
+				Message: "Required artifact has not been submitted",
+			})
+			continue
+		}
+		if artifact.ReviewStatus != "approved" {
+			reasons = append(reasons, workflowdomain.WaitingReason{
+				Code: "required_artifact_review_pending", Field: requirement.Key,
+				Message: "Required artifact has not been approved by the reviewer",
+			})
+		}
+	}
+	return reasons, nil
+}
+
+// publishWorkflowArtifactsReviewed emits invalidation signals only after the
+// verdict transaction commits. Consumers therefore never observe an artifact
+// decision without its matching node verdict (or the reverse).
+func (h *Handler) publishWorkflowArtifactsReviewed(
+	workspaceID pgtype.UUID,
+	instanceID pgtype.UUID,
+	nodeID pgtype.UUID,
+	actorType string,
+	actorID string,
+	artifactIDs []string,
+	reviewStatus string,
+) {
+	if reviewStatus != "approved" && reviewStatus != "rejected" {
+		return
+	}
+	for _, artifactID := range artifactIDs {
+		h.publishWorkflowRealtime(
+			protocol.EventWorkflowArtifactReviewed,
+			uuidToString(workspaceID), actorType, actorID,
+			map[string]any{
+				"workflow_instance_id":      uuidToString(instanceID),
+				"workflow_node_instance_id": uuidToString(nodeID),
+				"artifact_id":               artifactID,
+				"review_status":             reviewStatus,
+			},
+		)
+	}
 }
 
 type submitWorkflowArtifactRequest struct {
@@ -267,6 +407,28 @@ func (h *Handler) SubmitWorkflowArtifact(w http.ResponseWriter, r *http.Request)
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	locked, err := qtx.LockWorkflowInstance(r.Context(), db.LockWorkflowInstanceParams{
+		ID: instance.ID, WorkspaceID: instance.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusConflict, "workflow instance changed; refresh and try again")
+		return
+	}
+	currentNode, err := qtx.GetWorkflowNodeInstanceInWorkspace(
+		r.Context(),
+		db.GetWorkflowNodeInstanceInWorkspaceParams{
+			ID: node.ID, WorkspaceID: node.WorkspaceID,
+		},
+	)
+	if err != nil || locked.Status != "running" || !workflowNodeIsOpen(currentNode) {
+		writeError(w, http.StatusConflict, "workflow node does not accept artifacts")
+		return
+	}
+	if currentNode.Status == "in_review" {
+		writeError(w, http.StatusConflict, "workflow artifacts are frozen while the node is in review")
+		return
+	}
+	node = currentNode
 
 	replaced, err := qtx.SupersedeWorkflowArtifact(r.Context(), db.SupersedeWorkflowArtifactParams{
 		WorkspaceID: node.WorkspaceID, WorkflowNodeInstanceID: node.ID,

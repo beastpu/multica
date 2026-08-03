@@ -52,6 +52,19 @@ func BuildPrompt(task Task, provider string) string {
 func buildDirectWorkflowPrompt(task Task) string {
 	workflow := task.Workflow
 	var b strings.Builder
+	if workflow.Phase == "critic" {
+		b.WriteString("You are reviewing a completed activity in a Multica workflow run. There is no dedicated Issue for this review task.\n\n")
+		if workflow.RunTitle != "" {
+			fmt.Fprintf(&b, "Run: %s\n", workflow.RunTitle)
+		}
+		name := workflow.NodeName
+		if name == "" {
+			name = workflow.NodeKey
+		}
+		fmt.Fprintf(&b, "Activity under review: %s (`%s`)\n\n", name, workflow.NodeKey)
+		b.WriteString("Read and follow the Workflow Critic Protocol in your runtime context. Inspect the requirement, Worker submission, deliverables, and linked PR/MR, then return only the required JSON verdict. Do not perform or rewrite the Worker task.\n")
+		return b.String()
+	}
 	b.WriteString("You are executing an activity in a Multica workflow run. There is no Issue for this node.\n\n")
 	if workflow.RunTitle != "" {
 		fmt.Fprintf(&b, "Run: %s\n", workflow.RunTitle)

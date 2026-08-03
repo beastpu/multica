@@ -11,6 +11,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // startArtifactWorkflow boots a one-activity workflow whose node requires a
@@ -313,6 +314,118 @@ func TestWorkflowArtifactGatesNodeCompletion(t *testing.T) {
 	// verdict belonged to content that is no longer live.
 	if recorder := complete(); recorder.Code != http.StatusOK {
 		t.Fatalf("complete status = %d after resubmission, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// A Human Critic's node verdict is the atomic review action for the delivery:
+// the artifact statuses and the node verdict must describe the same snapshot.
+func TestWorkflowHumanCriticVerdictReviewsCurrentArtifacts(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	instanceID, nodeID := startArtifactWorkflow(t, "human-critic")
+	ctx := context.Background()
+
+	var snapshot []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT definition_snapshot FROM workflow_node_instance WHERE id = $1
+	`, nodeID).Scan(&snapshot); err != nil {
+		t.Fatalf("load node definition snapshot: %v", err)
+	}
+	var definition workflowdomain.NodeDefinition
+	if err := json.Unmarshal(snapshot, &definition); err != nil {
+		t.Fatalf("decode node definition snapshot: %v", err)
+	}
+	definition.Reviewer = &workflowdomain.ReviewerDefinition{
+		Kind: "owner", Required: true,
+	}
+	definition.Completion.Mode = "automatic"
+	snapshot, _ = json.Marshal(definition)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE workflow_node_instance SET definition_snapshot = $2 WHERE id = $1
+	`, nodeID, snapshot); err != nil {
+		t.Fatalf("configure Human Critic node: %v", err)
+	}
+	var versionID string
+	var versionDefinitionJSON []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT version.id, version.definition
+		FROM workflow_instance instance
+		JOIN workflow_version version ON version.id = instance.workflow_version_id
+		WHERE instance.id = $1
+	`, instanceID).Scan(&versionID, &versionDefinitionJSON); err != nil {
+		t.Fatalf("load workflow version definition: %v", err)
+	}
+	var versionDefinition workflowdomain.Definition
+	if err := json.Unmarshal(versionDefinitionJSON, &versionDefinition); err != nil {
+		t.Fatalf("decode workflow version definition: %v", err)
+	}
+	for index := range versionDefinition.Nodes {
+		if versionDefinition.Nodes[index].Key != "design" {
+			continue
+		}
+		versionDefinition.Nodes[index].Reviewer = definition.Reviewer
+		versionDefinition.Nodes[index].Completion = definition.Completion
+	}
+	versionDefinitionJSON, _ = json.Marshal(versionDefinition)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE workflow_version SET definition = $2 WHERE id = $1
+	`, versionID, versionDefinitionJSON); err != nil {
+		t.Fatalf("configure Human Critic workflow version: %v", err)
+	}
+
+	if recorder := submitArtifact(t, nodeID, map[string]any{
+		"artifact_key": "design_doc", "content": "The reviewed design.",
+	}); recorder.Code != http.StatusOK {
+		t.Fatalf("submit status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	postWorkflowSubmissionPayload(
+		t, nodeID, "human-critic-delivery", map[string]any{},
+	)
+	if node := latestWorkflowNodeForTest(t, instanceID, "design"); node.Status != "in_review" {
+		t.Fatalf("node status = %q, want in_review before Critic verdict", node.Status)
+	}
+	if recorder := submitArtifact(t, nodeID, map[string]any{
+		"artifact_key": "design_doc", "content": "A hidden replacement.",
+	}); recorder.Code != http.StatusConflict {
+		t.Fatalf(
+			"replace during review status = %d, want 409; body = %s",
+			recorder.Code,
+			recorder.Body.String(),
+		)
+	}
+	postWorkflowVerdict(t, nodeID, "human-critic-verdict")
+
+	artifacts := listNodeArtifacts(t, nodeID)
+	if len(artifacts) != 1 || artifacts[0].ReviewStatus != "approved" {
+		t.Fatalf("Human Critic artifact result = %#v, want one approved artifact", artifacts)
+	}
+	verdicts, err := testHandler.Queries.ListWorkflowVerdicts(
+		ctx,
+		db.ListWorkflowVerdictsParams{
+			WorkflowNodeInstanceID: parseUUID(nodeID),
+			WorkspaceID:            parseUUID(testWorkspaceID),
+		},
+	)
+	if err != nil || len(verdicts) == 0 {
+		t.Fatalf("load Human Critic verdicts: count=%d err=%v", len(verdicts), err)
+	}
+	var basis struct {
+		ArtifactIDs []string `json:"artifact_ids"`
+	}
+	if err := json.Unmarshal(verdicts[0].Basis, &basis); err != nil {
+		t.Fatalf("decode Human Critic verdict basis: %v", err)
+	}
+	if len(basis.ArtifactIDs) != 1 || basis.ArtifactIDs[0] != artifacts[0].ID {
+		t.Fatalf("Human Critic artifact snapshot = %#v", basis.ArtifactIDs)
+	}
+	instance, err := testHandler.Queries.GetWorkflowInstanceInWorkspace(
+		ctx,
+		db.GetWorkflowInstanceInWorkspaceParams{
+			ID: parseUUID(instanceID), WorkspaceID: parseUUID(testWorkspaceID),
+		},
+	)
+	if err != nil || instance.Status != "completed" {
+		t.Fatalf("instance status = %q, want completed, err=%v", instance.Status, err)
 	}
 }
 

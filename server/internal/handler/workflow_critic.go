@@ -1,0 +1,451 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
+	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
+)
+
+func createWorkflowCriticRework(
+	ctx context.Context,
+	q *db.Queries,
+	locked db.WorkflowInstance,
+	currentNode db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+	reason string,
+	actorID pgtype.UUID,
+	idempotencyKey string,
+) (db.WorkflowInstance, db.WorkflowNodeInstance, error) {
+	version, err := q.GetWorkflowVersionInWorkspace(ctx, db.GetWorkflowVersionInWorkspaceParams{
+		ID: locked.WorkflowVersionID, WorkspaceID: locked.WorkspaceID,
+	})
+	if err != nil {
+		return locked, db.WorkflowNodeInstance{}, err
+	}
+	definition, err := workflowdomain.ParseDefinition(version.Definition)
+	if err != nil {
+		return locked, db.WorkflowNodeInstance{}, err
+	}
+	plan, err := workflowdomain.BuildGraphPlan(definition)
+	if err != nil {
+		return locked, db.WorkflowNodeInstance{}, err
+	}
+	nodes, err := q.ListWorkflowNodeInstances(ctx, db.ListWorkflowNodeInstancesParams{
+		WorkflowInstanceID: locked.ID, WorkspaceID: locked.WorkspaceID,
+	})
+	if err != nil {
+		return locked, db.WorkflowNodeInstance{}, err
+	}
+	affected := plan.Descendants(currentNode.NodeKey)
+	affected[currentNode.NodeKey] = struct{}{}
+	for _, candidate := range nodes {
+		if _, exists := affected[candidate.NodeKey]; !exists {
+			continue
+		}
+		switch candidate.Status {
+		case "active", "in_review", "waiting", "blocked", "completed", "skipped":
+			if _, err := q.UpdateWorkflowNodeState(ctx, db.UpdateWorkflowNodeStateParams{
+				Status: "superseded", WaitingReasons: []byte("[]"),
+				ID: candidate.ID, WorkspaceID: locked.WorkspaceID,
+				ExpectedStatus: candidate.Status,
+			}); err != nil {
+				return locked, db.WorkflowNodeInstance{}, err
+			}
+		}
+	}
+	if err := q.DeletePendingWorkflowAcceptance(ctx, db.DeletePendingWorkflowAcceptanceParams{
+		WorkflowInstanceID: locked.ID, WorkspaceID: locked.WorkspaceID,
+	}); err != nil {
+		return locked, db.WorkflowNodeInstance{}, err
+	}
+	snapshot, _ := json.Marshal(nodeDefinition)
+	reworkNode, err := q.CreateWorkflowNodeInstance(ctx, db.CreateWorkflowNodeInstanceParams{
+		WorkspaceID: locked.WorkspaceID, WorkflowInstanceID: locked.ID,
+		NodeKey: currentNode.NodeKey, NodeKind: currentNode.NodeKind,
+		Attempt: currentNode.Attempt + 1, NameSnapshot: currentNode.NameSnapshot,
+		DisplayOrder: currentNode.DisplayOrder, DefinitionSnapshot: snapshot,
+		Status: "active",
+	})
+	if err != nil {
+		return locked, db.WorkflowNodeInstance{}, err
+	}
+	roleRows, err := q.ListWorkflowRoleAssignments(ctx, db.ListWorkflowRoleAssignmentsParams{
+		WorkflowInstanceID: locked.ID, WorkspaceID: locked.WorkspaceID,
+	})
+	if err != nil {
+		return locked, db.WorkflowNodeInstance{}, err
+	}
+	needsSetup, err := createWorkflowNodeActivationRecords(
+		ctx, q, locked.WorkspaceID, locked, reworkNode, nodeDefinition,
+		definition, workflowRoleAssignmentsMap(roleRows),
+	)
+	if err != nil {
+		return locked, db.WorkflowNodeInstance{}, err
+	}
+	status := "running"
+	if needsSetup {
+		status = "needs_setup"
+		reasons := workflowdomain.EncodeWaitingReasons([]workflowdomain.WaitingReason{{
+			Code: "executor_needs_setup", Message: "One or more workflow tasks require an executor",
+		}})
+		reworkNode, err = q.UpdateWorkflowNodeState(ctx, db.UpdateWorkflowNodeStateParams{
+			Status: "blocked", WaitingReasons: reasons, MarkReconciled: true,
+			ID: reworkNode.ID, WorkspaceID: locked.WorkspaceID,
+			ExpectedStatus: "active",
+		})
+		if err != nil {
+			return locked, db.WorkflowNodeInstance{}, err
+		}
+	}
+	updated, err := q.UpdateWorkflowInstanceState(ctx, db.UpdateWorkflowInstanceStateParams{
+		Status: status, MarkReconciled: true, ID: locked.ID,
+		WorkspaceID: locked.WorkspaceID, ExpectedRevision: locked.Revision,
+	})
+	if err != nil {
+		return locked, db.WorkflowNodeInstance{}, err
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"action": "critic_rework", "node_key": currentNode.NodeKey,
+		"node_instance_id":           uuidToString(currentNode.ID),
+		"activated_node_instance_id": uuidToString(reworkNode.ID),
+		"reason":                     reason,
+	})
+	if _, err := q.CreateWorkflowEvent(ctx, db.CreateWorkflowEventParams{
+		WorkspaceID: locked.WorkspaceID, WorkflowInstanceID: locked.ID,
+		WorkflowNodeInstanceID: currentNode.ID, EventType: "node.rollback",
+		ActorType: "agent", ActorID: actorID,
+		IdempotencyKey: idempotencyKey, Payload: payload,
+	}); err != nil {
+		return locked, db.WorkflowNodeInstance{}, err
+	}
+	return updated, reworkNode, nil
+}
+
+func (h *Handler) ensureWorkflowAgentCriticTask(
+	ctx context.Context,
+	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+) error {
+	reviewerType, reviewerID, resolved, err := workflowReviewerAssignment(
+		ctx, h.Queries, node, nodeDefinition,
+	)
+	if err != nil || !resolved {
+		return err
+	}
+	agentID := reviewerID
+	var squadID pgtype.UUID
+	switch reviewerType {
+	case "member":
+		return nil
+	case "agent":
+	case "squad":
+		squad, squadErr := h.Queries.GetSquadInWorkspace(
+			ctx,
+			db.GetSquadInWorkspaceParams{ID: reviewerID, WorkspaceID: instance.WorkspaceID},
+		)
+		if squadErr != nil {
+			return fmt.Errorf("load critic squad: %w", squadErr)
+		}
+		agentID = squad.LeaderID
+		squadID = squad.ID
+	default:
+		return fmt.Errorf("unsupported workflow reviewer type %q", reviewerType)
+	}
+
+	tasks, err := h.Queries.ListWorkflowNodeTasks(ctx, db.ListWorkflowNodeTasksParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: instance.WorkspaceID,
+	})
+	if err != nil {
+		return err
+	}
+	var carrier db.WorkflowNodeTask
+	for _, task := range tasks {
+		if task.Source == "critic" {
+			carrier = task
+			break
+		}
+	}
+	if !carrier.ID.Valid {
+		snapshot, _ := json.Marshal(nodeDefinition.Reviewer)
+		carrier, err = h.Queries.CreateWorkflowNodeTask(ctx, db.CreateWorkflowNodeTaskParams{
+			WorkspaceID: instance.WorkspaceID, WorkflowInstanceID: instance.ID,
+			WorkflowNodeInstanceID: node.ID, TaskKey: "critic", Source: "critic",
+			Required: false, DefinitionSnapshot: snapshot,
+			MaterializationStatus: "materialized", CreatedByType: "system",
+		})
+		if err != nil {
+			return fmt.Errorf("create critic task carrier: %w", err)
+		}
+	}
+	latest, err := h.Queries.GetLatestAgentTaskForWorkflowNodeTask(ctx, carrier.ID)
+	if err == nil {
+		context, ok := service.ParseWorkflowNodeTaskContext(latest)
+		if ok && context.Phase == service.WorkflowNodeTaskPhaseCritic &&
+			latest.AgentID == agentID &&
+			latest.Status != "failed" && latest.Status != "cancelled" {
+			return nil
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	_, err = h.TaskService.EnqueueWorkflowNodeCriticTask(
+		ctx, instance.WorkspaceID, instance.StartedByID, carrier.ID,
+		instance.ID, node.ID, agentID, squadID, instance.Title,
+	)
+	if err != nil {
+		return fmt.Errorf("enqueue workflow critic: %w", err)
+	}
+	return nil
+}
+
+func (h *Handler) recordWorkflowAgentCriticVerdict(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	output string,
+) error {
+	direct, ok := service.ParseWorkflowNodeTaskContext(task)
+	if !ok || direct.Phase != service.WorkflowNodeTaskPhaseCritic {
+		return nil
+	}
+	workspaceID, err := util.ParseUUID(direct.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	nodeID, err := util.ParseUUID(direct.NodeInstanceID)
+	if err != nil {
+		return err
+	}
+	node, err := h.Queries.GetWorkflowNodeInstanceInWorkspace(
+		ctx,
+		db.GetWorkflowNodeInstanceInWorkspaceParams{ID: nodeID, WorkspaceID: workspaceID},
+	)
+	if err != nil {
+		return err
+	}
+	instance, err := h.Queries.GetWorkflowInstanceInWorkspace(
+		ctx,
+		db.GetWorkflowInstanceInWorkspaceParams{ID: node.WorkflowInstanceID, WorkspaceID: workspaceID},
+	)
+	if err != nil {
+		return err
+	}
+	var nodeDefinition workflowdomain.NodeDefinition
+	if err := json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition); err != nil {
+		return err
+	}
+	reviewerType, reviewerID, resolved, err := workflowReviewerAssignment(
+		ctx, h.Queries, node, nodeDefinition,
+	)
+	if err != nil || !resolved {
+		return err
+	}
+	allowed, err := workflowActorMatchesReviewer(
+		ctx, h.Queries, reviewerType, reviewerID, "agent", task.AgentID,
+	)
+	if err != nil || !allowed {
+		// A role may be reassigned while an old Critic is running. Its stale
+		// result must not hold the daemon in an infinite completion retry.
+		return err
+	}
+
+	critic, parseErr := workflowdomain.ParseCriticOutput(output)
+	result := "pass"
+	reason := critic.Comment
+	if parseErr != nil {
+		result = "blocked"
+		reason = "Critic output did not match Workflow Critic Protocol v1: " + parseErr.Error()
+	} else if !critic.Approved {
+		result = "fail"
+	}
+	if result == "pass" && reason == "" {
+		reason = "Approved by workflow Critic"
+	}
+
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	qtx := h.Queries.WithTx(tx)
+	locked, err := qtx.LockWorkflowInstance(ctx, db.LockWorkflowInstanceParams{
+		ID: instance.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return err
+	}
+	idempotencyKey := "critic-task:" + uuidToString(task.ID)
+	if _, eventErr := qtx.GetWorkflowEventByIdempotencyKey(
+		ctx,
+		db.GetWorkflowEventByIdempotencyKeyParams{
+			WorkflowInstanceID: locked.ID, WorkspaceID: workspaceID,
+			IdempotencyKey: idempotencyKey,
+		},
+	); eventErr == nil {
+		return nil
+	}
+	currentNode, err := qtx.GetWorkflowNodeInstanceInWorkspace(
+		ctx,
+		db.GetWorkflowNodeInstanceInWorkspaceParams{ID: node.ID, WorkspaceID: workspaceID},
+	)
+	if err != nil || locked.Status != "running" || !workflowNodeIsOpen(currentNode) {
+		return nil
+	}
+	currentReviewerType, currentReviewerID, currentResolved, err := workflowReviewerAssignment(
+		ctx, qtx, currentNode, nodeDefinition,
+	)
+	if err != nil {
+		return err
+	}
+	currentAllowed, err := workflowActorMatchesReviewer(
+		ctx, qtx, currentReviewerType, currentReviewerID, "agent", task.AgentID,
+	)
+	if err != nil {
+		return err
+	}
+	if !currentResolved || !currentAllowed {
+		return nil
+	}
+	submissions, err := qtx.ListWorkflowSubmissions(ctx, db.ListWorkflowSubmissionsParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return err
+	}
+	var submission db.WorkflowNodeSubmission
+	for _, candidate := range submissions {
+		if candidate.Status == "valid" {
+			submission = candidate
+			break
+		}
+	}
+	if !submission.ID.Valid {
+		return errors.New("workflow critic requires a valid submission")
+	}
+	artifactIDs, err := reviewWorkflowArtifactsForVerdict(
+		ctx, qtx, workspaceID, currentNode, nodeDefinition,
+		result, reason, task.AgentID,
+	)
+	if err != nil {
+		return fmt.Errorf("review workflow artifacts: %w", err)
+	}
+	revision, err := qtx.GetNextWorkflowVerdictRevision(
+		ctx,
+		db.GetNextWorkflowVerdictRevisionParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	basis, _ := json.Marshal(map[string]any{
+		"kind": "critic_protocol_v1", "submission_id": uuidToString(submission.ID),
+		"agent_task_id": uuidToString(task.ID), "artifact_ids": artifactIDs,
+	})
+	definitionSnapshot, _ := json.Marshal(nodeDefinition.Reviewer)
+	verdict, err := qtx.CreateWorkflowVerdict(ctx, db.CreateWorkflowVerdictParams{
+		WorkspaceID: workspaceID, WorkflowInstanceID: locked.ID,
+		WorkflowNodeInstanceID: node.ID, Revision: revision,
+		Result: result, Reason: reason, Evidence: []byte("[]"), Basis: basis,
+		EvaluatorType: "agent", EvaluatorID: task.AgentID,
+		DefinitionSnapshot: definitionSnapshot,
+	})
+	if err != nil {
+		return err
+	}
+	if err := qtx.SetWorkflowNodeLatestVerdict(ctx, db.SetWorkflowNodeLatestVerdictParams{
+		LatestVerdictID: verdict.ID, ID: node.ID, WorkspaceID: workspaceID,
+	}); err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"action": "agent_critic_verdict", "verdict_id": uuidToString(verdict.ID),
+		"revision": verdict.Revision, "result": verdict.Result,
+	})
+	if _, err := qtx.CreateWorkflowEvent(ctx, db.CreateWorkflowEventParams{
+		WorkspaceID: workspaceID, WorkflowInstanceID: locked.ID,
+		WorkflowNodeInstanceID: node.ID, EventType: "node.verdict_recorded",
+		ActorType: "agent", ActorID: task.AgentID,
+		IdempotencyKey: idempotencyKey, Payload: payload,
+	}); err != nil {
+		return err
+	}
+	updatedInstance := locked
+	var reworkNode db.WorkflowNodeInstance
+	if result == "fail" {
+		updatedInstance, reworkNode, err = createWorkflowCriticRework(
+			ctx, qtx, locked, currentNode, nodeDefinition, reason, task.AgentID,
+			"critic-rework:"+uuidToString(task.ID),
+		)
+		if err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	reviewStatus := ""
+	if result == "pass" {
+		reviewStatus = "approved"
+	} else if result == "fail" {
+		reviewStatus = "rejected"
+	}
+	h.publishWorkflowArtifactsReviewed(
+		workspaceID, locked.ID, node.ID, "agent", uuidToString(task.AgentID),
+		artifactIDs, reviewStatus,
+	)
+	h.Metrics.RecordWorkflowVerdict("agent", verdict.Result)
+	if reworkNode.ID.Valid {
+		h.recordWorkflowInstanceStatusTransition(locked.Status, updatedInstance.Status)
+		h.recordWorkflowNodesActivated(ctx, []db.WorkflowNodeInstance{reworkNode})
+		version, versionErr := h.Queries.GetWorkflowVersionInWorkspace(
+			ctx,
+			db.GetWorkflowVersionInWorkspaceParams{
+				ID: updatedInstance.WorkflowVersionID, WorkspaceID: workspaceID,
+			},
+		)
+		if versionErr == nil {
+			if definition, parseErr := workflowdomain.ParseDefinition(version.Definition); parseErr == nil {
+				h.applyWorkflowNodeEnterActions(
+					ctx, updatedInstance, definition, []db.WorkflowNodeInstance{reworkNode},
+				)
+			}
+		}
+		h.materializeWorkflowNodeTasks(ctx, workspaceID, updatedInstance, reworkNode)
+	} else {
+		_, _ = h.reconcileWorkflowInstance(
+			ctx, workspaceID, locked.ID, "agent", task.AgentID,
+			"verdict:"+uuidToString(verdict.ID),
+		)
+	}
+	h.publishWorkflowRealtime(
+		protocol.EventWorkflowVerdictCreated,
+		uuidToString(workspaceID), "agent", uuidToString(task.AgentID),
+		map[string]any{
+			"workflow_instance_id":      uuidToString(locked.ID),
+			"workflow_node_instance_id": uuidToString(node.ID),
+			"workflow_verdict_id":       uuidToString(verdict.ID),
+		},
+	)
+	h.publishWorkflowNodeUpdated(
+		uuidToString(workspaceID), "agent", uuidToString(task.AgentID),
+		uuidToString(locked.ID), uuidToString(node.ID),
+	)
+	if reworkNode.ID.Valid {
+		h.publishWorkflowInstanceUpdated(
+			uuidToString(workspaceID), "agent", uuidToString(task.AgentID),
+			uuidToString(locked.ID), uuidToString(reworkNode.ID),
+		)
+	}
+	return nil
+}

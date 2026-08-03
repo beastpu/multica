@@ -94,6 +94,39 @@ func TestRenderIssueContext_NoWorkflow(t *testing.T) {
 	}
 }
 
+func TestRenderIssueContext_WorkflowCriticProtocol(t *testing.T) {
+	workflow := workflowFixture()
+	workflow.Phase = "critic"
+	workflow.NodeIssues = []string{"WTE-14774"}
+	workflow.ReviewSubmission = &WorkflowReviewSubmission{
+		ID: "submission-1", Summary: "Implemented the requested behavior",
+		WorkerOutput: "Added the endpoint and tests",
+	}
+	workflow.Artifacts[0].ID = "artifact-1"
+	workflow.Artifacts[0].Delivered = true
+	md := renderIssueContext("claude", TaskContextForEnv{
+		Workflow: workflow,
+	})
+
+	for _, want := range []string{
+		"Workflow Critic Protocol (v1)",
+		"WTE-14773",
+		"WTE-14774",
+		"submission-1",
+		"Added the endpoint and tests",
+		"artifact-1",
+		"own agent Instructions",
+		`{"approved":true,"comment":"short review opinion"}`,
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("critic protocol is missing %q:\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "What this node owes") {
+		t.Errorf("critic received the Worker delivery protocol:\n%s", md)
+	}
+}
+
 // A rejected artifact blocks completion exactly like a missing one, so it has
 // to read as outstanding rather than as delivered.
 func TestPendingRequiredArtifacts(t *testing.T) {

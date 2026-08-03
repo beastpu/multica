@@ -119,10 +119,10 @@ func HasCondition(raw json.RawMessage) bool {
 	return hasJSONValue(raw)
 }
 
-// ReviewerAcceptsMember reports whether a person records this node's verdict.
+// ReviewerAcceptsActor reports whether a member or agent records this node's verdict.
 // An api or auto reviewer decides on its own, so a member posting a verdict
 // there would be overruling a judge the template chose deliberately.
-func ReviewerAcceptsMember(node NodeDefinition) bool {
+func ReviewerAcceptsActor(node NodeDefinition) bool {
 	if node.Reviewer == nil {
 		return false
 	}

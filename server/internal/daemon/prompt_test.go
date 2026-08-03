@@ -1083,6 +1083,26 @@ func TestWorkflowPromptSectionUsesPushedContext(t *testing.T) {
 	}
 }
 
+func TestDirectWorkflowCriticPrompt(t *testing.T) {
+	prompt := BuildPrompt(Task{Workflow: &execenv.WorkflowTaskContext{
+		Phase: "critic", DirectExecution: true,
+		NodeKey: "review", NodeName: "Review implementation",
+	}}, "claude")
+
+	for _, want := range []string{
+		"reviewing a completed activity",
+		"Workflow Critic Protocol",
+		"return only the required JSON verdict",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("critic prompt is missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "Complete the activity directly") {
+		t.Errorf("critic prompt told the reviewer to execute the activity:\n%s", prompt)
+	}
+}
+
 // A server predating the pushed block sends nothing, and `workflow current` is
 // then the agent's only way in — that path has to survive.
 func TestWorkflowPromptSectionFallsBackWithoutContext(t *testing.T) {

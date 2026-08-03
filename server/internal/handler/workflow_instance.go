@@ -1003,6 +1003,24 @@ func writeWorkflowNodeParticipants(
 			return fmt.Errorf("create participant: %w", err)
 		}
 	}
+	if reviewer := nodeDefinition.Reviewer; reviewer != nil && reviewer.Kind == "actor" {
+		assignment, err := directWorkflowExecutorAssignment(
+			reviewer.ActorType,
+			reviewer.ActorID,
+		)
+		if err != nil {
+			return fmt.Errorf("resolve direct node reviewer: %w", err)
+		}
+		if err := validateWorkflowExecutorActor(ctx, q, workspaceID, assignment); err != nil {
+			return fmt.Errorf("validate direct node reviewer: %w", err)
+		}
+		if _, err := q.CreateWorkflowNodeParticipant(ctx, db.CreateWorkflowNodeParticipantParams{
+			WorkspaceID: workspaceID, WorkflowNodeInstanceID: node.ID, Role: "reviewer",
+			ActorType: assignment.ActorType, ActorID: assignment.ActorID,
+		}); err != nil {
+			return fmt.Errorf("create direct node reviewer: %w", err)
+		}
+	}
 	if nodeDefinition.OwnerRole != "" {
 		return nil
 	}

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -30,19 +31,19 @@ type WorkflowTaskContext struct {
 	// NodeInstanceID addresses the live attempt. Submissions are scoped to it,
 	// so an agent that cached an earlier attempt's id would write to work that
 	// has since been redone.
-	NodeInstanceID  string                    `json:"node_instance_id"`
-	NodeKey         string                    `json:"node_key"`
-	NodeName        string                    `json:"node_name,omitempty"`
-	RunTitle        string                    `json:"run_title,omitempty"`
-	Instructions    string                    `json:"instructions,omitempty"`
-	DirectExecution bool                      `json:"direct_execution,omitempty"`
-	HostIssue       string                    `json:"host_issue,omitempty"`
-	NodeIssues      []string                  `json:"node_issues,omitempty"`
-	HandoffRequired bool                      `json:"handoff_required,omitempty"`
-	Artifacts       []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
-	Upstream        []WorkflowUpstreamContext `json:"upstream,omitempty"`
-	Rework          *WorkflowReworkContext    `json:"rework,omitempty"`
-	Choice          *WorkflowChoiceDuty       `json:"choice,omitempty"`
+	NodeInstanceID   string                    `json:"node_instance_id"`
+	NodeKey          string                    `json:"node_key"`
+	NodeName         string                    `json:"node_name,omitempty"`
+	RunTitle         string                    `json:"run_title,omitempty"`
+	Instructions     string                    `json:"instructions,omitempty"`
+	DirectExecution  bool                      `json:"direct_execution,omitempty"`
+	HostIssue        string                    `json:"host_issue,omitempty"`
+	NodeIssues       []string                  `json:"node_issues,omitempty"`
+	HandoffRequired  bool                      `json:"handoff_required,omitempty"`
+	Artifacts        []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
+	Upstream         []WorkflowUpstreamContext `json:"upstream,omitempty"`
+	Rework           *WorkflowReworkContext    `json:"rework,omitempty"`
+	Choice           *WorkflowChoiceDuty       `json:"choice,omitempty"`
 	ReviewSubmission *WorkflowReviewSubmission `json:"review_submission,omitempty"`
 }
 
@@ -50,9 +51,10 @@ type WorkflowTaskContext struct {
 // The server still points the Critic at issue and artifact bodies for detail;
 // this compact record identifies the revision and preserves its conclusion.
 type WorkflowReviewSubmission struct {
-	ID      string          `json:"id"`
-	Summary string          `json:"summary,omitempty"`
-	Evidence json.RawMessage `json:"evidence,omitempty"`
+	ID           string          `json:"id"`
+	Summary      string          `json:"summary,omitempty"`
+	WorkerOutput string          `json:"worker_output,omitempty"`
+	Evidence     json.RawMessage `json:"evidence,omitempty"`
 }
 
 // WorkflowChoiceDuty is the routing decision this node owes a downstream
@@ -196,6 +198,18 @@ func (h *Handler) workflowTaskContext(
 	if err := json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition); err != nil {
 		return nil
 	}
+	hostIssue := coordinates.HostIssue
+	if strings.TrimSpace(hostIssue) == "" && instance.HostIssueID.Valid {
+		if host, hostErr := h.Queries.GetIssueInWorkspace(
+			ctx,
+			db.GetIssueInWorkspaceParams{
+				ID: instance.HostIssueID, WorkspaceID: instance.WorkspaceID,
+			},
+		); hostErr == nil {
+			hostIssue = h.getIssuePrefix(ctx, instance.WorkspaceID) + "-" +
+				strconv.Itoa(int(host.Number))
+		}
+	}
 	result := &WorkflowTaskContext{
 		InstanceID:      uuidToString(instance.ID),
 		Phase:           service.WorkflowNodeTaskPhaseWorker,
@@ -204,7 +218,7 @@ func (h *Handler) workflowTaskContext(
 		NodeName:        node.NameSnapshot,
 		RunTitle:        instance.Title,
 		Instructions:    strings.TrimSpace(nodeDefinition.Description),
-		HostIssue:       coordinates.HostIssue,
+		HostIssue:       hostIssue,
 		HandoffRequired: nodeDefinition.Completion.HandoffRequired,
 	}
 	result.Artifacts = h.workflowArtifactDuties(ctx, instance.WorkspaceID, node, nodeDefinition)
@@ -317,8 +331,44 @@ func (h *Handler) workflowReviewSubmission(
 	}
 	return &WorkflowReviewSubmission{
 		ID: uuidToString(submission.ID), Summary: submission.Summary,
-		Evidence: json.RawMessage(submission.Evidence),
+		WorkerOutput: h.workflowDirectWorkerOutput(ctx, workspaceID, node),
+		Evidence:     json.RawMessage(submission.Evidence),
 	}
+}
+
+func (h *Handler) workflowDirectWorkerOutput(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	node db.WorkflowNodeInstance,
+) string {
+	tasks, err := h.Queries.ListWorkflowNodeTasks(ctx, db.ListWorkflowNodeTasksParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return ""
+	}
+	for _, task := range tasks {
+		if task.Source != "execution" {
+			continue
+		}
+		agentTask, taskErr := h.Queries.GetLatestAgentTaskForWorkflowNodeTask(ctx, task.ID)
+		if taskErr != nil || agentTask.Status != "completed" {
+			continue
+		}
+		var result struct {
+			Output string `json:"output"`
+		}
+		if json.Unmarshal(agentTask.Result, &result) != nil {
+			continue
+		}
+		output := []rune(strings.TrimSpace(result.Output))
+		const maxOutputRunes = 12000
+		if len(output) > maxOutputRunes {
+			output = append(output[:maxOutputRunes], []rune("\n\n[truncated]")...)
+		}
+		return string(output)
+	}
+	return ""
 }
 
 // workflowChoiceDuty reports the branch decision this node owes, derived from
@@ -383,17 +433,22 @@ func (h *Handler) workflowReworkContext(
 	if err != nil {
 		return rework
 	}
-	switch event.EventType {
-	case "acceptance.rejected":
-		rework.Source = "acceptance"
-	case "node.rollback":
-		rework.Source = "manual_rollback"
-	}
 	var payload struct {
+		Action string `json:"action"`
 		Reason string `json:"reason"`
 	}
 	if json.Unmarshal(event.Payload, &payload) == nil {
 		rework.Reason = payload.Reason
+	}
+	switch event.EventType {
+	case "acceptance.rejected":
+		rework.Source = "acceptance"
+	case "node.rollback":
+		if payload.Action == "critic_rework" {
+			rework.Source = "critic"
+		} else {
+			rework.Source = "manual_rollback"
+		}
 	}
 	return rework
 }
