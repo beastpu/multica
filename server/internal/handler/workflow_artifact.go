@@ -634,12 +634,17 @@ func (h *Handler) ReviewWorkflowArtifact(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// Summary is the conclusion its author wrote; WorkerOutput is the platform's
+// fallback when nobody wrote one, kept in its own field so the two are never
+// confused. Issues points at the full record behind the summary.
 type workflowUpstreamNode struct {
-	NodeKey   string                    `json:"node_key"`
-	Name      string                    `json:"name"`
-	Status    string                    `json:"status"`
-	Summary   string                    `json:"summary"`
-	Artifacts []workflowArtifactSummary `json:"artifacts"`
+	NodeKey      string                    `json:"node_key"`
+	Name         string                    `json:"name"`
+	Status       string                    `json:"status"`
+	Summary      string                    `json:"summary"`
+	WorkerOutput string                    `json:"worker_output"`
+	Issues       []string                  `json:"issues"`
+	Artifacts    []workflowArtifactSummary `json:"artifacts"`
 }
 
 // workflowArtifactSummary is the index form of an artifact: enough to decide
@@ -732,6 +737,7 @@ func (h *Handler) GetWorkflowNodeUpstream(w http.ResponseWriter, r *http.Request
 		entry := workflowUpstreamNode{
 			NodeKey: candidate.NodeKey, Name: candidate.NameSnapshot,
 			Status: candidate.Status, Artifacts: []workflowArtifactSummary{},
+			Issues: []string{},
 		}
 		if candidate.LatestSubmissionID.Valid {
 			submission, err := h.Queries.GetWorkflowSubmissionInWorkspace(
@@ -743,6 +749,17 @@ func (h *Handler) GetWorkflowNodeUpstream(w http.ResponseWriter, r *http.Request
 			if err == nil {
 				entry.Summary = submission.Summary
 			}
+		}
+		if strings.TrimSpace(entry.Summary) == "" {
+			entry.WorkerOutput = clipRunes(
+				h.workflowDirectWorkerOutput(r.Context(), instance.WorkspaceID, candidate),
+				upstreamWorkerOutputRunes,
+			)
+		}
+		if issues := h.workflowNodeIssueIdentifiers(
+			r.Context(), instance.WorkspaceID, candidate,
+		); len(issues) > 0 {
+			entry.Issues = issues
 		}
 		artifacts, err := h.Queries.ListWorkflowNodeArtifacts(
 			r.Context(),

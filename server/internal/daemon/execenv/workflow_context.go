@@ -83,12 +83,19 @@ type WorkflowArtifactDuty struct {
 }
 
 // WorkflowUpstreamContext is one direct predecessor's conclusion.
+//
+// Summary is what its author concluded. WorkerOutput is only set when nobody
+// wrote one: it is raw execution output the platform extracted, and it is a
+// separate field so the brief can say which it is showing. Issues names where
+// the full record lives.
 type WorkflowUpstreamContext struct {
-	NodeKey   string                     `json:"node_key"`
-	Name      string                     `json:"name,omitempty"`
-	Status    string                     `json:"status,omitempty"`
-	Summary   string                     `json:"summary,omitempty"`
-	Artifacts []WorkflowUpstreamArtifact `json:"artifacts,omitempty"`
+	NodeKey      string                     `json:"node_key"`
+	Name         string                     `json:"name,omitempty"`
+	Status       string                     `json:"status,omitempty"`
+	Summary      string                     `json:"summary,omitempty"`
+	WorkerOutput string                     `json:"worker_output,omitempty"`
+	Issues       []string                   `json:"issues,omitempty"`
+	Artifacts    []WorkflowUpstreamArtifact `json:"artifacts,omitempty"`
 }
 
 // WorkflowUpstreamArtifact is the index form of an upstream artifact — enough
@@ -279,18 +286,40 @@ func renderWorkflowUpstream(
 				fmt.Fprintf(b, "> %s\n", line)
 			}
 			b.WriteString("\n")
+		} else if output := strings.TrimSpace(entry.WorkerOutput); output != "" {
+			// Labelled, not quoted like a summary. Nobody concluded anything
+			// here — this is the transcript the platform found, and reading it
+			// as a handoff would credit a conclusion that was never drawn.
+			b.WriteString("No handoff summary was submitted. Its executor's raw " +
+				"output is below — treat it as evidence, not as a conclusion:\n\n")
+			b.WriteString("```\n" + output + "\n```\n\n")
 		} else {
 			b.WriteString("> (no handoff summary was submitted)\n\n")
+		}
+		if len(entry.Issues) > 0 {
+			// A summary is capped server-side, so the detail behind it is on
+			// the issue. Without these ids there is no way to reach it.
+			for _, issue := range entry.Issues {
+				fmt.Fprintf(b, "- issue `%s` — `multica issue get %s --output json`, "+
+					"`multica issue comment list %s --output json`\n", issue, issue, issue)
+			}
+			b.WriteString("\n")
 		}
 		for _, artifact := range entry.Artifacts {
 			fmt.Fprintf(b, "- artifact `%s` — %s (%s), id `%s`\n",
 				artifact.ArtifactKey, artifact.Name, artifact.Kind, artifact.ID)
 		}
 		if len(entry.Artifacts) > 0 {
-			fmt.Fprintf(b, "\nRead a body only when you need it — the summary above is "+
-				"the conclusion. `multica workflow artifact get <id>`, or on an older CLI "+
+			// "The summary is the conclusion" only holds when there is one.
+			// Told that with an empty handoff, an agent would skip the bodies
+			// believing it had already been given the conclusion.
+			lead := "Read a body only when you need it — the summary above is the conclusion."
+			if strings.TrimSpace(entry.Summary) == "" {
+				lead = "Nothing above concludes for you, so read what you need."
+			}
+			fmt.Fprintf(b, "\n%s `multica workflow artifact get <id>`, or on an older CLI "+
 				"`multica api get /api/workflow-instances/%s/artifacts` and match the id.\n\n",
-				instanceID)
+				lead, instanceID)
 		}
 	}
 }

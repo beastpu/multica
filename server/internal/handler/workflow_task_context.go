@@ -97,12 +97,21 @@ type WorkflowArtifactDuty struct {
 }
 
 // WorkflowUpstreamContext carries one direct predecessor's conclusion.
+//
+// Summary is the conclusion its author wrote. WorkerOutput is a fallback the
+// platform extracted when no one wrote one — it is raw execution output, not a
+// conclusion, and the two are kept apart so a reader is never told the platform
+// summarised something a person did not. Issues name where the full record
+// lives, because a summary is short by construction and the detail behind it is
+// on the predecessor's issue rather than in this payload.
 type WorkflowUpstreamContext struct {
-	NodeKey   string                     `json:"node_key"`
-	Name      string                     `json:"name,omitempty"`
-	Status    string                     `json:"status,omitempty"`
-	Summary   string                     `json:"summary,omitempty"`
-	Artifacts []WorkflowUpstreamArtifact `json:"artifacts,omitempty"`
+	NodeKey      string                     `json:"node_key"`
+	Name         string                     `json:"name,omitempty"`
+	Status       string                     `json:"status,omitempty"`
+	Summary      string                     `json:"summary,omitempty"`
+	WorkerOutput string                     `json:"worker_output,omitempty"`
+	Issues       []string                   `json:"issues,omitempty"`
+	Artifacts    []WorkflowUpstreamArtifact `json:"artifacts,omitempty"`
 }
 
 // WorkflowUpstreamArtifact is the index form: enough to decide whether to read
@@ -361,14 +370,26 @@ func (h *Handler) workflowDirectWorkerOutput(
 		if json.Unmarshal(agentTask.Result, &result) != nil {
 			continue
 		}
-		output := []rune(strings.TrimSpace(result.Output))
-		const maxOutputRunes = 12000
-		if len(output) > maxOutputRunes {
-			output = append(output[:maxOutputRunes], []rune("\n\n[truncated]")...)
-		}
-		return string(output)
+		return clipRunes(result.Output, criticWorkerOutputRunes)
 	}
 	return ""
+}
+
+const (
+	// The Critic judges the worker's actual output, so it gets room to see it.
+	criticWorkerOutputRunes = 12000
+	// A downstream node gets far less: this is a fallback for a conclusion
+	// nobody wrote, and N predecessors' transcripts would crowd out the node's
+	// own instructions.
+	upstreamWorkerOutputRunes = 2000
+)
+
+func clipRunes(text string, limit int) string {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit]) + "\n\n[truncated]"
 }
 
 // workflowChoiceDuty reports the branch decision this node owes, derived from
@@ -557,6 +578,16 @@ func (h *Handler) workflowUpstreamContext(
 				entry.Summary = submission.Summary
 			}
 		}
+		// Only when nobody wrote a conclusion. A node whose author did hand one
+		// off has said what matters; adding its raw output on top would make
+		// every downstream brief pay for a transcript it does not need.
+		if strings.TrimSpace(entry.Summary) == "" {
+			entry.WorkerOutput = clipRunes(
+				h.workflowDirectWorkerOutput(ctx, instance.WorkspaceID, candidate),
+				upstreamWorkerOutputRunes,
+			)
+		}
+		entry.Issues = h.workflowNodeIssueIdentifiers(ctx, instance.WorkspaceID, candidate)
 		if artifacts, err := h.Queries.ListWorkflowNodeArtifacts(
 			ctx,
 			db.ListWorkflowNodeArtifactsParams{

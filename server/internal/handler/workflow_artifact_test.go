@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -690,6 +691,191 @@ func TestWorkflowUpstreamReturnsPredecessorHandoff(t *testing.T) {
 	if strings.Contains(recorder.Body.String(), `"content"`) {
 		t.Error("upstream index must not carry artifact bodies")
 	}
+}
+
+// A predecessor that ran but whose executor wrote no conclusion used to hand
+// downstream nothing at all. Its execution output and its issue are the only
+// record of what happened, so both travel with the upstream entry — the output
+// in its own field, never merged into summary, because the handoff gate treats
+// an authored conclusion and a platform extract as different things.
+func TestWorkflowUpstreamFallsBackToWorkerOutputAndIssues(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+	instanceID, reviewID, designID := startHandoffWorkflow(t, "upstream-fallback")
+
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1
+	`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("find seeded agent: %v", err)
+	}
+
+	var executionTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workflow_node_task (
+			workspace_id, workflow_instance_id, workflow_node_instance_id,
+			task_key, source, required, materialization_status, created_by_type
+		) VALUES ($1, $2, $3, 'run', 'execution', true, 'materialized', 'system')
+		RETURNING id
+	`, testWorkspaceID, instanceID, reviewID).Scan(&executionTaskID); err != nil {
+		t.Fatalf("create execution task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, status, priority, workflow_node_task_id, result
+		) VALUES ($1, $2, 'completed', 0, $3, $4)
+	`, agentID, testRuntimeID, executionTaskID,
+		`{"output":"Reviewed the pricing rules; two edge cases stay open."}`,
+	); err != nil {
+		t.Fatalf("create completed agent task: %v", err)
+	}
+
+	var workTaskID, workIssueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workflow_node_task (
+			workspace_id, workflow_instance_id, workflow_node_instance_id,
+			task_key, source, required, materialization_status, created_by_type
+		) VALUES ($1, $2, $3, 'work', 'template', true, 'materialized', 'system')
+		RETURNING id
+	`, testWorkspaceID, instanceID, reviewID).Scan(&workTaskID); err != nil {
+		t.Fatalf("create work task: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_type, creator_id,
+			number, position, origin_type, origin_id
+		) VALUES ($1, 'Upstream review work', 'done', 'none', 'member', $2, $3, 0, 'workflow', $4)
+		RETURNING id
+	`, testWorkspaceID, testUserID, nextWorkspaceIssueNumber(t), workTaskID).Scan(&workIssueID); err != nil {
+		t.Fatalf("create work issue: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE workflow_node_task SET issue_id = $1 WHERE id = $2
+	`, workIssueID, workTaskID); err != nil {
+		t.Fatalf("bind work issue: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(
+		http.MethodGet,
+		"/api/workflow-node-instances/"+designID+"/upstream?workspace_id="+testWorkspaceID,
+		nil,
+	), "nodeInstanceId", designID)
+	testHandler.GetWorkflowNodeUpstream(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("upstream status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Upstream []struct {
+			NodeKey      string   `json:"node_key"`
+			Summary      string   `json:"summary"`
+			WorkerOutput string   `json:"worker_output"`
+			Issues       []string `json:"issues"`
+		} `json:"upstream"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode upstream: %v", err)
+	}
+	if len(response.Upstream) != 1 {
+		t.Fatalf("upstream entries = %d, want exactly the direct predecessor", len(response.Upstream))
+	}
+	entry := response.Upstream[0]
+	if entry.Summary != "" {
+		t.Errorf("summary = %q, want empty: nobody wrote a conclusion", entry.Summary)
+	}
+	if !strings.Contains(entry.WorkerOutput, "two edge cases stay open") {
+		t.Errorf("worker_output = %q, want the completed execution's output", entry.WorkerOutput)
+	}
+	if len(entry.Issues) != 1 {
+		t.Fatalf("issues = %v, want the predecessor's issue", entry.Issues)
+	}
+	if !strings.HasSuffix(entry.Issues[0], "-"+strconv.Itoa(workIssueNumber(t, workIssueID))) {
+		t.Errorf("issue identifier = %q, want the work issue's identifier", entry.Issues[0])
+	}
+}
+
+// Once the executor writes a conclusion, that is the handoff. Carrying the raw
+// transcript alongside it would bury the conclusion in a downstream brief that
+// has its own instructions to fit.
+func TestWorkflowUpstreamOmitsWorkerOutputOnceHandoffExists(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+	instanceID, reviewID, designID := startHandoffWorkflow(t, "upstream-authored")
+
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1
+	`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("find seeded agent: %v", err)
+	}
+	var executionTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workflow_node_task (
+			workspace_id, workflow_instance_id, workflow_node_instance_id,
+			task_key, source, required, materialization_status, created_by_type
+		) VALUES ($1, $2, $3, 'run', 'execution', true, 'materialized', 'system')
+		RETURNING id
+	`, testWorkspaceID, instanceID, reviewID).Scan(&executionTaskID); err != nil {
+		t.Fatalf("create execution task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, status, priority, workflow_node_task_id, result
+		) VALUES ($1, $2, 'completed', 0, $3, $4)
+	`, agentID, testRuntimeID, executionTaskID,
+		`{"output":"verbose transcript nobody downstream needs"}`,
+	); err != nil {
+		t.Fatalf("create completed agent task: %v", err)
+	}
+
+	if recorder := submitHandoff(
+		t, reviewID, "Pricing rules reviewed; two edge cases deferred.", "handoff-authored",
+	); recorder.Code != http.StatusCreated {
+		t.Fatalf("submit handoff status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(
+		http.MethodGet,
+		"/api/workflow-node-instances/"+designID+"/upstream?workspace_id="+testWorkspaceID,
+		nil,
+	), "nodeInstanceId", designID)
+	testHandler.GetWorkflowNodeUpstream(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("upstream status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Upstream []struct {
+			Summary      string `json:"summary"`
+			WorkerOutput string `json:"worker_output"`
+		} `json:"upstream"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode upstream: %v", err)
+	}
+	if len(response.Upstream) != 1 {
+		t.Fatalf("upstream entries = %d, want exactly the direct predecessor", len(response.Upstream))
+	}
+	if !strings.Contains(response.Upstream[0].Summary, "two edge cases deferred") {
+		t.Errorf("summary = %q, want the authored handoff", response.Upstream[0].Summary)
+	}
+	if response.Upstream[0].WorkerOutput != "" {
+		t.Errorf("worker_output = %q, want empty once a conclusion exists",
+			response.Upstream[0].WorkerOutput)
+	}
+}
+
+func workIssueNumber(t *testing.T, issueID string) int {
+	t.Helper()
+	var number int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT number FROM issue WHERE id = $1
+	`, issueID).Scan(&number); err != nil {
+		t.Fatalf("read issue number: %v", err)
+	}
+	return number
 }
 
 // A node needing a verdict but declaring no schema gets a submission

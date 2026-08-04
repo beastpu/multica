@@ -72,6 +72,76 @@ func TestRenderIssueContext_WorkflowSummaryStaysQuoted(t *testing.T) {
 	}
 }
 
+// A predecessor whose executor never wrote a conclusion used to hand the next
+// node the literal string "(no handoff summary was submitted)" and nothing
+// else. Its raw output is the only record of what happened, so the brief
+// carries it — labelled as evidence, because nobody concluded anything.
+func TestRenderIssueContext_WorkflowUpstreamFallsBackToWorkerOutput(t *testing.T) {
+	workflow := workflowFixture()
+	workflow.Upstream[0].Summary = ""
+	workflow.Upstream[0].WorkerOutput = "Rewrote the pricing table query and benchmarked it."
+
+	md := renderIssueContext("claude", TaskContextForEnv{
+		IssueID:  "issue-1",
+		Workflow: workflow,
+	})
+
+	if !strings.Contains(md, "Rewrote the pricing table query") {
+		t.Errorf("upstream worker output is missing:\n%s", md)
+	}
+	if !strings.Contains(md, "treat it as evidence, not as a conclusion") {
+		t.Errorf("worker output was not labelled as evidence:\n%s", md)
+	}
+	if strings.Contains(md, "> Rewrote the pricing table query") {
+		t.Errorf("raw output was quoted like an authored handoff:\n%s", md)
+	}
+	if strings.Contains(md, "the summary above is the conclusion") {
+		t.Errorf("brief claims a conclusion that was never written:\n%s", md)
+	}
+}
+
+// The fallback exists for an absent conclusion. When the executor did write
+// one, that is what the next node acts on — appending the transcript as well
+// would bury it.
+func TestRenderIssueContext_WorkflowSummaryWinsOverWorkerOutput(t *testing.T) {
+	workflow := workflowFixture()
+	workflow.Upstream[0].WorkerOutput = "ran the benchmark suite twice"
+
+	md := renderIssueContext("claude", TaskContextForEnv{
+		IssueID:  "issue-1",
+		Workflow: workflow,
+	})
+
+	if !strings.Contains(md, "> 页面信息架构：") {
+		t.Errorf("authored summary is missing:\n%s", md)
+	}
+	if strings.Contains(md, "ran the benchmark suite twice") {
+		t.Errorf("transcript rendered alongside an authored conclusion:\n%s", md)
+	}
+}
+
+// A handoff summary is capped server-side, so the detail behind it lives on the
+// predecessor's issue. Without its identifier the agent cannot reach any of it.
+func TestRenderIssueContext_WorkflowUpstreamNamesItsIssues(t *testing.T) {
+	workflow := workflowFixture()
+	workflow.Upstream[0].Issues = []string{"WTE-14775"}
+
+	md := renderIssueContext("claude", TaskContextForEnv{
+		IssueID:  "issue-1",
+		Workflow: workflow,
+	})
+
+	for _, want := range []string{
+		"WTE-14775",
+		"multica issue get WTE-14775 --output json",
+		"multica issue comment list WTE-14775 --output json",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("upstream issue entry point %q is missing:\n%s", want, md)
+		}
+	}
+}
+
 // An older runtime CLI has no `workflow` subcommand at all, so the protocol has
 // to carry a route that works without it — addressed by node instance id,
 // which is exactly why the server pushes that id.
