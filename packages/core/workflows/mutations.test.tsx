@@ -11,6 +11,7 @@ import type { ApiClient } from "../api/client";
 import {
   useCreateWorkflowRun,
   useCreateWorkflowSubmission,
+  useSaveWorkflowDefinition,
 } from "./mutations";
 import { workflowKeys } from "./queries";
 import type { WorkflowNodeDetail, WorkflowSubmission } from "./types";
@@ -196,5 +197,60 @@ describe("workflow optimistic mutations", () => {
     );
     expect(keys[0]).toBe(keys[1]);
     expect(keys[2]).not.toBe(keys[1]);
+  });
+});
+
+describe("useSaveWorkflowDefinition", () => {
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+  });
+
+  afterEach(() => {
+    queryClient.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("puts the saved version in the cache before the refetch lands", async () => {
+    const templateKey = workflowKeys.template("ws-1", "template-1");
+    queryClient.setQueryData(templateKey, {
+      workflow: { id: "template-1", status: "published" },
+      versions: [{ id: "version-1", version: 1, definition: { nodes: [] } }],
+    });
+    const saved = {
+      id: "version-2",
+      version: 2,
+      revision: 1,
+      status: "published",
+      change_summary: "",
+      definition: { nodes: [] },
+    };
+    setApiInstance({
+      saveWorkflowDefinition: vi.fn().mockResolvedValue({ version: saved }),
+    } as unknown as ApiClient);
+
+    const { result } = renderHook(
+      () => useSaveWorkflowDefinition("template-1"),
+      { wrapper: wrapper(queryClient) },
+    );
+    await act(async () => {
+      await result.current.mutateAsync({
+        definition: { nodes: [] } as never,
+        change_summary: "",
+      });
+    });
+
+    // The editor selects the returned version as soon as the mutation
+    // resolves. If it is not in `versions` by then the page reads as an older
+    // version, turns read-only and reloads the previous definition over the
+    // edits.
+    const detail = queryClient.getQueryData(templateKey) as {
+      versions: Array<{ id: string }>;
+    };
+    expect(detail.versions.map((version) => version.id))
+      .toEqual(["version-2", "version-1"]);
   });
 });

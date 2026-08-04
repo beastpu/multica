@@ -596,6 +596,25 @@ export function useSaveWorkflowDefinition(templateId: string) {
       change_summary?: string;
       revision?: number;
     }) => api.saveWorkflowDefinition(templateId, input),
+    // The saved version has to be in the cache before this resolves. The
+    // editor selects it the moment the mutation succeeds, and until the
+    // invalidated detail query came back that id matched nothing in
+    // `versions` — so the editor read as "not the latest version", went
+    // read-only, reset the selection to the previous version and reloaded its
+    // definition over the one just saved. The server hands back the canonical
+    // version; write it in rather than wait for the round trip.
+    onSuccess: (result) => {
+      qc.setQueryData(
+        workflowKeys.template(wsId, templateId),
+        (current: WorkflowDetail | undefined) => {
+          if (!current) return current;
+          if (current.versions.some((v) => v.id === result.version.id)) {
+            return current;
+          }
+          return { ...current, versions: [result.version, ...current.versions] };
+        },
+      );
+    },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: workflowKeys.template(wsId, templateId) });
       qc.invalidateQueries({ queryKey: workflowKeys.templates(wsId) });
