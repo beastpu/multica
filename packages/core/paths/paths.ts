@@ -30,6 +30,13 @@ function workspaceScoped(slug: string) {
     // each, which is how "templates" ended up in the path to tell them apart.
     workflow: (id: string) => `${ws}/workflows/${encode(id)}`,
     workflowRun: (id: string) => `${ws}/workflows/runs/${encode(id)}`,
+    // Every run across every workflow. `workflowId` narrows it to one
+    // workflow's history, which is what the list page's history column links
+    // to.
+    workflowRuns: (workflowId?: string) =>
+      workflowId
+        ? `${ws}/workflows/runs?workflow=${encode(workflowId)}`
+        : `${ws}/workflows/runs`,
     autopilots: () => `${ws}/autopilots`,
     autopilotDetail: (id: string) => `${ws}/autopilots/${encode(id)}`,
     agents: () => `${ws}/agents`,

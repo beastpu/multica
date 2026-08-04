@@ -7,6 +7,8 @@ import {
   GitBranch,
   LayoutTemplate,
   Loader2,
+  MoreHorizontal,
+  Pencil,
   Play,
   Plus,
   Users,
@@ -41,6 +43,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@multica/ui/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@multica/ui/components/ui/dropdown-menu";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { Textarea } from "@multica/ui/components/ui/textarea";
@@ -64,7 +72,7 @@ import {
   CollectionPageState,
 } from "../layout/collection-page";
 import { cn } from "@multica/ui/lib/utils";
-import { useT } from "../i18n";
+import { useT, useTimeAgo } from "../i18n";
 import { WorkflowStatusBadge } from "./workflow-status";
 import { canManageWorkflows } from "./workflow-list";
 import { workflowPreviewActivities } from "./workflow-preview";
@@ -137,6 +145,59 @@ function recentRunMarkerClass(status: string): string {
     default:
       return "bg-sky-500";
   }
+}
+
+// A row of 2.5px dots told you a run existed and nothing else — not which one
+// was last, not when, and not where the rest were. What a list row owes the
+// reader is the latest state and a way through to the whole history; the
+// history itself is a page.
+function RunHistoryCell({ template }: { template: Workflow }) {
+  const { t } = useT("workflows");
+  const p = useWorkspacePaths();
+  const timeAgo = useTimeAgo();
+  const latest = template.recent_runs[0];
+
+  if (!latest) {
+    return (
+      <div className="flex items-center justify-end">
+        <span className="text-xs text-muted-foreground/60">
+          {t(($) => $.templates.never_run)}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <AppLink
+        href={p.workflowRun(latest.id)}
+        title={`${latest.title} · ${latest.status}`}
+        className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span
+          aria-hidden="true"
+          className={cn(
+            "size-2 shrink-0 rounded-full",
+            recentRunMarkerClass(latest.status),
+          )}
+        />
+        <span className="truncate text-xs text-muted-foreground">
+          {t(($) => $.status[latest.status as "running"]) ?? latest.status}
+        </span>
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
+          {timeAgo(latest.started_at)}
+        </span>
+      </AppLink>
+      {template.run_count > 1 && (
+        <AppLink
+          href={p.workflowRuns(template.id)}
+          className="shrink-0 rounded-md px-1.5 py-1 text-xs tabular-nums text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {t(($) => $.templates.run_count, { count: template.run_count })}
+        </AppLink>
+      )}
+    </div>
+  );
 }
 
 function matchesTemplateStatus(
@@ -362,34 +423,16 @@ function TemplatesPanel({
                     {template.activity_count}
                   </td>
                   <td className="px-3 py-2">
-                    <div className="flex items-center justify-end gap-2">
-                      <span className="text-xs tabular-nums text-muted-foreground">
-                        {template.run_count}
-                      </span>
-                      <div className="flex min-w-20 items-center justify-end gap-1">
-                        {template.recent_runs.map((run) => (
-                          <AppLink
-                            key={run.id}
-                            href={p.workflowRun(run.id)}
-                            title={`${run.title} · ${run.status}`}
-                            className={cn(
-                              "size-2.5 rounded-full ring-offset-background transition-transform hover:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                              recentRunMarkerClass(run.status),
-                            )}
-                          >
-                            <span className="sr-only">
-                              {t(($) => $.templates.open_run, {
-                                title: run.title,
-                                status: run.status,
-                              })}
-                            </span>
-                          </AppLink>
-                        ))}
-                      </div>
-                    </div>
+                    <RunHistoryCell template={template} />
                   </td>
+                  {/*
+                    -mr-2 pulls the trailing button's own padding back so its
+                    icon lines up with the right edge the header sits on;
+                    without it the column header reads as hanging past its
+                    own cells.
+                  */}
                   <td className="px-3 py-2">
-                    <div className="flex items-center justify-end gap-1">
+                    <div className="-mr-2 flex items-center justify-end gap-0.5">
                       {template.status === "published" && (
                         <Button
                           size="sm"
@@ -401,23 +444,45 @@ function TemplatesPanel({
                         </Button>
                       )}
                       {canManage && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label={t(($) => $.actions.copy)}
-                          disabled={copyTemplate.isPending}
-                          onClick={() => copyTemplate.mutate({
-                            templateId: template.id,
-                            name: `${template.name} ${
-                              t(($) => $.templates.copy_suffix)
-                            }`,
-                          }, {
-                            onSuccess: ({ workflow: copied }) =>
-                              navigation.push(p.workflow(copied.id)),
-                          })}
-                        >
-                          <Copy />
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <Button
+                                type="button"
+                                size="icon-sm"
+                                variant="ghost"
+                                aria-label={t(($) => $.templates.more_actions)}
+                              >
+                                <MoreHorizontal />
+                              </Button>
+                            }
+                          />
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              disabled={copyTemplate.isPending}
+                              onClick={() => copyTemplate.mutate({
+                                templateId: template.id,
+                                name: `${template.name} ${
+                                  t(($) => $.templates.copy_suffix)
+                                }`,
+                              }, {
+                                onSuccess: ({ workflow: copied }) =>
+                                  navigation.push(p.workflow(copied.id)),
+                              })}
+                            >
+                              <Copy aria-hidden="true" />
+                              {t(($) => $.actions.copy)}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              render={
+                                <AppLink href={p.workflow(template.id)}>
+                                  <Pencil aria-hidden="true" />
+                                  {t(($) => $.actions.edit_metadata)}
+                                </AppLink>
+                              }
+                            />
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       )}
                     </div>
                   </td>

@@ -143,6 +143,10 @@ vi.mock("@multica/core/paths", async (importOriginal) => {
     useWorkspacePaths: () => ({
       workflow: (id: string) => `/workspace/workflows/${id}`,
       workflowRun: (id: string) => `/workspace/workflows/runs/${id}`,
+      workflowRuns: (workflowId?: string) =>
+        workflowId
+          ? `/workspace/workflows/runs?workflow=${workflowId}`
+          : "/workspace/workflows/runs",
     }),
   };
 });
@@ -308,12 +312,15 @@ describe("WorkflowsPage", () => {
       .toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Delivery workflow" }))
       .toHaveAttribute("href", "/workspace/workflows/template-1");
+    // The latest run is named in the row; the rest live behind the count,
+    // which is a link to this workflow's history rather than a row of dots
+    // that said only "a run happened".
     expect(
-      screen.getByRole("link", { name: "Open Release run (running)" }),
+      screen.getByRole("link", { name: /Running/ }),
     ).toHaveAttribute("href", "/workspace/workflows/runs/run-running");
     expect(
-      screen.getByRole("link", { name: "Open Failed run (failed)" }),
-    ).toHaveAttribute("href", "/workspace/workflows/runs/run-failed");
+      screen.getByRole("link", { name: "4 runs" }),
+    ).toHaveAttribute("href", "/workspace/workflows/runs?workflow=template-1");
   });
 
   it("keeps secondary workflow metadata out of the operational list", () => {
