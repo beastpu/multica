@@ -211,10 +211,11 @@ function newActivity(definition: WorkflowDefinition): WorkflowNodeDefinition {
     key,
     kind: "activity",
     name: "New activity",
-    // A new activity is a process step first. Producing issues is an explicit
-    // opt-in, so building a flow does not fill the issue list with steps the
-    // author has not decided to track as work items yet.
-    issue_policy: "none",
+    // An activity gets an issue unless the author says otherwise. Defaulting
+    // the other way produced nodes with nowhere to state the work, nowhere for
+    // the executor to ask, and no id for `multica workflow` to resolve from —
+    // an agent on such a node had to guess the task from an artifact filename.
+    issue_policy: "auto",
     ...(initialRole
       ? {
         executor: {
@@ -224,7 +225,10 @@ function newActivity(definition: WorkflowDefinition): WorkflowNodeDefinition {
         },
       }
       : { executor: { kind: "manual" as const } }),
-    completion: { mode: "automatic", required_issue_outcome: "none" },
+    // The issue is where the work happens, so the node waits for it. Leaving
+    // this at "none" would let the activity complete while its own issue sat
+    // untouched.
+    completion: { mode: "automatic", required_issue_outcome: "done" },
   };
 }
 

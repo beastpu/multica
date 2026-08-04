@@ -107,12 +107,11 @@ function defaultWorkflowDefinition(): WorkflowDefinition {
           role: "owner",
           fallback: { kind: "manual" },
         },
-        issue_templates: [{
-          key: "work_item",
-          title: "Complete {{host.title}}",
-          required: true,
-          initial_status: "todo",
-        }],
+        // The node names its own issue. A starter that made the author write
+        // a title template first taught them the issue was optional, and the
+        // titles it produced ("Complete <host>") dropped the node name — the
+        // one thing that says which step the issue is for.
+        issue_policy: "auto",
         completion: { mode: "automatic", required_issue_outcome: "done" },
       },
       { key: "end", kind: "end", name: "End" },

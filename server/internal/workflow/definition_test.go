@@ -65,6 +65,93 @@ func TestValidateDefinitionRejectsTaskScopedSubmissionWithoutIssues(t *testing.T
 	}
 }
 
+// The default policy has to carry a node that declares nothing, because that
+// is exactly the node this exists for: an author who fills in no template at
+// all still gets an issue for the work to happen on.
+func TestNodeIssueTemplatesSynthesisesOneForAuto(t *testing.T) {
+	node := NodeDefinition{
+		Key: "work", Kind: "activity", Name: "代码实施", IssuePolicy: "auto",
+	}
+	templates := NodeIssueTemplates(node)
+	if len(templates) != 1 {
+		t.Fatalf("auto templates = %d, want exactly one", len(templates))
+	}
+	template := templates[0]
+	// The title carries the node name because a run with no host issue and no
+	// node description leaves the node name as the only statement of what the
+	// work is.
+	if !strings.Contains(template.Title, "代码实施") {
+		t.Errorf("auto title = %q, want the node name in it", template.Title)
+	}
+	if !strings.Contains(template.Title, "{{host.title}}") {
+		t.Errorf("auto title = %q, want it scoped to the run it belongs to", template.Title)
+	}
+	if err := validateIssueTitleTemplate(template.Title); err != nil {
+		t.Errorf("synthesised title is not a valid template: %v", err)
+	}
+	// A node whose issue nobody has to finish would complete while the work sits
+	// untouched, which is the opposite of why the issue is created.
+	if !template.Required {
+		t.Error("auto task is optional; the node would complete without the work")
+	}
+}
+
+// A node that names its own tasks keeps them; synthesising on top would give it
+// an extra issue nobody declared.
+func TestNodeIssueTemplatesLeavesDeclaredTemplatesAlone(t *testing.T) {
+	node := NodeDefinition{
+		Key: "work", Kind: "activity", Name: "Work", IssuePolicy: "fixed",
+		IssueTemplates: []IssueTemplate{{Key: "a", Title: "A", Required: true}},
+	}
+	if got := NodeIssueTemplates(node); len(got) != 1 || got[0].Key != "a" {
+		t.Fatalf("declared templates = %+v, want the author's own", got)
+	}
+	none := NodeDefinition{Key: "run", Kind: "activity", Name: "Run", IssuePolicy: "none"}
+	if got := NodeIssueTemplates(none); len(got) != 0 {
+		t.Fatalf("run-only templates = %+v, want none", got)
+	}
+}
+
+func TestValidateDefinitionAcceptsAutoIssuePolicy(t *testing.T) {
+	definition := validDefinition()
+	node := &definition.Nodes[1]
+	node.IssuePolicy = "auto"
+	node.IssueTemplates = nil
+	if err := ValidateDefinition(definition); err != nil {
+		t.Fatalf("ValidateDefinition() error = %v, want auto accepted", err)
+	}
+}
+
+// Auto means "one issue this node did not have to describe". Declaring
+// templates alongside it says two different things about the same node.
+func TestValidateDefinitionRejectsAutoWithDeclaredTemplates(t *testing.T) {
+	definition := validDefinition()
+	node := &definition.Nodes[1]
+	node.IssuePolicy = "auto"
+
+	err := ValidateDefinition(definition)
+	if err == nil || !strings.Contains(err.Error(), "cannot declare issue templates") {
+		t.Fatalf("ValidateDefinition() error = %v, want a template conflict error", err)
+	}
+}
+
+// An auto node is issue-backed, so the task-scoped submission policies that
+// need issues behind them are legal on it.
+func TestValidateDefinitionAcceptsTaskScopedSubmissionOnAuto(t *testing.T) {
+	for _, policy := range []string{"per_required_task", "fan_in"} {
+		t.Run(policy, func(t *testing.T) {
+			definition := validDefinition()
+			node := &definition.Nodes[1]
+			node.IssuePolicy = "auto"
+			node.IssueTemplates = nil
+			node.SubmissionSchema = &SubmissionSchema{Policy: policy}
+			if err := ValidateDefinition(definition); err != nil {
+				t.Fatalf("ValidateDefinition() error = %v, want accepted", err)
+			}
+		})
+	}
+}
+
 func TestValidateDefinitionAcceptsImplicitParallelOutgoingEdges(t *testing.T) {
 	activity := func(key string) NodeDefinition {
 		return NodeDefinition{Key: key, Kind: "activity", Name: key, OwnerRole: "owner"}

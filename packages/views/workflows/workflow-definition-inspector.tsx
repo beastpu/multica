@@ -1244,8 +1244,13 @@ export function WorkflowNodeDefinitionInspector({
               className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
               onChange={(event) => {
                 const policy = event.target.value;
-                const withoutFixedIssues = policy === "none" || policy === "dynamic";
-                const requiredIssueOutcome = withoutFixedIssues
+                // Auto declares no template of its own, so it drops any the
+                // author had — but it is still issue-backed, and its node
+                // waits for that issue like any other.
+                const withoutFixedIssues = policy === "none" ||
+                  policy === "auto" || policy === "dynamic";
+                const withoutIssues = policy === "none" || policy === "dynamic";
+                const requiredIssueOutcome = withoutIssues
                   ? "none"
                   : node.completion?.required_issue_outcome === "none"
                   ? "done"
@@ -1263,6 +1268,7 @@ export function WorkflowNodeDefinitionInspector({
                 });
               }}
             >
+              <option value="auto">{t(($) => $.editor.issue_policy_auto)}</option>
               <option value="none">{t(($) => $.editor.issue_policy_none)}</option>
               <option value="fixed">{t(($) => $.editor.issue_policy_fixed)}</option>
               {/*
@@ -1293,12 +1299,20 @@ export function WorkflowNodeDefinitionInspector({
               </p>
             )}
           </div>
-          {issuePolicy !== "none" && (
+          {/* Auto names its own issue, so there is no template to fill in.
+              Showing an empty title and description under it would read as
+              two more required fields before the node can do anything. */}
+          {issuePolicy !== "none" && issuePolicy !== "auto" && (
             <IssueTemplateEditor
               node={node}
               readOnly={readOnly}
               onChange={onChange}
             />
+          )}
+          {issuePolicy === "auto" && (
+            <p className="text-xs text-muted-foreground">
+              {t(($) => $.editor.issue_policy_auto_hint)}
+            </p>
           )}
           {/* Artifacts are independent of issue generation. A run-only node
               can still owe the following nodes a formal deliverable. */}

@@ -351,7 +351,7 @@ func (w *WorkflowSweeper) SweepOnce(ctx context.Context) error {
 			}
 		}
 		hasMissingTask := false
-		for _, template := range definition.IssueTemplates {
+		for _, template := range workflowdomain.NodeIssueTemplates(definition) {
 			if _, exists := existingTaskKeys[template.Key]; !exists {
 				hasMissingTask = true
 				break

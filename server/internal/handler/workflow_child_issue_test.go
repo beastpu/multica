@@ -12,6 +12,7 @@ func TestWorkflowTaskIssueDescription(t *testing.T) {
 		template string
 		node     string
 		host     string
+		purpose  string
 		want     string
 	}{
 		{
@@ -38,10 +39,33 @@ func TestWorkflowTaskIssueDescription(t *testing.T) {
 			template: "Produce the technical design.",
 			want:     "Produce the technical design.",
 		},
+		{
+			// A run started without a host issue has nothing that states the
+			// requirement, so the workflow's own purpose is what the executor
+			// gets — marked as the weaker thing it is.
+			name:    "a run with no host issue falls back to the workflow purpose",
+			node:    "Design node",
+			purpose: "Ship a small feature end to end.",
+			want:    "Design node\n\n> What this workflow is for: Ship a small feature end to end.",
+		},
+		{
+			// The host issue is the actual requirement. Printing the workflow's
+			// generic purpose beside it would compete with the real one.
+			name:    "the host reference wins over the workflow purpose",
+			node:    "Design node",
+			host:    "MUL-123",
+			purpose: "Ship a small feature end to end.",
+			want:    "Design node\n\n> Parent requirement: MUL-123",
+		},
+		{
+			name:    "purpose alone is still worth writing",
+			purpose: "Ship a small feature end to end.",
+			want:    "> What this workflow is for: Ship a small feature end to end.",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := workflowTaskIssueDescription(test.template, test.node, test.host)
+			got := workflowTaskIssueDescription(test.template, test.node, test.host, test.purpose)
 			if !got.Valid || got.String != test.want {
 				t.Errorf("workflowTaskIssueDescription() = %q (valid=%v), want %q",
 					got.String, got.Valid, test.want)
@@ -51,7 +75,7 @@ func TestWorkflowTaskIssueDescription(t *testing.T) {
 }
 
 func TestWorkflowTaskIssueDescriptionIsEmptyWithoutContent(t *testing.T) {
-	got := workflowTaskIssueDescription("", "", "")
+	got := workflowTaskIssueDescription("", "", "", "")
 	if got.Valid {
 		t.Errorf("workflowTaskIssueDescription() = %q, want an unset value", got.String)
 	}
@@ -61,7 +85,7 @@ func TestWorkflowTaskIssueDescriptionIsEmptyWithoutContent(t *testing.T) {
 // every node child issue a private snapshot that stops following the original.
 func TestWorkflowTaskIssueDescriptionReferencesRatherThanCopies(t *testing.T) {
 	hostDescription := "Import users from a CSV file, validating each row."
-	got := workflowTaskIssueDescription("Review the requirement.", "", "MUL-123")
+	got := workflowTaskIssueDescription("Review the requirement.", "", "MUL-123", "")
 	if strings.Contains(got.String, hostDescription) {
 		t.Errorf("description embedded the host requirement: %q", got.String)
 	}

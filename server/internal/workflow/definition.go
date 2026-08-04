@@ -536,7 +536,7 @@ func validateNodes(definitions []NodeDefinition, roles map[string]RoleDefinition
 				node.Key,
 			)
 		}
-		taskCount += len(node.IssueTemplates)
+		taskCount += len(NodeIssueTemplates(node))
 		if node.SubmissionSchema != nil {
 		}
 		nodes[node.Key] = node
@@ -579,12 +579,15 @@ func validateActivity(
 		return err
 	}
 	switch node.IssuePolicy {
-	case "", "none", "fixed", "dynamic", "fixed_and_dynamic":
+	case "", "none", "auto", "fixed", "dynamic", "fixed_and_dynamic":
 	default:
 		return fmt.Errorf("activity %q has invalid issue_policy %q", node.Key, node.IssuePolicy)
 	}
 	if node.IssuePolicy == "none" && len(node.IssueTemplates) > 0 {
 		return fmt.Errorf("activity %q issue_policy none cannot declare issue templates", node.Key)
+	}
+	if node.IssuePolicy == "auto" && len(node.IssueTemplates) > 0 {
+		return fmt.Errorf("activity %q issue_policy auto cannot declare issue templates", node.Key)
 	}
 	if node.IssuePolicy == "dynamic" && len(node.IssueTemplates) > 0 {
 		return fmt.Errorf("activity %q issue_policy dynamic cannot declare fixed issue templates", node.Key)
@@ -804,6 +807,42 @@ func AllowsDynamicIssues(node NodeDefinition) bool {
 	return node.IssuePolicy == "dynamic" || node.IssuePolicy == "fixed_and_dynamic"
 }
 
+// NodeIssueTemplates is the tasks a node actually creates. Every caller reads
+// the node's work through this rather than through IssueTemplates directly,
+// because an `auto` node declares none and still has one.
+//
+// Auto exists because the alternative default cost a run everything: a node
+// with no issue has nowhere to state what the work is, nowhere for its
+// executor to ask, and no id for `multica workflow` to resolve itself from —
+// so an agent handed an empty node had to infer the task from an artifact
+// filename and could not have said it was guessing.
+func NodeIssueTemplates(node NodeDefinition) []IssueTemplate {
+	if node.IssuePolicy != "auto" {
+		return node.IssueTemplates
+	}
+	return []IssueTemplate{autoIssueTemplate(node)}
+}
+
+// autoIssueTemplateKey is the task key an auto node's single issue is stored
+// under. Auto forbids declared templates, so it cannot collide with one.
+const autoIssueTemplateKey = "work"
+
+func autoIssueTemplate(node NodeDefinition) IssueTemplate {
+	name := strings.TrimSpace(node.Name)
+	if name == "" {
+		name = node.Key
+	}
+	// Scoped by the run or host issue it belongs to, then named by the node.
+	// The name matters most: a run whose host issue and node description are
+	// both empty leaves it as the only description of the work.
+	return IssueTemplate{
+		Key:           autoIssueTemplateKey,
+		Title:         "{{host.title}} — " + name,
+		Required:      true,
+		InitialStatus: "todo",
+	}
+}
+
 func SubmissionPolicy(node NodeDefinition) string {
 	if node.SubmissionSchema == nil {
 		return "none"
@@ -828,7 +867,7 @@ func RequiresManualCompletion(node NodeDefinition) bool {
 		node.Reviewer != nil {
 		return false
 	}
-	for _, task := range node.IssueTemplates {
+	for _, task := range NodeIssueTemplates(node) {
 		if task.Required {
 			return false
 		}

@@ -467,12 +467,17 @@ describe("WorkflowPage", () => {
     expect(inserted).toMatchObject({
       kind: "activity",
       name: "New activity",
-      // A new activity produces no issues until the author opts in. Manual
-      // confirmation is represented by a reviewer, not a second completion
-      // mode, so authored nodes always use the automatic engine mode.
-      issue_policy: "none",
-      completion: { mode: "automatic", required_issue_outcome: "none" },
+      // A new activity gets its own issue: that is where the work is stated,
+      // where its executor can ask, and the id every `multica workflow`
+      // command resolves itself from. The node waits for that issue, or it
+      // would complete with the work untouched. Manual confirmation is
+      // represented by a reviewer, not a second completion mode, so authored
+      // nodes always use the automatic engine mode.
+      issue_policy: "auto",
+      completion: { mode: "automatic", required_issue_outcome: "done" },
     });
+    // Auto names its own issue — the author is not asked for a title template.
+    expect(inserted).not.toHaveProperty("issue_templates");
     expect(inserted).not.toHaveProperty("reviewer");
     expect(inserted).not.toHaveProperty("issue_templates");
     expect(input.definition.edges).toEqual([

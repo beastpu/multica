@@ -3546,6 +3546,84 @@ func TestWorkflowNodeOwnerCanCompleteButOnlyAdminCanRollback(t *testing.T) {
 	}
 }
 
+// An `auto` activity declares no template and still gets an issue. Without one
+// the node runs as a bare agent task: nothing states what the work is, the
+// executor has nowhere to ask, and `multica workflow` cannot resolve the node
+// because every one of its commands starts from an issue id.
+func TestWorkflowAutoIssuePolicyCreatesOneNamedIssue(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Auto issue",
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true,
+			AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "work", Kind: "activity", Name: "代码实施",
+				OwnerRole: "owner", IssuePolicy: "auto",
+				Executor: &workflowdomain.ExecutorDefinition{
+					Kind: "role", Role: "owner",
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+				},
+			},
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "work"}, {From: "work", To: "end"},
+		},
+	}
+	if err := workflowdomain.ValidateDefinition(definition); err != nil {
+		t.Fatalf("auto definition invalid: %v", err)
+	}
+	templateID := createPublishedWorkflowForTest(t, "Auto issue template", definition)
+	hostID := createWorkflowHostForTest(t, "导入用户")
+	started := startWorkflowForTest(t, hostID, templateID, []map[string]any{{
+		"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
+	}}, "auto-issue-test")
+
+	workNode := findWorkflowNodeResponse(t, started.Nodes, "work", 1)
+	var taskKey, issueTitle, issueDescription string
+	if err := testPool.QueryRow(ctx, `
+		SELECT task.task_key, issue.title, coalesce(issue.description, '')
+		FROM workflow_node_task task
+		JOIN issue ON issue.id = task.issue_id
+		WHERE task.workflow_node_instance_id = $1
+	`, workNode.ID).Scan(&taskKey, &issueTitle, &issueDescription); err != nil {
+		t.Fatalf("auto node produced no issue-backed task: %v", err)
+	}
+	if taskKey != "work" {
+		t.Errorf("auto task key = %q, want the reserved auto key", taskKey)
+	}
+	// The node name is the only statement of the work when the host issue and
+	// the node description say nothing, so it has to survive into the title.
+	if !strings.Contains(issueTitle, "代码实施") {
+		t.Errorf("auto issue title = %q, want the node name in it", issueTitle)
+	}
+	if !strings.Contains(issueTitle, "导入用户") {
+		t.Errorf("auto issue title = %q, want it scoped to the host issue", issueTitle)
+	}
+	// A reference, never a copy: the requirement keeps moving on the host issue.
+	if !strings.Contains(issueDescription, "Parent requirement:") {
+		t.Errorf("auto issue description = %q, want the host reference", issueDescription)
+	}
+
+	var taskCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM workflow_node_task WHERE workflow_node_instance_id = $1
+	`, workNode.ID).Scan(&taskCount); err != nil {
+		t.Fatalf("count auto tasks: %v", err)
+	}
+	if taskCount != 1 {
+		t.Errorf("auto node created %d tasks, want exactly one", taskCount)
+	}
+}
+
 func createWorkflowHostForTest(t *testing.T, title string) string {
 	t.Helper()
 	var hostID string

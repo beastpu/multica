@@ -1134,7 +1134,7 @@ func createWorkflowNodeActivationRecords(
 			needsSetup = decision.Assignment == nil
 		}
 	}
-	for _, issueTemplate := range nodeDefinition.IssueTemplates {
+	for _, issueTemplate := range workflowdomain.NodeIssueTemplates(nodeDefinition) {
 		snapshot, _ := json.Marshal(issueTemplate)
 		task, err := q.CreateWorkflowNodeTask(ctx, db.CreateWorkflowNodeTaskParams{
 			WorkspaceID: workspaceID, WorkflowInstanceID: instance.ID, WorkflowNodeInstanceID: node.ID,
@@ -1199,7 +1199,7 @@ func ensureWorkflowNodeTasks(
 		}
 	}
 	repaired := false
-	for _, issueTemplate := range nodeDefinition.IssueTemplates {
+	for _, issueTemplate := range workflowdomain.NodeIssueTemplates(nodeDefinition) {
 		if _, exists := existing[issueTemplate.Key]; exists {
 			continue
 		}
@@ -1375,6 +1375,7 @@ func (h *Handler) materializeWorkflowTask(
 			template.Description,
 			nodeDefinition.Description,
 			hostIdentifier,
+			h.workflowPurpose(ctx, workspaceID, instance, host.ID.Valid),
 		),
 		Status: status, Priority: priority,
 		AssigneeType: resolution.ActorType, AssigneeID: resolution.ActorID,
@@ -1554,6 +1555,10 @@ func (h *Handler) reuseWorkflowReworkIssue(
 // child issue back at the requirement the workflow runs for.
 const workflowHostReferencePrefix = "> Parent requirement: "
 
+// workflowPurposePrefix marks the weaker statement of intent a run without a
+// host issue falls back to, so a reader can tell it from a requirement.
+const workflowPurposePrefix = "> What this workflow is for: "
+
 // workflowTaskIssueDescription composes a node child issue's description from
 // the task instructions and a reference to the host issue.
 //
@@ -1566,10 +1571,18 @@ const workflowHostReferencePrefix = "> Parent requirement: "
 //
 // English matches the rest of the server's generated content; there is no i18n
 // layer on this side.
+// workflowTaskIssueDescription writes what the executor of this task is being
+// asked to do.
+//
+// The host issue travels as a reference, never as a copy: the requirement keeps
+// changing on the issue that owns it, and a transcribed copy would be wrong the
+// first time someone edited it. workflowPurpose is the last resort — a run with
+// no host issue has nothing else that says why it is running at all.
 func workflowTaskIssueDescription(
 	templateDescription string,
 	nodeDescription string,
 	hostIdentifier string,
+	workflowPurpose string,
 ) pgtype.Text {
 	instructions := strings.TrimSpace(templateDescription)
 	if instructions == "" {
@@ -1581,11 +1594,44 @@ func workflowTaskIssueDescription(
 	}
 	if reference := strings.TrimSpace(hostIdentifier); reference != "" {
 		parts = append(parts, workflowHostReferencePrefix+reference)
+	} else if purpose := strings.TrimSpace(workflowPurpose); purpose != "" {
+		parts = append(parts, workflowPurposePrefix+purpose)
 	}
 	if len(parts) == 0 {
 		return pgtype.Text{}
 	}
 	return pgtype.Text{String: strings.Join(parts, "\n\n"), Valid: true}
+}
+
+// workflowPurpose is the workflow's own description, read only when a run has
+// no host issue to point at. It says what this kind of run is for rather than
+// what this run was asked for, which is weaker than a requirement — and still
+// the only thing standing between an executor and no statement of intent.
+func (h *Handler) workflowPurpose(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	instance db.WorkflowInstance,
+	hasHostIssue bool,
+) string {
+	if hasHostIssue {
+		return ""
+	}
+	version, err := h.Queries.GetWorkflowVersionInWorkspace(
+		ctx,
+		db.GetWorkflowVersionInWorkspaceParams{
+			ID: instance.WorkflowVersionID, WorkspaceID: workspaceID,
+		},
+	)
+	if err != nil {
+		return ""
+	}
+	workflow, err := h.Queries.GetWorkflowInWorkspace(ctx, db.GetWorkflowInWorkspaceParams{
+		ID: version.WorkflowID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(workflow.Description)
 }
 
 // workflowIssueMetadataKey is the reserved namespace under issue.metadata that
