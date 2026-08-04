@@ -224,7 +224,7 @@ func TestWorkflowPermissionsImmutabilityAndSaveValidation(t *testing.T) {
 	if err := testPool.QueryRow(ctx, `
 		SELECT definition
 		FROM workflow_version
-		WHERE workflow_id = $1 AND status = 'published' AND version = 1
+		WHERE workflow_id = $1 AND version = 1
 	`, created.Workflow.ID).Scan(&publishedDefinition); err != nil {
 		t.Fatalf("load published workflow definition: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestWorkflowPermissionsImmutabilityAndSaveValidation(t *testing.T) {
 	if err := testPool.QueryRow(ctx, `
 		SELECT definition
 		FROM workflow_version
-		WHERE workflow_id = $1 AND status = 'published' AND version = 1
+		WHERE workflow_id = $1 AND version = 1
 	`, created.Workflow.ID).Scan(&publishedAfter); err != nil {
 		t.Fatalf("reload published workflow definition: %v", err)
 	}
@@ -376,10 +376,12 @@ func TestWorkflowPermissionsImmutabilityAndSaveValidation(t *testing.T) {
 		t.Fatalf("decode member workflow template detail: %v", err)
 	}
 	// Every stored version is runnable, so there is nothing left to hide from
-	// a member: they see the same history an admin does.
-	if len(memberDetail.Versions) != 2 {
+	// a member: they see the same history an admin does — the three that were
+	// actually written, with the rejected and the stale save absent because
+	// neither ever became a version.
+	if len(memberDetail.Versions) != 3 {
 		t.Fatalf(
-			"member-visible workflow versions = %d, want 2",
+			"member-visible workflow versions = %d, want 3",
 			len(memberDetail.Versions),
 		)
 	}

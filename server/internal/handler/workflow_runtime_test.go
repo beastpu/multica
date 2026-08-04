@@ -83,9 +83,9 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workflow_version (
-			workspace_id, workflow_id, version, status, definition,
+			workspace_id, workflow_id, version, definition,
 			definition_checksum, created_by, published_by, published_at
-		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
+		) VALUES ($1, $2, 1, $3, 'test', $4, $4, now())
 		RETURNING id
 	`, testWorkspaceID, templateID, definitionJSON, testUserID).Scan(&versionID); err != nil {
 		t.Fatalf("create template version: %v", err)
@@ -705,9 +705,9 @@ func TestCreateWorkflowAtomicAndIdempotent(t *testing.T) {
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workflow_version (
-			workspace_id, workflow_id, version, status, definition,
+			workspace_id, workflow_id, version, definition,
 			definition_checksum, created_by, published_by, published_at
-		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
+		) VALUES ($1, $2, 1, $3, 'test', $4, $4, now())
 		RETURNING id
 	`, testWorkspaceID, templateID, definitionJSON, testUserID).Scan(&versionID); err != nil {
 		t.Fatalf("create version: %v", err)
@@ -3643,9 +3643,9 @@ func createPublishedWorkflowForTest(
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workflow_version (
-			workspace_id, workflow_id, version, status, definition,
+			workspace_id, workflow_id, version, definition,
 			definition_checksum, created_by, published_by, published_at
-		) VALUES ($1, $2, 1, 'published', $3, 'test', $4, $4, now())
+		) VALUES ($1, $2, 1, $3, 'test', $4, $4, now())
 		RETURNING id
 	`, testWorkspaceID, templateID, definitionJSON, testUserID).Scan(&versionID); err != nil {
 		t.Fatalf("create workflow template version %q: %v", name, err)
