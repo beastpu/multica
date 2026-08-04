@@ -212,6 +212,33 @@ export function removeWorkflowEdge(
   return { ...definition, edges };
 }
 
+export function updateWorkflowEdge(
+  definition: WorkflowDefinition,
+  target: WorkflowCanvasEdgeTarget,
+  nextEdge: WorkflowDefinition["edges"][number],
+) {
+  if (!definition.edges.some(
+    (edge) => edge.from === target.from && edge.to === target.to
+  )) {
+    return null;
+  }
+  const normalizedNext = nextEdge.default
+    ? { ...nextEdge, condition: undefined }
+    : nextEdge;
+  return {
+    ...definition,
+    edges: definition.edges.map((edge) => {
+      if (edge.from === target.from && edge.to === target.to) {
+        return normalizedNext;
+      }
+      if (normalizedNext.default && edge.from === target.from) {
+        return { ...edge, default: false };
+      }
+      return edge;
+    }),
+  };
+}
+
 export function removeWorkflowNode(
   definition: WorkflowDefinition,
   nodeKey: string,

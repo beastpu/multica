@@ -11,6 +11,7 @@ import {
   nextWorkflowNodeKey,
   removeWorkflowEdge,
   removeWorkflowNode,
+  updateWorkflowEdge,
   workflowConnectionTargets,
 } from "./workflow-graph-editor";
 
@@ -143,6 +144,48 @@ describe("workflow graph editor", () => {
       { from: "choice", to: "inserted", default: true },
       { from: "inserted", to: "end" },
     ]);
+  });
+
+  it("keeps exactly one default edge when a gateway fallback changes", () => {
+    const gateway: WorkflowNodeDefinition = {
+      key: "choice",
+      kind: "gateway",
+      name: "Choice",
+    };
+    const definition = workflow(
+      [start, activity("decision"), gateway, activity("left"), activity("right"), end],
+      [
+        { from: "start", to: "decision" },
+        { from: "decision", to: "choice" },
+        { from: "choice", to: "left", default: true },
+        {
+          from: "choice",
+          to: "right",
+          condition: {
+            source: "node_choice",
+            node: "decision",
+            key: "choice",
+            op: "eq",
+            value: "right",
+          },
+        },
+      ],
+    );
+
+    const next = updateWorkflowEdge(
+      definition,
+      { from: "choice", to: "right" },
+      { from: "choice", to: "right", default: true },
+    );
+
+    expect(next?.edges.filter((edge) => edge.default)).toEqual([
+      { from: "choice", to: "right", default: true },
+    ]);
+    expect(next?.edges.find((edge) => edge.to === "left")).toEqual({
+      from: "choice",
+      to: "left",
+      default: false,
+    });
   });
 
   it("returns no change for missing edges, sources, and duplicate keys", () => {
