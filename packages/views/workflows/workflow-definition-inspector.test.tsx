@@ -210,6 +210,34 @@ describe("WorkflowNodeDefinitionInspector", () => {
       .not.toBeInTheDocument();
   });
 
+  it("asks whether each issue gates the activity, not the activity as a whole", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderInspector(onChange);
+
+    // The gate is a property of the issue — a node with no issues has nothing
+    // to gate on, which is why a node-level outcome select could be set to
+    // something meaningless. The transition tab keeps who reviews and who may
+    // override; it no longer carries a completion gate or a submission policy.
+    await user.click(
+      screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
+    );
+    expect(screen.queryByRole("combobox", { name: /submission|outcome/i }))
+      .not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("tab", { name: enWorkflows.editor.tab_work }),
+    );
+    const gate = screen.getByRole("checkbox", {
+      name: enWorkflows.editor.required_task,
+    });
+    expect(gate).toBeChecked();
+    await user.click(gate);
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      issue_templates: [expect.objectContaining({ required: false })],
+    }));
+  });
+
   it("says which buttons an activity grows at run time", async () => {
     const user = userEvent.setup();
     const { unmount } = renderInspector(vi.fn());

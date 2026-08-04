@@ -453,104 +453,18 @@ export function ArtifactPanel({
 }
 
 export function VerdictPanel({
-  instanceId,
-  node,
   verdicts,
-  canRecord,
 }: {
-  instanceId: string;
-  node: WorkflowNodeInstance;
   verdicts: WorkflowVerdict[];
-  canRecord: boolean;
 }) {
   const { t } = useT("workflows");
-  const [result, setResult] = useState<"pass" | "fail" | "blocked">("pass");
-  const [reason, setReason] = useState("");
-  const [confidence, setConfidence] = useState("");
-  const record = useCreateWorkflowVerdict(instanceId, node.id);
-  const isOpen = isWorkflowNodeOpen(node.status);
-  const reasonRequired = result === "fail" || result === "blocked";
 
-  useEffect(() => {
-    setResult("pass");
-    setReason("");
-    setConfidence("");
-  }, [node.id]);
-
+  // Recording a verdict is the node's primary action and lives on the button
+  // above, so this tab is the record of what was decided. It carried a second
+  // copy of the same form, which is how a node in review ended up with two
+  // places to pass it and no obvious one.
   return (
     <div className="space-y-4">
-      {canRecord && isOpen && reviewerAcceptsMember(node.definition) && (
-        <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="workflow-verdict-result">
-                {t(($) => $.workbench.verdict_result)}
-              </Label>
-              <select
-                id="workflow-verdict-result"
-                value={result}
-                onChange={(event) =>
-                  setResult(event.target.value as "pass" | "fail" | "blocked")}
-                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
-              >
-                <option value="pass">{t(($) => $.status.pass)}</option>
-                <option value="fail">{t(($) => $.status.fail)}</option>
-                <option value="blocked">{t(($) => $.status.blocked)}</option>
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="workflow-verdict-confidence">
-                {t(($) => $.workbench.verdict_confidence)}
-              </Label>
-              <Input
-                id="workflow-verdict-confidence"
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={confidence}
-                className="min-h-11"
-                onChange={(event) => setConfidence(event.target.value)}
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="workflow-verdict-reason">
-              {t(($) => $.workbench.verdict_reason)}
-              {reasonRequired && <span className="ml-0.5 text-destructive">*</span>}
-            </Label>
-            <Textarea
-              id="workflow-verdict-reason"
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              rows={3}
-            />
-          </div>
-          <Button
-            className="min-h-11"
-            disabled={record.isPending || (reasonRequired && !reason.trim())}
-            onClick={() => record.mutate({
-              result,
-              reason: reason.trim() || undefined,
-              confidence: confidence === "" ? undefined : Number(confidence),
-            }, {
-              onSuccess: () => {
-                setReason("");
-                setConfidence("");
-              },
-            })}
-          >
-            <FileCheck2 />
-            {t(($) => $.actions.record_verdict)}
-          </Button>
-          {record.isError && (
-            <p role="alert" className="text-xs text-destructive">
-              {t(($) => $.errors.action_failed)}
-            </p>
-          )}
-        </div>
-      )}
-
       {verdicts.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">
           {t(($) => $.workbench.no_verdict)}
@@ -2453,12 +2367,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         </TabsContent>
         {hasVerdictPanel && (
           <TabsContent value="verdict" className="pt-4">
-            <VerdictPanel
-              instanceId={instanceId}
-              node={selectedNode}
-              verdicts={nodeQuery.data.verdicts}
-              canRecord={canManageSelectedNode}
-            />
+            <VerdictPanel verdicts={nodeQuery.data.verdicts} />
           </TabsContent>
         )}
         <TabsContent value="history" className="pt-4">

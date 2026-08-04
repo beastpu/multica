@@ -362,8 +362,7 @@ describe("VerdictPanel", () => {
     vi.clearAllMocks();
   });
 
-  it("renders verdict evidence and requires a reason for non-pass decisions", async () => {
-    const user = userEvent.setup();
+  it("renders the verdict record without offering a second form", () => {
     const verdict = {
       id: "verdict-1",
       workflow_node_instance_id: "node-1",
@@ -385,35 +384,19 @@ describe("VerdictPanel", () => {
           en: { common: enCommon, workflows: enWorkflows },
         }}
       >
-        <VerdictPanel
-          instanceId="instance-1"
-          node={workflowNode()}
-          verdicts={[verdict]}
-          canRecord
-        />
+        <VerdictPanel verdicts={[verdict]} />
       </I18nProvider>,
     );
 
     expect(screen.getByText("Security review is missing")).toBeInTheDocument();
     expect(screen.getByText(/75%/)).toBeInTheDocument();
     expect(screen.getByText(/"artifact": "report"/)).toBeInTheDocument();
-
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Check result" }),
-      "fail",
-    );
-    const record = screen.getByRole("button", { name: "Record check result" });
-    expect(record).toBeDisabled();
-    await user.type(
-      screen.getByRole("textbox", { name: /Reason/ }),
-      "Tests failed",
-    );
-    await user.click(record);
-    expect(mocks.recordVerdict).toHaveBeenCalledWith({
-      result: "fail",
-      reason: "Tests failed",
-      confidence: undefined,
-    }, expect.any(Object));
+    // Passing and sending back are the node's primary buttons; this tab is
+    // the record of what was decided, not a second way to decide it.
+    expect(screen.queryByRole("combobox", { name: "Check result" }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record check result" }))
+      .not.toBeInTheDocument();
   });
 });
 

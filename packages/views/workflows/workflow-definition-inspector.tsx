@@ -773,57 +773,6 @@ function IssueTemplateEditor({
   );
 }
 
-function SubmissionEditor({
-  node,
-  readOnly,
-  onChange,
-}: {
-  node: WorkflowNodeDefinition;
-  readOnly: boolean;
-  onChange: (node: WorkflowNodeDefinition) => void;
-}) {
-  const { t } = useT("workflows");
-  const policy = node.submission_schema?.policy ?? "none";
-
-  // Only how many results a node submits is configurable. What a node produces
-  // is declared as an artifact, its conclusion is the handoff summary, and its
-  // branch is a node choice — three fixed shapes, so there is no form to build.
-  return (
-    <div className="space-y-1.5">
-      <Label>{t(($) => $.editor.submission_policy)}</Label>
-      <select
-        value={policy}
-        disabled={readOnly}
-        className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-        onChange={(event) => {
-          const nextPolicy = event.target.value as
-            | "none"
-            | "single"
-            | "per_required_task"
-            | "fan_in";
-          onChange({
-            ...node,
-            submission_schema: nextPolicy === "none"
-              ? undefined
-              : { policy: nextPolicy },
-            completion: {
-              ...(node.completion ?? {}),
-              submission_required: nextPolicy === "none"
-                ? false
-                : (node.completion?.submission_required ?? true),
-            },
-          });
-        }}
-      >
-        <option value="none">{t(($) => $.editor.submission_none)}</option>
-        <option value="single">{t(($) => $.editor.submission_single)}</option>
-        <option value="per_required_task">{t(($) => $.editor.submission_per_task)}</option>
-        <option value="fan_in">{t(($) => $.editor.submission_fan_in)}</option>
-      </select>
-    </div>
-  );
-}
-
 function CompletionEditor({
   node,
   definition,
@@ -907,33 +856,6 @@ function CompletionEditor({
           </li>
           <li>{t(($) => $.editor.runtime_button_rollback)}</li>
         </ul>
-      </div>
-      <div className="border-t pt-3">
-        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {t(($) => $.editor.completion_conditions)}
-        </p>
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor={`required-issue-outcome-${node.key}`}>
-          {t(($) => $.editor.required_issue_outcome)}
-        </Label>
-        <select
-          id={`required-issue-outcome-${node.key}`}
-          value={completion.required_issue_outcome ?? "none"}
-          disabled={readOnly}
-          className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-          onChange={(event) => onChange({
-            ...node,
-            completion: {
-              ...completion,
-              required_issue_outcome: event.target.value as "done" | "terminal" | "none",
-            },
-          })}
-        >
-          <option value="none">{t(($) => $.editor.issue_outcome_none)}</option>
-          <option value="done">{t(($) => $.editor.issue_outcome_done)}</option>
-          <option value="terminal">{t(($) => $.editor.issue_outcome_terminal)}</option>
-        </select>
       </div>
     </div>
   );
@@ -1400,12 +1322,6 @@ export function WorkflowNodeDefinitionInspector({
             readOnly={readOnly}
             onChange={onChange}
           />
-          <div className="space-y-3 border-t pt-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {t(($) => $.editor.section_submission)}
-            </p>
-            <SubmissionEditor node={node} readOnly={readOnly} onChange={onChange} />
-          </div>
           <div className="space-y-3 border-t pt-3">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t(($) => $.editor.section_node_events)}
