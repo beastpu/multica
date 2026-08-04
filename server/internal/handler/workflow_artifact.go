@@ -489,6 +489,42 @@ const maxArtifactCommentPreview = 400
 // Best-effort on purpose. The artifact is already committed and it is what
 // gates the node; failing the request because a courtesy comment could not be
 // written would trade the delivery for its announcement.
+// resolveWorkflowArtifactIssue picks the issue an artifact submission should be
+// traced onto: the one the caller named, or else the node's own — but only when
+// the node has exactly one. A node running several issue-backed tasks has no
+// single owner for a node-level artifact, and picking one of them would file
+// the delivery under work it did not come from.
+func (h *Handler) resolveWorkflowArtifactIssue(
+	ctx context.Context,
+	node db.WorkflowNodeInstance,
+	requested string,
+) (pgtype.UUID, bool) {
+	if trimmed := strings.TrimSpace(requested); trimmed != "" {
+		parsed, err := util.ParseUUID(trimmed)
+		if err != nil {
+			return pgtype.UUID{}, false
+		}
+		return parsed, true
+	}
+	tasks, err := h.Queries.ListWorkflowNodeTasks(ctx, db.ListWorkflowNodeTasksParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+	})
+	if err != nil {
+		return pgtype.UUID{}, false
+	}
+	var sole pgtype.UUID
+	for _, task := range tasks {
+		if !task.IssueID.Valid {
+			continue
+		}
+		if sole.Valid {
+			return pgtype.UUID{}, false
+		}
+		sole = task.IssueID
+	}
+	return sole, sole.Valid
+}
+
 func (h *Handler) noteArtifactOnIssue(
 	r *http.Request,
 	node db.WorkflowNodeInstance,
@@ -496,11 +532,12 @@ func (h *Handler) noteArtifactOnIssue(
 	issueID string,
 	replaced bool,
 ) {
-	if strings.TrimSpace(issueID) == "" {
-		return
-	}
-	parsed, err := util.ParseUUID(issueID)
-	if err != nil {
+	// A submitter that names no issue still delivered to a node, and the node
+	// usually owns one. Requiring the caller to supply it meant the trace was
+	// written exactly when it was least needed — by a caller already holding
+	// the issue — and skipped when an agent submitted through the node alone.
+	parsed, ok := h.resolveWorkflowArtifactIssue(r.Context(), node, issueID)
+	if !ok {
 		return
 	}
 	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
@@ -508,6 +545,22 @@ func (h *Handler) noteArtifactOnIssue(
 	})
 	if err != nil {
 		return
+	}
+	// An attachment artifact lives in object storage addressed by the artifact
+	// row. Announcing it on the issue without binding it there produced the
+	// exact failure the delivery rules forbid: a comment that says a file was
+	// delivered, next to no file.
+	if artifact.Kind == "attachment" && artifact.AttachmentID.Valid {
+		if err := h.Queries.LinkAttachmentsToIssue(r.Context(), db.LinkAttachmentsToIssueParams{
+			IssueID: issue.ID, WorkspaceID: node.WorkspaceID,
+			Column3: []pgtype.UUID{artifact.AttachmentID},
+		}); err != nil {
+			slog.Warn("workflow artifact: attachment link failed",
+				"error", err,
+				"artifact_id", uuidToString(artifact.ID),
+				"issue_id", uuidToString(issue.ID),
+			)
+		}
 	}
 
 	var body strings.Builder
@@ -520,7 +573,7 @@ func (h *Handler) noteArtifactOnIssue(
 	case "link":
 		fmt.Fprintf(&body, "\n\n%s", artifact.Url)
 	case "attachment":
-		body.WriteString("\n\nDelivered as a file attachment.")
+		body.WriteString("\n\nDelivered as a file attachment on this issue.")
 	default:
 		preview := []rune(strings.TrimSpace(artifact.Content))
 		if len(preview) > maxArtifactCommentPreview {

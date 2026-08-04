@@ -3624,6 +3624,104 @@ func TestWorkflowAutoIssuePolicyCreatesOneNamedIssue(t *testing.T) {
 	}
 }
 
+// An attachment artifact used to be announced on the issue without being put
+// there: the trace comment said a file had been delivered and the file was
+// reachable only through the artifact row, so the issue showed a claim with
+// nothing behind it. The delivery has to land where it was announced.
+func TestWorkflowAttachmentArtifactLandsOnTheNodeIssue(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Attachment delivery",
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true,
+			AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "work", Kind: "activity", Name: "Build the report",
+				OwnerRole: "owner", IssuePolicy: "auto",
+				Executor: &workflowdomain.ExecutorDefinition{
+					Kind: "role", Role: "owner",
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+				},
+				Artifacts: []workflowdomain.ArtifactRequirement{{
+					Key: "report", Name: "result.html", Kind: "attachment", Required: true,
+				}},
+			},
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "work"}, {From: "work", To: "end"},
+		},
+	}
+	if err := workflowdomain.ValidateDefinition(definition); err != nil {
+		t.Fatalf("attachment definition invalid: %v", err)
+	}
+	templateID := createPublishedWorkflowForTest(t, "Attachment delivery template", definition)
+	hostID := createWorkflowHostForTest(t, "周报")
+	started := startWorkflowForTest(t, hostID, templateID, []map[string]any{{
+		"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
+	}}, "attachment-artifact-test")
+	workNode := findWorkflowNodeResponse(t, started.Nodes, "work", 1)
+
+	var attachmentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO attachment (
+			workspace_id, uploader_type, uploader_id, filename, url, content_type, size_bytes
+		) VALUES ($1, 'member', $2, 'result.html', 'https://example.invalid/result.html',
+			'text/html; charset=utf-8', 2616)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&attachmentID); err != nil {
+		t.Fatalf("create attachment: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(
+		http.MethodPost,
+		"/api/workflow-node-instances/"+workNode.ID+"/artifacts?workspace_id="+testWorkspaceID,
+		// No issue_id: an agent submitting through the node does not have one
+		// to give, which is exactly when the trace was being skipped.
+		map[string]any{"artifact_key": "report", "attachment_id": attachmentID},
+	), "nodeInstanceId", workNode.ID)
+	testHandler.SubmitWorkflowArtifact(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("submit attachment artifact status = %d, body = %s",
+			recorder.Code, recorder.Body.String())
+	}
+
+	var boundIssue string
+	if err := testPool.QueryRow(ctx, `
+		SELECT coalesce(issue_id::text, '') FROM attachment WHERE id = $1
+	`, attachmentID).Scan(&boundIssue); err != nil {
+		t.Fatalf("read attachment binding: %v", err)
+	}
+	var nodeIssue string
+	if err := testPool.QueryRow(ctx, `
+		SELECT issue_id FROM workflow_node_task
+		WHERE workflow_node_instance_id = $1 AND issue_id IS NOT NULL
+	`, workNode.ID).Scan(&nodeIssue); err != nil {
+		t.Fatalf("read node issue: %v", err)
+	}
+	if boundIssue != nodeIssue {
+		t.Errorf("attachment issue_id = %q, want the node issue %q", boundIssue, nodeIssue)
+	}
+
+	var traced int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM comment WHERE issue_id = $1 AND content LIKE '%result.html%'
+	`, nodeIssue).Scan(&traced); err != nil {
+		t.Fatalf("count trace comments: %v", err)
+	}
+	if traced != 1 {
+		t.Errorf("trace comments on the node issue = %d, want exactly one", traced)
+	}
+}
+
 func createWorkflowHostForTest(t *testing.T, title string) string {
 	t.Helper()
 	var hostID string
