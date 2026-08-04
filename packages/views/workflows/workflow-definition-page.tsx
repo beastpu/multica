@@ -33,7 +33,11 @@ import {
   memberListOptions,
   squadListOptions,
 } from "@multica/core/workspace/queries";
-import { Alert, AlertTitle } from "@multica/ui/components/ui/alert";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@multica/ui/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -84,8 +88,11 @@ import {
   nextWorkflowNodeKey,
   removeWorkflowEdge,
   removeWorkflowNode,
+  updateWorkflowEdge,
+  workflowPathExists,
   workflowNodeIsBoundary,
 } from "./workflow-graph-editor";
+import { WorkflowGatewayConditionEditor } from "./workflow-gateway-condition-editor";
 import {
   WorkflowNodeDefinitionInspector,
   WorkflowRoleEditor,
@@ -240,55 +247,46 @@ function newControlNode(
 function WorkflowEdgeRow({
   edge,
   targetName,
+  isGateway,
+  choiceSources,
   readOnly,
   onChange,
   onRemove,
 }: {
   edge: WorkflowDefinition["edges"][number];
   targetName: string;
+  isGateway: boolean;
+  choiceSources: Array<{ key: string; name: string }>;
   readOnly: boolean;
   onChange: (edge: WorkflowDefinition["edges"][number]) => void;
   onRemove: () => void;
 }) {
   const { t } = useT("workflows");
-  const [conditionText, setConditionText] = useState(
-    edge.condition ? JSON.stringify(edge.condition, null, 2) : "",
-  );
-  const [conditionError, setConditionError] = useState("");
-
-  useEffect(() => {
-    setConditionText(edge.condition ? JSON.stringify(edge.condition, null, 2) : "");
-    setConditionError("");
-  }, [edge.condition]);
-
-  const applyCondition = () => {
-    const value = conditionText.trim();
-    if (!value) {
-      onChange({ ...edge, condition: undefined });
-      setConditionError("");
-      return;
-    }
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("condition must be an object");
-      }
-      onChange({ ...edge, condition: parsed, default: false });
-      setConditionError("");
-    } catch {
-      setConditionError(t(($) => $.errors.invalid_json));
-    }
-  };
 
   return (
-    <div className="space-y-3 rounded-lg border bg-background p-3">
+    <div className="overflow-hidden rounded-lg border bg-background">
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-sm font-medium">{targetName}</span>
+        <div className="flex min-w-0 items-center gap-2 px-3 py-2.5">
+          <span className="truncate text-sm font-medium">{targetName}</span>
+          {isGateway && (
+            <span className={cn(
+              "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+              edge.default
+                ? "bg-muted text-muted-foreground"
+                : "bg-brand/10 text-brand",
+            )}>
+              {edge.default
+                ? t(($) => $.editor.fallback_branch)
+                : t(($) => $.editor.conditional_branch)}
+            </span>
+          )}
+        </div>
         {!readOnly && (
           <Button
             type="button"
             size="icon-sm"
             variant="ghost"
+            className="mr-2"
             aria-label={t(($) => $.actions.remove_connection)}
             onClick={onRemove}
           >
@@ -296,39 +294,39 @@ function WorkflowEdgeRow({
           </Button>
         )}
       </div>
-      <label className="flex min-h-11 items-center gap-2 text-xs text-muted-foreground">
-        <input
-          type="checkbox"
-          checked={edge.default === true}
-          disabled={readOnly}
-          onChange={(event) => {
-            const isDefault = event.target.checked;
-            onChange({
-              ...edge,
-              default: isDefault,
-              condition: isDefault ? undefined : edge.condition,
-            });
-            if (isDefault) setConditionText("");
-          }}
-        />
-        {t(($) => $.editor.default_branch)}
-      </label>
-      {!edge.default && (
-        <div className="space-y-1.5">
-          <Label>{t(($) => $.editor.edge_condition)}</Label>
-          <Textarea
-            value={conditionText}
-            disabled={readOnly}
-            onChange={(event) => setConditionText(event.target.value)}
-            onBlur={applyCondition}
-            rows={4}
-            className="font-mono text-xs"
-            placeholder={'{"source":"node_submission","node":"triage","key":"approved","op":"eq","value":true}'}
-          />
-          {conditionError && (
-            <p role="alert" className="text-xs text-destructive">
-              {conditionError}
+      {isGateway && (
+        <div className="space-y-3 border-t bg-muted/10 p-3">
+          <label className="flex min-h-9 items-center gap-2 text-xs font-medium">
+            <input
+              type="radio"
+              name={`gateway-default-${edge.from}`}
+              checked={edge.default === true}
+              disabled={readOnly}
+              onChange={() => onChange({
+                ...edge,
+                default: true,
+                condition: undefined,
+              })}
+            />
+            {t(($) => $.editor.default_branch)}
+          </label>
+          {edge.default ? (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {t(($) => $.editor.default_branch_help)}
             </p>
+          ) : (
+            <WorkflowGatewayConditionEditor
+              condition={edge.condition}
+              targetKey={edge.to}
+              targetName={targetName}
+              choiceSources={choiceSources}
+              readOnly={readOnly}
+              onChange={(condition) => onChange({
+                ...edge,
+                default: false,
+                condition,
+              })}
+            />
           )}
         </div>
       )}
@@ -350,8 +348,16 @@ function WorkflowEdgeInspector({
   const { t } = useT("workflows");
   const outgoing = definition.edges.filter((edge) => edge.from === nodeKey);
   const incoming = definition.edges.filter((edge) => edge.to === nodeKey);
+  const selectedNode = definition.nodes.find((node) => node.key === nodeKey);
+  const isGateway = selectedNode?.kind === "gateway";
   const nodeName = (key: string) =>
     definition.nodes.find((node) => node.key === key)?.name || key;
+  const choiceSources = definition.nodes
+    .filter((node) =>
+      node.kind === "activity" &&
+      workflowPathExists(definition, node.key, nodeKey)
+    )
+    .map((node) => ({ key: node.key, name: node.name || node.key }));
 
   return (
     <div className="space-y-4 border-t pt-5">
@@ -378,14 +384,16 @@ function WorkflowEdgeInspector({
             key={`${edge.from}-${edge.to}`}
             edge={edge}
             targetName={nodeName(edge.to)}
+            isGateway={isGateway}
+            choiceSources={choiceSources}
             readOnly={readOnly}
             onChange={(next) => {
-              const edges = [...definition.edges];
-              const actualIndex = edges.findIndex(
-                (item) => item.from === edge.from && item.to === edge.to,
+              const updated = updateWorkflowEdge(
+                definition,
+                { from: edge.from, to: edge.to },
+                next,
               );
-              if (actualIndex >= 0) edges[actualIndex] = next;
-              onChange({ ...definition, edges });
+              if (updated) onChange(updated);
             }}
             onRemove={() => onChange({
               ...definition,
@@ -471,8 +479,18 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
   // read-only history: a run that started on one is still executing it.
   const latestVersion = [...versions]
     .sort((left, right) => right.version - left.version)[0];
+  // Someone else publishing while you are mid-edit used to take the editor
+  // read-only under you: the version you loaded stopped being the latest, and
+  // the work on screen became unsaveable with nothing on screen saying why.
+  // Unsaved work keeps its editor; the save is what finds out, and the server
+  // refuses it with a conflict rather than displacing the version you never
+  // saw.
+  const supersededWhileEditing = Boolean(
+    dirty && selectedVersion && latestVersion &&
+      selectedVersion.id !== latestVersion.id,
+  );
   const canEdit = canManage && !isMobile &&
-    selectedVersion?.id === latestVersion?.id &&
+    (selectedVersion?.id === latestVersion?.id || supersededWhileEditing) &&
     detailQuery.data?.workflow.status !== "archived";
 
   useEffect(() => {
@@ -522,6 +540,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
       // writing the immutable version and returns that canonical definition.
       definition,
       change_summary: changeSummary.trim(),
+      base_version_id: loadedVersionId || undefined,
     }, {
       onSuccess: (result) => {
         setLoadedVersionId(result.version.id);
@@ -765,6 +784,32 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
         <Alert className="mx-3 mt-3">
           {template.status === "archived" ? <Archive /> : <AlertCircle />}
           <AlertTitle>{readOnlyNotice}</AlertTitle>
+        </Alert>
+      )}
+      {/*
+        Said while the work is still saveable, not after the save is refused:
+        knowing a newer version exists is what lets someone decide whether to
+        keep going or take the other one.
+      */}
+      {supersededWhileEditing && (
+        <Alert className="mx-3 mt-3">
+          <AlertCircle />
+          <AlertTitle>{t(($) => $.editor.superseded_title)}</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center gap-2">
+            {t(($) => $.editor.superseded_description)}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (!latestVersion) return;
+                setDirty(false);
+                setSelectedVersionId(latestVersion.id);
+              }}
+            >
+              {t(($) => $.editor.superseded_load_latest)}
+            </Button>
+          </AlertDescription>
         </Alert>
       )}
       {/*

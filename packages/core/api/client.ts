@@ -3737,6 +3737,11 @@ export class ApiClient {
     input: {
       definition: WorkflowDefinition;
       change_summary?: string;
+      // The version the editor loaded. The server refuses the save if that is
+      // no longer the live one, which is the only thing standing between two
+      // editors and a silent overwrite — version numbers never collide, so
+      // the unique index only catches saves in the same instant.
+      base_version_id?: string;
     },
   ): Promise<{ version: WorkflowVersion }> {
     const raw = await this.fetch<unknown>(

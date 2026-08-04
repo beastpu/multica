@@ -520,7 +520,7 @@ func (h *Handler) ensureWorkflowWritable(
 	r *http.Request,
 	workspaceID pgtype.UUID,
 	templateID pgtype.UUID,
-) bool {
+) (db.Workflow, bool) {
 	template, err := h.Queries.GetWorkflowInWorkspace(
 		r.Context(),
 		db.GetWorkflowInWorkspaceParams{
@@ -529,17 +529,17 @@ func (h *Handler) ensureWorkflowWritable(
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "workflow template not found")
-		return false
+		return db.Workflow{}, false
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load workflow template")
-		return false
+		return db.Workflow{}, false
 	}
 	if template.Status == "archived" {
 		writeError(w, http.StatusConflict, "workflow template is archived")
-		return false
+		return db.Workflow{}, false
 	}
-	return true
+	return template, true
 }
 
 type updateWorkflowMetadataRequest struct {
@@ -573,7 +573,7 @@ func (h *Handler) UpdateWorkflowMetadata(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if !h.ensureWorkflowWritable(w, r, wsUUID, templateID) {
+	if _, ok := h.ensureWorkflowWritable(w, r, wsUUID, templateID); !ok {
 		return
 	}
 	if req.Name != nil &&
@@ -618,7 +618,10 @@ func (h *Handler) ValidateWorkflowDefinition(w http.ResponseWriter, r *http.Requ
 type saveWorkflowDefinitionRequest struct {
 	Definition    json.RawMessage `json:"definition"`
 	ChangeSummary string          `json:"change_summary"`
-	Revision      int64           `json:"revision"`
+	// BaseVersionID is the version the editor loaded and edited. Empty from a
+	// client that does not send it, which skips the check rather than
+	// rejecting the save.
+	BaseVersionID string `json:"base_version_id"`
 }
 
 // SaveWorkflowDefinition is the one editing action: it validates the
@@ -660,8 +663,31 @@ func (h *Handler) SaveWorkflowDefinition(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if !h.ensureWorkflowWritable(w, r, wsUUID, templateID) {
+	template, ok := h.ensureWorkflowWritable(w, r, wsUUID, templateID)
+	if !ok {
 		return
+	}
+	// The unique index on (workflow_id, version) only catches two saves racing
+	// in the same instant. The ordinary case is slower and used to pass
+	// silently: someone saves, a second editor still holding the version
+	// before it saves too, gets the next number, and their definition becomes
+	// live with nobody aware the first one was displaced. An editor that says
+	// which version it was working from gets told when that is no longer the
+	// live one. Older clients send nothing and keep the previous behavior.
+	if req.BaseVersionID != "" {
+		baseUUID, ok := parseUUIDOrBadRequest(w, req.BaseVersionID, "base_version_id")
+		if !ok {
+			return
+		}
+		if template.LatestPublishedVersionID.Valid &&
+			template.LatestPublishedVersionID != baseUUID {
+			writeError(
+				w,
+				http.StatusConflict,
+				"workflow was saved elsewhere; refresh and try again",
+			)
+			return
+		}
 	}
 	userID, ok := requireUserID(w, r)
 	if !ok {

@@ -594,7 +594,7 @@ export function useSaveWorkflowDefinition(templateId: string) {
     mutationFn: (input: {
       definition: WorkflowDefinition;
       change_summary?: string;
-      revision?: number;
+      base_version_id?: string;
     }) => api.saveWorkflowDefinition(templateId, input),
     // The saved version has to be in the cache before this resolves. The
     // editor selects it the moment the mutation succeeds, and until the

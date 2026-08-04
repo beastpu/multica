@@ -293,6 +293,44 @@ func TestWorkflowPermissionsImmutabilityAndSaveValidation(t *testing.T) {
 		t.Fatalf("saved version = %d, want 2", savedVersion.Version)
 	}
 
+	// A second editor still holding version 1 saves after this one landed.
+	// The version numbers do not collide — it would get 3 — so the unique
+	// index never fires and its definition would quietly become live over a
+	// version it never saw. Saying which version it started from is what
+	// turns that into a conflict.
+	stale := save(map[string]any{
+		"definition":      updatedDefinition,
+		"change_summary":  "Third",
+		"base_version_id": created.Version.ID,
+	})
+	if stale.Code != http.StatusConflict {
+		t.Fatalf(
+			"stale save status = %d, want %d, body = %s",
+			stale.Code, http.StatusConflict, stale.Body.String(),
+		)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM workflow_version WHERE workflow_id = $1
+	`, created.Workflow.ID).Scan(&versionCount); err != nil {
+		t.Fatalf("count workflow versions: %v", err)
+	}
+	if versionCount != 2 {
+		t.Fatalf("refused stale save left %d versions, want 2", versionCount)
+	}
+
+	// Saving from the version that is actually live still works.
+	current := save(map[string]any{
+		"definition":      updatedDefinition,
+		"change_summary":  "Fourth",
+		"base_version_id": savedVersion.ID,
+	})
+	if current.Code != http.StatusOK {
+		t.Fatalf(
+			"current save status = %d, body = %s",
+			current.Code, current.Body.String(),
+		)
+	}
+
 	// Version 1 is what any run started before this edit is still executing,
 	// so saving must not have touched it.
 	var publishedAfter []byte

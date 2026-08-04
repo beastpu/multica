@@ -307,8 +307,13 @@ describe("WorkflowPage", () => {
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
     const input = mocks.save.mock.calls[0]![0] as {
       definition: typeof definition;
+      base_version_id?: string;
     };
     expect(input.definition.nodes).toHaveLength(4);
+    // Version numbers never collide, so the only thing that can tell the
+    // server this edit started from a version that is no longer live is the
+    // editor naming it.
+    expect(input.base_version_id).toBe("version-1");
   });
 
   it("returns to the workflow list from the editor header", async () => {
@@ -531,6 +536,14 @@ describe("WorkflowPage sections", () => {
     // And back, so opening a section is not a one-way door out of the graph.
     await user.click(screen.getByRole("tab", { name: "Graph" }));
     expect(await screen.findByText("Node inspector")).toBeInTheDocument();
+  });
+
+  it("does not show gateway routing controls for ordinary activity edges", async () => {
+    renderPage();
+
+    expect(await screen.findByText("Node inspector")).toBeInTheDocument();
+    expect(screen.queryByText("Default branch")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Node choice" })).toBeNull();
   });
 });
 
