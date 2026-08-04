@@ -18,7 +18,7 @@ import {
   CollectionPageHeader,
   CollectionPageState,
 } from "../layout/collection-page";
-import { useT, useTimeAgo } from "../i18n";
+import { useT } from "../i18n";
 import { AppLink } from "../navigation";
 import { WorkflowStatusBadge } from "./workflow-status";
 
@@ -29,6 +29,18 @@ type RunScope = "all" | "open" | "closed";
 
 const OPEN_STATUSES = ["needs_setup", "running", "paused"];
 const CLOSED_STATUSES = ["completed", "cancelled", "failed"];
+
+// History is read by comparing rows and matching them against something that
+// happened elsewhere — a deploy, an incident, another run. "18 hours ago" does
+// not survive either use, so the column carries the timestamp itself, in a
+// form that sorts and reads the same in every locale.
+function absoluteTime(value: string): string {
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return "—";
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ` +
+    `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
 
 export function WorkflowRunsPage({ workflowId }: { workflowId?: string }) {
   const { t } = useT("workflows");
@@ -49,6 +61,11 @@ export function WorkflowRunsPage({ workflowId }: { workflowId?: string }) {
     workflowInstanceInfiniteListOptions(wsId, filters),
   );
   const workflowsQuery = useQuery(workflowListOptions(wsId));
+  // Narrowed to one workflow, the page is that workflow's history and says so
+  // — otherwise every workflow's history looks like the same page.
+  const scopedWorkflow = (workflowsQuery.data?.workflows ?? []).find(
+    (item) => item.id === workflow,
+  );
   const runs = useMemo(
     () => runsQuery.data?.pages.flatMap((page) => page.instances) ?? [],
     [runsQuery.data],
@@ -58,9 +75,13 @@ export function WorkflowRunsPage({ workflowId }: { workflowId?: string }) {
     <div className="flex h-full min-h-0 flex-col">
       <CollectionPageHeader
         icon={History}
-        title={t(($) => $.runs.all_title)}
+        title={scopedWorkflow
+          ? t(($) => $.runs.workflow_title, { name: scopedWorkflow.name })
+          : t(($) => $.runs.all_title)}
         count={runs.length}
-        description={t(($) => $.runs.description)}
+        description={scopedWorkflow
+          ? t(($) => $.runs.workflow_description)
+          : t(($) => $.runs.description)}
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex flex-wrap items-center gap-2 px-3 py-2">
@@ -178,7 +199,6 @@ export function WorkflowRunsPage({ workflowId }: { workflowId?: string }) {
 
 function RunRow({ run, href }: { run: WorkflowInstance; href: string }) {
   const { t } = useT("workflows");
-  const timeAgo = useTimeAgo();
   const current = run.current_activities?.[0];
   return (
     <tr className="h-12 transition-colors hover:bg-muted/30">
@@ -212,10 +232,9 @@ function RunRow({ run, href }: { run: WorkflowInstance; href: string }) {
       <td className="px-3 py-2 text-right">
         <time
           dateTime={run.started_at}
-          title={new Date(run.started_at).toLocaleString()}
           className="text-xs tabular-nums text-muted-foreground"
         >
-          {timeAgo(run.started_at)}
+          {absoluteTime(run.started_at)}
         </time>
       </td>
     </tr>

@@ -147,6 +147,18 @@ describe("WorkflowRunsPage", () => {
     );
   });
 
+  it("names the workflow when scoped to one, and dates each run", () => {
+    mockRuns([run]);
+    render(<WorkflowRunsPage workflowId="wf-1" />, { wrapper });
+
+    // Reading history means lining rows up against each other and against
+    // something that happened elsewhere; "18 hours ago" serves neither.
+    expect(screen.getByText(/^2026-08-03 \d{2}:\d{2}$/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /Delivery workflow runs/ }),
+    ).toBeInTheDocument();
+  });
+
   it("says so when a workspace has no runs yet", () => {
     mockRuns([]);
     render(<WorkflowRunsPage />, { wrapper });

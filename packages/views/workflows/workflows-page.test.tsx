@@ -310,8 +310,13 @@ describe("WorkflowsPage", () => {
       .toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Run history" }))
       .toBeInTheDocument();
+    // The row's name is the operational destination: what this workflow has
+    // done. Editing its definition lives in the overflow menu.
     expect(screen.getByRole("link", { name: "Delivery workflow" }))
-      .toHaveAttribute("href", "/workspace/workflows/template-1");
+      .toHaveAttribute(
+        "href",
+        "/workspace/workflows/runs?workflow=template-1",
+      );
     // The latest run is named in the row; the rest live behind the count,
     // which is a link to this workflow's history rather than a row of dots
     // that said only "a run happened".

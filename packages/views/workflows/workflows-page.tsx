@@ -408,8 +408,14 @@ function TemplatesPanel({
                         className="size-4 shrink-0 text-muted-foreground"
                       />
                       <div className="min-w-0">
+                        {/*
+                          A row in an operational list is a thing that runs,
+                          so its name opens what it has done. Editing the
+                          definition is the rarer act and sits in the overflow
+                          with the rest of the management actions.
+                        */}
                         <AppLink
-                          href={p.workflow(template.id)}
+                          href={p.workflowRuns(template.id)}
                           className="block truncate font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           {template.name}
@@ -478,7 +484,7 @@ function TemplatesPanel({
                               render={
                                 <AppLink href={p.workflow(template.id)}>
                                   <Pencil aria-hidden="true" />
-                                  {t(($) => $.actions.edit_metadata)}
+                                  {t(($) => $.actions.edit_workflow)}
                                 </AppLink>
                               }
                             />
