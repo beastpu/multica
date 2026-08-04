@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Copy,
   GitBranch,
+  History,
   LayoutTemplate,
   Loader2,
   MoreHorizontal,
@@ -188,7 +189,7 @@ function RunHistoryCell({ template }: { template: Workflow }) {
           {timeAgo(latest.started_at)}
         </span>
       </AppLink>
-      {template.run_count > 1 && (
+      {template.run_count > 0 && (
         <AppLink
           href={p.workflowRuns(template.id)}
           className="shrink-0 rounded-md px-1.5 py-1 text-xs tabular-nums text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
@@ -905,6 +906,8 @@ type WorkflowPageTab = "workflows" | "builtin";
 export function WorkflowsPage() {
   const { t } = useT("workflows");
   const [tab, setTab] = useState<WorkflowPageTab>("workflows");
+  const navigation = useNavigation();
+  const p = useWorkspacePaths();
   const wsId = useWorkspaceId();
   const userId = useAuthStore((state) => state.user?.id);
   const { data: members = [] } = useQuery(memberListOptions(wsId));
@@ -915,8 +918,22 @@ export function WorkflowsPage() {
       <CollectionPageHeader
         icon={GitBranch}
         title={t(($) => $.title)}
-        actions={tab === "workflows" && canManage
-          ? <CreateWorkflowButton />
+        actions={tab === "workflows"
+          ? (
+            <>
+              {/*
+                The run history has to be reachable without a run to click
+                through: a workspace whose workflows have each run once had
+                every route to it hidden behind a count that never showed.
+              */}
+              <CollectionPageHeaderAction
+                icon={History}
+                label={t(($) => $.runs.all_title)}
+                onClick={() => navigation.push(p.workflowRuns())}
+              />
+              {canManage && <CreateWorkflowButton />}
+            </>
+          )
           : undefined}
       />
       <nav aria-label={t(($) => $.title)} className="border-b px-5">

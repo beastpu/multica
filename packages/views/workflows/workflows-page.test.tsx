@@ -321,6 +321,10 @@ describe("WorkflowsPage", () => {
     expect(
       screen.getByRole("link", { name: "4 runs" }),
     ).toHaveAttribute("href", "/workspace/workflows/runs?workflow=template-1");
+    // The history is reachable from the page itself, not only from a workflow
+    // that happens to have run more than once.
+    expect(screen.getByRole("button", { name: "Workflow runs" }))
+      .toBeInTheDocument();
   });
 
   it("keeps secondary workflow metadata out of the operational list", () => {
