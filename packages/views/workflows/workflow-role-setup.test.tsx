@@ -332,31 +332,6 @@ describe("WorkflowTaskCard", () => {
   });
 });
 
-function workflowNode(overrides: Partial<WorkflowNodeInstance> = {}) {
-  return {
-    id: "node-1",
-    workflow_instance_id: "instance-1",
-    node_key: "review",
-    node_kind: "activity",
-    attempt: 1,
-    name: "Review",
-    display_order: 1,
-    definition: {
-      key: "review",
-      kind: "activity",
-      name: "Review",
-      reviewer: { kind: "role", role: "qa", required: true },
-    },
-    status: "active",
-    waiting_reasons: [],
-    latest_submission_id: null,
-    latest_verdict_id: null,
-    activated_at: "2026-07-23T00:00:00Z",
-    completed_at: null,
-    ...overrides,
-  } as WorkflowNodeInstance;
-}
-
 describe("VerdictPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
