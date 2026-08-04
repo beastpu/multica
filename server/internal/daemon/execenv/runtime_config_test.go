@@ -397,6 +397,29 @@ func TestChatOutputDoesNotRequireIssueComment(t *testing.T) {
 	}
 }
 
+func TestIssueCreationHandoffLinksIssueAndUsesTypeProperty(t *testing.T) {
+	t.Parallel()
+
+	for name, ctx := range map[string]TaskContextForEnv{
+		"chat":       {ChatSessionID: "chat-1"},
+		"assignment": {IssueID: "11111111-2222-3333-4444-555555555555"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := buildMetaSkillContent("claude", ctx)
+			for _, want := range []string{
+				"[<identifier>](mention://issue/<id>)",
+				"multica property list --output json",
+				"multica issue property set <issue-id>",
+				"Never use a label to represent issue type",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("%s brief missing created-issue handoff rule %q\n---\n%s", name, want, out)
+				}
+			}
+		})
+	}
+}
+
 // The Output section for issue tasks must forbid mid-run progress
 // comments and require the single final result comment. Guards the
 // MUL-3605 regression where a review agent surfaced its progress

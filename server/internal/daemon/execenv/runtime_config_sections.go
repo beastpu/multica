@@ -552,6 +552,18 @@ func writeDeliveryInvariant(b *strings.Builder) {
 	b.WriteString("- To deliver a file you produced, use this surface's mechanism (below). If this surface has no file mechanism, say so in words — never link the path and imply the file was delivered.\n\n")
 }
 
+// writeIssueCreationHandoff keeps agent-created issues typed and reachable
+// from the response that announces them. It is excluded from quick-create:
+// that flow permits exactly one create command and delivers a server-owned
+// inbox item already bound to the resulting issue.
+func writeIssueCreationHandoff(b *strings.Builder) {
+	b.WriteString("## Creating Issues for Users\n\n")
+	b.WriteString("Whenever you create an issue on a user's behalf:\n\n")
+	b.WriteString("1. Before creating it, run `multica property list --output json` and find the workspace's active issue-type property (for example `Issue Type`, `issue类型`, or `类型`). Use the existing property name and one of its existing options; do not invent a property or option.\n")
+	b.WriteString("2. Create the issue with `multica issue create --output json`, retain both `id` and `identifier`, then set the type with `multica issue property set <issue-id> --name <property-name> --value <option-name>`. If no unambiguous issue-type property or matching option exists, say that the type could not be set. Never use a label to represent issue type.\n")
+	b.WriteString("3. In the final reply or issue comment, include the clickable issue link `[<identifier>](mention://issue/<id>)`. A plain identifier or title alone is not enough.\n\n")
+}
+
 // writeOutput emits the kind-specific Output section: the always-on delivery
 // invariant plus one per-surface file-delivery policy line per kind.
 func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
@@ -677,6 +689,10 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 		writeWorkflowComment(&b, provider, ctx)
 	case kindAssignmentTriggered:
 		writeWorkflowAssignment(&b, ctx)
+	}
+
+	if kind != kindQuickCreate && kind != kindP4Assessment {
+		writeIssueCreationHandoff(&b)
 	}
 
 	if kind.hasIssueContext() && ctx.IssueID != "" {

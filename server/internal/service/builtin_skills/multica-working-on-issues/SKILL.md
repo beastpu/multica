@@ -172,6 +172,37 @@ multica issue property unset <issue-id> --name Environment
   filter by, and a definition exists, prefer the property. Metadata stays the
   free-form scratchpad for run state (`pr_url`, `waiting_on`, ...).
 
+### Issue type on newly created issues
+
+When creating an issue for a user, inspect the active property catalog first:
+
+```bash
+multica property list --output json
+```
+
+If the workspace has an unambiguous issue-type property (for example `Issue
+Type`, `issue类型`, or `类型`), choose one of that property's existing options and
+set it after creation:
+
+```bash
+multica issue property set <issue-id> --name <property-name> --value <option-name>
+```
+
+Never use a label to represent issue type. Do not create a property definition
+or invent a select option; if the property or matching option is unavailable,
+tell the user that the type could not be set.
+
+The create response contains both the UUID and human-readable identifier. Keep
+both, and include a clickable issue link in the response that announces the
+new issue:
+
+```text
+[<identifier>](mention://issue/<id>)
+```
+
+A bare identifier or title is not an adequate handoff because the user would
+have to search for the issue that was just created.
+
 ## Status changes have server side effects
 
 A status change is not cosmetic — the server enqueues or skips agent work based

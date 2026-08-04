@@ -170,6 +170,14 @@ wakes the parent assignee. Promoting the next stage's `backlog` sub-issues to
 | Per-type value validation (self-correcting errors) | `server/internal/handler/property.go` (`validatePropertyValue`) |
 | API routes (`/api/properties`, PUT/DELETE `/api/issues/{id}/properties/{propertyId}`) | `server/cmd/server/router.go` |
 
+## Created-issue handoff
+
+| Behavior | File:line |
+|---|---|
+| `issue create --output json` returns the create response, including `id` and `identifier` | `server/cmd/multica/cmd_issue.go:1052` (`runIssueCreate`) |
+| Issue-type values use the typed property catalog and property setter | `server/cmd/multica/cmd_property.go:255,438,608` (`runPropertyList`, `encodeIssuePropertyValue`, `runIssuePropertySet`) |
+| `[IDENTIFIER](mention://issue/<uuid>)` is parsed as an issue link without an agent-run side effect | `server/internal/util/mention.go:16,24` (`MentionRe`, `ParseMentions`) |
+
 ## Verification command
 
 Re-derive any line above before depending on it:
@@ -183,4 +191,7 @@ grep -n 'extractIdentifiers(\|extractClosingIdentifiers(\|derivePRState(' intern
 grep -n 'qualifyingIdents\|reference_only\|ReferenceOnly' internal/handler/github.go pkg/db/queries/github.sql
 grep -n 'prevIssue.Status == "backlog"\|func (h \*Handler) shouldEnqueueAgentTask' internal/handler/issue.go
 grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.go
+grep -n 'func runIssueCreate'                cmd/multica/cmd_issue.go
+grep -n 'func runPropertyList\|func runIssuePropertySet\|func encodeIssuePropertyValue' cmd/multica/cmd_property.go
+grep -n 'MentionRe\|func ParseMentions'      internal/util/mention.go
 ```
