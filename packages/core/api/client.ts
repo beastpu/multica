@@ -365,7 +365,6 @@ import {
   WorkflowPublishResponseSchema,
   WorkflowSaveResponseSchema,
   WorkflowSchema,
-  WorkflowDefinitionValidationResponseSchema,
 } from "./workflow-schemas";
 
 /** Identifies the calling client to the server.
@@ -3761,23 +3760,6 @@ export class ApiClient {
       { endpoint: "PUT /api/workflows/:id/definition" },
     );
   }
-
-  async validateWorkflowDefinition(
-    templateId: string,
-    definition: WorkflowDefinition,
-  ): Promise<{ valid: boolean; errors: string[] }> {
-    const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/validate`, {
-      method: "POST",
-      body: JSON.stringify({ definition }),
-    });
-    return parseWithFallback(
-      raw,
-      WorkflowDefinitionValidationResponseSchema,
-      { valid: false, errors: [] },
-      { endpoint: "POST /api/workflows/:id/validate" },
-    );
-  }
-
 
   async archiveWorkflow(templateId: string): Promise<Workflow> {
     const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/archive`, { method: "POST" });

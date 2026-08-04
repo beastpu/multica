@@ -424,11 +424,6 @@ export const WorkflowPublishResponseSchema = z.object({
   version: WorkflowVersionSchema,
 }).loose();
 
-export const WorkflowDefinitionValidationResponseSchema = z.object({
-  valid: z.boolean().optional().default(false),
-  errors: arrayOrEmpty(z.string()),
-}).loose();
-
 export const WorkflowSubmissionMutationResponseSchema = z.object({
   submission: WorkflowSubmissionSchema,
   validation_errors: arrayOrEmpty(WaitingReasonSchema),

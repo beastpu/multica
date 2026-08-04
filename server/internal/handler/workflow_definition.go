@@ -599,22 +599,6 @@ func (h *Handler) UpdateWorkflowMetadata(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, workflowToResponse(template))
 }
 
-func (h *Handler) ValidateWorkflowDefinition(w http.ResponseWriter, r *http.Request) {
-	if !h.workflowTemplateWriteEnabled(w, r) {
-		return
-	}
-	var req saveWorkflowDefinitionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if _, _, err := workflowDefinitionBytes(req.Definition); err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "errors": []string{err.Error()}})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"valid": true, "errors": []string{}})
-}
-
 type saveWorkflowDefinitionRequest struct {
 	Definition    json.RawMessage `json:"definition"`
 	ChangeSummary string          `json:"change_summary"`
