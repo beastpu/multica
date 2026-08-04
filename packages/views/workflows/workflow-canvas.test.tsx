@@ -235,10 +235,13 @@ describe("WorkflowCanvas", () => {
     });
   });
 
-  it("adds a branch or connects the selected node to a valid existing node", async () => {
-    const user = userEvent.setup();
-    const onAddBranch = vi.fn();
-    const onConnectNode = vi.fn();
+  // One render helper for both halves: driving a Base UI menu costs seconds
+  // under jsdom, and a single case that opened two of them was the slowest in
+  // the package by a wide margin.
+  function renderBranchableCanvas(handlers: {
+    onAddBranch?: () => void;
+    onConnectNode?: () => void;
+  }) {
     const nodes = [
       node("start", "completed", 0),
       node("split", "completed", 1),
@@ -254,15 +257,19 @@ describe("WorkflowCanvas", () => {
           nodes={nodes}
           selectedId="node-analysis"
           onSelect={vi.fn()}
-          onAddBranch={onAddBranch}
-          onConnectNode={onConnectNode}
+          onAddBranch={handlers.onAddBranch ?? vi.fn()}
+          onConnectNode={handlers.onConnectNode ?? vi.fn()}
         />
       </I18nProvider>,
     );
+    return screen.getByRole("button", { name: "Actions for Analysis" });
+  }
 
-    const actions = screen.getByRole("button", {
-      name: "Actions for Analysis",
-    });
+  it("adds a branch from the selected node, without the parallel forms", async () => {
+    const user = userEvent.setup();
+    const onAddBranch = vi.fn();
+    const actions = renderBranchableCanvas({ onAddBranch });
+
     await user.click(actions);
     await user.click(await screen.findByRole("menuitem", { name: "Add node" }));
     expect(
@@ -273,12 +280,15 @@ describe("WorkflowCanvas", () => {
     ).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("menuitem", { name: "Activity" }));
     expect(onAddBranch).toHaveBeenCalledWith("activity", "analysis");
+  });
+
+  it("connects the selected node to a valid existing node", async () => {
+    const user = userEvent.setup();
+    const onConnectNode = vi.fn();
+    const actions = renderBranchableCanvas({ onConnectNode });
 
     await user.click(actions);
-    const connectTo = await screen.findByRole("menuitem", {
-      name: "Connect to",
-    });
-    await user.click(connectTo);
+    await user.click(await screen.findByRole("menuitem", { name: "Connect to" }));
     fireEvent.click(await screen.findByRole("menuitem", {
       name: "Implementation",
     }));
