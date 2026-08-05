@@ -2908,6 +2908,95 @@ func TestWorkflowReworkStopsAtAttemptCap(t *testing.T) {
 	}
 }
 
+// A node that declares output fields owes those fields. The engine
+// synthesises a submission for a node with no schema once its issues are done
+// — useful for nodes that owe nothing structured, but it carries none of the
+// declared fields, so accepting it would complete the node with an empty
+// variable pool and route the gateway to else with nobody having decided
+// anything. That is the exact silent failure declared outputs exist to stop.
+func TestWorkflowDeclaredOutputsAreNotSatisfiedBySynthesis(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+
+	ownerExecutor := workflowdomain.ExecutorDefinition{
+		Kind: "role", Role: "owner",
+		Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+	}
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Declared outputs",
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true,
+			AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "triage", Kind: "activity", Name: "Triage", OwnerRole: "owner",
+				Executor: &ownerExecutor, IssuePolicy: "fixed",
+				IssueTemplates: []workflowdomain.IssueTemplate{{
+					Key: "triage_issue", Title: "Triage {{host.title}}", Required: true,
+				}},
+				// No submission_schema — the default shape, and the one that
+				// gets a synthesised submission.
+				Outputs: []workflowdomain.OutputField{{
+					Key: "is_bug", Type: "bool", Required: true,
+				}},
+				Completion: workflowdomain.CompletionDefinition{RequiredIssueOutcome: "done"},
+			},
+			{
+				Key: "route", Kind: "gateway", Name: "Route",
+				Cases: []workflowdomain.GatewayCase{
+					{ID: "c1", Label: "非缺陷", When: `is_bug == false`},
+					{ID: "else", Label: "继续"},
+				},
+			},
+			{Key: "closed", Kind: "end", Name: "Closed"},
+			{Key: "fixing", Kind: "end", Name: "Fixing"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "triage"},
+			{From: "triage", To: "route"},
+			{From: "route", To: "closed", FromCase: "c1"},
+			{From: "route", To: "fixing", FromCase: "else"},
+		},
+		Acceptance: workflowdomain.AcceptanceDefinition{Policy: "none"},
+	}
+	if err := workflowdomain.ValidateDefinition(definition); err != nil {
+		t.Fatalf("definition invalid: %v", err)
+	}
+	templateID := createPublishedWorkflowForTest(t, "Declared outputs template", definition)
+	hostID := createWorkflowHostForTest(t, "Declared outputs host")
+	started := startWorkflowForTest(t, hostID, templateID, []map[string]any{{
+		"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
+	}}, "declared-outputs-start")
+
+	// Finish the issue without ever delivering the declared field.
+	triage := findWorkflowNodeResponse(t, started.Nodes, "triage", 1)
+	tasks, err := testHandler.Queries.ListWorkflowNodeTasks(
+		context.Background(),
+		db.ListWorkflowNodeTasksParams{
+			WorkflowNodeInstanceID: parseUUID(triage.ID),
+			WorkspaceID:            parseUUID(testWorkspaceID),
+		},
+	)
+	if err != nil || len(tasks) != 1 || !tasks[0].IssueID.Valid {
+		t.Fatalf("triage tasks = %#v, err = %v", tasks, err)
+	}
+	completeWorkflowIssue(t, uuidToString(tasks[0].IssueID))
+	reconcileWorkflowForTest(t, started.Instance.ID, "declared-outputs-reconcile")
+
+	node := latestWorkflowNodeForTest(t, started.Instance.ID, "triage")
+	if node.Status == "completed" {
+		t.Fatalf(
+			"triage completed without delivering is_bug; the gateway would route on an empty pool",
+		)
+	}
+	if !strings.Contains(string(node.WaitingReasons), "output") {
+		t.Fatalf("waiting reasons do not name the missing fields: %s", node.WaitingReasons)
+	}
+}
+
 func TestWorkflowRequiredIssueCancellationPolicy(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 

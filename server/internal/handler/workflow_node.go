@@ -1793,6 +1793,26 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 			Code: "valid_submission_required", Message: "A valid structured submission is required",
 		}}, submission, db.WorkflowNodeVerdict{}, nil
 	}
+	// Declared output fields are a delivery the node owes, and only a real
+	// submission carries them: the synthesised one above records that the
+	// issues are done and nothing else. Completing on it would leave the
+	// variable pool empty, and a downstream gateway would fail closed to its
+	// else branch with nobody having made the decision — the silent routing
+	// that declared outputs exist to prevent. Held here rather than refused
+	// at submit time so the work itself is never blocked, only its handover.
+	if missing := workflowdomain.MissingRequiredOutputs(
+		nodeDefinition.Outputs, workflowSubmissionOutputs(submission),
+	); len(missing) > 0 {
+		reasons := make([]workflowdomain.WaitingReason, 0, len(missing))
+		for _, key := range missing {
+			reasons = append(reasons, workflowdomain.WaitingReason{
+				Code:    "output_field_required",
+				Field:   key,
+				Message: "The activity owes the output field " + key,
+			})
+		}
+		return false, reasons, submission, db.WorkflowNodeVerdict{}, nil
+	}
 	// The handoff summary is what the next node reads first, so a node that
 	// owes one is not finished without it. Checked against the live submission
 	// rather than any submission: an earlier revision's conclusion described
@@ -2115,6 +2135,16 @@ func (h *Handler) evaluateDeterministicWorkflowVerdict(
 // which made "reviewed" mean two different things.
 func workflowVerdictSatisfies(result string) bool {
 	return result == "pass"
+}
+
+// workflowSubmissionOutputs reads the delivered field values off a submission.
+// An absent submission yields an empty map, so a node with nothing delivered
+// reads as "owes everything" rather than panicking.
+func workflowSubmissionOutputs(submission db.WorkflowNodeSubmission) map[string]any {
+	if !submission.ID.Valid {
+		return map[string]any{}
+	}
+	return decodeWorkflowObject(submission.Payload)
 }
 
 func decodeWorkflowObject(raw []byte) map[string]any {

@@ -197,6 +197,22 @@ func normalizeOutputValue(field OutputField, raw any) (any, *OutputFieldError) {
 	return nil, invalid("invalid_type")
 }
 
+// MissingRequiredOutputs lists the required fields a delivery does not carry,
+// in declaration order. Values are not re-checked here: anything stored has
+// already been through ValidateOutputValues at submit time.
+func MissingRequiredOutputs(fields []OutputField, values map[string]any) []string {
+	missing := make([]string, 0)
+	for _, field := range fields {
+		if !field.Required {
+			continue
+		}
+		if value, present := values[field.Key]; !present || value == nil {
+			missing = append(missing, field.Key)
+		}
+	}
+	return missing
+}
+
 // OutputFieldByKey returns the declaration for key, if any.
 func OutputFieldByKey(fields []OutputField, key string) (OutputField, bool) {
 	for _, field := range fields {
