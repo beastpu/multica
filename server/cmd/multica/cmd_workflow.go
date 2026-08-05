@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -80,6 +81,10 @@ func init() {
 	workflowArtifactGetCmd.Flags().String("output", "text", "Output format: text or json")
 
 	workflowSubmitCmd.Flags().String("summary", "", "Handoff summary for the next node")
+	workflowSubmitCmd.Flags().StringArray("set", nil,
+		"One structured output field as key=value (repeatable)")
+	workflowSubmitCmd.Flags().String("json", "",
+		"All structured output fields as one JSON object")
 	workflowSubmitCmd.Flags().String("artifact", "", "Artifact key declared by the node")
 	workflowSubmitCmd.Flags().String("file", "", "Read the document body from this file")
 	workflowSubmitCmd.Flags().String("content", "", "Document body given inline")
@@ -517,8 +522,12 @@ func runWorkflowSubmit(cmd *cobra.Command, args []string) error {
 	}
 	artifactKey := strings.TrimSpace(mustFlag(cmd, "artifact"))
 	summary := strings.TrimSpace(mustFlag(cmd, "summary"))
-	if artifactKey == "" && summary == "" {
-		return fmt.Errorf("give --summary, --artifact, or both")
+	outputs, err := workflowOutputsFromFlags(cmd)
+	if err != nil {
+		return err
+	}
+	if artifactKey == "" && summary == "" && len(outputs) == 0 {
+		return fmt.Errorf("give --summary, --set/--json output fields, --artifact, or a combination")
 	}
 	var body map[string]any
 	if artifactKey != "" {
@@ -562,21 +571,28 @@ func runWorkflowSubmit(cmd *cobra.Command, args []string) error {
 		results["artifact"] = response.Artifact
 		results["replaced"] = response.Replaced
 	}
-	if summary != "" {
+	if summary != "" || len(outputs) > 0 {
 		var response struct {
 			Submission struct {
 				ID      string `json:"id"`
 				Summary string `json:"summary"`
 			} `json:"submission"`
 		}
+		// Map marshaling is key-sorted, so the digest is stable and a retried
+		// submit with the same summary and fields lands as the same handoff.
+		digestSource, _ := json.Marshal(map[string]any{"summary": summary, "outputs": outputs})
+		request := map[string]any{
+			"summary":         summary,
+			"idempotency_key": "handoff-" + node.ID + "-" + shortDigest(string(digestSource)),
+		}
+		if len(outputs) > 0 {
+			request["payload"] = outputs
+		}
 		if err := client.PostJSON(
 			ctx, "/api/workflow-node-instances/"+node.ID+"/submissions",
-			map[string]any{
-				"summary":         summary,
-				"idempotency_key": "handoff-" + node.ID + "-" + shortDigest(summary),
-			}, &response,
+			request, &response,
 		); err != nil {
-			return fmt.Errorf("submit handoff summary: %w", err)
+			return workflowSubmitOutputsError(err)
 		}
 		results["submission"] = response.Submission
 	}
@@ -592,10 +608,70 @@ func runWorkflowSubmit(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stdout, "%s %s (%s)\n", verb, artifact.Name, artifact.ID)
 		}
 	}
-	if summary != "" {
-		fmt.Fprintln(os.Stdout, "handoff summary submitted")
+	if summary != "" || len(outputs) > 0 {
+		fmt.Fprintln(os.Stdout, "handoff submitted")
 	}
 	return nil
+}
+
+// workflowOutputsFromFlags merges --json and --set into one field map. --set
+// wins on overlap so a mostly-JSON submission can still patch one field.
+// Values stay strings here; the server coerces them against the node's
+// declared field types, which the CLI has no way to know.
+func workflowOutputsFromFlags(cmd *cobra.Command) (map[string]any, error) {
+	outputs := map[string]any{}
+	if raw := strings.TrimSpace(mustFlag(cmd, "json")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &outputs); err != nil {
+			return nil, fmt.Errorf("--json must be one JSON object: %w", err)
+		}
+	}
+	pairs, _ := cmd.Flags().GetStringArray("set")
+	for _, pair := range pairs {
+		key, value, found := strings.Cut(pair, "=")
+		key = strings.TrimSpace(key)
+		if !found || key == "" {
+			return nil, fmt.Errorf("--set expects key=value, got %q", pair)
+		}
+		outputs[key] = value
+	}
+	if len(outputs) == 0 {
+		return nil, nil
+	}
+	return outputs, nil
+}
+
+// workflowSubmitOutputsError turns the server's structured field errors into
+// lines an agent can act on directly, instead of an opaque HTTP 400.
+func workflowSubmitOutputsError(err error) error {
+	var httpErr *cli.HTTPError
+	if !errors.As(err, &httpErr) {
+		return fmt.Errorf("submit handoff: %w", err)
+	}
+	var body struct {
+		Error  string `json:"error"`
+		Fields []struct {
+			Key      string   `json:"key"`
+			Problem  string   `json:"problem"`
+			Got      string   `json:"got"`
+			Expected []string `json:"expected"`
+		} `json:"fields"`
+	}
+	if json.Unmarshal([]byte(httpErr.Body), &body) != nil ||
+		body.Error != "output_validation_failed" {
+		return fmt.Errorf("submit handoff: %w", err)
+	}
+	fmt.Fprintln(os.Stderr, "output validation failed:")
+	for _, field := range body.Fields {
+		line := "  - " + field.Key + ": " + field.Problem
+		if field.Got != "" {
+			line += fmt.Sprintf(" (got %q)", field.Got)
+		}
+		if len(field.Expected) > 0 {
+			line += " — expected: " + strings.Join(field.Expected, ", ")
+		}
+		fmt.Fprintln(os.Stderr, line)
+	}
+	return fmt.Errorf("fix the fields above and resubmit with --set key=value")
 }
 
 func mustFlag(cmd *cobra.Command, name string) string {

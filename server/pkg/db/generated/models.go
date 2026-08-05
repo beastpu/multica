@@ -1467,7 +1467,6 @@ type WorkflowNodeSubmission struct {
 	SourceAgentRunID       pgtype.UUID        `json:"source_agent_run_id"`
 	SchemaVersion          int32              `json:"schema_version"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	Choice                 string             `json:"choice"`
 }
 
 type WorkflowNodeTask struct {

@@ -1534,11 +1534,11 @@ WHERE id = @issue_id
 -- name: CreateWorkflowSubmission :one
 INSERT INTO workflow_node_submission (
     workspace_id, workflow_instance_id, workflow_node_instance_id, revision,
-    status, payload, summary, choice, evidence, submitted_by_type, submitted_by_id,
+    status, payload, summary, evidence, submitted_by_type, submitted_by_id,
     source_issue_id, source_agent_run_id, schema_version
 ) VALUES (
     @workspace_id, @workflow_instance_id, @workflow_node_instance_id, @revision,
-    @status, @payload, @summary, @choice, @evidence, @submitted_by_type, sqlc.narg(submitted_by_id),
+    @status, @payload, @summary, @evidence, @submitted_by_type, sqlc.narg(submitted_by_id),
     sqlc.narg(source_issue_id), sqlc.narg(source_agent_run_id), @schema_version
 )
 RETURNING *;

@@ -254,42 +254,40 @@ func TestRenderIssueContext_NoReworkOnFirstAttempt(t *testing.T) {
 	}
 }
 
-// A node that feeds a gateway has to learn it from the brief. Left to the
-// template author's prose, a template that forgets produces runs that take the
-// default branch forever without anything reporting the decision was skipped.
-func TestRenderIssueContext_WorkflowChoice(t *testing.T) {
+// A node that owes structured fields has to learn it from the brief — the
+// table names the values and the submit flags, and it never names a branch or
+// a downstream node.
+func TestRenderIssueContext_WorkflowOutputs(t *testing.T) {
 	workflow := workflowFixture()
-	workflow.Choice = &WorkflowChoiceDuty{
-		GatewayName:   "是否需要修复",
-		DefaultTarget: "缺陷修复",
-		Options: []WorkflowChoiceOption{
-			{Value: "end", Target: "结束"},
-		},
+	workflow.Outputs = []WorkflowOutputDuty{
+		{Key: "is_bug", Type: "bool", Required: true, Desc: "是否为真实缺陷"},
+		{Key: "category", Type: "enum", Values: []string{"bug", "duplicate"}, Required: true},
+		{Key: "root_cause", Type: "string"},
 	}
 	md := renderIssueContext("claude", TaskContextForEnv{
 		IssueID:  "issue-1",
 		Workflow: workflow,
 	})
 	for _, want := range []string{
-		"是否需要修复",
-		"`end`",
-		"结束",
-		"缺陷修复",
-		"--choice",
+		"结构化字段",
+		"is_bug",
+		"枚举: bug / duplicate",
+		"是否为真实缺陷",
+		"--set",
 	} {
 		if !strings.Contains(md, want) {
-			t.Fatalf("choice brief missing %q:\n%s", want, md)
+			t.Fatalf("outputs brief missing %q:\n%s", want, md)
 		}
 	}
 }
 
-// A node nothing branches on must not be told to choose.
-func TestRenderIssueContext_NoChoiceSection(t *testing.T) {
+// A node declaring no outputs must not be told to deliver fields.
+func TestRenderIssueContext_NoOutputsSection(t *testing.T) {
 	md := renderIssueContext("claude", TaskContextForEnv{
 		IssueID:  "issue-1",
 		Workflow: workflowFixture(),
 	})
-	if strings.Contains(md, "--choice") {
-		t.Fatalf("non-deciding node was told to choose:\n%s", md)
+	if strings.Contains(md, "--set") {
+		t.Fatalf("node without outputs was told to deliver fields:\n%s", md)
 	}
 }

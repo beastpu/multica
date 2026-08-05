@@ -43,7 +43,7 @@ type WorkflowTaskContext struct {
 	Artifacts        []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
 	Upstream         []WorkflowUpstreamContext `json:"upstream,omitempty"`
 	Rework           *WorkflowReworkContext    `json:"rework,omitempty"`
-	Choice           *WorkflowChoiceDuty       `json:"choice,omitempty"`
+	Outputs          []WorkflowOutputDuty      `json:"outputs,omitempty"`
 	ReviewSubmission *WorkflowReviewSubmission `json:"review_submission,omitempty"`
 }
 
@@ -57,18 +57,15 @@ type WorkflowReviewSubmission struct {
 	Evidence     json.RawMessage `json:"evidence,omitempty"`
 }
 
-// WorkflowChoiceDuty is the routing decision this node owes a downstream
-// gateway, derived from the graph rather than declared on the node. Nil when
-// nothing branches on this node.
-type WorkflowChoiceDuty struct {
-	GatewayName   string                 `json:"gateway_name,omitempty"`
-	DefaultTarget string                 `json:"default_target,omitempty"`
-	Options       []WorkflowChoiceOption `json:"options,omitempty"`
-}
-
-type WorkflowChoiceOption struct {
-	Value  string `json:"value"`
-	Target string `json:"target,omitempty"`
+// WorkflowOutputDuty is one structured field this node owes on delivery. It is
+// the node's own declaration — no downstream node name, no branch concept —
+// so the executor reports facts and the graph decides where they route.
+type WorkflowOutputDuty struct {
+	Key      string   `json:"key"`
+	Type     string   `json:"type"`
+	Values   []string `json:"values,omitempty"`
+	Required bool     `json:"required,omitempty"`
+	Desc     string   `json:"desc,omitempty"`
 }
 
 // WorkflowReworkContext explains why a node is running again. Nil on a first
@@ -234,7 +231,7 @@ func (h *Handler) workflowTaskContext(
 	result.NodeIssues = h.workflowNodeIssueIdentifiers(ctx, instance.WorkspaceID, node)
 	result.Upstream = h.workflowUpstreamContext(ctx, instance, node, live)
 	result.Rework = h.workflowReworkContext(ctx, instance, node)
-	result.Choice = h.workflowChoiceDuty(ctx, instance, node)
+	result.Outputs = workflowOutputDuties(nodeDefinition)
 	result.ReviewSubmission = h.workflowReviewSubmission(ctx, instance.WorkspaceID, node)
 	return result
 }
@@ -392,42 +389,20 @@ func clipRunes(text string, limit int) string {
 	return string(runes[:limit]) + "\n\n[truncated]"
 }
 
-// workflowChoiceDuty reports the branch decision this node owes, derived from
-// the published graph. Nil when no gateway reads this node's choice, so a node
-// is never told to make a decision nothing consumes.
-func (h *Handler) workflowChoiceDuty(
-	ctx context.Context,
-	instance db.WorkflowInstance,
-	node db.WorkflowNodeInstance,
-) *WorkflowChoiceDuty {
-	version, err := h.Queries.GetWorkflowVersionInWorkspace(
-		ctx,
-		db.GetWorkflowVersionInWorkspaceParams{
-			ID: instance.WorkflowVersionID, WorkspaceID: instance.WorkspaceID,
-		},
-	)
-	if err != nil {
+// workflowOutputDuties lists the structured fields the node owes, straight
+// from its own declaration snapshot. Empty when the node declares none.
+func workflowOutputDuties(nodeDefinition workflowdomain.NodeDefinition) []WorkflowOutputDuty {
+	if len(nodeDefinition.Outputs) == 0 {
 		return nil
 	}
-	definition, err := workflowdomain.ParseDefinition(version.Definition)
-	if err != nil {
-		return nil
-	}
-	duty, decides := workflowdomain.ChoiceBranchesForNode(definition, node.NodeKey)
-	if !decides || len(duty.Options) == 0 {
-		return nil
-	}
-	options := make([]WorkflowChoiceOption, 0, len(duty.Options))
-	for _, option := range duty.Options {
-		options = append(options, WorkflowChoiceOption{
-			Value: option.Value, Target: option.Target,
+	duties := make([]WorkflowOutputDuty, 0, len(nodeDefinition.Outputs))
+	for _, field := range nodeDefinition.Outputs {
+		duties = append(duties, WorkflowOutputDuty{
+			Key: field.Key, Type: field.Type, Values: field.Values,
+			Required: field.Required, Desc: field.Desc,
 		})
 	}
-	return &WorkflowChoiceDuty{
-		GatewayName:   duty.GatewayName,
-		DefaultTarget: duty.DefaultTarget,
-		Options:       options,
-	}
+	return duties
 }
 
 // workflowReworkContext explains a re-attempt. It returns nil for a first

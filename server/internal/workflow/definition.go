@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -55,7 +56,15 @@ type NodeDefinition struct {
 	IssueTemplates   []IssueTemplate       `json:"issue_templates,omitempty"`
 	Artifacts        []ArtifactRequirement `json:"artifacts,omitempty"`
 	SubmissionSchema *SubmissionSchema     `json:"submission_schema,omitempty"`
-	Completion       CompletionDefinition  `json:"completion,omitempty"`
+	// Outputs declares the structured fields an activity owes on delivery.
+	// They are the only data a gateway condition can read: the executor
+	// reports domain facts here and never names a branch or a downstream node.
+	Outputs []OutputField `json:"outputs,omitempty"`
+	// Cases carry a gateway's routing table: evaluated in order, first match
+	// wins, and the mandatory trailing else case is the fallback. Each case
+	// owns exactly one outgoing edge via EdgeDefinition.FromCase.
+	Cases      []GatewayCase        `json:"cases,omitempty"`
+	Completion CompletionDefinition `json:"completion,omitempty"`
 	// OnEnter/OnComplete run controlled side effects when an activity
 	// activates or completes. Only white-listed action kinds are allowed;
 	// notifications and integrations stay in their own subsystems.
@@ -183,11 +192,10 @@ func RequiredArtifacts(node NodeDefinition) []ArtifactRequirement {
 	return required
 }
 
-// SubmissionSchema carries only how many results a node submits. The
-// user-defined field list is gone: a node's business output is an artifact, its
-// conclusion is the handoff summary, and its branch decision is a node choice —
-// three system-defined shapes that cover what fields were used for, without
-// asking a template author to design a form per node.
+// SubmissionSchema carries only how many results a node submits. What the
+// results contain is declared separately: artifacts for documents, the handoff
+// summary for the conclusion, and typed output fields (NodeDefinition.Outputs)
+// for the structured facts gateway cases route on.
 type SubmissionSchema struct {
 	Policy string `json:"policy,omitempty"`
 }
@@ -214,10 +222,21 @@ type CompletionDefinition struct {
 const MaxHandoffSummaryChars = 500
 
 type EdgeDefinition struct {
-	From      string          `json:"from"`
-	To        string          `json:"to"`
-	Condition json.RawMessage `json:"condition,omitempty"`
-	Default   bool            `json:"default,omitempty"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	// FromCase binds a gateway's outgoing edge to one of its cases. Only
+	// gateway edges carry it; the conditions themselves live on the cases,
+	// not on the edges, so the graph stays a plain topology.
+	FromCase string `json:"from_case,omitempty"`
+}
+
+// GatewayCase is one row of a gateway's routing table. When is a boolean
+// expression over upstream output fields (see ParseExpr); the else case has
+// id "else", no expression, and must be declared last.
+type GatewayCase struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+	When  string `json:"when,omitempty"`
 }
 
 // AcceptanceDefinition gates the run as a whole, not any one node. It has no
@@ -502,6 +521,11 @@ func validateNodes(definitions []NodeDefinition, roles map[string]RoleDefinition
 		if _, exists := nodes[node.Key]; exists {
 			return nil, "", 0, 0, fmt.Errorf("duplicate node key %q", node.Key)
 		}
+		// "issue" is reserved for the host-issue variable namespace, so a node
+		// named issue could never be referenced in a condition unambiguously.
+		if node.Key == "issue" {
+			return nil, "", 0, 0, errors.New(`node key "issue" is reserved`)
+		}
 		if strings.TrimSpace(node.Name) == "" {
 			return nil, "", 0, 0, fmt.Errorf("node %q name is required", node.Key)
 		}
@@ -511,6 +535,16 @@ func validateNodes(definitions []NodeDefinition, roles map[string]RoleDefinition
 		if len(node.Artifacts) > 0 && node.Kind != "activity" {
 			return nil, "", 0, 0, fmt.Errorf(
 				"node %q cannot declare artifacts outside an activity", node.Key,
+			)
+		}
+		if len(node.Outputs) > 0 && node.Kind != "activity" {
+			return nil, "", 0, 0, fmt.Errorf(
+				"node %q cannot declare outputs outside an activity", node.Key,
+			)
+		}
+		if len(node.Cases) > 0 && node.Kind != "gateway" {
+			return nil, "", 0, 0, fmt.Errorf(
+				"node %q cannot declare cases outside a gateway", node.Key,
 			)
 		}
 		switch node.Kind {
@@ -571,6 +605,9 @@ func validateActivity(
 	}
 	if err := validateReviewer(node, roles); err != nil {
 		return err
+	}
+	if err := ValidateOutputFields(node.Outputs); err != nil {
+		return fmt.Errorf("activity %q outputs: %w", node.Key, err)
 	}
 	if err := validateNodeActions(node.Key, "on_enter", node.OnEnter); err != nil {
 		return err
@@ -1055,40 +1092,8 @@ func validateGraph(nodes map[string]NodeDefinition, startKey string, edges []Edg
 		}
 		switch node.Kind {
 		case "gateway":
-			if len(outgoing[key]) < 2 {
-				return fmt.Errorf("gateway %q requires at least two outgoing edges", key)
-			}
-			defaultCount := 0
-			for _, edge := range outgoing[key] {
-				if edge.Default {
-					defaultCount++
-					if hasJSONValue(edge.Condition) {
-						return fmt.Errorf("gateway %q default edge cannot have a condition", key)
-					}
-					continue
-				}
-				if !hasJSONValue(edge.Condition) {
-					return fmt.Errorf("gateway %q non-default edge requires a condition", key)
-				}
-				if err := ValidateCondition(edge.Condition, nodes); err != nil {
-					return fmt.Errorf("gateway %q edge to %q: %w", key, edge.To, err)
-				}
-				references, err := ConditionReferences(edge.Condition)
-				if err != nil {
-					return fmt.Errorf("gateway %q edge to %q: %w", key, edge.To, err)
-				}
-				for _, reference := range references {
-					if !workflowPathExists(reference.Node, key, edges) {
-						return fmt.Errorf(
-							"gateway %q condition node %q must be upstream",
-							key,
-							reference.Node,
-						)
-					}
-				}
-			}
-			if defaultCount != 1 {
-				return fmt.Errorf("gateway %q requires exactly one default edge", key)
+			if err := validateGatewayCases(node, outgoing[key], nodes, edges); err != nil {
+				return err
 			}
 		case "parallel_split":
 			if len(outgoing[key]) < 2 {
@@ -1119,8 +1124,8 @@ func validateGraph(nodes map[string]NodeDefinition, startKey string, edges []Edg
 		}
 		if node.Kind != "gateway" {
 			for _, edge := range outgoing[key] {
-				if edge.Default || hasJSONValue(edge.Condition) {
-					return fmt.Errorf("node %q cannot declare conditional/default edges", key)
+				if edge.FromCase != "" {
+					return fmt.Errorf("node %q cannot bind edges to cases", key)
 				}
 			}
 		}
@@ -1193,6 +1198,104 @@ func validateAcceptance(
 		}
 		if !roleResolvesOnlyToMember(role) {
 			return errors.New("acceptance approver role must resolve only to member")
+		}
+	}
+	return nil
+}
+
+// GatewayExprScope builds what a gateway's when expressions may reference:
+// the output fields of upstream-reachable activities. Restricting the scope is
+// what enforces upstream reachability — a field on a sibling branch simply
+// does not exist here, so a condition cannot be written against it.
+func GatewayExprScope(
+	gatewayKey string,
+	nodes map[string]NodeDefinition,
+	edges []EdgeDefinition,
+) ExprScope {
+	scope := ExprScope{
+		Fields:     map[string][]string{},
+		FieldTypes: map[string]OutputField{},
+	}
+	for key, node := range nodes {
+		if node.Kind != "activity" || len(node.Outputs) == 0 {
+			continue
+		}
+		if !workflowPathExists(key, gatewayKey, edges) {
+			continue
+		}
+		for _, field := range node.Outputs {
+			scope.Fields[field.Key] = append(scope.Fields[field.Key], key)
+			scope.FieldTypes[key+"."+field.Key] = field
+		}
+	}
+	for key := range scope.Fields {
+		slices.Sort(scope.Fields[key])
+	}
+	return scope
+}
+
+// validateGatewayCases checks a gateway's routing table and its binding to the
+// outgoing edges. Cases evaluate in declared order with first match winning,
+// so the constraints are structural: conditional cases first, exactly one
+// trailing else, and a one-to-one mapping between cases and edges.
+func validateGatewayCases(
+	gateway NodeDefinition,
+	outgoing []EdgeDefinition,
+	nodes map[string]NodeDefinition,
+	edges []EdgeDefinition,
+) error {
+	key := gateway.Key
+	if len(gateway.Cases) < 2 {
+		return fmt.Errorf(
+			"gateway %q requires at least one conditional case and the else case", key,
+		)
+	}
+	if gateway.Cases[len(gateway.Cases)-1].ID != "else" {
+		return fmt.Errorf("gateway %q requires the else case last", key)
+	}
+	scope := GatewayExprScope(key, nodes, edges)
+	seen := make(map[string]struct{}, len(gateway.Cases))
+	for i, gatewayCase := range gateway.Cases {
+		if _, exists := seen[gatewayCase.ID]; exists {
+			return fmt.Errorf("gateway %q duplicate case id %q", key, gatewayCase.ID)
+		}
+		seen[gatewayCase.ID] = struct{}{}
+		if gatewayCase.ID == "else" {
+			if i != len(gateway.Cases)-1 {
+				return fmt.Errorf("gateway %q else case must be last", key)
+			}
+			if strings.TrimSpace(gatewayCase.When) != "" {
+				return fmt.Errorf("gateway %q else case cannot carry a condition", key)
+			}
+			continue
+		}
+		if !validKey(gatewayCase.ID) {
+			return fmt.Errorf("gateway %q has invalid case id %q", key, gatewayCase.ID)
+		}
+		if strings.TrimSpace(gatewayCase.When) == "" {
+			return fmt.Errorf("gateway %q case %q requires a when expression", key, gatewayCase.ID)
+		}
+		if _, err := ParseExpr(gatewayCase.When, scope); err != nil {
+			return fmt.Errorf("gateway %q case %q: %w", key, gatewayCase.ID, err)
+		}
+	}
+	edgesByCase := make(map[string]int, len(outgoing))
+	for _, edge := range outgoing {
+		if edge.FromCase == "" {
+			return fmt.Errorf("gateway %q edge to %q must bind to a case", key, edge.To)
+		}
+		if _, exists := seen[edge.FromCase]; !exists {
+			return fmt.Errorf(
+				"gateway %q edge to %q references unknown case %q", key, edge.To, edge.FromCase,
+			)
+		}
+		edgesByCase[edge.FromCase]++
+	}
+	for _, gatewayCase := range gateway.Cases {
+		if edgesByCase[gatewayCase.ID] != 1 {
+			return fmt.Errorf(
+				"gateway %q case %q requires exactly one outgoing edge", key, gatewayCase.ID,
+			)
 		}
 	}
 	return nil
@@ -1277,27 +1380,4 @@ func validateReviewerAPIURL(nodeKey, raw string) error {
 		return fmt.Errorf("activity %q api_url is missing a host", nodeKey)
 	}
 	return nil
-}
-
-// ReachableFrom returns every node the graph can reach from `from`, excluding
-// `from` itself. Exported so callers can bound a value by what the graph allows
-// rather than by a list they maintain separately.
-//
-// One traversal rather than one per candidate: the caller wants the whole set,
-// and asking "can I reach X" node by node walks the graph again for each.
-func ReachableFrom(plan GraphPlan, from string) map[string]struct{} {
-	reachable := map[string]struct{}{}
-	queue := []string{from}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, edge := range plan.Outgoing[current] {
-			if _, seen := reachable[edge.To]; seen || edge.To == from {
-				continue
-			}
-			reachable[edge.To] = struct{}{}
-			queue = append(queue, edge.To)
-		}
-	}
-	return reachable
 }

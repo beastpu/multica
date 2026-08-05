@@ -203,9 +203,9 @@ func TestAPIReviewerValidation(t *testing.T) {
 	}
 }
 
-// node_choice replaces branching on a user-defined field. Its range comes from
-// the graph, so validation only has to know the node exists.
-func TestNodeChoiceConditionSource(t *testing.T) {
+// Gateway cases route on declared output fields. The stored form is the JSON
+// a client actually sends, so this exercises the whole parse-validate path.
+func TestGatewayCasesConditionSource(t *testing.T) {
 	raw := []byte(`{
 	  "schema_version": 1,
 	  "name": "t",
@@ -214,16 +214,21 @@ func TestNodeChoiceConditionSource(t *testing.T) {
 	    {"key":"start","kind":"start","name":"Start"},
 	    {"key":"triage","kind":"activity","name":"Triage",
 	     "owner_role":"owner","issue_policy":"none",
+	     "outputs":[{"key":"is_bug","type":"bool","required":true}],
 	     "completion":{"mode":"manual","required_issue_outcome":"none"}},
-	    {"key":"gate","kind":"gateway","name":"Gate"},
+	    {"key":"gate","kind":"gateway","name":"Gate",
+	     "cases":[
+	       {"id":"c1","label":"修复","when":"is_bug == true"},
+	       {"id":"else","label":"驳回"}
+	     ]},
 	    {"key":"fix","kind":"end","name":"Fix"},
 	    {"key":"reject","kind":"end","name":"Reject"}
 	  ],
 	  "edges": [
 	    {"from":"start","to":"triage"},
 	    {"from":"triage","to":"gate"},
-	    {"from":"gate","to":"fix","condition":{"source":"node_choice","node":"triage","key":"choice","op":"eq","value":"fix"}},
-	    {"from":"gate","to":"reject","default":true}
+	    {"from":"gate","to":"fix","from_case":"c1"},
+	    {"from":"gate","to":"reject","from_case":"else"}
 	  ],
 	  "acceptance": {"policy":"none"}
 	}`)

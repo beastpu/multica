@@ -40,7 +40,7 @@ func BuildSerialPlan(definition Definition) (SerialPlan, error) {
 		}
 	}
 	for _, edge := range definition.Edges {
-		if len(edge.Condition) > 0 && string(edge.Condition) != "null" {
+		if edge.FromCase != "" {
 			return SerialPlan{}, fmt.Errorf("conditional edge %q -> %q is not enabled in the serial runtime", edge.From, edge.To)
 		}
 		outgoing[edge.From] = append(outgoing[edge.From], edge.To)

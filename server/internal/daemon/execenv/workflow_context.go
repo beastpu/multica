@@ -29,7 +29,7 @@ type WorkflowTaskContext struct {
 	Artifacts        []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
 	Upstream         []WorkflowUpstreamContext `json:"upstream,omitempty"`
 	Rework           *WorkflowReworkContext    `json:"rework,omitempty"`
-	Choice           *WorkflowChoiceDuty       `json:"choice,omitempty"`
+	Outputs          []WorkflowOutputDuty      `json:"outputs,omitempty"`
 	ReviewSubmission *WorkflowReviewSubmission `json:"review_submission,omitempty"`
 }
 
@@ -40,22 +40,15 @@ type WorkflowReviewSubmission struct {
 	Evidence     json.RawMessage `json:"evidence,omitempty"`
 }
 
-// WorkflowChoiceDuty is the routing decision this node owes a downstream
-// gateway. It is nil when nothing branches on this node.
-//
-// The options are derived from the graph, not from the template author's
-// prose. A node whose choice decides the path but whose description forgets to
-// say so takes the default branch on every run, and nothing anywhere reports
-// that a decision was never made.
-type WorkflowChoiceDuty struct {
-	GatewayName   string                 `json:"gateway_name,omitempty"`
-	DefaultTarget string                 `json:"default_target,omitempty"`
-	Options       []WorkflowChoiceOption `json:"options,omitempty"`
-}
-
-type WorkflowChoiceOption struct {
-	Value  string `json:"value"`
-	Target string `json:"target,omitempty"`
+// WorkflowOutputDuty is one structured field this node owes on delivery. The
+// declaration never names a downstream node or a branch: the executor reports
+// domain facts, and the graph decides where they route.
+type WorkflowOutputDuty struct {
+	Key      string   `json:"key"`
+	Type     string   `json:"type"`
+	Values   []string `json:"values,omitempty"`
+	Required bool     `json:"required,omitempty"`
+	Desc     string   `json:"desc,omitempty"`
 }
 
 // WorkflowReworkContext explains why a node is being executed again. It is nil
@@ -150,7 +143,7 @@ func renderWorkflowProtocol(b *strings.Builder, workflow *WorkflowTaskContext) {
 	}
 
 	renderWorkflowRework(b, workflow.Rework)
-	renderWorkflowChoice(b, workflow.Choice)
+	renderWorkflowOutputs(b, workflow.Outputs)
 	renderWorkflowUpstream(b, workflow.InstanceID, workflow.Upstream)
 	renderWorkflowDuties(b, workflow)
 }
@@ -235,32 +228,36 @@ func renderWorkflowRework(b *strings.Builder, rework *WorkflowReworkContext) {
 	}
 }
 
-// renderWorkflowChoice writes the branch decision this node owes. It states
-// the consequence of not choosing, so skipping the decision is at least an
-// informed choice rather than an unnoticed one.
-func renderWorkflowChoice(b *strings.Builder, choice *WorkflowChoiceDuty) {
-	if choice == nil || len(choice.Options) == 0 {
+// renderWorkflowOutputs writes the structured fields this node owes. The table
+// carries the machine values and the descriptions together, and the section
+// never names a downstream node — the executor reports facts, not routes.
+func renderWorkflowOutputs(b *strings.Builder, outputs []WorkflowOutputDuty) {
+	if len(outputs) == 0 {
 		return
 	}
-	b.WriteString("### 这个节点要选一条分支\n\n")
-	gateway := choice.GatewayName
-	if gateway == "" {
-		gateway = "下游网关"
-	}
-	fmt.Fprintf(b, "下游的「%s」会读你的选择来决定流程走向。可选：\n\n", gateway)
-	for _, option := range choice.Options {
-		if option.Target != "" {
-			fmt.Fprintf(b, "- `%s` — 走向「%s」\n", option.Value, option.Target)
-		} else {
-			fmt.Fprintf(b, "- `%s`\n", option.Value)
+	b.WriteString("### 这个节点要交付的结构化字段\n\n")
+	b.WriteString("| 字段 | 类型 | 必填 | 说明 |\n| --- | --- | --- | --- |\n")
+	example := ""
+	for _, output := range outputs {
+		kind := output.Type
+		if output.Type == "enum" {
+			kind = "枚举: " + strings.Join(output.Values, " / ")
 		}
+		required := "否"
+		if output.Required {
+			required = "是"
+			if example == "" && len(output.Values) > 0 {
+				example = fmt.Sprintf(" --set %s=%s", output.Key, output.Values[0])
+			} else if example == "" {
+				example = fmt.Sprintf(" --set %s=<值>", output.Key)
+			}
+		}
+		fmt.Fprintf(b, "| %s | %s | %s | %s |\n", output.Key, kind, required, output.Desc)
 	}
-	b.WriteString("\n提交时带上选择：\n\n")
-	b.WriteString("```\nmultica workflow submit --summary \"<结论>\" --choice <上面的某个值>\n```\n\n")
-	if choice.DefaultTarget != "" {
-		fmt.Fprintf(b, "不选则走默认路径「%s」。如果你的结论其实指向别的分支，"+
-			"不选就等于把判断丢掉了。\n\n", choice.DefaultTarget)
-	}
+	b.WriteString("\n提交（--set 可重复，枚举字段只认上表中的英文值）：\n\n")
+	fmt.Fprintf(b, "```\nmultica workflow submit --summary \"<结论>\"%s\n```\n\n", example)
+	b.WriteString("字段校验不通过时命令会返回每个字段的具体问题，按提示修正后重交。" +
+		"缺了必填字段流程会拒绝这次交付。\n\n")
 }
 
 // renderWorkflowUpstream writes what the predecessors concluded. Summaries are

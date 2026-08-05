@@ -568,10 +568,19 @@ func TestValidateDefinitionAcceptsStructuredAutoReviewer(t *testing.T) {
 
 func TestValidateDefinitionRejectsDownstreamConditionReference(t *testing.T) {
 	definition := validDefinition()
+	definition.Nodes = append(definition.Nodes, NodeDefinition{
+		Key: "verify", Kind: "activity", Name: "Verify", OwnerRole: "owner",
+		Reviewer: &ReviewerDefinition{Kind: "role", Role: "owner"},
+	})
+	definition.Edges = []EdgeDefinition{
+		{From: "start", To: "implementation"},
+		{From: "implementation", To: "verify"},
+		{From: "verify", To: "end"},
+	}
 	definition.Nodes[1].Reviewer = &ReviewerDefinition{
 		Kind: "auto",
 		Condition: json.RawMessage(
-			`{"source":"node_choice","node":"end","key":"choice","op":"eq","value":"done"}`,
+			`{"source":"node_verdict","node":"verify","key":"result","op":"eq","value":"pass"}`,
 		),
 	}
 	err := ValidateDefinition(definition)
@@ -701,6 +710,9 @@ func TestValidateDefinitionAcceptsParallelGatewayDAG(t *testing.T) {
 		{Key: "review_end", Kind: "end", Name: "Review end"},
 		{Key: "direct_end", Kind: "end", Name: "Direct end"},
 	}
+	definition.Nodes[2].Outputs = []OutputField{
+		{Key: "path", Type: "enum", Values: []string{"review", "direct"}, Required: true},
+	}
 	definition.Edges = []EdgeDefinition{
 		{From: "start", To: "split"},
 		{From: "split", To: "analysis"},
@@ -708,19 +720,18 @@ func TestValidateDefinitionAcceptsParallelGatewayDAG(t *testing.T) {
 		{From: "analysis", To: "join"},
 		{From: "implementation", To: "join"},
 		{From: "join", To: "route"},
-		{
-			From: "route", To: "review",
-			Condition: json.RawMessage(`{
-				"source":"node_choice",
-				"node":"analysis",
-				"key":"choice",
-				"op":"eq",
-				"value":"review"
-			}`),
-		},
-		{From: "route", To: "direct", Default: true},
+		{From: "route", To: "review", FromCase: "c1"},
+		{From: "route", To: "direct", FromCase: "else"},
 		{From: "review", To: "review_end"},
 		{From: "direct", To: "direct_end"},
+	}
+	for i, node := range definition.Nodes {
+		if node.Key == "route" {
+			definition.Nodes[i].Cases = []GatewayCase{
+				{ID: "c1", Label: "评审", When: `path == "review"`},
+				{ID: "else", Label: "直接结束"},
+			}
+		}
 	}
 	definition.Acceptance = AcceptanceDefinition{}
 	if err := ValidateDefinition(definition); err != nil {
@@ -735,60 +746,185 @@ func TestValidateDefinitionAcceptsParallelGatewayDAG(t *testing.T) {
 	}
 }
 
-func TestValidateDefinitionRejectsGatewayWithoutDefault(t *testing.T) {
+func gatewayTestDefinition(cases []GatewayCase, edges []EdgeDefinition) Definition {
 	definition := validDefinition()
 	definition.Nodes = []NodeDefinition{
 		{Key: "start", Kind: "start", Name: "Start"},
-		{Key: "route", Kind: "gateway", Name: "Route"},
+		{
+			Key: "triage", Kind: "activity", Name: "Triage", OwnerRole: "owner",
+			Outputs: []OutputField{
+				{Key: "is_bug", Type: "bool", Required: true},
+				{Key: "severity", Type: "enum", Values: []string{"low", "high"}},
+			},
+		},
+		{Key: "route", Kind: "gateway", Name: "Route", Cases: cases},
 		{Key: "left", Kind: "end", Name: "Left"},
 		{Key: "right", Kind: "end", Name: "Right"},
 	}
-	definition.Edges = []EdgeDefinition{
-		{From: "start", To: "route"},
+	base := []EdgeDefinition{
+		{From: "start", To: "triage"},
+		{From: "triage", To: "route"},
+	}
+	definition.Edges = append(base, edges...)
+	definition.Acceptance = AcceptanceDefinition{}
+	return definition
+}
+
+func TestValidateDefinitionGatewayCases(t *testing.T) {
+	valid := gatewayTestDefinition(
+		[]GatewayCase{
+			{ID: "c1", Label: "非缺陷", When: `is_bug == false`},
+			{ID: "else", Label: "继续"},
+		},
+		[]EdgeDefinition{
+			{From: "route", To: "left", FromCase: "c1"},
+			{From: "route", To: "right", FromCase: "else"},
+		},
+	)
+	if err := ValidateDefinition(valid); err != nil {
+		t.Fatalf("ValidateDefinition() error = %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		cases []GatewayCase
+		edges []EdgeDefinition
+		want  string
+	}{
 		{
-			From: "route", To: "left",
-			Condition: json.RawMessage(`{"source":"host_issue","key":"priority","op":"eq","value":"high"}`),
+			name:  "missing else",
+			cases: []GatewayCase{{ID: "c1", When: `is_bug == false`}, {ID: "c2", When: `is_bug == true`}},
+			edges: []EdgeDefinition{
+				{From: "route", To: "left", FromCase: "c1"},
+				{From: "route", To: "right", FromCase: "c2"},
+			},
+			want: "else case last",
 		},
 		{
-			From: "route", To: "right",
-			Condition: json.RawMessage(`{"source":"host_issue","key":"priority","op":"neq","value":"high"}`),
+			name:  "else not last",
+			cases: []GatewayCase{{ID: "else"}, {ID: "c1", When: `is_bug == false`}},
+			edges: []EdgeDefinition{
+				{From: "route", To: "left", FromCase: "c1"},
+				{From: "route", To: "right", FromCase: "else"},
+			},
+			want: "else case last",
+		},
+		{
+			name:  "else with condition",
+			cases: []GatewayCase{{ID: "c1", When: `is_bug == false`}, {ID: "else", When: `is_bug == true`}},
+			edges: []EdgeDefinition{
+				{From: "route", To: "left", FromCase: "c1"},
+				{From: "route", To: "right", FromCase: "else"},
+			},
+			want: "cannot carry a condition",
+		},
+		{
+			name:  "unknown operator",
+			cases: []GatewayCase{{ID: "c1", When: `is_bug matches "x"`}, {ID: "else"}},
+			edges: []EdgeDefinition{
+				{From: "route", To: "left", FromCase: "c1"},
+				{From: "route", To: "right", FromCase: "else"},
+			},
+			want: "case \"c1\"",
+		},
+		{
+			name:  "enum literal outside declaration",
+			cases: []GatewayCase{{ID: "c1", When: `severity == "urgent"`}, {ID: "else"}},
+			edges: []EdgeDefinition{
+				{From: "route", To: "left", FromCase: "c1"},
+				{From: "route", To: "right", FromCase: "else"},
+			},
+			want: "not among enum values",
+		},
+		{
+			name:  "case without edge",
+			cases: []GatewayCase{{ID: "c1", When: `is_bug == false`}, {ID: "else"}},
+			edges: []EdgeDefinition{
+				{From: "route", To: "left", FromCase: "else"},
+				{From: "route", To: "right", FromCase: "else"},
+			},
+			want: "exactly one outgoing edge",
+		},
+		{
+			name:  "edge bound to unknown case",
+			cases: []GatewayCase{{ID: "c1", When: `is_bug == false`}, {ID: "else"}},
+			edges: []EdgeDefinition{
+				{From: "route", To: "left", FromCase: "ghost"},
+				{From: "route", To: "right", FromCase: "else"},
+			},
+			want: "unknown case",
 		},
 	}
-	definition.Acceptance = AcceptanceDefinition{}
-	err := ValidateDefinition(definition)
-	if err == nil || !strings.Contains(err.Error(), "exactly one default") {
-		t.Fatalf("ValidateDefinition() error = %v, want default error", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateDefinition(gatewayTestDefinition(tc.cases, tc.edges))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateDefinition() error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
-func TestValidateDefinitionRejectsUnknownConditionOperator(t *testing.T) {
-	definition := validDefinition()
-	definition.Nodes = []NodeDefinition{
-		{Key: "start", Kind: "start", Name: "Start"},
-		{Key: "route", Kind: "gateway", Name: "Route"},
-		{Key: "left", Kind: "end", Name: "Left"},
-		{Key: "right", Kind: "end", Name: "Right"},
-	}
-	definition.Edges = []EdgeDefinition{
-		{From: "start", To: "route"},
-		{
-			From: "route", To: "left",
-			Condition: json.RawMessage(`{"source":"host_issue","key":"priority","op":"matches","value":"high"}`),
+func TestSelectGatewayCase(t *testing.T) {
+	definition := gatewayTestDefinition(
+		[]GatewayCase{
+			{ID: "c1", Label: "非缺陷", When: `is_bug == false`},
+			{ID: "c2", Label: "高危", When: `severity == "high"`},
+			{ID: "else", Label: "继续"},
 		},
-		{From: "route", To: "right", Default: true},
+		[]EdgeDefinition{
+			{From: "route", To: "left", FromCase: "c1"},
+			{From: "route", To: "right", FromCase: "c2"},
+		},
+	)
+	// c2 and else share targets with c1/right to keep the graph small: give
+	// else its own edge by reusing right for c2 above and left for else here
+	// is not allowed (duplicate edge), so extend with a third end node.
+	definition.Nodes = append(definition.Nodes, NodeDefinition{Key: "fallthrough", Kind: "end", Name: "Fallthrough"})
+	definition.Edges = append(definition.Edges, EdgeDefinition{From: "route", To: "fallthrough", FromCase: "else"})
+	plan, err := BuildGraphPlan(definition)
+	if err != nil {
+		t.Fatalf("BuildGraphPlan() error = %v", err)
 	}
-	definition.Acceptance = AcceptanceDefinition{}
-	err := ValidateDefinition(definition)
-	if err == nil || !strings.Contains(err.Error(), "unknown condition operator") {
-		t.Fatalf("ValidateDefinition() error = %v, want operator error", err)
-	}
+	gateway := plan.Nodes["route"]
+
+	t.Run("first match wins in declared order", func(t *testing.T) {
+		selected, target, err := SelectGatewayCase(gateway, plan, ExprPool{
+			"triage": {"is_bug": false, "severity": "high"},
+		})
+		if err != nil || selected.ID != "c1" || target != "left" {
+			t.Fatalf("selected %q -> %q, err %v", selected.ID, target, err)
+		}
+	})
+	t.Run("later case fires when earlier misses", func(t *testing.T) {
+		selected, target, err := SelectGatewayCase(gateway, plan, ExprPool{
+			"triage": {"is_bug": true, "severity": "high"},
+		})
+		if err != nil || selected.ID != "c2" || target != "right" {
+			t.Fatalf("selected %q -> %q, err %v", selected.ID, target, err)
+		}
+	})
+	t.Run("no match falls to else", func(t *testing.T) {
+		selected, target, err := SelectGatewayCase(gateway, plan, ExprPool{
+			"triage": {"is_bug": true, "severity": "low"},
+		})
+		if err != nil || selected.ID != "else" || target != "fallthrough" {
+			t.Fatalf("selected %q -> %q, err %v", selected.ID, target, err)
+		}
+	})
+	t.Run("absent upstream fails closed to else", func(t *testing.T) {
+		selected, target, err := SelectGatewayCase(gateway, plan, ExprPool{})
+		if err != nil || selected.ID != "else" || target != "fallthrough" {
+			t.Fatalf("selected %q -> %q, err %v", selected.ID, target, err)
+		}
+	})
 }
 
 func TestEvaluateConditionCompositionsAndMissingFailClosed(t *testing.T) {
 	resolver := func(source, node, key string) (any, bool) {
 		values := map[string]any{
-			"host_issue.priority":         "high",
-			"node_choice.analysis.choice": "review",
+			"host_issue.priority":          "high",
+			"node_verdict.analysis.result": "pass",
 		}
 		lookup := source + "." + key
 		if node != "" {
@@ -800,7 +936,7 @@ func TestEvaluateConditionCompositionsAndMissingFailClosed(t *testing.T) {
 	raw := json.RawMessage(`{
 		"all":[
 			{"source":"host_issue","key":"priority","op":"in","value":["high","urgent"]},
-			{"not":{"source":"node_choice","node":"analysis","key":"choice","op":"eq","value":"direct"}}
+			{"not":{"source":"node_verdict","node":"analysis","key":"result","op":"eq","value":"fail"}}
 		]
 	}`)
 	matches, err := EvaluateCondition(raw, resolver)
@@ -813,54 +949,6 @@ func TestEvaluateConditionCompositionsAndMissingFailClosed(t *testing.T) {
 	)
 	if err != nil || missing {
 		t.Fatalf("missing neq = %v, %v; want fail-closed false", missing, err)
-	}
-}
-
-// A node whose choice a downstream gateway reads has to be told so. The
-// options come from the graph rather than the template author's prose, which
-// is what stops a run silently taking the default because nobody mentioned
-// there was a decision to make.
-func TestChoiceBranchesForNode(t *testing.T) {
-	definition := Definition{
-		SchemaVersion: 1,
-		Name:          "branching",
-		Roles:         []RoleDefinition{{Key: "qa", Name: "QA", Required: true, AllowedActorTypes: []string{"member"}}},
-		Nodes: []NodeDefinition{
-			{Key: "start", Kind: "start", Name: "开始"},
-			{Key: "triage", Kind: "activity", Name: "问题分诊", OwnerRole: "qa"},
-			{Key: "route", Kind: "gateway", Name: "是否需要修复"},
-			{Key: "fix", Kind: "activity", Name: "缺陷修复", OwnerRole: "qa"},
-			{Key: "end", Kind: "end", Name: "结束"},
-		},
-		Edges: []EdgeDefinition{
-			{From: "start", To: "triage"},
-			{From: "triage", To: "route"},
-			{From: "route", To: "end", Condition: json.RawMessage(
-				`{"source":"node_choice","node":"triage","key":"choice","op":"eq","value":"end"}`)},
-			{From: "route", To: "fix", Default: true},
-		},
-	}
-
-	duty, found := ChoiceBranchesForNode(definition, "triage")
-	if !found {
-		t.Fatal("triage feeds a gateway but reported no choice duty")
-	}
-	if duty.GatewayName != "是否需要修复" {
-		t.Fatalf("gateway name = %q", duty.GatewayName)
-	}
-	if duty.DefaultTarget != "缺陷修复" {
-		t.Fatalf("default target = %q", duty.DefaultTarget)
-	}
-	if len(duty.Options) != 1 ||
-		duty.Options[0].Value != "end" ||
-		duty.Options[0].Target != "结束" {
-		t.Fatalf("options = %#v", duty.Options)
-	}
-
-	// A node nothing branches on must not be told to choose — an invented
-	// decision is worse than none.
-	if _, found := ChoiceBranchesForNode(definition, "fix"); found {
-		t.Fatal("fix has no downstream gateway reading it, but reported a choice duty")
 	}
 }
 

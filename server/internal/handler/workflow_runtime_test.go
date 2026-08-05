@@ -1273,6 +1273,9 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 				Executor: &ownerExecutor, IssuePolicy: "fixed",
 				IssueTemplates:   requiredIssue("analysis_issue", "Analyze {{host.title}}"),
 				SubmissionSchema: &workflowdomain.SubmissionSchema{},
+				Outputs: []workflowdomain.OutputField{{
+					Key: "path", Type: "enum", Values: []string{"review", "direct"}, Required: true,
+				}},
 				Completion: workflowdomain.CompletionDefinition{
 					RequiredIssueOutcome: "done", SubmissionRequired: true,
 				},
@@ -1284,7 +1287,13 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 				Completion:     workflowdomain.CompletionDefinition{RequiredIssueOutcome: "done"},
 			},
 			{Key: "join", Kind: "parallel_join", JoinMode: "all", Name: "Join"},
-			{Key: "route", Kind: "gateway", Name: "Review route"},
+			{
+				Key: "route", Kind: "gateway", Name: "Review route",
+				Cases: []workflowdomain.GatewayCase{
+					{ID: "c1", Label: "评审", When: `path == "review"`},
+					{ID: "else", Label: "直接结束"},
+				},
+			},
 			{
 				Key: "review", Kind: "activity", Name: "Review", OwnerRole: "owner",
 				Executor: &ownerExecutor, IssuePolicy: "fixed",
@@ -1306,17 +1315,8 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 			{From: "analysis", To: "join"},
 			{From: "implementation", To: "join"},
 			{From: "join", To: "route"},
-			{
-				From: "route", To: "review",
-				Condition: json.RawMessage(`{
-					"source":"node_choice",
-					"node":"analysis",
-					"key":"choice",
-					"op":"eq",
-					"value":"review"
-				}`),
-			},
-			{From: "route", To: "direct", Default: true},
+			{From: "route", To: "review", FromCase: "c1"},
+			{From: "route", To: "direct", FromCase: "else"},
 			{From: "review", To: "review_end"},
 			{From: "direct", To: "direct_end"},
 		},
@@ -1363,8 +1363,8 @@ func TestWorkflowDAGParallelJoinAndGateway(t *testing.T) {
 	analysisIssueID := workflowTaskIssueForNode(t, started.Tasks, analysisNode.ID)
 	implementationIssueID := workflowTaskIssueForNode(t, started.Tasks, implementationNode.ID)
 
-	postWorkflowSubmissionChoice(
-		t, analysisNode.ID, "dag-analysis-submission", map[string]any{}, "review",
+	postWorkflowSubmissionPayload(
+		t, analysisNode.ID, "dag-analysis-submission", map[string]any{"path": "review"},
 	)
 	completeWorkflowIssue(t, analysisIssueID)
 	reconcileWorkflowForTest(t, instanceID, "dag-after-analysis")
@@ -2493,10 +2493,13 @@ func TestWorkflowDeterministicVerdictReevaluatesStructuredCondition(t *testing.T
 				Key: "decision", Kind: "activity", Name: "Decision",
 				OwnerRole: "owner", IssuePolicy: "none",
 				SubmissionSchema: &workflowdomain.SubmissionSchema{Policy: "single"},
+				Outputs: []workflowdomain.OutputField{{
+					Key: "proceed", Type: "enum", Values: []string{"end", "retry"},
+				}},
 				Reviewer: &workflowdomain.ReviewerDefinition{
 					Kind: "auto", Required: true,
 					Condition: json.RawMessage(
-						`{"source":"node_choice","node":"decision","key":"choice","op":"eq","value":"end"}`,
+						`{"source":"node_submission","node":"decision","key":"proceed","op":"eq","value":"end"}`,
 					),
 				},
 				Completion: workflowdomain.CompletionDefinition{
@@ -2521,8 +2524,8 @@ func TestWorkflowDeterministicVerdictReevaluatesStructuredCondition(t *testing.T
 	}}, "deterministic-verdict-start")
 	decision := findWorkflowNodeResponse(t, started.Nodes, "decision", 1)
 
-	postWorkflowSubmissionChoice(
-		t, decision.ID, "deterministic-verdict-fail", map[string]any{}, "",
+	postWorkflowSubmissionPayload(
+		t, decision.ID, "deterministic-verdict-fail", map[string]any{},
 	)
 	reconcileWorkflowForTest(t, started.Instance.ID, "deterministic-verdict-fail-reconcile")
 	waiting := latestWorkflowNodeForTest(t, started.Instance.ID, "decision")
@@ -2531,8 +2534,8 @@ func TestWorkflowDeterministicVerdictReevaluatesStructuredCondition(t *testing.T
 		t.Fatalf("deterministic fail node = %#v", waiting)
 	}
 
-	postWorkflowSubmissionChoice(
-		t, decision.ID, "deterministic-verdict-pass", map[string]any{}, "end",
+	postWorkflowSubmissionPayload(
+		t, decision.ID, "deterministic-verdict-pass", map[string]any{"proceed": "end"},
 	)
 	reconcileWorkflowForTest(t, started.Instance.ID, "deterministic-verdict-pass-reconcile")
 	instance, err := testHandler.Queries.GetWorkflowInstanceInWorkspace(
@@ -2555,6 +2558,124 @@ func TestWorkflowDeterministicVerdictReevaluatesStructuredCondition(t *testing.T
 		verdicts[0].Result != "pass" || verdicts[1].Result != "fail" {
 		t.Fatalf("deterministic verdicts = %#v, err=%v", verdicts, err)
 	}
+}
+
+// A node that declares outputs owns a delivery contract: values are validated
+// against it, failures come back structured enough for an agent to self-fix,
+// and a summary-only submission missing required fields is refused rather than
+// silently routing the downstream gateway to else.
+func TestWorkflowSubmissionOutputValidation(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Output validation",
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true,
+			AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "triage", Kind: "activity", Name: "Triage",
+				OwnerRole: "owner", IssuePolicy: "none",
+				SubmissionSchema: &workflowdomain.SubmissionSchema{Policy: "single"},
+				Outputs: []workflowdomain.OutputField{
+					{Key: "is_bug", Type: "bool", Required: true},
+					{Key: "severity", Type: "enum", Values: []string{"low", "high"}},
+				},
+				Completion: workflowdomain.CompletionDefinition{SubmissionRequired: true},
+			},
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "triage"}, {From: "triage", To: "end"},
+		},
+	}
+	templateID := createPublishedWorkflowForTest(t, "Output validation template", definition)
+	hostID := createWorkflowHostForTest(t, "Output validation host")
+	started := startWorkflowForTest(t, hostID, templateID, []map[string]any{{
+		"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
+	}}, "output-validation-start")
+	triage := findWorkflowNodeResponse(t, started.Nodes, "triage", 1)
+
+	submit := func(payload map[string]any, key string) *httptest.ResponseRecorder {
+		body := map[string]any{
+			"payload": payload, "summary": "conclusion", "idempotency_key": key,
+		}
+		recorder := httptest.NewRecorder()
+		request := withURLParam(newRequest(
+			http.MethodPost,
+			"/api/workflow-node-instances/"+triage.ID+"/submissions?workspace_id="+testWorkspaceID,
+			body,
+		), "nodeInstanceId", triage.ID)
+		testHandler.CreateWorkflowNodeSubmission(recorder, request)
+		return recorder
+	}
+
+	t.Run("summary-only misses required fields", func(t *testing.T) {
+		recorder := submit(map[string]any{}, "output-validation-empty")
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("empty payload status = %d, body = %s", recorder.Code, recorder.Body.String())
+		}
+		var response struct {
+			Error  string                            `json:"error"`
+			Fields []workflowdomain.OutputFieldError `json:"fields"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode validation error: %v", err)
+		}
+		if response.Error != "output_validation_failed" ||
+			len(response.Fields) != 1 ||
+			response.Fields[0].Key != "is_bug" ||
+			response.Fields[0].Problem != "missing_required" {
+			t.Fatalf("validation response = %+v", response)
+		}
+	})
+
+	t.Run("invalid enum names the accepted values", func(t *testing.T) {
+		recorder := submit(
+			map[string]any{"is_bug": true, "severity": "urgent"},
+			"output-validation-enum",
+		)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("invalid enum status = %d", recorder.Code)
+		}
+		var response struct {
+			Fields []workflowdomain.OutputFieldError `json:"fields"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode validation error: %v", err)
+		}
+		if len(response.Fields) != 1 || response.Fields[0].Problem != "invalid_enum" ||
+			len(response.Fields[0].Expected) != 2 {
+			t.Fatalf("enum error = %+v", response.Fields)
+		}
+	})
+
+	t.Run("string values coerce to declared types", func(t *testing.T) {
+		recorder := submit(
+			map[string]any{"is_bug": "false", "severity": "low"},
+			"output-validation-coerce",
+		)
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("coerced submit status = %d, body = %s", recorder.Code, recorder.Body.String())
+		}
+		var response struct {
+			Submission struct {
+				Payload map[string]any `json:"payload"`
+			} `json:"submission"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode submission: %v", err)
+		}
+		if response.Submission.Payload["is_bug"] != false {
+			t.Fatalf("payload not normalized: %+v", response.Submission.Payload)
+		}
+	})
+	_ = ctx
 }
 
 func TestWorkflowRequiredIssueCancellationPolicy(t *testing.T) {
@@ -3849,29 +3970,16 @@ func workflowTaskIssueForNode(
 	return ""
 }
 
+// postWorkflowSubmissionPayload submits a node's result. Branching reads the
+// declared output fields inside the payload.
 func postWorkflowSubmissionPayload(
 	t *testing.T,
 	nodeID, idempotencyKey string,
 	payload map[string]any,
 ) {
 	t.Helper()
-	postWorkflowSubmissionChoice(t, nodeID, idempotencyKey, payload, "")
-}
-
-// postWorkflowSubmissionChoice submits a node's result together with the branch
-// it picked. Branching reads the choice, not the payload.
-func postWorkflowSubmissionChoice(
-	t *testing.T,
-	nodeID, idempotencyKey string,
-	payload map[string]any,
-	choice string,
-) {
-	t.Helper()
 	body := map[string]any{
 		"payload": payload, "summary": "DAG result", "idempotency_key": idempotencyKey,
-	}
-	if choice != "" {
-		body["choice"] = choice
 	}
 	recorder := httptest.NewRecorder()
 	request := withURLParam(newRequest(http.MethodPost, "/api/workflow-node-instances/"+nodeID+"/submissions?workspace_id="+testWorkspaceID, body), "nodeInstanceId", nodeID)

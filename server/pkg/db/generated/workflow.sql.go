@@ -1360,14 +1360,14 @@ func (q *Queries) CreateWorkflowRoleAssignment(ctx context.Context, arg CreateWo
 const createWorkflowSubmission = `-- name: CreateWorkflowSubmission :one
 INSERT INTO workflow_node_submission (
     workspace_id, workflow_instance_id, workflow_node_instance_id, revision,
-    status, payload, summary, choice, evidence, submitted_by_type, submitted_by_id,
+    status, payload, summary, evidence, submitted_by_type, submitted_by_id,
     source_issue_id, source_agent_run_id, schema_version
 ) VALUES (
     $1, $2, $3, $4,
-    $5, $6, $7, $8, $9, $10, $11,
-    $12, $13, $14
+    $5, $6, $7, $8, $9, $10,
+    $11, $12, $13
 )
-RETURNING id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, status, payload, summary, evidence, submitted_by_type, submitted_by_id, source_issue_id, source_agent_run_id, schema_version, created_at, choice
+RETURNING id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, status, payload, summary, evidence, submitted_by_type, submitted_by_id, source_issue_id, source_agent_run_id, schema_version, created_at
 `
 
 type CreateWorkflowSubmissionParams struct {
@@ -1378,7 +1378,6 @@ type CreateWorkflowSubmissionParams struct {
 	Status                 string      `json:"status"`
 	Payload                []byte      `json:"payload"`
 	Summary                string      `json:"summary"`
-	Choice                 string      `json:"choice"`
 	Evidence               []byte      `json:"evidence"`
 	SubmittedByType        string      `json:"submitted_by_type"`
 	SubmittedByID          pgtype.UUID `json:"submitted_by_id"`
@@ -1396,7 +1395,6 @@ func (q *Queries) CreateWorkflowSubmission(ctx context.Context, arg CreateWorkfl
 		arg.Status,
 		arg.Payload,
 		arg.Summary,
-		arg.Choice,
 		arg.Evidence,
 		arg.SubmittedByType,
 		arg.SubmittedByID,
@@ -1421,7 +1419,6 @@ func (q *Queries) CreateWorkflowSubmission(ctx context.Context, arg CreateWorkfl
 		&i.SourceAgentRunID,
 		&i.SchemaVersion,
 		&i.CreatedAt,
-		&i.Choice,
 	)
 	return i, err
 }
@@ -2613,7 +2610,7 @@ func (q *Queries) GetWorkflowNodeTaskInWorkspace(ctx context.Context, arg GetWor
 }
 
 const getWorkflowSubmissionInWorkspace = `-- name: GetWorkflowSubmissionInWorkspace :one
-SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, status, payload, summary, evidence, submitted_by_type, submitted_by_id, source_issue_id, source_agent_run_id, schema_version, created_at, choice FROM workflow_node_submission
+SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, status, payload, summary, evidence, submitted_by_type, submitted_by_id, source_issue_id, source_agent_run_id, schema_version, created_at FROM workflow_node_submission
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -2641,7 +2638,6 @@ func (q *Queries) GetWorkflowSubmissionInWorkspace(ctx context.Context, arg GetW
 		&i.SourceAgentRunID,
 		&i.SchemaVersion,
 		&i.CreatedAt,
-		&i.Choice,
 	)
 	return i, err
 }
@@ -4369,7 +4365,7 @@ func (q *Queries) ListWorkflowRoleAssignments(ctx context.Context, arg ListWorkf
 }
 
 const listWorkflowSubmissions = `-- name: ListWorkflowSubmissions :many
-SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, status, payload, summary, evidence, submitted_by_type, submitted_by_id, source_issue_id, source_agent_run_id, schema_version, created_at, choice FROM workflow_node_submission
+SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, status, payload, summary, evidence, submitted_by_type, submitted_by_id, source_issue_id, source_agent_run_id, schema_version, created_at FROM workflow_node_submission
 WHERE workflow_node_instance_id = $1 AND workspace_id = $2
 ORDER BY revision DESC
 `
@@ -4404,7 +4400,6 @@ func (q *Queries) ListWorkflowSubmissions(ctx context.Context, arg ListWorkflowS
 			&i.SourceAgentRunID,
 			&i.SchemaVersion,
 			&i.CreatedAt,
-			&i.Choice,
 		); err != nil {
 			return nil, err
 		}

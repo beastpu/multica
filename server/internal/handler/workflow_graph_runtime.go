@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -156,8 +157,12 @@ func (h *Handler) propagateWorkflowGraph(
 				}
 				result.Nodes[node.NodeKey] = updated
 			case "gateway":
-				target, err := h.selectWorkflowGatewayTarget(
-					ctx, q, workspaceID, instance, plan, result.Nodes, nodeDefinition,
+				pool, err := workflowExprPool(ctx, q, workspaceID, result.Nodes)
+				if err != nil {
+					return result, err
+				}
+				selectedCase, target, err := workflowdomain.SelectGatewayCase(
+					nodeDefinition, plan, pool,
 				)
 				if err != nil {
 					return result, err
@@ -169,7 +174,9 @@ func (h *Handler) propagateWorkflowGraph(
 				if err != nil {
 					return result, fmt.Errorf("complete workflow gateway %q: %w", node.NodeKey, err)
 				}
-				payload, _ := json.Marshal(map[string]any{"selected_target": target})
+				payload, _ := json.Marshal(map[string]any{
+					"case_id": selectedCase.ID, "selected_targets": []string{target},
+				})
 				if _, err := q.CreateWorkflowEvent(ctx, db.CreateWorkflowEventParams{
 					WorkspaceID: workspaceID, WorkflowInstanceID: instance.ID,
 					WorkflowNodeInstanceID: node.ID, EventType: "node.routed",
@@ -323,12 +330,13 @@ func (h *Handler) workflowNodeInputState(
 					return false, false, 0, fmt.Errorf("load gateway route %q: %w", predecessor.NodeKey, routeErr)
 				}
 				var payload struct {
-					SelectedTarget string `json:"selected_target"`
+					CaseID          string   `json:"case_id"`
+					SelectedTargets []string `json:"selected_targets"`
 				}
-				if json.Unmarshal(routing.Payload, &payload) != nil || payload.SelectedTarget == "" {
+				if json.Unmarshal(routing.Payload, &payload) != nil || len(payload.SelectedTargets) == 0 {
 					return false, false, 0, fmt.Errorf("gateway route %q is invalid", predecessor.NodeKey)
 				}
-				edgeSelected = payload.SelectedTarget == edge.To
+				edgeSelected = slices.Contains(payload.SelectedTargets, edge.To)
 			} else {
 				edgeSelected = true
 			}
@@ -375,44 +383,33 @@ func (h *Handler) workflowNodeInputState(
 	return selectedCount > 0, true, maxSelectedAttempt, nil
 }
 
-func (h *Handler) selectWorkflowGatewayTarget(
+// workflowExprPool assembles the variable pool a gateway routes on: for every
+// node with a latest valid submission, that submission's normalized outputs.
+// Whole-submission replacement, no field-level merge — a field the latest
+// round did not deliver is absent, and absent fails closed.
+func workflowExprPool(
 	ctx context.Context,
 	q *db.Queries,
 	workspaceID pgtype.UUID,
-	instance db.WorkflowInstance,
-	plan workflowdomain.GraphPlan,
 	nodes map[string]db.WorkflowNodeInstance,
-	gateway workflowdomain.NodeDefinition,
-) (string, error) {
-	var defaultTarget string
-	matches := make([]string, 0, 1)
-	resolver, err := workflowConditionResolver(ctx, q, workspaceID, instance, nodes)
-	if err != nil {
-		return "", err
-	}
-	for _, edge := range plan.Successors(gateway.Key) {
-		if edge.Default {
-			defaultTarget = edge.To
+) (workflowdomain.ExprPool, error) {
+	pool := workflowdomain.ExprPool{}
+	for key, node := range nodes {
+		if !node.LatestSubmissionID.Valid {
 			continue
 		}
-		matched, err := workflowdomain.EvaluateCondition(edge.Condition, resolver)
-		if err != nil {
-			return "", fmt.Errorf("evaluate gateway %q edge to %q: %w", gateway.Key, edge.To, err)
+		submission, err := q.GetWorkflowSubmissionInWorkspace(ctx, db.GetWorkflowSubmissionInWorkspaceParams{
+			ID: node.LatestSubmissionID, WorkspaceID: workspaceID,
+		})
+		if err != nil || submission.Status != "valid" {
+			continue
 		}
-		if matched {
-			matches = append(matches, edge.To)
+		values := map[string]any{}
+		if json.Unmarshal(submission.Payload, &values) == nil && len(values) > 0 {
+			pool[key] = values
 		}
 	}
-	if len(matches) > 1 {
-		return "", fmt.Errorf("gateway %q matched multiple outgoing paths", gateway.Key)
-	}
-	if len(matches) == 1 {
-		return matches[0], nil
-	}
-	if defaultTarget == "" {
-		return "", fmt.Errorf("gateway %q has no default path", gateway.Key)
-	}
-	return defaultTarget, nil
+	return pool, nil
 }
 
 func workflowConditionResolver(
@@ -436,7 +433,6 @@ func workflowConditionResolver(
 	}
 
 	submissions := map[string]map[string]any{}
-	choices := map[string]string{}
 	verdicts := map[string]map[string]any{}
 	for key, node := range nodes {
 		if node.LatestSubmissionID.Valid {
@@ -448,7 +444,6 @@ func workflowConditionResolver(
 				if json.Unmarshal(submission.Payload, &payload) == nil {
 					submissions[key] = payload
 				}
-				choices[key] = submission.Choice
 			}
 		}
 		if node.LatestVerdictID.Valid {
@@ -491,15 +486,6 @@ func workflowConditionResolver(
 		case "node_submission":
 			value, ok := submissions[node][key]
 			return value, ok
-		case "node_choice":
-			// The choice is a single value, so the condition's key is ignored
-			// rather than indexed into. An unset choice reports absent, which
-			// keeps an unanswered branch from matching by accident.
-			choice, exists := choices[node]
-			if !exists || choice == "" {
-				return nil, false
-			}
-			return choice, true
 		case "node_verdict":
 			value, ok := verdicts[node][key]
 			return value, ok

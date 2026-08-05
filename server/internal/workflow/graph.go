@@ -84,6 +84,64 @@ func (p GraphPlan) Node(nodeKey string) (NodeDefinition, bool) {
 	return node, ok
 }
 
+// EdgeList flattens the outgoing adjacency back into a single edge slice, for
+// helpers that walk the raw topology.
+func (p GraphPlan) EdgeList() []EdgeDefinition {
+	edges := make([]EdgeDefinition, 0)
+	for _, list := range p.Outgoing {
+		edges = append(edges, list...)
+	}
+	return edges
+}
+
+// SelectGatewayCase routes a gateway against the variable pool: cases evaluate
+// in declared order, the first match wins, and no match falls through to the
+// trailing else. It returns the winning case and the target its edge binds.
+//
+// A parse error here means a stored template escaped validation — surfaced as
+// an error rather than a silent else, because misrouting work is worse than
+// halting it.
+func SelectGatewayCase(
+	gateway NodeDefinition,
+	plan GraphPlan,
+	pool ExprPool,
+) (GatewayCase, string, error) {
+	targets := make(map[string]string, len(plan.Outgoing[gateway.Key]))
+	for _, edge := range plan.Outgoing[gateway.Key] {
+		targets[edge.FromCase] = edge.To
+	}
+	scope := GatewayExprScope(gateway.Key, plan.Nodes, plan.EdgeList())
+	for _, gatewayCase := range gateway.Cases {
+		if gatewayCase.ID == "else" {
+			continue
+		}
+		expr, err := ParseExpr(gatewayCase.When, scope)
+		if err != nil {
+			return GatewayCase{}, "", fmt.Errorf(
+				"gateway %q case %q: %w", gateway.Key, gatewayCase.ID, err,
+			)
+		}
+		matched, err := expr.Evaluate(pool)
+		if err != nil {
+			return GatewayCase{}, "", fmt.Errorf(
+				"gateway %q case %q: %w", gateway.Key, gatewayCase.ID, err,
+			)
+		}
+		if matched {
+			return gatewayCase, targets[gatewayCase.ID], nil
+		}
+	}
+	if len(gateway.Cases) == 0 {
+		return GatewayCase{}, "", fmt.Errorf("gateway %q has no cases", gateway.Key)
+	}
+	elseCase := gateway.Cases[len(gateway.Cases)-1]
+	target, exists := targets[elseCase.ID]
+	if elseCase.ID != "else" || !exists {
+		return GatewayCase{}, "", fmt.Errorf("gateway %q has no else path", gateway.Key)
+	}
+	return elseCase, target, nil
+}
+
 func (p GraphPlan) Successors(nodeKey string) []EdgeDefinition {
 	return append([]EdgeDefinition(nil), p.Outgoing[nodeKey]...)
 }
