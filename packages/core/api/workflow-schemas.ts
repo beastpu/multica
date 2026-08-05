@@ -91,6 +91,25 @@ const WorkflowReviewerDefinitionSchema = z.object({
   required: z.boolean().optional().default(false),
 }).loose();
 
+// One structured field an activity owes on delivery. `type` stays a lenient
+// string rather than an enum so a server that adds a sixth type renders the
+// field as text instead of dropping the node's whole definition.
+export const WorkflowOutputFieldSchema = z.object({
+  key: z.string(),
+  type: z.string().optional().default("string"),
+  values: arrayOrEmpty(z.string()).optional().default([]),
+  required: z.boolean().optional().default(false),
+  desc: z.string().optional().default(""),
+  max_len: z.number().optional(),
+}).loose();
+
+// One row of a gateway's routing table. `when` is absent on the else case.
+export const WorkflowGatewayCaseSchema = z.object({
+  id: z.string(),
+  label: z.string().optional().default(""),
+  when: z.string().optional().default(""),
+}).loose();
+
 export const WorkflowNodeDefinitionSchema = z.object({
   key: z.string(),
   kind: z.string(),
@@ -106,6 +125,8 @@ export const WorkflowNodeDefinitionSchema = z.object({
     policy: z.string().optional(),
     fields: arrayOrEmpty(WorkflowSubmissionFieldSchema),
   }).loose().optional(),
+  outputs: arrayOrEmpty(WorkflowOutputFieldSchema).optional(),
+  cases: arrayOrEmpty(WorkflowGatewayCaseSchema).optional(),
   completion: WorkflowCompletionDefinitionSchema.optional().default({}),
   executor: WorkflowExecutorDefinitionSchema.optional(),
   reviewer: WorkflowReviewerDefinitionSchema.optional(),
@@ -119,8 +140,8 @@ export const WorkflowDefinitionSchema = z.object({
   edges: arrayOrEmpty(z.object({
     from: z.string(),
     to: z.string(),
-    condition: z.unknown().optional(),
-    default: z.boolean().optional(),
+    // Which gateway case this edge belongs to. Absent on plain edges.
+    from_case: z.string().optional(),
   }).loose()),
   acceptance: z.object({
     policy: z.string().optional(),

@@ -5,6 +5,7 @@ import {
   ListBuiltinWorkflowTemplatesResponseSchema,
   ListWorkflowsResponseSchema,
   WorkflowInstanceDetailSchema,
+  WorkflowDefinitionSchema,
   WorkflowNodeDefinitionSchema,
   WorkflowNodeDetailSchema,
 } from "./workflow-schemas";
@@ -260,5 +261,67 @@ describe("workflow response schemas", () => {
     });
     expect(partial.templates[0]?.name).toBe("");
     expect(partial.templates[0]?.description).toBe("");
+  });
+
+  // Output fields and gateway cases are what routing reads; a node whose
+  // schema drifted must degrade to "no fields declared" rather than take the
+  // whole definition down with it.
+  it("keeps declared output fields and gateway cases, defaulting absent parts", () => {
+    const parsed = WorkflowNodeDefinitionSchema.parse({
+      key: "triage",
+      kind: "activity",
+      outputs: [
+        { key: "is_bug", type: "bool", required: true, desc: "real defect" },
+        { key: "category", type: "enum", values: ["bug", "duplicate"] },
+      ],
+    });
+    expect(parsed.outputs?.[0]?.required).toBe(true);
+    expect(parsed.outputs?.[1]?.values).toEqual(["bug", "duplicate"]);
+    // Absent optional parts get usable defaults instead of undefined.
+    expect(parsed.outputs?.[1]?.required).toBe(false);
+    expect(parsed.outputs?.[1]?.desc).toBe("");
+
+    const gateway = WorkflowNodeDefinitionSchema.parse({
+      key: "route",
+      kind: "gateway",
+      cases: [
+        { id: "c1", label: "not a defect", when: 'category == "duplicate"' },
+        { id: "else", label: "continue" },
+      ],
+    });
+    expect(gateway.cases?.map((entry) => entry.id)).toEqual(["c1", "else"]);
+    // The else case carries no condition; it must read as empty, not missing.
+    expect(gateway.cases?.[1]?.when).toBe("");
+  });
+
+  it("survives a malformed outputs array and unknown field types", () => {
+    const malformed = WorkflowNodeDefinitionSchema.parse({
+      key: "triage",
+      kind: "activity",
+      outputs: { not: "an array" },
+    });
+    expect(malformed.outputs).toEqual([]);
+
+    // A type this build has never heard of stays a string rather than
+    // failing the node — the form falls back to a text input.
+    const future = WorkflowNodeDefinitionSchema.parse({
+      key: "triage",
+      kind: "activity",
+      outputs: [{ key: "score", type: "decimal" }],
+    });
+    expect(future.outputs?.[0]?.type).toBe("decimal");
+  });
+
+  it("carries the gateway case binding on edges", () => {
+    const parsed = WorkflowDefinitionSchema.parse({
+      name: "branching",
+      nodes: [],
+      edges: [
+        { from: "route", to: "end", from_case: "c1" },
+        { from: "start", to: "route" },
+      ],
+    });
+    expect(parsed.edges[0]?.from_case).toBe("c1");
+    expect(parsed.edges[1]?.from_case).toBeUndefined();
   });
 });

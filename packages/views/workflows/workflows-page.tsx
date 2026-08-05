@@ -212,29 +212,55 @@ function matchesTemplateStatus(
   }
 }
 
+// unusedWorkflowName suffixes the starter name until it is free. The server
+// rejects a duplicate name, and the starter name is the same every time — so
+// without this the second workflow a workspace ever creates fails, on a button
+// whose whole promise is "you now have a new workflow". The name is a
+// placeholder the author renames anyway; what matters is that the click works.
+function unusedWorkflowName(base: string, taken: Set<string>) {
+  if (!taken.has(base)) return base;
+  let suffix = 2;
+  while (taken.has(`${base} ${suffix}`)) suffix += 1;
+  return `${base} ${suffix}`;
+}
+
 function CreateWorkflowButton() {
   const { t } = useT("workflows");
   const navigation = useNavigation();
   const p = useWorkspacePaths();
+  const wsId = useWorkspaceId();
+  // Same query key as the list below, so this reads the cache rather than
+  // firing a second request.
+  const { data } = useQuery(workflowListOptions(wsId));
   const createTemplate = useCreateWorkflow();
   const create = () => {
     const definition = defaultWorkflowDefinition();
+    const taken = new Set((data?.workflows ?? []).map((workflow) => workflow.name));
+    const name = unusedWorkflowName(definition.name, taken);
     createTemplate.mutate({
-      name: definition.name,
+      name,
       description: "",
-      definition,
+      definition: { ...definition, name },
     }, {
       onSuccess: ({ workflow }) => navigation.push(p.workflow(workflow.id)),
     });
   };
 
   return (
-    <CollectionPageHeaderAction
-      icon={Plus}
-      label={t(($) => $.actions.new_template)}
-      onClick={create}
-      disabled={createTemplate.isPending}
-    />
+    <div className="flex flex-col items-end gap-1">
+      <CollectionPageHeaderAction
+        icon={Plus}
+        label={t(($) => $.actions.new_template)}
+        onClick={create}
+        disabled={createTemplate.isPending}
+      />
+      {/* A silently swallowed failure reads as a dead button. */}
+      {createTemplate.isError && (
+        <p role="alert" className="text-xs text-destructive">
+          {t(($) => $.errors.action_failed)}
+        </p>
+      )}
+    </div>
   );
 }
 
