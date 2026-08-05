@@ -18,6 +18,7 @@ import {
   RotateCcw,
   Send,
   SkipForward,
+  Split,
   Unlink,
   Undo2,
   UserRoundCheck,
@@ -138,6 +139,11 @@ import { PriorityIcon } from "../issues/components/priority-icon";
 import { WorkflowIssuePanel } from "./workflow-issue-panel";
 import { WorkflowExecutionHistory } from "./workflow-execution-history";
 import { WorkflowNodeIssues } from "./workflow-node-issues";
+import { GatewayRoutingPanel } from "./gateway-routing-panel";
+import {
+  findGatewayRoutingEvent,
+  readGatewayRouting,
+} from "./gateway-routing";
 import { ActorAvatar } from "../common/actor-avatar";
 import { WorkflowCanvas } from "./workflow-canvas";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -182,6 +188,16 @@ function outputProblemText(
     default:
       return problem;
   }
+}
+
+/** A declared output field's value, as it reads on the delivery card. */
+function submissionOutputText(value: unknown): string {
+  // A declared field with nothing behind it is the reason a branch fell
+  // through, so it is stated rather than left blank.
+  if (value === undefined || value === null) return "—";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.join("、");
+  return JSON.stringify(value);
 }
 
 export function SubmissionPanel({
@@ -405,6 +421,29 @@ export function SubmissionPanel({
               <CardContent className="space-y-2">
                 {submission.summary && (
                   <p className="text-sm">{submission.summary}</p>
+                )}
+                {/*
+                  The declared fields, not the raw payload: these are what a
+                  downstream gateway routes on, and until now the node that
+                  produced them showed only its prose summary — leaving the
+                  values readable on the branch and nowhere on the source.
+                */}
+                {outputFields.length > 0 && (
+                  <dl className="divide-y rounded-lg border text-xs">
+                    {outputFields.map((field) => (
+                      <div
+                        key={field.key}
+                        className="flex items-baseline justify-between gap-3 px-2.5 py-1.5"
+                      >
+                        <dt className="min-w-0 truncate font-mono text-muted-foreground">
+                          {field.key}
+                        </dt>
+                        <dd className="shrink-0">
+                          {submissionOutputText(submission.payload[field.key])}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
                 )}
                 {submission.source_issue_id && (
                   <p className="text-xs text-muted-foreground">
@@ -2025,6 +2064,13 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   // schema hid it from the default node shape — which declares none — leaving
   // the panel inside reachable only by URL.
   const hasSubmissionPanel = selectedNode?.node_kind === "activity";
+  // Only an activity has work to hand off and issues gating it. A gateway
+  // decides and a control node just passes through, so the delivery tab and
+  // the issue/completion-rule block are not empty for them — they are about a
+  // different kind of node, and reading "no artifacts configured" on a
+  // decision is worse than reading nothing.
+  const isActivityNode = selectedNode?.node_kind === "activity";
+  const isGatewayNode = selectedNode?.node_kind === "gateway";
   const hasVerdictPanel = Boolean(
     selectedNode && reviewerAcceptsMember(selectedNode.definition),
   );
@@ -2109,10 +2155,31 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   // activity has a submission panel, so without this the reviewer always
   // landed on the handoff form and had to go looking for the verdict.
   // A node in review is waiting on exactly one action, so open on it.
-  const sidebarDefaultTab =
-    hasVerdictPanel && selectedNode?.status === "in_review"
+  const sidebarDefaultTab = isGatewayNode
+    ? "routing"
+    : hasVerdictPanel && selectedNode?.status === "in_review"
       ? "verdict"
       : "delivery";
+  // The events list is instance-wide; the tab claims to be the node's. Without
+  // the filter it showed the whole run under a node heading, which is how a
+  // gateway's own routing event stayed buried among everything else.
+  const nodeEvents = useMemo(
+    () =>
+      (eventsQuery.data?.events ?? []).filter(
+        (event) => event.workflow_node_instance_id === selectedNode?.id,
+      ),
+    [eventsQuery.data?.events, selectedNode?.id],
+  );
+  const gatewayRouting = useMemo(() => {
+    if (!selectedNode || !isGatewayNode) return null;
+    return readGatewayRouting(
+      selectedNode.definition,
+      templateVersion?.definition.edges ?? [],
+      (nodeKey) =>
+        nodes.find((item) => item.node_key === nodeKey)?.name ?? nodeKey,
+      findGatewayRoutingEvent(nodeEvents, selectedNode.id),
+    );
+  }, [isGatewayNode, nodeEvents, nodes, selectedNode, templateVersion]);
   const workflowIssueMenuActions = useMemo(() => [{
     id: "remove-from-workflow-node",
     label: t(($) => $.workbench.detach_issue_title),
@@ -2149,6 +2216,39 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
       />
     );
   }
+
+  // Both halves of the block above the tabs — why the node has not moved, and
+  // the control that moves it — are the same for every node kind. Only the
+  // issue list and completion rule between them are an activity's alone.
+  const nodeBlockers = visibleWaitingReasons.length > 0
+    ? (
+      <Alert>
+        <AlertCircle />
+        <AlertTitle>{t(($) => $.workbench.waiting)}</AlertTitle>
+        <AlertDescription>
+          <ul className="list-disc space-y-1 pl-4">
+            {visibleWaitingReasons.map((reason, index) => (
+              <li key={`${reason.code}-${index}`}>
+                {reason.message || reason.code}
+              </li>
+            ))}
+          </ul>
+        </AlertDescription>
+      </Alert>
+    )
+    : null;
+  const nodeTransitionPanel = selectedNode && nodeQuery.data && instance
+    ? (
+      <NodeTransitionPanel
+        instanceId={instanceId}
+        node={selectedNode}
+        submissions={nodeQuery.data.submissions}
+        canManage={canManageSelectedNode}
+        canAdmin={canAdmin}
+        instanceRunning={instance.status === "running"}
+      />
+    )
+    : null;
 
   const nodeSidebarContent = selectedNode && nodeQuery.data ? (
     <div className="-m-4 min-h-full">
@@ -2353,57 +2453,52 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         primary action of the whole surface sat below four tabs of reference
         material.
       */}
-      <WorkflowNodeIssues
-        issues={blockingNodeIssues}
-        canManage={canManageSelectedNode}
-        attempt={selectedNode.attempt}
-        blockers={visibleWaitingReasons.length > 0
-          ? (
-            <Alert>
-              <AlertCircle />
-              <AlertTitle>{t(($) => $.workbench.waiting)}</AlertTitle>
-              <AlertDescription>
-                <ul className="list-disc space-y-1 pl-4">
-                  {visibleWaitingReasons.map((reason, index) => (
-                    <li key={`${reason.code}-${index}`}>
-                      {reason.message || reason.code}
-                    </li>
-                  ))}
-                </ul>
-              </AlertDescription>
-            </Alert>
-          )
-          : null}
-        rule={requiredIssueOutcome === "terminal"
-          ? t(($) => $.workbench.completion_rule_terminal)
-          : requiredIssueOutcome === "none"
-            ? t(($) => $.workbench.completion_rule_none)
-            : t(($) => $.workbench.completion_rule_done)}
-        completed={completedRequiredIssues}
-        total={requiredIssueOutcome === "none"
-          ? 0
-          : selectedRequiredTasks.length}
-        action={
-          <NodeTransitionPanel
-            instanceId={instanceId}
-            node={selectedNode}
-            submissions={nodeQuery.data.submissions}
+      {isActivityNode
+        ? (
+          <WorkflowNodeIssues
+            issues={blockingNodeIssues}
             canManage={canManageSelectedNode}
-            canAdmin={canAdmin}
-            instanceRunning={instance.status === "running"}
+            attempt={selectedNode.attempt}
+            blockers={nodeBlockers}
+            rule={requiredIssueOutcome === "terminal"
+              ? t(($) => $.workbench.completion_rule_terminal)
+              : requiredIssueOutcome === "none"
+                ? t(($) => $.workbench.completion_rule_none)
+                : t(($) => $.workbench.completion_rule_done)}
+            completed={completedRequiredIssues}
+            total={requiredIssueOutcome === "none"
+              ? 0
+              : selectedRequiredTasks.length}
+            action={nodeTransitionPanel}
           />
-        }
-      />
+        )
+        : (
+          // A gateway or a control node has no issues and no completion rule
+          // to state, but it can still be blocked and can still be rolled
+          // back — so what remains of the block is exactly that.
+          <section className="space-y-3 border-y py-4">
+            {nodeBlockers}
+            {nodeTransitionPanel}
+          </section>
+        )}
 
       <Tabs key={selectedNode.id} defaultValue={sidebarDefaultTab}>
         <TabsList
           variant="line"
           className="w-full justify-start overflow-x-auto border-b"
         >
-          <TabsTrigger value="delivery">
-            <Send />
-            {t(($) => $.workbench.tab_delivery)}
-          </TabsTrigger>
+          {isGatewayNode && (
+            <TabsTrigger value="routing">
+              <Split />
+              {t(($) => $.workbench.tab_routing)}
+            </TabsTrigger>
+          )}
+          {isActivityNode && (
+            <TabsTrigger value="delivery">
+              <Send />
+              {t(($) => $.workbench.tab_delivery)}
+            </TabsTrigger>
+          )}
           {hasVerdictPanel && (
             <TabsTrigger value="verdict">
               <FileCheck2 />
@@ -2420,21 +2515,28 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
           artifact and its conclusion is the handoff summary — halves of the
           same handover, which is why they were never worth a tab each.
         */}
-        <TabsContent value="delivery" className="space-y-6 pt-4">
-          {hasSubmissionPanel && (
-            <SubmissionPanel
-              instanceId={instanceId}
+        {gatewayRouting && (
+          <TabsContent value="routing" className="pt-4">
+            <GatewayRoutingPanel routing={gatewayRouting} />
+          </TabsContent>
+        )}
+        {isActivityNode && (
+          <TabsContent value="delivery" className="space-y-6 pt-4">
+            {hasSubmissionPanel && (
+              <SubmissionPanel
+                instanceId={instanceId}
+                node={selectedNode}
+                submissions={nodeQuery.data.submissions}
+                tasks={nodeQuery.data.tasks}
+                actorOptions={actorOptions}
+                canManage={canManageSelectedNode}
+              />
+            )}
+            <ArtifactPanel
               node={selectedNode}
-              submissions={nodeQuery.data.submissions}
-              tasks={nodeQuery.data.tasks}
-              actorOptions={actorOptions}
-              canManage={canManageSelectedNode}
             />
-          )}
-          <ArtifactPanel
-            node={selectedNode}
-          />
-        </TabsContent>
+          </TabsContent>
+        )}
         {hasVerdictPanel && (
           <TabsContent value="verdict" className="pt-4">
             <VerdictPanel verdicts={nodeQuery.data.verdicts} />
@@ -2442,7 +2544,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         )}
         <TabsContent value="history" className="pt-4">
           <WorkflowHistoryPanel
-            events={eventsQuery.data?.events ?? []}
+            events={nodeEvents}
             loading={eventsQuery.isLoading}
           />
         </TabsContent>
