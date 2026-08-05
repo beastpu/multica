@@ -493,7 +493,19 @@
     "gateway_mode_switch_help": "Branches are checked top-down and the first match wins. Use this when the paths are alternatives.",
     "gateway_mode_filter_help": "Every matching branch runs. Use this to add reviews or checks alongside the main line; the fallback runs only when nothing matches.",
     "max_attempts": "Rework limit",
-    "max_attempts_hint": "How many times this activity may run in total before it stops being handed back and waits for a person. Leave empty for no limit."
+    "max_attempts_hint": "How many times this activity may run in total before it stops being handed back and waits for a person. Leave empty for no limit.",
+    "condition_field": "Field",
+    "condition_operator": "Operator",
+    "condition_value": "Value",
+    "condition_choose_field": "Choose a field",
+    "condition_choose_value": "Choose a value",
+    "condition_join": "Combine with",
+    "condition_and": "and",
+    "condition_or": "or",
+    "condition_add_row": "Add condition",
+    "condition_use_text": "Write as text",
+    "condition_use_rows": "Back to fields",
+    "condition_host_issue": "Requirement"
   },
   "status": {
     "needs_setup": "Needs setup",

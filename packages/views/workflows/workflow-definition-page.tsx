@@ -95,6 +95,7 @@ import {
   updateWorkflowGatewayCase,
   workflowNodeIsBoundary,
 } from "./workflow-graph-editor";
+import { GatewayConditionEditor } from "./gateway-condition-editor";
 import {
   WorkflowNodeDefinitionInspector,
   WorkflowRoleEditor,
@@ -251,6 +252,7 @@ function newControlNode(
 }
 
 function WorkflowEdgeRow({
+  definition,
   edge,
   gatewayCase,
   targetName,
@@ -261,6 +263,7 @@ function WorkflowEdgeRow({
   onMove,
   onRemove,
 }: {
+  definition: WorkflowDefinition;
   edge: WorkflowDefinition["edges"][number];
   gatewayCase?: WorkflowGatewayCase;
   targetName: string;
@@ -359,17 +362,14 @@ function WorkflowEdgeRow({
               >
                 {t(($) => $.editor.case_when)}
               </Label>
-              <Input
-                id={`case-when-${edge.from}-${gatewayCase.id}`}
-                value={gatewayCase.when ?? ""}
-                disabled={readOnly}
-                placeholder={t(($) => $.editor.case_when_placeholder)}
-                className="font-mono text-xs"
-                onChange={(event) => onCaseChange({ when: event.target.value })}
+              <GatewayConditionEditor
+                definition={definition}
+                gatewayKey={edge.from}
+                when={gatewayCase.when ?? ""}
+                readOnly={readOnly}
+                inputId={`case-when-${edge.from}-${gatewayCase.id}`}
+                onChange={(when) => onCaseChange({ when })}
               />
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                {t(($) => $.editor.case_when_help)}
-              </p>
             </div>
           )}
         </div>
@@ -474,6 +474,7 @@ function WorkflowEdgeInspector({
           return (
             <WorkflowEdgeRow
               key={`${edge.from}-${edge.to}`}
+              definition={definition}
               edge={edge}
               gatewayCase={gatewayCase}
               targetName={nodeName(edge.to)}
