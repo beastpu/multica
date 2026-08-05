@@ -550,6 +550,20 @@ describe("WorkflowPage sections", () => {
     expect(screen.queryByText("Default branch")).toBeNull();
     expect(screen.queryByRole("button", { name: "Node choice" })).toBeNull();
   });
+
+  // The connections help ends by saying the section configures branch rules,
+  // which an activity's section does not. On an activity it was four lines
+  // about a capability that is not there and a canvas that is.
+  it("explains branch rules only where they can be edited", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Work node" }));
+    expect(screen.queryByText(/Configure branch rules here/)).toBeNull();
+    // The section itself stays: it still names the predecessors and lists the
+    // outgoing edges.
+    expect(screen.getByText("Connections")).toBeInTheDocument();
+  });
 });
 
 describe("WorkflowPage node deletion", () => {

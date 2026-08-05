@@ -153,13 +153,15 @@ describe("WorkflowNodeDefinitionInspector", () => {
     ]);
   });
 
-  it("shows predecessors and successors from the graph edges", () => {
+  // The panel printed the node's neighbours twice: a read-only
+  // predecessors/successors list here, and the Connections section below the
+  // tabs, which derives the same edges and can also delete them. Only one of
+  // the two does anything, so the other is the one that goes.
+  it("leaves the neighbouring nodes to the connections section", () => {
     renderInspector(vi.fn());
 
-    expect(screen.getByText(enWorkflows.editor.flow_predecessors))
-      .toBeInTheDocument();
-    expect(screen.getByText("Start")).toBeInTheDocument();
-    expect(screen.getByText("End")).toBeInTheDocument();
+    expect(screen.queryByText("Previous nodes")).toBeNull();
+    expect(screen.queryByText("Next nodes")).toBeNull();
   });
 
   it("shows humanized executor kind labels instead of engine enums", () => {
@@ -634,5 +636,38 @@ describe("artifact declarations", () => {
     }).at(-1)!);
     const afterRemove = onChange.mock.calls.at(-1)![0] as WorkflowNodeDefinition;
     expect(afterRemove.artifacts).toEqual([]);
+  });
+
+  // The checkbox read "required unless explicitly false", but Go tags the
+  // field `omitempty` and re-marshals the definition on save, so `false` never
+  // survives the round trip — unchecking it stored "optional" and redrew the
+  // box checked. The server was right and the panel was lying about it.
+  it("shows an artifact the server treats as optional as unchecked", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const withArtifact: WorkflowNodeDefinition = {
+      ...node,
+      // What comes back from the server after the author unchecked it.
+      artifacts: [{ key: "design_doc", name: "Design doc", kind: "document" }],
+    };
+    render(
+      <I18nProvider locale="en" resources={{ en: { workflows: enWorkflows } }}>
+        <WorkflowNodeDefinitionInspector
+          node={withArtifact}
+          definition={definition}
+          actorOptions={actorOptions}
+          readOnly={false}
+          onChange={onChange}
+        />
+      </I18nProvider>,
+    );
+
+    await user.click(screen.getByRole("tab", { name: enWorkflows.editor.tab_work }));
+    const box = screen.getByLabelText(enWorkflows.editor.artifact_required);
+    expect(box).not.toBeChecked();
+
+    await user.click(box);
+    const patched = onChange.mock.calls.at(-1)![0] as WorkflowNodeDefinition;
+    expect(patched.artifacts?.[0]?.required).toBe(true);
   });
 });

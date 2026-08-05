@@ -421,7 +421,13 @@ function WorkflowEdgeInspector({
             {incoming.map((edge) => nodeName(edge.from)).join(", ")}
           </p>
         )}
-        {!readOnly && (
+        {/*
+          The help ends by saying this section only configures branch rules,
+          which is true of a gateway and of nothing else. On an activity it
+          spent four lines describing a capability the section does not have
+          there and pointing at the canvas for the rest.
+        */}
+        {!readOnly && isGateway && (
           <p className="mt-1 text-xs text-muted-foreground">
             {t(($) => $.editor.connections_help)}
           </p>

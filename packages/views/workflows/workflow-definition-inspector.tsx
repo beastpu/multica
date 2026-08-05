@@ -110,34 +110,6 @@ function HostStatusActionSelect({
   );
 }
 
-function NodeNeighborList({
-  label,
-  nodes,
-}: {
-  label: string;
-  nodes: WorkflowNodeDefinition[];
-}) {
-  return (
-    <div className="space-y-1.5">
-      <p className="text-xs font-medium">{label}</p>
-      {nodes.length === 0 ? (
-        <p className="text-xs text-muted-foreground">—</p>
-      ) : (
-        <div className="flex flex-wrap gap-1.5">
-          {nodes.map((item) => (
-            <span
-              key={item.key}
-              className="rounded-md border bg-muted/40 px-2 py-1 text-xs"
-            >
-              {item.name}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function InspectorSection({
   title,
   children,
@@ -597,9 +569,16 @@ function ArtifactEditor({
               </select>
             </div>
             <label className="flex min-h-9 items-center gap-2 self-end text-xs">
+              {/*
+                Absent means optional, matching the server: the Go field is
+                tagged omitempty and the definition is re-marshalled on save,
+                so an unchecked box is stored as no field at all. Reading the
+                absence as "required" drew the box checked on every reload of
+                an artifact the engine was already treating as optional.
+              */}
               <input
                 type="checkbox"
-                checked={artifact.required !== false}
+                checked={artifact.required === true}
                 disabled={readOnly}
                 onChange={(event) => update(index, {
                   ...artifact,
@@ -1378,27 +1357,6 @@ export function WorkflowNodeDefinitionInspector({
               actorOptions={actorOptions}
               readOnly={readOnly}
               onChange={onChange}
-            />
-          </div>
-          <div className="space-y-3 border-t pt-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {t(($) => $.editor.section_flow)}
-            </p>
-            <NodeNeighborList
-              label={t(($) => $.editor.flow_predecessors)}
-              nodes={definition.nodes.filter((item) =>
-                definition.edges.some(
-                  (edge) => edge.to === node.key && edge.from === item.key,
-                ),
-              )}
-            />
-            <NodeNeighborList
-              label={t(($) => $.editor.flow_successors)}
-              nodes={definition.nodes.filter((item) =>
-                definition.edges.some(
-                  (edge) => edge.from === node.key && edge.to === item.key,
-                ),
-              )}
             />
           </div>
         </TabsContent>
