@@ -244,9 +244,9 @@ function CreateWorkflowButton() {
       definition: { ...definition, name },
     }, {
       onSuccess: ({ workflow }) => navigation.push(p.workflow(workflow.id)),
-      // A swallowed failure reads as a dead button. The toast reports it
-      // without adding anything to the header, whose action row lays its
-      // children out horizontally and drops a wrapped one out of view.
+      // A swallowed failure reads as a dead button. A toast says so without
+      // putting a second element in the header's action row, which is sized
+      // for the buttons themselves.
       onError: () => toast.error(t(($) => $.errors.action_failed)),
     });
   };

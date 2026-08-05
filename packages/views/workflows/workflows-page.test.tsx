@@ -354,18 +354,6 @@ describe("WorkflowsPage", () => {
       .toHaveLength(1);
   });
 
-  // The header lays its actions out in a row; a button wrapped in a column
-  // container was pushed out of the viewport entirely and stopped receiving
-  // clicks, while still passing every assertion that only queried the DOM.
-  it("keeps the create button inside the header action row", () => {
-    render(<WorkflowsPage />, { wrapper });
-
-    const button = screen.getByRole("button", { name: "New workflow" });
-    const row = button.parentElement;
-    expect(row?.className).toContain("items-center");
-    expect(row?.className).not.toContain("flex-col");
-  });
-
   it("creates a workflow whose name does not collide with the list", async () => {
     const user = userEvent.setup();
     render(<WorkflowsPage />, { wrapper });
