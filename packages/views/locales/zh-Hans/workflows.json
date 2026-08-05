@@ -477,7 +477,7 @@
     "case_label": "分支标签",
     "case_when": "条件",
     "case_when_placeholder": "例：is_bug == false && severity in [\"high\", \"critical\"]",
-    "case_when_help": "读取上游节点的输出字段。按从上到下的顺序求值，第一个命中的分支生效。",
+    "case_when_help": "可读取上游节点的输出字段、评审结论（review.verdict、review.confidence）以及宿主 issue（issue.priority、issue.status、issue.property.<字段>）。按从上到下的顺序求值，第一个命中的分支生效。",
     "outputs": "输出字段",
     "outputs_hint": "执行者交付时报告的结构化事实；网关条件基于它们路由。",
     "add_output": "添加输出字段",

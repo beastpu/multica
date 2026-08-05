@@ -124,3 +124,83 @@ func TestExprReferences(t *testing.T) {
 		t.Fatalf("unexpected references %v", references)
 	}
 }
+
+// The host issue and a reviewer's verdict are facts a branch legitimately
+// routes on — "urgent bugs skip the queue", "route on what review concluded".
+// Before this they needed their own condition sources; they are now ordinary
+// variables, so the whole language stays "read a field, compare it".
+func TestExprReadsIssueAndVerdictFields(t *testing.T) {
+	scope := ExprScope{
+		Fields: map[string][]string{
+			"is_bug":  {"triage"},
+			"verdict": {"review"},
+		},
+		FieldTypes: map[string]OutputField{
+			"triage.is_bug": {Key: "is_bug", Type: "bool"},
+			// A reviewer's built-in fields, addressed like any other output.
+			"review.verdict":    {Key: "verdict", Type: "enum", Values: []string{"pass", "fail", "blocked"}},
+			"review.confidence": {Key: "confidence", Type: "number"},
+			"review.reason":     {Key: "reason", Type: "string"},
+			// Host issue fields, always qualified — issue is not a node.
+			"issue.status":            {Key: "status", Type: "string"},
+			"issue.priority":          {Key: "priority", Type: "string"},
+			"issue.property.severity": {Key: "severity", Type: "string"},
+		},
+	}
+	pool := ExprPool{
+		"triage": {"is_bug": true},
+		"review": {"verdict": "pass", "confidence": 0.91, "reason": "looks right"},
+		"issue":  {"status": "in_progress", "priority": "urgent"},
+	}
+
+	trueCases := []string{
+		`review.verdict == "pass"`,
+		`review.confidence >= 0.9`,
+		`issue.priority == "urgent"`,
+		`issue.status != "done"`,
+		`review.verdict == "pass" && issue.priority == "urgent"`,
+	}
+	for _, source := range trueCases {
+		expr, err := ParseExpr(source, scope)
+		if err != nil {
+			t.Fatalf("parse %q: %v", source, err)
+		}
+		if matched, err := expr.Evaluate(pool); err != nil || !matched {
+			t.Fatalf("%q = %v, err %v; want true", source, matched, err)
+		}
+	}
+
+	// An enum value the verdict can never hold is a save-time error, exactly
+	// as it is for a declared output field.
+	if _, err := ParseExpr(`review.verdict == "approved"`, scope); err == nil {
+		t.Fatal("a verdict value outside the enum was accepted")
+	}
+
+	// A run with no host issue leaves issue.* absent, and absent fails closed
+	// rather than matching — the branch falls to else instead of guessing.
+	noHost := ExprPool{"triage": {"is_bug": true}}
+	for _, source := range []string{
+		`issue.priority == "urgent"`,
+		`issue.priority != "urgent"`,
+	} {
+		expr, err := ParseExpr(source, scope)
+		if err != nil {
+			t.Fatalf("parse %q: %v", source, err)
+		}
+		if matched, _ := expr.Evaluate(noHost); matched {
+			t.Fatalf("%q matched with no host issue", source)
+		}
+	}
+
+	// A property is addressed through its own segment so it cannot collide
+	// with a built-in issue field.
+	expr, err := ParseExpr(`issue.property.severity == "high"`, scope)
+	if err != nil {
+		t.Fatalf("parse property reference: %v", err)
+	}
+	if matched, _ := expr.Evaluate(ExprPool{
+		"issue": {"property.severity": "high"},
+	}); !matched {
+		t.Fatal("issue.property.severity did not match")
+	}
+}

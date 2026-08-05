@@ -624,6 +624,14 @@ func validateActivity(
 	if err := ValidateOutputFields(node.Outputs); err != nil {
 		return fmt.Errorf("activity %q outputs: %w", node.Key, err)
 	}
+	for _, field := range node.Outputs {
+		if ReservedNodeFieldKey(node, field.Key) {
+			return fmt.Errorf(
+				"activity %q output %q collides with a field its reviewer supplies",
+				node.Key, field.Key,
+			)
+		}
+	}
 	if node.Completion.MaxAttempts < 0 {
 		return fmt.Errorf("activity %q max_attempts cannot be negative", node.Key)
 	}
@@ -1235,7 +1243,7 @@ func GatewayExprScope(
 		FieldTypes: map[string]OutputField{},
 	}
 	for key, node := range nodes {
-		if node.Kind != "activity" || len(node.Outputs) == 0 {
+		if node.Kind != "activity" {
 			continue
 		}
 		if !workflowPathExists(key, gatewayKey, edges) {
@@ -1245,6 +1253,21 @@ func GatewayExprScope(
 			scope.Fields[field.Key] = append(scope.Fields[field.Key], key)
 			scope.FieldTypes[key+"."+field.Key] = field
 		}
+		// A reviewed node also carries what the review concluded. These are
+		// system-defined rather than declared, so routing on a verdict needs
+		// no cooperation from whoever authored the node's own fields.
+		if node.Reviewer != nil {
+			for _, field := range ReviewerOutputFields() {
+				scope.Fields[field.Key] = append(scope.Fields[field.Key], key)
+				scope.FieldTypes[key+"."+field.Key] = field
+			}
+		}
+	}
+	// Host issue fields are always qualified: `issue` is not a node, and
+	// leaving them unqualified would let `status` mean the issue's status in
+	// one template and an activity's own field in the next.
+	for _, field := range HostIssueFields() {
+		scope.FieldTypes[HostIssueScope+"."+field.Key] = field
 	}
 	for key := range scope.Fields {
 		slices.Sort(scope.Fields[key])

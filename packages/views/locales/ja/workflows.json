@@ -477,7 +477,7 @@
     "case_label": "分岐ラベル",
     "case_when": "条件",
     "case_when_placeholder": "例：is_bug == false && severity in [\"high\", \"critical\"]",
-    "case_when_help": "上流ノードの出力フィールドを読み取ります。上から順に評価され、最初に一致した分岐が有効になります。",
+    "case_when_help": "上流ノードの出力フィールド、レビュー結果（review.verdict、review.confidence）、ホスト issue（issue.priority、issue.status、issue.property.<キー>）を参照できます。上から順に評価され、最初に一致した分岐が有効になります。",
     "outputs": "出力フィールド",
     "outputs_hint": "実行者が納品時に報告する構造化された事実。ゲートウェイの条件はこれを基に分岐します。",
     "add_output": "出力フィールドを追加",

@@ -478,7 +478,7 @@
     "case_label": "Branch label",
     "case_when": "Condition",
     "case_when_placeholder": "e.g. is_bug == false && severity in [\"high\", \"critical\"]",
-    "case_when_help": "Reads upstream output fields. Cases evaluate top-down; the first match wins.",
+    "case_when_help": "Reads upstream output fields, a reviewed node's verdict (review.verdict, review.confidence), and the host issue (issue.priority, issue.status, issue.property.<key>). Cases evaluate top-down; the first match wins.",
     "outputs": "Output fields",
     "outputs_hint": "Structured facts the executor reports on delivery; gateway conditions route on them.",
     "add_output": "Add output field",

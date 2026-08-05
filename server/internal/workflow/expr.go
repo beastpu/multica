@@ -444,14 +444,15 @@ func (p *exprParser) parseLiteral(field OutputField) (any, error) {
 // once two nodes share the key the template author must qualify, which is
 // what keeps a later edit from silently rebinding an existing condition.
 func (p *exprParser) resolveReference(text string) (node, key string, field OutputField, err error) {
+	// Split on the first dot only: the owner is one segment, and everything
+	// after it is the field's own name. Host issue properties use a second
+	// segment (issue.property.severity) so a custom property can never be
+	// mistaken for a built-in issue field.
 	if before, after, qualified := strings.Cut(text, "."); qualified {
-		if strings.Contains(after, ".") {
-			return "", "", OutputField{}, fmt.Errorf("invalid reference %q", text)
-		}
 		declaration, ok := p.scope.FieldTypes[text]
 		if !ok {
 			return "", "", OutputField{}, fmt.Errorf(
-				"unknown field %q: no upstream node declares it", text,
+				"unknown field %q: nothing upstream declares it", text,
 			)
 		}
 		return before, after, declaration, nil

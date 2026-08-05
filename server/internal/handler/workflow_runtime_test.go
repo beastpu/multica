@@ -2997,6 +2997,81 @@ func TestWorkflowDeclaredOutputsAreNotSatisfiedBySynthesis(t *testing.T) {
 	}
 }
 
+// "Urgent bugs skip the queue" routes on the requirement, not on anything an
+// activity produced. Reading the host issue through the same variable syntax
+// as a declared field is what keeps the condition language to one idea.
+func TestWorkflowGatewayRoutesOnHostIssueField(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+
+	ownerExecutor := workflowdomain.ExecutorDefinition{
+		Kind: "role", Role: "owner",
+		Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+	}
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Host issue routing",
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true,
+			AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "triage", Kind: "activity", Name: "Triage", OwnerRole: "owner",
+				Executor: &ownerExecutor, IssuePolicy: "none",
+			},
+			{
+				Key: "route", Kind: "gateway", Name: "Route",
+				Cases: []workflowdomain.GatewayCase{
+					{ID: "hot", Label: "加急", When: `issue.priority == "urgent"`},
+					{ID: "else", Label: "常规"},
+				},
+			},
+			{Key: "hotfix", Kind: "end", Name: "Hotfix"},
+			{Key: "normal", Kind: "end", Name: "Normal"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "triage"},
+			{From: "triage", To: "route"},
+			{From: "route", To: "hotfix", FromCase: "hot"},
+			{From: "route", To: "normal", FromCase: "else"},
+		},
+		Acceptance: workflowdomain.AcceptanceDefinition{Policy: "none"},
+	}
+	if err := workflowdomain.ValidateDefinition(definition); err != nil {
+		t.Fatalf("host issue definition invalid: %v", err)
+	}
+	templateID := createPublishedWorkflowForTest(t, "Host issue routing template", definition)
+
+	// The host issue carries the urgency; nothing else in the run does.
+	var hostID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_type, creator_id, number, position
+		) VALUES ($1, 'Urgent host', 'todo', 'urgent', 'member', $2, $3, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID, nextWorkspaceIssueNumber(t)).Scan(&hostID); err != nil {
+		t.Fatalf("create urgent host issue: %v", err)
+	}
+	started := startWorkflowForTest(t, hostID, templateID, []map[string]any{{
+		"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
+	}}, "host-issue-routing-start")
+
+	triage := latestWorkflowNodeForTest(t, started.Instance.ID, "triage")
+	transitionWorkflowNode(t, uuidToString(triage.ID), "complete", "host-issue-routing-complete")
+	reconcileWorkflowForTest(t, started.Instance.ID, "host-issue-routing-reconcile")
+
+	hotfix := latestWorkflowNodeForTest(t, started.Instance.ID, "hotfix")
+	normal := latestWorkflowNodeForTest(t, started.Instance.ID, "normal")
+	if hotfix.Status != "completed" {
+		t.Fatalf("urgent host did not take the hotfix branch: %s", hotfix.Status)
+	}
+	if normal.Status != "skipped" {
+		t.Fatalf("normal branch = %s, want skipped", normal.Status)
+	}
+}
+
 func TestWorkflowRequiredIssueCancellationPolicy(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 

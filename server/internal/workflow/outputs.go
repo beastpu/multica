@@ -197,6 +197,53 @@ func normalizeOutputValue(field OutputField, raw any) (any, *OutputFieldError) {
 	return nil, invalid("invalid_type")
 }
 
+// HostIssueScope is the variable namespace the host issue occupies. It is a
+// reserved node key (see the definition validator) so nothing can shadow it.
+const HostIssueScope = "issue"
+
+// HostIssuePropertyPrefix addresses a workspace custom property, keeping it in
+// its own segment so a property named "status" cannot be read as the issue's
+// own status.
+const HostIssuePropertyPrefix = "property."
+
+// HostIssueFields are the host issue's fields a condition may read. Kept as
+// output declarations so they flow through the same parser, the same operator
+// narrowing, and the same editor as anything an activity declares.
+func HostIssueFields() []OutputField {
+	return []OutputField{
+		{Key: "status", Type: "string", Desc: "宿主 issue 状态"},
+		{Key: "priority", Type: "string", Desc: "宿主 issue 优先级"},
+		{Key: "title", Type: "string", Desc: "宿主 issue 标题"},
+		{Key: "assignee_type", Type: "string", Desc: "宿主 issue 负责人类型"},
+		{Key: "assignee_id", Type: "string", Desc: "宿主 issue 负责人"},
+		{Key: "project_id", Type: "string", Desc: "宿主 issue 所属项目"},
+	}
+}
+
+// ReviewerOutputFields are the fields a reviewed activity carries in addition
+// to whatever it declares: what the review concluded, how sure it was, and why.
+func ReviewerOutputFields() []OutputField {
+	return []OutputField{
+		{
+			Key: "verdict", Type: "enum",
+			Values: []string{"pass", "fail", "blocked"},
+			Desc:   "评审结论",
+		},
+		{Key: "confidence", Type: "number", Desc: "评审置信度"},
+		{Key: "reason", Type: "string", Desc: "评审说明"},
+	}
+}
+
+// ReservedNodeFieldKey reports whether an activity's declared field would
+// collide with one the engine supplies for it.
+func ReservedNodeFieldKey(node NodeDefinition, key string) bool {
+	if node.Reviewer == nil {
+		return false
+	}
+	_, taken := OutputFieldByKey(ReviewerOutputFields(), key)
+	return taken
+}
+
 // MissingRequiredOutputs lists the required fields a delivery does not carry,
 // in declaration order. Values are not re-checked here: anything stored has
 // already been through ValidateOutputValues at submit time.

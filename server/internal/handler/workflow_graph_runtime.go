@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/jackc/pgx/v5"
@@ -157,7 +158,7 @@ func (h *Handler) propagateWorkflowGraph(
 				}
 				result.Nodes[node.NodeKey] = updated
 			case "gateway":
-				pool, err := workflowExprPool(ctx, q, workspaceID, result.Nodes)
+				pool, err := workflowExprPool(ctx, q, workspaceID, instance, result.Nodes)
 				if err != nil {
 					return result, err
 				}
@@ -399,22 +400,73 @@ func workflowExprPool(
 	ctx context.Context,
 	q *db.Queries,
 	workspaceID pgtype.UUID,
+	instance db.WorkflowInstance,
 	nodes map[string]db.WorkflowNodeInstance,
 ) (workflowdomain.ExprPool, error) {
 	pool := workflowdomain.ExprPool{}
+	valuesFor := func(key string) map[string]any {
+		if existing, ok := pool[key]; ok {
+			return existing
+		}
+		created := map[string]any{}
+		pool[key] = created
+		return created
+	}
 	for key, node := range nodes {
-		if !node.LatestSubmissionID.Valid {
-			continue
+		if node.LatestSubmissionID.Valid {
+			submission, err := q.GetWorkflowSubmissionInWorkspace(ctx, db.GetWorkflowSubmissionInWorkspaceParams{
+				ID: node.LatestSubmissionID, WorkspaceID: workspaceID,
+			})
+			if err == nil && submission.Status == "valid" {
+				values := map[string]any{}
+				if json.Unmarshal(submission.Payload, &values) == nil && len(values) > 0 {
+					maps.Copy(valuesFor(key), values)
+				}
+			}
 		}
-		submission, err := q.GetWorkflowSubmissionInWorkspace(ctx, db.GetWorkflowSubmissionInWorkspaceParams{
-			ID: node.LatestSubmissionID, WorkspaceID: workspaceID,
+		// The review's conclusion sits in the same namespace as the node's own
+		// fields, so `review.verdict` reads like any other variable. The
+		// definition refuses a declared field that would collide.
+		if node.LatestVerdictID.Valid {
+			verdict, err := q.GetWorkflowVerdictInWorkspace(ctx, db.GetWorkflowVerdictInWorkspaceParams{
+				ID: node.LatestVerdictID, WorkspaceID: workspaceID,
+			})
+			if err == nil {
+				values := valuesFor(key)
+				values["verdict"] = verdict.Result
+				values["reason"] = verdict.Reason
+				if verdict.Confidence.Valid {
+					values["confidence"] = verdict.Confidence.Float64
+				}
+			}
+		}
+	}
+	// A run started without a host issue simply has no issue.* values, and
+	// absent fails closed — the branch falls to else rather than guessing.
+	if instance.HostIssueID.Valid {
+		host, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+			ID: instance.HostIssueID, WorkspaceID: workspaceID,
 		})
-		if err != nil || submission.Status != "valid" {
-			continue
-		}
-		values := map[string]any{}
-		if json.Unmarshal(submission.Payload, &values) == nil && len(values) > 0 {
-			pool[key] = values
+		if err == nil {
+			values := map[string]any{
+				"status": host.Status, "priority": host.Priority, "title": host.Title,
+			}
+			if host.AssigneeType.Valid {
+				values["assignee_type"] = host.AssigneeType.String
+			}
+			if host.AssigneeID.Valid {
+				values["assignee_id"] = uuidToString(host.AssigneeID)
+			}
+			if host.ProjectID.Valid {
+				values["project_id"] = uuidToString(host.ProjectID)
+			}
+			properties := map[string]any{}
+			if json.Unmarshal(host.Properties, &properties) == nil {
+				for key, value := range properties {
+					values[workflowdomain.HostIssuePropertyPrefix+key] = value
+				}
+			}
+			pool[workflowdomain.HostIssueScope] = values
 		}
 	}
 	return pool, nil

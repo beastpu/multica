@@ -477,7 +477,7 @@
     "case_label": "분기 레이블",
     "case_when": "조건",
     "case_when_placeholder": "예: is_bug == false && severity in [\"high\", \"critical\"]",
-    "case_when_help": "상위 노드의 출력 필드를 읽습니다. 위에서부터 순서대로 평가되며 첫 번째로 일치하는 분기가 적용됩니다.",
+    "case_when_help": "상위 노드의 출력 필드, 검토 결과(review.verdict, review.confidence), 호스트 issue(issue.priority, issue.status, issue.property.<키>)를 읽을 수 있습니다. 위에서부터 순서대로 평가되며 첫 번째로 일치하는 분기가 적용됩니다.",
     "outputs": "출력 필드",
     "outputs_hint": "실행자가 결과 제출 시 보고하는 구조화된 사실입니다. 게이트웨이 조건이 이를 기준으로 분기합니다.",
     "add_output": "출력 필드 추가",
