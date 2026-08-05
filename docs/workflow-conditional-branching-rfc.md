@@ -1,7 +1,7 @@
 ---
 title: Workflow 条件分支重设计 — 结构化输出变量 + 多 case Gateway
 type: feat
-status: draft
+status: implemented
 date: 2026-08-05
 topic: workflow
 artifact_readiness: approved
@@ -15,7 +15,9 @@ execution: authorized
 > （§4），落到 Multica 的开发与缺陷修复场景，并与 Run 一等对象架构
 > （[workflow-architecture-rfc §0.0](./workflow-architecture-rfc.md)）对齐（§7）。
 >
-> **状态：设计已收敛，待评审。** 原开放问题已全部定案并收进对应章节；§10 只剩实施前行动项。
+> **状态：已实现并部署至 `multica-test`。** 落地顺序 1–5 步全部完成，6–7 步按 §6.3 的
+> 更正调整后落地；实现与设计的每一处偏差、以及实现证伪的两条论断，都记在 §9 的实施状态块
+> 和对应章节的更正框里。
 
 ## TL;DR
 
@@ -512,6 +514,9 @@ DO_WHILE 的按迭代号存档）。轮次限定语法（如 `fix.done@1`）**�
 > 因此本节的 `on_failure` / `on_timeout` **不是防静默路由的手段**（架构已防），而是给
 > 「已经停下来的节点」一个自动处置（通知 / 转人工 / 重试）。价值仍在，但优先级低于原文
 > 判断。另注：`timeout_minutes` 已存在于现有实现，只产生 `node_timeout` 标记、不改流程。
+>
+> **实际落地的是三者中的「通知」一项**，且没有做成节点上的声明式出口：跑飞的节点转入
+> `blocked` 并进收件箱。自动重试与 `goto` 失败分支未做 —— 见 §9 实施状态的说明。
 
 解法：activity 节点声明失败 / 超时策略，**不经过 gateway**（采纳 Dify v0.14 的三策略框架，
 去掉不适用的「默认值」—— 流程节点伪造一份成功交付比失败更危险）：
@@ -634,9 +639,22 @@ workspace 级 schema 库（§3.4，第 5 步）
 ```
 
 `node.routed` 事件保留，payload 从 `{selected_target}` 改成
-`{case_id, selected_targets[]}`（filter 模式是数组）。下游判断入边是否被选中的逻辑
-（[`workflow_graph_runtime.go:316`](../server/internal/handler/workflow_graph_runtime.go)）
+`{case_id, case_ids[], selected_targets[], matched{}, evidence{}}`（filter 模式下
+`case_ids` / `selected_targets` 是数组）。下游判断入边是否被选中的逻辑
+（[`workflow_graph_runtime.go`](../server/internal/handler/workflow_graph_runtime.go)）
 从比对单个 target 改成检查是否在数组里。
+
+`matched` 与 `evidence` 是决策的审计面：前者记每个求过值的 case 命中与否（`switch`
+下没轮到的 case 不出现，与「求了值但没命中」区分），后者记每个条件读到的
+`node.field → 值`，缺失的字段记为空。**这两项必须随决策一起落盘，不能事后从
+submission 回读** —— submission 会被返工改写，回读得到的是「现在是什么」，而问题
+问的是「当时是什么」。运行页的路由面板直接读这份 payload。
+
+```json
+{"case_id": "c2", "case_ids": ["c2"], "selected_targets": ["hotfix"],
+ "matched": {"c1": false, "c2": true},
+ "evidence": {"triage.is_bug": true, "triage.severity": "high"}}
+```
 
 **删除项：**
 
@@ -651,26 +669,28 @@ workspace 级 schema 库（§3.4，第 5 步）
 
 ## 9. 落地顺序
 
-| 步 | 内容 | 做完能干什么 |
-| --- | --- | --- |
-| 1 | outputs schema 独立包（§3.4 代码层）+ `submission.outputs` + 服务端校验 + 结构化错误 | Agent 交付可校验，脱离自由文本 |
-| 2 | CLI `--set` / `--json` + task context 注入 schema（§7.4） | Agent 能真的交付字段（顺带解掉 `--choice` 断链） |
-| 3 | gateway cases + 端口 + 有序求值 + else 自动生成（仅 node outputs 一种 source） | **分诊 → 非 bug 直接 end 的场景通了（§5.1）** |
-| 4 | `issue.*` / verdict 统一进变量池（§7.2 / §7.3） | 条件可读宿主字段与评审结论，四种 source 归一 |
-| 5 | 条件编辑器（三下拉 + 类型收窄）+ 人工节点 schema 表单（§7.5）+ workspace schema 库（§3.4） | 编排者不写 JSON，人工节点同轨，字段跨模板复用 |
-| 6 | `on_failure` / `on_timeout` / `on_stall` + `error_type` / `error_message` 注入 | Agent 跑飞不再静默走错路 |
-| 7 | `mode: filter` + join 规则 + 重入刷新 + `max_passes` | 附加门控和返工环路（§5.3 全场景通） |
+| 步 | 内容 | 做完能干什么 | 状态 |
+| --- | --- | --- | --- |
+| 1 | outputs schema 独立包（§3.4 代码层）+ `submission.outputs` + 服务端校验 + 结构化错误 | Agent 交付可校验，脱离自由文本 | ✅ |
+| 2 | CLI `--set` / `--json` + task context 注入 schema（§7.4） | Agent 能真的交付字段（顺带解掉 `--choice` 断链） | ✅ |
+| 3 | gateway cases + 端口 + 有序求值 + else 自动生成（仅 node outputs 一种 source） | **分诊 → 非 bug 直接 end 的场景通了（§5.1）** | ✅ |
+| 4 | `issue.*` / verdict 统一进变量池（§7.2 / §7.3） | 条件可读宿主字段与评审结论，四种 source 归一 | ✅ |
+| 5 | 条件编辑器（三下拉 + 类型收窄）+ 人工节点 schema 表单（§7.5）+ workspace schema 库（§3.4） | 编排者不写 JSON，人工节点同轨，字段跨模板复用 | 编辑器与表单 ✅；schema 库暂缓 |
+| 6 | `on_failure` / `on_timeout` / `on_stall` + `error_type` / `error_message` 注入 | Agent 跑飞不再静默走错路 | 改为「停下来就通知」，见 §9 实施状态 |
+| 7 | `mode: filter` + join 规则 + 重入刷新 + `max_passes` | 附加门控和返工环路（§5.3 全场景通） | ✅（`join: any` 未做） |
 
 **1–3 是最小可用集。** 删除 choice 相关代码（§8）在第 3 步一起做；第 4 步拆出来单做，
 因为它牵动 condition 全部 source、校验器和前端条件编辑器，不该和最小可用集捆在一起。
 
-> **实施状态（2026-08-05）：第 1–3 步已实现**，另提前带上了输出字段声明编辑器与
+> 下面是按实现先后记的流水账，读到后面的条目会覆盖前面的中间态。
+>
+> **第 1–3 步已实现**，另提前带上了输出字段声明编辑器与
 > 工作台的最小 schema 表单（原第 5 步的一部分）。实现与本文的偏差：
 > ① outputs 值复用既有 `submission.payload` 列存储（该列自用户自定义字段废弃后闲置），
 > 不新增 `outputs` 列，迁移 258 只删 `choice`；
 > ② auto reviewer 获得 `node_submission` source，可读**已声明的** outputs 字段，
 > 接替原 node_choice 自引用能力（§7.3 的 verdict 统一仍留在第 4 步）；
-> ③ 条件编辑器暂为 when 表达式文本输入（三下拉编辑器仍在第 5 步）。
+> ③ 条件编辑器此时仍是 when 表达式文本输入（三下拉编辑器随第 5 步落地，见下）。
 >
 > **测试环境验证（2026-08-05，`multica-test`）**：分诊 → 非缺陷直接结束这条
 > 路径已端到端跑通，路由事件为 `{"case_id":"c1","selected_targets":["end_1"]}`，
@@ -690,11 +710,45 @@ workspace 级 schema 库（§3.4，第 5 步）
 > 任何下游节点名或分支概念 —— 它只报告领域事实，路由由编排层完成，这正是本设计
 > 相对 `choice` 的核心差别，现已在真实 agent 上得到验证。
 >
-> **第 6–7 步部分实现**：`mode: filter`（附加门控，含下游 join 等待全部激活分支）与
-> 返工上限（活动级 `completion.max_attempts`，见 §6.2 的更正）已实现并通过集成测试。
-> `on_failure` / `on_timeout` 未实现 —— 其定位已按 §6.3 的更正下调。
+> **第 4–5 步已实现**：`issue.*` 与 reviewer verdict 统一进变量池（§7.2 / §7.3），
+> 条件编辑器从 when 文本升级为三下拉（字段 / 运算符 / 值，运算符按字段类型收窄，
+> §7.5）。不认识或有歧义的表达式回落文本模式，不阻塞编辑；`category` 这类省略
+> 节点名的写法在展示时补全为它实际指向的 `triage.category`。
+> **workspace schema 库未做** —— 跨模板复用字段的痛点尚未出现，等它出现再做。
+>
+> **第 6–7 步按 §6.3 的更正调整后实现**：`mode: filter`（附加门控，含下游 join 等待
+> 全部激活分支）与返工上限（活动级 `completion.max_attempts`，见 §6.2 的更正）已实现
+> 并通过集成测试。
+>
+> `on_failure` / `on_timeout` **没有按原设计做成节点出口**。§6.3 的更正已经说明它不是
+> 防静默路由的手段（架构本身挡住了那条路径），剩下的价值是「已经停下来的节点要有人知道」。
+> 实现落在这一点上：Agent 跑飞时 readiness 早已记录 `direct_execution_failed`，但节点
+> 停在 `waiting` —— 那是「还在走」的状态，于是一个活已经停了的 run 看上去和所有进行中的
+> run 一模一样，且没有任何人被通知。现在它进 `blocked`，并沿用 sweeper 已有的通知链进
+> 收件箱，触达发起人、需求负责人、节点 owner 与工作区管理员，只报状态跨越的那一次，
+> 不在每轮 reconcile 上重复打扰。自动重试与 `goto` 失败分支仍未做，`on_stall` 亦然。
+>
+> **路由决策留存求值依据**：`node.routed` 事件原先只写 `case_id` / `selected_targets`。
+> 事后问「为什么走这条」只能回读上游 submission —— 那回答的是「现在是什么」，不是
+> 「当时是什么」，中间一次返工就把已发生的决策解释改写了。事件现在同时写下每个求过值的
+> case 是否命中（`matched`）与每个条件读到的字段值（`evidence`）。没命中的 case 一并记录
+> ——「为什么没走那条」和「为什么走这条」是同一个问题的两半；`switch` 模式下没轮到求值的
+> case 与「求了值但没命中」区分开；提交时缺失的字段记为显式空缺，而不是从依据里消失。
+> 这两项**不追溯**：此前跑过的 gateway 事件里没有它们，面板对这类历史决策只能显示
+> 走了哪条、没命中的一律标「未判断」、不显示判断依据。这是诚实的降级 —— 补一份事后
+> 回读的依据，正是这条改动要杜绝的事。
+>
+> **运行页节点面板按类型分流**：面板此前对所有节点用同一套「活动」布局，于是一个已完成的
+> Decision 会显示「需所有必需 issue 完成」和「该活动没有配置制品」—— 都是在说另一种节点，
+> 而它自己做了什么反倒不在屏幕上。Gateway 现在默认打开**路由**页：每个 case 连同条件与
+> 目标节点、命中的高亮、没命中的保留、`switch` 下没轮到的标「未判断」，下面列出判断依据。
+> Gateway 未执行时同样渲染这张表，只标「还没执行」。同时：issue 列表与完成规则只留给
+> activity，gateway 与控制节点只剩阻塞项和回滚控制；「节点事件」页原先渲染的是整个 run 的
+> 事件流却挂在节点标题下，现已按节点过滤 —— gateway 自己的 `node.routed` 此前正是被埋在
+> 那条全量流里。activity 的交付卡片补上了声明的输出字段值：它们是下游 gateway 的路由依据，
+> 此前在分支上看得到、在产出它的节点上反而看不到。
 
-## 10. 决策记录与实施前行动项
+## 10. 决策记录与行动项
 
 原开放问题已全部定案，去向如下：
 
@@ -715,14 +769,21 @@ workspace 级 schema 库（§3.4，第 5 步）
 | `on_stall` 挂点 | 复用 `blocked / executor_needs_setup` 状态机加计时器，不做第二套 | §6.3 |
 | schema 库版本语义 | 编辑期引用、模板保存时快照，无运行期依赖 | §3.4 |
 
-**实施前行动项：**
+**实施前行动项（两项均已关闭，见 §9 实施状态）：**
 
-1. 查生产库是否存在包含 gateway 的模板：
-   `node_kind='gateway'` 的 template version、以及 `workflow_node_submission.choice`
-   非空的行。有则手工迁移后再删列。
-2. 用现有 test workflow（Work → Decision → branch1/branch2）实测第 2 步的 Agent 交付
-   契约 —— schema 注入提示后，Agent 能否稳定用 `--set` 交付合法字段。这是整套方案里
-   唯一没法靠设计推演验证的环节。
+1. ~~查生产库是否存在包含 gateway 的模板与 `choice` 非空的行~~ —— 已核查：`choice`
+   全库为空，生产库尚无 workflow 表，删列无数据损失。
+2. ~~实测 Agent 交付契约~~ —— 真实 cloud runtime agent 一次提交即通过校验，
+   提示中不出现任何下游节点名。
+
+**已知未做（不是遗漏，是判断）：**
+
+| 项 | 为什么不做 |
+| --- | --- |
+| workspace schema 库（§3.4） | 跨模板复用字段的痛点尚未出现；先做等于凭空多一层版本语义 |
+| `on_failure` 自动重试 / `goto` 失败分支、`on_stall` | 停下来的节点已经会通知到人（§9）。自动跳转的风险大于收益：跳错分支比停着更难发现 |
+| `join: any`（§6.1） | 现有 join 语义（等所有被激活入边）够用，没有场景要求先到先得 |
+| 环路 × filter 重入刷新 | §10 里仍标「提案，待验证」；缺少能触发它的真实模板，验证不了就不实现 |
 
 ## 11. 参考
 
