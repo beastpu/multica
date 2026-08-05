@@ -1606,6 +1606,34 @@ func (q *Queries) DeletePendingWorkflowAcceptance(ctx context.Context, arg Delet
 	return err
 }
 
+const deleteUnusedWorkflow = `-- name: DeleteUnusedWorkflow :one
+DELETE FROM workflow
+WHERE workflow.id = $1 AND workflow.workspace_id = $2
+  AND NOT EXISTS (
+    SELECT 1 FROM workflow_instance instance
+    WHERE instance.workflow_id = workflow.id
+      AND instance.workspace_id = workflow.workspace_id
+  )
+RETURNING workflow.id
+`
+
+type DeleteUnusedWorkflowParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Deletes a workflow only while nothing has run it. Runs name the workflow and
+// its version by id, and the schema has no foreign keys to stop those rows from
+// outliving it, so a workflow with history is archived instead. The NOT EXISTS
+// lives inside the DELETE rather than in a preceding read: a run started
+// concurrently then loses the race instead of being orphaned by it.
+func (q *Queries) DeleteUnusedWorkflow(ctx context.Context, arg DeleteUnusedWorkflowParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, deleteUnusedWorkflow, arg.ID, arg.WorkspaceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const deleteWorkflowNodeParticipants = `-- name: DeleteWorkflowNodeParticipants :exec
 DELETE FROM workflow_node_participant
 WHERE workflow_node_instance_id = $1
@@ -1619,6 +1647,21 @@ type DeleteWorkflowNodeParticipantsParams struct {
 
 func (q *Queries) DeleteWorkflowNodeParticipants(ctx context.Context, arg DeleteWorkflowNodeParticipantsParams) error {
 	_, err := q.db.Exec(ctx, deleteWorkflowNodeParticipants, arg.WorkflowNodeInstanceID, arg.WorkspaceID)
+	return err
+}
+
+const deleteWorkflowVersions = `-- name: DeleteWorkflowVersions :exec
+DELETE FROM workflow_version
+WHERE workflow_id = $1 AND workspace_id = $2
+`
+
+type DeleteWorkflowVersionsParams struct {
+	WorkflowID  pgtype.UUID `json:"workflow_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) DeleteWorkflowVersions(ctx context.Context, arg DeleteWorkflowVersionsParams) error {
+	_, err := q.db.Exec(ctx, deleteWorkflowVersions, arg.WorkflowID, arg.WorkspaceID)
 	return err
 }
 

@@ -633,6 +633,21 @@ export function useArchiveWorkflow(templateId: string) {
   });
 }
 
+// Deleting is not optimistic: the list is what the user is looking at when
+// they confirm, and a row that vanishes and comes back on a 409 ("this one has
+// runs") is a worse answer than one that waits for the server.
+export function useDeleteWorkflow() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (workflowId: string) => api.deleteWorkflow(workflowId),
+    onSettled: (_data, _error, workflowId) => {
+      qc.removeQueries({ queryKey: workflowKeys.template(wsId, workflowId) });
+      qc.invalidateQueries({ queryKey: workflowKeys.templates(wsId) });
+    },
+  });
+}
+
 export function setWorkflowInstanceDetail(
   current: WorkflowInstanceDetail | undefined,
   next: WorkflowInstanceDetail,

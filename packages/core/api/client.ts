@@ -3805,6 +3805,13 @@ export class ApiClient {
     });
   }
 
+  /** Permanently deletes a workflow that has never run. The server refuses
+   * with 409 once runs exist — they name the workflow by id — so callers
+   * should offer archiving for that case rather than treating it as a bug. */
+  async deleteWorkflow(workflowId: string): Promise<void> {
+    await this.fetch<unknown>(`/api/workflows/${workflowId}`, { method: "DELETE" });
+  }
+
   // Composio integration (MUL-3720). All routes are user-scoped (a connection
   // belongs to a user, not a workspace), so none take a workspaceId.
 

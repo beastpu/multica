@@ -1233,7 +1233,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/{id}", h.UpdateWorkflowMetadata)
 					r.Put("/{id}/definition", h.SaveWorkflowDefinition)
 					r.Post("/{id}/archive", h.ArchiveWorkflow)
-					r.Delete("/{id}", h.ArchiveWorkflow)
+					r.Delete("/{id}", h.DeleteWorkflow)
 				})
 			})
 

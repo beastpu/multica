@@ -768,3 +768,72 @@ func (h *Handler) ArchiveWorkflow(w http.ResponseWriter, r *http.Request) {
 	)
 	writeJSON(w, http.StatusOK, workflowToResponse(template))
 }
+
+// DeleteWorkflow permanently removes a workflow and its stored versions, and
+// only while nothing has run it. A workflow with runs is load-bearing: the runs
+// name it by id and there is no foreign key to stop them from pointing at
+// nothing, so that case is refused with the reason rather than cascaded —
+// archiving is the route for a workflow that has been used.
+func (h *Handler) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
+	if !h.workflowTemplateWriteEnabled(w, r) {
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	workflowID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workflow_id")
+	if !ok {
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start workflow delete")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	deletedID, err := qtx.DeleteUnusedWorkflow(r.Context(), db.DeleteUnusedWorkflowParams{
+		ID: workflowID, WorkspaceID: wsUUID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// No row matched for one of two reasons, and they need different
+		// answers: "it has runs" is something the author can act on by
+		// archiving instead, "it is gone" is not.
+		_ = tx.Rollback(r.Context())
+		if _, lookupErr := h.Queries.GetWorkflowInWorkspace(
+			r.Context(),
+			db.GetWorkflowInWorkspaceParams{ID: workflowID, WorkspaceID: wsUUID},
+		); lookupErr == nil {
+			writeError(
+				w, http.StatusConflict,
+				"workflow has runs and cannot be deleted; archive it instead",
+			)
+			return
+		}
+		writeError(w, http.StatusNotFound, "workflow not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete workflow")
+		return
+	}
+	if err := qtx.DeleteWorkflowVersions(r.Context(), db.DeleteWorkflowVersionsParams{
+		WorkflowID: workflowID, WorkspaceID: wsUUID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete workflow versions")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete workflow")
+		return
+	}
+	h.publishWorkflowRealtime(
+		protocol.EventWorkflowUpdated, workspaceID, "system", "",
+		map[string]any{"workflow_template_id": uuidToString(deletedID)},
+	)
+	w.WriteHeader(http.StatusNoContent)
+}

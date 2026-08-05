@@ -99,6 +99,25 @@ SET status = 'archived', archived_at = now(), updated_at = now()
 WHERE id = @id AND workspace_id = @workspace_id
 RETURNING *;
 
+-- Deletes a workflow only while nothing has run it. Runs name the workflow and
+-- its version by id, and the schema has no foreign keys to stop those rows from
+-- outliving it, so a workflow with history is archived instead. The NOT EXISTS
+-- lives inside the DELETE rather than in a preceding read: a run started
+-- concurrently then loses the race instead of being orphaned by it.
+-- name: DeleteUnusedWorkflow :one
+DELETE FROM workflow
+WHERE workflow.id = @id AND workflow.workspace_id = @workspace_id
+  AND NOT EXISTS (
+    SELECT 1 FROM workflow_instance instance
+    WHERE instance.workflow_id = workflow.id
+      AND instance.workspace_id = workflow.workspace_id
+  )
+RETURNING workflow.id;
+
+-- name: DeleteWorkflowVersions :exec
+DELETE FROM workflow_version
+WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id;
+
 -- name: ListWorkflowVersions :many
 SELECT * FROM workflow_version
 WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id

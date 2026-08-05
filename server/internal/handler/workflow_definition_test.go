@@ -453,3 +453,130 @@ func TestWorkflowPermissionsImmutabilityAndSaveValidation(t *testing.T) {
 		})
 	}
 }
+
+// Deleting is for a workflow that was never used — the junk a workspace
+// accumulates while learning the editor. Once a run exists the workflow is
+// load-bearing: runs name it and its version by id, and no foreign key stops
+// those rows from outliving it, so the delete has to refuse and say why.
+func TestDeleteWorkflowKeepsWorkflowsThatHaveRun(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Deletable",
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{Key: "work", Kind: "activity", Name: "Work"},
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "work"},
+			{From: "work", To: "end"},
+		},
+		Acceptance: workflowdomain.AcceptanceDefinition{Policy: "none"},
+	}
+
+	create := func(t *testing.T, name string) workflowResponse {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		testHandler.CreateWorkflow(recorder, newRequest(
+			http.MethodPost,
+			"/api/workflows?workspace_id="+testWorkspaceID,
+			map[string]any{"name": name, "definition": definition},
+		))
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("CreateWorkflow status = %d, body = %s", recorder.Code, recorder.Body.String())
+		}
+		var created struct {
+			Workflow workflowResponse `json:"workflow"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil {
+			t.Fatalf("decode created workflow: %v", err)
+		}
+		return created.Workflow
+	}
+	deleteWorkflow := func(id string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		testHandler.DeleteWorkflow(recorder, withURLParam(
+			newRequest(
+				http.MethodDelete,
+				"/api/workflows/"+id+"?workspace_id="+testWorkspaceID,
+				nil,
+			),
+			"id",
+			id,
+		))
+		return recorder
+	}
+	countRows := func(t *testing.T, query, id string) int {
+		t.Helper()
+		var count int
+		if err := testPool.QueryRow(ctx, query, id).Scan(&count); err != nil {
+			t.Fatalf("count rows: %v", err)
+		}
+		return count
+	}
+
+	unused := create(t, "Never run workflow")
+	if recorder := deleteWorkflow(unused.ID); recorder.Code != http.StatusNoContent {
+		t.Fatalf(
+			"delete unused workflow status = %d, want %d, body = %s",
+			recorder.Code, http.StatusNoContent, recorder.Body.String(),
+		)
+	}
+	if count := countRows(t, `SELECT count(*) FROM workflow WHERE id = $1`, unused.ID); count != 0 {
+		t.Fatalf("deleted workflow left %d rows, want 0", count)
+	}
+	// The versions go with it. Left behind they are unreachable rows keyed to
+	// a workflow nothing can load.
+	if count := countRows(
+		t, `SELECT count(*) FROM workflow_version WHERE workflow_id = $1`, unused.ID,
+	); count != 0 {
+		t.Fatalf("deleted workflow left %d versions, want 0", count)
+	}
+
+	used := create(t, "Already run workflow")
+	var versionID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id FROM workflow_version WHERE workflow_id = $1 ORDER BY version DESC LIMIT 1
+	`, used.ID).Scan(&versionID); err != nil {
+		t.Fatalf("load workflow version: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO workflow_instance (
+			workspace_id, workflow_id, workflow_version_id, title,
+			status, host_status_mode, started_by_type
+		) VALUES ($1, $2, $3, 'Run 1', 'running', 'independent', 'system')
+	`, testWorkspaceID, used.ID, versionID); err != nil {
+		t.Fatalf("insert workflow instance: %v", err)
+	}
+
+	refused := deleteWorkflow(used.ID)
+	if refused.Code != http.StatusConflict {
+		t.Fatalf(
+			"delete workflow with runs status = %d, want %d, body = %s",
+			refused.Code, http.StatusConflict, refused.Body.String(),
+		)
+	}
+	if count := countRows(t, `SELECT count(*) FROM workflow WHERE id = $1`, used.ID); count != 1 {
+		t.Fatalf("refused delete removed the workflow, rows = %d, want 1", count)
+	}
+	// A refused delete must not take the versions with it either — the
+	// workflow survives, and a workflow whose versions are gone is worse than
+	// one that was never deleted.
+	if count := countRows(
+		t, `SELECT count(*) FROM workflow_version WHERE workflow_id = $1`, used.ID,
+	); count != 1 {
+		t.Fatalf("refused delete left %d versions, want 1", count)
+	}
+
+	missing := deleteWorkflow("00000000-0000-0000-0000-0000000000ff")
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf(
+			"delete missing workflow status = %d, want %d, body = %s",
+			missing.Code, http.StatusNotFound, missing.Body.String(),
+		)
+	}
+}
