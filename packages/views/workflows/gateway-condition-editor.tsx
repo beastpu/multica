@@ -50,7 +50,7 @@ export function GatewayConditionEditor({
     gatewayKey,
     t(($) => $.editor.condition_host_issue),
   );
-  const parsed = parseGatewayCondition(when);
+  const parsed = parseGatewayCondition(when, fields);
   // Text mode is sticky once chosen, so toggling to it does not bounce back
   // the moment the text happens to become row-representable again.
   const [textMode, setTextMode] = useState(false);
@@ -67,7 +67,7 @@ export function GatewayConditionEditor({
     // from the text this editor just produced.
     if (when === emitted.current) return;
     emitted.current = when;
-    setDraft(parseGatewayCondition(when) ?? { join: "&&", clauses: [] });
+    setDraft(parseGatewayCondition(when, fields) ?? { join: "&&", clauses: [] });
   }, [when]);
 
   const rows = draft.clauses;
@@ -103,7 +103,7 @@ export function GatewayConditionEditor({
           <p className="text-xs leading-relaxed text-muted-foreground">
             {t(($) => $.editor.case_when_help)}
           </p>
-          {!readOnly && parseGatewayCondition(when) && (
+          {!readOnly && parseGatewayCondition(when, fields) && (
             <Button
               type="button"
               size="sm"

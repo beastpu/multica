@@ -157,4 +157,26 @@ describe("gateway condition round trip", () => {
       ],
     }, fields)).toBe(`triage.is_bug == true`);
   });
+
+  // Shorthand is what the server accepts and what an author is likely to have
+  // typed. The rows address fields fully, so it is expanded rather than shown
+  // as an unselected dropdown that looks like the condition was lost.
+  it("expands an unqualified field to the node that declares it", () => {
+    const form = parseGatewayCondition(`is_bug == false`, fields);
+    expect(form?.clauses[0]?.path).toBe("triage.is_bug");
+    expect(serializeGatewayCondition(form!, fields)).toBe(
+      `triage.is_bug == false`,
+    );
+  });
+
+  it("stays in text mode when the shorthand is ambiguous or unknown", () => {
+    // Two nodes both declaring `done` cannot be resolved to one of them.
+    const ambiguous = [
+      ...fields,
+      { key: "is_bug", type: "bool" as const, owner: "verify",
+        ownerLabel: "复核", path: "verify.is_bug" },
+    ];
+    expect(parseGatewayCondition(`is_bug == false`, ambiguous)).toBeNull();
+    expect(parseGatewayCondition(`nothing_declares_this == 1`, fields)).toBeNull();
+  });
 });

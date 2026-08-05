@@ -149,6 +149,18 @@ export function serializeGatewayCondition(
     .join(` ${form.join} `);
 }
 
+// `category` is legal shorthand when exactly one upstream node declares it —
+// the server resolves it the same way. The rows address fields by their full
+// path, so shorthand is expanded on the way in and saved expanded on the way
+// out, which is the same condition stated unambiguously.
+function resolvePath(path: string, fields: GatewayField[]): string | null {
+  if (fields.length === 0) return path;
+  if (fields.some((field) => field.path === path)) return path;
+  if (path.includes(".")) return null;
+  const owners = fields.filter((field) => field.key === path);
+  return owners.length === 1 ? owners[0]!.path : null;
+}
+
 // `==` must not be followed by another `=`: `a === 1` is not this language,
 // and matching it as `==` plus a value of `= 1` would quietly accept a typo.
 const CLAUSE_PATTERN =
@@ -178,6 +190,7 @@ function unquote(raw: string): string[] {
  */
 export function parseGatewayCondition(
   when: string,
+  fields: GatewayField[] = [],
 ): GatewayConditionForm | null {
   const text = when.trim();
   if (!text || text.includes("(") || text.includes(")") || text.includes("!")) {
@@ -196,8 +209,13 @@ export function parseGatewayCondition(
     const [, path, operator, rest] = match;
     const values = unquote(rest!);
     if (values.length === 0) return null;
+    const resolved = resolvePath(path!, fields);
+    // An unqualified name nothing resolves — or that two nodes both declare —
+    // stays as text. Guessing which node it meant would silently rebind the
+    // condition to a different field.
+    if (!resolved) return null;
     clauses.push({
-      path: path!,
+      path: resolved,
       operator: operator as GatewayOperator,
       values,
     });
