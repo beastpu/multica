@@ -62,6 +62,16 @@ export function parseWorkflowAssignment(value: string): {
   return actorId ? { actorType, actorId } : null;
 }
 
+// Every run opened with the workflow's own name, so a workflow's history was a
+// column of identical titles — nothing distinguished run three from run one
+// without opening both. Numbering off the run count gives each run an identity
+// on sight. It stays a starting value: the author types over it when a run
+// deserves a real name, and the number is not an identifier the system reads
+// back, so a stale count costs a duplicate label and nothing more.
+export function defaultRunTitle(name: string, runCount: number) {
+  return `${name} #${runCount + 1}`;
+}
+
 export function defaultNewWorkflowAssignments(
   roles: WorkflowRoleDefinition[],
   userId: string | undefined,
@@ -148,14 +158,16 @@ export function WorkflowRunDialog({
     })),
   ], [agents, members, squads]);
 
+  const workflowName = workflow?.name ?? "";
+  const workflowRunCount = workflow?.run_count ?? 0;
   useEffect(() => {
     if (!open) return;
-    setTitle(workflow?.name ?? "");
+    setTitle(workflowName ? defaultRunTitle(workflowName, workflowRunCount) : "");
     setInstructions("");
     setVersionId(preferredVersion?.id ?? "");
     setAssignments({});
     setError("");
-  }, [open, preferredVersion?.id, workflow?.id, workflow?.name]);
+  }, [open, preferredVersion?.id, workflowName, workflowRunCount]);
 
   useEffect(() => {
     if (!selectedVersion) return;

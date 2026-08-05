@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import enCommon from "../locales/en/common.json";
 import enWorkflows from "../locales/en/workflows.json";
-import { WorkflowRunDialog } from "./workflow-run-dialog";
+import { defaultRunTitle, WorkflowRunDialog } from "./workflow-run-dialog";
 
 const mocks = vi.hoisted(() => ({
   // What the detail query has cached — deliberately stale, the way it is right
@@ -127,5 +127,32 @@ describe("WorkflowRunDialog version selection", () => {
   it("falls back to the newest known version when none is preferred", () => {
     render(dialog(null, true));
     expect(versionSelect().value).toBe("v2");
+  });
+});
+
+describe("WorkflowRunDialog naming", () => {
+  // Every run opened prefilled with the workflow's own name, so a workflow's
+  // history was a column of identical titles and nothing on screen said which
+  // run was which.
+  it("numbers a new run after the ones already recorded", () => {
+    expect(defaultRunTitle("Defect fix", 0)).toBe("Defect fix #1");
+    expect(defaultRunTitle("Defect fix", 4)).toBe("Defect fix #5");
+  });
+
+  it("prefills the run name with the next number", () => {
+    render(
+      <I18nProvider
+        locale="en"
+        resources={{ en: { common: enCommon, workflows: enWorkflows } }}
+      >
+        <WorkflowRunDialog
+          workflow={{ ...workflowFixture, run_count: 2 } as Workflow}
+          open
+          onOpenChange={() => {}}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByLabelText("Run name")).toHaveValue("Defect fix #3");
   });
 });
