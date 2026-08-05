@@ -1,5 +1,6 @@
 import type {
   WorkflowDefinition,
+  WorkflowGatewayCase,
   WorkflowNodeDefinition,
 } from "@multica/core/workflows";
 
@@ -115,20 +116,129 @@ export function nextWorkflowNodeKey(
   return `${prefix}_${suffix}`;
 }
 
-function branchEdge(
+function nextGatewayCaseId(cases: WorkflowGatewayCase[]) {
+  const existing = new Set(cases.map((gatewayCase) => gatewayCase.id));
+  let suffix = 1;
+  while (existing.has(`c${suffix}`)) suffix += 1;
+  return `c${suffix}`;
+}
+
+/**
+ * Adds one outgoing branch from a gateway, keeping cases and edges in a
+ * one-to-one mapping. The first branch binds the mandatory else case; every
+ * later branch gets a fresh conditional case inserted before else, so the
+ * declared order stays "conditions first, else last" by construction.
+ */
+function gatewayBranch(
+  definition: WorkflowDefinition,
+  gateway: WorkflowNodeDefinition,
+  to: string,
+): { nodes: WorkflowNodeDefinition[]; edge: WorkflowDefinition["edges"][number] } {
+  const cases = gateway.cases ?? [];
+  const boundCases = new Set(
+    definition.edges
+      .filter((edge) => edge.from === gateway.key)
+      .map((edge) => edge.from_case),
+  );
+  let nextCases = cases;
+  let caseId: string;
+  if (!boundCases.has("else")) {
+    caseId = "else";
+    if (!cases.some((gatewayCase) => gatewayCase.id === "else")) {
+      nextCases = [...cases, { id: "else" }];
+    }
+  } else {
+    caseId = nextGatewayCaseId(cases);
+    const elseIndex = cases.findIndex((gatewayCase) => gatewayCase.id === "else");
+    const insertAt = elseIndex === -1 ? cases.length : elseIndex;
+    nextCases = [
+      ...cases.slice(0, insertAt),
+      { id: caseId, when: "" },
+      ...cases.slice(insertAt),
+    ];
+  }
+  const nodes = nextCases === cases
+    ? definition.nodes
+    : definition.nodes.map((node) =>
+      node.key === gateway.key ? { ...node, cases: nextCases } : node
+    );
+  return { nodes, edge: { from: gateway.key, to, from_case: caseId } };
+}
+
+function branchUpdate(
   definition: WorkflowDefinition,
   from: string,
   to: string,
-) {
+): { nodes: WorkflowNodeDefinition[]; edge: WorkflowDefinition["edges"][number] } {
   const source = definition.nodes.find((node) => node.key === from);
-  const sourceEdges = definition.edges.filter((edge) => edge.from === from);
+  if (source?.kind === "gateway") {
+    return gatewayBranch(definition, source, to);
+  }
+  return { nodes: definition.nodes, edge: { from, to } };
+}
+
+/** Updates one gateway case's label or condition in place. */
+export function updateWorkflowGatewayCase(
+  definition: WorkflowDefinition,
+  gatewayKey: string,
+  caseId: string,
+  patch: Partial<Pick<WorkflowGatewayCase, "label" | "when">>,
+) {
+  const gateway = definition.nodes.find((node) => node.key === gatewayKey);
+  if (!gateway?.cases?.some((gatewayCase) => gatewayCase.id === caseId)) {
+    return null;
+  }
   return {
-    from,
-    to,
-    ...(source?.kind === "gateway" &&
-        !sourceEdges.some((candidate) => candidate.default === true)
-      ? { default: true }
-      : {}),
+    ...definition,
+    nodes: definition.nodes.map((node) =>
+      node.key === gatewayKey
+        ? {
+          ...node,
+          cases: node.cases!.map((gatewayCase) =>
+            gatewayCase.id === caseId
+              // else never carries a condition; a stray when would be
+              // rejected server-side, so it cannot be introduced here.
+              ? {
+                ...gatewayCase,
+                ...patch,
+                ...(caseId === "else" ? { when: undefined } : {}),
+              }
+              : gatewayCase
+          ),
+        }
+        : node
+    ),
+  };
+}
+
+/**
+ * Moves a conditional case one step up or down. Order is priority — first
+ * match wins — and else stays pinned last.
+ */
+export function moveWorkflowGatewayCase(
+  definition: WorkflowDefinition,
+  gatewayKey: string,
+  caseId: string,
+  direction: "up" | "down",
+) {
+  const gateway = definition.nodes.find((node) => node.key === gatewayKey);
+  const cases = gateway?.cases;
+  if (!cases || caseId === "else") return null;
+  const index = cases.findIndex((gatewayCase) => gatewayCase.id === caseId);
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (
+    index === -1 || target < 0 || target >= cases.length ||
+    cases[target]!.id === "else"
+  ) {
+    return null;
+  }
+  const reordered = [...cases];
+  [reordered[index], reordered[target]] = [reordered[target]!, reordered[index]!];
+  return {
+    ...definition,
+    nodes: definition.nodes.map((node) =>
+      node.key === gatewayKey ? { ...node, cases: reordered } : node
+    ),
   };
 }
 
@@ -141,6 +251,11 @@ export function insertWorkflowNodeOnEdge(
     return null;
   }
 
+  // A gateway inserted on an edge starts with its pass-through bound to the
+  // mandatory else case; the author then adds conditional branches.
+  const inserted = node.kind === "gateway"
+    ? { ...node, cases: [{ id: "else" }] }
+    : node;
   let replaced = false;
   const edges = definition.edges.flatMap((edge) => {
     if (replaced || edge.from !== target.from || edge.to !== target.to) {
@@ -148,15 +263,19 @@ export function insertWorkflowNodeOnEdge(
     }
     replaced = true;
     return [
-      { ...edge, to: node.key },
-      { from: node.key, to: target.to },
+      { ...edge, to: inserted.key },
+      {
+        from: inserted.key,
+        to: target.to,
+        ...(inserted.kind === "gateway" ? { from_case: "else" } : {}),
+      },
     ];
   });
   if (!replaced) return null;
 
   return {
     ...definition,
-    nodes: [...definition.nodes, node],
+    nodes: [...definition.nodes, inserted],
     edges,
   };
 }
@@ -173,10 +292,11 @@ export function addWorkflowBranch(
     return null;
   }
 
+  const branch = branchUpdate(definition, from, node.key);
   return {
     ...definition,
-    nodes: [...definition.nodes, node],
-    edges: [...definition.edges, branchEdge(definition, from, node.key)],
+    nodes: [...branch.nodes, node],
+    edges: [...definition.edges, branch.edge],
   };
 }
 
@@ -192,51 +312,42 @@ export function connectWorkflowNodes(
     return null;
   }
 
+  const branch = branchUpdate(definition, target.from, target.to);
   return {
     ...definition,
-    edges: [
-      ...definition.edges,
-      branchEdge(definition, target.from, target.to),
-    ],
+    nodes: branch.nodes,
+    edges: [...definition.edges, branch.edge],
   };
 }
 
+/**
+ * Removes a conditional case together with its bound edge when the source is
+ * a gateway; the else case itself survives an edge removal because the
+ * gateway cannot exist without it — the next added branch re-binds it.
+ */
 export function removeWorkflowEdge(
   definition: WorkflowDefinition,
   target: WorkflowCanvasEdgeTarget,
 ) {
-  const edges = definition.edges.filter(
-    (edge) => edge.from !== target.from || edge.to !== target.to,
+  const removed = definition.edges.find(
+    (edge) => edge.from === target.from && edge.to === target.to,
   );
-  if (edges.length === definition.edges.length) return null;
-  return { ...definition, edges };
-}
-
-export function updateWorkflowEdge(
-  definition: WorkflowDefinition,
-  target: WorkflowCanvasEdgeTarget,
-  nextEdge: WorkflowDefinition["edges"][number],
-) {
-  if (!definition.edges.some(
-    (edge) => edge.from === target.from && edge.to === target.to
-  )) {
-    return null;
+  if (!removed) return null;
+  const edges = definition.edges.filter((edge) => edge !== removed);
+  let nodes = definition.nodes;
+  if (removed.from_case && removed.from_case !== "else") {
+    nodes = nodes.map((node) =>
+      node.key === removed.from
+        ? {
+          ...node,
+          cases: node.cases?.filter(
+            (gatewayCase) => gatewayCase.id !== removed.from_case,
+          ),
+        }
+        : node
+    );
   }
-  const normalizedNext = nextEdge.default
-    ? { ...nextEdge, condition: undefined }
-    : nextEdge;
-  return {
-    ...definition,
-    edges: definition.edges.map((edge) => {
-      if (edge.from === target.from && edge.to === target.to) {
-        return normalizedNext;
-      }
-      if (normalizedNext.default && edge.from === target.from) {
-        return { ...edge, default: false };
-      }
-      return edge;
-    }),
-  };
+  return { ...definition, nodes, edges };
 }
 
 export function removeWorkflowNode(
@@ -252,6 +363,7 @@ export function removeWorkflowNode(
     (edge) => edge.from !== nodeKey && edge.to !== nodeKey,
   );
 
+  let bridged = false;
   if (incoming.length === 1 && outgoing.length === 1) {
     const from = incoming[0]!.from;
     const to = outgoing[0]!.to;
@@ -260,6 +372,20 @@ export function removeWorkflowNode(
     );
     if (from !== to && !duplicate) {
       remainingEdges.push({ ...incoming[0]!, to });
+      bridged = true;
+    }
+  }
+
+  // A gateway whose branch pointed at the removed node loses that edge, so
+  // the conditional case bound to it goes too — else stays, it is structural.
+  const orphanedCases = new Map<string, Set<string>>();
+  if (!bridged) {
+    for (const edge of incoming) {
+      if (edge.from_case && edge.from_case !== "else") {
+        const dropped = orphanedCases.get(edge.from) ?? new Set<string>();
+        dropped.add(edge.from_case);
+        orphanedCases.set(edge.from, dropped);
+      }
     }
   }
 
@@ -267,7 +393,18 @@ export function removeWorkflowNode(
   // its rework destinations come from the graph, which the deletion updates.
   return {
     ...definition,
-    nodes: definition.nodes.filter((candidate) => candidate.key !== nodeKey),
+    nodes: definition.nodes
+      .filter((candidate) => candidate.key !== nodeKey)
+      .map((candidate) => {
+        const dropped = orphanedCases.get(candidate.key);
+        if (!dropped) return candidate;
+        return {
+          ...candidate,
+          cases: candidate.cases?.filter(
+            (gatewayCase) => !dropped.has(gatewayCase.id),
+          ),
+        };
+      }),
     edges: remainingEdges,
   };
 }

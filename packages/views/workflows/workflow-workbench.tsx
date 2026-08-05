@@ -147,7 +147,6 @@ import {
   workflowNodeDisplayStatus,
 } from "./workflow-status";
 import { ReworkReasonFields } from "./rework-reason-fields";
-import { branchChoiceDuty } from "./branch-choice";
 import {
   composeReworkReason,
   emptyReworkReasonDraft,
@@ -168,7 +167,6 @@ export function SubmissionPanel({
   submissions,
   tasks,
   canManage,
-  branchDuty,
 }: {
   instanceId: string;
   node: WorkflowNodeInstance;
@@ -176,18 +174,19 @@ export function SubmissionPanel({
   tasks: WorkflowNodeTask[];
   actorOptions: WorkflowActorOption[];
   canManage: boolean;
-  branchDuty: ReturnType<typeof branchChoiceDuty>;
 }) {
   const { t } = useT("workflows");
-  const [values, setValues] = useState<Record<string, unknown>>({});
+  const [values, setValues] = useState<Record<string, string>>({});
   const [summary, setSummary] = useState("");
-  const [choice, setChoice] = useState("");
   const [sourceIssueId, setSourceIssueId] = useState("");
   const submit = useCreateWorkflowSubmission(instanceId, node.id);
   const submissionPolicy = node.definition.submission_schema?.policy ?? "single";
   const taskScoped = submissionPolicy === "per_required_task" ||
     submissionPolicy === "fan_in";
   const sourceTasks = tasks.filter((task) => task.issue_id);
+  // The node's declared output fields drive the form; the server validates the
+  // same declaration, so human and agent submissions share one contract.
+  const outputFields = node.definition.outputs ?? [];
   // A node that owes a verdict but declares no schema gets a submission
   // synthesised for it, carrying a canned summary and a payload that names
   // the rule that produced it. It is engine bookkeeping, and listing it
@@ -195,14 +194,10 @@ export function SubmissionPanel({
   const deliveredSubmissions = submissions.filter(
     (submission) => submission.submitted_by_type !== "system",
   );
-  // Only the values a gateway condition actually matches. Offering every node
-  // let an author pick one no condition reads: the server accepts it and the
-  // run then takes the default edge, looking exactly like no decision at all.
 
   useEffect(() => {
     setValues({});
     setSummary("");
-    setChoice("");
     setSourceIssueId("");
   }, [node.id]);
 
@@ -253,49 +248,74 @@ export function SubmissionPanel({
               })}
             </p>
           </div>
-          {branchDuty && (
-            <div className="space-y-1.5">
-              <Label htmlFor="workflow-submission-choice">
-                {t(($) => $.workbench.branch_choice)}
-              </Label>
-              <select
-                id="workflow-submission-choice"
-                value={choice}
-                onChange={(event) => setChoice(event.target.value)}
-                className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
-              >
-                <option value="">
-                  {t(($) => $.workbench.branch_choice_none)}
-                </option>
-                {branchDuty.options.map((option) => (
-                  <option key={option.key} value={option.key}>
-                    {option.key} — {option.target}
-                  </option>
-                ))}
-              </select>
-              {branchDuty.defaultTarget && (
-                <p className="text-xs text-muted-foreground">
-                  {t(($) => $.workbench.branch_choice_help, {
-                    gateway: branchDuty.gatewayName,
-                    fallback: branchDuty.defaultTarget,
-                  })}
-                </p>
-              )}
+          {outputFields.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-xs font-medium">
+                {t(($) => $.workbench.output_fields)}
+              </p>
+              {outputFields.map((field) => {
+                const inputId = `workflow-output-${field.key}`;
+                const value = values[field.key] ?? "";
+                const setValue = (next: string) =>
+                  setValues((current) => ({ ...current, [field.key]: next }));
+                return (
+                  <div key={field.key} className="space-y-1.5">
+                    <Label htmlFor={inputId}>
+                      {field.key}
+                      {field.required && (
+                        <span className="text-destructive"> *</span>
+                      )}
+                    </Label>
+                    {field.type === "bool" || field.type === "enum" ? (
+                      <select
+                        id={inputId}
+                        value={value}
+                        onChange={(event) => setValue(event.target.value)}
+                        className="min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="">
+                          {t(($) => $.workbench.output_unset)}
+                        </option>
+                        {(field.type === "bool"
+                          ? ["true", "false"]
+                          : field.values ?? []
+                        ).map((option) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Input
+                        id={inputId}
+                        value={value}
+                        type={field.type === "number" ? "number" : "text"}
+                        placeholder={field.type === "string[]" ? '["a", "b"]' : undefined}
+                        onChange={(event) => setValue(event.target.value)}
+                      />
+                    )}
+                    {field.desc && (
+                      <p className="text-xs text-muted-foreground">{field.desc}</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
           <Button
             size="sm"
             className="min-h-11"
-            onClick={() => submit.mutate({
-              payload: values,
-              summary,
-              choice: choice || undefined,
-              source_issue_id: sourceIssueId || undefined,
-            }, {
-              onSuccess: () => {
-                setChoice("");
-              },
-            })}
+            onClick={() => {
+              // Strings go up as-is; the server coerces them against the
+              // declared field types and rejects with per-field errors.
+              const payload: Record<string, unknown> = {};
+              for (const [key, value] of Object.entries(values)) {
+                if (value !== "") payload[key] = value;
+              }
+              submit.mutate({
+                payload,
+                summary,
+                source_issue_id: sourceIssueId || undefined,
+              });
+            }}
             disabled={
               submit.isPending ||
               (taskScoped && !sourceIssueId)
@@ -2352,13 +2372,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               tasks={nodeQuery.data.tasks}
               actorOptions={actorOptions}
               canManage={canManageSelectedNode}
-              branchDuty={templateVersion
-                ? branchChoiceDuty(
-                  templateVersion.definition.nodes,
-                  templateVersion.definition.edges,
-                  selectedNode.node_key,
-                )
-                : null}
             />
           )}
           <ArtifactPanel

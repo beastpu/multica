@@ -223,7 +223,9 @@ export function WorkflowCanvas({
                   traversed && "stroke-blue-500/60",
                 )}
                 strokeWidth={traversed ? 2 : 1.5}
-                strokeDasharray={edge.condition ? "5 4" : undefined}
+                strokeDasharray={
+                  edge.from_case && edge.from_case !== "else" ? "5 4" : undefined
+                }
               />
             );
           })}

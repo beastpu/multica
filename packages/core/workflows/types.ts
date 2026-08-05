@@ -69,6 +69,33 @@ export interface WorkflowArtifactRequirement {
   required?: boolean;
 }
 
+export type WorkflowOutputFieldType =
+  | "bool"
+  | "enum"
+  | "number"
+  | "string"
+  | "string[]";
+
+/** One structured field an activity owes on delivery. */
+export interface WorkflowOutputField {
+  key: string;
+  type: WorkflowOutputFieldType;
+  values?: string[];
+  required?: boolean;
+  desc?: string;
+  max_len?: number;
+}
+
+/**
+ * One row of a gateway's routing table. Evaluated in declared order, first
+ * match wins; the mandatory trailing else case has id "else" and no `when`.
+ */
+export interface WorkflowGatewayCase {
+  id: string;
+  label?: string;
+  when?: string;
+}
+
 export interface WorkflowNodeDefinition {
   key: string;
   kind: string;
@@ -84,6 +111,8 @@ export interface WorkflowNodeDefinition {
   submission_schema?: {
     policy?: "none" | "single" | "per_required_task" | "fan_in";
   };
+  outputs?: WorkflowOutputField[];
+  cases?: WorkflowGatewayCase[];
   completion?: WorkflowCompletionDefinition;
   executor?: WorkflowExecutorDefinition;
   reviewer?: WorkflowReviewerDefinition;
@@ -97,7 +126,7 @@ export interface WorkflowDefinition {
   name: string;
   roles: WorkflowRoleDefinition[];
   nodes: WorkflowNodeDefinition[];
-  edges: Array<{ from: string; to: string; condition?: unknown; default?: boolean }>;
+  edges: Array<{ from: string; to: string; from_case?: string }>;
   acceptance: {
     policy?: string;
     approver_role?: string;

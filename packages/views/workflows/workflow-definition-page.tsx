@@ -3,7 +3,9 @@
 import {
   AlertCircle,
   Archive,
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   GitBranch,
   MoreHorizontal,
   Pencil,
@@ -24,6 +26,7 @@ import {
   useSaveWorkflowDefinition,
   workflowOptions,
   type WorkflowDefinition,
+  type WorkflowGatewayCase,
   type WorkflowNodeDefinition,
   type Workflow,
   type WorkflowVersion,
@@ -85,14 +88,13 @@ import {
   type WorkflowCanvasEdgeTarget,
   type WorkflowCanvasInsertKind,
   insertWorkflowNodeOnEdge,
+  moveWorkflowGatewayCase,
   nextWorkflowNodeKey,
   removeWorkflowEdge,
   removeWorkflowNode,
-  updateWorkflowEdge,
-  workflowPathExists,
+  updateWorkflowGatewayCase,
   workflowNodeIsBoundary,
 } from "./workflow-graph-editor";
-import { WorkflowGatewayConditionEditor } from "./workflow-gateway-condition-editor";
 import {
   WorkflowNodeDefinitionInspector,
   WorkflowRoleEditor,
@@ -250,87 +252,125 @@ function newControlNode(
 
 function WorkflowEdgeRow({
   edge,
+  gatewayCase,
   targetName,
-  isGateway,
-  choiceSources,
+  canMoveUp,
+  canMoveDown,
   readOnly,
-  onChange,
+  onCaseChange,
+  onMove,
   onRemove,
 }: {
   edge: WorkflowDefinition["edges"][number];
+  gatewayCase?: WorkflowGatewayCase;
   targetName: string;
-  isGateway: boolean;
-  choiceSources: Array<{ key: string; name: string }>;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
   readOnly: boolean;
-  onChange: (edge: WorkflowDefinition["edges"][number]) => void;
+  onCaseChange: (patch: { label?: string; when?: string }) => void;
+  onMove: (direction: "up" | "down") => void;
   onRemove: () => void;
 }) {
   const { t } = useT("workflows");
+  const isElse = gatewayCase?.id === "else";
 
   return (
     <div className="overflow-hidden rounded-lg border bg-background">
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 px-3 py-2.5">
           <span className="truncate text-sm font-medium">{targetName}</span>
-          {isGateway && (
+          {gatewayCase && (
             <span className={cn(
               "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-              edge.default
+              isElse
                 ? "bg-muted text-muted-foreground"
                 : "bg-brand/10 text-brand",
             )}>
-              {edge.default
+              {isElse
                 ? t(($) => $.editor.fallback_branch)
                 : t(($) => $.editor.conditional_branch)}
             </span>
           )}
         </div>
         {!readOnly && (
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            className="mr-2"
-            aria-label={t(($) => $.actions.remove_connection)}
-            onClick={onRemove}
-          >
-            <Trash2 />
-          </Button>
+          <div className="mr-2 flex items-center gap-0.5">
+            {gatewayCase && !isElse && (
+              <>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  disabled={!canMoveUp}
+                  aria-label={t(($) => $.editor.case_move_up)}
+                  onClick={() => onMove("up")}
+                >
+                  <ArrowUp />
+                </Button>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  disabled={!canMoveDown}
+                  aria-label={t(($) => $.editor.case_move_down)}
+                  onClick={() => onMove("down")}
+                >
+                  <ArrowDown />
+                </Button>
+              </>
+            )}
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label={t(($) => $.actions.remove_connection)}
+              onClick={onRemove}
+            >
+              <Trash2 />
+            </Button>
+          </div>
         )}
       </div>
-      {isGateway && (
+      {gatewayCase && (
         <div className="space-y-3 border-t bg-muted/10 p-3">
-          <label className="flex min-h-9 items-center gap-2 text-xs font-medium">
-            <input
-              type="radio"
-              name={`gateway-default-${edge.from}`}
-              checked={edge.default === true}
+          <div className="space-y-1.5">
+            <Label
+              htmlFor={`case-label-${edge.from}-${gatewayCase.id}`}
+              className="text-xs"
+            >
+              {t(($) => $.editor.case_label)}
+            </Label>
+            <Input
+              id={`case-label-${edge.from}-${gatewayCase.id}`}
+              value={gatewayCase.label ?? ""}
               disabled={readOnly}
-              onChange={() => onChange({
-                ...edge,
-                default: true,
-                condition: undefined,
-              })}
+              placeholder={targetName}
+              onChange={(event) => onCaseChange({ label: event.target.value })}
             />
-            {t(($) => $.editor.default_branch)}
-          </label>
-          {edge.default ? (
+          </div>
+          {isElse ? (
             <p className="text-xs leading-relaxed text-muted-foreground">
               {t(($) => $.editor.default_branch_help)}
             </p>
           ) : (
-            <WorkflowGatewayConditionEditor
-              condition={edge.condition}
-              targetKey={edge.to}
-              targetName={targetName}
-              choiceSources={choiceSources}
-              readOnly={readOnly}
-              onChange={(condition) => onChange({
-                ...edge,
-                default: false,
-                condition,
-              })}
-            />
+            <div className="space-y-1.5">
+              <Label
+                htmlFor={`case-when-${edge.from}-${gatewayCase.id}`}
+                className="text-xs"
+              >
+                {t(($) => $.editor.case_when)}
+              </Label>
+              <Input
+                id={`case-when-${edge.from}-${gatewayCase.id}`}
+                value={gatewayCase.when ?? ""}
+                disabled={readOnly}
+                placeholder={t(($) => $.editor.case_when_placeholder)}
+                className="font-mono text-xs"
+                onChange={(event) => onCaseChange({ when: event.target.value })}
+              />
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t(($) => $.editor.case_when_help)}
+              </p>
+            </div>
           )}
         </div>
       )}
@@ -350,18 +390,23 @@ function WorkflowEdgeInspector({
   onChange: (definition: WorkflowDefinition) => void;
 }) {
   const { t } = useT("workflows");
-  const outgoing = definition.edges.filter((edge) => edge.from === nodeKey);
   const incoming = definition.edges.filter((edge) => edge.to === nodeKey);
   const selectedNode = definition.nodes.find((node) => node.key === nodeKey);
   const isGateway = selectedNode?.kind === "gateway";
   const nodeName = (key: string) =>
     definition.nodes.find((node) => node.key === key)?.name || key;
-  const choiceSources = definition.nodes
-    .filter((node) =>
-      node.kind === "activity" &&
-      workflowPathExists(definition, node.key, nodeKey)
-    )
-    .map((node) => ({ key: node.key, name: node.name || node.key }));
+  const rawOutgoing = definition.edges.filter((edge) => edge.from === nodeKey);
+  // A gateway's branches render in case order because that order is the
+  // routing priority; other nodes keep edge order.
+  const cases = selectedNode?.cases ?? [];
+  const conditionalCount = cases.filter((item) => item.id !== "else").length;
+  const outgoing = isGateway
+    ? [...rawOutgoing].sort((a, b) => {
+      const indexOf = (edge: typeof a) =>
+        cases.findIndex((item) => item.id === edge.from_case);
+      return indexOf(a) - indexOf(b);
+    })
+    : rawOutgoing;
 
   return (
     <div className="space-y-4 border-t pt-5">
@@ -383,30 +428,45 @@ function WorkflowEdgeInspector({
         )}
       </div>
       <div className="space-y-2">
-        {outgoing.map((edge) => (
-          <WorkflowEdgeRow
-            key={`${edge.from}-${edge.to}`}
-            edge={edge}
-            targetName={nodeName(edge.to)}
-            isGateway={isGateway}
-            choiceSources={choiceSources}
-            readOnly={readOnly}
-            onChange={(next) => {
-              const updated = updateWorkflowEdge(
-                definition,
-                { from: edge.from, to: edge.to },
-                next,
-              );
-              if (updated) onChange(updated);
-            }}
-            onRemove={() => onChange({
-              ...definition,
-              edges: definition.edges.filter(
-                (item) => !(item.from === edge.from && item.to === edge.to),
-              ),
-            })}
-          />
-        ))}
+        {outgoing.map((edge) => {
+          const gatewayCase = isGateway
+            ? cases.find((item) => item.id === edge.from_case)
+            : undefined;
+          const caseIndex = gatewayCase
+            ? cases.findIndex((item) => item.id === gatewayCase.id)
+            : -1;
+          return (
+            <WorkflowEdgeRow
+              key={`${edge.from}-${edge.to}`}
+              edge={edge}
+              gatewayCase={gatewayCase}
+              targetName={nodeName(edge.to)}
+              canMoveUp={caseIndex > 0}
+              canMoveDown={caseIndex >= 0 && caseIndex < conditionalCount - 1}
+              readOnly={readOnly}
+              onCaseChange={(patch) => {
+                if (!gatewayCase) return;
+                const updated = updateWorkflowGatewayCase(
+                  definition, nodeKey, gatewayCase.id, patch,
+                );
+                if (updated) onChange(updated);
+              }}
+              onMove={(direction) => {
+                if (!gatewayCase) return;
+                const updated = moveWorkflowGatewayCase(
+                  definition, nodeKey, gatewayCase.id, direction,
+                );
+                if (updated) onChange(updated);
+              }}
+              onRemove={() => {
+                const updated = removeWorkflowEdge(
+                  definition, { from: edge.from, to: edge.to },
+                );
+                if (updated) onChange(updated);
+              }}
+            />
+          );
+        })}
         {outgoing.length === 0 && (
           <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
             {t(($) => $.editor.no_outgoing)}

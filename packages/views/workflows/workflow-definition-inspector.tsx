@@ -10,6 +10,7 @@ import {
   type WorkflowIssueTemplate,
   type WorkflowNodeAction,
   type WorkflowNodeDefinition,
+  type WorkflowOutputField,
   type WorkflowReviewerDefinition,
   type WorkflowRoleDefinition,
 } from "@multica/core/workflows";
@@ -630,6 +631,142 @@ function ArtifactEditor({
         >
           <Plus />
           {t(($) => $.editor.add_artifact)}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+// OutputsEditor declares the structured fields a node owes on delivery.
+//
+// The key is author-editable because it is what gateway conditions reference
+// (`is_bug == false`) and what agents submit against (`--set is_bug=false`);
+// unlike an artifact key it is meant to be read and typed, so it should carry
+// domain meaning rather than a generated suffix.
+function OutputsEditor({
+  node,
+  readOnly,
+  onChange,
+}: {
+  node: WorkflowNodeDefinition;
+  readOnly: boolean;
+  onChange: (node: WorkflowNodeDefinition) => void;
+}) {
+  const { t } = useT("workflows");
+  const outputs = node.outputs ?? [];
+  const update = (index: number, field: WorkflowOutputField) => {
+    const next = [...outputs];
+    next[index] = field;
+    onChange({ ...node, outputs: next });
+  };
+
+  return (
+    <div className="space-y-3">
+      {outputs.map((field, index) => (
+        <div key={index} className="space-y-3 rounded-lg border p-2.5">
+          <div className="flex items-start justify-between gap-2">
+            <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>{t(($) => $.editor.output_key)}</Label>
+                <Input
+                  value={field.key}
+                  disabled={readOnly}
+                  className="min-h-9 font-mono text-xs"
+                  placeholder="is_bug"
+                  onChange={(event) => update(index, {
+                    ...field,
+                    key: event.target.value,
+                  })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t(($) => $.editor.output_type)}</Label>
+                <select
+                  value={field.type}
+                  disabled={readOnly}
+                  className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
+                  onChange={(event) => update(index, {
+                    ...field,
+                    type: event.target.value as WorkflowOutputField["type"],
+                    values: event.target.value === "enum"
+                      ? field.values
+                      : undefined,
+                  })}
+                >
+                  {(["bool", "enum", "number", "string", "string[]"] as const)
+                    .map((kind) => (
+                      <option key={kind} value={kind}>{kind}</option>
+                    ))}
+                </select>
+              </div>
+            </div>
+            <RemoveButton
+              label={t(($) => $.actions.remove)}
+              disabled={readOnly}
+              onClick={() => onChange({
+                ...node,
+                outputs: outputs.filter((_, i) => i !== index),
+              })}
+            />
+          </div>
+          {field.type === "enum" && (
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.output_values)}</Label>
+              <Input
+                value={(field.values ?? []).join(", ")}
+                disabled={readOnly}
+                className="min-h-9 font-mono text-xs"
+                placeholder="bug, duplicate, works_as_intended"
+                onChange={(event) => update(index, {
+                  ...field,
+                  values: event.target.value
+                    .split(",")
+                    .map((value) => value.trim())
+                    .filter(Boolean),
+                })}
+              />
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>{t(($) => $.editor.output_desc)}</Label>
+              <Input
+                value={field.desc ?? ""}
+                disabled={readOnly}
+                className="min-h-9 text-xs"
+                onChange={(event) => update(index, {
+                  ...field,
+                  desc: event.target.value || undefined,
+                })}
+              />
+            </div>
+            <label className="flex min-h-9 items-center gap-2 self-end text-xs">
+              <input
+                type="checkbox"
+                checked={field.required === true}
+                disabled={readOnly}
+                onChange={(event) => update(index, {
+                  ...field,
+                  required: event.target.checked || undefined,
+                })}
+              />
+              {t(($) => $.editor.output_required)}
+            </label>
+          </div>
+        </div>
+      ))}
+      {!readOnly && (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-9 w-full"
+          onClick={() => onChange({
+            ...node,
+            outputs: [...outputs, { key: "", type: "enum" }],
+          })}
+        >
+          <Plus />
+          {t(($) => $.editor.add_output)}
         </Button>
       )}
     </div>
@@ -1323,6 +1460,21 @@ export function WorkflowNodeDefinitionInspector({
             </p>
           </div>
           <ArtifactEditor
+            node={node}
+            readOnly={readOnly}
+            onChange={onChange}
+          />
+          {/* Output fields are the facts a gateway can route on. Declared
+              beside artifacts because both are halves of the node's delivery
+              contract: the artifact is the work, the outputs are the verdict
+              about it. */}
+          <div className="space-y-1.5 border-t pt-3">
+            <Label>{t(($) => $.editor.outputs)}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t(($) => $.editor.outputs_hint)}
+            </p>
+          </div>
+          <OutputsEditor
             node={node}
             readOnly={readOnly}
             onChange={onChange}

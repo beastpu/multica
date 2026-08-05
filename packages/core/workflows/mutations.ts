@@ -329,10 +329,9 @@ export function useChangeWorkflowNodeTask(
 }
 
 export interface CreateWorkflowSubmissionInput {
+  /** Structured output field values; validated against the node's declaration. */
   payload: Record<string, unknown>;
   summary?: string;
-  /** The outgoing node this activity picked; branches read it. */
-  choice?: string;
   evidence?: unknown[];
   source_issue_id?: string;
   source_agent_run_id?: string;

@@ -166,7 +166,6 @@ function renderSubmissionPanel(
           { type: "agent", id: "agent-1", name: "Build Agent" },
         ]}
         canManage
-        branchDuty={null}
       />
     </I18nProvider>,
   );
