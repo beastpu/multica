@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   createTemplate: vi.fn(),
   navigate: vi.fn(),
   saveDefinition: vi.fn(),
+  deleteWorkflow: vi.fn(),
+  archiveWorkflow: vi.fn(),
 }));
 
 const definition = {
@@ -80,6 +82,16 @@ const templateSummary = {
   latest_published_version: 3,
 };
 
+// The junk a workspace accumulates while learning the editor: published, never
+// started. Deleting is only offered for real on this shape.
+const neverRunSummary = {
+  ...templateSummary,
+  id: "template-2",
+  name: "Unused workflow",
+  run_count: 0,
+  recent_runs: [],
+};
+
 const templateDetail = {
   workflow: templateSummary,
   versions: [{
@@ -115,7 +127,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
         return { data: templateDetail, isLoading: false, isError: false };
       }
       return {
-        data: { workflows: [templateSummary] },
+        data: { workflows: [templateSummary, neverRunSummary] },
         isLoading: false,
         isError: false,
       };
@@ -174,6 +186,20 @@ vi.mock("@multica/core/workflows", async (importOriginal) => {
       isPending: false,
     }),
     useCopyWorkflow: () => ({ mutate: vi.fn(), isPending: false }),
+    useDeleteWorkflow: () => ({
+      mutate: (id: string, options?: { onSuccess?: () => void }) => {
+        mocks.deleteWorkflow(id);
+        options?.onSuccess?.();
+      },
+      isPending: false,
+    }),
+    useArchiveWorkflow: (id: string) => ({
+      mutate: (_input: unknown, options?: { onSuccess?: () => void }) => {
+        mocks.archiveWorkflow(id);
+        options?.onSuccess?.();
+      },
+      isPending: false,
+    }),
     useCreateWorkflowTemplateFromBuiltin: () => ({
       mutate: vi.fn(),
       isPending: false,
@@ -194,13 +220,17 @@ vi.mock("./workflow-start-dialog", () => ({
 vi.mock("../navigation", async () => {
   const React = await import("react");
   return {
+    // Props beyond href/children have to survive: a row action renders its
+    // Button through AppLink, and the label that names it for a reader
+    // arrives as one of them.
     AppLink: ({
       href,
       children,
+      ...rest
     }: {
       href: string;
       children: ReactNode;
-    }) => React.createElement("a", { href }, children),
+    }) => React.createElement("a", { href, ...rest }, children),
     useNavigation: () => ({ push: mocks.navigate }),
   };
 });
@@ -292,6 +322,8 @@ describe("NewWorkflowDialog", () => {
 describe("WorkflowsPage", () => {
   beforeEach(() => {
     mocks.saveDefinition.mockReset();
+    mocks.deleteWorkflow.mockReset();
+    mocks.archiveWorkflow.mockReset();
   });
 
   // Roles were their own tab with their own workflow picker and their own
@@ -365,6 +397,67 @@ describe("WorkflowsPage", () => {
     expect(mocks.createTemplate).toHaveBeenCalledWith(
       expect.objectContaining({ name: "New workflow" }),
     );
+  });
+
+  // Running and editing are the reasons to be on this page. Editing used to be
+  // one menu deep, which put the routine act behind the same click as the
+  // destructive one.
+  it("puts run and edit on the row and leaves the rest in the overflow", () => {
+    render(<WorkflowsPage />, { wrapper });
+
+    const editLinks = screen.getAllByRole("link", { name: "Edit workflow" });
+    expect(editLinks[0]).toHaveAttribute(
+      "href",
+      "/workspace/workflows/template-1",
+    );
+    expect(screen.getAllByRole("button", { name: "Run" })).toHaveLength(2);
+    // Copy and delete are not on the row — they are reached through the menu.
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
+  });
+
+  // The column is called "run history" and named no run. Status and time say
+  // how the last one went; only the name says which one it was.
+  it("names the latest run in the history column", () => {
+    render(<WorkflowsPage />, { wrapper });
+
+    expect(
+      screen.getByRole("link", { name: /Release run/ }),
+    ).toHaveAttribute("href", "/workspace/workflows/runs/run-running");
+  });
+
+  it("deletes a workflow that has never run, after confirming", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowsPage />, { wrapper });
+
+    await user.click(screen.getAllByRole("button", { name: "More actions" })[1]!);
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    expect(
+      screen.getByText(/removed for good/),
+    ).toBeInTheDocument();
+    expect(mocks.deleteWorkflow).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(mocks.deleteWorkflow).toHaveBeenCalledWith("template-2");
+  });
+
+  // Runs name the workflow by id, so deleting one that has run would leave
+  // them pointing at nothing. The confirmation says so and offers the action
+  // that does work, rather than dead-ending on a refusal.
+  it("offers archiving instead of deleting a workflow that has runs", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowsPage />, { wrapper });
+
+    await user.click(screen.getAllByRole("button", { name: "More actions" })[0]!);
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    expect(screen.getByText(/cannot be deleted/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+    expect(mocks.archiveWorkflow).toHaveBeenCalledWith("template-1");
+    expect(mocks.deleteWorkflow).not.toHaveBeenCalled();
   });
 
   it("suffixes the starter name until it is free", () => {

@@ -12,6 +12,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Trash2,
   Users,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -20,10 +21,12 @@ import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
+  useArchiveWorkflow,
   useCreateWorkflow,
   useCreateWorkflowTemplateFromBuiltin,
   useCopyWorkflow,
   useCreateWorkflowRun,
+  useDeleteWorkflow,
   workflowBuiltinTemplateListOptions,
   workflowListOptions,
   workflowOptions,
@@ -35,7 +38,17 @@ import {
   memberListOptions,
   squadListOptions,
 } from "@multica/core/workspace/queries";
-import { Button } from "@multica/ui/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@multica/ui/components/ui/alert-dialog";
+import { Button, buttonVariants } from "@multica/ui/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -152,6 +165,10 @@ function recentRunMarkerClass(status: string): string {
 // was last, not when, and not where the rest were. What a list row owes the
 // reader is the latest state and a way through to the whole history; the
 // history itself is a page.
+//
+// The run's own name leads. Status and time say how the last run went, but
+// only the name says which run it was, and a column called "run history" that
+// never names a run is the one thing it cannot leave out.
 function RunHistoryCell({ template }: { template: Workflow }) {
   const { t } = useT("workflows");
   const p = useWorkspacePaths();
@@ -169,11 +186,11 @@ function RunHistoryCell({ template }: { template: Workflow }) {
   }
 
   return (
-    <div className="flex items-center justify-end gap-2">
+    <div className="flex items-center justify-end gap-1">
       <AppLink
         href={p.workflowRun(latest.id)}
         title={`${latest.title} · ${latest.status}`}
-        className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
       >
         <span
           aria-hidden="true"
@@ -182,7 +199,10 @@ function RunHistoryCell({ template }: { template: Workflow }) {
             recentRunMarkerClass(latest.status),
           )}
         />
-        <span className="truncate text-xs text-muted-foreground">
+        <span className="truncate text-xs font-medium text-foreground">
+          {latest.title}
+        </span>
+        <span className="shrink-0 text-xs text-muted-foreground">
           {t(($) => $.status[latest.status as "running"]) ?? latest.status}
         </span>
         <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
@@ -192,7 +212,7 @@ function RunHistoryCell({ template }: { template: Workflow }) {
       {template.run_count > 0 && (
         <AppLink
           href={p.workflowRuns(template.id)}
-          className="shrink-0 rounded-md px-1.5 py-1 text-xs tabular-nums text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          className="shrink-0 rounded-md border border-transparent px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground/70 outline-none hover:border-border hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
         >
           {t(($) => $.templates.run_count, { count: template.run_count })}
         </AppLink>
@@ -329,6 +349,7 @@ function TemplatesPanel({
   canManage: boolean;
 }) {
   const { t } = useT("workflows");
+  const { t: commonT } = useT("common");
   const wsId = useWorkspaceId();
   const p = useWorkspacePaths();
   const navigation = useNavigation();
@@ -342,6 +363,14 @@ function TemplatesPanel({
   );
   const copyTemplate = useCopyWorkflow();
   const [runTemplate, setRunTemplate] = useState<Workflow | null>(null);
+  const [deleteTemplate, setDeleteTemplate] = useState<Workflow | null>(null);
+  // A workflow that has run cannot be deleted — the runs name it by id and
+  // would be left pointing at nothing — so the same confirmation offers
+  // archiving instead of dead-ending on a refusal the reader can't act on.
+  const deleteHasRuns = (deleteTemplate?.run_count ?? 0) > 0;
+  const deleteWorkflow = useDeleteWorkflow();
+  const archiveWorkflow = useArchiveWorkflow(deleteTemplate?.id ?? "");
+  const deletePending = deleteWorkflow.isPending || archiveWorkflow.isPending;
 
   if (isError) {
     return (
@@ -461,16 +490,40 @@ function TemplatesPanel({
                     own cells.
                   */}
                   <td className="px-3 py-2">
+                    {/*
+                      Running and editing are what this list is for, so they
+                      are one click on the row. Copy and delete are occasional
+                      and destructive respectively — they stay behind the
+                      overflow where a mis-click cannot reach them.
+                    */}
                     <div className="-mr-2 flex items-center justify-end gap-0.5">
                       {template.status === "published" && (
                         <Button
-                          size="sm"
+                          size="icon-sm"
                           variant="ghost"
                           aria-label={t(($) => $.actions.run)}
                           onClick={() => setRunTemplate(template)}
                         >
                           <Play />
                         </Button>
+                      )}
+                      {/*
+                        Styled as a button, but left as a real link: it
+                        navigates, so it should open in a new tab and announce
+                        as a link. Rendering Button through AppLink would hand
+                        it button semantics it does not have.
+                      */}
+                      {canManage && (
+                        <AppLink
+                          href={p.workflow(template.id)}
+                          aria-label={t(($) => $.actions.edit_workflow)}
+                          className={buttonVariants({
+                            variant: "ghost",
+                            size: "icon-sm",
+                          })}
+                        >
+                          <Pencil aria-hidden="true" className="size-4" />
+                        </AppLink>
                       )}
                       {canManage && (
                         <DropdownMenu>
@@ -503,13 +556,12 @@ function TemplatesPanel({
                               {t(($) => $.actions.copy)}
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              render={
-                                <AppLink href={p.workflow(template.id)}>
-                                  <Pencil aria-hidden="true" />
-                                  {t(($) => $.actions.edit_workflow)}
-                                </AppLink>
-                              }
-                            />
+                              variant="destructive"
+                              onClick={() => setDeleteTemplate(template)}
+                            >
+                              <Trash2 aria-hidden="true" />
+                              {t(($) => $.actions.delete)}
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       )}
@@ -534,6 +586,48 @@ function TemplatesPanel({
           if (!nextOpen) setRunTemplate(null);
         }}
       />
+      <AlertDialog
+        open={Boolean(deleteTemplate)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !deletePending) setDeleteTemplate(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t(($) => $.templates.delete_title)}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteHasRuns
+                ? t(($) => $.templates.delete_blocked)
+                : t(($) => $.templates.delete_description, {
+                  name: deleteTemplate?.name ?? "",
+                })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletePending}>
+              {commonT(($) => $.cancel)}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deletePending}
+              onClick={() => {
+                if (!deleteTemplate) return;
+                const done = { onSuccess: () => setDeleteTemplate(null) };
+                if (deleteHasRuns) {
+                  archiveWorkflow.mutate(undefined, done);
+                } else {
+                  deleteWorkflow.mutate(deleteTemplate.id, done);
+                }
+              }}
+            >
+              {deleteHasRuns
+                ? t(($) => $.actions.archive)
+                : t(($) => $.actions.delete)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

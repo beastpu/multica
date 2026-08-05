@@ -52,7 +52,8 @@
     "start_workflow": "ワークフローを開始",
     "start_existing_workflow": "既存 issue から開始",
     "load_more": "さらに読み込む",
-    "loading_more": "読み込み中..."
+    "loading_more": "読み込み中...",
+    "delete": "削除"
   },
   "create": {
     "title": "ワークフローを開始",
@@ -170,7 +171,10 @@
     "column_name": "名称",
     "column_status": "ステータス",
     "column_actions": "操作",
-    "column_updated": "最終公開"
+    "column_updated": "最終公開",
+    "delete_title": "このワークフローを削除しますか？",
+    "delete_description": "「{{name}}」と保存済みのバージョンを完全に削除します。元に戻せません。",
+    "delete_blocked": "このワークフローには実行履歴があるため削除できません。アーカイブを使ってください。履歴は残り、新しい実行は開始できなくなります。"
   },
   "workbench": {
     "title": "ワークフロー作業台",
