@@ -314,7 +314,13 @@
     "run_administration": "実行の管理",
     "workflow_version": "{{name}} · バージョン {{version}}",
     "output_fields": "構造化出力フィールド",
-    "output_unset": "— 未設定 —"
+    "output_unset": "— 未設定 —",
+    "output_validation_failed": "提出が拒否されました。次のフィールドを修正してください：",
+    "output_expected": "許可される値：{{values}}",
+    "output_problem_missing": "必須ですが未入力です",
+    "output_problem_enum": "許可された値ではありません",
+    "output_problem_type": "型が正しくありません",
+    "output_problem_too_long": "長すぎます"
   },
   "editor": {
     "title": "ワークフローテンプレート",

@@ -315,7 +315,13 @@
     "run_administration": "Run administration",
     "workflow_version": "{{name}} · version {{version}}",
     "output_fields": "Structured output fields",
-    "output_unset": "— not set —"
+    "output_unset": "— not set —",
+    "output_validation_failed": "The delivery was refused — these fields need fixing:",
+    "output_expected": "expected: {{values}}",
+    "output_problem_missing": "required, but not filled in",
+    "output_problem_enum": "not one of the allowed values",
+    "output_problem_type": "wrong type",
+    "output_problem_too_long": "too long"
   },
   "editor": {
     "title": "Workflow template",

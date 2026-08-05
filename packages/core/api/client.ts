@@ -423,6 +423,43 @@ export function dispatchReasonCode(err: unknown): string | undefined {
   return undefined;
 }
 
+/** One field the server refused, with what it would have accepted. */
+export interface OutputFieldError {
+  key: string;
+  problem: string;
+  got?: string;
+  expected?: string[];
+}
+
+// outputFieldErrors extracts the per-field rejections from a workflow
+// submission that failed schema validation. A generic "action failed" toast
+// would leave the submitter guessing which field to fix — the whole point of
+// validating against a declared schema is that the answer is knowable.
+// Returns undefined for any other failure so callers keep their generic toast.
+export function outputFieldErrors(err: unknown): OutputFieldError[] | undefined {
+  if (!(err instanceof ApiError) || !err.body || typeof err.body !== "object") {
+    return undefined;
+  }
+  const body = err.body as { error?: unknown; fields?: unknown };
+  if (body.error !== "output_validation_failed" || !Array.isArray(body.fields)) {
+    return undefined;
+  }
+  const fields = body.fields.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const { key, problem, got, expected } = entry as Record<string, unknown>;
+    if (typeof key !== "string" || typeof problem !== "string") return [];
+    return [{
+      key,
+      problem,
+      got: typeof got === "string" ? got : undefined,
+      expected: Array.isArray(expected)
+        ? expected.filter((value): value is string => typeof value === "string")
+        : undefined,
+    }];
+  });
+  return fields.length > 0 ? fields : undefined;
+}
+
 // Thrown by getAttachmentTextContent when the server refuses to inline a
 // file because it exceeds the 2 MB cap. UI maps to a "too large, please
 // download" affordance with the Download CTA still available.

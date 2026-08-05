@@ -1245,48 +1245,71 @@ func validateGatewayCases(
 	edges []EdgeDefinition,
 ) error {
 	key := gateway.Key
+	// Errors name the gateway and branch the way the author labelled them on
+	// the canvas. Reporting an internal key ("gateway_1", "c1") asks the
+	// reader to translate before they can even find what to fix.
+	name := displayName(gateway.Name, key)
 	if len(gateway.Cases) < 2 {
 		return fmt.Errorf(
-			"gateway %q requires at least one conditional case and the else case", key,
+			"gateway %q requires at least one conditional branch and the fallback branch", name,
 		)
 	}
 	if gateway.Cases[len(gateway.Cases)-1].ID != "else" {
-		return fmt.Errorf("gateway %q requires the else case last", key)
+		return fmt.Errorf("gateway %q requires the fallback branch last", name)
 	}
 	scope := GatewayExprScope(key, nodes, edges)
 	seen := make(map[string]struct{}, len(gateway.Cases))
+	targets := make(map[string]string, len(outgoing))
+	for _, edge := range outgoing {
+		targets[edge.FromCase] = edge.To
+	}
+	branchName := func(gatewayCase GatewayCase) string {
+		if label := strings.TrimSpace(gatewayCase.Label); label != "" {
+			return label
+		}
+		if target, ok := targets[gatewayCase.ID]; ok {
+			if node, exists := nodes[target]; exists {
+				return displayName(node.Name, target)
+			}
+		}
+		return gatewayCase.ID
+	}
 	for i, gatewayCase := range gateway.Cases {
 		if _, exists := seen[gatewayCase.ID]; exists {
-			return fmt.Errorf("gateway %q duplicate case id %q", key, gatewayCase.ID)
+			return fmt.Errorf("gateway %q duplicate branch id %q", name, gatewayCase.ID)
 		}
 		seen[gatewayCase.ID] = struct{}{}
 		if gatewayCase.ID == "else" {
 			if i != len(gateway.Cases)-1 {
-				return fmt.Errorf("gateway %q else case must be last", key)
+				return fmt.Errorf("gateway %q fallback branch must be last", name)
 			}
 			if strings.TrimSpace(gatewayCase.When) != "" {
-				return fmt.Errorf("gateway %q else case cannot carry a condition", key)
+				return fmt.Errorf("gateway %q fallback branch cannot carry a condition", name)
 			}
 			continue
 		}
 		if !validKey(gatewayCase.ID) {
-			return fmt.Errorf("gateway %q has invalid case id %q", key, gatewayCase.ID)
+			return fmt.Errorf("gateway %q has invalid branch id %q", name, gatewayCase.ID)
 		}
 		if strings.TrimSpace(gatewayCase.When) == "" {
-			return fmt.Errorf("gateway %q case %q requires a when expression", key, gatewayCase.ID)
+			return fmt.Errorf(
+				"gateway %q branch %q requires a condition", name, branchName(gatewayCase),
+			)
 		}
 		if _, err := ParseExpr(gatewayCase.When, scope); err != nil {
-			return fmt.Errorf("gateway %q case %q: %w", key, gatewayCase.ID, err)
+			return fmt.Errorf(
+				"gateway %q branch %q: %w", name, branchName(gatewayCase), err,
+			)
 		}
 	}
 	edgesByCase := make(map[string]int, len(outgoing))
 	for _, edge := range outgoing {
 		if edge.FromCase == "" {
-			return fmt.Errorf("gateway %q edge to %q must bind to a case", key, edge.To)
+			return fmt.Errorf("gateway %q edge to %q must bind to a branch", name, edge.To)
 		}
 		if _, exists := seen[edge.FromCase]; !exists {
 			return fmt.Errorf(
-				"gateway %q edge to %q references unknown case %q", key, edge.To, edge.FromCase,
+				"gateway %q edge to %q references unknown branch %q", name, edge.To, edge.FromCase,
 			)
 		}
 		edgesByCase[edge.FromCase]++
@@ -1294,11 +1317,21 @@ func validateGatewayCases(
 	for _, gatewayCase := range gateway.Cases {
 		if edgesByCase[gatewayCase.ID] != 1 {
 			return fmt.Errorf(
-				"gateway %q case %q requires exactly one outgoing edge", key, gatewayCase.ID,
+				"gateway %q branch %q requires exactly one outgoing edge",
+				name, branchName(gatewayCase),
 			)
 		}
 	}
 	return nil
+}
+
+// displayName prefers the author-visible name, falling back to the key when a
+// node or branch was never named.
+func displayName(name, fallback string) string {
+	if trimmed := strings.TrimSpace(name); trimmed != "" {
+		return trimmed
+	}
+	return fallback
 }
 
 func workflowPathExists(from, to string, edges []EdgeDefinition) bool {

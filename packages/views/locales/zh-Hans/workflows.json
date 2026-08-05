@@ -314,7 +314,13 @@
     "run_administration": "运行管理",
     "workflow_version": "{{name}} · 版本 {{version}}",
     "output_fields": "结构化输出字段",
-    "output_unset": "— 未填写 —"
+    "output_unset": "— 未填写 —",
+    "output_validation_failed": "交付被拒绝，以下字段需要修正：",
+    "output_expected": "可选值：{{values}}",
+    "output_problem_missing": "必填，但未填写",
+    "output_problem_enum": "不在允许的取值范围内",
+    "output_problem_type": "类型不正确",
+    "output_problem_too_long": "内容过长"
   },
   "editor": {
     "title": "工作流模板",

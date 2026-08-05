@@ -314,7 +314,13 @@
     "run_administration": "실행 관리",
     "workflow_version": "{{name}} · 버전 {{version}}",
     "output_fields": "구조화된 출력 필드",
-    "output_unset": "— 미설정 —"
+    "output_unset": "— 미설정 —",
+    "output_validation_failed": "제출이 거부되었습니다. 다음 필드를 수정하세요:",
+    "output_expected": "허용 값: {{values}}",
+    "output_problem_missing": "필수 항목이지만 입력되지 않았습니다",
+    "output_problem_enum": "허용된 값이 아닙니다",
+    "output_problem_type": "형식이 올바르지 않습니다",
+    "output_problem_too_long": "너무 깁니다"
   },
   "editor": {
     "title": "워크플로 템플릿",

@@ -28,6 +28,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { outputFieldErrors } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { issueDetailOptions } from "@multica/core/issues/queries";
@@ -161,6 +162,28 @@ import {
 // author trim before submitting instead of being rejected after writing.
 const handoffSummaryLimit = 500;
 
+// outputProblemText localizes the server's machine-readable problem codes. An
+// unknown code falls back to the raw string rather than an empty line: a newer
+// server may add codes this build has no translation for, and naming the field
+// with an untranslated reason still beats saying nothing.
+function outputProblemText(
+  t: ReturnType<typeof useT<"workflows">>["t"],
+  problem: string,
+) {
+  switch (problem) {
+    case "missing_required":
+      return t(($) => $.workbench.output_problem_missing);
+    case "invalid_enum":
+      return t(($) => $.workbench.output_problem_enum);
+    case "invalid_type":
+      return t(($) => $.workbench.output_problem_type);
+    case "too_long":
+      return t(($) => $.workbench.output_problem_too_long);
+    default:
+      return problem;
+  }
+}
+
 export function SubmissionPanel({
   instanceId,
   node,
@@ -194,6 +217,7 @@ export function SubmissionPanel({
   const deliveredSubmissions = submissions.filter(
     (submission) => submission.submitted_by_type !== "system",
   );
+  const fieldErrors = outputFieldErrors(submit.error);
 
   useEffect(() => {
     setValues({});
@@ -260,10 +284,18 @@ export function SubmissionPanel({
                   setValues((current) => ({ ...current, [field.key]: next }));
                 return (
                   <div key={field.key} className="space-y-1.5">
+                    {/* The description leads when the author wrote one: the key
+                        is an identifier for conditions and agents, not a label
+                        a person should have to read as one. */}
                     <Label htmlFor={inputId}>
-                      {field.key}
+                      {field.desc || field.key}
                       {field.required && (
                         <span className="text-destructive"> *</span>
+                      )}
+                      {field.desc && (
+                        <span className="ml-1.5 font-mono text-xs font-normal text-muted-foreground">
+                          {field.key}
+                        </span>
                       )}
                     </Label>
                     {field.type === "bool" || field.type === "enum" ? (
@@ -291,9 +323,6 @@ export function SubmissionPanel({
                         placeholder={field.type === "string[]" ? '["a", "b"]' : undefined}
                         onChange={(event) => setValue(event.target.value)}
                       />
-                    )}
-                    {field.desc && (
-                      <p className="text-xs text-muted-foreground">{field.desc}</p>
                     )}
                   </div>
                 );
@@ -325,9 +354,37 @@ export function SubmissionPanel({
             {t(($) => $.actions.submit)}
           </Button>
           {submit.isError && (
-            <p role="alert" className="text-xs text-destructive">
-              {t(($) => $.errors.action_failed)}
-            </p>
+            fieldErrors
+              // Naming the offending fields is the whole point of validating
+              // against a declared schema; a generic failure would leave the
+              // submitter guessing which one to fix.
+              ? (
+                <div role="alert" className="space-y-1 text-xs text-destructive">
+                  <p>{t(($) => $.workbench.output_validation_failed)}</p>
+                  <ul className="space-y-0.5 pl-4">
+                    {fieldErrors.map((fieldError) => (
+                      <li key={fieldError.key} className="list-disc">
+                        <span className="font-mono">{fieldError.key}</span>
+                        {": "}
+                        {outputProblemText(t, fieldError.problem)}
+                        {fieldError.expected && fieldError.expected.length > 0 && (
+                          <>
+                            {" — "}
+                            {t(($) => $.workbench.output_expected, {
+                              values: fieldError.expected.join(", "),
+                            })}
+                          </>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )
+              : (
+                <p role="alert" className="text-xs text-destructive">
+                  {t(($) => $.errors.action_failed)}
+                </p>
+              )
           )}
         </div>
       )}

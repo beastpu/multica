@@ -798,7 +798,7 @@ func TestValidateDefinitionGatewayCases(t *testing.T) {
 				{From: "route", To: "left", FromCase: "c1"},
 				{From: "route", To: "right", FromCase: "c2"},
 			},
-			want: "else case last",
+			want: "fallback branch last",
 		},
 		{
 			name:  "else not last",
@@ -807,7 +807,7 @@ func TestValidateDefinitionGatewayCases(t *testing.T) {
 				{From: "route", To: "left", FromCase: "c1"},
 				{From: "route", To: "right", FromCase: "else"},
 			},
-			want: "else case last",
+			want: "fallback branch last",
 		},
 		{
 			name:  "else with condition",
@@ -825,7 +825,7 @@ func TestValidateDefinitionGatewayCases(t *testing.T) {
 				{From: "route", To: "left", FromCase: "c1"},
 				{From: "route", To: "right", FromCase: "else"},
 			},
-			want: "case \"c1\"",
+			want: "branch \"Left\"",
 		},
 		{
 			name:  "enum literal outside declaration",
@@ -852,7 +852,7 @@ func TestValidateDefinitionGatewayCases(t *testing.T) {
 				{From: "route", To: "left", FromCase: "ghost"},
 				{From: "route", To: "right", FromCase: "else"},
 			},
-			want: "unknown case",
+			want: "unknown branch",
 		},
 	}
 	for _, tc := range tests {
