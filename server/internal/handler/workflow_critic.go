@@ -47,6 +47,27 @@ func createWorkflowVerdictRework(
 	if err != nil {
 		return locked, db.WorkflowNodeInstance{}, err
 	}
+	// A Critic rejecting and a worker resubmitting is the loop most likely to
+	// run away, because neither side ever tires. At the cap the node stops
+	// being handed back and waits for a person instead — halting is the point,
+	// so this is not an error the Critic callback should retry.
+	if capErr := workflowdomain.ValidateReworkAttempt(
+		nodeDefinition, int(currentNode.Attempt),
+	); capErr != nil {
+		reasons := workflowdomain.EncodeWaitingReasons([]workflowdomain.WaitingReason{{
+			Code:    "rework_attempts_exhausted",
+			Message: capErr.Error(),
+		}})
+		held, holdErr := q.UpdateWorkflowNodeState(ctx, db.UpdateWorkflowNodeStateParams{
+			Status: "blocked", WaitingReasons: reasons, MarkReconciled: true,
+			ID: currentNode.ID, WorkspaceID: locked.WorkspaceID,
+			ExpectedStatus: currentNode.Status,
+		})
+		if holdErr != nil {
+			return locked, db.WorkflowNodeInstance{}, holdErr
+		}
+		return locked, held, nil
+	}
 	affected := plan.Descendants(currentNode.NodeKey)
 	affected[currentNode.NodeKey] = struct{}{}
 	for _, candidate := range nodes {

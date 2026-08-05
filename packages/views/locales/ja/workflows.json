@@ -485,7 +485,14 @@
     "output_type": "タイプ",
     "output_values": "列挙値（カンマ区切り）",
     "output_desc": "説明",
-    "output_required": "必須"
+    "output_required": "必須",
+    "gateway_mode": "ルーティング方式",
+    "gateway_mode_switch": "1 つだけ進む（排他）",
+    "gateway_mode_filter": "一致したものすべて（並列）",
+    "gateway_mode_switch_help": "上から順に評価し、最初に一致した分岐が有効になります。経路が互いに代替関係にある場合に使います。",
+    "gateway_mode_filter_help": "一致したすべての分岐が実行されます。本線に加えてレビューやチェックを追加する場合に使います。フォールバックはどれも一致しないときだけ実行されます。",
+    "max_attempts": "差し戻し上限",
+    "max_attempts_hint": "このアクティビティを実行できる回数の上限です。上限に達すると差し戻しを止め、担当者の判断を待ちます。空欄なら無制限。"
   },
   "status": {
     "needs_setup": "設定が必要",

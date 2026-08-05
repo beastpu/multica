@@ -889,33 +889,37 @@ func TestSelectGatewayCase(t *testing.T) {
 	gateway := plan.Nodes["route"]
 
 	t.Run("first match wins in declared order", func(t *testing.T) {
-		selected, target, err := SelectGatewayCase(gateway, plan, ExprPool{
+		selected, targets, err := SelectGatewayCases(gateway, plan, ExprPool{
 			"triage": {"is_bug": false, "severity": "high"},
 		})
-		if err != nil || selected.ID != "c1" || target != "left" {
-			t.Fatalf("selected %q -> %q, err %v", selected.ID, target, err)
+		if err != nil || len(selected) != 1 || selected[0].ID != "c1" ||
+			targets[0] != "left" {
+			t.Fatalf("selected %+v -> %v, err %v", selected, targets, err)
 		}
 	})
 	t.Run("later case fires when earlier misses", func(t *testing.T) {
-		selected, target, err := SelectGatewayCase(gateway, plan, ExprPool{
+		selected, targets, err := SelectGatewayCases(gateway, plan, ExprPool{
 			"triage": {"is_bug": true, "severity": "high"},
 		})
-		if err != nil || selected.ID != "c2" || target != "right" {
-			t.Fatalf("selected %q -> %q, err %v", selected.ID, target, err)
+		if err != nil || len(selected) != 1 || selected[0].ID != "c2" ||
+			targets[0] != "right" {
+			t.Fatalf("selected %+v -> %v, err %v", selected, targets, err)
 		}
 	})
 	t.Run("no match falls to else", func(t *testing.T) {
-		selected, target, err := SelectGatewayCase(gateway, plan, ExprPool{
+		selected, targets, err := SelectGatewayCases(gateway, plan, ExprPool{
 			"triage": {"is_bug": true, "severity": "low"},
 		})
-		if err != nil || selected.ID != "else" || target != "fallthrough" {
-			t.Fatalf("selected %q -> %q, err %v", selected.ID, target, err)
+		if err != nil || len(selected) != 1 || selected[0].ID != "else" ||
+			targets[0] != "fallthrough" {
+			t.Fatalf("selected %+v -> %v, err %v", selected, targets, err)
 		}
 	})
 	t.Run("absent upstream fails closed to else", func(t *testing.T) {
-		selected, target, err := SelectGatewayCase(gateway, plan, ExprPool{})
-		if err != nil || selected.ID != "else" || target != "fallthrough" {
-			t.Fatalf("selected %q -> %q, err %v", selected.ID, target, err)
+		selected, targets, err := SelectGatewayCases(gateway, plan, ExprPool{})
+		if err != nil || len(selected) != 1 || selected[0].ID != "else" ||
+			targets[0] != "fallthrough" {
+			t.Fatalf("selected %+v -> %v, err %v", selected, targets, err)
 		}
 	})
 }
@@ -1102,5 +1106,151 @@ func TestAcceptanceReworkTargetsComeFromTheGraph(t *testing.T) {
 	targets := plan.AcceptanceReworkTargets()
 	if len(targets) != 1 || targets[0] != "implementation" {
 		t.Fatalf("AcceptanceReworkTargets() = %v, want [implementation]", targets)
+	}
+}
+
+// A filter gateway is how "this change touched the database, so add a DBA
+// review, and carry on with the main line either way" is expressed. An
+// exclusive gateway cannot say it: it must pick exactly one path.
+func TestSelectGatewayCasesFilterMode(t *testing.T) {
+	definition := gatewayTestDefinition(
+		[]GatewayCase{
+			{ID: "c1", Label: "非缺陷", When: `is_bug == false`},
+			{ID: "c2", Label: "高危", When: `severity == "high"`},
+			{ID: "else", Label: "继续"},
+		},
+		[]EdgeDefinition{
+			{From: "route", To: "left", FromCase: "c1"},
+			{From: "route", To: "right", FromCase: "c2"},
+		},
+	)
+	for i, node := range definition.Nodes {
+		if node.Key == "route" {
+			definition.Nodes[i].Mode = "filter"
+		}
+	}
+	definition.Nodes = append(definition.Nodes, NodeDefinition{
+		Key: "fallthrough", Kind: "end", Name: "Fallthrough",
+	})
+	definition.Edges = append(definition.Edges, EdgeDefinition{
+		From: "route", To: "fallthrough", FromCase: "else",
+	})
+	plan, err := BuildGraphPlan(definition)
+	if err != nil {
+		t.Fatalf("BuildGraphPlan() error = %v", err)
+	}
+	gateway := plan.Nodes["route"]
+
+	t.Run("every matching case activates", func(t *testing.T) {
+		cases, targets, err := SelectGatewayCases(gateway, plan, ExprPool{
+			"triage": {"is_bug": false, "severity": "high"},
+		})
+		if err != nil {
+			t.Fatalf("SelectGatewayCases() error = %v", err)
+		}
+		if len(cases) != 2 || cases[0].ID != "c1" || cases[1].ID != "c2" {
+			t.Fatalf("cases = %+v, want both conditional branches", cases)
+		}
+		if len(targets) != 2 || targets[0] != "left" || targets[1] != "right" {
+			t.Fatalf("targets = %v, want [left right]", targets)
+		}
+	})
+
+	t.Run("a single match does not drag in the fallback", func(t *testing.T) {
+		cases, targets, err := SelectGatewayCases(gateway, plan, ExprPool{
+			"triage": {"is_bug": true, "severity": "high"},
+		})
+		if err != nil || len(cases) != 1 || cases[0].ID != "c2" {
+			t.Fatalf("cases = %+v, err = %v", cases, err)
+		}
+		if len(targets) != 1 || targets[0] != "right" {
+			t.Fatalf("targets = %v, want [right]", targets)
+		}
+	})
+
+	t.Run("no match falls through to else alone", func(t *testing.T) {
+		cases, targets, err := SelectGatewayCases(gateway, plan, ExprPool{
+			"triage": {"is_bug": true, "severity": "low"},
+		})
+		if err != nil || len(cases) != 1 || cases[0].ID != "else" {
+			t.Fatalf("cases = %+v, err = %v", cases, err)
+		}
+		if len(targets) != 1 || targets[0] != "fallthrough" {
+			t.Fatalf("targets = %v, want [fallthrough]", targets)
+		}
+	})
+}
+
+// Switch stays first-match-wins even when a later case would also match.
+func TestSelectGatewayCasesSwitchStopsAtFirstMatch(t *testing.T) {
+	definition := gatewayTestDefinition(
+		[]GatewayCase{
+			{ID: "c1", Label: "非缺陷", When: `is_bug == false`},
+			{ID: "c2", Label: "高危", When: `severity == "high"`},
+			{ID: "else", Label: "继续"},
+		},
+		[]EdgeDefinition{
+			{From: "route", To: "left", FromCase: "c1"},
+			{From: "route", To: "right", FromCase: "c2"},
+		},
+	)
+	definition.Nodes = append(definition.Nodes, NodeDefinition{
+		Key: "fallthrough", Kind: "end", Name: "Fallthrough",
+	})
+	definition.Edges = append(definition.Edges, EdgeDefinition{
+		From: "route", To: "fallthrough", FromCase: "else",
+	})
+	plan, err := BuildGraphPlan(definition)
+	if err != nil {
+		t.Fatalf("BuildGraphPlan() error = %v", err)
+	}
+
+	cases, targets, err := SelectGatewayCases(plan.Nodes["route"], plan, ExprPool{
+		"triage": {"is_bug": false, "severity": "high"},
+	})
+	if err != nil || len(cases) != 1 || cases[0].ID != "c1" {
+		t.Fatalf("cases = %+v, err = %v", cases, err)
+	}
+	if len(targets) != 1 || targets[0] != "left" {
+		t.Fatalf("targets = %v, want [left]", targets)
+	}
+}
+
+// Rework has no natural end: a reviewer rejecting and an executor resubmitting
+// is a loop the graph cannot see, because rework rebuilds the node rather than
+// following an edge. The cap is what turns "looping forever" into "a person
+// decides".
+func TestReworkAttemptCap(t *testing.T) {
+	node := NodeDefinition{
+		Key: "fix", Kind: "activity", Name: "Fix",
+		Completion: CompletionDefinition{MaxAttempts: 3},
+	}
+	t.Run("allows attempts up to the cap", func(t *testing.T) {
+		for attempt := 1; attempt < 3; attempt++ {
+			if err := ValidateReworkAttempt(node, attempt); err != nil {
+				t.Fatalf("attempt %d rejected: %v", attempt, err)
+			}
+		}
+	})
+	t.Run("refuses the attempt that would exceed it", func(t *testing.T) {
+		err := ValidateReworkAttempt(node, 3)
+		if err == nil || !strings.Contains(err.Error(), "3") {
+			t.Fatalf("ValidateReworkAttempt() error = %v, want a cap error naming 3", err)
+		}
+	})
+	t.Run("an unset cap never blocks", func(t *testing.T) {
+		open := NodeDefinition{Key: "fix", Kind: "activity", Name: "Fix"}
+		if err := ValidateReworkAttempt(open, 99); err != nil {
+			t.Fatalf("uncapped node blocked at 99: %v", err)
+		}
+	})
+}
+
+func TestValidateDefinitionRejectsNegativeMaxAttempts(t *testing.T) {
+	definition := validDefinition()
+	definition.Nodes[1].Completion.MaxAttempts = -1
+	err := ValidateDefinition(definition)
+	if err == nil || !strings.Contains(err.Error(), "max_attempts") {
+		t.Fatalf("ValidateDefinition() error = %v, want max_attempts error", err)
 	}
 }

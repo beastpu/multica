@@ -94,52 +94,85 @@ func (p GraphPlan) EdgeList() []EdgeDefinition {
 	return edges
 }
 
-// SelectGatewayCase routes a gateway against the variable pool: cases evaluate
-// in declared order, the first match wins, and no match falls through to the
-// trailing else. It returns the winning case and the target its edge binds.
+// GatewayModeFilter activates every matching case instead of only the first.
+const GatewayModeFilter = "filter"
+
+// ValidateReworkAttempt reports whether a node may be sent back again.
+// currentAttempt is the attempt already on record; the rework about to happen
+// would produce currentAttempt+1.
+//
+// Rework does not travel an edge — it rebuilds the node — so the graph's
+// acyclic guarantee says nothing about how many times this can repeat. Without
+// a cap a reviewer and an executor can hand work back indefinitely, and the run
+// looks busy the whole time.
+func ValidateReworkAttempt(node NodeDefinition, currentAttempt int) error {
+	cap := node.Completion.MaxAttempts
+	if cap <= 0 || currentAttempt < cap {
+		return nil
+	}
+	return fmt.Errorf(
+		"activity %q has used all %d attempts; a person has to decide instead of reworking again",
+		displayName(node.Name, node.Key), cap,
+	)
+}
+
+// SelectGatewayCases routes a gateway against the variable pool. Cases evaluate
+// in declared order. A switch gateway (the default) stops at the first match; a
+// filter gateway takes all of them. Either way, no match at all falls through
+// to the trailing else, alone.
 //
 // A parse error here means a stored template escaped validation — surfaced as
 // an error rather than a silent else, because misrouting work is worse than
 // halting it.
-func SelectGatewayCase(
+func SelectGatewayCases(
 	gateway NodeDefinition,
 	plan GraphPlan,
 	pool ExprPool,
-) (GatewayCase, string, error) {
+) ([]GatewayCase, []string, error) {
 	targets := make(map[string]string, len(plan.Outgoing[gateway.Key]))
 	for _, edge := range plan.Outgoing[gateway.Key] {
 		targets[edge.FromCase] = edge.To
 	}
 	scope := GatewayExprScope(gateway.Key, plan.Nodes, plan.EdgeList())
+	matched := make([]GatewayCase, 0, 1)
+	matchedTargets := make([]string, 0, 1)
 	for _, gatewayCase := range gateway.Cases {
 		if gatewayCase.ID == "else" {
 			continue
 		}
 		expr, err := ParseExpr(gatewayCase.When, scope)
 		if err != nil {
-			return GatewayCase{}, "", fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"gateway %q case %q: %w", gateway.Key, gatewayCase.ID, err,
 			)
 		}
-		matched, err := expr.Evaluate(pool)
+		hit, err := expr.Evaluate(pool)
 		if err != nil {
-			return GatewayCase{}, "", fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"gateway %q case %q: %w", gateway.Key, gatewayCase.ID, err,
 			)
 		}
-		if matched {
-			return gatewayCase, targets[gatewayCase.ID], nil
+		if !hit {
+			continue
+		}
+		matched = append(matched, gatewayCase)
+		matchedTargets = append(matchedTargets, targets[gatewayCase.ID])
+		if gateway.Mode != GatewayModeFilter {
+			break
 		}
 	}
+	if len(matched) > 0 {
+		return matched, matchedTargets, nil
+	}
 	if len(gateway.Cases) == 0 {
-		return GatewayCase{}, "", fmt.Errorf("gateway %q has no cases", gateway.Key)
+		return nil, nil, fmt.Errorf("gateway %q has no cases", gateway.Key)
 	}
 	elseCase := gateway.Cases[len(gateway.Cases)-1]
 	target, exists := targets[elseCase.ID]
 	if elseCase.ID != "else" || !exists {
-		return GatewayCase{}, "", fmt.Errorf("gateway %q has no else path", gateway.Key)
+		return nil, nil, fmt.Errorf("gateway %q has no else path", gateway.Key)
 	}
-	return elseCase, target, nil
+	return []GatewayCase{elseCase}, []string{target}, nil
 }
 
 func (p GraphPlan) Successors(nodeKey string) []EdgeDefinition {

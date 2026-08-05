@@ -56,6 +56,8 @@ export interface WorkflowCompletionDefinition {
   required_issue_outcome?: "done" | "terminal" | "none";
   submission_required?: boolean;
   handoff_required?: boolean;
+  /** Cap on rework rounds; 0 or absent means uncapped. */
+  max_attempts?: number;
   /** Workflow roles additionally allowed to complete/skip/rollback. */
   authorized_roles?: string[];
 }
@@ -113,6 +115,8 @@ export interface WorkflowNodeDefinition {
   };
   outputs?: WorkflowOutputField[];
   cases?: WorkflowGatewayCase[];
+  /** Gateway routing: "switch" takes the first match, "filter" takes all. */
+  mode?: "switch" | "filter";
   completion?: WorkflowCompletionDefinition;
   executor?: WorkflowExecutorDefinition;
   reviewer?: WorkflowReviewerDefinition;

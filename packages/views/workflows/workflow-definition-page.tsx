@@ -426,6 +426,42 @@ function WorkflowEdgeInspector({
             {t(($) => $.editor.connections_help)}
           </p>
         )}
+        {isGateway && (
+          <div className="mt-3 space-y-1.5">
+            <Label htmlFor={`gateway-mode-${nodeKey}`} className="text-xs">
+              {t(($) => $.editor.gateway_mode)}
+            </Label>
+            <select
+              id={`gateway-mode-${nodeKey}`}
+              value={selectedNode?.mode === "filter" ? "filter" : "switch"}
+              disabled={readOnly}
+              className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
+              onChange={(event) => {
+                const mode = event.target.value === "filter"
+                  ? "filter" as const
+                  : undefined;
+                onChange({
+                  ...definition,
+                  nodes: definition.nodes.map((node) =>
+                    node.key === nodeKey ? { ...node, mode } : node
+                  ),
+                });
+              }}
+            >
+              <option value="switch">
+                {t(($) => $.editor.gateway_mode_switch)}
+              </option>
+              <option value="filter">
+                {t(($) => $.editor.gateway_mode_filter)}
+              </option>
+            </select>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {selectedNode?.mode === "filter"
+                ? t(($) => $.editor.gateway_mode_filter_help)
+                : t(($) => $.editor.gateway_mode_switch_help)}
+            </p>
+          </div>
+        )}
       </div>
       <div className="space-y-2">
         {outgoing.map((edge) => {

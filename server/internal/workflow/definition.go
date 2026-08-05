@@ -63,7 +63,11 @@ type NodeDefinition struct {
 	// Cases carry a gateway's routing table: evaluated in order, first match
 	// wins, and the mandatory trailing else case is the fallback. Each case
 	// owns exactly one outgoing edge via EdgeDefinition.FromCase.
-	Cases      []GatewayCase        `json:"cases,omitempty"`
+	Cases []GatewayCase `json:"cases,omitempty"`
+	// Mode picks how many cases may win. "switch" (the default) takes the
+	// first match; "filter" takes every match, which is how a node adds a
+	// review without leaving the main line. Empty means switch.
+	Mode       string               `json:"mode,omitempty"`
 	Completion CompletionDefinition `json:"completion,omitempty"`
 	// OnEnter/OnComplete run controlled side effects when an activity
 	// activates or completes. Only white-listed action kinds are allowed;
@@ -209,6 +213,12 @@ type CompletionDefinition struct {
 	// can owe a structured result without owing a conclusion, and far more
 	// often owes the conclusion alone.
 	HandoffRequired bool `json:"handoff_required,omitempty"`
+	// MaxAttempts caps how many times this activity may be reworked. A
+	// reviewer and an executor can otherwise hand work back and forth
+	// indefinitely, and nothing in the run reports that it is looping —
+	// reaching the cap stops the rework and leaves the decision to a person.
+	// Zero means no cap.
+	MaxAttempts int `json:"max_attempts,omitempty"`
 	// AuthorizedRoles lists workflow roles whose resolved member actors may
 	// force-complete, skip, or roll back this node in addition to the
 	// defaults (workspace admins always; the node owner for manual
@@ -547,6 +557,11 @@ func validateNodes(definitions []NodeDefinition, roles map[string]RoleDefinition
 				"node %q cannot declare cases outside a gateway", node.Key,
 			)
 		}
+		if node.Mode != "" && node.Kind != "gateway" {
+			return nil, "", 0, 0, fmt.Errorf(
+				"node %q cannot declare a routing mode outside a gateway", node.Key,
+			)
+		}
 		switch node.Kind {
 		case "start":
 			if startKey != "" {
@@ -608,6 +623,9 @@ func validateActivity(
 	}
 	if err := ValidateOutputFields(node.Outputs); err != nil {
 		return fmt.Errorf("activity %q outputs: %w", node.Key, err)
+	}
+	if node.Completion.MaxAttempts < 0 {
+		return fmt.Errorf("activity %q max_attempts cannot be negative", node.Key)
 	}
 	if err := validateNodeActions(node.Key, "on_enter", node.OnEnter); err != nil {
 		return err
@@ -1249,6 +1267,13 @@ func validateGatewayCases(
 	// the canvas. Reporting an internal key ("gateway_1", "c1") asks the
 	// reader to translate before they can even find what to fix.
 	name := displayName(gateway.Name, key)
+	switch gateway.Mode {
+	case "", "switch", GatewayModeFilter:
+	default:
+		return fmt.Errorf(
+			"gateway %q has invalid mode %q; use switch or filter", name, gateway.Mode,
+		)
+	}
 	if len(gateway.Cases) < 2 {
 		return fmt.Errorf(
 			"gateway %q requires at least one conditional branch and the fallback branch", name,

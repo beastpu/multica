@@ -485,7 +485,14 @@
     "output_type": "类型",
     "output_values": "枚举值（逗号分隔）",
     "output_desc": "说明",
-    "output_required": "必填"
+    "output_required": "必填",
+    "gateway_mode": "路由方式",
+    "gateway_mode_switch": "只走一条（互斥）",
+    "gateway_mode_filter": "命中的都走（并联）",
+    "gateway_mode_switch_help": "按从上到下的顺序判断，第一个命中的分支生效。适合几条路径互为备选的情况。",
+    "gateway_mode_filter_help": "所有命中的分支都会执行。适合在主流程之外追加评审或检查；兜底分支只在全都没命中时才走。",
+    "max_attempts": "返工上限",
+    "max_attempts_hint": "这个活动最多执行多少次；达到上限后不再打回，改为挂起等人决定。留空表示不限制。"
   },
   "status": {
     "needs_setup": "待配置",

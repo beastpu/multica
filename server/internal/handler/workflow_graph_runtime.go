@@ -161,11 +161,15 @@ func (h *Handler) propagateWorkflowGraph(
 				if err != nil {
 					return result, err
 				}
-				selectedCase, target, err := workflowdomain.SelectGatewayCase(
+				selectedCases, targets, err := workflowdomain.SelectGatewayCases(
 					nodeDefinition, plan, pool,
 				)
 				if err != nil {
 					return result, err
+				}
+				caseIDs := make([]string, len(selectedCases))
+				for i, selected := range selectedCases {
+					caseIDs[i] = selected.ID
 				}
 				updated, err := q.UpdateWorkflowNodeState(ctx, db.UpdateWorkflowNodeStateParams{
 					Status: "completed", WaitingReasons: []byte("[]"), MarkReconciled: true,
@@ -174,8 +178,12 @@ func (h *Handler) propagateWorkflowGraph(
 				if err != nil {
 					return result, fmt.Errorf("complete workflow gateway %q: %w", node.NodeKey, err)
 				}
+				// case_id names the first winner and stays for readers that
+				// predate filter mode; case_ids carries the full set.
 				payload, _ := json.Marshal(map[string]any{
-					"case_id": selectedCase.ID, "selected_targets": []string{target},
+					"case_id":          caseIDs[0],
+					"case_ids":         caseIDs,
+					"selected_targets": targets,
 				})
 				if _, err := q.CreateWorkflowEvent(ctx, db.CreateWorkflowEventParams{
 					WorkspaceID: workspaceID, WorkflowInstanceID: instance.ID,

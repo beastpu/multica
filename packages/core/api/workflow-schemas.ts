@@ -60,6 +60,7 @@ const WorkflowCompletionDefinitionSchema = z.object({
     .optional().catch(undefined),
   submission_required: z.boolean().optional().catch(undefined),
   handoff_required: z.boolean().optional().catch(undefined),
+  max_attempts: z.number().optional().catch(undefined),
   authorized_roles: arrayOrEmpty(z.string()).optional(),
 }).loose();
 
@@ -127,6 +128,9 @@ export const WorkflowNodeDefinitionSchema = z.object({
   }).loose().optional(),
   outputs: arrayOrEmpty(WorkflowOutputFieldSchema).optional(),
   cases: arrayOrEmpty(WorkflowGatewayCaseSchema).optional(),
+  // Lenient so a mode this build has not heard of degrades to switch
+  // rather than dropping the gateway's whole definition.
+  mode: z.string().optional(),
   completion: WorkflowCompletionDefinitionSchema.optional().default({}),
   executor: WorkflowExecutorDefinitionSchema.optional(),
   reviewer: WorkflowReviewerDefinitionSchema.optional(),

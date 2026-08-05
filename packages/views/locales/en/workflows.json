@@ -486,7 +486,14 @@
     "output_type": "Type",
     "output_values": "Enum values (comma-separated)",
     "output_desc": "Description",
-    "output_required": "Required"
+    "output_required": "Required",
+    "gateway_mode": "Routing",
+    "gateway_mode_switch": "Take one branch (switch)",
+    "gateway_mode_filter": "Take every match (filter)",
+    "gateway_mode_switch_help": "Branches are checked top-down and the first match wins. Use this when the paths are alternatives.",
+    "gateway_mode_filter_help": "Every matching branch runs. Use this to add reviews or checks alongside the main line; the fallback runs only when nothing matches.",
+    "max_attempts": "Rework limit",
+    "max_attempts_hint": "How many times this activity may run in total before it stops being handed back and waits for a person. Leave empty for no limit."
   },
   "status": {
     "needs_setup": "Needs setup",

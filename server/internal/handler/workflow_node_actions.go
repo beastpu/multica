@@ -968,6 +968,15 @@ func (h *Handler) transitionWorkflowNode(
 			writeError(w, http.StatusInternalServerError, "rollback target not found")
 			return
 		}
+		// Refused rather than silently allowed: a node at its attempt cap has
+		// already been handed back as often as the template permits, and one
+		// more round would look identical to the ones that did not settle it.
+		if capErr := workflowdomain.ValidateReworkAttempt(
+			targetDefinition, int(latestTarget.Attempt),
+		); capErr != nil {
+			writeError(w, http.StatusConflict, capErr.Error())
+			return
+		}
 		affected := plan.Descendants(node.NodeKey)
 		affected[node.NodeKey] = struct{}{}
 		for _, candidate := range nodes {

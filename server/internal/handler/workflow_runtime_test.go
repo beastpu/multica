@@ -2678,6 +2678,236 @@ func TestWorkflowSubmissionOutputValidation(t *testing.T) {
 	_ = ctx
 }
 
+// A filter gateway is how a run adds a review without leaving the main line.
+// Both branches have to activate off one delivery, and the node they rejoin
+// has to wait for both rather than racing ahead on the first.
+func TestWorkflowFilterGatewayActivatesEveryMatch(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+
+	ownerExecutor := workflowdomain.ExecutorDefinition{
+		Kind: "role", Role: "owner",
+		Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+	}
+	activity := func(key, name string) workflowdomain.NodeDefinition {
+		return workflowdomain.NodeDefinition{
+			Key: key, Kind: "activity", Name: name, OwnerRole: "owner",
+			Executor: &ownerExecutor, IssuePolicy: "fixed",
+			IssueTemplates: []workflowdomain.IssueTemplate{{
+				Key: key + "_issue", Title: name + " {{host.title}}", Required: true,
+			}},
+			Completion: workflowdomain.CompletionDefinition{RequiredIssueOutcome: "done"},
+		}
+	}
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Filter gateway",
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true,
+			AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "fix", Kind: "activity", Name: "Fix", OwnerRole: "owner",
+				Executor: &ownerExecutor, IssuePolicy: "none",
+				SubmissionSchema: &workflowdomain.SubmissionSchema{Policy: "single"},
+				Outputs: []workflowdomain.OutputField{
+					{Key: "touched_db", Type: "bool", Required: true},
+					{Key: "touched_api", Type: "bool", Required: true},
+				},
+				Completion: workflowdomain.CompletionDefinition{SubmissionRequired: true},
+			},
+			{
+				Key: "gates", Kind: "gateway", Name: "Extra reviews",
+				Mode: workflowdomain.GatewayModeFilter,
+				Cases: []workflowdomain.GatewayCase{
+					{ID: "dba", Label: "需 DBA", When: `touched_db == true`},
+					{ID: "api", Label: "需兼容评审", When: `touched_api == true`},
+					{ID: "else", Label: "无附加门控"},
+				},
+			},
+			activity("dba_review", "DBA review"),
+			activity("api_review", "API review"),
+			activity("merge", "Merge"),
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "fix"},
+			{From: "fix", To: "gates"},
+			{From: "gates", To: "dba_review", FromCase: "dba"},
+			{From: "gates", To: "api_review", FromCase: "api"},
+			{From: "gates", To: "merge", FromCase: "else"},
+			{From: "dba_review", To: "merge"},
+			{From: "api_review", To: "merge"},
+			{From: "merge", To: "end"},
+		},
+		Acceptance: workflowdomain.AcceptanceDefinition{Policy: "none"},
+	}
+	if err := workflowdomain.ValidateDefinition(definition); err != nil {
+		t.Fatalf("filter definition invalid: %v", err)
+	}
+	templateID := createPublishedWorkflowForTest(t, "Filter gateway template", definition)
+	hostID := createWorkflowHostForTest(t, "Filter gateway host")
+	started := startWorkflowForTest(t, hostID, templateID, []map[string]any{{
+		"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
+	}}, "filter-gateway-start")
+	fixNode := findWorkflowNodeResponse(t, started.Nodes, "fix", 1)
+
+	// Both conditions hold, so both reviews are owed.
+	postWorkflowSubmissionPayload(t, fixNode.ID, "filter-gateway-submit", map[string]any{
+		"touched_db": true, "touched_api": true,
+	})
+	reconcileWorkflowForTest(t, started.Instance.ID, "filter-gateway-reconcile")
+
+	dba := latestWorkflowNodeForTest(t, started.Instance.ID, "dba_review")
+	api := latestWorkflowNodeForTest(t, started.Instance.ID, "api_review")
+	merge := latestWorkflowNodeForTest(t, started.Instance.ID, "merge")
+	if dba.Status == "skipped" || api.Status == "skipped" {
+		t.Fatalf("filter gateway skipped a matching branch: dba=%s api=%s",
+			dba.Status, api.Status)
+	}
+	// Merge is reachable directly through the else edge, but that edge lost;
+	// it must wait for the two branches that won instead of starting now.
+	if merge.Status != "pending" {
+		t.Fatalf("merge ran before its reviews: %s", merge.Status)
+	}
+
+	routing, err := testHandler.Queries.GetWorkflowNodeRoutingEvent(
+		ctx,
+		db.GetWorkflowNodeRoutingEventParams{
+			WorkflowInstanceID:     parseUUID(started.Instance.ID),
+			WorkspaceID:            parseUUID(testWorkspaceID),
+			WorkflowNodeInstanceID: latestWorkflowNodeForTest(t, started.Instance.ID, "gates").ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("load routing event: %v", err)
+	}
+	var payload struct {
+		CaseIDs         []string `json:"case_ids"`
+		SelectedTargets []string `json:"selected_targets"`
+	}
+	if err := json.Unmarshal(routing.Payload, &payload); err != nil {
+		t.Fatalf("decode routing payload: %v", err)
+	}
+	if len(payload.CaseIDs) != 2 || len(payload.SelectedTargets) != 2 {
+		t.Fatalf("routing payload = %+v, want both branches", payload)
+	}
+
+	// Finishing both reviews releases the merge.
+	for _, node := range []db.WorkflowNodeInstance{dba, api} {
+		tasks, taskErr := testHandler.Queries.ListWorkflowNodeTasks(
+			ctx,
+			db.ListWorkflowNodeTasksParams{
+				WorkflowNodeInstanceID: node.ID, WorkspaceID: parseUUID(testWorkspaceID),
+			},
+		)
+		if taskErr != nil || len(tasks) != 1 || !tasks[0].IssueID.Valid {
+			t.Fatalf("tasks for %s = %#v, err = %v", node.NodeKey, tasks, taskErr)
+		}
+		completeWorkflowIssue(t, uuidToString(tasks[0].IssueID))
+	}
+	reconcileWorkflowForTest(t, started.Instance.ID, "filter-gateway-after-reviews")
+	if merged := latestWorkflowNodeForTest(t, started.Instance.ID, "merge"); merged.Status == "pending" {
+		t.Fatalf("merge still pending after both reviews finished")
+	}
+}
+
+// Manual rollback is the path a person drives, so the cap has to refuse it
+// outright rather than quietly allowing one more round.
+func TestWorkflowReworkStopsAtAttemptCap(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+
+	ownerExecutor := workflowdomain.ExecutorDefinition{
+		Kind: "role", Role: "owner",
+		Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+	}
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Rework cap",
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true,
+			AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "fix", Kind: "activity", Name: "Fix", OwnerRole: "owner",
+				Executor: &ownerExecutor, IssuePolicy: "none",
+				// Two attempts total: the original run and one rework.
+				Completion: workflowdomain.CompletionDefinition{MaxAttempts: 2},
+			},
+			{
+				Key: "review", Kind: "activity", Name: "Review", OwnerRole: "owner",
+				Executor: &ownerExecutor, IssuePolicy: "none",
+			},
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "fix"},
+			{From: "fix", To: "review"},
+			{From: "review", To: "end"},
+		},
+		Acceptance: workflowdomain.AcceptanceDefinition{Policy: "none"},
+	}
+	if err := workflowdomain.ValidateDefinition(definition); err != nil {
+		t.Fatalf("rework cap definition invalid: %v", err)
+	}
+	templateID := createPublishedWorkflowForTest(t, "Rework cap template", definition)
+	hostID := createWorkflowHostForTest(t, "Rework cap host")
+	started := startWorkflowForTest(t, hostID, templateID, []map[string]any{{
+		"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
+	}}, "rework-cap-start")
+
+	// Rollback re-runs the node it is called on, so it targets fix directly.
+	rollback := func(key string) *httptest.ResponseRecorder {
+		node := latestWorkflowNodeForTest(t, started.Instance.ID, "fix")
+		recorder := httptest.NewRecorder()
+		request := withURLParam(newRequest(
+			http.MethodPost,
+			"/api/workflow-node-instances/"+uuidToString(node.ID)+
+				"/rollback?workspace_id="+testWorkspaceID,
+			map[string]any{
+				"reason":          "needs another pass",
+				"idempotency_key": key,
+			},
+		), "nodeInstanceId", uuidToString(node.ID))
+		testHandler.RollbackWorkflowNode(recorder, request)
+		return recorder
+	}
+
+	// Move to review so there is something to roll back from.
+	advanceFix := func(key string) {
+		fix := latestWorkflowNodeForTest(t, started.Instance.ID, "fix")
+		transitionWorkflowNode(t, uuidToString(fix.ID), "complete", key)
+		reconcileWorkflowForTest(t, started.Instance.ID, key+"-reconcile")
+	}
+	advanceFix("rework-cap-fix-1")
+	if first := rollback("rework-cap-rollback-1"); first.Code != http.StatusOK {
+		t.Fatalf("first rollback status = %d, body = %s", first.Code, first.Body.String())
+	}
+	if attempt := latestWorkflowNodeForTest(t, started.Instance.ID, "fix").Attempt; attempt != 2 {
+		t.Fatalf("fix attempt after first rollback = %d, want 2", attempt)
+	}
+
+	// The second rollback would be attempt 3, past the cap of 2.
+	advanceFix("rework-cap-fix-2")
+	second := rollback("rework-cap-rollback-2")
+	if second.Code != http.StatusConflict {
+		t.Fatalf("second rollback status = %d, want 409; body = %s",
+			second.Code, second.Body.String())
+	}
+	if !strings.Contains(second.Body.String(), "attempts") {
+		t.Fatalf("rollback refusal does not explain the cap: %s", second.Body.String())
+	}
+	if attempt := latestWorkflowNodeForTest(t, started.Instance.ID, "fix").Attempt; attempt != 2 {
+		t.Fatalf("fix attempt after refused rollback = %d, want it unchanged at 2", attempt)
+	}
+}
+
 func TestWorkflowRequiredIssueCancellationPolicy(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 

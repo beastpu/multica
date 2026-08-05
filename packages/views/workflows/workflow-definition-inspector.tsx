@@ -936,6 +936,39 @@ function CompletionEditor({
         readOnly={readOnly}
         onChange={onChange}
       />
+      {/* Only worth showing where a reviewer exists: the cap bounds how many
+          times that reviewer may hand the work back. */}
+      {node.reviewer?.kind && (
+        <div className="space-y-1.5">
+          <Label htmlFor={`max-attempts-${node.key}`}>
+            {t(($) => $.editor.max_attempts)}
+          </Label>
+          <Input
+            id={`max-attempts-${node.key}`}
+            type="number"
+            min={0}
+            value={completion.max_attempts ?? ""}
+            disabled={readOnly}
+            placeholder="0"
+            className="min-h-9 text-xs"
+            onChange={(event) => {
+              const parsed = Number.parseInt(event.target.value, 10);
+              onChange({
+                ...node,
+                completion: {
+                  ...completion,
+                  max_attempts: Number.isFinite(parsed) && parsed > 0
+                    ? parsed
+                    : undefined,
+                },
+              });
+            }}
+          />
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {t(($) => $.editor.max_attempts_hint)}
+          </p>
+        </div>
+      )}
       {roles.length > 0 && (
         <fieldset>
           <legend className="mb-1.5 text-xs font-medium">

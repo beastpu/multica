@@ -656,6 +656,24 @@ workspace 级 schema 库（§3.4，第 5 步）
 > ② auto reviewer 获得 `node_submission` source，可读**已声明的** outputs 字段，
 > 接替原 node_choice 自引用能力（§7.3 的 verdict 统一仍留在第 4 步）；
 > ③ 条件编辑器暂为 when 表达式文本输入（三下拉编辑器仍在第 5 步）。
+>
+> **测试环境验证（2026-08-05，`multica-test`）**：分诊 → 非缺陷直接结束这条
+> 路径已端到端跑通，路由事件为 `{"case_id":"c1","selected_targets":["end_1"]}`，
+> 兜底分支正确置 `skipped`。部署前核查确认 `submission.choice` 全库为空、生产库
+> 尚无 workflow 表，故删列无数据损失（§10 两条行动项就此关闭）；测试库仅存一条
+> 旧格式 gateway 模板，其模板页与所属已完成实例在新代码下无法解析，列表页不受影响。
+>
+> 验证中发现并修复的四处交互问题：交付被拒时前端丢弃了服务端的字段级明细、
+> 保存校验错误使用内部 key 而非作者可见名称、输出字段以英文 key 作表单标签、
+> 以及「新建工作流」因固定默认名触发 409 且失败被静默吞掉。
+>
+> **Agent 交付链路已实测通过**（§10 行动项 2 关闭）。真实 cloud runtime 上的
+> agent 执行一个 `issue_policy=none` 的分诊节点，一次提交即通过校验：
+> `{"is_bug": false, "category": "works_as_intended"}`，enum 值精确落在声明范围内，
+> submission 只有 revision 1 且 status 为 `valid`，未触发重交。网关随即路由到
+> `{"case_id":"c1","selected_targets":["end_ok"]}`。全过程 agent 的提示中不出现
+> 任何下游节点名或分支概念 —— 它只报告领域事实，路由由编排层完成，这正是本设计
+> 相对 `choice` 的核心差别，现已在真实 agent 上得到验证。
 
 ## 10. 决策记录与实施前行动项
 
