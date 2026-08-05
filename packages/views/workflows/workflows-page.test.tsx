@@ -8,10 +8,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import enCommon from "../locales/en/common.json";
 import enWorkflows from "../locales/en/workflows.json";
-import { NewWorkflowDialog, WorkflowsPage } from "./workflows-page";
+import {
+  NewWorkflowDialog,
+  unusedWorkflowName,
+  WorkflowsPage,
+} from "./workflows-page";
 
 const mocks = vi.hoisted(() => ({
   createWorkflow: vi.fn(),
+  createTemplate: vi.fn(),
   navigate: vi.fn(),
   saveDefinition: vi.fn(),
 }));
@@ -161,7 +166,13 @@ vi.mock("@multica/core/workflows", async (importOriginal) => {
       mutate: (input: unknown) => mocks.createWorkflow(input),
       isPending: false,
     }),
-    useCreateWorkflow: () => ({ mutate: vi.fn(), isPending: false }),
+    useCreateWorkflow: () => ({
+      mutate: (input: unknown, options?: { onSuccess?: (r: unknown) => void }) => {
+        mocks.createTemplate(input);
+        options?.onSuccess?.({ workflow: { id: "created-1" } });
+      },
+      isPending: false,
+    }),
     useCopyWorkflow: () => ({ mutate: vi.fn(), isPending: false }),
     useCreateWorkflowTemplateFromBuiltin: () => ({
       mutate: vi.fn(),
@@ -341,5 +352,41 @@ describe("WorkflowsPage", () => {
     ).toBeNull();
     expect(screen.getAllByRole("button", { name: "New workflow" }))
       .toHaveLength(1);
+  });
+
+  // The header lays its actions out in a row; a button wrapped in a column
+  // container was pushed out of the viewport entirely and stopped receiving
+  // clicks, while still passing every assertion that only queried the DOM.
+  it("keeps the create button inside the header action row", () => {
+    render(<WorkflowsPage />, { wrapper });
+
+    const button = screen.getByRole("button", { name: "New workflow" });
+    const row = button.parentElement;
+    expect(row?.className).toContain("items-center");
+    expect(row?.className).not.toContain("flex-col");
+  });
+
+  it("creates a workflow whose name does not collide with the list", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowsPage />, { wrapper });
+
+    await user.click(screen.getByRole("button", { name: "New workflow" }));
+
+    // Nothing in the list is called "New workflow", so the starter name is
+    // free and used as-is; unusedWorkflowName covers the collision cases.
+    expect(mocks.createTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "New workflow" }),
+    );
+  });
+
+  it("suffixes the starter name until it is free", () => {
+    expect(unusedWorkflowName("New workflow", new Set())).toBe("New workflow");
+    expect(unusedWorkflowName("New workflow", new Set(["New workflow"])))
+      .toBe("New workflow 2");
+    // Skips over suffixes already in use rather than colliding again.
+    expect(unusedWorkflowName(
+      "New workflow",
+      new Set(["New workflow", "New workflow 2", "New workflow 3"]),
+    )).toBe("New workflow 4");
   });
 });

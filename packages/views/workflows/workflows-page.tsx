@@ -15,6 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -217,7 +218,7 @@ function matchesTemplateStatus(
 // without this the second workflow a workspace ever creates fails, on a button
 // whose whole promise is "you now have a new workflow". The name is a
 // placeholder the author renames anyway; what matters is that the click works.
-function unusedWorkflowName(base: string, taken: Set<string>) {
+export function unusedWorkflowName(base: string, taken: Set<string>) {
   if (!taken.has(base)) return base;
   let suffix = 2;
   while (taken.has(`${base} ${suffix}`)) suffix += 1;
@@ -243,24 +244,20 @@ function CreateWorkflowButton() {
       definition: { ...definition, name },
     }, {
       onSuccess: ({ workflow }) => navigation.push(p.workflow(workflow.id)),
+      // A swallowed failure reads as a dead button. The toast reports it
+      // without adding anything to the header, whose action row lays its
+      // children out horizontally and drops a wrapped one out of view.
+      onError: () => toast.error(t(($) => $.errors.action_failed)),
     });
   };
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <CollectionPageHeaderAction
-        icon={Plus}
-        label={t(($) => $.actions.new_template)}
-        onClick={create}
-        disabled={createTemplate.isPending}
-      />
-      {/* A silently swallowed failure reads as a dead button. */}
-      {createTemplate.isError && (
-        <p role="alert" className="text-xs text-destructive">
-          {t(($) => $.errors.action_failed)}
-        </p>
-      )}
-    </div>
+    <CollectionPageHeaderAction
+      icon={Plus}
+      label={t(($) => $.actions.new_template)}
+      onClick={create}
+      disabled={createTemplate.isPending}
+    />
   );
 }
 
