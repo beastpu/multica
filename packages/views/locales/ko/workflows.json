@@ -70,7 +70,8 @@
     "description": "템플릿에서 바로 실행합니다. Issue는 필요한 활동에서만 생성됩니다.",
     "name": "실행 이름",
     "instructions": "실행 지침",
-    "instructions_placeholder": "목표, 배경, 기대 결과를 입력하세요..."
+    "instructions_placeholder": "목표, 배경, 기대 결과를 입력하세요...",
+    "default_name": "{{number}}번째 실행"
   },
   "start": {
     "title": "이 issue에서 워크플로 시작",

@@ -70,7 +70,8 @@
     "description": "Start a run directly from this template. An issue is only created by activities that need one.",
     "name": "Run name",
     "instructions": "Run instructions",
-    "instructions_placeholder": "Describe the goal, context, and expected outcome..."
+    "instructions_placeholder": "Describe the goal, context, and expected outcome...",
+    "default_name": "Run {{number}}"
   },
   "start": {
     "title": "Start workflow from this issue",

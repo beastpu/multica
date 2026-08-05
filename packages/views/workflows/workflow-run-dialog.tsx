@@ -64,12 +64,18 @@ export function parseWorkflowAssignment(value: string): {
 
 // Every run opened with the workflow's own name, so a workflow's history was a
 // column of identical titles — nothing distinguished run three from run one
-// without opening both. Numbering off the run count gives each run an identity
-// on sight. It stays a starting value: the author types over it when a run
-// deserves a real name, and the number is not an identifier the system reads
-// back, so a stale count costs a duplicate label and nothing more.
-export function defaultRunTitle(name: string, runCount: number) {
-  return `${name} #${runCount + 1}`;
+// without opening both. The ordinal gives each run an identity on sight.
+//
+// The workflow's name is deliberately not in it. Every place a run title
+// renders already shows that name beside it: the runs table puts it on the
+// line below, and the run page puts it in the header's description. Repeating
+// it only pushed the part that differs past the truncation.
+//
+// It stays a starting value the author types over, and the number is not an
+// identifier anything reads back, so a stale count costs a duplicate label and
+// nothing more.
+export function nextRunNumber(runCount: number) {
+  return runCount + 1;
 }
 
 export function defaultNewWorkflowAssignments(
@@ -158,16 +164,18 @@ export function WorkflowRunDialog({
     })),
   ], [agents, members, squads]);
 
-  const workflowName = workflow?.name ?? "";
-  const workflowRunCount = workflow?.run_count ?? 0;
+  const hasWorkflow = Boolean(workflow);
+  const runNumber = nextRunNumber(workflow?.run_count ?? 0);
   useEffect(() => {
     if (!open) return;
-    setTitle(workflowName ? defaultRunTitle(workflowName, workflowRunCount) : "");
+    setTitle(
+      hasWorkflow ? t(($) => $.run.default_name, { number: runNumber }) : "",
+    );
     setInstructions("");
     setVersionId(preferredVersion?.id ?? "");
     setAssignments({});
     setError("");
-  }, [open, preferredVersion?.id, workflowName, workflowRunCount]);
+  }, [hasWorkflow, open, preferredVersion?.id, runNumber, t]);
 
   useEffect(() => {
     if (!selectedVersion) return;

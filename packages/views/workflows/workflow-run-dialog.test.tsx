@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import enCommon from "../locales/en/common.json";
 import enWorkflows from "../locales/en/workflows.json";
-import { defaultRunTitle, WorkflowRunDialog } from "./workflow-run-dialog";
+import { nextRunNumber, WorkflowRunDialog } from "./workflow-run-dialog";
 
 const mocks = vi.hoisted(() => ({
   // What the detail query has cached — deliberately stale, the way it is right
@@ -135,11 +135,13 @@ describe("WorkflowRunDialog naming", () => {
   // history was a column of identical titles and nothing on screen said which
   // run was which.
   it("numbers a new run after the ones already recorded", () => {
-    expect(defaultRunTitle("Defect fix", 0)).toBe("Defect fix #1");
-    expect(defaultRunTitle("Defect fix", 4)).toBe("Defect fix #5");
+    expect(nextRunNumber(0)).toBe(1);
+    expect(nextRunNumber(4)).toBe(5);
   });
 
-  it("prefills the run name with the next number", () => {
+  // The workflow's name is left out: every place the title renders already
+  // shows it alongside, so repeating it pushed the ordinal past the truncation.
+  it("prefills the run name with the ordinal alone", () => {
     render(
       <I18nProvider
         locale="en"
@@ -153,6 +155,6 @@ describe("WorkflowRunDialog naming", () => {
       </I18nProvider>,
     );
 
-    expect(screen.getByLabelText("Run name")).toHaveValue("Defect fix #3");
+    expect(screen.getByLabelText("Run name")).toHaveValue("Run 3");
   });
 });

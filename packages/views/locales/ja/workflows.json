@@ -70,7 +70,8 @@
     "description": "テンプレートから直接実行します。Issue は必要なアクティビティでのみ作成されます。",
     "name": "実行名",
     "instructions": "実行指示",
-    "instructions_placeholder": "目的、背景、期待する結果を入力..."
+    "instructions_placeholder": "目的、背景、期待する結果を入力...",
+    "default_name": "実行 {{number}}"
   },
   "start": {
     "title": "この issue からワークフローを開始",

@@ -70,7 +70,8 @@
     "description": "直接从模板启动一次运行；只有确实需要 issue 的活动才会创建 issue。",
     "name": "运行名称",
     "instructions": "运行说明",
-    "instructions_placeholder": "说明目标、上下文和期望结果..."
+    "instructions_placeholder": "说明目标、上下文和期望结果...",
+    "default_name": "第 {{number}} 次运行"
   },
   "start": {
     "title": "从当前 issue 启动工作流",
