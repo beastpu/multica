@@ -3072,6 +3072,106 @@ func TestWorkflowGatewayRoutesOnHostIssueField(t *testing.T) {
 	}
 }
 
+// Readiness already noticed a failed agent run, but the node stayed "waiting"
+// and nothing was sent: the run sat on work that had stopped until somebody
+// happened to open it. Blocking makes it visible, and the notification is what
+// carries it to the people responsible.
+func TestWorkflowFailedAgentExecutionBlocksAndNotifies(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+
+	// The shape this matters for: an agent executes the node directly, so a
+	// failed run is the only thing that can stop it.
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, visibility, max_concurrent_tasks, owner_id,
+			instructions, custom_env, custom_args
+		) VALUES ($1, 'failing-agent', '', 'cloud', '{}'::jsonb, $2, 'private', 1, $3,
+			'', '{}'::jsonb, '[]'::jsonb)
+		RETURNING id
+	`, testWorkspaceID, handlerTestRuntimeID(t), testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+	})
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Agent failure",
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true,
+			AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "work", Kind: "activity", Name: "Work", OwnerRole: "owner",
+				IssuePolicy: "none",
+				Executor: &workflowdomain.ExecutorDefinition{
+					Kind: "actor", ActorType: "agent", ActorID: agentID,
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+				},
+			},
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "work"}, {From: "work", To: "end"},
+		},
+		Acceptance: workflowdomain.AcceptanceDefinition{Policy: "none"},
+	}
+	templateID := createPublishedWorkflowForTest(t, "Agent failure template", definition)
+	hostID := createWorkflowHostForTest(t, "Agent failure host")
+	started := startWorkflowForTest(t, hostID, templateID, []map[string]any{{
+		"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
+	}}, "agent-failure-start")
+
+	node := latestWorkflowNodeForTest(t, started.Instance.ID, "work")
+	tasks, err := testHandler.Queries.ListWorkflowNodeTasks(ctx,
+		db.ListWorkflowNodeTasksParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: parseUUID(testWorkspaceID),
+		})
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("node tasks = %#v, err = %v", tasks, err)
+	}
+
+	// The agent took the work and failed at it.
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, workflow_node_task_id, status, priority,
+			context, error, failure_reason, completed_at, originator_source
+		) VALUES ($1, $2, $3, 'failed', 100, '{}'::jsonb,
+			'runtime exited 1', 'execution_failed', now(), 'workflow_node')
+	`, agentID, handlerTestRuntimeID(t), uuidToString(tasks[0].ID)); err != nil {
+		t.Fatalf("create failed agent task: %v", err)
+	}
+
+	reconcileWorkflowForTest(t, started.Instance.ID, "agent-failure-reconcile")
+
+	swept := latestWorkflowNodeForTest(t, started.Instance.ID, "work")
+	if !jsonContainsWaitingReason(swept.WaitingReasons, "direct_execution_failed") {
+		t.Fatalf("failed agent run not reported on the node: %s", swept.WaitingReasons)
+	}
+	// Blocked, not waiting: waiting reads as a step still making its way.
+	if swept.Status != "blocked" {
+		t.Fatalf("node status after agent failure = %q, want blocked", swept.Status)
+	}
+	// The inbox is how anyone finds out; an unreported stall is the whole bug.
+	var inboxCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM inbox_item
+		WHERE workspace_id = $1 AND type = 'workflow_action_required'
+		  AND details->>'workflow_node_instance_id' = $2
+	`, testWorkspaceID, uuidToString(swept.ID)).Scan(&inboxCount); err != nil {
+		t.Fatalf("count inbox items: %v", err)
+	}
+	if inboxCount == 0 {
+		t.Fatal("nobody was told the activity's agent had failed")
+	}
+}
+
 func TestWorkflowRequiredIssueCancellationPolicy(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 

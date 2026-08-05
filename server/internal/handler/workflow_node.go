@@ -1422,6 +1422,16 @@ func (h *Handler) reconcileWorkflowInstance(
 		}
 		for _, blockedNode := range blockedNodes {
 			h.recordWorkflowNodeTransition(blockedNode, "blocked")
+			// Blocking is only useful if somebody hears about it. The list
+			// holds nodes that just crossed into blocked, so this notifies on
+			// the transition rather than on every reconcile that finds them
+			// still stuck.
+			h.notifyWorkflowIntervention(
+				ctx, updated, blockedNode,
+				workflowWaitingReasonsForNotification(
+					decodeWorkflowWaitingReasons(blockedNode.WaitingReasons),
+				),
+			)
 		}
 		h.recordWorkflowNodesActivated(ctx, activated)
 		for range createdSubmissions {
@@ -2061,7 +2071,12 @@ func workflowWaitingReasonsBlockNode(
 ) bool {
 	for _, reason := range reasons {
 		if reason.Code == "required_issue_cancelled" ||
-			reason.Code == "verdict_blocked" {
+			reason.Code == "verdict_blocked" ||
+			// An agent that failed is not a step still in progress. Left as
+			// "waiting" the node reads like every other node making its way,
+			// and the run sits on work that already stopped until somebody
+			// happens to look.
+			reason.Code == "direct_execution_failed" {
 			return true
 		}
 	}
