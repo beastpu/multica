@@ -32,8 +32,8 @@ execution: authorized
 - **废弃**：`workflow_node_submission.choice` 列、`ChoiceBranchesForNode`、
   `branch-choice.ts`、Agent 提示里的「这个节点要选一条分支」段落、condition DSL 的
   `node_choice` 与 `node_verdict` source（verdict 统一进变量池，§7.3）。
-- **必须同时补齐三个缺口**（§6）：`mode: filter`（附加门控）、环路轮次上限、
-  节点级失败/超时出口。缺任何一个都会在开发场景踩坑。
+- **必须同时补齐三个缺口**（§6）：`mode: filter`（附加门控）、返工轮次上限、
+  节点级失败/超时出口。前两个已实现；第三个的定位在实现后下调（见 §6.3 更正）。
 
 ## 1. 现状与问题
 
@@ -92,7 +92,7 @@ Multica 的主场景是开发和缺陷修复。这类流程里的分支实际只
 | 形态 | 例子 | 现有 gateway 表达 |
 | --- | --- | --- |
 | **提前终止** | 不是 bug / 重复单 / 不修 | 别扭：菱形 + 一条指向 end 的边 |
-| **返工环路** | 评审不过打回重做 | 可表达（边指回上游），但无轮次保护 |
+| **返工环路** | 评审不过打回重做 | 走 rework 机制重建节点（图强制 acyclic，边不能回指），无轮次保护 |
 | **附加门控** | 碰了 DB → 加 DBA 评审，主线继续 | 表达不了（XOR 必须选一条） |
 | **真·多路分流** | 三类问题走三条完全不同的路 | 合适，但开发场景里最少见 |
 
@@ -472,14 +472,18 @@ gateway 会重算路由，激活集合可能与上一轮不同（第一轮碰了
 但不再计入 join 等待集合。需结合现有 rework 的 attempt 重置逻辑验证可行性，这是
 filter × rework 组合的唯一空白区。
 
-### 6.2 环路轮次上限
+### 6.2 返工轮次上限
 
-case 边指回上游能表达「评审不过打回重做」，但必须有上限，否则 Agent 和 reviewer 会互相无限打回。
+评审不过打回重做必须有上限，否则 Agent 和 reviewer 会互相无限打回。
 
-**在边上加 `max_passes: 3`**，超限走 gateway 的溢出端口（默认：挂起并通知人）。
-
-放在边上而不是节点上，因为同一个节点可能被多条返工边指向，上限语义属于那条环路。
-LangGraph 的对应物是图级 `recursion_limit`；边级上限更精细，且画布上可视。
+> **本节原方案已被实现证伪并修正。** 原文写的是「case 边指回上游表达环路，
+> 在边上加 `max_passes`」。实际上图有三处 `acyclic` 强制校验，**边不可能指回上游**；
+> 返工是 rework 机制重建节点实例（attempt+1）实现的，不经过边。边级上限没有管辖对象。
+>
+> 真实缺口是 rework 本身完全没有上限。改为**活动级 `completion.max_attempts`**：
+> 手动回滚超限返回 409 并说明原因；Critic 打回超限时把节点置为 `blocked` 而非返回
+> 错误 —— 返回错误会被投递 verdict 的 daemon 重试，而「停下来交给人」才是目的。
+> LangGraph 的对应物是图级 `recursion_limit`，活动级比它更精细。
 
 **环路中的变量取值**：变量池默认取该节点**最新一次 valid submission** 的字段。
 每轮 submission 本来就按 attempt 分行存储，历史轮次数据天然保留（对齐 Conductor
@@ -492,11 +496,22 @@ DO_WHILE 的按迭代号存档）。轮次限定语法（如 `fix.done@1`）**�
 
 ### 6.3 节点级失败 / 超时出口 —— 不经过 Gateway
 
-如果 Agent 崩了、跑飞了、超时了，字段根本不存在。条件求值 fail-closed 全 false
-（现有语义，[`condition.go:172`](../server/internal/workflow/condition.go)）→ 静默落 else
-→ 流程当成「正常情况」继续往下走。
-
-**这是最危险的失效模式。**
+> **本节对危险性的判断已被实现证伪，保留原文并在此更正。**
+>
+> 原文断言：Agent 崩溃 → 字段不存在 → 条件 fail-closed → 静默落 else → 流程当正常继续，
+> 并称这是「最危险的失效模式」。**这条不成立**：Agent 失败时节点没有 valid submission，
+> 不满足完成条件，会停在 `active`/`blocked`；gateway 的入边始终不会 settled，根本不会被激活。
+> 架构本身已经挡住了这条路径。
+>
+> 真正会导致静默落 else 的是另一条路径，实现期间发现并已修复：节点若未设
+> `submission_schema`（**默认值**），必需 issue 完成后引擎会自动合成一个 valid
+> submission，其 payload 不含节点声明的 outputs 字段 —— 节点因此 completed、变量池为空、
+> 网关 fail-closed 落 else。触发它不需要 Agent 崩溃，默认配置即可。修法是：声明了必填
+> 输出的节点不能被合成交付顶替，缺字段时挂起并逐个列出。
+>
+> 因此本节的 `on_failure` / `on_timeout` **不是防静默路由的手段**（架构已防），而是给
+> 「已经停下来的节点」一个自动处置（通知 / 转人工 / 重试）。价值仍在，但优先级低于原文
+> 判断。另注：`timeout_minutes` 已存在于现有实现，只产生 `node_timeout` 标记、不改流程。
 
 解法：activity 节点声明失败 / 超时策略，**不经过 gateway**（采纳 Dify v0.14 的三策略框架，
 去掉不适用的「默认值」—— 流程节点伪造一份成功交付比失败更危险）：
@@ -674,6 +689,10 @@ workspace 级 schema 库（§3.4，第 5 步）
 > `{"case_id":"c1","selected_targets":["end_ok"]}`。全过程 agent 的提示中不出现
 > 任何下游节点名或分支概念 —— 它只报告领域事实，路由由编排层完成，这正是本设计
 > 相对 `choice` 的核心差别，现已在真实 agent 上得到验证。
+>
+> **第 6–7 步部分实现**：`mode: filter`（附加门控，含下游 join 等待全部激活分支）与
+> 返工上限（活动级 `completion.max_attempts`，见 §6.2 的更正）已实现并通过集成测试。
+> `on_failure` / `on_timeout` 未实现 —— 其定位已按 §6.3 的更正下调。
 
 ## 10. 决策记录与实施前行动项
 
