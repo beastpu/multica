@@ -162,14 +162,14 @@ func (h *Handler) propagateWorkflowGraph(
 				if err != nil {
 					return result, err
 				}
-				selectedCases, targets, err := workflowdomain.SelectGatewayCases(
+				routing, err := workflowdomain.SelectGatewayCases(
 					nodeDefinition, plan, pool,
 				)
 				if err != nil {
 					return result, err
 				}
-				caseIDs := make([]string, len(selectedCases))
-				for i, selected := range selectedCases {
+				caseIDs := make([]string, len(routing.Cases))
+				for i, selected := range routing.Cases {
 					caseIDs[i] = selected.ID
 				}
 				updated, err := q.UpdateWorkflowNodeState(ctx, db.UpdateWorkflowNodeStateParams{
@@ -180,11 +180,16 @@ func (h *Handler) propagateWorkflowGraph(
 					return result, fmt.Errorf("complete workflow gateway %q: %w", node.NodeKey, err)
 				}
 				// case_id names the first winner and stays for readers that
-				// predate filter mode; case_ids carries the full set.
+				// predate filter mode; case_ids carries the full set. matched
+				// and evidence are what the branch is read back with: the
+				// submissions they came from keep changing, so a decision that
+				// does not carry its own inputs cannot be explained later.
 				payload, _ := json.Marshal(map[string]any{
 					"case_id":          caseIDs[0],
 					"case_ids":         caseIDs,
-					"selected_targets": targets,
+					"selected_targets": routing.Targets,
+					"matched":          routing.Matched,
+					"evidence":         routing.Evidence,
 				})
 				if _, err := q.CreateWorkflowEvent(ctx, db.CreateWorkflowEventParams{
 					WorkspaceID: workspaceID, WorkflowInstanceID: instance.ID,

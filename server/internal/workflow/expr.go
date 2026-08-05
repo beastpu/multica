@@ -132,6 +132,53 @@ func (e *Expr) Evaluate(pool ExprPool) (bool, error) {
 	return e.root.evaluate(pool), nil
 }
 
+// FieldReference names one variable an expression reads.
+type FieldReference struct {
+	Node string
+	Key  string
+}
+
+// Path renders the reference the way it is written in an expression.
+func (r FieldReference) Path() string { return r.Node + "." + r.Key }
+
+// ReferencedFields lists every variable the expression reads, in a stable
+// order. Used to record what a routing decision turned on: read back off the
+// submission later, a value shows what is true now rather than what was true
+// when the branch was chosen.
+func (e *Expr) ReferencedFields() []FieldReference {
+	if e == nil || e.root == nil {
+		return nil
+	}
+	seen := map[FieldReference]struct{}{}
+	collectExprFields(e.root, seen)
+	refs := make([]FieldReference, 0, len(seen))
+	for ref := range seen {
+		refs = append(refs, ref)
+	}
+	slices.SortFunc(refs, func(a, b FieldReference) int {
+		if a.Node != b.Node {
+			return strings.Compare(a.Node, b.Node)
+		}
+		return strings.Compare(a.Key, b.Key)
+	})
+	return refs
+}
+
+func collectExprFields(node exprNode, into map[FieldReference]struct{}) {
+	switch typed := node.(type) {
+	case exprAnd:
+		collectExprFields(typed.left, into)
+		collectExprFields(typed.right, into)
+	case exprOr:
+		collectExprFields(typed.left, into)
+		collectExprFields(typed.right, into)
+	case exprNot:
+		collectExprFields(typed.child, into)
+	case exprComparison:
+		into[FieldReference{Node: typed.node, Key: typed.key}] = struct{}{}
+	}
+}
+
 // Nodes lists the node keys the expression reads, for upstream-reachability
 // validation.
 func (e *Expr) Nodes() []string {

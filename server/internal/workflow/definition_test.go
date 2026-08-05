@@ -889,37 +889,37 @@ func TestSelectGatewayCase(t *testing.T) {
 	gateway := plan.Nodes["route"]
 
 	t.Run("first match wins in declared order", func(t *testing.T) {
-		selected, targets, err := SelectGatewayCases(gateway, plan, ExprPool{
+		routing, err := SelectGatewayCases(gateway, plan, ExprPool{
 			"triage": {"is_bug": false, "severity": "high"},
 		})
-		if err != nil || len(selected) != 1 || selected[0].ID != "c1" ||
-			targets[0] != "left" {
-			t.Fatalf("selected %+v -> %v, err %v", selected, targets, err)
+		if err != nil || len(routing.Cases) != 1 ||
+			routing.Cases[0].ID != "c1" || routing.Targets[0] != "left" {
+			t.Fatalf("routing = %+v, err %v", routing, err)
 		}
 	})
 	t.Run("later case fires when earlier misses", func(t *testing.T) {
-		selected, targets, err := SelectGatewayCases(gateway, plan, ExprPool{
+		routing, err := SelectGatewayCases(gateway, plan, ExprPool{
 			"triage": {"is_bug": true, "severity": "high"},
 		})
-		if err != nil || len(selected) != 1 || selected[0].ID != "c2" ||
-			targets[0] != "right" {
-			t.Fatalf("selected %+v -> %v, err %v", selected, targets, err)
+		if err != nil || len(routing.Cases) != 1 ||
+			routing.Cases[0].ID != "c2" || routing.Targets[0] != "right" {
+			t.Fatalf("routing = %+v, err %v", routing, err)
 		}
 	})
 	t.Run("no match falls to else", func(t *testing.T) {
-		selected, targets, err := SelectGatewayCases(gateway, plan, ExprPool{
+		routing, err := SelectGatewayCases(gateway, plan, ExprPool{
 			"triage": {"is_bug": true, "severity": "low"},
 		})
-		if err != nil || len(selected) != 1 || selected[0].ID != "else" ||
-			targets[0] != "fallthrough" {
-			t.Fatalf("selected %+v -> %v, err %v", selected, targets, err)
+		if err != nil || len(routing.Cases) != 1 ||
+			routing.Cases[0].ID != "else" || routing.Targets[0] != "fallthrough" {
+			t.Fatalf("routing = %+v, err %v", routing, err)
 		}
 	})
 	t.Run("absent upstream fails closed to else", func(t *testing.T) {
-		selected, targets, err := SelectGatewayCases(gateway, plan, ExprPool{})
-		if err != nil || len(selected) != 1 || selected[0].ID != "else" ||
-			targets[0] != "fallthrough" {
-			t.Fatalf("selected %+v -> %v, err %v", selected, targets, err)
+		routing, err := SelectGatewayCases(gateway, plan, ExprPool{})
+		if err != nil || len(routing.Cases) != 1 || routing.Cases[0].ID != "else" ||
+			routing.Targets[0] != "fallthrough" {
+			t.Fatalf("routing = %+v, err %v", routing, err)
 		}
 	})
 }
@@ -1142,41 +1142,43 @@ func TestSelectGatewayCasesFilterMode(t *testing.T) {
 	gateway := plan.Nodes["route"]
 
 	t.Run("every matching case activates", func(t *testing.T) {
-		cases, targets, err := SelectGatewayCases(gateway, plan, ExprPool{
+		routing, err := SelectGatewayCases(gateway, plan, ExprPool{
 			"triage": {"is_bug": false, "severity": "high"},
 		})
 		if err != nil {
 			t.Fatalf("SelectGatewayCases() error = %v", err)
 		}
-		if len(cases) != 2 || cases[0].ID != "c1" || cases[1].ID != "c2" {
-			t.Fatalf("cases = %+v, want both conditional branches", cases)
+		if len(routing.Cases) != 2 || routing.Cases[0].ID != "c1" ||
+			routing.Cases[1].ID != "c2" {
+			t.Fatalf("cases = %+v, want both conditional branches", routing.Cases)
 		}
-		if len(targets) != 2 || targets[0] != "left" || targets[1] != "right" {
-			t.Fatalf("targets = %v, want [left right]", targets)
+		if len(routing.Targets) != 2 || routing.Targets[0] != "left" ||
+			routing.Targets[1] != "right" {
+			t.Fatalf("targets = %v, want [left right]", routing.Targets)
 		}
 	})
 
 	t.Run("a single match does not drag in the fallback", func(t *testing.T) {
-		cases, targets, err := SelectGatewayCases(gateway, plan, ExprPool{
+		routing, err := SelectGatewayCases(gateway, plan, ExprPool{
 			"triage": {"is_bug": true, "severity": "high"},
 		})
-		if err != nil || len(cases) != 1 || cases[0].ID != "c2" {
-			t.Fatalf("cases = %+v, err = %v", cases, err)
+		if err != nil || len(routing.Cases) != 1 || routing.Cases[0].ID != "c2" {
+			t.Fatalf("cases = %+v, err = %v", routing.Cases, err)
 		}
-		if len(targets) != 1 || targets[0] != "right" {
-			t.Fatalf("targets = %v, want [right]", targets)
+		if len(routing.Targets) != 1 || routing.Targets[0] != "right" {
+			t.Fatalf("targets = %v, want [right]", routing.Targets)
 		}
 	})
 
 	t.Run("no match falls through to else alone", func(t *testing.T) {
-		cases, targets, err := SelectGatewayCases(gateway, plan, ExprPool{
+		routing, err := SelectGatewayCases(gateway, plan, ExprPool{
 			"triage": {"is_bug": true, "severity": "low"},
 		})
-		if err != nil || len(cases) != 1 || cases[0].ID != "else" {
-			t.Fatalf("cases = %+v, err = %v", cases, err)
+		if err != nil || len(routing.Cases) != 1 || routing.Cases[0].ID != "else" {
+			t.Fatalf("cases = %+v, err = %v", routing.Cases, err)
 		}
-		if len(targets) != 1 || targets[0] != "fallthrough" {
-			t.Fatalf("targets = %v, want [fallthrough]", targets)
+		if len(routing.Targets) != 1 || routing.Targets[0] != "fallthrough" {
+			t.Fatalf("targets = %v, want [fallthrough]", routing.Targets)
 		}
 	})
 }
@@ -1205,14 +1207,14 @@ func TestSelectGatewayCasesSwitchStopsAtFirstMatch(t *testing.T) {
 		t.Fatalf("BuildGraphPlan() error = %v", err)
 	}
 
-	cases, targets, err := SelectGatewayCases(plan.Nodes["route"], plan, ExprPool{
+	routing, err := SelectGatewayCases(plan.Nodes["route"], plan, ExprPool{
 		"triage": {"is_bug": false, "severity": "high"},
 	})
-	if err != nil || len(cases) != 1 || cases[0].ID != "c1" {
-		t.Fatalf("cases = %+v, err = %v", cases, err)
+	if err != nil || len(routing.Cases) != 1 || routing.Cases[0].ID != "c1" {
+		t.Fatalf("cases = %+v, err = %v", routing.Cases, err)
 	}
-	if len(targets) != 1 || targets[0] != "left" {
-		t.Fatalf("targets = %v, want [left]", targets)
+	if len(routing.Targets) != 1 || routing.Targets[0] != "left" {
+		t.Fatalf("targets = %v, want [left]", routing.Targets)
 	}
 }
 
@@ -1252,5 +1254,79 @@ func TestValidateDefinitionRejectsNegativeMaxAttempts(t *testing.T) {
 	err := ValidateDefinition(definition)
 	if err == nil || !strings.Contains(err.Error(), "max_attempts") {
 		t.Fatalf("ValidateDefinition() error = %v, want max_attempts error", err)
+	}
+}
+
+// A branch is only auditable if the decision carries the values it was made
+// from. Reading them back off the submission later answers "what is true now",
+// which is a different question once the node has been reworked.
+func TestSelectGatewayCasesRecordsEvidenceForEveryCase(t *testing.T) {
+	definition := gatewayTestDefinition(
+		[]GatewayCase{
+			{ID: "c1", Label: "非缺陷", When: `is_bug == false`},
+			{ID: "c2", Label: "高危", When: `severity == "high"`},
+			{ID: "else", Label: "继续"},
+		},
+		[]EdgeDefinition{
+			{From: "route", To: "left", FromCase: "c1"},
+			{From: "route", To: "right", FromCase: "c2"},
+		},
+	)
+	definition.Nodes = append(definition.Nodes, NodeDefinition{
+		Key: "fallthrough", Kind: "end", Name: "Fallthrough",
+	})
+	definition.Edges = append(definition.Edges, EdgeDefinition{
+		From: "route", To: "fallthrough", FromCase: "else",
+	})
+	plan, err := BuildGraphPlan(definition)
+	if err != nil {
+		t.Fatalf("BuildGraphPlan() error = %v", err)
+	}
+	routing, err := SelectGatewayCases(plan.Nodes["route"], plan, ExprPool{
+		"triage": {"is_bug": true, "severity": "high"},
+	})
+	if err != nil {
+		t.Fatalf("SelectGatewayCases() error = %v", err)
+	}
+	if len(routing.Cases) != 1 || routing.Cases[0].ID != "c2" {
+		t.Fatalf("cases = %+v, want c2", routing.Cases)
+	}
+	// The case that lost is reported too — "why not that one" is half the answer.
+	if routing.Matched["c1"] != false || routing.Matched["c2"] != true {
+		t.Fatalf("matched = %v, want c1 false and c2 true", routing.Matched)
+	}
+	if routing.Evidence["triage.is_bug"] != true ||
+		routing.Evidence["triage.severity"] != "high" {
+		t.Fatalf("evidence = %v, want the values both conditions read", routing.Evidence)
+	}
+}
+
+// A condition reading a field nobody submitted is the case worth explaining, so
+// the absence is recorded rather than left out of the evidence entirely.
+func TestSelectGatewayCasesRecordsAbsentFieldsAsEvidence(t *testing.T) {
+	definition := gatewayTestDefinition(
+		[]GatewayCase{
+			{ID: "c1", Label: "非缺陷", When: `is_bug == false`},
+			{ID: "else", Label: "继续"},
+		},
+		[]EdgeDefinition{
+			{From: "route", To: "left", FromCase: "c1"},
+			{From: "route", To: "right", FromCase: "else"},
+		},
+	)
+	plan, err := BuildGraphPlan(definition)
+	if err != nil {
+		t.Fatalf("BuildGraphPlan() error = %v", err)
+	}
+	routing, err := SelectGatewayCases(plan.Nodes["route"], plan, ExprPool{})
+	if err != nil {
+		t.Fatalf("SelectGatewayCases() error = %v", err)
+	}
+	if routing.Cases[0].ID != "else" {
+		t.Fatalf("cases = %+v, want the else fallthrough", routing.Cases)
+	}
+	value, recorded := routing.Evidence["triage.is_bug"]
+	if !recorded || value != nil {
+		t.Fatalf("evidence = %v, want triage.is_bug present and empty", routing.Evidence)
 	}
 }

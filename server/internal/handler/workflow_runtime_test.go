@@ -2786,14 +2786,26 @@ func TestWorkflowFilterGatewayActivatesEveryMatch(t *testing.T) {
 		t.Fatalf("load routing event: %v", err)
 	}
 	var payload struct {
-		CaseIDs         []string `json:"case_ids"`
-		SelectedTargets []string `json:"selected_targets"`
+		CaseIDs         []string        `json:"case_ids"`
+		SelectedTargets []string        `json:"selected_targets"`
+		Matched         map[string]bool `json:"matched"`
+		Evidence        map[string]any  `json:"evidence"`
 	}
 	if err := json.Unmarshal(routing.Payload, &payload); err != nil {
 		t.Fatalf("decode routing payload: %v", err)
 	}
 	if len(payload.CaseIDs) != 2 || len(payload.SelectedTargets) != 2 {
 		t.Fatalf("routing payload = %+v, want both branches", payload)
+	}
+	// The decision is stored with the values behind it. Read off the
+	// submission instead, a later rework would rewrite the explanation of a
+	// branch that had already been taken.
+	if !payload.Matched["dba"] || !payload.Matched["api"] {
+		t.Fatalf("matched = %v, want both gates recorded as hit", payload.Matched)
+	}
+	if payload.Evidence["fix.touched_db"] != true ||
+		payload.Evidence["fix.touched_api"] != true {
+		t.Fatalf("evidence = %v, want the submitted flags", payload.Evidence)
 	}
 
 	// Finishing both reviews releases the merge.

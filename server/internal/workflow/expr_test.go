@@ -204,3 +204,22 @@ func TestExprReadsIssueAndVerdictFields(t *testing.T) {
 		t.Fatal("issue.property.severity did not match")
 	}
 }
+
+// A routing decision is only reviewable if the values it turned on are kept
+// with it. Reading them off the submission later shows what is true now, not
+// what was true when the branch was chosen.
+func TestExprReferencedFields(t *testing.T) {
+	expr := mustParseExpr(t, `fix.done == true && severity in ["high", "critical"]`)
+	refs := expr.ReferencedFields()
+
+	if len(refs) != 2 {
+		t.Fatalf("referenced fields = %+v, want two", refs)
+	}
+	seen := map[string]string{}
+	for _, ref := range refs {
+		seen[ref.Node] = ref.Key
+	}
+	if seen["fix"] != "done" || seen["triage"] != "severity" {
+		t.Fatalf("unexpected references %+v", refs)
+	}
+}

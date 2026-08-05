@@ -116,6 +116,21 @@ func ValidateReworkAttempt(node NodeDefinition, currentAttempt int) error {
 	)
 }
 
+// GatewayRouting is a routing decision together with what it turned on.
+type GatewayRouting struct {
+	// Cases that won, in declared order. Exactly one unless mode is filter.
+	Cases   []GatewayCase
+	Targets []string
+	// Per case id, whether it matched. Every conditional case is present,
+	// including ones that ran after the winner in filter mode.
+	Matched map[string]bool
+	// The values every condition read, keyed by "node.field". A branch is
+	// only reviewable if the data behind it is kept with it — read off the
+	// submission later, a value shows what is true now, not what was true
+	// when the branch was taken.
+	Evidence map[string]any
+}
+
 // SelectGatewayCases routes a gateway against the variable pool. Cases evaluate
 // in declared order. A switch gateway (the default) stops at the first match; a
 // filter gateway takes all of them. Either way, no match at all falls through
@@ -128,51 +143,68 @@ func SelectGatewayCases(
 	gateway NodeDefinition,
 	plan GraphPlan,
 	pool ExprPool,
-) ([]GatewayCase, []string, error) {
+) (GatewayRouting, error) {
 	targets := make(map[string]string, len(plan.Outgoing[gateway.Key]))
 	for _, edge := range plan.Outgoing[gateway.Key] {
 		targets[edge.FromCase] = edge.To
 	}
 	scope := GatewayExprScope(gateway.Key, plan.Nodes, plan.EdgeList())
-	matched := make([]GatewayCase, 0, 1)
-	matchedTargets := make([]string, 0, 1)
+	routing := GatewayRouting{
+		Cases:    make([]GatewayCase, 0, 1),
+		Targets:  make([]string, 0, 1),
+		Matched:  map[string]bool{},
+		Evidence: map[string]any{},
+	}
+	decided := false
 	for _, gatewayCase := range gateway.Cases {
 		if gatewayCase.ID == "else" {
 			continue
 		}
 		expr, err := ParseExpr(gatewayCase.When, scope)
 		if err != nil {
-			return nil, nil, fmt.Errorf(
+			return GatewayRouting{}, fmt.Errorf(
 				"gateway %q case %q: %w", gateway.Key, gatewayCase.ID, err,
 			)
+		}
+		// Collected for every case, not just the winner: "why not that one"
+		// is as much of the answer as "why this one".
+		for _, ref := range expr.ReferencedFields() {
+			if value, ok := pool[ref.Node][ref.Key]; ok {
+				routing.Evidence[ref.Path()] = value
+			} else {
+				routing.Evidence[ref.Path()] = nil
+			}
 		}
 		hit, err := expr.Evaluate(pool)
 		if err != nil {
-			return nil, nil, fmt.Errorf(
+			return GatewayRouting{}, fmt.Errorf(
 				"gateway %q case %q: %w", gateway.Key, gatewayCase.ID, err,
 			)
 		}
-		if !hit {
+		routing.Matched[gatewayCase.ID] = hit
+		if !hit || decided {
 			continue
 		}
-		matched = append(matched, gatewayCase)
-		matchedTargets = append(matchedTargets, targets[gatewayCase.ID])
+		routing.Cases = append(routing.Cases, gatewayCase)
+		routing.Targets = append(routing.Targets, targets[gatewayCase.ID])
 		if gateway.Mode != GatewayModeFilter {
-			break
+			decided = true
 		}
 	}
-	if len(matched) > 0 {
-		return matched, matchedTargets, nil
+	if len(routing.Cases) > 0 {
+		return routing, nil
 	}
 	if len(gateway.Cases) == 0 {
-		return nil, nil, fmt.Errorf("gateway %q has no cases", gateway.Key)
+		return GatewayRouting{}, fmt.Errorf("gateway %q has no cases", gateway.Key)
 	}
 	elseCase := gateway.Cases[len(gateway.Cases)-1]
 	target, exists := targets[elseCase.ID]
 	if elseCase.ID != "else" || !exists {
-		return nil, nil, fmt.Errorf("gateway %q has no else path", gateway.Key)
+		return GatewayRouting{}, fmt.Errorf("gateway %q has no else path", gateway.Key)
 	}
-	return []GatewayCase{elseCase}, []string{target}, nil
+	routing.Cases = append(routing.Cases, elseCase)
+	routing.Targets = append(routing.Targets, target)
+	return routing, nil
 }
 
 func (p GraphPlan) Successors(nodeKey string) []EdgeDefinition {
