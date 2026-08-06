@@ -53,6 +53,32 @@ Before planning or implementing, read:
   Multica issue comments. Public output should explain only the current issue's
   root cause, fix, and verification.
 
+## Concurrency and State Authority Rules
+
+Races in daemon/queue/sync code on this repo keep reappearing in two shapes.
+Both are design problems that look like missing checks:
+
+- A point-in-time re-check is not a fix when the window you must cover lies
+  between that check and the action it guards. "Read the local state again just
+  before sending the request" only lowers the reproduction rate; the reverse
+  operation can complete in the gap. Put the action itself inside the existing
+  order instead — extend the critical section to span decide → apply → external
+  call — and keep the re-check only as an in-order predicate.
+- When several paths can reach the same destructive verdict but only one holds
+  the state that makes acting on it safe (a barrier, a sequenced hold, a lease),
+  do not give the other paths that state too. Have them report the verdict as
+  "this response is not authoritative about these items", preserve the current
+  rows, and let the single owner act. Distributing the authority means several
+  places now maintain an ordering that only worked because one place did.
+- Deferring an action to the single owner has a cost. State it explicitly and
+  check it is acceptable — "at most one refresh tick later, which is the
+  pre-verdict status quo" is a reason; "probably fine" is not. If the delay is a
+  real new exposure, converge the entry points instead of letting the verdict
+  hang.
+- Discarding a probe's return value does not mean the path is not acting on it.
+  Check how the caller treats absent items: if absence is treated as deletion,
+  the verdict is already being executed, just without a record.
+
 ## Regression Test Coverage Rules
 
 Maintainers have consistently valued tests that prove the bug boundary, not
@@ -84,6 +110,15 @@ tests that merely exercise changed code. For non-trivial fixes, use these rules:
 - Avoid live external services. Use fake HTTP servers, fake clients, fixtures,
   deterministic clocks, atomics, buffered channels, and deadlines for
   concurrency tests.
+- Make the test double reproduce the identity and idempotency semantics the
+  system under test depends on, not just the response shape. A fake register
+  endpoint that minted a fresh row ID per call made a whole class of
+  cleanup-undoes-recovery interleaves impossible to express, because the two
+  operations never named the same row — the suite stayed green through the bug.
+  Mirror the real upsert: same key, same ID.
+- Gate the external call, not the goroutine, when you need a deterministic
+  interleave. Blocking inside the fake server's handler pins the exact in-flight
+  window; sleeps around the caller do not.
 - Name tests after the regression or invariant they protect. A future revert
   should fail for the right reason.
 
@@ -113,6 +148,18 @@ oversights. These rules come from a fix that took eight rounds:
 - State the verification you actually ran (commands, database state, which
   failures pre-exist on `main`). Do not report a check as passing on a
   different revision than the one you pushed.
+- A maintainer may push commits to your branch and then file findings against
+  their own commits, explicitly not as changes requested of you. Answer the one
+  question they are actually asking — who takes the fix — instead of treating it
+  as a normal review round. Taking it is usually right: the invariant carries
+  your feature's name, and the branch is yours to land.
+- When you substitute a different test for one the reviewer proposed, say so and
+  why. If the chosen design makes their scenario unconstructible, that is the
+  point worth stating — silently shipping a different assertion reads as having
+  missed the request.
+- Prefer the reviewer's stated preference when they offer two options and lean
+  one way, unless you can name a concrete reason the other is better. Say which
+  you took and why in the same comment.
 
 ## PR Shape
 

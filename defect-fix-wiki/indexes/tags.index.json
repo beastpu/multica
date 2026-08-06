@@ -50,13 +50,19 @@
     "pattern.runtimes.clear_incompatible_model_on_switch",
     "pattern.runtimes.custom_runtime_args_registration_errors"
   ],
+  "concurrency": [
+    "antipattern.daemon.verdict_without_authority",
+    "pattern.daemon.registration_cleanup_ordering"
+  ],
   "consistency": [
     "antipattern.storage.inline_compensation_on_uncertain_write"
   ],
   "daemon": [
+    "antipattern.daemon.verdict_without_authority",
     "pattern.cli.daemon_task_token_fallback_guard",
     "pattern.daemon.autopilot_workdir_gc_terminal",
     "pattern.daemon.claim_slow_log_observability",
+    "pattern.daemon.registration_cleanup_ordering",
     "pattern.runtimes.custom_runtime_args_registration_errors",
     "pattern.runtimes.profile_drift_sync"
   ],
@@ -175,11 +181,16 @@
   "reconciler": [
     "pattern.channel.media_object_intent_ledger"
   ],
+  "registration": [
+    "pattern.daemon.registration_cleanup_ordering"
+  ],
   "revert-followup": [
     "pattern.daemon.claim_slow_log_observability"
   ],
   "runtime": [
+    "antipattern.daemon.verdict_without_authority",
     "pattern.agent.antigravity_print_timeout",
+    "pattern.daemon.registration_cleanup_ordering",
     "pattern.runtimes.clear_incompatible_model_on_switch",
     "pattern.runtimes.custom_runtime_args_registration_errors",
     "pattern.runtimes.custom_runtime_profile_delete",
@@ -196,6 +207,7 @@
     "pattern.workspace.deployment_host_url_prefix"
   ],
   "server": [
+    "antipattern.daemon.verdict_without_authority",
     "antipattern.storage.inline_compensation_on_uncertain_write",
     "pattern.agent.antigravity_print_timeout",
     "pattern.agent.assignment_comment_catch_up",
@@ -209,6 +221,7 @@
     "pattern.comments.resolve_aware_agent_reads",
     "pattern.daemon.autopilot_workdir_gc_terminal",
     "pattern.daemon.claim_slow_log_observability",
+    "pattern.daemon.registration_cleanup_ordering",
     "pattern.github.webhook_route_by_repo_registry",
     "pattern.issues.child_done_backlog_parent_wake",
     "pattern.issues.sub_issue_stage_barrier",
@@ -229,6 +242,9 @@
   "stages": [
     "pattern.agent.sub_issue_stages_runtime_brief",
     "pattern.issues.sub_issue_stage_barrier"
+  ],
+  "state-machine": [
+    "antipattern.daemon.verdict_without_authority"
   ],
   "storage": [
     "antipattern.storage.inline_compensation_on_uncertain_write",
