@@ -2928,6 +2928,23 @@ func (h *Handler) rejectAnalysisTaskWrite(w http.ResponseWriter, r *http.Request
 // Only status, and only for an agent. A person closing a carrier is making a
 // decision the run should respect, and an agent editing a title or description
 // is not claiming anything about progress.
+// workflowCarrierIssue reports whether an issue was materialized to carry a
+// workflow node's work.
+//
+// origin_type is the authoritative record: materialization writes it in the
+// same statement that creates the issue. The metadata block carries the same
+// coordinates, but stamping it is best effort — it is a navigation index, and
+// a failure there deliberately does not fail a materialization that already
+// succeeded. Keying a refusal on the index alone means a carrier whose stamp
+// was lost silently stops being protected.
+func workflowCarrierIssue(issue db.Issue) bool {
+	if issue.OriginType.Valid && issue.OriginType.String == "workflow" {
+		return true
+	}
+	_, ok := readWorkflowIssueCoordinates(issue.Metadata)
+	return ok
+}
+
 func (h *Handler) rejectAgentCarrierStatusWrite(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -2941,7 +2958,7 @@ func (h *Handler) rejectAgentCarrierStatusWrite(
 	if actorType, _ := h.resolveActor(r, userID, workspaceID); actorType != "agent" {
 		return false
 	}
-	if _, ok := readWorkflowIssueCoordinates(issue.Metadata); !ok {
+	if !workflowCarrierIssue(issue) {
 		return false
 	}
 	writeError(
