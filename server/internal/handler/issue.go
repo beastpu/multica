@@ -2915,6 +2915,43 @@ func (h *Handler) rejectAnalysisTaskWrite(w http.ResponseWriter, r *http.Request
 	return true
 }
 
+// rejectAgentCarrierStatusWrite refuses an agent's attempt to set the status of
+// an issue that carries a workflow node's work.
+//
+// The carrier mirrors the node; the node does not read the carrier. An agent
+// that finishes its work and moves the issue to in_review is stating an outcome
+// through the one channel the engine does not listen to — the node stays where
+// it was, the board says something else, and the two disagree until a person
+// notices. It has a channel that does work: submitting. That advances the node,
+// and the node moves the carrier.
+//
+// Only status, and only for an agent. A person closing a carrier is making a
+// decision the run should respect, and an agent editing a title or description
+// is not claiming anything about progress.
+func (h *Handler) rejectAgentCarrierStatusWrite(
+	w http.ResponseWriter,
+	r *http.Request,
+	issue db.Issue,
+	userID, workspaceID string,
+	changesStatus bool,
+) bool {
+	if !changesStatus {
+		return false
+	}
+	if actorType, _ := h.resolveActor(r, userID, workspaceID); actorType != "agent" {
+		return false
+	}
+	if _, ok := readWorkflowIssueCoordinates(issue.Metadata); !ok {
+		return false
+	}
+	writeError(
+		w, http.StatusForbidden,
+		"this issue carries a workflow node; its status follows the node. "+
+			"Report your result with `multica workflow submit` instead.",
+	)
+	return true
+}
+
 func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	prevIssue, ok := h.loadIssueForUser(w, r, id)
@@ -2950,6 +2987,13 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	if _, changesParent := rawFields["parent_issue_id"]; changesParent &&
 		parentIssueIDChanged(prevIssue.ParentIssueID, req.ParentIssueID) &&
 		h.rejectActiveWorkflowIssueReparent(w, r, prevIssue) {
+		return
+	}
+	_, sendsStatus := rawFields["status"]
+	if h.rejectAgentCarrierStatusWrite(
+		w, r, prevIssue, userID, workspaceID,
+		sendsStatus && req.Status != nil && *req.Status != prevIssue.Status,
+	) {
 		return
 	}
 
