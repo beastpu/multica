@@ -165,7 +165,7 @@ function renderSubmissionPanel(
           { type: "member", id: "member-1", name: "Ada" },
           { type: "agent", id: "agent-1", name: "Build Agent" },
         ]}
-        canManage
+        owesDelivery
       />
     </I18nProvider>,
   );

@@ -205,14 +205,23 @@ export function SubmissionPanel({
   node,
   submissions,
   tasks,
-  canManage,
+  // Whether the reader is the one who owes this delivery — not whether they
+  // are allowed to manage the workspace. Those came out the same for an admin,
+  // which put a submit form in front of anyone senior enough to see the node:
+  // on a node an agent was executing it invited them to hand in the agent's
+  // work under their own name, and on a node they were only reviewing it
+  // offered them the job they were there to judge.
+  //
+  // Everyone still sees what the node owes and what has been handed in. That
+  // is the record, and it is the part worth reading.
+  owesDelivery,
 }: {
   instanceId: string;
   node: WorkflowNodeInstance;
   submissions: WorkflowSubmission[];
   tasks: WorkflowNodeTask[];
   actorOptions: WorkflowActorOption[];
-  canManage: boolean;
+  owesDelivery: boolean;
 }) {
   const { t } = useT("workflows");
   const [values, setValues] = useState<Record<string, string>>({});
@@ -246,7 +255,7 @@ export function SubmissionPanel({
       {/* A node with no schema still owes the next node a conclusion, and the
           default node shape has no schema — gating this panel on one left the
           most common node with nowhere to hand anything off from. */}
-      {canManage && isWorkflowNodeOpen(node.status) && (
+      {owesDelivery && isWorkflowNodeOpen(node.status) && (
         <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
           {taskScoped && (
             <div className="space-y-1.5">
@@ -402,6 +411,40 @@ export function SubmissionPanel({
                 </p>
               )
           )}
+        </div>
+      )}
+      {/*
+        What the node owes, for everyone who is not the one who owes it. The
+        form used to be the only place the declared fields appeared, so hiding
+        it from a reader hid the contract too — and the contract is the part a
+        reviewer, a watcher and the person chasing a stuck run all need. It is
+        the node's own statement of what it will hand over, readable before
+        anything has been handed over.
+      */}
+      {!owesDelivery && outputFields.length > 0 &&
+        deliveredSubmissions.length === 0 && (
+        <div className="space-y-2 rounded-xl border border-dashed bg-muted/10 p-4">
+          <p className="text-xs font-medium text-muted-foreground">
+            {t(($) => $.workbench.output_fields)}
+          </p>
+          <ul className="space-y-1.5">
+            {outputFields.map((field) => (
+              <li
+                key={field.key}
+                className="flex items-baseline justify-between gap-3 text-xs"
+              >
+                <span className="min-w-0 truncate">
+                  {field.desc || field.key}
+                  {field.required && (
+                    <span aria-hidden className="ml-1 text-destructive">*</span>
+                  )}
+                </span>
+                <span className="shrink-0 font-mono text-muted-foreground">
+                  {field.key}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {deliveredSubmissions.length === 0 ? (
@@ -2014,6 +2057,34 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
           participant.actor_id === userId,
       ),
     );
+  // Who owes this node's delivery. The executor resolution is the answer the
+  // engine already computed: it names the actor the node was dispatched to. A
+  // member sees the form when that actor is them, and when the node has no
+  // agent to dispatch to at all — the manual case, where the owner is the
+  // executor by default.
+  //
+  // Being an admin is not an answer. It grants the right to intervene, which
+  // the node's own management actions provide, not the right to file someone
+  // else's work as if it were yours.
+  const selectedExecutor = (nodeQuery.data?.executor_resolutions ?? []).find(
+    (resolution) => !resolution.workflow_node_task_id,
+  ) ?? (nodeQuery.data?.executor_resolutions ?? [])[0];
+  const selectedExecutorKind = selectedNode?.definition.executor?.kind ?? "manual";
+  const viewerOwesSelectedDelivery = Boolean(
+    userId && (
+      (selectedExecutor?.actor_type === "member" &&
+        selectedExecutor.actor_id === userId) ||
+      // No resolution names an actor and the definition never asked for one:
+      // the node is worked by hand, and its owner is who works it.
+      (selectedExecutorKind === "manual" && !selectedExecutor?.actor_id &&
+        (nodeQuery.data?.participants ?? []).some(
+          (participant) =>
+            participant.role === "owner" &&
+            participant.actor_type === "member" &&
+            participant.actor_id === userId,
+        ))
+    ),
+  );
   const eventsQuery = useQuery(workflowEventsOptions(wsId, instanceId));
   const diagnosticsQuery = useQuery(
     workflowDiagnosticsOptions(wsId, instanceId, canAdmin),
@@ -2529,7 +2600,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                 submissions={nodeQuery.data.submissions}
                 tasks={nodeQuery.data.tasks}
                 actorOptions={actorOptions}
-                canManage={canManageSelectedNode}
+                owesDelivery={viewerOwesSelectedDelivery}
               />
             )}
             <ArtifactPanel

@@ -30,7 +30,7 @@ vi.mock("@multica/core/workflows", async (importOriginal) => ({
   }),
 }));
 
-function renderPanel() {
+function renderPanel(owesDelivery = true) {
   const node = {
     id: "node-1",
     status: "active",
@@ -56,7 +56,7 @@ function renderPanel() {
         submissions={[]}
         tasks={[]}
         actorOptions={[]}
-        canManage
+        owesDelivery={owesDelivery}
       />
     </I18nProvider>,
   );
@@ -67,6 +67,20 @@ describe("SubmissionPanel output fields", () => {
     vi.clearAllMocks();
     mocks.isError.current = false;
     mocks.submitError.current = null;
+  });
+
+  // The form used to appear for anyone who could manage the workspace, which
+  // on an agent-executed node invited an admin to file the agent's work under
+  // their own name, and on a node they were reviewing offered them the job
+  // they were there to judge.
+  it("offers no delivery form to someone who does not owe the delivery", () => {
+    renderPanel(false);
+
+    expect(screen.queryByLabelText(/summary/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /submit/i })).toBeNull();
+    // The contract itself is not hidden — what the node owes is the record,
+    // and everyone watching the run has reason to read it.
+    expect(screen.getByText("Is it a real defect")).toBeInTheDocument();
   });
 
   it("labels a field by its description and keeps the key visible", () => {
