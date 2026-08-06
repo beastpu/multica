@@ -65,12 +65,13 @@ func runAttachmentUpload(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// A task is how the file finds its way into a chat reply, not a condition
+	// of uploading. Without one the file is stored against the workspace and
+	// the caller keeps the id — which is what a workflow node needs to satisfy
+	// an attachment artifact, and what this command used to refuse to give it.
 	taskID, _ := cmd.Flags().GetString("task")
 	if taskID == "" {
 		taskID = client.TaskID
-	}
-	if taskID == "" {
-		return fmt.Errorf("no chat task in context: run inside a chat task (MULTICA_TASK_ID set) or pass --task <id>")
 	}
 
 	path := args[0]

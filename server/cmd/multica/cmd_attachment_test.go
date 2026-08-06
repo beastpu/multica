@@ -227,27 +227,6 @@ func TestRunAttachmentUploadEscapesFilename(t *testing.T) {
 	}
 }
 
-func TestRunAttachmentUploadRequiresTask(t *testing.T) {
-	t.Setenv("MULTICA_TASK_ID", "")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-	setCLITestServerEnv(t, srv.URL)
-	t.Setenv("MULTICA_TOKEN", "mat_test-token")
-
-	dir := t.TempDir()
-	imgPath := filepath.Join(dir, "chart.png")
-	if err := os.WriteFile(imgPath, []byte("bytes"), 0o644); err != nil {
-		t.Fatalf("write temp image: %v", err)
-	}
-
-	cmd := newAttachmentUploadTestCmd() // no --task, no MULTICA_TASK_ID
-	if err := runAttachmentUpload(cmd, []string{imgPath}); err == nil || !strings.Contains(err.Error(), "no chat task in context") {
-		t.Fatalf("runAttachmentUpload error = %v, want no-chat-task error", err)
-	}
-}
-
 func TestRunAttachmentDownloadRequiresDownloadURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/attachments/att-no-url" {
@@ -264,5 +243,48 @@ func TestRunAttachmentDownloadRequiresDownloadURL(t *testing.T) {
 	cmd := newAttachmentDownloadTestCmd()
 	if err := runAttachmentDownload(cmd, []string{"att-no-url"}); err == nil || !strings.Contains(err.Error(), "no download URL") {
 		t.Fatalf("runAttachmentDownload error = %v, want missing download URL", err)
+	}
+}
+
+// A workflow node's agent has a task, but not a chat task, and the server now
+// stores its file workspace-scoped rather than refusing it. The CLI used to
+// stop the upload before the request left the machine — the same file the
+// node's own `workflow submit --attachment-id` asks it to produce.
+func TestRunAttachmentUploadWithoutATaskStillUploads(t *testing.T) {
+	var sawTaskField bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("parse multipart: %v", err)
+		}
+		_, sawTaskField = r.MultipartForm.Value["task_id"]
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":           "att-1000",
+			"filename":     "result.html",
+			"content_type": "text/html",
+			"url":          "https://cdn.example/result.html",
+			"markdown_url": "https://public.example/api/attachments/att-1000/download",
+		})
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+	t.Setenv("MULTICA_TASK_ID", "")
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "result.html")
+	if err := os.WriteFile(filePath, []byte("<h1>hello</h1>"), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	cmd := newAttachmentUploadTestCmd()
+	if _, err := captureStdout(t, func() error {
+		return runAttachmentUpload(cmd, []string{filePath})
+	}); err != nil {
+		t.Fatalf("runAttachmentUpload: %v", err)
+	}
+	// No task in context means no task to name: sending an empty task_id would
+	// make the server reject a field it did not need.
+	if sawTaskField {
+		t.Fatalf("upload sent a task_id field with no task in context")
 	}
 }

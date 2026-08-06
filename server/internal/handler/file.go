@@ -502,14 +502,20 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "task_id upload requires the task's own agent")
 				return
 			}
-			if !task.ChatSessionID.Valid {
-				writeError(w, http.StatusBadRequest, "task_id upload requires a chat task")
-				return
+			// Only a chat task has a reply to bind to. A workflow node's agent
+			// task has none, and refusing it conflated "cannot bind" with
+			// "cannot upload" — leaving a node that declares an attachment
+			// artifact with no way to produce the attachment id its own submit
+			// command asks for. The file lands workspace-scoped instead; every
+			// gate above (task token, matching task, owning agent, workspace
+			// membership) has already run.
+			if task.ChatSessionID.Valid {
+				params.TaskID = task.ID
+				// Bind the session too so reads (groupChatMessageAttachments)
+				// and GC classify the row consistently before it gains a
+				// message id.
+				params.ChatSessionID = task.ChatSessionID
 			}
-			params.TaskID = task.ID
-			// Bind the session too so reads (groupChatMessageAttachments) and
-			// GC classify the row consistently before it gains a message id.
-			params.ChatSessionID = task.ChatSessionID
 		}
 
 		link, err := h.Storage.Upload(r.Context(), key, data, contentType, header.Filename)

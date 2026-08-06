@@ -217,11 +217,26 @@ func TestUploadFile_TaskScopedChatAttachment(t *testing.T) {
 		}
 	})
 
-	t.Run("non-chat task rejected", func(t *testing.T) {
+	t.Run("non-chat task uploads without a chat binding", func(t *testing.T) {
+		// A non-chat task has no assistant reply to bind to, so the row gets
+		// no task or session — but the upload itself is legitimate: this is
+		// how a workflow node produces the attachment its artifact needs.
+		// TestUploadFile_NonChatAgentTaskUploadsWorkspaceScoped asserts the
+		// row's shape; here the point is only that it is not refused.
 		issueTask := createHandlerTestTaskForAgent(t, agentID) // no chat_session_id
 		w := uploadWithTaskID(t, agentID, issueTask, issueTask)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("non-chat task upload: expected 400, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusOK {
+			t.Fatalf("non-chat task upload: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp AttachmentResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v; body: %s", err, w.Body.String())
+		}
+		t.Cleanup(func() {
+			testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, resp.ID)
+		})
+		if resp.ChatSessionID != nil {
+			t.Fatalf("chat_session_id: want nil, got %v", resp.ChatSessionID)
 		}
 	})
 
@@ -398,4 +413,61 @@ func TestCompleteTask_BindsChatAttachments(t *testing.T) {
 			t.Fatalf("FailTask must not bind attachments, got %v", got)
 		}
 	})
+}
+
+// A workflow node's agent task is not a chat task: it has no session and no
+// assistant reply to bind an attachment to. The upload used to be refused for
+// that reason, which conflated "cannot bind" with "cannot upload" — and left a
+// node that declares an attachment artifact with no way to produce the
+// attachment id its own submit command asks for.
+func TestUploadFile_NonChatAgentTaskUploadsWorkspaceScoped(t *testing.T) {
+	if testPool == nil {
+		t.Skip("test database not available")
+	}
+	origStorage := testHandler.Storage
+	testHandler.Storage = &mockStorage{}
+	defer func() { testHandler.Storage = origStorage }()
+
+	agentID := createHandlerTestAgent(t, "WorkflowNodeAgent", []byte("[]"))
+	var taskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, started_at)
+		VALUES ($1, $2, 'running', 0, now())
+		RETURNING id
+	`, agentID, handlerTestRuntimeID(t)).Scan(&taskID); err != nil {
+		t.Fatalf("seed running non-chat task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
+
+	recorder := uploadWithTaskID(t, agentID, taskID, taskID)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var resp AttachmentResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body: %s", err, recorder.Body.String())
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, resp.ID)
+	})
+
+	// The row lands in the workspace and nowhere else: binding it to a task
+	// whose reply does not exist would leave a dangling owner, and the artifact
+	// submission only needs an attachment id from this workspace.
+	if resp.ChatSessionID != nil {
+		t.Fatalf("chat_session_id: want nil, got %v", resp.ChatSessionID)
+	}
+	var dbTask *string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT task_id::text FROM attachment WHERE id = $1`, resp.ID).Scan(&dbTask); err != nil {
+		t.Fatalf("query task_id: %v", err)
+	}
+	if dbTask != nil {
+		t.Fatalf("task_id: want NULL for a non-chat task, got %v", *dbTask)
+	}
+	if resp.UploaderType != "agent" {
+		t.Fatalf("uploader_type: want agent, got %s", resp.UploaderType)
+	}
 }
