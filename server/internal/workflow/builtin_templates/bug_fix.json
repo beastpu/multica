@@ -54,7 +54,48 @@
         "mode": "automatic",
         "required_issue_outcome": "done",
         "handoff_required": true
-      }
+      },
+      "outputs": [
+        {
+          "key": "is_bug",
+          "type": "bool",
+          "required": true,
+          "desc": "确认这是缺陷，而不是预期行为、使用问题或重复单"
+        },
+        {
+          "key": "severity",
+          "type": "enum",
+          "values": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "required": true,
+          "desc": "影响面与紧急度：high 影响线上主流程，low 可择期处理"
+        },
+        {
+          "key": "reproducible",
+          "type": "bool",
+          "desc": "是否按单据步骤稳定复现"
+        }
+      ]
+    },
+    {
+      "key": "route",
+      "kind": "gateway",
+      "name": "分诊路由",
+      "description": "不是缺陷就地关闭，是缺陷才进入根因分析。",
+      "cases": [
+        {
+          "id": "not_a_bug",
+          "label": "不是缺陷",
+          "when": "triage.is_bug == false"
+        },
+        {
+          "id": "else",
+          "label": "确认缺陷"
+        }
+      ]
     },
     {
       "key": "root_cause",
@@ -92,7 +133,21 @@
         "mode": "automatic",
         "required_issue_outcome": "done",
         "handoff_required": true
-      }
+      },
+      "outputs": [
+        {
+          "key": "root_cause_found",
+          "type": "bool",
+          "required": true,
+          "desc": "是否定位到根本原因；未定位时不要进入修复"
+        },
+        {
+          "key": "component",
+          "type": "string",
+          "max_len": 120,
+          "desc": "根因所在的模块 / 文件 / 服务"
+        }
+      ]
     },
     {
       "key": "fix",
@@ -126,12 +181,26 @@
         "mode": "automatic",
         "required_issue_outcome": "done",
         "handoff_required": true
-      }
+      },
+      "artifacts": [
+        {
+          "key": "fix_change",
+          "name": "修复提交",
+          "description": "修复对应的 MR / PR 或提交地址",
+          "kind": "link",
+          "required": true
+        }
+      ]
     },
     {
       "key": "end",
       "kind": "end",
       "name": "完成"
+    },
+    {
+      "key": "closed",
+      "kind": "end",
+      "name": "非缺陷关闭"
     }
   ],
   "edges": [
@@ -141,7 +210,17 @@
     },
     {
       "from": "triage",
-      "to": "root_cause"
+      "to": "route"
+    },
+    {
+      "from": "route",
+      "to": "closed",
+      "from_case": "not_a_bug"
+    },
+    {
+      "from": "route",
+      "to": "root_cause",
+      "from_case": "else"
     },
     {
       "from": "root_cause",

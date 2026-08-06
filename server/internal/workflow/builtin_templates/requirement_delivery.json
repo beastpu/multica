@@ -62,7 +62,43 @@
         "required_issue_outcome": "done",
         "handoff_required": true
       },
-      "timeout_minutes": 1440
+      "timeout_minutes": 1440,
+      "outputs": [
+        {
+          "key": "accepted",
+          "type": "bool",
+          "required": true,
+          "desc": "需求是否通过评审；不通过则不进入方案设计"
+        },
+        {
+          "key": "scale",
+          "type": "enum",
+          "values": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "required": true,
+          "desc": "工作量量级，决定方案设计要写到多细"
+        }
+      ]
+    },
+    {
+      "key": "review_gate",
+      "kind": "gateway",
+      "name": "评审路由",
+      "description": "评审未通过就地退回，通过才进入方案设计。",
+      "cases": [
+        {
+          "id": "rejected",
+          "label": "评审未通过",
+          "when": "review.accepted == false"
+        },
+        {
+          "id": "else",
+          "label": "评审通过"
+        }
+      ]
     },
     {
       "key": "plan",
@@ -105,7 +141,15 @@
           "required": true
         }
       ],
-      "timeout_minutes": 1440
+      "timeout_minutes": 1440,
+      "outputs": [
+        {
+          "key": "breaking_change",
+          "type": "bool",
+          "required": true,
+          "desc": "是否包含破坏性变更（接口、数据结构、配置）"
+        }
+      ]
     },
     {
       "key": "implement",
@@ -139,12 +183,26 @@
         "required_issue_outcome": "done",
         "handoff_required": true
       },
-      "timeout_minutes": 1440
+      "timeout_minutes": 1440,
+      "artifacts": [
+        {
+          "key": "implementation_change",
+          "name": "实施提交",
+          "description": "本次实施对应的 MR / PR 或提交地址",
+          "kind": "link",
+          "required": true
+        }
+      ]
     },
     {
       "key": "end",
       "kind": "end",
       "name": "完成"
+    },
+    {
+      "key": "rejected",
+      "kind": "end",
+      "name": "需求退回"
     }
   ],
   "edges": [
@@ -154,7 +212,17 @@
     },
     {
       "from": "review",
-      "to": "plan"
+      "to": "review_gate"
+    },
+    {
+      "from": "review_gate",
+      "to": "rejected",
+      "from_case": "rejected"
+    },
+    {
+      "from": "review_gate",
+      "to": "plan",
+      "from_case": "else"
     },
     {
       "from": "plan",

@@ -1,6 +1,9 @@
 package workflow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestBuiltinTemplatesAreValid(t *testing.T) {
 	templates := BuiltinTemplates()
@@ -70,5 +73,82 @@ func TestFindBuiltinTemplate(t *testing.T) {
 	}
 	if _, ok := FindBuiltinTemplate("unknown"); ok {
 		t.Fatal("FindBuiltinTemplate(unknown) unexpectedly found")
+	}
+}
+
+// The builtins are what a workspace copies to get going, so they are also what
+// teaches the model. They shipped as straight lines: every node ran, no node
+// reported a fact, and nothing routed on anything — a workspace starting from
+// one would never meet the structured outputs or the branching the engine is
+// built around. Each now declares what its deciding node concludes and turns
+// that conclusion into a route.
+func TestBuiltinTemplatesRouteOnDeclaredOutputs(t *testing.T) {
+	for _, template := range BuiltinTemplates() {
+		definition, err := ParseDefinition(template.Definition)
+		if err != nil {
+			t.Fatalf("builtin template %q definition invalid: %v", template.Key, err)
+		}
+
+		declared := map[string]map[string]OutputField{}
+		gateways := 0
+		for _, node := range definition.Nodes {
+			if len(node.Outputs) > 0 {
+				fields := map[string]OutputField{}
+				for _, field := range node.Outputs {
+					fields[field.Key] = field
+				}
+				declared[node.Key] = fields
+			}
+			if node.Kind == "gateway" {
+				gateways++
+				// An else case is what keeps an unmatched run from stalling on
+				// the gateway; the engine generates one, but a builtin that
+				// relies on that teaches the shape without the safety.
+				hasElse := false
+				for _, item := range node.Cases {
+					if item.ID == "else" {
+						hasElse = true
+					}
+				}
+				if !hasElse {
+					t.Fatalf(
+						"builtin template %q gateway %q has no else case",
+						template.Key, node.Key,
+					)
+				}
+			}
+		}
+		if gateways == 0 {
+			t.Fatalf("builtin template %q routes nothing", template.Key)
+		}
+		if len(declared) == 0 {
+			t.Fatalf("builtin template %q declares no output fields", template.Key)
+		}
+
+		// Every condition must read a field some upstream node actually owes.
+		// A condition on an undeclared field is not an error the engine
+		// reports — it fails closed to else — so a typo here would ship as a
+		// branch that silently never fires.
+		for _, node := range definition.Nodes {
+			for _, item := range node.Cases {
+				if item.When == "" {
+					continue
+				}
+				referenced := false
+				for nodeKey, fields := range declared {
+					for fieldKey := range fields {
+						if strings.Contains(item.When, nodeKey+"."+fieldKey) {
+							referenced = true
+						}
+					}
+				}
+				if !referenced {
+					t.Fatalf(
+						"builtin template %q case %q reads no declared output: %q",
+						template.Key, item.ID, item.When,
+					)
+				}
+			}
+		}
 	}
 }
