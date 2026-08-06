@@ -146,17 +146,16 @@ func (h *Handler) propagateWorkflowGraph(
 					}
 					result.NeedsSetup = true
 				}
-				// An activity that resolved an executor is under way; one that
-				// could not is blocked, and never entered Activated — which is
-				// what drives the started mirror — so it says so here.
-				carrierEvent := "activated"
+				// Only the blocked case is written here. A node that resolved
+				// an executor has no carriers yet — they are materialised after
+				// this transaction — so marking it started belongs there, not
+				// ten milliseconds before the issue exists.
 				if needsSetup {
-					carrierEvent = "blocked"
-				}
-				if err := syncWorkflowNodeIssueStatusTx(
-					ctx, q, workspaceID, updated, carrierEvent,
-				); err != nil {
-					return result, fmt.Errorf("sync workflow activity carriers %q: %w", node.NodeKey, err)
+					if err := syncWorkflowNodeIssueStatusTx(
+						ctx, q, workspaceID, updated, "blocked",
+					); err != nil {
+						return result, fmt.Errorf("block workflow activity carriers %q: %w", node.NodeKey, err)
+					}
 				}
 				result.Nodes[node.NodeKey] = updated
 				if !needsSetup {

@@ -66,9 +66,6 @@ func (h *Handler) applyWorkflowNodeEnterActions(
 		byKey[node.Key] = node
 	}
 	for _, node := range nodes {
-		// Activation is the moment the carrier stops being a plan and starts
-		// being work in progress.
-		h.syncWorkflowNodeIssueStatus(ctx, instance.WorkspaceID, node, "activated")
 		if nodeDefinition, ok := byKey[node.NodeKey]; ok {
 			h.applyWorkflowNodeActions(ctx, instance, nodeDefinition.OnEnter)
 		}

@@ -1249,6 +1249,14 @@ func (h *Handler) materializeWorkflowNodeTasks(ctx context.Context, workspaceID 
 			uuidToString(instance.ID), uuidToString(node.ID), uuidToString(task.ID),
 		)
 	}
+	// Materialization is the moment the carriers exist, so it is the earliest
+	// point the mirror has anything to write to. Marking them started at
+	// activation instead — which is where the other transitions are handled —
+	// ran ten milliseconds too early and found no issue to update: a silent
+	// no-op that looked like coverage.
+	if workflowNodeIsOpen(node) {
+		h.syncWorkflowNodeIssueStatus(ctx, workspaceID, node, "activated")
+	}
 	if h.WorkflowMaterializer != nil {
 		h.WorkflowMaterializer.Notify()
 	}
