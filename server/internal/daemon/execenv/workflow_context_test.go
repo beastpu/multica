@@ -353,3 +353,36 @@ func TestWorkflowBriefSaysItOnceWhenOnlyOneKindIsOwed(t *testing.T) {
 		t.Fatalf("fields-only node got the combined contract:\n%s", b.String())
 	}
 }
+
+// A node owing both kinds used to get three submit commands: one under the
+// field table, one under the artifact list, and the combined one. Each read as
+// a complete instruction on its own, and a real agent ran the artifact one,
+// wrote "delivered" on the issue, and left the node waiting on a field nobody
+// had asked it for in a command it could run.
+func TestWorkflowBriefOffersNoPartialDeliveryCommand(t *testing.T) {
+	var b strings.Builder
+	renderWorkflowProtocol(&b, &WorkflowTaskContext{
+		InstanceID: "instance-1",
+		NodeKey:    "root_cause",
+		NodeName:   "根因分析",
+		Outputs: []WorkflowOutputDuty{
+			{Key: "root_cause_found", Type: "bool", Required: true},
+		},
+		Artifacts: []WorkflowArtifactDuty{
+			{Key: "root_cause_report", Name: "根因分析", Kind: "document", Required: true},
+		},
+	})
+	for _, line := range strings.Split(b.String(), "\n") {
+		if !strings.Contains(line, "workflow submit") {
+			continue
+		}
+		// Every runnable submit line must carry the whole obligation. A line
+		// with one half and not the other is the trap.
+		hasField := strings.Contains(line, "--set root_cause_found=")
+		hasArtifact := strings.Contains(line, "--artifact root_cause_report")
+		if hasField != hasArtifact {
+			t.Fatalf("brief offers a command that delivers only half:\n%s\n\nfull brief:\n%s",
+				line, b.String())
+		}
+	}
+}

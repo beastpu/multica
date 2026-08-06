@@ -142,11 +142,30 @@ func renderWorkflowProtocol(b *strings.Builder, workflow *WorkflowTaskContext) {
 			"instructions.\n\n", workflow.HostIssue)
 	}
 
+	// When the node owes both kinds, the sections below describe what is owed
+	// and the delivery contract states the one command that discharges it. A
+	// section that also printed its own runnable command would read as a
+	// complete instruction while covering half the obligation.
+	deferDelivery := workflowOwesBothKinds(workflow)
+
 	renderWorkflowRework(b, workflow.Rework)
-	renderWorkflowOutputs(b, workflow.Outputs)
+	renderWorkflowOutputs(b, workflow.Outputs, deferDelivery)
 	renderWorkflowUpstream(b, workflow.InstanceID, workflow.Upstream)
-	renderWorkflowDuties(b, workflow)
+	renderWorkflowDuties(b, workflow, deferDelivery)
 	renderWorkflowDeliveryContract(b, workflow)
+}
+
+// workflowOwesBothKinds reports whether the node still owes required
+// structured fields and required artifacts at the same time — the case where
+// any single command is necessarily partial.
+func workflowOwesBothKinds(workflow *WorkflowTaskContext) bool {
+	requiredFields := 0
+	for _, output := range workflow.Outputs {
+		if output.Required {
+			requiredFields++
+		}
+	}
+	return requiredFields > 0 && len(workflow.PendingRequiredArtifacts()) > 0
 }
 
 // renderWorkflowCriticProtocol is a built-in, versioned review contract. The
@@ -234,7 +253,7 @@ func renderWorkflowRework(b *strings.Builder, rework *WorkflowReworkContext) {
 // renderWorkflowOutputs writes the structured fields this node owes. The table
 // carries the machine values and the descriptions together, and the section
 // never names a downstream node — the executor reports facts, not routes.
-func renderWorkflowOutputs(b *strings.Builder, outputs []WorkflowOutputDuty) {
+func renderWorkflowOutputs(b *strings.Builder, outputs []WorkflowOutputDuty, deferDelivery bool) {
 	if len(outputs) == 0 {
 		return
 	}
@@ -257,10 +276,15 @@ func renderWorkflowOutputs(b *strings.Builder, outputs []WorkflowOutputDuty) {
 		}
 		fmt.Fprintf(b, "| %s | %s | %s | %s |\n", output.Key, kind, required, output.Desc)
 	}
-	b.WriteString("\n提交（--set 可重复，枚举字段只认上表中的英文值）：\n\n")
-	fmt.Fprintf(b, "```\nmultica workflow submit --summary \"<结论>\"%s\n```\n\n", example)
-	b.WriteString("字段校验不通过时命令会返回每个字段的具体问题，按提示修正后重交。" +
+	b.WriteString("\n枚举字段只认上表中的英文值。" +
+		"字段校验不通过时命令会返回每个字段的具体问题，按提示修正后重交。" +
 		"缺了必填字段流程会拒绝这次交付。\n\n")
+	if deferDelivery {
+		b.WriteString("交付命令见下方「这个节点欠的是一份交付，不是两份」。\n\n")
+		return
+	}
+	b.WriteString("提交（--set 可重复）：\n\n")
+	fmt.Fprintf(b, "```\nmultica workflow submit --summary \"<结论>\"%s\n```\n\n", example)
 }
 
 // renderWorkflowUpstream writes what the predecessors concluded. Summaries are
@@ -325,7 +349,7 @@ func renderWorkflowUpstream(
 }
 
 // renderWorkflowDuties writes what this node owes and exactly how to deliver it.
-func renderWorkflowDuties(b *strings.Builder, workflow *WorkflowTaskContext) {
+func renderWorkflowDuties(b *strings.Builder, workflow *WorkflowTaskContext, deferDelivery bool) {
 	if len(workflow.Artifacts) == 0 && !workflow.HandoffRequired {
 		return
 	}
@@ -351,11 +375,16 @@ func renderWorkflowDuties(b *strings.Builder, workflow *WorkflowTaskContext) {
 	if len(workflow.Artifacts) > 0 {
 		b.WriteString("\nThe keys above are fixed by the workflow template. " +
 			"The server rejects any key it did not declare, so use them verbatim.\n\n")
-		b.WriteString("Write your document to a file and submit the file:\n\n")
-		b.WriteString("```\nmultica workflow submit --artifact <key> --file <path>\n```\n\n")
+		b.WriteString("Write your document to a file, and submit it with the command " +
+			"below — or, if this node also owes structured fields, with the single " +
+			"command in the delivery section that carries both.\n\n")
+		if !deferDelivery {
+			b.WriteString("```\nmultica workflow submit --artifact <key> --file <path>\n```\n\n")
+		}
 		b.WriteString("If the file is already on the issue as a comment attachment, " +
-			"register that attachment instead of uploading a second copy:\n\n")
-		b.WriteString("```\nmultica workflow submit --artifact <key> --attachment-id <attachment-id>\n```\n\n")
+			"register that attachment instead of uploading a second copy — swap " +
+			"`--file <path>` for:\n\n")
+		b.WriteString("```\n--attachment-id <attachment-id>\n```\n\n")
 		// A run without a host issue has no comment to carry the file, which
 		// used to leave an attachment artifact unsatisfiable: the only uploader
 		// demanded a chat task this node does not have. Upload direct and pass
