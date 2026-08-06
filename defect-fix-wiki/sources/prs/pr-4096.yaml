@@ -1,0 +1,161 @@
+id: source.github.pr.4096
+repo: multica-ai/multica
+pr_number: 4096
+url: https://github.com/multica-ai/multica/pull/4096
+state: merged
+title: "MUL-3269: Follow out-of-band multica binary replacement; hot-refresh agent CLI versions"
+author: beastpu
+base_ref: main
+head_ref: codex/upstream-daemon-auto-reload-version-change
+merged_at: 2026-08-05T11:54:22Z
+closed_at: 2026-08-05T11:54:22Z
+merge_commit: 31cd51ae2fa294ec0808840a40d84b4a6dc9c5cd
+linked_issues:
+  - MUL-3269
+changed_files:
+  - path: CLI_AND_DAEMON.md
+    additions: 28
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/environment-variables.ja.mdx
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/environment-variables.ko.mdx
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/environment-variables.mdx
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: apps/docs/content/docs/environment-variables.zh.mdx
+    additions: 2
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_config.go
+    additions: 29
+    deletions: 13
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_config_test.go
+    additions: 5
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_daemon.go
+    additions: 22
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_daemon_precedence_test.go
+    additions: 7
+    deletions: 6
+    change_type: MODIFIED
+  - path: server/cmd/multica/cmd_daemon_test.go
+    additions: 84
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/cli/config.go
+    additions: 9
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/cli/update.go
+    additions: 8
+    deletions: 1
+    change_type: MODIFIED
+  - path: server/internal/daemon/agent_path_selfheal_test.go
+    additions: 62
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/agent_version_refresh_test.go
+    additions: 1657
+    deletions: 0
+    change_type: ADDED
+  - path: server/internal/daemon/agents_refresh.go
+    additions: 351
+    deletions: 17
+    change_type: MODIFIED
+  - path: server/internal/daemon/agents_refresh_test.go
+    additions: 6
+    deletions: 4
+    change_type: MODIFIED
+  - path: server/internal/daemon/auto_update.go
+    additions: 279
+    deletions: 32
+    change_type: MODIFIED
+  - path: server/internal/daemon/config.go
+    additions: 18
+    deletions: 9
+    change_type: MODIFIED
+  - path: server/internal/daemon/config_test.go
+    additions: 78
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/daemon.go
+    additions: 916
+    deletions: 157
+    change_type: MODIFIED
+  - path: server/internal/daemon/daemon_test.go
+    additions: 46
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/health.go
+    additions: 9
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/daemon/health_test.go
+    additions: 45
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/helpers.go
+    additions: 13
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/runtime_isolation_test.go
+    additions: 4
+    deletions: 0
+    change_type: MODIFIED
+  - path: server/internal/daemon/runtime_probe_batch_test.go
+    additions: 229
+    deletions: 26
+    change_type: MODIFIED
+  - path: server/internal/daemon/runtime_probe_concurrency_test.go
+    additions: 2
+    deletions: 2
+    change_type: MODIFIED
+  - path: server/internal/daemon/runtime_profile_drift_test.go
+    additions: 5
+    deletions: 5
+    change_type: MODIFIED
+  - path: server/internal/daemon/runtime_profile_test.go
+    additions: 8
+    deletions: 8
+    change_type: MODIFIED
+  - path: server/internal/daemon/self_reload_test.go
+    additions: 586
+    deletions: 0
+    change_type: ADDED
+  - path: server/pkg/agent/version.go
+    additions: 20
+    deletions: 2
+    change_type: MODIFIED
+test_files_changed:
+  - path: server/cmd/multica/cmd_config_test.go
+  - path: server/cmd/multica/cmd_daemon_precedence_test.go
+  - path: server/cmd/multica/cmd_daemon_test.go
+  - path: server/internal/daemon/agent_path_selfheal_test.go
+  - path: server/internal/daemon/agent_version_refresh_test.go
+  - path: server/internal/daemon/agents_refresh_test.go
+  - path: server/internal/daemon/config_test.go
+  - path: server/internal/daemon/daemon_test.go
+  - path: server/internal/daemon/health_test.go
+  - path: server/internal/daemon/runtime_isolation_test.go
+  - path: server/internal/daemon/runtime_probe_batch_test.go
+  - path: server/internal/daemon/runtime_probe_concurrency_test.go
+  - path: server/internal/daemon/runtime_profile_drift_test.go
+  - path: server/internal/daemon/runtime_profile_test.go
+  - path: server/internal/daemon/self_reload_test.go
+classification:
+  candidate: true
+  reasons:
+    - merged
+    - "linked issue detected"
+    - "test file changed"
