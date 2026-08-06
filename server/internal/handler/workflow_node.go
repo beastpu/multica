@@ -1416,12 +1416,14 @@ func (h *Handler) reconcileWorkflowInstance(
 		h.recordWorkflowInstanceStatusTransition(locked.Status, updated.Status)
 		if completedNode.ID.Valid {
 			h.recordWorkflowNodeTransition(completedNode, "completed")
+			h.syncWorkflowNodeIssueStatus(ctx, workspaceID, completedNode, "completed")
 			if nodeDefinition, ok := plan.Node(completedNode.NodeKey); ok {
 				h.applyWorkflowNodeActions(ctx, updated, nodeDefinition.OnComplete)
 			}
 		}
 		for _, blockedNode := range blockedNodes {
 			h.recordWorkflowNodeTransition(blockedNode, "blocked")
+			h.syncWorkflowNodeIssueStatus(ctx, workspaceID, blockedNode, "blocked")
 			// Blocking is only useful if somebody hears about it. The list
 			// holds nodes that just crossed into blocked, so this notifies on
 			// the transition rather than on every reconcile that finds them

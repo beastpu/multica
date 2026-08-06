@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -64,6 +66,9 @@ func (h *Handler) applyWorkflowNodeEnterActions(
 		byKey[node.Key] = node
 	}
 	for _, node := range nodes {
+		// Activation is the moment the carrier stops being a plan and starts
+		// being work in progress.
+		h.syncWorkflowNodeIssueStatus(ctx, instance.WorkspaceID, node, "activated")
 		if nodeDefinition, ok := byKey[node.NodeKey]; ok {
 			h.applyWorkflowNodeActions(ctx, instance, nodeDefinition.OnEnter)
 		}
@@ -130,4 +135,91 @@ func (h *Handler) updateWorkflowHostStatus(
 		h.notifyParentOfChildDone(ctx, previous, updated)
 	}
 	return nil
+}
+
+// syncWorkflowNodeIssueStatus pushes a node's state onto the issues that carry
+// its work. The issue is where the work happens; the node is the record of
+// whether it finished. Leaving the two to drift meant an issue sat in todo
+// while an agent worked it and stayed in progress after the node was done —
+// a board describing a run that had moved on without it.
+//
+// Best effort, like the node's other side effects: the transition is already
+// durable, and a failed mirror must not undo it. A failure is logged rather
+// than swallowed, because a carrier showing the wrong state is exactly the
+// kind of thing nobody notices until they are debugging something else.
+func (h *Handler) syncWorkflowNodeIssueStatus(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	node db.WorkflowNodeInstance,
+	event string,
+) {
+	tasks, err := h.Queries.ListWorkflowNodeTasks(ctx, db.ListWorkflowNodeTasksParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		slog.Warn("workflow node issue sync could not list tasks",
+			"workflow_node_instance_id", uuidToString(node.ID),
+			"event", event, "error", err)
+		return
+	}
+	for _, task := range tasks {
+		if !task.IssueID.Valid {
+			continue
+		}
+		previous, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+			ID: task.IssueID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			continue
+		}
+		target, ok := workflowdomain.NodeIssueStatus(event, previous.Status)
+		if !ok || target == previous.Status {
+			continue
+		}
+		updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+			ID: previous.ID, Status: target, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			slog.Warn("workflow node issue sync could not set the status",
+				"issue_id", uuidToString(previous.ID),
+				"event", event, "target", target, "error", err)
+			continue
+		}
+		h.publishWorkflowNodeIssueStatus(ctx, previous, updated)
+	}
+}
+
+func (h *Handler) publishWorkflowNodeIssueStatus(
+	ctx context.Context,
+	previous, updated db.Issue,
+) {
+	prefix := h.getIssuePrefix(ctx, updated.WorkspaceID)
+	h.publish(
+		protocol.EventIssueUpdated,
+		uuidToString(updated.WorkspaceID),
+		"system",
+		"",
+		map[string]any{
+			"issue":               issueToResponse(updated, prefix),
+			"assignee_changed":    false,
+			"status_changed":      true,
+			"priority_changed":    false,
+			"project_changed":     false,
+			"start_date_changed":  false,
+			"due_date_changed":    false,
+			"description_changed": false,
+			"title_changed":       false,
+			"prev_title":          previous.Title,
+			"prev_assignee_type":  textToPtr(previous.AssigneeType),
+			"prev_assignee_id":    uuidToPtr(previous.AssigneeID),
+			"prev_status":         previous.Status,
+			"prev_priority":       previous.Priority,
+			"prev_start_date":     dateToPtr(previous.StartDate),
+			"prev_due_date":       dateToPtr(previous.DueDate),
+			"prev_description":    textToPtr(previous.Description),
+			"creator_type":        previous.CreatorType,
+			"creator_id":          uuidToString(previous.CreatorID),
+			"source":              "workflow",
+		},
+	)
 }

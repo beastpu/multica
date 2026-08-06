@@ -286,6 +286,7 @@ func (h *Handler) CreateWorkflowNodeIssue(w http.ResponseWriter, r *http.Request
 	)
 	if node.Status == "blocked" {
 		h.recordWorkflowNodeTransition(node, "blocked")
+		h.syncWorkflowNodeIssueStatus(r.Context(), node.WorkspaceID, node, "blocked")
 	}
 	if decision.Assignment != nil {
 		_ = h.materializeWorkflowTask(
@@ -1085,8 +1086,10 @@ func (h *Handler) transitionWorkflowNode(
 		h.Metrics.RecordWorkflowVerdict("member", "pass")
 	case action == "complete":
 		h.recordWorkflowNodeTransition(node, "completed")
+		h.syncWorkflowNodeIssueStatus(r.Context(), node.WorkspaceID, node, "completed")
 	case action == "skip":
 		h.recordWorkflowNodeTransition(node, "skipped")
+		h.syncWorkflowNodeIssueStatus(r.Context(), node.WorkspaceID, node, "skipped")
 	}
 	if updated.Status == "completed" {
 		_ = h.updateManagedWorkflowHostStatus(r.Context(), updated, "done")
