@@ -214,6 +214,10 @@ func (h *Handler) CancelWorkflowInstance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	h.TaskService.BroadcastCancelledTasks(r.Context(), cancelledTasks)
+	// The nodes were cancelled inside the transaction; their carriers have to
+	// follow, or the issues stay open on someone's board as work to pick up
+	// for a run that no longer exists.
+	h.cancelWorkflowNodeCarriers(r.Context(), updated)
 	h.recordWorkflowInstanceStatusTransition(locked.Status, updated.Status)
 	h.Metrics.RecordWorkflowHumanIntervention("cancel")
 	h.publishWorkflowInstanceUpdated(

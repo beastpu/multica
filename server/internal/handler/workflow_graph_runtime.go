@@ -106,6 +106,11 @@ func (h *Handler) propagateWorkflowGraph(
 				if err != nil {
 					return result, fmt.Errorf("skip workflow node %q: %w", node.NodeKey, err)
 				}
+				if err := syncWorkflowNodeIssueStatusTx(
+					ctx, q, workspaceID, updated, "skipped",
+				); err != nil {
+					return result, fmt.Errorf("cancel skipped workflow node carriers %q: %w", node.NodeKey, err)
+				}
 				result.Nodes[node.NodeKey] = updated
 				result.Changed = true
 				progressed = true
@@ -140,6 +145,18 @@ func (h *Handler) propagateWorkflowGraph(
 						return result, fmt.Errorf("block workflow activity %q for executor setup: %w", node.NodeKey, err)
 					}
 					result.NeedsSetup = true
+				}
+				// An activity that resolved an executor is under way; one that
+				// could not is blocked, and never entered Activated — which is
+				// what drives the started mirror — so it says so here.
+				carrierEvent := "activated"
+				if needsSetup {
+					carrierEvent = "blocked"
+				}
+				if err := syncWorkflowNodeIssueStatusTx(
+					ctx, q, workspaceID, updated, carrierEvent,
+				); err != nil {
+					return result, fmt.Errorf("sync workflow activity carriers %q: %w", node.NodeKey, err)
 				}
 				result.Nodes[node.NodeKey] = updated
 				if !needsSetup {

@@ -66,6 +66,14 @@ func createWorkflowVerdictRework(
 		if holdErr != nil {
 			return locked, db.WorkflowNodeInstance{}, holdErr
 		}
+		// The node stopped because it ran out of attempts, and its carriers say
+		// so — an issue still reading in progress would describe someone
+		// working on something the run has given up sending back.
+		if syncErr := syncWorkflowNodeIssueStatusTx(
+			ctx, q, locked.WorkspaceID, held, "blocked",
+		); syncErr != nil {
+			return locked, db.WorkflowNodeInstance{}, syncErr
+		}
 		return locked, held, nil
 	}
 	affected := plan.Descendants(currentNode.NodeKey)

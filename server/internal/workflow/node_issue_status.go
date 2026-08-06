@@ -23,7 +23,10 @@ func NodeIssueStatus(event, current string) (string, bool) {
 		if current == "in_progress" || current == "in_review" {
 			return "blocked", true
 		}
-	case "skipped":
+	// A node the run skipped and a node the run was cancelled out from under
+	// both leave work that will never be done. Leaving the carrier open would
+	// keep it on someone's board as a thing to pick up.
+	case "skipped", "cancelled":
 		return "cancelled", true
 	}
 	return "", false

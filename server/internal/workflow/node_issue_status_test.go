@@ -30,6 +30,13 @@ func TestNodeIssueStatus(t *testing.T) {
 			event: "blocked", current: "todo", wantOK: false,
 		},
 		{"a skipped node cancels its carrier", "skipped", "todo", "cancelled", true},
+		{"a cancelled run cancels its carriers", "cancelled", "in_progress", "cancelled", true},
+		{
+			// The run being cancelled does not undo work someone finished
+			// before it was.
+			name: "a cancelled run leaves finished work finished",
+			event: "cancelled", current: "done", wantOK: false,
+		},
 
 		// The rule that matters most: a person's terminal decision stands.
 		{

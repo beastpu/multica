@@ -261,6 +261,15 @@ func (h *Handler) DecideWorkflowAcceptance(w http.ResponseWriter, r *http.Reques
 				writeError(w, http.StatusConflict, "failed to pause rework for executor setup")
 				return
 			}
+			// Rework reopened the carrier; the node then failed to resolve an
+			// executor, so the carrier says blocked rather than sitting in
+			// todo waiting for someone who was never assigned.
+			if err := syncWorkflowNodeIssueStatusTx(
+				r.Context(), qtx, locked.WorkspaceID, activatedNode, "blocked",
+			); err != nil {
+				writeError(w, http.StatusConflict, "failed to mark rework carriers blocked")
+				return
+			}
 		}
 	}
 	targetInstanceStatus := locked.Status

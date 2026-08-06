@@ -223,3 +223,72 @@ func (h *Handler) publishWorkflowNodeIssueStatus(
 		},
 	)
 }
+
+// cancelWorkflowNodeCarriers closes the issues that carried a cancelled run's
+// work. Cancelling the run already cancelled its nodes; without this the
+// carriers stay open, and an issue nobody will ever work sits on a board
+// looking like something somebody should.
+//
+// Terminal carriers are left alone by the mapping, so work finished before the
+// cancellation stays finished.
+func (h *Handler) cancelWorkflowNodeCarriers(
+	ctx context.Context,
+	instance db.WorkflowInstance,
+) {
+	nodes, err := h.Queries.ListWorkflowNodeInstances(ctx, db.ListWorkflowNodeInstancesParams{
+		WorkflowInstanceID: instance.ID, WorkspaceID: instance.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("workflow cancellation could not list nodes to cancel their carriers",
+			"workflow_instance_id", uuidToString(instance.ID), "error", err)
+		return
+	}
+	for _, node := range nodes {
+		h.syncWorkflowNodeIssueStatus(ctx, instance.WorkspaceID, node, "cancelled")
+	}
+}
+
+// syncWorkflowNodeIssueStatusTx is the in-transaction half of the carrier
+// mirror, for transitions the graph propagation performs while it holds the
+// transaction. Writing the carrier here keeps it atomic with the transition
+// that caused it: the two cannot disagree because a later step failed.
+//
+// It does not publish. The realtime update for these paths rides on the
+// workflow event the same transaction writes, which is what the run view
+// listens to; emitting a second one from inside the transaction would announce
+// a state that a rollback could still take back.
+func syncWorkflowNodeIssueStatusTx(
+	ctx context.Context,
+	q *db.Queries,
+	workspaceID pgtype.UUID,
+	node db.WorkflowNodeInstance,
+	event string,
+) error {
+	tasks, err := q.ListWorkflowNodeTasks(ctx, db.ListWorkflowNodeTasksParams{
+		WorkflowNodeInstanceID: node.ID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		if !task.IssueID.Valid {
+			continue
+		}
+		previous, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+			ID: task.IssueID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			continue
+		}
+		target, ok := workflowdomain.NodeIssueStatus(event, previous.Status)
+		if !ok || target == previous.Status {
+			continue
+		}
+		if _, err := q.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+			ID: previous.ID, Status: target, WorkspaceID: workspaceID,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
