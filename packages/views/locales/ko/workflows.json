@@ -334,7 +334,9 @@
     "output_problem_missing": "필수 항목이지만 입력되지 않았습니다",
     "output_problem_enum": "허용된 값이 아닙니다",
     "output_problem_type": "형식이 올바르지 않습니다",
-    "output_problem_too_long": "너무 깁니다"
+    "output_problem_too_long": "너무 깁니다",
+    "driven_by_run": "이 이슈는 워크플로우 실행이 진행합니다.",
+    "open_workbench": "워크벤치 열기"
   },
   "editor": {
     "title": "워크플로 템플릿",

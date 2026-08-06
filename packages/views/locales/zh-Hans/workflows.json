@@ -334,7 +334,9 @@
     "output_problem_missing": "必填，但未填写",
     "output_problem_enum": "不在允许的取值范围内",
     "output_problem_type": "类型不正确",
-    "output_problem_too_long": "内容过长"
+    "output_problem_too_long": "内容过长",
+    "driven_by_run": "这个 issue 由一次工作流运行驱动。",
+    "open_workbench": "打开工作台"
   },
   "editor": {
     "title": "工作流模板",

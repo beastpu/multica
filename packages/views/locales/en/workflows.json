@@ -335,7 +335,9 @@
     "output_problem_missing": "required, but not filled in",
     "output_problem_enum": "not one of the allowed values",
     "output_problem_type": "wrong type",
-    "output_problem_too_long": "too long"
+    "output_problem_too_long": "too long",
+    "driven_by_run": "A workflow run drives this issue.",
+    "open_workbench": "Open workbench"
   },
   "editor": {
     "title": "Workflow template",

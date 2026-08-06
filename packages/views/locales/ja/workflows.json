@@ -334,7 +334,9 @@
     "output_problem_missing": "必須ですが未入力です",
     "output_problem_enum": "許可された値ではありません",
     "output_problem_type": "型が正しくありません",
-    "output_problem_too_long": "長すぎます"
+    "output_problem_too_long": "長すぎます",
+    "driven_by_run": "この issue はワークフローの実行によって進行しています。",
+    "open_workbench": "ワークベンチを開く"
   },
   "editor": {
     "title": "ワークフローテンプレート",
