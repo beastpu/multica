@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -303,6 +304,120 @@ func TestHTTPClient_DownloadMessageResourceUsesResourceTimeout(t *testing.T) {
 	}
 }
 
+func TestHTTPClient_DownloadMessageResourceExceedingTimeoutIsCancelled(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok_resource", 7200)
+	fake.mux.HandleFunc("/open-apis/im/v1/messages/om_timeout/resources/file_timeout", func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+			_, _ = w.Write([]byte("too late"))
+		}
+	})
+	c := NewHTTPAPIClient(HTTPClientConfig{
+		BaseURL:                 fake.URL(),
+		ResourceDownloadTimeout: 20 * time.Millisecond,
+		Now:                     time.Now,
+	}).(*httpAPIClient)
+
+	_, err := c.DownloadMessageResource(context.Background(), testCreds(), DownloadResourceParams{
+		MessageID: "om_timeout",
+		FileKey:   "file_timeout",
+		Type:      "file",
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v, want context deadline exceeded", err)
+	}
+}
+
+func TestHTTPClient_DownloadMessageResourceRejectsDeclaredOversize(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok_resource", 7200)
+	fake.mux.HandleFunc("/open-apis/im/v1/messages/om_large/resources/file_large", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Length", strconv.FormatInt(maxMessageResourceBytes+1, 10))
+		w.WriteHeader(http.StatusOK)
+	})
+	c := newTestClient(fake, time.Now)
+
+	_, err := c.DownloadMessageResourceStream(context.Background(), testCreds(), DownloadResourceParams{
+		MessageID: "om_large",
+		FileKey:   "file_large",
+		Type:      "file",
+	})
+	if err == nil || !strings.Contains(err.Error(), "resource exceeds") {
+		t.Fatalf("declared oversize error = %v", err)
+	}
+}
+
+func TestHTTPClient_DownloadMessageResourceAllowsDeclaredFeishuLimit(t *testing.T) {
+	fake := newLarkFake(t)
+	fake.stubToken("tok_resource", 7200)
+	fake.mux.HandleFunc("/open-apis/im/v1/messages/om_limit/resources/file_limit", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Length", strconv.FormatInt(maxMessageResourceBytes, 10))
+		w.WriteHeader(http.StatusOK)
+	})
+	c := newTestClient(fake, time.Now)
+
+	got, err := c.DownloadMessageResourceStream(context.Background(), testCreds(), DownloadResourceParams{
+		MessageID: "om_limit",
+		FileKey:   "file_limit",
+		Type:      "file",
+	})
+	if err != nil {
+		t.Fatalf("declared Feishu-limit resource should be accepted: %v", err)
+	}
+	got.Body.Close()
+	if got.SizeBytes != maxMessageResourceBytes {
+		t.Fatalf("SizeBytes = %d, want %d", got.SizeBytes, maxMessageResourceBytes)
+	}
+}
+
+func TestHTTPClient_DownloadMessageResourceAllowsAbovePreviousLocalLimit(t *testing.T) {
+	const previousLocalLimit = 20 << 20
+	fake := newLarkFake(t)
+	fake.stubToken("tok_resource", 7200)
+	fake.mux.HandleFunc("/open-apis/im/v1/messages/om_above_previous/resources/file_above_previous", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Length", strconv.FormatInt(previousLocalLimit+1, 10))
+		w.WriteHeader(http.StatusOK)
+	})
+	c := newTestClient(fake, time.Now)
+
+	got, err := c.DownloadMessageResourceStream(context.Background(), testCreds(), DownloadResourceParams{
+		MessageID: "om_above_previous",
+		FileKey:   "file_above_previous",
+		Type:      "file",
+	})
+	if err != nil {
+		t.Fatalf("resource above previous 20MiB local limit should be accepted: %v", err)
+	}
+	got.Body.Close()
+	if got.SizeBytes != previousLocalLimit+1 {
+		t.Fatalf("SizeBytes = %d, want %d", got.SizeBytes, previousLocalLimit+1)
+	}
+}
+
+func TestMaxBytesReadCloserEnforcesUnknownLengthBoundary(t *testing.T) {
+	t.Run("exact limit", func(t *testing.T) {
+		body := &maxBytesReadCloser{r: io.NopCloser(strings.NewReader("abc")), remaining: 3}
+		got, err := io.ReadAll(body)
+		if err != nil || string(got) != "abc" {
+			t.Fatalf("exact limit: body=%q err=%v", got, err)
+		}
+	})
+
+	t.Run("one byte over", func(t *testing.T) {
+		body := &maxBytesReadCloser{r: io.NopCloser(strings.NewReader("abcd")), remaining: 3}
+		got, err := io.ReadAll(body)
+		if err == nil || !strings.Contains(err.Error(), "resource exceeds") || string(got) != "abc" {
+			t.Fatalf("overflow: body=%q err=%v", got, err)
+		}
+	})
+}
+
 func TestHTTPClient_DownloadMessageResourceBusinessError(t *testing.T) {
 	fake := newLarkFake(t)
 	fake.stubToken("tok_resource", 7200)
@@ -442,6 +557,9 @@ func TestHTTPClient_SendInteractiveCard_HappyPath(t *testing.T) {
 			if !strings.Contains(body["content"], "\"tag\"") {
 				t.Errorf("content not a card body: %q", body["content"])
 			}
+			if body["uuid"] != "stream-ee100002-ee10-ee10-ee10-eeeeeeeeeeee" {
+				t.Errorf("uuid: got %q", body["uuid"])
+			}
 		},
 	)
 
@@ -450,6 +568,7 @@ func TestHTTPClient_SendInteractiveCard_HappyPath(t *testing.T) {
 		InstallationID: testCreds(),
 		ChatID:         ChatID("oc_chat_1"),
 		CardJSON:       `{"tag":"div","text":"hi"}`,
+		IdempotencyKey: "stream-ee100002-ee10-ee10-ee10-eeeeeeeeeeee",
 	})
 	if err != nil {
 		t.Fatalf("send: %v", err)
@@ -459,48 +578,6 @@ func TestHTTPClient_SendInteractiveCard_HappyPath(t *testing.T) {
 	}
 	if got := fake.lastAuth(); got != "Bearer tok_1" {
 		t.Errorf("Authorization header: got %q want Bearer tok_1", got)
-	}
-}
-
-func TestHTTPClient_SendDirectInteractiveCard_HappyPath(t *testing.T) {
-	fake := newLarkFake(t)
-	fake.stubToken("tok_direct_card", 7200)
-	fake.stubSend(
-		map[string]any{
-			"code": 0,
-			"msg":  "ok",
-			"data": map[string]string{"message_id": "om_direct_card_1"},
-		},
-		func(r *http.Request, body map[string]string) {
-			if got := r.URL.Query().Get("receive_id_type"); got != "open_id" {
-				t.Errorf("receive_id_type: got %q want open_id", got)
-			}
-			if body["receive_id"] != "ou_user_1" {
-				t.Errorf("receive_id: got %q", body["receive_id"])
-			}
-			if body["msg_type"] != "interactive" {
-				t.Errorf("msg_type: got %q want interactive", body["msg_type"])
-			}
-			if !strings.Contains(body["content"], "\"tag\"") {
-				t.Errorf("content not a card body: %q", body["content"])
-			}
-		},
-	)
-
-	c := newTestClient(fake, time.Now)
-	msgID, err := c.SendDirectInteractiveCard(context.Background(), SendDirectCardParams{
-		InstallationID: testCreds(),
-		OpenID:         OpenID("ou_user_1"),
-		CardJSON:       `{"tag":"div","text":"hi"}`,
-	})
-	if err != nil {
-		t.Fatalf("send direct card: %v", err)
-	}
-	if msgID != "om_direct_card_1" {
-		t.Errorf("message id: got %q want om_direct_card_1", msgID)
-	}
-	if got := fake.lastAuth(); got != "Bearer tok_direct_card" {
-		t.Errorf("Authorization header: got %q want Bearer tok_direct_card", got)
 	}
 }
 
@@ -559,49 +636,6 @@ func TestHTTPClient_SendTextMessage_HappyPath(t *testing.T) {
 	}
 	if got := fake.lastAuth(); got != "Bearer tok_text" {
 		t.Errorf("Authorization header: got %q want Bearer tok_text", got)
-	}
-}
-
-func TestHTTPClient_SendDirectTextMessage_HappyPath(t *testing.T) {
-	fake := newLarkFake(t)
-	fake.stubToken("tok_direct_text", 7200)
-	fake.stubSend(
-		map[string]any{
-			"code": 0,
-			"msg":  "ok",
-			"data": map[string]string{"message_id": "om_direct_text_1"},
-		},
-		func(r *http.Request, body map[string]string) {
-			if got := r.URL.Query().Get("receive_id_type"); got != "open_id" {
-				t.Errorf("receive_id_type: got %q want open_id", got)
-			}
-			if body["receive_id"] != "ou_user_1" {
-				t.Errorf("receive_id: got %q want ou_user_1", body["receive_id"])
-			}
-			if body["msg_type"] != "text" {
-				t.Errorf("msg_type: got %q want text", body["msg_type"])
-			}
-			var inner map[string]string
-			if err := json.Unmarshal([]byte(body["content"]), &inner); err != nil {
-				t.Fatalf("content is not valid inner JSON: %v", err)
-			}
-			if inner["text"] != "Inbox: build failed" {
-				t.Errorf("inner content.text: got %q", inner["text"])
-			}
-		},
-	)
-
-	c := newTestClient(fake, time.Now)
-	msgID, err := c.SendDirectTextMessage(context.Background(), SendDirectTextParams{
-		InstallationID: testCreds(),
-		OpenID:         OpenID("ou_user_1"),
-		Text:           "Inbox: build failed",
-	})
-	if err != nil {
-		t.Fatalf("send direct text: %v", err)
-	}
-	if msgID != "om_direct_text_1" {
-		t.Errorf("message id: got %q want om_direct_text_1", msgID)
 	}
 }
 

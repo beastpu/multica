@@ -49,6 +49,47 @@ If you skip a required test, say exactly why and what residual risk remains.
   - call remote first, then commit local only if remote succeeded.
 - Never rely on a read-then-insert check without `ON CONFLICT`, row locks, or a unique constraint.
 
+### Writes That Span Object Storage Or Another Non-Transactional System
+
+Postgres and an object store (or payment provider, IM platform, external tracker)
+share no transaction, so "did my write land?" is unanswerable at the moment an
+error surfaces: a `PutObject` may have been fully received before the connection
+dropped, and a `COMMIT` may have applied before its ack was lost.
+
+- Classify every cross-system call as **known-failed** (the remote definitively
+  rejected it: 4xx, validation, precondition) or **result-uncertain** (timeout,
+  reset, context deadline, lost ack). Only known-failed may be compensated inline.
+- For result-uncertain outcomes, persist the intent **before** the remote write
+  (a ledger row keyed by the object key, carrying the URL the referencing row
+  will hold), and delete that row **inside the same transaction** that inserts
+  the referencing row. Commit landed ⇔ intent gone, atomically — an ambiguous
+  commit then needs no adjudication.
+- Never compensate inline on a result-uncertain outcome, and never treat an
+  empty verification `SELECT` as proof that a `COMMIT` rolled back. It proves one
+  snapshot, not a terminal state.
+- Resolve every ambiguity toward a reclaimable orphan, never toward a dangling
+  reference. Bytes in a bucket are cheap; a row pointing at a deleted object is
+  user-visible corruption.
+- Settle leftovers in an independent worker through a persisted state machine
+  (`pending` → `deleting` → done) with a lease. Check for a durable reference
+  **after** winning the claim, and do the remote I/O **outside** any transaction
+  — never hold a DB connection or row lock across it.
+- If a reclaim pass finds a durable reference where the state machine says it
+  cannot exist, that is a broken invariant: keep the object, clear the row, log
+  it, and count it on a dedicated metric. Do not delete through it.
+- A deletion cannot be ordered against a request the client already abandoned.
+  If that matters, keep a tombstone and re-delete on a widening schedule rather
+  than betting on a single settle window.
+- Timing must not carry correctness weight. If a settle delay exists, write down
+  and test the invariant that makes it a buffer only (`settle >> every inline
+  budget in the pipeline`).
+- Derive the object key from the row it will attach to, not from an upstream id
+  that can be ingested twice — otherwise a second ingest collides with the first
+  one's ledger row and silently drops its payload.
+- Local-disk writes go through a temp file and `rename`, and the temp path must
+  be derived from the object key so a crash between write and rename leaves
+  something the delete path can still find.
+
 ### Multi-Replica Safety
 
 Assume multiple `multica-server` pods are running.
@@ -62,6 +103,13 @@ Assume multiple `multica-server` pods are running.
   - a lease column with expiry
   - Redis atomic operations with expiry
   - unique constraints plus idempotent upsert
+- Compute every deadline (lease expiry, settle cutoff, retry backoff) from the
+  database clock — pass a duration and let SQL do `now() ± interval`. A process
+  timestamp compared against `now()` makes a drifting replica reclaim work early
+  or hand out leases that are born expired.
+- A claim is a promise to do the work now: claim one unit immediately before
+  processing it rather than reserving a batch up front, so `attempt`/backoff
+  describe attempts that actually happened.
 - Realtime fanout must work across pods via the existing Redis relay or a documented fallback.
 
 ### Idempotency And Retries
@@ -107,6 +155,9 @@ For concurrency-sensitive code, include one test using goroutines or two indepen
 Before final response or PR:
 
 - Is there a failing test that would have caught the original bug or requested behavior?
+- For each cross-system write: what happens if the remote applied it but the
+  client saw an error? Is there a test where the fake performs the side effect
+  and then returns the error?
 - Are all new DB invariants enforced in migrations, not only in Go code?
 - Can this run with two server replicas?
 - Is the operation idempotent under retry?

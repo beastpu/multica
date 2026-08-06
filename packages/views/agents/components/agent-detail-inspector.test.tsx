@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent } from "@multica/core/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -129,18 +130,23 @@ const baseAgent: Agent = {
 };
 
 function renderInspector(canEdit: boolean, onUpdate = vi.fn().mockResolvedValue(undefined)) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   const view = render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
-      <AgentDetailInspector
-        agent={baseAgent}
-        runtime={null}
-        runtimes={[]}
-        members={[]}
-        currentUserId={null}
-        canEdit={canEdit}
-        onUpdate={onUpdate}
-      />
-    </I18nProvider>,
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <AgentDetailInspector
+          agent={baseAgent}
+          runtime={null}
+          runtimes={[]}
+          members={[]}
+          currentUserId={null}
+          canEdit={canEdit}
+          onUpdate={onUpdate}
+        />
+      </I18nProvider>
+    </QueryClientProvider>,
   );
   return { ...view, onUpdate };
 }

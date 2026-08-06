@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { ListTodo, Plus } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -16,6 +22,7 @@ import { GanttView } from "../components/gantt-view";
 import { IssuesHeader } from "../components/issues-header";
 import { ListView } from "../components/list-view";
 import { SwimLaneView } from "../components/swimlane-view";
+import { TableView } from "../components/table-view";
 import { useT } from "../../i18n";
 import { IssueContextMenuProvider } from "../actions";
 import { IssueSurfaceActionsProvider } from "./actions-context";
@@ -31,8 +38,10 @@ export interface IssueSurfaceRenderContext {
   issues: Issue[];
   /** The rows the agents-working filter would leave on screen, with this
    *  surface's `clientFilter` applied — headers feed it to the working chip
-   *  so the chip's count is the post-click row count (MUL-4884). */
-  workingIssues: Issue[];
+   *  so the chip's count is the post-click row count (MUL-4884). Undefined
+   *  means the set is UNKNOWN (not materialized by the server-backed Table);
+   *  the chip renders an indeterminate state instead of a number. */
+  workingIssues: Issue[] | undefined;
 }
 
 interface IssueSurfaceComponentProps extends IssueSurfaceProps {
@@ -53,6 +62,7 @@ export function IssueSurface({
   allowCreate = true,
   onCreateIssue,
   menuActions = [],
+  search,
   renderHeader,
   renderEmpty,
   renderLoading,
@@ -101,6 +111,7 @@ export function IssueSurface({
         allowCreate={allowCreate}
         onCreateIssue={onCreateIssue}
         menuActions={menuActions}
+        search={search}
         renderHeader={renderHeader}
         renderEmpty={renderEmpty}
         renderLoading={renderLoading}
@@ -120,6 +131,7 @@ function IssueSurfaceContent({
   allowCreate,
   onCreateIssue,
   menuActions = [],
+  search,
   renderHeader,
   renderEmpty,
   renderLoading,
@@ -133,7 +145,20 @@ function IssueSurfaceContent({
     scope,
     modes,
     createDefaults,
+    search,
   });
+  const [tableLoadedIssues, setTableLoadedIssues] = useState<Issue[]>([]);
+  const handleTableLoadedIssuesChange = useCallback((next: Issue[]) => {
+    setTableLoadedIssues((current) =>
+      current.length === next.length &&
+      current.every((issue, index) => issue === next[index])
+        ? current
+        : next,
+    );
+  }, []);
+  useEffect(() => {
+    if (controller.viewMode !== "table") setTableLoadedIssues([]);
+  }, [controller.viewMode]);
   const issues = useMemo(
     () =>
       clientFilter
@@ -150,9 +175,11 @@ function IssueSurfaceContent({
   );
   // Same clientFilter the rendered rows go through, so the chip's promise
   // survives on surfaces that narrow the list locally (e.g. a search box).
+  // An UNKNOWN scope (undefined) passes through untouched — there is nothing
+  // to filter and the chip must see it as unknown.
   const workingIssues = useMemo(
     () =>
-      clientFilter
+      clientFilter && controller.workingScopeIssues
         ? controller.workingScopeIssues.filter((issue) => clientFilter(issue))
         : controller.workingScopeIssues,
     [clientFilter, controller.workingScopeIssues],
@@ -195,7 +222,9 @@ function IssueSurfaceContent({
     (showClientEmpty ? showClientEmpty(renderContext) : true);
   const shouldShowBatchToolbar =
     batchToolbar !== "never" &&
-    (batchToolbar === "always" || controller.viewMode === "list");
+    (batchToolbar === "always" ||
+      controller.viewMode === "list" ||
+      controller.viewMode === "table");
 
   return (
     <IssueSurfaceActionsProvider actions={surfaceActions}>
@@ -210,9 +239,11 @@ function IssueSurfaceContent({
           ) : (
             <IssuesHeader
               scopedIssues={controller.surfaceIssues}
-              workingIssues={workingIssues}
               allowGantt={controller.allowGantt}
               isRefreshing={controller.isRefreshing}
+              facetCountsExact={controller.facetCountsExact}
+              tableFacetCounts={controller.tableFacetCounts}
+              onTableFacetChange={controller.setActiveTableFacet}
             />
           )}
           {controller.isLoading ? (
@@ -264,13 +295,13 @@ function IssueSurfaceContent({
                   myIssuesScope={controller.loadMoreScope}
                   myIssuesFilter={controller.loadMoreFilter}
                   listFilter={
-                    controller.loadMoreScope
-                      ? undefined
-                      : controller.listFilter
+                    controller.loadMoreScope ? undefined : controller.listFilter
                   }
                   sort={controller.sort}
                   projectId={controller.projectId}
                   onCreateIssue={allowCreate ? openCreateIssue : undefined}
+                  statusPagination={controller.statusPagination}
+                  groupBranches={controller.groupBranches}
                 />
               )}
               {controller.viewMode === "list" && (
@@ -279,17 +310,24 @@ function IssueSurfaceContent({
                   visibleStatuses={controller.visibleStatuses}
                   childProgressMap={controller.childProgressMap}
                   projectMap={controller.projectMap}
-                  myIssuesScope={controller.loadMoreScope}
-                  myIssuesFilter={controller.loadMoreFilter}
-                  listFilter={
-                    controller.loadMoreScope
-                      ? undefined
-                      : controller.listFilter
-                  }
-                  sort={controller.sort}
                   projectId={controller.projectId}
                   onMoveIssue={controller.moveIssue}
                   onCreateIssue={allowCreate ? openCreateIssue : undefined}
+                  statusPagination={controller.statusPagination!}
+                />
+              )}
+              {controller.viewMode === "table" && (
+                <TableView
+                  serverQuery={controller.tableQuerySpec}
+                  childProgressMap={controller.childProgressMap}
+                  search={controller.tableSearch}
+                  onSearchChange={controller.setTableSearch}
+                  onLoadedIssuesChange={handleTableLoadedIssuesChange}
+                  // TableView requires the callback. openCreateIssue already
+                  // no-ops when allowCreate is false, so the guard still holds.
+                  onCreateIssue={openCreateIssue}
+                  exportIssues={controller.exportTableIssues}
+                  resolveExportLookups={controller.resolveTableExportLookups}
                 />
               )}
               {controller.viewMode === "gantt" && (
@@ -308,19 +346,23 @@ function IssueSurfaceContent({
                   myIssuesScope={controller.loadMoreScope}
                   myIssuesFilter={controller.loadMoreFilter}
                   listFilter={
-                    controller.loadMoreScope
-                      ? undefined
-                      : controller.listFilter
+                    controller.loadMoreScope ? undefined : controller.listFilter
                   }
                   sort={controller.sort}
                   projectId={controller.projectId}
-                  activityByIssueId={controller.activity.activityByIssueId}
                   onCreateIssue={allowCreate ? openCreateIssue : undefined}
+                  groupBranches={controller.groupBranches}
                 />
               )}
             </div>
           )}
-          {shouldShowBatchToolbar && <BatchActionToolbar issues={issues} />}
+          {shouldShowBatchToolbar && (
+            <BatchActionToolbar
+              issues={
+                controller.viewMode === "table" ? tableLoadedIssues : issues
+              }
+            />
+          )}
         </IssueSurfaceSelectionProvider>
       </IssueContextMenuProvider>
     </IssueSurfaceActionsProvider>
@@ -328,11 +370,18 @@ function IssueSurfaceContent({
 }
 
 function IssueSurfaceSkeleton({ mode }: { mode: string }) {
-  if (mode === "list") {
+  if (mode === "list" || mode === "table") {
     return (
-      <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-10 w-full rounded-lg" />
+      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
+        {mode === "table" && <Skeleton className="mb-1 h-8 w-full" />}
+        {Array.from({ length: mode === "table" ? 8 : 4 }).map((_, i) => (
+          <Skeleton
+            key={i}
+            className={cn(
+              "w-full",
+              mode === "table" ? "h-9 rounded-sm" : "h-10 rounded-lg",
+            )}
+          />
         ))}
       </div>
     );

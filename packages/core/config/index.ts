@@ -13,6 +13,11 @@ interface ConfigState {
   googleClientId: string;
   daemonServerUrl: string;
   daemonAppUrl: string;
+  // Self-host-only gate for the Git provider integration (Forgejo / Gitea /
+  // GitLab). When false the whole Settings → Integrations "Git providers"
+  // section is hidden. Defaults to false so unknown / older servers and the
+  // managed cloud (which omits the field) keep it hidden.
+  vcsIntegrationAvailable: boolean;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
   // must be hidden. Defaults to false so unknown / older servers behave like
   // the managed-cloud case.
@@ -26,6 +31,7 @@ interface ConfigState {
   setAuthConfig: (config: {
     allowSignup: boolean;
     googleClientId?: string;
+    vcsIntegrationAvailable?: boolean;
     workspaceCreationDisabled?: boolean;
   }) => void;
   setDaemonConfig: (config: {
@@ -43,12 +49,23 @@ export const configStore = createStore<ConfigState>((set) => ({
   googleClientId: "",
   daemonServerUrl: "",
   daemonAppUrl: "",
+  vcsIntegrationAvailable: false,
   workspaceCreationDisabled: false,
   featureFlags: {},
   serverVersion: "",
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
-  setAuthConfig: ({ allowSignup, googleClientId = "", workspaceCreationDisabled = false }) =>
-    set({ allowSignup, googleClientId, workspaceCreationDisabled }),
+  setAuthConfig: ({
+    allowSignup,
+    googleClientId = "",
+    vcsIntegrationAvailable = false,
+    workspaceCreationDisabled = false,
+  }) =>
+    set({
+      allowSignup,
+      googleClientId,
+      vcsIntegrationAvailable,
+      workspaceCreationDisabled,
+    }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),

@@ -6,7 +6,12 @@ export {
   PreviewTooLargeError,
   PreviewUnsupportedError,
 } from "./client";
-export type { ApiClientOptions, OutputFieldError } from "./client";
+export type {
+  ApiClientOptions,
+  ClientRuntimeSnapshot,
+  ClientUsageRequest,
+  OutputFieldError,
+} from "./client";
 export { parseWithFallback, setSchemaLogger } from "./schema";
 export type { ParseOptions } from "./schema";
 export { DuplicateIssueErrorBodySchema } from "./schemas";

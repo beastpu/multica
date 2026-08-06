@@ -1,4 +1,4 @@
-// Regression test for AII-246: selecting a project in the create-issue
+// Regression test: selecting a project in the create-issue
 // dialog left the dropdown stuck open. The dialog wires the picker with
 // `open={cond ? true : undefined}`; Base UI's Menu latches a controlled
 // `open={true}` and does NOT treat a later `undefined` as "close", so the

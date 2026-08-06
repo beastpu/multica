@@ -468,6 +468,7 @@ func (s *ChannelStore) CreateLarkOutboundCardMessage(ctx context.Context, arg Cr
 		ChannelCardMessageID: arg.ChannelCardMessageID,
 		Status:               arg.Status,
 		TaskID:               arg.TaskID,
+		StartDelaySeconds:    arg.StartDelaySeconds,
 	})
 	if err != nil {
 		return OutboundCardMessage{}, err
@@ -475,11 +476,124 @@ func (s *ChannelStore) CreateLarkOutboundCardMessage(ctx context.Context, arg Cr
 	return outboundCardFromRow(row), nil
 }
 
-func (s *ChannelStore) UpdateLarkOutboundCardStatus(ctx context.Context, arg UpdateOutboundCardStatusParams) error {
-	return s.Queries.UpdateChannelOutboundCardStatus(ctx, db.UpdateChannelOutboundCardStatusParams{
-		ID:     arg.ID,
-		Status: arg.Status,
+func (s *ChannelStore) ProjectLarkOutboundTaskMessage(ctx context.Context, arg ProjectOutboundTaskMessageParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.ProjectChannelOutboundTaskMessage(ctx, db.ProjectChannelOutboundTaskMessageParams{
+		TaskID: arg.TaskID, ChannelType: channelTypeFeishu, Seq: arg.Seq,
+		VisibleTextAppend: arg.VisibleTextAppend, CurrentStage: arg.CurrentStage,
+		FilesReadDelta: arg.FilesReadDelta, FilesEditedDelta: arg.FilesEditedDelta,
+		SearchesDelta: arg.SearchesDelta, CommandsDelta: arg.CommandsDelta,
+		MinIntervalSeconds: arg.MinIntervalSeconds,
 	})
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) ScheduleLarkOutboundTaskMessage(ctx context.Context, arg ScheduleOutboundTaskMessageParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.ScheduleChannelOutboundTaskMessage(ctx, db.ScheduleChannelOutboundTaskMessageParams{
+		TaskID: arg.TaskID, ChannelType: channelTypeFeishu, MinIntervalSeconds: arg.MinIntervalSeconds,
+	})
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) SetLarkOutboundTerminalDesired(ctx context.Context, arg SetOutboundTerminalDesiredParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.SetChannelOutboundTerminalDesired(ctx, db.SetChannelOutboundTerminalDesiredParams{
+		TaskID: arg.TaskID, ChannelType: channelTypeFeishu,
+		Status: arg.Status, TerminalContent: arg.TerminalContent,
+	})
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) ClaimLarkOutboundCardDelivery(ctx context.Context, arg ClaimOutboundCardDeliveryParams) (OutboundCardMessage, error) {
+	var row db.ChannelOutboundCardMessage
+	var err error
+	if arg.TaskID.Valid {
+		row, err = s.Queries.ClaimChannelOutboundCardDeliveryByTask(ctx, db.ClaimChannelOutboundCardDeliveryByTaskParams{
+			TaskID: arg.TaskID, ChannelType: channelTypeFeishu,
+			LeaseToken: arg.LeaseToken, LeaseSeconds: arg.LeaseSeconds,
+		})
+	} else {
+		row, err = s.Queries.ClaimChannelOutboundCardDelivery(ctx, db.ClaimChannelOutboundCardDeliveryParams{
+			ChannelType: channelTypeFeishu, LeaseToken: arg.LeaseToken, LeaseSeconds: arg.LeaseSeconds,
+		})
+	}
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) SetLarkOutboundInflightPayload(ctx context.Context, arg SetOutboundInflightPayloadParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.SetChannelOutboundInflightPayload(ctx, db.SetChannelOutboundInflightPayloadParams{
+		ID: arg.ID, LeaseToken: arg.LeaseToken, DesiredRevision: arg.DesiredRevision, CardJson: arg.CardJSON,
+	})
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) SetLarkOutboundCardEntityID(ctx context.Context, arg SetOutboundCardEntityIDParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.SetChannelOutboundCardEntityID(ctx, db.SetChannelOutboundCardEntityIDParams{
+		ID: arg.ID, LeaseToken: arg.LeaseToken, ChannelCardID: arg.ChannelCardID,
+	})
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) SetLarkOutboundCardMessageID(ctx context.Context, arg SetOutboundCardMessageIDParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.SetChannelOutboundCardMessageID(ctx, db.SetChannelOutboundCardMessageIDParams{
+		ID: arg.ID, LeaseToken: arg.LeaseToken, ChannelCardMessageID: arg.ChannelCardMessageID,
+	})
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) DowngradeLarkOutboundCardTransport(ctx context.Context, arg OutboundDeliveryLeaseParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.DowngradeChannelOutboundCardTransport(ctx, db.DowngradeChannelOutboundCardTransportParams(arg))
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) CompleteLarkOutboundCardDelivery(ctx context.Context, arg OutboundDeliveryLeaseParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.CompleteChannelOutboundCardDelivery(ctx, db.CompleteChannelOutboundCardDeliveryParams(arg))
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) FailLarkOutboundCardDelivery(ctx context.Context, arg FailOutboundCardDeliveryParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.FailChannelOutboundCardDelivery(ctx, db.FailChannelOutboundCardDeliveryParams{
+		ID: arg.ID, LeaseToken: arg.LeaseToken, LastError: arg.LastError, RetrySeconds: arg.RetrySeconds,
+	})
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) AbandonLarkOutboundCardDelivery(ctx context.Context, arg AbandonOutboundCardDeliveryParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.AbandonChannelOutboundCardDelivery(ctx, db.AbandonChannelOutboundCardDeliveryParams{
+		ID: arg.ID, LeaseToken: arg.LeaseToken, LastError: arg.LastError,
+	})
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
 }
 
 // installationsFromRows maps a slice of channel_installation rows to domain

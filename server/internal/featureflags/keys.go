@@ -29,6 +29,10 @@ const (
 	// materialization and reconciliation without hiding or deleting runtime
 	// data. The diagnostic sweeper continues to report anomalies.
 	OpsPauseWorkflowProgression = "ops_pause_workflow_progression"
+	// agentBuilderCompat is no longer a release flag. Keep publishing the key
+	// as enabled so installed desktop clients that still gate the AI creation
+	// entry on this config decision receive the permanently enabled behavior.
+	agentBuilderCompat = "agents_agent_builder"
 	// agentSkillTogglesCompat is no longer a release flag. Keep publishing the
 	// key as enabled so installed v0.4.0 desktop clients, which still gate the
 	// switch on this config decision, receive the permanently enabled behavior.
@@ -37,7 +41,6 @@ const (
 
 var frontendPublicFlags = []string{
 	ComposioMCPApps,
-	AgentBuilder,
 	ResourceLabels,
 	WorkflowsActivityEngine,
 }
@@ -93,10 +96,11 @@ func WorkflowProgressionPaused(
 }
 
 func EvaluateFrontendPublicFlags(ctx context.Context, flags *featureflag.Service) map[string]bool {
-	out := make(map[string]bool, len(frontendPublicFlags)+1)
+	out := make(map[string]bool, len(frontendPublicFlags)+2)
 	for _, key := range frontendPublicFlags {
 		out[key] = flags.IsEnabled(ctx, key, false)
 	}
+	out[agentBuilderCompat] = true
 	out[agentSkillTogglesCompat] = true
 	return out
 }

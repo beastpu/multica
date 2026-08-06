@@ -651,10 +651,17 @@ WHERE installation_id = $1;
 -- name: CreateChannelOutboundCardMessage :one
 INSERT INTO channel_outbound_card_message (
     chat_session_id, task_id, channel_type, channel_chat_id,
-    channel_card_message_id, status
+    channel_card_message_id, status, desired_revision, next_attempt_at
 ) VALUES (
-    $1, sqlc.narg('task_id'), $2, $3, $4, $5
+    $1, sqlc.narg('task_id'), $2, $3, $4, $5, 1,
+    now() + make_interval(secs => sqlc.arg('start_delay_seconds')::double precision)
 )
+ON CONFLICT (task_id) WHERE task_id IS NOT NULL DO UPDATE
+SET next_attempt_at = LEAST(
+        channel_outbound_card_message.next_attempt_at,
+        EXCLUDED.next_attempt_at
+    )
+WHERE channel_outbound_card_message.status IN ('pending', 'streaming')
 RETURNING *;
 
 -- name: GetChannelOutboundCardByTask :one
@@ -665,11 +672,240 @@ SELECT * FROM channel_outbound_card_message
 WHERE task_id = sqlc.arg('task_id')
   AND channel_type = sqlc.arg('channel_type');
 
--- name: UpdateChannelOutboundCardStatus :exec
+-- name: ProjectChannelOutboundTaskMessage :one
+-- Applies a public-safe projection of one persisted task event. Raw tool input,
+-- output, commands, prompts, and paths never enter the outbound row. projected_seq
+-- makes duplicate bus delivery idempotent. The existing due time is preserved
+-- until the delayed initial send; once a card exists, updates are coalesced by
+-- the DB clock instead of a process clock.
 UPDATE channel_outbound_card_message
-SET status = $2,
-    last_patched_at = now()
-WHERE id = $1;
+SET projected_seq = sqlc.arg('seq'),
+    visible_text = right(visible_text || sqlc.arg('visible_text_append'), 20000),
+    current_stage = sqlc.arg('current_stage'),
+    files_read_count = files_read_count + sqlc.arg('files_read_delta'),
+    files_edited_count = files_edited_count + sqlc.arg('files_edited_delta'),
+    searches_count = searches_count + sqlc.arg('searches_delta'),
+    commands_count = commands_count + sqlc.arg('commands_delta'),
+    desired_revision = desired_revision + 1,
+    next_attempt_at = CASE
+        WHEN channel_card_message_id = '' THEN next_attempt_at
+        ELSE LEAST(
+            COALESCE(next_attempt_at, now() + make_interval(secs => sqlc.arg('min_interval_seconds')::double precision)),
+            now() + make_interval(secs => sqlc.arg('min_interval_seconds')::double precision)
+        )
+    END
+WHERE task_id = sqlc.arg('task_id')
+  AND channel_type = sqlc.arg('channel_type')
+  AND status IN ('pending', 'streaming')
+  AND projected_seq < sqlc.arg('seq')
+RETURNING *;
+
+-- name: ScheduleChannelOutboundTaskMessage :one
+-- Task-message ingestion only wakes the durable worker. The worker projects
+-- the persisted transcript under the delivery lease, so the synchronous event
+-- path never performs remote I/O and a crashed event listener loses no data.
+UPDATE channel_outbound_card_message
+SET next_attempt_at = CASE
+        WHEN channel_card_message_id = '' THEN next_attempt_at
+        ELSE LEAST(
+            COALESCE(next_attempt_at, now() + make_interval(secs => sqlc.arg('min_interval_seconds')::double precision)),
+            now() + make_interval(secs => sqlc.arg('min_interval_seconds')::double precision)
+        )
+    END
+WHERE task_id = sqlc.arg('task_id')
+  AND channel_type = sqlc.arg('channel_type')
+  AND status IN ('pending', 'streaming')
+  AND delivery_failed_at IS NULL
+RETURNING *;
+
+-- name: SetChannelOutboundTerminalDesired :one
+-- A terminal event is monotonic: later progress events cannot reopen it. When
+-- no worker owns the unsent row, applied_revision is advanced immediately and
+-- the caller keeps the native fast-reply path. If a worker already started the
+-- remote card, the terminal revision is queued for that same card.
+UPDATE channel_outbound_card_message
+SET status = sqlc.arg('status'),
+    terminal_content = sqlc.arg('terminal_content'),
+    desired_revision = desired_revision + 1,
+    applied_revision = CASE
+        WHEN channel_card_id = ''
+         AND channel_card_message_id = ''
+         AND (lease_expires_at IS NULL OR lease_expires_at <= now())
+        THEN desired_revision + 1
+        ELSE applied_revision
+    END,
+    next_attempt_at = CASE
+        WHEN channel_card_id = ''
+         AND channel_card_message_id = ''
+         AND (lease_expires_at IS NULL OR lease_expires_at <= now())
+        THEN NULL
+        ELSE now()
+    END
+WHERE task_id = sqlc.arg('task_id')
+  AND channel_type = sqlc.arg('channel_type')
+  AND status IN ('pending', 'streaming')
+RETURNING *;
+
+-- name: ClaimChannelOutboundCardDelivery :one
+WITH candidate AS (
+    SELECT pending.id
+    FROM channel_outbound_card_message AS pending
+    WHERE pending.channel_type = sqlc.arg('channel_type')
+      AND pending.delivery_failed_at IS NULL
+      AND (
+          pending.desired_revision > pending.applied_revision
+          OR EXISTS (
+              SELECT 1 FROM task_message AS message
+              WHERE message.task_id = pending.task_id
+                AND message.seq > pending.projected_seq
+          )
+      )
+      AND (
+          pending.next_attempt_at <= now()
+          OR (
+              pending.next_attempt_at IS NULL
+              AND pending.status IN ('pending', 'streaming')
+              AND EXISTS (
+                  SELECT 1 FROM task_message AS message
+                  WHERE message.task_id = pending.task_id
+                    AND message.seq > pending.projected_seq
+              )
+          )
+      )
+      AND (pending.lease_expires_at IS NULL OR pending.lease_expires_at <= now())
+    ORDER BY pending.next_attempt_at, pending.created_at
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+UPDATE channel_outbound_card_message AS c
+SET lease_token = sqlc.arg('lease_token'),
+    lease_expires_at = now() + make_interval(secs => sqlc.arg('lease_seconds')::double precision),
+    inflight_revision = COALESCE(c.inflight_revision, c.desired_revision)
+FROM candidate
+WHERE c.id = candidate.id
+RETURNING c.*;
+
+-- name: ClaimChannelOutboundCardDeliveryByTask :one
+UPDATE channel_outbound_card_message AS c
+SET lease_token = sqlc.arg('lease_token'),
+    lease_expires_at = now() + make_interval(secs => sqlc.arg('lease_seconds')::double precision),
+    inflight_revision = COALESCE(inflight_revision, desired_revision)
+WHERE c.task_id = sqlc.arg('task_id')
+  AND c.channel_type = sqlc.arg('channel_type')
+  AND c.delivery_failed_at IS NULL
+  AND (
+      c.desired_revision > c.applied_revision
+      OR EXISTS (
+          SELECT 1 FROM task_message AS message
+          WHERE message.task_id = c.task_id
+            AND message.seq > c.projected_seq
+      )
+  )
+  AND (
+      c.next_attempt_at <= now()
+      OR (
+          c.next_attempt_at IS NULL
+          AND c.status IN ('pending', 'streaming')
+          AND EXISTS (
+              SELECT 1 FROM task_message AS message
+              WHERE message.task_id = c.task_id
+                AND message.seq > c.projected_seq
+          )
+      )
+  )
+  AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= now())
+RETURNING c.*;
+
+-- name: SetChannelOutboundInflightPayload :one
+UPDATE channel_outbound_card_message
+SET inflight_revision = sqlc.arg('desired_revision')::bigint,
+    inflight_sequence = CASE
+        WHEN transport = 'cardkit' AND channel_card_message_id <> ''
+        THEN operation_sequence + 1
+        ELSE NULL
+    END,
+    operation_sequence = CASE
+        WHEN transport = 'cardkit' AND channel_card_message_id <> ''
+        THEN operation_sequence + 1
+        ELSE operation_sequence
+    END,
+    inflight_card_json = sqlc.arg('card_json')
+WHERE id = sqlc.arg('id')
+  AND lease_token = sqlc.arg('lease_token')
+  AND desired_revision >= sqlc.arg('desired_revision')::bigint
+  AND inflight_card_json = ''
+RETURNING *;
+
+-- name: SetChannelOutboundCardEntityID :one
+UPDATE channel_outbound_card_message
+SET channel_card_id = sqlc.arg('channel_card_id')
+WHERE id = sqlc.arg('id')
+  AND lease_token = sqlc.arg('lease_token')
+  AND (channel_card_id = '' OR channel_card_id = sqlc.arg('channel_card_id'))
+RETURNING *;
+
+-- name: SetChannelOutboundCardMessageID :one
+UPDATE channel_outbound_card_message
+SET channel_card_message_id = sqlc.arg('channel_card_message_id')
+WHERE id = sqlc.arg('id')
+  AND lease_token = sqlc.arg('lease_token')
+  AND (channel_card_message_id = '' OR channel_card_message_id = sqlc.arg('channel_card_message_id'))
+RETURNING *;
+
+-- name: DowngradeChannelOutboundCardTransport :one
+UPDATE channel_outbound_card_message
+SET transport = 'legacy',
+    channel_card_id = ''
+WHERE id = sqlc.arg('id')
+  AND lease_token = sqlc.arg('lease_token')
+  AND transport = 'cardkit'
+  AND channel_card_message_id = ''
+RETURNING *;
+
+-- name: CompleteChannelOutboundCardDelivery :one
+UPDATE channel_outbound_card_message
+SET applied_revision = inflight_revision,
+    status = CASE WHEN status = 'pending' THEN 'streaming' ELSE status END,
+    last_patched_at = now(),
+    inflight_revision = NULL,
+    inflight_sequence = NULL,
+    inflight_card_json = '',
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    attempt_count = 0,
+    delivery_failed_at = NULL,
+    last_error = '',
+    next_attempt_at = CASE
+        WHEN desired_revision > inflight_revision THEN now()
+        ELSE NULL
+    END
+WHERE id = sqlc.arg('id')
+  AND lease_token = sqlc.arg('lease_token')
+  AND inflight_revision IS NOT NULL
+RETURNING *;
+
+-- name: AbandonChannelOutboundCardDelivery :one
+UPDATE channel_outbound_card_message
+SET lease_token = NULL,
+    lease_expires_at = NULL,
+    attempt_count = attempt_count + 1,
+    delivery_failed_at = now(),
+    last_error = sqlc.arg('last_error'),
+    next_attempt_at = NULL
+WHERE id = sqlc.arg('id')
+  AND lease_token = sqlc.arg('lease_token')
+RETURNING *;
+
+-- name: FailChannelOutboundCardDelivery :one
+UPDATE channel_outbound_card_message
+SET lease_token = NULL,
+    lease_expires_at = NULL,
+    attempt_count = attempt_count + 1,
+    last_error = sqlc.arg('last_error'),
+    next_attempt_at = now() + make_interval(secs => sqlc.arg('retry_seconds')::double precision)
+WHERE id = sqlc.arg('id')
+  AND lease_token = sqlc.arg('lease_token')
+RETURNING *;
 
 -- name: DeleteChannelOutboundCardMessagesBySession :exec
 -- Application-layer integrity (channel_* has no FK/cascade, MUL-3515 §4): drop the
@@ -724,3 +960,148 @@ WHERE expires_at < $1;
 -- installation — a link that never actually reaches the live bot.
 DELETE FROM channel_binding_token
 WHERE installation_id = $1;
+
+-- =====================
+-- channel_media_pending_object (media intent ledger)
+-- =====================
+
+-- name: RecordChannelMediaPendingObject :one
+-- Records upload intent BEFORE the PUT. A redelivered attempt refreshes the
+-- settle window, but only while the row is still 'pending' — a key the
+-- reconciler owns ('deleting') must never be resurrected — and only within
+-- the SAME workspace: a cross-workspace key collision (impossible via the
+-- derived key, but tenancy must never trust the key string) updates nothing
+-- and returns no row, so the caller skips the upload entirely.
+INSERT INTO channel_media_pending_object (
+    storage_key, workspace_id, chat_message_id, storage_url, installation_id
+)
+VALUES ($1, $2, $3, $4, sqlc.narg(installation_id))
+ON CONFLICT (storage_key) DO UPDATE
+SET created_at = now(), next_attempt_at = now(),
+    chat_message_id = EXCLUDED.chat_message_id,
+    storage_url = EXCLUDED.storage_url
+WHERE channel_media_pending_object.state = 'pending'
+  AND channel_media_pending_object.workspace_id = EXCLUDED.workspace_id
+RETURNING storage_key;
+
+-- name: ClaimChannelMediaPendingObjectsForBind :many
+-- Runs inside the attachment-insert transaction: commit landed ⇔ the intents
+-- are gone, atomically, so an ambiguous COMMIT never needs adjudication. Only
+-- 'pending' rows can be claimed — a key the reconciler moved to 'deleting'
+-- is NOT returned, and the caller must skip attaching that object (the
+-- placeholder stays; the reconciler will delete the object).
+DELETE FROM channel_media_pending_object
+WHERE storage_key = ANY(@storage_keys::text[])
+  AND workspace_id = @workspace_id
+  AND state = 'pending'
+RETURNING storage_key;
+
+-- name: ClaimChannelMediaPendingObjectsForReconcile :many
+-- Short-transaction claim: flips due rows to 'deleting' under a fresh lease.
+-- Due means (a) 'pending' rows older than the settle delay — an operational
+-- buffer only; correctness comes from the state flip, after which a bind can
+-- never succeed on the key — or (b) 'deleting' rows whose lease expired (a
+-- crashed or failed worker). FOR UPDATE SKIP LOCKED keeps replicas from
+-- claiming the same rows; the object-storage DELETE happens outside any
+-- transaction, gated by the lease token.
+UPDATE channel_media_pending_object AS obj
+SET state = CASE WHEN obj.state = 'tombstoned' THEN 'tombstoned' ELSE 'deleting' END,
+    lease_token = @lease_token,
+    lease_expires_at = @lease_expires_at,
+    attempt = obj.attempt + 1
+FROM (
+    SELECT cand.storage_key FROM channel_media_pending_object AS cand
+    WHERE cand.next_attempt_at <= now()
+      AND (
+          (cand.state = 'pending' AND cand.created_at <= @pending_settled_before)
+          OR (cand.state = 'deleting' AND (cand.lease_expires_at IS NULL OR cand.lease_expires_at <= now()))
+          -- Tombstones: the object was deleted, but a PUT the client abandoned
+          -- may still materialize it afterwards, so each due tombstone gets
+          -- another idempotent delete before the row is finally dropped.
+          OR (cand.state = 'tombstoned' AND (cand.lease_expires_at IS NULL OR cand.lease_expires_at <= now()))
+      )
+    ORDER BY cand.next_attempt_at
+    LIMIT @batch_limit
+    FOR UPDATE SKIP LOCKED
+) AS due
+WHERE obj.storage_key = due.storage_key
+RETURNING obj.*;
+
+-- name: RenewChannelMediaPendingObjectLease :execrows
+-- Per-row heartbeat: the batch shares one claim, so the lease must be
+-- extended before EACH row's settle work — otherwise a few storage deletes
+-- running at their full timeout could outlive the lease mid-batch and a
+-- second replica would reclaim the tail, duplicating deletes and inflating
+-- attempt/backoff. Zero rows affected means another worker already reclaimed
+-- this row: the caller must skip it. workspace_id explicit per the tenancy
+-- rule.
+UPDATE channel_media_pending_object
+SET lease_expires_at = @lease_expires_at
+WHERE storage_key = @storage_key
+  AND workspace_id = @workspace_id
+  AND lease_token = @lease_token;
+
+-- name: ReleaseChannelMediaPendingObject :exec
+-- Object-storage DELETE failed: keep the row in 'deleting' (bind must still
+-- never attach it), release the lease, and back off the next attempt.
+-- workspace_id is redundant with the storage_key PK but explicit per the
+-- tenancy rule: every query constrains the workspace column, never trusting
+-- the key string.
+UPDATE channel_media_pending_object
+SET lease_token = NULL,
+    lease_expires_at = NULL,
+    next_attempt_at = @next_attempt_at,
+    last_error = @last_error
+WHERE storage_key = @storage_key
+  AND workspace_id = @workspace_id
+  AND lease_token = @lease_token;
+
+-- name: TombstoneChannelMediaPendingObject :execrows
+-- The object was deleted, but the row is KEPT as a tombstone: a PUT the client
+-- abandoned before the delete may still materialize the object afterwards, and
+-- no DELETE can be ordered against it. Each due tombstone triggers another
+-- idempotent delete, so a late materialization is reclaimed by a later pass;
+-- only after the re-delete schedule is exhausted is the row dropped
+-- (DeleteChannelMediaPendingObject). Lease-token guarded like every other
+-- settle write; workspace_id explicit per the tenancy rule.
+UPDATE channel_media_pending_object
+SET state = 'tombstoned',
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    next_attempt_at = @next_attempt_at,
+    -- last_error doubles as the tombstone's schedule position (a tombstoned
+    -- row has no failure to report); see tombstonePassMarker.
+    last_error = @pass_marker
+WHERE storage_key = @storage_key
+  AND workspace_id = @workspace_id
+  AND lease_token = @lease_token;
+
+-- name: DeleteChannelMediaPendingObject :execrows
+-- Settles a claimed row (object deleted, or a durable attachment reference
+-- was found). Lease-token guarded so an expired-lease reclaim by another
+-- replica cannot be clobbered; workspace_id explicit per the tenancy rule.
+DELETE FROM channel_media_pending_object
+WHERE storage_key = @storage_key
+  AND workspace_id = @workspace_id
+  AND lease_token = @lease_token;
+
+-- name: ChannelMediaObjectIsReferenced :one
+-- The post-claim reference check: an attachment row carrying this object's
+-- URL on the intended message. Only meaningful AFTER the claim flipped the
+-- row to 'deleting' — from that point a bind can no longer succeed on the
+-- key, so a negative answer is terminal, not a snapshot race.
+SELECT EXISTS (
+    SELECT 1 FROM attachment
+    WHERE chat_message_id = @chat_message_id
+      AND workspace_id = @workspace_id
+      AND url = @storage_url
+) AS referenced;
+
+-- name: CountChannelMediaPendingObjects :one
+-- Ledger backlog gauge for the reconciler's observability. Tombstones are
+-- reported separately: they are bounded bookkeeping for already-deleted
+-- objects, not a backlog of objects awaiting reclaim.
+SELECT
+    count(*) FILTER (WHERE state <> 'tombstoned') AS pending_objects,
+    count(*) FILTER (WHERE state = 'tombstoned') AS tombstoned_objects
+FROM channel_media_pending_object;
