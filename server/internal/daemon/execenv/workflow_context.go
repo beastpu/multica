@@ -214,6 +214,8 @@ func renderWorkflowRework(b *strings.Builder, rework *WorkflowReworkContext) {
 		b.WriteString("退回来源：**验收驳回**\n\n")
 	case "critic":
 		b.WriteString("退回来源：**智能体评审驳回**\n\n")
+	case "manual_review":
+		b.WriteString("退回来源：**人工驳回**\n\n")
 	case "manual_rollback":
 		b.WriteString("退回来源：**人工回滚**\n\n")
 	}
@@ -353,6 +355,13 @@ func renderWorkflowDuties(b *strings.Builder, workflow *WorkflowTaskContext) {
 		b.WriteString("If the file is already on the issue as a comment attachment, " +
 			"register that attachment instead of uploading a second copy:\n\n")
 		b.WriteString("```\nmultica workflow submit --artifact <key> --attachment-id <attachment-id>\n```\n\n")
+		// A run without a host issue has no comment to carry the file, which
+		// used to leave an attachment artifact unsatisfiable: the only uploader
+		// demanded a chat task this node does not have. Upload direct and pass
+		// the id along.
+		b.WriteString("If there is no issue to attach to, upload the file first " +
+			"and submit the id it prints:\n\n")
+		b.WriteString("```\nmultica attachment upload <path>\n```\n\n")
 		fmt.Fprintf(b, "If `multica workflow` is not a known command, this runtime's CLI "+
 			"predates it — submit through the API instead:\n\n"+
 			"```\nmultica api post /api/workflow-node-instances/%s/artifacts --content-file body.json\n```\n\n"+

@@ -4896,3 +4896,133 @@ func cleanupWorkflowRuntimeTest(t *testing.T) {
 	cleanup()
 	t.Cleanup(cleanup)
 }
+
+// A person rejecting a delivery and the agent Critic rejecting one are
+// different judgements, and the executor is told which sent it back. Both were
+// stamped "critic_rework" because the human path reuses the Critic's rework
+// helper, so a member's rejection reached the agent as "the Critic rejected
+// you" — a reviewer it could go argue with instead of the person who is
+// actually waiting.
+func TestWorkflowMemberRejectionIsNotAttributedToTheCritic(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	ctx := context.Background()
+	cleanupWorkflowRuntimeTest(t)
+
+	var hostID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_type, creator_id, number, position
+		) VALUES ($1, 'Rejection attribution host', 'todo', 'none', 'member', $2, $3, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID, nextWorkspaceIssueNumber(t)).Scan(&hostID); err != nil {
+		t.Fatalf("create host issue: %v", err)
+	}
+
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Rejection attribution",
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true, AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "work", Kind: "activity", Name: "Implementation", OwnerRole: "owner",
+				IssuePolicy: "fixed_and_dynamic",
+				Executor: &workflowdomain.ExecutorDefinition{
+					Kind: "role", Role: "owner",
+					Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
+				},
+				IssueTemplates: []workflowdomain.IssueTemplate{{
+					Key: "implementation", Title: "Implement {{host.title}}", Required: true,
+				}},
+				SubmissionSchema: &workflowdomain.SubmissionSchema{},
+				Reviewer: &workflowdomain.ReviewerDefinition{
+					Kind: "owner", Required: true,
+				},
+				Completion: workflowdomain.CompletionDefinition{
+					RequiredIssueOutcome: "done", SubmissionRequired: true,
+				},
+			},
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "work"}, {From: "work", To: "end"},
+		},
+		Acceptance: workflowdomain.AcceptanceDefinition{Policy: "none"},
+	}
+	if err := workflowdomain.ValidateDefinition(definition); err != nil {
+		t.Fatalf("definition invalid: %v", err)
+	}
+	definitionJSON, _ := json.Marshal(definition)
+	var templateID, versionID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workflow (workspace_id, name, status, created_by)
+		VALUES ($1, 'Rejection attribution template', 'published', $2)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&templateID); err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workflow_version (
+			workspace_id, workflow_id, version, definition,
+			definition_checksum, created_by, published_by, published_at
+		) VALUES ($1, $2, 1, $3, 'test', $4, $4, now())
+		RETURNING id
+	`, testWorkspaceID, templateID, definitionJSON, testUserID).Scan(&versionID); err != nil {
+		t.Fatalf("create template version: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE workflow SET latest_published_version_id = $1 WHERE id = $2
+	`, versionID, templateID); err != nil {
+		t.Fatalf("set published version: %v", err)
+	}
+
+	started := startWorkflowForTest(t, hostID, templateID, []map[string]any{{
+		"role_key": "owner", "actor_type": "member", "actor_id": testUserID,
+	}}, "rejection-attribution-start")
+
+	work := latestWorkflowNodeForTest(t, started.Instance.ID, "work")
+	var workIssueID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT issue_id::text FROM workflow_node_task
+		WHERE workflow_node_instance_id = $1 AND issue_id IS NOT NULL
+		ORDER BY created_at DESC LIMIT 1
+	`, work.ID).Scan(&workIssueID); err != nil {
+		t.Fatalf("read work issue: %v", err)
+	}
+	completeWorkflowIssue(t, workIssueID)
+	workNodeID := uuidToString(work.ID)
+	postSubmission(t, workNodeID, "rejection-attribution-submission", "first result")
+
+	postWorkflowVerdictResult(
+		t, workNodeID, "fail", "Not what was asked for", "rejection-attribution-verdict",
+	)
+
+	var action string
+	if err := testPool.QueryRow(ctx, `
+		SELECT payload->>'action' FROM workflow_event
+		WHERE workflow_instance_id = $1 AND event_type = 'node.rollback'
+		ORDER BY created_at DESC LIMIT 1
+	`, started.Instance.ID).Scan(&action); err != nil {
+		t.Fatalf("read rollback event: %v", err)
+	}
+	if action != "manual_rework" {
+		t.Fatalf("member rejection recorded action %q, want manual_rework", action)
+	}
+
+	reworkIssue, err := testHandler.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID: parseUUID(workIssueID), WorkspaceID: parseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatalf("load rework issue: %v", err)
+	}
+	reworkContext := testHandler.workflowTaskContext(ctx, reworkIssue)
+	if reworkContext == nil || reworkContext.Rework == nil {
+		t.Fatalf("rework task context = %#v, want a rework block", reworkContext)
+	}
+	if reworkContext.Rework.Source != "manual_review" ||
+		reworkContext.Rework.Reason != "Not what was asked for" {
+		t.Fatalf("rework block = %#v", reworkContext.Rework)
+	}
+}

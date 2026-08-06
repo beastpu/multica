@@ -136,8 +136,16 @@ func createWorkflowVerdictRework(
 	if err != nil {
 		return locked, db.WorkflowNodeInstance{}, err
 	}
+	// Who rejected is part of the judgement, not decoration: the executor is
+	// told what sent it back so it knows whether a reviewer or a person is
+	// waiting. This helper serves both the agent Critic and a member recording
+	// a fail verdict, so the action follows the actor rather than the helper.
+	reworkAction := "critic_rework"
+	if actorType == "member" {
+		reworkAction = "manual_rework"
+	}
 	payload, _ := json.Marshal(map[string]any{
-		"action": "critic_rework", "node_key": currentNode.NodeKey,
+		"action": reworkAction, "node_key": currentNode.NodeKey,
 		"node_instance_id":           uuidToString(currentNode.ID),
 		"activated_node_instance_id": uuidToString(reworkNode.ID),
 		"reason":                     reason,

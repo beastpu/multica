@@ -440,9 +440,15 @@ func (h *Handler) workflowReworkContext(
 	case "acceptance.rejected":
 		rework.Source = "acceptance"
 	case "node.rollback":
-		if payload.Action == "critic_rework" {
+		// Three different judgements share this event type: an agent Critic
+		// rejecting a delivery, a person rejecting one, and a person rolling
+		// the run back to this node without reviewing anything.
+		switch payload.Action {
+		case "critic_rework":
 			rework.Source = "critic"
-		} else {
+		case "manual_rework":
+			rework.Source = "manual_review"
+		default:
 			rework.Source = "manual_rollback"
 		}
 	}
