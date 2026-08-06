@@ -986,25 +986,17 @@ func (h *Handler) transitionWorkflowNode(
 			}
 			switch candidate.Status {
 			case "active", "in_review", "waiting", "blocked", "completed", "skipped":
-				superseded, updateErr := qtx.UpdateWorkflowNodeState(
+				// The carrier is deliberately not touched here: the next
+				// attempt takes over this same issue and reopens it.
+				if _, updateErr := qtx.UpdateWorkflowNodeState(
 					r.Context(),
 					db.UpdateWorkflowNodeStateParams{
 						Status: "superseded", WaitingReasons: []byte("[]"),
 						ID: candidate.ID, WorkspaceID: locked.WorkspaceID,
 						ExpectedStatus: candidate.Status,
 					},
-				)
-				if updateErr != nil {
+				); updateErr != nil {
 					writeError(w, http.StatusConflict, "workflow path changed; refresh and try again")
-					return
-				}
-				// The attempt is being replaced, and the replacement opens its
-				// own carrier. Closing this one keeps the same work from
-				// sitting on the board twice.
-				if syncErr := syncWorkflowNodeIssueStatusTx(
-					r.Context(), qtx, locked.WorkspaceID, superseded, "superseded",
-				); syncErr != nil {
-					writeError(w, http.StatusConflict, "failed to close superseded carriers")
 					return
 				}
 			}

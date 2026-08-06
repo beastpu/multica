@@ -81,14 +81,11 @@ func TestNodeIssueStatus(t *testing.T) {
 			event: "waiting", current: "todo", wantOK: false,
 		},
 
-		// Rework opens a fresh attempt with its own carrier. The attempt it
-		// replaced has to close, or the same work sits on the board twice.
-		{"a superseded attempt closes its carrier", "superseded", "in_review", "cancelled", true},
-		{"a superseded attempt closes an unstarted carrier", "superseded", "todo", "cancelled", true},
-		{
-			name:  "superseding leaves a finished attempt finished",
-			event: "superseded", current: "done", wantOK: false,
-		},
+		// Rework hands the same carrier to the next attempt and reopens it, so
+		// superseding must leave the issue alone. Closing it here would cancel
+		// the issue the replacement is about to pick up.
+		{"superseding never touches the carrier", "superseded", "in_review", "", false},
+		{"superseding never touches an unstarted carrier", "superseded", "todo", "", false},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

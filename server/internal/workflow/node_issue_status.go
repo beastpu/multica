@@ -38,12 +38,15 @@ func NodeIssueStatus(event, current string) (string, bool) {
 		if current == "in_progress" || current == "in_review" {
 			return "blocked", true
 		}
-	// A node the run skipped, a node the run was cancelled out from under, and
-	// an attempt a rework replaced all leave work that will never be done.
-	// Leaving those carriers open would keep them on someone's board as things
-	// to pick up — the superseded case worst of all, because the attempt that
-	// replaced it opens a second issue for the same work.
-	case "skipped", "cancelled", "superseded":
+	// A node the run skipped and a node the run was cancelled out from under
+	// both leave work that will never be done. Leaving the carrier open would
+	// keep it on someone's board as a thing to pick up.
+	//
+	// Superseding is deliberately absent. An attempt replaced by a rework does
+	// not abandon its carrier — reuseWorkflowReworkIssue hands the same issue
+	// to the next attempt and reopens it. Cancelling here would close the issue
+	// the replacement is about to pick up.
+	case "skipped", "cancelled":
 		return "cancelled", true
 	}
 	return "", false
