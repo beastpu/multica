@@ -1661,6 +1661,37 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 			})
 			continue
 		}
+		// Whoever did the work decides. When a run owns this task the run's
+		// outcome is the answer and the issue is its mirror: an agent that
+		// delivered has nothing left to do, and holding the node until someone
+		// also drags the issue to done strands finished work behind a status
+		// change nobody owes. Only a task no run ever claimed — a person
+		// working in the issue — is answered by the issue's own status.
+		owner, ownerErr := q.GetOwningAgentTaskForWorkflowNodeTask(
+			ctx,
+			db.GetOwningAgentTaskForWorkflowNodeTaskParams{
+				WorkflowNodeTaskID: task.ID, IssueID: task.IssueID,
+			},
+		)
+		if ownerErr != nil && !errors.Is(ownerErr, pgx.ErrNoRows) {
+			return false, nil, db.WorkflowNodeSubmission{}, db.WorkflowNodeVerdict{}, ownerErr
+		}
+		if ownerErr == nil {
+			switch owner.Status {
+			case "completed":
+			case "failed", "cancelled":
+				reasons = append(reasons, workflowdomain.WaitingReason{
+					Code: "direct_execution_failed", Field: task.TaskKey,
+					Message: "Direct agent execution did not complete successfully",
+				})
+			default:
+				reasons = append(reasons, workflowdomain.WaitingReason{
+					Code: "direct_execution_running", Field: task.TaskKey,
+					Message: "Direct agent execution is still running",
+				})
+			}
+			continue
+		}
 		status := issueStatuses[task.IssueID]
 		outcomeSatisfied := status == "done"
 		if requiredIssueOutcome == "terminal" {

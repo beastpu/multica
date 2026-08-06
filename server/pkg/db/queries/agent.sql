@@ -352,6 +352,23 @@ WHERE workflow_node_task_id = @workflow_node_task_id
 ORDER BY attempt DESC, created_at DESC, id DESC
 LIMIT 1;
 
+-- name: GetOwningAgentTaskForWorkflowNodeTask :one
+-- The run that owns a node task, in whichever shape it took: an execution the
+-- task owns directly, or an agent working the task's issue. Completion asks
+-- this before it reads the issue's status, because when a run did the work the
+-- run's outcome is the answer — the issue is a mirror of it, and waiting for
+-- someone to also move the mirror strands finished work behind a status change
+-- nobody owes.
+SELECT * FROM agent_task_queue
+WHERE workflow_node_task_id = @workflow_node_task_id
+   OR (
+     sqlc.narg(issue_id)::uuid IS NOT NULL
+     AND issue_id = sqlc.narg(issue_id)
+     AND workflow_node_task_id IS NULL
+   )
+ORDER BY attempt DESC, created_at DESC, id DESC
+LIMIT 1;
+
 -- name: ListWorkflowNodeWorkerAgentTasks :many
 -- A workflow activity can execute without an issue (durable task ownership)
 -- or through an issue-backed task. Return both shapes from the node boundary,

@@ -3430,6 +3430,85 @@ func (q *Queries) GetLatestTaskRoleForIssueAndAgent(ctx context.Context, arg Get
 	return i, err
 }
 
+const getOwningAgentTaskForWorkflowNodeTask = `-- name: GetOwningAgentTaskForWorkflowNodeTask :one
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, workflow_node_task_id FROM agent_task_queue
+WHERE workflow_node_task_id = $1
+   OR (
+     $2::uuid IS NOT NULL
+     AND issue_id = $2
+     AND workflow_node_task_id IS NULL
+   )
+ORDER BY attempt DESC, created_at DESC, id DESC
+LIMIT 1
+`
+
+type GetOwningAgentTaskForWorkflowNodeTaskParams struct {
+	WorkflowNodeTaskID pgtype.UUID `json:"workflow_node_task_id"`
+	IssueID            pgtype.UUID `json:"issue_id"`
+}
+
+// The run that owns a node task, in whichever shape it took: an execution the
+// task owns directly, or an agent working the task's issue. Completion asks
+// this before it reads the issue's status, because when a run did the work the
+// run's outcome is the answer — the issue is a mirror of it, and waiting for
+// someone to also move the mirror strands finished work behind a status change
+// nobody owes.
+func (q *Queries) GetOwningAgentTaskForWorkflowNodeTask(ctx context.Context, arg GetOwningAgentTaskForWorkflowNodeTaskParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, getOwningAgentTaskForWorkflowNodeTask, arg.WorkflowNodeTaskID, arg.IssueID)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.WorkflowNodeTaskID,
+	)
+	return i, err
+}
+
 const getP4AssessmentBinding = `-- name: GetP4AssessmentBinding :one
 SELECT
   fib.id AS binding_id,
