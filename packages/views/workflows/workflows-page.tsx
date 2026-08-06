@@ -369,7 +369,7 @@ function TemplatesPanel({
   // archiving instead of dead-ending on a refusal the reader can't act on.
   const deleteHasRuns = (deleteTemplate?.run_count ?? 0) > 0;
   const deleteWorkflow = useDeleteWorkflow();
-  const archiveWorkflow = useArchiveWorkflow(deleteTemplate?.id ?? "");
+  const archiveWorkflow = useArchiveWorkflow();
   const deletePending = deleteWorkflow.isPending || archiveWorkflow.isPending;
 
   if (isError) {
@@ -598,11 +598,12 @@ function TemplatesPanel({
               {t(($) => $.templates.delete_title)}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteHasRuns
-                ? t(($) => $.templates.delete_blocked)
-                : t(($) => $.templates.delete_description, {
-                  name: deleteTemplate?.name ?? "",
-                })}
+              {t(
+                ($) => deleteHasRuns
+                  ? $.templates.delete_blocked
+                  : $.templates.delete_description,
+                { name: deleteTemplate?.name ?? "" },
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -615,7 +616,7 @@ function TemplatesPanel({
                 if (!deleteTemplate) return;
                 const done = { onSuccess: () => setDeleteTemplate(null) };
                 if (deleteHasRuns) {
-                  archiveWorkflow.mutate(undefined, done);
+                  archiveWorkflow.mutate(deleteTemplate.id, done);
                 } else {
                   deleteWorkflow.mutate(deleteTemplate.id, done);
                 }

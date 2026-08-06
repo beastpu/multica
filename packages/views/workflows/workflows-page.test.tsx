@@ -92,6 +92,21 @@ const neverRunSummary = {
   recent_runs: [],
 };
 
+// A third workflow, also with runs, so a test can confirm the second archive
+// targets the row it names rather than the one before it.
+const secondRunSummary = {
+  ...templateSummary,
+  id: "template-3",
+  name: "Release workflow",
+  recent_runs: [{
+    id: "run-release",
+    title: "Nightly release",
+    status: "completed",
+    started_at: "2026-08-01T10:00:00.000Z",
+    completed_at: "2026-08-01T10:30:00.000Z",
+  }],
+};
+
 const templateDetail = {
   workflow: templateSummary,
   versions: [{
@@ -127,7 +142,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
         return { data: templateDetail, isLoading: false, isError: false };
       }
       return {
-        data: { workflows: [templateSummary, neverRunSummary] },
+        data: { workflows: [templateSummary, neverRunSummary, secondRunSummary] },
         isLoading: false,
         isError: false,
       };
@@ -193,8 +208,8 @@ vi.mock("@multica/core/workflows", async (importOriginal) => {
       },
       isPending: false,
     }),
-    useArchiveWorkflow: (id: string) => ({
-      mutate: (_input: unknown, options?: { onSuccess?: () => void }) => {
+    useArchiveWorkflow: () => ({
+      mutate: (id: string, options?: { onSuccess?: () => void }) => {
         mocks.archiveWorkflow(id);
         options?.onSuccess?.();
       },
@@ -367,7 +382,7 @@ describe("WorkflowsPage", () => {
       screen.getByRole("link", { name: /Running/ }),
     ).toHaveAttribute("href", "/workspace/workflows/runs/run-running");
     expect(
-      screen.getByRole("link", { name: "4 runs" }),
+      screen.getAllByRole("link", { name: "4 runs" })[0],
     ).toHaveAttribute("href", "/workspace/workflows/runs?workflow=template-1");
     // The history is reachable from the page itself, not only from a workflow
     // that happens to have run more than once.
@@ -410,7 +425,7 @@ describe("WorkflowsPage", () => {
       "href",
       "/workspace/workflows/template-1",
     );
-    expect(screen.getAllByRole("button", { name: "Run" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Run" })).toHaveLength(3);
     // Copy and delete are not on the row — they are reached through the menu.
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
@@ -458,6 +473,45 @@ describe("WorkflowsPage", () => {
     await user.click(screen.getByRole("button", { name: "Archive" }));
     expect(mocks.archiveWorkflow).toHaveBeenCalledWith("template-1");
     expect(mocks.deleteWorkflow).not.toHaveBeenCalled();
+  });
+
+  // The mutation used to take its id when the hook ran, which is fine on a page
+  // that edits one workflow and wrong on a list: the second confirmation
+  // archived whatever the first one had, the server answered 200 for it, and
+  // the row the reader actually picked was left untouched.
+  it("archives the workflow named in the confirmation, not the previous one", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowsPage />, { wrapper });
+
+    const openDeleteFor = async (index: number) => {
+      await user.click(
+        screen.getAllByRole("button", { name: "More actions" })[index]!,
+      );
+      await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    };
+
+    await openDeleteFor(0);
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+    expect(mocks.archiveWorkflow).toHaveBeenLastCalledWith("template-1");
+
+    // Same dialog, different row. Nothing about the first choice may survive.
+    await openDeleteFor(2);
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+    expect(mocks.archiveWorkflow).toHaveBeenLastCalledWith("template-3");
+  });
+
+  // The blocked branch said only "this workflow has runs", so a reader could
+  // not tell which workflow they were about to archive — which is exactly how
+  // the stale-id bug above stayed invisible while it fired six times.
+  it("names the workflow in the archive-instead confirmation", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowsPage />, { wrapper });
+
+    await user.click(screen.getAllByRole("button", { name: "More actions" })[0]!);
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(/Delivery workflow/)).toBeInTheDocument();
   });
 
   it("suffixes the starter name until it is free", () => {

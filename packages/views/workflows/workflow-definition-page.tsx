@@ -576,7 +576,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
   const [saveError, setSaveError] = useState("");
   const [changeSummary, setChangeSummary] = useState("");
   const saveDefinition = useSaveWorkflowDefinition(templateId);
-  const archive = useArchiveWorkflow(templateId);
+  const archive = useArchiveWorkflow();
 
   const selectedVersion = versions.find(
     (version) => version.id === selectedVersionId,
@@ -1116,7 +1116,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
               {commonT(($) => $.cancel)}
             </AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => archive.mutate(undefined, {
+              onClick={() => archive.mutate(templateId, {
                 onSuccess: () => setArchiveOpen(false),
               })}
               disabled={archive.isPending}

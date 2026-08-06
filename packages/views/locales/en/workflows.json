@@ -175,7 +175,7 @@
     "column_updated": "Last published",
     "delete_title": "Delete this workflow?",
     "delete_description": "“{{name}}” and its saved versions are removed for good. This cannot be undone.",
-    "delete_blocked": "This workflow has runs, so it cannot be deleted. Archive it instead — the runs stay readable and it can no longer start new ones."
+    "delete_blocked": "“{{name}}” has runs, so it cannot be deleted. Archive it instead — the runs stay readable and it can no longer start new ones."
   },
   "workbench": {
     "title": "Workflow workbench",
