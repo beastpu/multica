@@ -146,6 +146,7 @@ func renderWorkflowProtocol(b *strings.Builder, workflow *WorkflowTaskContext) {
 	renderWorkflowOutputs(b, workflow.Outputs)
 	renderWorkflowUpstream(b, workflow.InstanceID, workflow.Upstream)
 	renderWorkflowDuties(b, workflow)
+	renderWorkflowDeliveryContract(b, workflow)
 }
 
 // renderWorkflowCriticProtocol is a built-in, versioned review contract. The
@@ -401,4 +402,55 @@ func (w *WorkflowTaskContext) PendingRequiredArtifacts() []WorkflowArtifactDuty 
 		}
 	}
 	return pending
+}
+
+// renderWorkflowDeliveryContract states, once, everything the node still owes.
+//
+// The fields and the artifacts each arrived with their own `multica workflow
+// submit` line, in their own section, neither saying the other existed. An
+// agent that read to the end ran the last command it saw and stopped: three
+// runs in a row delivered the artifact, never the fields, and sat waiting for
+// a field the brief had already asked for — in a section it had scrolled past.
+//
+// One obligation, said in one place, with one command that satisfies it. The
+// CLI has always accepted the combination; only the brief split it.
+func renderWorkflowDeliveryContract(b *strings.Builder, workflow *WorkflowTaskContext) {
+	pendingFields := make([]WorkflowOutputDuty, 0, len(workflow.Outputs))
+	for _, output := range workflow.Outputs {
+		if output.Required {
+			pendingFields = append(pendingFields, output)
+		}
+	}
+	pendingArtifacts := workflow.PendingRequiredArtifacts()
+	if len(pendingFields) == 0 || len(pendingArtifacts) == 0 {
+		// With only one kind outstanding, that kind's own section already says
+		// the whole truth; repeating it would be noise.
+		return
+	}
+
+	b.WriteString("### 这个节点欠的是一份交付，不是两份\n\n")
+	b.WriteString("结构化字段和制品都要交齐，节点才会完成。" +
+		"只交其中一样会一直停在这里，等待原因写着缺的那一样。\n\n")
+
+	command := "multica workflow submit --summary \"<结论>\""
+	for _, field := range pendingFields {
+		value := "<值>"
+		if len(field.Values) > 0 {
+			value = field.Values[0]
+		}
+		command += fmt.Sprintf(" --set %s=%s", field.Key, value)
+	}
+	first := pendingArtifacts[0]
+	switch first.Kind {
+	case "link":
+		command += fmt.Sprintf(" --artifact %s --url <地址>", first.Key)
+	case "attachment":
+		command += fmt.Sprintf(" --artifact %s --attachment-id <id>", first.Key)
+	default:
+		command += fmt.Sprintf(" --artifact %s --file <路径>", first.Key)
+	}
+	fmt.Fprintf(b, "```\n%s\n```\n\n", command)
+	if len(pendingArtifacts) > 1 {
+		b.WriteString("还欠的制品逐个补交：`multica workflow submit --artifact <key> ...`\n\n")
+	}
 }

@@ -291,3 +291,65 @@ func TestRenderIssueContext_NoOutputsSection(t *testing.T) {
 		t.Fatalf("node without outputs was told to deliver fields:\n%s", md)
 	}
 }
+
+// Three consecutive runs delivered the artifact and never the fields, then sat
+// waiting on a field the brief had already listed. The brief was not missing
+// the contract — it was stating it twice, in two sections, each ending in its
+// own `multica workflow submit` line with nothing saying the other was also
+// owed. An agent reading to the end ran the last command it saw.
+func TestWorkflowBriefStatesOneDeliveryForFieldsAndArtifacts(t *testing.T) {
+	workflow := &WorkflowTaskContext{
+		InstanceID: "instance-1",
+		NodeKey:    "root_cause",
+		NodeName:   "根因分析",
+		Outputs: []WorkflowOutputDuty{
+			{Key: "root_cause_found", Type: "bool", Required: true},
+			{Key: "component", Type: "string"},
+		},
+		Artifacts: []WorkflowArtifactDuty{
+			{Key: "root_cause_report", Name: "根因分析", Kind: "document", Required: true},
+		},
+	}
+	var b strings.Builder
+	renderWorkflowProtocol(&b, workflow)
+	brief := b.String()
+
+	// One command that satisfies the whole obligation, so following the brief
+	// literally cannot leave half of it undone.
+	if !strings.Contains(brief, "--set root_cause_found=") ||
+		!strings.Contains(brief, "--artifact root_cause_report") {
+		t.Fatalf("brief has no combined delivery command:\n%s", brief)
+	}
+	combined := false
+	for _, line := range strings.Split(brief, "\n") {
+		if strings.Contains(line, "--set root_cause_found=") &&
+			strings.Contains(line, "--artifact root_cause_report") {
+			combined = true
+		}
+	}
+	if !combined {
+		t.Fatalf("fields and artifact are still handed over separately:\n%s", brief)
+	}
+
+	// An optional field is not part of what blocks the node, so it does not
+	// belong in the command that says how to unblock it.
+	if strings.Contains(brief, "--set component=") {
+		t.Fatalf("optional field appears in the required delivery command:\n%s", brief)
+	}
+}
+
+// A node owing only one of the two already says everything in that kind's own
+// section; repeating it under a second heading is noise.
+func TestWorkflowBriefSaysItOnceWhenOnlyOneKindIsOwed(t *testing.T) {
+	var b strings.Builder
+	renderWorkflowProtocol(&b, &WorkflowTaskContext{
+		InstanceID: "instance-1",
+		NodeKey:    "triage",
+		Outputs: []WorkflowOutputDuty{
+			{Key: "is_bug", Type: "bool", Required: true},
+		},
+	})
+	if strings.Contains(b.String(), "不是两份") {
+		t.Fatalf("fields-only node got the combined contract:\n%s", b.String())
+	}
+}
