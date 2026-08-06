@@ -573,10 +573,14 @@ func (h *Handler) StartIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	hostID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "issue_id")
+	// The path param is whatever the address bar holds, and an issue answers to
+	// both WTE-14841 and its UUID. Parsing it as a UUID rejected every run
+	// started from a link a person would actually share.
+	host, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
 		return
 	}
+	hostID := host.ID
 	templateID, ok := parseUUIDOrBadRequest(w, req.WorkflowID, "workflow_id")
 	if !ok {
 		return
@@ -587,11 +591,6 @@ func (h *Handler) StartIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user_id")
 	if !ok {
-		return
-	}
-	host, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: hostID, WorkspaceID: wsUUID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "host issue not found")
 		return
 	}
 	template, err := h.Queries.GetWorkflowInWorkspace(r.Context(), db.GetWorkflowInWorkspaceParams{ID: templateID, WorkspaceID: wsUUID})
@@ -1767,12 +1766,12 @@ func (h *Handler) GetIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	hostID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "issue_id")
+	host, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
 		return
 	}
 	instance, err := h.Queries.GetLatestWorkflowInstanceByHost(r.Context(), db.GetLatestWorkflowInstanceByHostParams{
-		HostIssueID: hostID, WorkspaceID: wsUUID,
+		HostIssueID: host.ID, WorkspaceID: wsUUID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "workflow instance not found")
