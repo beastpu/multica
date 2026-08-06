@@ -588,8 +588,15 @@ function TemplatesPanel({
       />
       <AlertDialog
         open={Boolean(deleteTemplate)}
+        // The dialog closes when it says it is closing. Holding it open while
+        // the request was in flight fought the dialog's own close: the state
+        // never cleared, so the panel and its backdrop stayed on screen
+        // swallowing clicks, and the next row the reader picked never
+        // registered — one confirmation per page load was all the list could
+        // do. The request outlives the dialog; the list refetches when it
+        // lands.
         onOpenChange={(nextOpen) => {
-          if (!nextOpen && !deletePending) setDeleteTemplate(null);
+          if (!nextOpen) setDeleteTemplate(null);
         }}
       >
         <AlertDialogContent>
@@ -613,13 +620,18 @@ function TemplatesPanel({
             <AlertDialogAction
               disabled={deletePending}
               onClick={() => {
-                if (!deleteTemplate) return;
-                const done = { onSuccess: () => setDeleteTemplate(null) };
-                if (deleteHasRuns) {
-                  archiveWorkflow.mutate(deleteTemplate.id, done);
+                // Read the target before the close clears it.
+                const target = deleteTemplate;
+                if (!target) return;
+                const failed = {
+                  onError: () => toast.error(t(($) => $.errors.action_failed)),
+                };
+                if (target.run_count > 0) {
+                  archiveWorkflow.mutate(target.id, failed);
                 } else {
-                  deleteWorkflow.mutate(deleteTemplate.id, done);
+                  deleteWorkflow.mutate(target.id, failed);
                 }
+                setDeleteTemplate(null);
               }}
             >
               {deleteHasRuns

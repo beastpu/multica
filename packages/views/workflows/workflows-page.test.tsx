@@ -21,6 +21,11 @@ const mocks = vi.hoisted(() => ({
   saveDefinition: vi.fn(),
   deleteWorkflow: vi.fn(),
   archiveWorkflow: vi.fn(),
+  // A real mutation reports itself pending between the click and the reply.
+  // With isPending pinned to false the confirmation looked fine in tests while
+  // the browser left it on screen, backdrop and all.
+  pending: { current: false },
+  settle: { current: () => {} },
 }));
 
 const definition = {
@@ -204,16 +209,24 @@ vi.mock("@multica/core/workflows", async (importOriginal) => {
     useDeleteWorkflow: () => ({
       mutate: (id: string, options?: { onSuccess?: () => void }) => {
         mocks.deleteWorkflow(id);
-        options?.onSuccess?.();
+        mocks.pending.current = true;
+        mocks.settle.current = () => {
+          mocks.pending.current = false;
+          options?.onSuccess?.();
+        };
       },
-      isPending: false,
+      isPending: mocks.pending.current,
     }),
     useArchiveWorkflow: () => ({
       mutate: (id: string, options?: { onSuccess?: () => void }) => {
         mocks.archiveWorkflow(id);
-        options?.onSuccess?.();
+        mocks.pending.current = true;
+        mocks.settle.current = () => {
+          mocks.pending.current = false;
+          options?.onSuccess?.();
+        };
       },
-      isPending: false,
+      isPending: mocks.pending.current,
     }),
     useCreateWorkflowTemplateFromBuiltin: () => ({
       mutate: vi.fn(),
@@ -339,6 +352,8 @@ describe("WorkflowsPage", () => {
     mocks.saveDefinition.mockReset();
     mocks.deleteWorkflow.mockReset();
     mocks.archiveWorkflow.mockReset();
+    mocks.pending.current = false;
+    mocks.settle.current = () => {};
   });
 
   // Roles were their own tab with their own workflow picker and their own
@@ -493,6 +508,7 @@ describe("WorkflowsPage", () => {
     await openDeleteFor(0);
     await user.click(screen.getByRole("button", { name: "Archive" }));
     expect(mocks.archiveWorkflow).toHaveBeenLastCalledWith("template-1");
+    mocks.settle.current();
 
     // Same dialog, different row. Nothing about the first choice may survive.
     await openDeleteFor(2);
@@ -512,6 +528,45 @@ describe("WorkflowsPage", () => {
 
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText(/Delivery workflow/)).toBeInTheDocument();
+  });
+
+  // Confirming left the dialog on screen with its backdrop still swallowing
+  // clicks, so the row you picked next never registered and the next
+  // confirmation was still about the previous workflow. One archive per page
+  // load was all the list could do.
+  it("closes the confirmation as soon as it is confirmed", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowsPage />, { wrapper });
+
+    await user.click(screen.getAllByRole("button", { name: "More actions" })[0]!);
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+
+    // Still in flight — this is the window the dialog used to get stuck in.
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    });
+  });
+
+  it("confirms a second workflow after the first one is done", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowsPage />, { wrapper });
+
+    const confirmFor = async (index: number, action: string) => {
+      await user.click(
+        screen.getAllByRole("button", { name: "More actions" })[index]!,
+      );
+      await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+      await user.click(screen.getByRole("button", { name: action }));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+      mocks.settle.current();
+    };
+
+    await confirmFor(0, "Archive");
+    await confirmFor(1, "Delete");
+
+    expect(mocks.archiveWorkflow).toHaveBeenCalledWith("template-1");
+    expect(mocks.deleteWorkflow).toHaveBeenCalledWith("template-2");
   });
 
   it("suffixes the starter name until it is free", () => {
