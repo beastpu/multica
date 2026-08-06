@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -25,16 +26,27 @@ func (h *Handler) updateManagedWorkflowHostStatus(
 // applyWorkflowNodeActions runs a node's controlled side effects after its
 // state transition committed. Explicit template actions apply regardless of
 // host_status_mode: the mode governs the implicit lifecycle, not authored
-// per-node instructions. Failures are best-effort by design — the node
-// transition itself is already durable.
+// per-node instructions.
+//
+// A failure does not roll the transition back — the node has already moved and
+// the run is correct without the side effect — but it is not swallowed either.
+// The author asked for the host to say something and it does not; only the log
+// can say the instruction was issued and lost.
 func (h *Handler) applyWorkflowNodeActions(
 	ctx context.Context,
 	instance db.WorkflowInstance,
 	actions []workflowdomain.NodeActionDefinition,
 ) {
 	for _, action := range actions {
-		if action.Kind == "set_host_status" {
-			_ = h.updateWorkflowHostStatus(ctx, instance, action.Status)
+		if action.Kind != "set_host_status" {
+			continue
+		}
+		if err := h.updateWorkflowHostStatus(ctx, instance, action.Status); err != nil {
+			slog.Warn("workflow node action could not set the host status",
+				"workflow_instance_id", uuidToString(instance.ID),
+				"host_issue_id", uuidToString(instance.HostIssueID),
+				"requested_status", action.Status,
+				"error", err)
 		}
 	}
 }
