@@ -7,7 +7,9 @@
       "name": "产品负责人",
       "required": true,
       "allowed_actor_types": [
-        "member"
+        "member",
+        "agent",
+        "squad"
       ]
     },
     {
@@ -48,19 +50,9 @@
           "kind": "manual"
         }
       },
-      "issue_policy": "fixed",
-      "issue_templates": [
-        {
-          "key": "review_requirement",
-          "title": "需求评审：{{host.title}}",
-          "required": true,
-          "initial_status": "todo"
-        }
-      ],
+      "issue_policy": "none",
       "completion": {
-        "mode": "automatic",
-        "required_issue_outcome": "done",
-        "handoff_required": true
+        "submission_required": true
       },
       "timeout_minutes": 1440,
       "outputs": [
@@ -130,7 +122,7 @@
       "completion": {
         "mode": "automatic",
         "required_issue_outcome": "done",
-        "handoff_required": true
+        "submission_required": true
       },
       "artifacts": [
         {
@@ -181,7 +173,7 @@
       "completion": {
         "mode": "automatic",
         "required_issue_outcome": "done",
-        "handoff_required": true
+        "submission_required": true
       },
       "timeout_minutes": 1440,
       "artifacts": [

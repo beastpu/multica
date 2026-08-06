@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -146,6 +147,61 @@ func TestBuiltinTemplatesRouteOnDeclaredOutputs(t *testing.T) {
 					t.Fatalf(
 						"builtin template %q case %q reads no declared output: %q",
 						template.Key, item.ID, item.When,
+					)
+				}
+			}
+		}
+	}
+}
+
+// A deciding node states its conclusion in the fields the flow routes on. The
+// builtins also demanded a written handoff and an issue closed by hand, so the
+// first thing a workspace met was being asked for the same conclusion twice and
+// then made to tick off a work item that represented no work. Triage is a
+// judgement, not a task.
+func TestBuiltinDecidingNodesAskForTheConclusionOnce(t *testing.T) {
+	for _, template := range BuiltinTemplates() {
+		definition, err := ParseDefinition(template.Definition)
+		if err != nil {
+			t.Fatalf("builtin template %q definition invalid: %v", template.Key, err)
+		}
+		for _, node := range definition.Nodes {
+			if node.Kind != "activity" {
+				continue
+			}
+			// Whatever the node already owes in machine-readable form is its
+			// conclusion; a prose summary on top is the same answer again.
+			states := len(node.Outputs) > 0 || len(node.Artifacts) > 0
+			if states && node.Completion.HandoffRequired {
+				t.Fatalf(
+					"builtin template %q node %q owes a declared result and a written one",
+					template.Key, node.Key,
+				)
+			}
+			// A node that only decides has nothing to work on, so an issue it
+			// must close is ceremony the decision cannot supply.
+			decidesOnly := len(node.Outputs) > 0 && len(node.Artifacts) == 0
+			if decidesOnly && node.IssuePolicy != "none" {
+				t.Fatalf(
+					"builtin template %q node %q only decides but issues work: %q",
+					template.Key, node.Key, node.IssuePolicy,
+				)
+			}
+		}
+		// Every role that executes has to be able to be an agent, or the flow
+		// a workspace copies is one only people can run.
+		for _, node := range definition.Nodes {
+			if node.Executor == nil || node.Executor.Kind != "role" {
+				continue
+			}
+			for _, role := range definition.Roles {
+				if role.Key != node.Executor.Role {
+					continue
+				}
+				if !slices.Contains(role.AllowedActorTypes, "agent") {
+					t.Fatalf(
+						"builtin template %q executes %q as role %q, which no agent may hold",
+						template.Key, node.Key, role.Key,
 					)
 				}
 			}

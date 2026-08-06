@@ -4,10 +4,12 @@
   "roles": [
     {
       "key": "qa",
-      "name": "测试负责人",
+      "name": "分诊与验收",
       "required": true,
       "allowed_actor_types": [
-        "member"
+        "member",
+        "agent",
+        "squad"
       ]
     },
     {
@@ -41,19 +43,9 @@
           "kind": "manual"
         }
       },
-      "issue_policy": "fixed",
-      "issue_templates": [
-        {
-          "key": "triage_bug",
-          "title": "问题分诊：{{host.title}}",
-          "required": true,
-          "initial_status": "todo"
-        }
-      ],
+      "issue_policy": "none",
       "completion": {
-        "mode": "automatic",
-        "required_issue_outcome": "done",
-        "handoff_required": true
+        "submission_required": true
       },
       "outputs": [
         {
@@ -132,7 +124,7 @@
       "completion": {
         "mode": "automatic",
         "required_issue_outcome": "done",
-        "handoff_required": true
+        "submission_required": true
       },
       "outputs": [
         {
@@ -180,7 +172,7 @@
       "completion": {
         "mode": "automatic",
         "required_issue_outcome": "done",
-        "handoff_required": true
+        "submission_required": true
       },
       "artifacts": [
         {
