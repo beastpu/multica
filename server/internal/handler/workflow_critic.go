@@ -84,11 +84,20 @@ func createWorkflowVerdictRework(
 		}
 		switch candidate.Status {
 		case "active", "in_review", "waiting", "blocked", "completed", "skipped":
-			if _, err := q.UpdateWorkflowNodeState(ctx, db.UpdateWorkflowNodeStateParams{
+			superseded, err := q.UpdateWorkflowNodeState(ctx, db.UpdateWorkflowNodeStateParams{
 				Status: "superseded", WaitingReasons: []byte("[]"),
 				ID: candidate.ID, WorkspaceID: locked.WorkspaceID,
 				ExpectedStatus: candidate.Status,
-			}); err != nil {
+			})
+			if err != nil {
+				return locked, db.WorkflowNodeInstance{}, err
+			}
+			// The attempt is being replaced, and the replacement opens its own
+			// carrier. Closing this one keeps the same work from sitting on the
+			// board twice.
+			if err := syncWorkflowNodeIssueStatusTx(
+				ctx, q, locked.WorkspaceID, superseded, "superseded",
+			); err != nil {
 				return locked, db.WorkflowNodeInstance{}, err
 			}
 		}

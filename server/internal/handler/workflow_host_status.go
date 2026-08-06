@@ -134,6 +134,15 @@ func (h *Handler) updateWorkflowHostStatus(
 	return nil
 }
 
+// workflowCarrierSync defers a carrier update to after the transaction that
+// caused it commits. The transition is the thing that must be durable; the
+// mirror follows it, and running the writes inside would hold the lock for the
+// length of however many issues a node happens to carry.
+type workflowCarrierSync struct {
+	node  db.WorkflowNodeInstance
+	event string
+}
+
 // syncWorkflowNodeIssueStatus pushes a node's state onto the issues that carry
 // its work. The issue is where the work happens; the node is the record of
 // whether it finished. Leaving the two to drift meant an issue sat in todo

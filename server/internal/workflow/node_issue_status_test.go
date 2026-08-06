@@ -16,7 +16,7 @@ func TestNodeIssueStatus(t *testing.T) {
 		{"activation starts a todo carrier", "activated", "todo", "in_progress", true},
 		{"activation starts a backlog carrier", "activated", "backlog", "in_progress", true},
 		{
-			name: "activation leaves work already under way alone",
+			name:  "activation leaves work already under way alone",
 			event: "activated", current: "in_progress", wantOK: false,
 		},
 		{"completion closes the carrier", "completed", "in_progress", "done", true},
@@ -26,7 +26,7 @@ func TestNodeIssueStatus(t *testing.T) {
 		{
 			// An unstarted issue is waiting, not blocked. Saying otherwise
 			// turns every node that has not begun into an alarm.
-			name: "blocking leaves unstarted work alone",
+			name:  "blocking leaves unstarted work alone",
 			event: "blocked", current: "todo", wantOK: false,
 		},
 		{"a skipped node cancels its carrier", "skipped", "todo", "cancelled", true},
@@ -34,28 +34,61 @@ func TestNodeIssueStatus(t *testing.T) {
 		{
 			// The run being cancelled does not undo work someone finished
 			// before it was.
-			name: "a cancelled run leaves finished work finished",
+			name:  "a cancelled run leaves finished work finished",
 			event: "cancelled", current: "done", wantOK: false,
 		},
 
 		// The rule that matters most: a person's terminal decision stands.
 		{
-			name: "a closed carrier is never reopened by activation",
+			name:  "a closed carrier is never reopened by activation",
 			event: "activated", current: "done", wantOK: false,
 		},
 		{
-			name: "a closed carrier is never re-closed",
+			name:  "a closed carrier is never re-closed",
 			event: "completed", current: "done", wantOK: false,
 		},
 		{
-			name: "a cancelled carrier is not completed by the run",
+			name:  "a cancelled carrier is not completed by the run",
 			event: "completed", current: "cancelled", wantOK: false,
 		},
 		{
-			name: "a cancelled carrier is not blocked by the run",
+			name:  "a cancelled carrier is not blocked by the run",
 			event: "blocked", current: "cancelled", wantOK: false,
 		},
-		{"an unknown transition changes nothing", "superseded", "in_progress", "", false},
+		{"an unknown transition changes nothing", "reconciled", "in_progress", "", false},
+
+		// The review round trip. Each of these was a state the board could not
+		// show, which is why executors reached for the issue directly.
+		{"delivery puts the carrier up for review", "in_review", "in_progress", "in_review", true},
+		{
+			// The node reached review without the carrier ever being started —
+			// a direct-executor node whose issue was created late. Showing
+			// review is still truer than showing todo.
+			name:  "delivery reviews a carrier that never started",
+			event: "in_review", current: "todo", want: "in_review", wantOK: true,
+		},
+		{
+			name:  "delivery does not disturb a blocked carrier",
+			event: "in_review", current: "blocked", wantOK: false,
+		},
+		{"a node still owing work pulls the carrier back", "waiting", "in_review", "in_progress", true},
+		{
+			name:  "waiting does not restart work already in progress",
+			event: "waiting", current: "in_progress", wantOK: false,
+		},
+		{
+			name:  "waiting does not start work nobody has picked up",
+			event: "waiting", current: "todo", wantOK: false,
+		},
+
+		// Rework opens a fresh attempt with its own carrier. The attempt it
+		// replaced has to close, or the same work sits on the board twice.
+		{"a superseded attempt closes its carrier", "superseded", "in_review", "cancelled", true},
+		{"a superseded attempt closes an unstarted carrier", "superseded", "todo", "cancelled", true},
+		{
+			name:  "superseding leaves a finished attempt finished",
+			event: "superseded", current: "done", wantOK: false,
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

@@ -1240,6 +1240,7 @@ func (h *Handler) reconcileWorkflowInstance(
 		var completionSubmission db.WorkflowNodeSubmission
 		var completionVerdict db.WorkflowNodeVerdict
 		var blockedNodes []db.WorkflowNodeInstance
+		var carrierSyncs []workflowCarrierSync
 		var createdSubmissions []db.WorkflowNodeSubmission
 		var createdVerdicts []db.WorkflowNodeVerdict
 		var criticDispatches []workflowCriticDispatch
@@ -1346,6 +1347,17 @@ func (h *Handler) reconcileWorkflowInstance(
 				if nextStatus == "blocked" && active.Status != "blocked" {
 					blockedNodes = append(blockedNodes, updatedNode)
 				}
+				// Review and back again. Both directions have to reach the
+				// carrier or the board stops tracking the node partway through
+				// its own round trip: delivered work reads as still in
+				// progress, and work sent back for more reads as still under
+				// review.
+				if nextStatus != active.Status &&
+					(nextStatus == "in_review" || nextStatus == "waiting") {
+					carrierSyncs = append(carrierSyncs, workflowCarrierSync{
+						node: updatedNode, event: nextStatus,
+					})
+				}
 			}
 		}
 
@@ -1434,6 +1446,9 @@ func (h *Handler) reconcileWorkflowInstance(
 					decodeWorkflowWaitingReasons(blockedNode.WaitingReasons),
 				),
 			)
+		}
+		for _, carrier := range carrierSyncs {
+			h.syncWorkflowNodeIssueStatus(ctx, workspaceID, carrier.node, carrier.event)
 		}
 		h.recordWorkflowNodesActivated(ctx, activated)
 		for range createdSubmissions {
