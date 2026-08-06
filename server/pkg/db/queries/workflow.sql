@@ -1416,10 +1416,23 @@ WITH candidate AS (
                   OR node.updated_at > instance.last_reconciled_at
                   OR task.updated_at > instance.last_reconciled_at
                   OR bound_issue.updated_at > instance.last_reconciled_at
+                  -- A run owns a node task in one of two shapes: it owns the
+                  -- task directly, or it is an agent working the task's issue.
+                  -- Matching only the first left an issue-backed node asleep
+                  -- when its agent finished — the reason it was waiting on had
+                  -- been true when it was written and nothing ever came back
+                  -- to find out it no longer was.
                   OR EXISTS (
                     SELECT 1
                     FROM agent_task_queue agent_task
-                    WHERE agent_task.workflow_node_task_id = task.id
+                    WHERE (
+                        agent_task.workflow_node_task_id = task.id
+                        OR (
+                          task.issue_id IS NOT NULL
+                          AND agent_task.issue_id = task.issue_id
+                          AND agent_task.workflow_node_task_id IS NULL
+                        )
+                      )
                       AND agent_task.completed_at > instance.last_reconciled_at
                   )
                   OR (
@@ -1435,6 +1448,11 @@ WITH candidate AS (
                       SELECT agent_task.status
                       FROM agent_task_queue agent_task
                       WHERE agent_task.workflow_node_task_id = task.id
+                         OR (
+                           task.issue_id IS NOT NULL
+                           AND agent_task.issue_id = task.issue_id
+                           AND agent_task.workflow_node_task_id IS NULL
+                         )
                       ORDER BY agent_task.attempt DESC,
                                agent_task.created_at DESC,
                                agent_task.id DESC
