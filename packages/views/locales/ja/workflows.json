@@ -443,7 +443,7 @@
     "executor_kind_manual": "手動で指定",
     "timeout_minutes_hint": "タイムアウトはリマインドとマークのみで、ノードが自動的に失敗・スキップ・差し戻しされることはありません。0 で無効になります。",
     "tab_info": "ノード情報",
-    "tab_work": "ノードタスク",
+    "tab_work": "作業と成果物",
     "tab_transition": "ノードフロー",
     "completion_mode_advanced": "完了トリガー",
     "section_node_events": "ノードイベント",

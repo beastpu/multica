@@ -444,7 +444,7 @@
     "executor_kind_manual": "Manual pick",
     "timeout_minutes_hint": "A timeout only raises a reminder and marker; the node is never failed, skipped, or rolled back automatically. 0 disables the timeout.",
     "tab_info": "Node info",
-    "tab_work": "Node tasks",
+    "tab_work": "Work & delivery",
     "tab_transition": "Node transition",
     "completion_mode_advanced": "Completion trigger",
     "section_node_events": "Node events",

@@ -443,7 +443,7 @@
     "executor_kind_manual": "직접 지정",
     "timeout_minutes_hint": "시간 초과 시 알림과 표시만 생성되며 노드가 자동으로 실패, 건너뛰기, 되돌리기 되지 않습니다. 0은 시간 제한 없음을 의미합니다.",
     "tab_info": "노드 정보",
-    "tab_work": "노드 작업",
+    "tab_work": "작업과 산출물",
     "tab_transition": "노드 전환",
     "completion_mode_advanced": "완료 트리거",
     "section_node_events": "노드 이벤트",

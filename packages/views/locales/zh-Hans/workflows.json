@@ -419,7 +419,7 @@
     "executor_kind_manual": "手动指定",
     "timeout_minutes_hint": "超时后只产生提醒和标记，不会自动失败、跳过或回退。0 表示不设超时。",
     "tab_info": "节点信息",
-    "tab_work": "节点子项",
+    "tab_work": "工作与交付",
     "tab_transition": "节点流转",
     "completion_mode_advanced": "完成触发方式",
     "section_node_events": "节点事件",
