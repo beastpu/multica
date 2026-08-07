@@ -58,9 +58,21 @@ log() { printf '%s\n' "$*" >&2; }
 # them. This job does the same: use a host binary when there is one (a laptop
 # verifying a change to this script), otherwise borrow a container. Requiring
 # the runner to grow a toolchain would make this job the only one that does.
-for tool in git tar; do
+for tool in git tar curl unzip; do
   command -v "$tool" >/dev/null || { log "❌ $tool is not on PATH"; exit 1; }
 done
+
+# GNU coreutils on the CI runner, BSD on a laptop verifying a change to this
+# script. Both print "<digest>  <name>", which is the format `multica update`
+# parses, so either satisfies the manifest.
+if command -v sha256sum >/dev/null; then
+  sha256() { sha256sum "$@"; }
+elif command -v shasum >/dev/null; then
+  sha256() { shasum -a 256 "$@"; }
+else
+  log "❌ neither sha256sum nor shasum is available"
+  exit 1
+fi
 
 if command -v go >/dev/null; then
   go_build() { (cd server && "$@"); }
@@ -77,34 +89,48 @@ else
   exit 1
 fi
 
-if command -v aws >/dev/null; then
-  aws_cli() { aws "$@"; }
-elif command -v docker >/dev/null; then
-  log "aws not on PATH — using amazon/aws-cli"
-  aws_cli() {
-    docker run --rm \
-      -v "$PWD:/work" -w /work \
-      -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
-      -e AWS_DEFAULT_REGION -e AWS_REQUEST_CHECKSUM_CALCULATION \
-      -e AWS_RESPONSE_CHECKSUM_VALIDATION -e AWS_S3_ADDRESSING_STYLE \
-      amazon/aws-cli "$@"
-  }
-else
-  log "❌ neither aws nor docker is available"
-  exit 1
-fi
+# Aliyun's own tool, pinned to the version and digest cloud-runtime's catalog
+# already uses for its runtime images. A single static binary beats an AWS CLI
+# container here: the script calls it eight times, and a container per call
+# would spend more time starting than uploading.
+OSSUTIL_VERSION="1.7.19"
+OSSUTIL_SHA256="dcc512e4a893e16bbee63bc769339d8e56b21744fd83c8212a9d8baf28767343"
 
-# GNU coreutils on the CI runner, BSD on a laptop verifying a change to this
-# script. Both print "<digest>  <name>", which is the format `multica update`
-# parses, so either satisfies the manifest.
-if command -v sha256sum >/dev/null; then
-  sha256() { sha256sum "$@"; }
-elif command -v shasum >/dev/null; then
-  sha256() { shasum -a 256 "$@"; }
-else
-  log "❌ neither sha256sum nor shasum is available"
-  exit 1
-fi
+ensure_ossutil() {
+  if command -v ossutil >/dev/null; then
+    OSSUTIL="$(command -v ossutil)"
+    return
+  fi
+  local dir="dist/tools" zip="dist/tools/ossutil.zip"
+  OSSUTIL="$PWD/$dir/ossutil"
+  [ -x "$OSSUTIL" ] && return
+
+  mkdir -p "$dir"
+  log "ossutil not on PATH — fetching v$OSSUTIL_VERSION"
+  curl -fsSL -o "$zip" \
+    "https://gosspublic.alicdn.com/ossutil/${OSSUTIL_VERSION}/ossutil-v${OSSUTIL_VERSION}-linux-amd64.zip"
+  # The digest is checked because this binary is about to be handed the
+  # credentials that can write the download directory.
+  local got
+  got="$(sha256 "$zip" | cut -d' ' -f1)"
+  [ "$got" = "$OSSUTIL_SHA256" ] || {
+    log "❌ ossutil sha256 mismatch: $got"
+    exit 1
+  }
+  unzip -qo "$zip" -d "$dir"
+  mv "$dir/ossutil-v${OSSUTIL_VERSION}-linux-amd64/ossutil" "$OSSUTIL"
+  chmod 0755 "$OSSUTIL"
+  rm -rf "$zip" "$dir/ossutil-v${OSSUTIL_VERSION}-linux-amd64"
+}
+
+# Credentials travel as flags on each call rather than through a config file,
+# so nothing writes them to disk.
+oss() {
+  "$OSSUTIL" "$@" \
+    -e "${endpoint#https://}" \
+    -i "$AWS_ACCESS_KEY_ID" \
+    -k "$AWS_SECRET_ACCESS_KEY"
+}
 
 # ── build ───────────────────────────────────────────────────────────────
 version="$IMAGE_TAG"
@@ -137,6 +163,8 @@ printf '%s\n' "$version" > dist/cli/latest-cli-test.txt
 
 ls -la dist/cli
 
+ensure_ossutil
+
 # ── publish ─────────────────────────────────────────────────────────────
 # Versioned artifacts go up before the pointer, so a reader that resolves the
 # pointer never names a tarball that is not there yet.
@@ -147,8 +175,8 @@ upload() {
     log "DRY-RUN upload $name (cache: $cache)"
     return
   fi
-  s3 cp "$file" "s3://$OSS_BUCKET/$PREFIX/$name" \
-    --cache-control "$cache" --only-show-errors
+  oss cp -f "$file" "oss://$OSS_BUCKET/$PREFIX/$name" \
+    --meta "Cache-Control:$cache" >/dev/null
   log "uploaded $name"
 }
 
@@ -164,9 +192,8 @@ if [ "$DRY_RUN" != "1" ]; then
   for f in dist/cli/*; do
     name="$(basename "$f")"
     key="$PREFIX/$name"
-    found="$(s3api list-objects-v2 --bucket "$OSS_BUCKET" --prefix "$key" \
-      --query "Contents[?Key=='$key'].Key | [0]" --output text)"
-    [ "$found" = "$key" ] || { log "❌ missing on OSS: s3://$OSS_BUCKET/$key"; exit 1; }
+    oss stat "oss://$OSS_BUCKET/$key" >/dev/null 2>&1 \
+      || { log "❌ missing on OSS: oss://$OSS_BUCKET/$key"; exit 1; }
   done
   log "✅ all artifacts verified on OSS"
 fi
@@ -188,8 +215,8 @@ fi
 # would disappear with no commit to point at.
 prune() {
   local keys versions keep drop
-  keys="$(s3api list-objects-v2 --bucket "$OSS_BUCKET" \
-    --prefix "$PREFIX/$TEST_PREFIX" --query 'Contents[].Key' --output text 2>/dev/null || true)"
+  keys="$(oss ls "oss://$OSS_BUCKET/$PREFIX/$TEST_PREFIX" 2>/dev/null \
+    | sed -nE "s#^.*oss://$OSS_BUCKET/($PREFIX/[^ ]+)\$#\\1#p" || true)"
   [ -n "$keys" ] && [ "$keys" != "None" ] || { log "nothing published yet — no prune"; return; }
 
   # Exactly the three names a run of this script produces, and nothing that
@@ -227,7 +254,7 @@ prune() {
       if [ "$DRY_RUN" = "1" ]; then
         log "DRY-RUN delete $k"
       else
-        s3 rm "s3://$OSS_BUCKET/$k" --only-show-errors
+        oss rm -f "oss://$OSS_BUCKET/$k" >/dev/null
         log "pruned $k"
       fi
     done
