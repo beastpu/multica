@@ -1691,3 +1691,41 @@ func TestGetRemoteDefaultBranchAmbiguousOriginReturnsEmpty(t *testing.T) {
 		t.Fatalf("getRemoteDefaultBranch = %q, want \"\" (ambiguous origin/* must not guess)", got)
 	}
 }
+
+// A workspace holds several repos and only one of them may be broken — an
+// address that no longer resolves, a permission that lapsed. Sync returned a
+// single error for the whole batch, and the daemon read that error as "the
+// repo you asked for is not synced", so `multica repo checkout mcdn-web` was
+// refused because an unrelated `iac` clone had failed. Agents fell back to a
+// leftover working copy from an earlier run and analysed possibly stale code.
+//
+// The repos that did sync are cached and usable; the error must name only the
+// ones that did not.
+func TestSyncReportsPerRepoErrors(t *testing.T) {
+	t.Parallel()
+	good := createTestRepo(t)
+	broken := filepath.Join(t.TempDir(), "does-not-exist.git")
+	cache := New(t.TempDir(), testLogger())
+
+	err := cache.Sync("ws-1", []RepoInfo{{URL: broken}, {URL: good}})
+	if err == nil {
+		t.Fatal("expected an error naming the broken repo")
+	}
+
+	var syncErr *SyncError
+	if !errors.As(err, &syncErr) {
+		t.Fatalf("expected a *SyncError, got %T: %v", err, err)
+	}
+	if !syncErr.Failed(broken) {
+		t.Errorf("broken repo %s not reported as failed", broken)
+	}
+	if syncErr.Failed(good) {
+		t.Errorf("healthy repo %s reported as failed", good)
+	}
+
+	// The healthy repo synced despite its neighbour failing, so a checkout of
+	// it must not be blocked.
+	if cache.Lookup("ws-1", good) == "" {
+		t.Error("healthy repo was not cached")
+	}
+}

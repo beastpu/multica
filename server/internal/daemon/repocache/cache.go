@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -166,13 +167,57 @@ func (c *Cache) lockForRepo(barePath string) *sync.Mutex {
 // via lockForRepo. Different repos run sequentially within a single Sync call
 // but concurrent Sync calls (different workspaces, or the same workspace
 // re-synced while checkouts are running) do not block each other.
+// SyncError reports which repos in a batch failed, so a caller can tell
+// "everything is broken" from "one unrelated repo is broken". Sync used to
+// return a bare first error, which read as the latter and was treated as the
+// former.
+type SyncError struct {
+	failed map[string]error
+}
+
+func (e *SyncError) record(url string, err error) {
+	if e.failed == nil {
+		e.failed = map[string]error{}
+	}
+	e.failed[url] = err
+}
+
+// Failed reports whether this specific repo is one of the ones that did not
+// sync. A caller gating on one repo should ask about that repo.
+func (e *SyncError) Failed(url string) bool {
+	if e == nil {
+		return false
+	}
+	_, ok := e.failed[url]
+	return ok
+}
+
+func (e *SyncError) Error() string {
+	if e == nil || len(e.failed) == 0 {
+		return "repo sync failed"
+	}
+	urls := make([]string, 0, len(e.failed))
+	for url := range e.failed {
+		urls = append(urls, url)
+	}
+	sort.Strings(urls)
+	parts := make([]string, 0, len(urls))
+	for _, url := range urls {
+		parts = append(parts, fmt.Sprintf("%s: %v", url, e.failed[url]))
+	}
+	return strings.Join(parts, "; ")
+}
+
 func (c *Cache) Sync(workspaceID string, repos []RepoInfo) error {
 	wsDir := filepath.Join(c.root, workspaceID)
 	if err := os.MkdirAll(wsDir, 0o755); err != nil {
 		return fmt.Errorf("create workspace cache dir: %w", err)
 	}
 
-	var firstErr error
+	// Per repo, not per batch. One unreachable repo used to fail the whole
+	// Sync, and the daemon read that failure as "the repo you asked for is not
+	// synced" — refusing a checkout of a repo sitting healthy in the cache.
+	syncErr := &SyncError{failed: map[string]error{}}
 	for _, repo := range repos {
 		if repo.URL == "" {
 			continue
@@ -186,23 +231,22 @@ func (c *Cache) Sync(workspaceID string, repos []RepoInfo) error {
 			c.logger.Info("repo cache: fetching", "url", repo.URL, "path", barePath)
 			if err := gitFetch(barePath); err != nil {
 				c.logger.Warn("repo cache: fetch failed", "url", repo.URL, "error", err)
-				if firstErr == nil {
-					firstErr = err
-				}
+				syncErr.record(repo.URL, err)
 			}
 		} else {
 			// Not cached — bare clone.
 			c.logger.Info("repo cache: cloning", "url", repo.URL, "path", barePath)
 			if err := gitCloneBare(repo.URL, barePath); err != nil {
 				c.logger.Error("repo cache: clone failed", "url", repo.URL, "error", err)
-				if firstErr == nil {
-					firstErr = err
-				}
+				syncErr.record(repo.URL, err)
 			}
 		}
 		repoLock.Unlock()
 	}
-	return firstErr
+	if len(syncErr.failed) == 0 {
+		return nil
+	}
+	return syncErr
 }
 
 // Lookup returns the local bare clone path for a repo URL within a workspace.

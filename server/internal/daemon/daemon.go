@@ -1708,7 +1708,9 @@ func (d *Daemon) registerTaskRepos(workspaceID, taskID string, repos []RepoData)
 		d.bgSyncs.Add(1)
 		go func() {
 			defer d.bgSyncs.Done()
-			d.syncWorkspaceRepos(workspaceID, toSync)
+			// Background warm-up: failures are logged and recorded inside, and
+			// the checkout gate re-syncs and judges per repo when it matters.
+			_ = d.syncWorkspaceRepos(workspaceID, toSync)
 		}()
 	}
 }
@@ -1749,16 +1751,21 @@ func (d *Daemon) waitBackgroundSyncs() {
 	d.bgSyncs.Wait()
 }
 
-func (d *Daemon) syncWorkspaceRepos(workspaceID string, repos []RepoData) {
+// syncWorkspaceRepos returns the sync outcome so a caller gating on one repo
+// can ask whether THAT repo failed. The recorded string stays for diagnostics;
+// it names every failure in the batch and must not be read as a verdict on any
+// single repo.
+func (d *Daemon) syncWorkspaceRepos(workspaceID string, repos []RepoData) error {
 	if d.repoCache == nil {
-		return
+		return nil
 	}
 	if err := d.repoCache.Sync(workspaceID, repoDataToInfo(repos)); err != nil {
 		d.setWorkspaceRepoSyncError(workspaceID, err.Error())
 		d.logger.Warn("repo cache sync failed", "workspace_id", workspaceID, "error", err)
-		return
+		return err
 	}
 	d.setWorkspaceRepoSyncError(workspaceID, "")
+	return nil
 }
 
 func (d *Daemon) refreshWorkspaceRepos(ctx context.Context, workspaceID string) (*WorkspaceReposResponse, error) {
@@ -1989,14 +1996,25 @@ func (d *Daemon) ensureRepoReady(ctx context.Context, workspaceID, repoURL strin
 		return nil
 	}
 
-	d.syncWorkspaceRepos(workspaceID, resp.Repos)
+	syncErr := d.syncWorkspaceRepos(workspaceID, resp.Repos)
 
 	if d.repoCache.Lookup(workspaceID, repoURL) != "" {
 		return nil
 	}
 
-	if syncErr := d.workspaceLastRepoSyncErr(workspaceID); syncErr != "" {
-		return fmt.Errorf("repo is configured but not synced: %s", syncErr)
+	// Only this repo's own failure explains this checkout. A sibling that
+	// could not be cloned — a stale address, a lapsed credential — used to
+	// fail every checkout in the workspace, and the agent, told its repo was
+	// unavailable, would reach for a leftover working copy instead.
+	var perRepo *repocache.SyncError
+	if errors.As(syncErr, &perRepo) {
+		if perRepo.Failed(repoURL) {
+			return fmt.Errorf("repo is configured but not synced: %w", syncErr)
+		}
+		return fmt.Errorf("repo is configured but not synced")
+	}
+	if syncErr != nil {
+		return fmt.Errorf("repo is configured but not synced: %w", syncErr)
 	}
 
 	return fmt.Errorf("repo is configured but not synced")
@@ -2268,7 +2286,7 @@ func (d *Daemon) syncWorkspacesFromAPI(ctx context.Context, reconcileProfiles bo
 		d.mu.Unlock()
 
 		if d.repoCache != nil && len(resp.Repos) > 0 {
-			go d.syncWorkspaceRepos(id, resp.Repos)
+			go func() { _ = d.syncWorkspaceRepos(id, resp.Repos) }()
 		}
 
 		// Tell the server about any tasks the previous daemon process was
