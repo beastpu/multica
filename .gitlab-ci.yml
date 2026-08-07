@@ -255,6 +255,66 @@ build-web:
         docker logout "$REGISTRY" || true
       fi
 
+# ── publish-cli ─────────────────────────────────────────────────────────
+# Publishes the Linux `multica` CLI for the cloud-runtime nodes.
+#
+# The runtime nodes do not run the CLI from this repo's images. They install
+# it from `downloads/`, pinned by cloud-runtime's runtimes/catalog.json (see
+# gitlab.lilithgame.com/devops/cloud-runtime). Until this job existed the only
+# publisher was the tag-triggered GitHub workflow, so nothing a branch changed
+# in `server/internal/daemon` or `server/cmd/multica` could ever reach a test
+# node — the fleet ran a hand-built binary from whenever someone last made one.
+# That is not a small window: the node serving the test workspace was 203
+# commits behind, 18 of them daemon/CLI changes.
+#
+# Release channel vs test channel share the `downloads/` prefix because the
+# proxy route serves one flat namespace (IsSafeDownloadFilename rejects any
+# separator). They cannot collide: a release version is `0.4.11`, and every
+# artifact here carries IMAGE_TAG, which always begins `test-`. The pointers
+# are separate files, so `latest-cli.txt` — what install.sh and released
+# clients read — is never touched by a branch build.
+publish-cli:
+  stage: build
+  tags: *build_runner
+  rules: *test_pipeline_rule
+  needs: [preflight]
+  variables:
+    AWS_DEFAULT_REGION: $OSS_REGION
+    # Aliyun's S3-compatible endpoint rejects the trailer checksums the newer
+    # AWS CLI sends by default; the desktop workflow disables them the same way.
+    AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+    AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+  before_script:
+    - *assert_linux_host
+    - |
+      missing=0
+      for var in OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET OSS_BUCKET OSS_ENDPOINT; do
+        eval "value=\${$var:-}"
+        [ -n "$value" ] || { echo "❌ $var is not set"; missing=1; }
+      done
+      if [ "$missing" -ne 0 ]; then
+        echo
+        echo "This job publishes to Aliyun OSS and needs a RAM user with"
+        echo "read/write/delete on the bucket's downloads/ prefix. Add these"
+        echo "under Settings → CI/CD → Variables (mask the two secrets):"
+        echo "  OSS_ACCESS_KEY_ID       masked"
+        echo "  OSS_ACCESS_KEY_SECRET   masked"
+        echo "  OSS_BUCKET              bucket name only, no host"
+        echo "  OSS_ENDPOINT            e.g. https://oss-cn-shanghai.aliyuncs.com"
+        echo "  OSS_REGION              optional, defaults to oss-cn-shanghai"
+        exit 1
+      fi
+    - |
+      for tool in go aws; do
+        command -v "$tool" >/dev/null || { echo "❌ $tool is not on PATH for $(id -un)"; exit 1; }
+      done
+    - export AWS_ACCESS_KEY_ID="$OSS_ACCESS_KEY_ID"
+    - export AWS_SECRET_ACCESS_KEY="$OSS_ACCESS_KEY_SECRET"
+    - export AWS_DEFAULT_REGION="${OSS_REGION:-oss-cn-shanghai}"
+    - aws configure set default.s3.addressing_style virtual
+  script:
+    - bash scripts/publish-cli-test.sh
+
 # ── mirror ──────────────────────────────────────────────────────────────
 mirror-to-github:
   stage: mirror
