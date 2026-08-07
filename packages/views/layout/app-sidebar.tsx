@@ -65,7 +65,7 @@ import { countUnreadChatMessages } from "@multica/core/chat/unread";
 import { useChatStore } from "@multica/core/chat";
 import { api, ApiError } from "@multica/core/api";
 import { useModalStore } from "@multica/core/modals";
-import { useConfigStore, useWorkspaceFeatureEnabled } from "@multica/core/config";
+import { useWorkspaceFeatureEnabled } from "@multica/core/config";
 import { WORKFLOWS_ACTIVITY_ENGINE_FLAG } from "@multica/core/feature-flags";
 import { pinListOptions } from "@multica/core/pins/queries";
 import { useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
@@ -364,7 +364,6 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   const p = useWorkspacePaths();
   const { data: workspaces = EMPTY_WORKSPACES } = useQuery(workspaceListOptions());
   const { data: myInvitations = EMPTY_INVITATIONS } = useQuery(myInvitationListOptions());
-  const workspaceCreationDisabled = useConfigStore((s) => s.workspaceCreationDisabled);
   const wsId = workspace?.id;
   const workflowsEnabled = useWorkspaceFeatureEnabled(
     wsId,
@@ -581,16 +580,14 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         )}
                       </DropdownMenuItem>
                     ))}
-                    {!workspaceCreationDisabled && (
-                      <DropdownMenuItem
-                        onClick={() =>
-                          useModalStore.getState().open("create-workspace")
-                        }
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        {t(($) => $.sidebar.create_workspace)}
-                      </DropdownMenuItem>
-                    )}
+                    <DropdownMenuItem
+                      onClick={() =>
+                        useModalStore.getState().open("create-workspace")
+                      }
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      {t(($) => $.sidebar.create_workspace)}
+                    </DropdownMenuItem>
                   </DropdownMenuGroup>
                   {myInvitations.length > 0 && (
                     <>

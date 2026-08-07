@@ -18,10 +18,6 @@ interface ConfigState {
   // section is hidden. Defaults to false so unknown / older servers and the
   // managed cloud (which omits the field) keep it hidden.
   vcsIntegrationAvailable: boolean;
-  // Self-host gate (#3433): when true, every "Create workspace" affordance
-  // must be hidden. Defaults to false so unknown / older servers behave like
-  // the managed-cloud case.
-  workspaceCreationDisabled: boolean;
   featureFlags: Record<string, boolean>;
   // The running API build version, surfaced in the Help popover so
   // self-hosted operators can confirm what's deployed. Empty for dev builds
@@ -32,7 +28,6 @@ interface ConfigState {
     allowSignup: boolean;
     googleClientId?: string;
     vcsIntegrationAvailable?: boolean;
-    workspaceCreationDisabled?: boolean;
   }) => void;
   setDaemonConfig: (config: {
     daemonServerUrl?: string;
@@ -50,7 +45,6 @@ export const configStore = createStore<ConfigState>((set) => ({
   daemonServerUrl: "",
   daemonAppUrl: "",
   vcsIntegrationAvailable: false,
-  workspaceCreationDisabled: false,
   featureFlags: {},
   serverVersion: "",
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
@@ -58,14 +52,7 @@ export const configStore = createStore<ConfigState>((set) => ({
     allowSignup,
     googleClientId = "",
     vcsIntegrationAvailable = false,
-    workspaceCreationDisabled = false,
-  }) =>
-    set({
-      allowSignup,
-      googleClientId,
-      vcsIntegrationAvailable,
-      workspaceCreationDisabled,
-    }),
+  }) => set({ allowSignup, googleClientId, vcsIntegrationAvailable }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),
