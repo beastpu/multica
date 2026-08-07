@@ -10,7 +10,7 @@
 #   IMAGE_TAG               the pipeline's shared tag (`test-YYYYMMDD-<sha>`)
 #   OSS_BUCKET              bucket name, no host
 #   OSS_ENDPOINT            S3-compatible endpoint
-#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY   passed to ossutil as flags
 #
 # Set DRY_RUN=1 to print the uploads and deletions without performing them.
 #
@@ -47,9 +47,6 @@ case "$endpoint" in
   http://*|https://*) ;;
   *) endpoint="https://$endpoint" ;;
 esac
-
-s3() { aws_cli s3 "$@" --endpoint-url "$endpoint"; }
-s3api() { aws_cli s3api "$@" --endpoint-url "$endpoint"; }
 
 log() { printf '%s\n' "$*" >&2; }
 
