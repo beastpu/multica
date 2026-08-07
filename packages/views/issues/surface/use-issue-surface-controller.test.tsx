@@ -178,6 +178,24 @@ describe("useIssueSurfaceController", () => {
     vi.restoreAllMocks();
   });
 
+  // The workflow workbench renders an issue surface that never offers Table.
+  // A `case "workflow": throw` looked safe on that reasoning, but this memo
+  // evaluates on every render regardless of view mode — the workbench went
+  // blank, and the run underneath it looked like it had never happened.
+  it("renders a workflow-scoped surface instead of throwing on the Table spec", async () => {
+    const { result } = renderHook(
+      () =>
+        useIssueSurfaceController({
+          scope: { type: "workflow", instanceId: "instance-1" },
+          modes: ["board", "list", "swimlane"],
+        }),
+      { wrapper: makeWrapper(qc, "workflow:instance-1") },
+    );
+
+    expect(result.current).toBeTruthy();
+    expect(result.current.tableQuerySpec.scope).toEqual({ kind: "workspace" });
+  });
+
   it("derives the project scope and canonical server query", async () => {
     const store = getIssueSurfaceViewStore("project:p1");
     store.getState().setSortBy("priority");

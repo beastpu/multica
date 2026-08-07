@@ -369,14 +369,17 @@ export function useIssueSurfaceController({
           actor: { type: scope.actorType, id: scope.actorId },
         };
         break;
-      // Neither scope reaches here in practice: the workflow workbench offers
-      // list/board/swimlane only, and team surfaces likewise never enter Table
-      // mode. Throwing rather than silently degrading keeps a future surface
-      // that does offer Table from quietly querying the wrong window.
+      // Neither scope has a Table query to express. Throwing here looked safe
+      // — the workflow workbench offers list/board/swimlane only — but this
+      // memo runs on every render regardless of view mode, so the throw took
+      // the whole workbench down with a blank page. Degrade to the workspace
+      // window instead: `usesTable` is false for both surfaces, so nothing
+      // ever issues this spec, and an inert value cannot query the wrong
+      // thing the way a wrong-but-plausible scope could.
       case "workflow":
-        throw new Error("Workflow issue scope is not supported by the Table query");
       case "team":
-        throw new Error("Team issue scope is not supported by the Table query");
+        queryScope = { kind: "workspace" };
+        break;
     }
 
     const date =
