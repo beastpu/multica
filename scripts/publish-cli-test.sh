@@ -48,17 +48,51 @@ case "$endpoint" in
   *) endpoint="https://$endpoint" ;;
 esac
 
-s3() { aws s3 "$@" --endpoint-url "$endpoint"; }
-s3api() { aws s3api "$@" --endpoint-url "$endpoint"; }
+s3() { aws_cli s3 "$@" --endpoint-url "$endpoint"; }
+s3api() { aws_cli s3api "$@" --endpoint-url "$endpoint"; }
 
 log() { printf '%s\n' "$*" >&2; }
 
-# Checked before anything is built. A missing tool discovered after two
-# cross-compiles wastes the build and reports the wrong thing — the failure
-# reads as a checksum problem rather than a runner without the tool.
-for tool in go git aws tar; do
+# The CI runner is a shell executor with neither Go nor the AWS CLI on the
+# host — `build-server` compiles inside `golang:1.26-alpine` and never needed
+# them. This job does the same: use a host binary when there is one (a laptop
+# verifying a change to this script), otherwise borrow a container. Requiring
+# the runner to grow a toolchain would make this job the only one that does.
+for tool in git tar; do
   command -v "$tool" >/dev/null || { log "❌ $tool is not on PATH"; exit 1; }
 done
+
+if command -v go >/dev/null; then
+  go_build() { (cd server && "$@"); }
+elif command -v docker >/dev/null; then
+  log "go not on PATH — building in golang:1.26-alpine"
+  go_build() {
+    docker run --rm \
+      -v "$PWD:/src" -w /src/server \
+      -e CGO_ENABLED -e GOOS -e GOARCH \
+      golang:1.26-alpine "$@"
+  }
+else
+  log "❌ neither go nor docker is available"
+  exit 1
+fi
+
+if command -v aws >/dev/null; then
+  aws_cli() { aws "$@"; }
+elif command -v docker >/dev/null; then
+  log "aws not on PATH — using amazon/aws-cli"
+  aws_cli() {
+    docker run --rm \
+      -v "$PWD:/work" -w /work \
+      -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
+      -e AWS_DEFAULT_REGION -e AWS_REQUEST_CHECKSUM_CALCULATION \
+      -e AWS_RESPONSE_CHECKSUM_VALIDATION \
+      amazon/aws-cli "$@"
+  }
+else
+  log "❌ neither aws nor docker is available"
+  exit 1
+fi
 
 # GNU coreutils on the CI runner, BSD on a laptop verifying a change to this
 # script. Both print "<digest>  <name>", which is the format `multica update`
@@ -78,16 +112,19 @@ commit="$(git rev-parse --short HEAD)"
 date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ldflags="-X main.version=${version} -X main.commit=${commit} -X main.date=${date}"
 
-rm -rf dist/cli
-mkdir -p dist/cli
+rm -rf dist/cli dist/build
+mkdir -p dist/cli dist/build
+# Output stays inside the repo rather than a mktemp dir: the build may happen
+# in a container that only has the workspace mounted, and a host temp path is
+# invisible there.
 for arch in amd64 arm64; do
-  work="$(mktemp -d)"
   log "building linux/${arch}"
-  (cd server && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-    go build -ldflags "$ldflags" -o "$work/multica" ./cmd/multica)
-  tar -czf "dist/cli/multica-cli-${version}-linux-${arch}.tar.gz" -C "$work" multica
-  rm -rf "$work"
+  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+    go_build go build -ldflags "$ldflags" -o "../dist/build/multica" ./cmd/multica
+  tar -czf "dist/cli/multica-cli-${version}-linux-${arch}.tar.gz" -C dist/build multica
+  rm -f dist/build/multica
 done
+rmdir dist/build
 
 # Bare names, matching what `multica update` looks up.
 (cd dist/cli && sha256 "multica-cli-${version}-linux-"*.tar.gz \
