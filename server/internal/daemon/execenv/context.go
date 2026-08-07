@@ -26,6 +26,13 @@ type taskContextMarkerFile struct {
 	ManagedBy string `json:"managed_by"`
 	AgentID   string `json:"agent_id,omitempty"`
 	IssueID   string `json:"issue_id,omitempty"`
+	// A node with issue_policy: none executes without an issue, so issue_id is
+	// the wrong handle for it — and it was the only one the CLI had. These let
+	// `multica workflow` address the node directly, which is what the node is
+	// anyway; the issue was never more than a carrier.
+	WorkflowInstanceID     string `json:"workflow_instance_id,omitempty"`
+	WorkflowNodeInstanceID string `json:"workflow_node_instance_id,omitempty"`
+	WorkflowNodeKey        string `json:"workflow_node_key,omitempty"`
 }
 
 // EnsureWorkspacesRootMarker writes a persistent daemon-task marker at
@@ -210,6 +217,11 @@ func writeTaskContextMarker(workDir string, ctx TaskContextForEnv, manifest *sid
 		ManagedBy: TaskContextMarkerManagedBy,
 		AgentID:   ctx.AgentID,
 		IssueID:   ctx.IssueID,
+	}
+	if ctx.Workflow != nil {
+		payload.WorkflowInstanceID = ctx.Workflow.InstanceID
+		payload.WorkflowNodeInstanceID = ctx.Workflow.NodeInstanceID
+		payload.WorkflowNodeKey = ctx.Workflow.NodeKey
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {

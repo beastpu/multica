@@ -120,12 +120,57 @@ func daemonTaskIssueID() string {
 	return strings.TrimSpace(marker.IssueID)
 }
 
+// daemonTaskWorkflow reads the node this task executes straight from the
+// daemon marker. A node with issue_policy: none has no issue to resolve
+// through, and the issue was only ever a carrier anyway — the node is what the
+// command acts on.
+func daemonTaskWorkflow() (instanceID, nodeKey string) {
+	markerPath := daemonTaskContextMarkerPath()
+	if markerPath == "" {
+		return "", ""
+	}
+	data, err := os.ReadFile(markerPath)
+	if err != nil {
+		return "", ""
+	}
+	var marker struct {
+		ManagedBy          string `json:"managed_by"`
+		WorkflowInstanceID string `json:"workflow_instance_id"`
+		WorkflowNodeKey    string `json:"workflow_node_key"`
+	}
+	if json.Unmarshal(data, &marker) != nil ||
+		marker.ManagedBy != execenv.TaskContextMarkerManagedBy {
+		return "", ""
+	}
+	return strings.TrimSpace(marker.WorkflowInstanceID),
+		strings.TrimSpace(marker.WorkflowNodeKey)
+}
+
+// errNotAWorkflowNode explains the failure in terms of what the caller
+// actually has. With no issue and no node in the marker, "issue  is not a
+// workflow node issue" named an empty string as the culprit.
+func errNotAWorkflowNode(issueID string) error {
+	if strings.TrimSpace(issueID) == "" {
+		return fmt.Errorf(
+			"this task carries no workflow node; run inside a node task, " +
+				"or pass the node's issue id explicitly",
+		)
+	}
+	return fmt.Errorf("issue %s is not a workflow node issue", issueID)
+}
+
 func resolveWorkflowIssueID(args []string) (string, error) {
 	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
 		return strings.TrimSpace(args[0]), nil
 	}
 	if issueID := daemonTaskIssueID(); issueID != "" {
 		return issueID, nil
+	}
+	// A direct-execution node has no issue, and that is not an error: the
+	// marker names the node itself, and resolveWorkflowContext prefers it.
+	// Returning empty lets the node-first path run instead of refusing here.
+	if instanceID, _ := daemonTaskWorkflow(); instanceID != "" {
+		return "", nil
 	}
 	return "", fmt.Errorf(
 		"no issue id given and no daemon task context found; pass an issue id explicitly",
@@ -190,6 +235,25 @@ func resolveWorkflowContext(
 ) (workflowDetailEnvelope, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// The marker names the node directly when the daemon put one there. Going
+	// through the issue first meant an issue-less node could not be addressed
+	// at all, however plainly it was executing.
+	if instanceID, nodeKey := daemonTaskWorkflow(); instanceID != "" && nodeKey != "" {
+		var detail workflowDetailEnvelope
+		if err := client.GetJSON(
+			ctx, "/api/workflow-instances/"+instanceID, &detail,
+		); err != nil {
+			return workflowDetailEnvelope{}, "", fmt.Errorf("get workflow: %w", err)
+		}
+		return detail, nodeKey, nil
+	}
+
+	if issueID == "" {
+		return workflowDetailEnvelope{}, "", fmt.Errorf(
+			"no workflow node in the daemon task context and no issue id given",
+		)
+	}
 
 	var envelope workflowIssueMetadataEnvelope
 	if err := client.GetJSON(ctx, "/api/issues/"+issueID, &envelope); err != nil {
@@ -472,7 +536,7 @@ func runWorkflowUpstream(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if nodeKey == "" {
-		return fmt.Errorf("issue %s is not a workflow node issue", issueID)
+		return errNotAWorkflowNode(issueID)
 	}
 	node, ok := currentNode(detail, nodeKey)
 	if !ok {
@@ -542,9 +606,7 @@ func runWorkflowSubmit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if nodeKey == "" {
-		return fmt.Errorf(
-			"issue %s is not a workflow node issue; submit from the node's own issue", issueID,
-		)
+		return errNotAWorkflowNode(issueID)
 	}
 	node, ok := currentNode(detail, nodeKey)
 	if !ok {

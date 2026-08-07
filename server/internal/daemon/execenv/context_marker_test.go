@@ -169,3 +169,47 @@ func TestReuse_SelfHealsWorkspacesRootMarker(t *testing.T) {
 		t.Fatalf("Reuse did not restore the root marker: %v", err)
 	}
 }
+
+// A node with issue_policy: none has no issue, so the marker carried nothing
+// the CLI could resolve — `multica workflow` reported "no issue id given and
+// no daemon task context found" on a node that was plainly executing one.
+// Agents worked around it by hunting for the protocol and then calling the
+// node API directly, minutes per run.
+//
+// The coordinates were never missing; they just never reached the marker.
+func TestTaskContextMarkerCarriesWorkflowCoordinates(t *testing.T) {
+	workDir := t.TempDir()
+	manifest := &sidecarManifest{}
+
+	err := writeTaskContextMarker(workDir, TaskContextForEnv{
+		AgentID: "agent-1",
+		// No IssueID: this is a direct-execution node.
+		Workflow: &WorkflowTaskContext{
+			InstanceID:     "instance-1",
+			NodeInstanceID: "node-instance-1",
+			NodeKey:        "triage",
+		},
+	}, manifest)
+	if err != nil {
+		t.Fatalf("writeTaskContextMarker: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(workDir, TaskContextMarkerRelPath))
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	var marker taskContextMarkerFile
+	if err := json.Unmarshal(data, &marker); err != nil {
+		t.Fatalf("unmarshal marker: %v", err)
+	}
+
+	if marker.WorkflowInstanceID != "instance-1" {
+		t.Errorf("workflow_instance_id = %q, want instance-1", marker.WorkflowInstanceID)
+	}
+	if marker.WorkflowNodeInstanceID != "node-instance-1" {
+		t.Errorf("workflow_node_instance_id = %q, want node-instance-1", marker.WorkflowNodeInstanceID)
+	}
+	if marker.IssueID != "" {
+		t.Errorf("issue_id = %q, want empty for a direct-execution node", marker.IssueID)
+	}
+}
