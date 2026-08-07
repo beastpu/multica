@@ -275,7 +275,20 @@ export const WorkflowNodeTaskSchema = z.object({
   task_key: z.string(),
   source: z.string().optional().default("template"),
   required: z.boolean().optional().default(false),
-  definition: z.union([WorkflowIssueTemplateSchema, WorkflowNodeDefinitionSchema]),
+  // The snapshot's shape follows `source`: a template task carries an issue
+  // template, a direct execution carries the node definition, and a critic
+  // task carries the reviewer block — which has no `key` at all, so it
+  // matches neither. A task whose snapshot this build does not recognise is
+  // still a task worth showing, and the panels that read the snapshot already
+  // treat its fields as optional. Falling back to an opaque object keeps one
+  // unrecognised task from taking the whole run's detail down with it: this
+  // union rejecting a critic task is what rendered a completed run as an
+  // empty workbench with no host issue and status "unknown".
+  definition: z.union([
+    WorkflowIssueTemplateSchema,
+    WorkflowNodeDefinitionSchema,
+    z.looseObject({}),
+  ]),
   materialization_status: z.string().optional().default("unknown"),
   issue_id: nullableString,
   executor_resolution_id: nullableString,

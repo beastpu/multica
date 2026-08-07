@@ -324,4 +324,39 @@ describe("workflow response schemas", () => {
     expect(parsed.edges[0]?.from_case).toBe("c1");
     expect(parsed.edges[1]?.from_case).toBeUndefined();
   });
+
+  // A run whose reviewer node produced a critic task rendered as an empty
+  // workbench: no nodes, no host issue, status "unknown". Nothing was wrong
+  // with the run — the whole detail response failed validation on one task's
+  // definition snapshot and fell back to the empty instance, and the fallback
+  // is silent by design. One optional panel's shape took down the page.
+  it("keeps a run readable when a critic task carries a reviewer snapshot", () => {
+    const parsed = parseWithFallback(
+      {
+        instance: { ...instanceShape(), status: "completed", title: "Bug fix" },
+        role_assignments: [],
+        nodes: [],
+        tasks: [
+          {
+            id: "task-critic",
+            workflow_node_instance_id: "node-1",
+            task_key: "critic",
+            source: "critic",
+            // The server snapshots the reviewer block here. It has no `key`,
+            // which both members of the definition union require.
+            definition: { kind: "reviewer", role: "qa", required: true },
+            materialization_status: "materialized",
+          },
+        ],
+      },
+      WorkflowInstanceDetailSchema,
+      EMPTY_WORKFLOW_INSTANCE_DETAIL,
+      endpoint,
+    );
+
+    expect(parsed.instance.status).toBe("completed");
+    expect(parsed.instance.host_issue_id).toBe("issue-1");
+    expect(parsed.tasks).toHaveLength(1);
+    expect(parsed.tasks[0]?.task_key).toBe("critic");
+  });
 });
