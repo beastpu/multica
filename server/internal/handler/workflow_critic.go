@@ -328,7 +328,11 @@ func (h *Handler) recordWorkflowAgentCriticVerdict(
 	reason := critic.Comment
 	if parseErr != nil {
 		result = "blocked"
-		reason = "Critic output did not match Workflow Critic Protocol v1: " + parseErr.Error()
+		// The reviewer's own words go into the reason. Discarding them left a
+		// blocked node explained only by a byte offset, and made the failure
+		// undiagnosable after the fact — the run that hit this had nothing
+		// left to inspect.
+		reason = workflowdomain.DescribeCriticParseFailure(parseErr, output)
 	} else if !critic.Approved {
 		result = "fail"
 	}

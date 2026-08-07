@@ -51,3 +51,40 @@ func ParseCriticOutput(output string) (CriticOutput, error) {
 	}
 	return result, nil
 }
+
+// maxCriticOutputInReason bounds how much of an unreadable verdict travels
+// into a waiting reason. Long enough to hold a real short review, short enough
+// that a UI can render it inline.
+const maxCriticOutputInReason = 800
+
+// DescribeCriticParseFailure explains a rejected verdict in terms of what the
+// Critic actually wrote.
+//
+// The parse error alone — "invalid character 'å' looking for beginning of
+// value" — names a byte, not a problem. It leaves whoever comes to unblock the
+// node unable to see the judgement that was made, and leaves nobody able to
+// tell a Critic that answered in prose from one that never answered at all.
+// The output is the evidence for both.
+func DescribeCriticParseFailure(err error, output string) string {
+	var sb strings.Builder
+	sb.WriteString("Critic output did not match Workflow Critic Protocol v1: ")
+	if err != nil {
+		sb.WriteString(err.Error())
+	}
+
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		sb.WriteString("\n\nThe Critic produced no output.")
+		return sb.String()
+	}
+
+	sb.WriteString("\n\nWhat the Critic wrote:\n")
+	runes := []rune(trimmed)
+	if len(runes) > maxCriticOutputInReason {
+		sb.WriteString(string(runes[:maxCriticOutputInReason]))
+		fmt.Fprintf(&sb, "\n… (truncated, %d characters total)", len(runes))
+	} else {
+		sb.WriteString(trimmed)
+	}
+	return sb.String()
+}
