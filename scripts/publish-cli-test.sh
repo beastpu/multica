@@ -42,6 +42,25 @@ s3api() { aws s3api "$@" --endpoint-url "$endpoint"; }
 
 log() { printf '%s\n' "$*" >&2; }
 
+# Checked before anything is built. A missing tool discovered after two
+# cross-compiles wastes the build and reports the wrong thing — the failure
+# reads as a checksum problem rather than a runner without the tool.
+for tool in go git aws tar; do
+  command -v "$tool" >/dev/null || { log "❌ $tool is not on PATH"; exit 1; }
+done
+
+# GNU coreutils on the CI runner, BSD on a laptop verifying a change to this
+# script. Both print "<digest>  <name>", which is the format `multica update`
+# parses, so either satisfies the manifest.
+if command -v sha256sum >/dev/null; then
+  sha256() { sha256sum "$@"; }
+elif command -v shasum >/dev/null; then
+  sha256() { shasum -a 256 "$@"; }
+else
+  log "❌ neither sha256sum nor shasum is available"
+  exit 1
+fi
+
 # ── build ───────────────────────────────────────────────────────────────
 version="$IMAGE_TAG"
 commit="$(git rev-parse --short HEAD)"
@@ -60,7 +79,7 @@ for arch in amd64 arm64; do
 done
 
 # Bare names, matching what `multica update` looks up.
-(cd dist/cli && sha256sum "multica-cli-${version}-linux-"*.tar.gz \
+(cd dist/cli && sha256 "multica-cli-${version}-linux-"*.tar.gz \
   > "multica-cli-${version}-checksums.txt")
 
 # The test channel's own pointer. `latest-cli.txt` belongs to releases and is
@@ -112,16 +131,29 @@ fi
 #
 # The version being published is pinned into the keep set, so it survives
 # regardless of where its name sorts.
+#
+# Only objects this script could have written are candidates. The prefix
+# already holds hand-published builds from before this job existed —
+# `multica-cli-test-20260716-7c13a93d1-kubefleet-...` and friends — which
+# carry an extra label segment. A job should garbage-collect what it produces
+# and nothing else; somebody may still be pinned to one of those, and they
+# would disappear with no commit to point at.
 prune() {
   local keys versions keep drop
   keys="$(s3api list-objects-v2 --bucket "$OSS_BUCKET" \
     --prefix "$PREFIX/$TEST_PREFIX" --query 'Contents[].Key' --output text 2>/dev/null || true)"
   [ -n "$keys" ] && [ "$keys" != "None" ] || { log "nothing published yet — no prune"; return; }
 
-  versions="$(printf '%s\n' $keys \
-    | sed -E "s#^$PREFIX/##" \
-    | sed -E 's#^(multica-cli-test-[0-9]{8}-[0-9a-f]+)-.*$#\1#' \
-    | sed -E 's#^multica-cli-##' \
+  # Exactly the three names a run of this script produces, and nothing that
+  # merely starts the same way.
+  local ours
+  ours="$(printf '%s\n' $keys \
+    | grep -E "^$PREFIX/multica-cli-test-[0-9]{8}-[0-9a-f]+-(linux-(amd64|arm64)\.tar\.gz|checksums\.txt)$" \
+    || true)"
+  [ -n "$ours" ] || { log "no artifacts from this job yet — no prune"; return; }
+
+  versions="$(printf '%s\n' "$ours" \
+    | sed -E "s#^$PREFIX/multica-cli-(test-[0-9]{8}-[0-9a-f]+)-.*\$#\\1#" \
     | sort -u)"
 
   # The version just uploaded is pinned into the keep set rather than sorted
@@ -143,7 +175,7 @@ prune() {
 
   local v k
   for v in $drop; do
-    for k in $(printf '%s\n' $keys | grep -F "/multica-cli-${v}-" || true); do
+    for k in $(printf '%s\n' "$ours" | grep -F "/multica-cli-${v}-" || true); do
       if [ "$DRY_RUN" = "1" ]; then
         log "DRY-RUN delete $k"
       else

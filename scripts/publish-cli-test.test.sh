@@ -91,10 +91,36 @@ deleted="$(run_prune test-20260807-aaaaaaaa \
 printf '%s\n' "$deleted" | grep -qE "multica-cli-[0-9]+\.[0-9]+" \
   && fail "prune touched a release artifact: $deleted"
 
+# Builds published by hand before this job existed carry an extra label
+# segment. They are not this job's to delete: someone may still be pinned to
+# one, and it would vanish with no commit to point at.
+DELETED_LOG="$(mktemp)"; export DELETED_LOG
+legacy="downloads/multica-cli-test-20260716-7c13a93d1-kubefleet-linux-amd64.tar.gz downloads/multica-cli-test-20260709-ddc01a9-develop-checksums.txt"
+deleted="$(FAKE_KEYS="$legacy $(keys_for \
+  test-20260801-11111111 test-20260802-22222222 test-20260803-33333333 \
+  test-20260804-44444444 test-20260805-55555555 test-20260806-66666666)" \
+  PATH="$fake_bin:$PATH" \
+  IMAGE_TAG=test-20260807-aaaaaaaa OSS_BUCKET=b OSS_ENDPOINT=https://e \
+  CLI_TEST_KEEP=5 DRY_RUN=0 \
+  bash -c '
+    set -euo pipefail
+    sed -n "/^# ── prune ─/,/^prune$/p" "'"$here"'/publish-cli-test.sh" > /tmp/prune-only.sh
+    version="$IMAGE_TAG"; KEEP="$CLI_TEST_KEEP"; PREFIX=downloads
+    TEST_PREFIX="multica-cli-test-"; DRY_RUN=0
+    endpoint="$OSS_ENDPOINT"
+    s3() { aws s3 "$@"; }; s3api() { aws s3api "$@"; }
+    log() { :; }
+    source /tmp/prune-only.sh
+  '; cat "$DELETED_LOG" 2>/dev/null || true)"
+printf '%s\n' "$deleted" | grep -qE "kubefleet|develop" \
+  && fail "pruned a hand-published build: $deleted"
+printf '%s\n' "$deleted" | grep -q "test-20260801-11111111" \
+  || fail "own oldest build survived when it should have been pruned: $deleted"
+
 # Five or fewer published → nothing to do.
 deleted="$(run_prune test-20260807-aaaaaaaa \
   test-20260803-33333333 test-20260804-44444444 test-20260805-55555555)"
 [ -z "$(printf '%s' "$deleted" | tr -d '[:space:]')" ] \
   || fail "pruned below the keep threshold: $deleted"
 
-printf '✅ publish-cli-test.sh prune: 4 cases passed\n'
+printf '✅ publish-cli-test.sh prune: 5 cases passed\n'
