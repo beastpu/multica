@@ -86,7 +86,7 @@ elif command -v docker >/dev/null; then
       -v "$PWD:/work" -w /work \
       -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
       -e AWS_DEFAULT_REGION -e AWS_REQUEST_CHECKSUM_CALCULATION \
-      -e AWS_RESPONSE_CHECKSUM_VALIDATION \
+      -e AWS_RESPONSE_CHECKSUM_VALIDATION -e AWS_S3_ADDRESSING_STYLE \
       amazon/aws-cli "$@"
   }
 else
