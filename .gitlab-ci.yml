@@ -273,6 +273,13 @@ build-web:
 # artifact here carries IMAGE_TAG, which always begins `test-`. The pointers
 # are separate files, so `latest-cli.txt` — what install.sh and released
 # clients read — is never touched by a branch build.
+#
+# This job does not prune. Retention would need oss:DeleteObject on
+# downloads/, and OSS's narrowest RAM prefix is the whole directory — the same
+# grant that lets a job overwrite latest-cli.txt and the released installers.
+# A publish job has no business holding that, so the test channel is expired by
+# a bucket lifecycle rule instead, and scripts/publish-cli-test.sh keeps its
+# prune behind PRUNE=1 for a human who legitimately has delete rights.
 publish-cli:
   stage: build
   tags: *build_runner

@@ -49,13 +49,14 @@ run_prune() {
     set -euo pipefail
     # Source only the prune half: the build half needs a Go toolchain and a
     # repo, and neither is what is under test here.
-    sed -n "/^# ── prune ─/,/^prune$/p" "'"$here"'/publish-cli-test.sh" > /tmp/prune-only.sh
+    sed -n "/^# ── prune ─/,/^}$/p" "'"$here"'/publish-cli-test.sh" > /tmp/prune-only.sh
     version="$IMAGE_TAG"; KEEP="$CLI_TEST_KEEP"; PREFIX=downloads
     TEST_PREFIX="multica-cli-test-"; DRY_RUN=0
     endpoint="$OSS_ENDPOINT"
     s3() { aws s3 "$@"; }; s3api() { aws s3api "$@"; }
     log() { :; }
     source /tmp/prune-only.sh
+    prune
   '
   cat "$DELETED_LOG" 2>/dev/null || true
 }
@@ -104,13 +105,14 @@ deleted="$(FAKE_KEYS="$legacy $(keys_for \
   CLI_TEST_KEEP=5 DRY_RUN=0 \
   bash -c '
     set -euo pipefail
-    sed -n "/^# ── prune ─/,/^prune$/p" "'"$here"'/publish-cli-test.sh" > /tmp/prune-only.sh
+    sed -n "/^# ── prune ─/,/^}$/p" "'"$here"'/publish-cli-test.sh" > /tmp/prune-only.sh
     version="$IMAGE_TAG"; KEEP="$CLI_TEST_KEEP"; PREFIX=downloads
     TEST_PREFIX="multica-cli-test-"; DRY_RUN=0
     endpoint="$OSS_ENDPOINT"
     s3() { aws s3 "$@"; }; s3api() { aws s3api "$@"; }
     log() { :; }
     source /tmp/prune-only.sh
+    prune
   '; cat "$DELETED_LOG" 2>/dev/null || true)"
 printf '%s\n' "$deleted" | grep -qE "kubefleet|develop" \
   && fail "pruned a hand-published build: $deleted"

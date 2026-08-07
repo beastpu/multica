@@ -13,6 +13,14 @@
 #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION
 #
 # Set DRY_RUN=1 to print the uploads and deletions without performing them.
+#
+# Pruning is OFF by default and does not run in CI. Retention would need
+# oss:DeleteObject on downloads/, and the narrowest RAM prefix OSS offers is
+# the whole directory — the same grant that lets a job overwrite latest-cli.txt
+# and the released installers. A publish job does not need that standing, so
+# the credential it runs with does not carry it. Run with PRUNE=1 from a
+# session that legitimately holds delete rights, or expire the test channel
+# with a bucket lifecycle rule.
 set -euo pipefail
 
 : "${IMAGE_TAG:?IMAGE_TAG is required}"
@@ -23,6 +31,9 @@ set -euo pipefail
 # (two tarballs + a checksum manifest), and nothing but a node that has not
 # synced yet reads an older one.
 KEEP="${CLI_TEST_KEEP:-5}"
+
+# Opt-in, because pruning is the only thing here that deletes. See the header.
+PRUNE="${PRUNE:-0}"
 
 DRY_RUN="${DRY_RUN:-0}"
 PREFIX="downloads"
@@ -186,6 +197,10 @@ prune() {
   done
 }
 
-prune
+if [ "$PRUNE" = "1" ]; then
+  prune
+else
+  log "prune skipped (PRUNE=1 to enable — needs delete rights on $PREFIX/)"
+fi
 
-log "published multica CLI $version to $PREFIX/ (keeping newest $KEEP)"
+log "published multica CLI $version to $PREFIX/"
