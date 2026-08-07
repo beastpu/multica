@@ -192,7 +192,11 @@ if [ "$DRY_RUN" != "1" ]; then
   for f in dist/cli/*; do
     name="$(basename "$f")"
     key="$PREFIX/$name"
-    oss stat "oss://$OSS_BUCKET/$key" >/dev/null 2>&1 \
+    # `stat` needs oss:GetObjectMeta, which the publish credential has no
+    # reason to hold — it returned 403 on an object that was plainly there,
+    # and a permission error read as a failed upload. Listing the exact key
+    # proves existence with the permission the prune already requires.
+    oss ls "oss://$OSS_BUCKET/$key" 2>/dev/null | grep -qF "oss://$OSS_BUCKET/$key" \
       || { log "❌ missing on OSS: oss://$OSS_BUCKET/$key"; exit 1; }
   done
   log "✅ all artifacts verified on OSS"
