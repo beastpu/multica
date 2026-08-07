@@ -14,19 +14,23 @@ trap 'rm -rf "$fake_bin"' EXIT
 
 # Fake `aws`: list-objects-v2 replays $FAKE_KEYS, everything else is a no-op
 # that records the call. `s3 rm` is what the assertions read back.
-cat > "$fake_bin/aws" <<'FAKE'
+# Fake `ossutil`: `ls` replays $FAKE_KEYS in the listing shape the script
+# parses, `rm` records what it was asked to delete. Everything else no-ops.
+cat > "$fake_bin/ossutil" <<'FAKE'
 #!/usr/bin/env bash
-case "$1 $2" in
-  "s3api list-objects-v2")
-    for k in $FAKE_KEYS; do printf '%s\t' "$k"; done; printf '\n'
+case "$1" in
+  ls)
+    for k in $FAKE_KEYS; do printf 'oss://b/%s\n' "$k"; done
     ;;
-  "s3 rm")
-    printf '%s\n' "$3" >> "$DELETED_LOG"
+  rm)
+    for a in "$@"; do
+      case "$a" in oss://*) printf '%s\n' "$a" >> "$DELETED_LOG" ;; esac
+    done
     ;;
   *) : ;;
 esac
 FAKE
-chmod +x "$fake_bin/aws"
+chmod +x "$fake_bin/ossutil"
 
 keys_for() {
   local v
@@ -53,7 +57,7 @@ run_prune() {
     version="$IMAGE_TAG"; KEEP="$CLI_TEST_KEEP"; PREFIX=downloads
     TEST_PREFIX="multica-cli-test-"; DRY_RUN=0
     endpoint="$OSS_ENDPOINT"
-    s3() { aws s3 "$@"; }; s3api() { aws s3api "$@"; }
+    OSSUTIL=ossutil; oss() { "$OSSUTIL" "$@"; }
     log() { :; }
     source /tmp/prune-only.sh
     prune
@@ -109,7 +113,7 @@ deleted="$(FAKE_KEYS="$legacy $(keys_for \
     version="$IMAGE_TAG"; KEEP="$CLI_TEST_KEEP"; PREFIX=downloads
     TEST_PREFIX="multica-cli-test-"; DRY_RUN=0
     endpoint="$OSS_ENDPOINT"
-    s3() { aws s3 "$@"; }; s3api() { aws s3api "$@"; }
+    OSSUTIL=ossutil; oss() { "$OSSUTIL" "$@"; }
     log() { :; }
     source /tmp/prune-only.sh
     prune
