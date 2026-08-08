@@ -133,28 +133,6 @@ type OutboundCardMessage struct {
 	Status               string
 	LastPatchedAt        pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
-	ChannelCardID        string
-	Transport            string
-	DesiredRevision      int64
-	AppliedRevision      int64
-	InflightRevision     pgtype.Int8
-	InflightSequence     pgtype.Int4
-	InflightCardJSON     string
-	OperationSequence    int32
-	ProjectedSeq         int32
-	VisibleText          string
-	CurrentStage         string
-	FilesReadCount       int32
-	FilesEditedCount     int32
-	SearchesCount        int32
-	CommandsCount        int32
-	TerminalContent      string
-	NextAttemptAt        pgtype.Timestamptz
-	LeaseToken           pgtype.UUID
-	LeaseExpiresAt       pgtype.Timestamptz
-	AttemptCount         int32
-	DeliveryFailedAt     pgtype.Timestamptz
-	LastError            string
 }
 
 // feishuInstallConfig is the JSON shape of channel_installation.config for the
@@ -312,28 +290,6 @@ func outboundCardFromRow(row db.ChannelOutboundCardMessage) OutboundCardMessage 
 		Status:               row.Status,
 		LastPatchedAt:        row.LastPatchedAt,
 		CreatedAt:            row.CreatedAt,
-		ChannelCardID:        row.ChannelCardID,
-		Transport:            row.Transport,
-		DesiredRevision:      row.DesiredRevision,
-		AppliedRevision:      row.AppliedRevision,
-		InflightRevision:     row.InflightRevision,
-		InflightSequence:     row.InflightSequence,
-		InflightCardJSON:     row.InflightCardJson,
-		OperationSequence:    row.OperationSequence,
-		ProjectedSeq:         row.ProjectedSeq,
-		VisibleText:          row.VisibleText,
-		CurrentStage:         row.CurrentStage,
-		FilesReadCount:       row.FilesReadCount,
-		FilesEditedCount:     row.FilesEditedCount,
-		SearchesCount:        row.SearchesCount,
-		CommandsCount:        row.CommandsCount,
-		TerminalContent:      row.TerminalContent,
-		NextAttemptAt:        row.NextAttemptAt,
-		LeaseToken:           row.LeaseToken,
-		LeaseExpiresAt:       row.LeaseExpiresAt,
-		AttemptCount:         row.AttemptCount,
-		DeliveryFailedAt:     row.DeliveryFailedAt,
-		LastError:            row.LastError,
 	}
 }
 

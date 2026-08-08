@@ -37,9 +37,13 @@ func TestRenderConfirmationCardEmbedsRealChatID(t *testing.T) {
 	}
 }
 
-func TestRenderConfirmationCardV2UsesCardKitCallbackBehaviors(t *testing.T) {
+// TestRenderConfirmationCardUsesCallbackBehaviors pins the schema-2.0 button
+// shape. A 2.0 card rejects the schema-1.0 top-level `value`, and the card is
+// 2.0 in both of its uses so that patching a live progress card into a
+// confirmation prompt never changes schema mid-flight.
+func TestRenderConfirmationCardUsesCallbackBehaviors(t *testing.T) {
 	t.Parallel()
-	cardJSON, err := renderConfirmationCardV2(
+	cardJSON, err := renderConfirmationCard(
 		"是否确认？【确认执行】",
 		ChatSessionBinding{ChannelChatID: "oc_real", ChatType: "p2p"},
 		"task-1", "ou_user", time.Unix(1700000000, 0),
@@ -59,7 +63,7 @@ func TestRenderConfirmationCardV2UsesCardKitCallbackBehaviors(t *testing.T) {
 	actions := map[string]bool{}
 	for _, button := range buttons {
 		if _, legacy := button["value"]; legacy {
-			t.Fatalf("CardKit 2.0 button must not use the legacy top-level value: %v", button)
+			t.Fatalf("schema 2.0 button must not use the legacy top-level value: %v", button)
 		}
 		behaviors, _ := button["behaviors"].([]any)
 		if len(behaviors) != 1 {
@@ -218,25 +222,27 @@ func TestRenderConfirmationCardEmbedsContentInButtonValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	var doc struct {
-		Elements []struct {
-			Tag     string `json:"tag"`
-			Actions []struct {
-				Value confirmationCardValue `json:"value"`
-			} `json:"actions"`
-		} `json:"elements"`
-	}
+	var doc any
 	if err := json.Unmarshal([]byte(cardJSON), &doc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+	var buttons []map[string]any
+	collectCardElementsByTag(doc, "button", &buttons)
 	checked := 0
-	for _, el := range doc.Elements {
-		if el.Tag != "action" {
-			continue
-		}
-		for _, a := range el.Actions {
+	for _, button := range buttons {
+		behaviors, _ := button["behaviors"].([]any)
+		for _, raw := range behaviors {
+			behavior, _ := raw.(map[string]any)
+			encoded, err := json.Marshal(behavior["value"])
+			if err != nil {
+				t.Fatalf("marshal behavior value: %v", err)
+			}
+			var value confirmationCardValue
+			if err := json.Unmarshal(encoded, &value); err != nil {
+				t.Fatalf("decode behavior value: %v", err)
+			}
 			checked++
-			runes := []rune(a.Value.Content)
+			runes := []rune(value.Content)
 			if len(runes) != maxConfirmationCardContentRunes+1 || runes[len(runes)-1] != '…' {
 				t.Fatalf("button value content not truncated to %d runes + ellipsis: len=%d", maxConfirmationCardContentRunes, len(runes))
 			}
@@ -290,6 +296,64 @@ func TestRenderChatConfirmationCardActionResponse(t *testing.T) {
 			t.Fatalf("resolved cancel card missing %q: %s", want, respJSON)
 		}
 	}
+}
+
+// TestConfirmationReceiptMatchesItsCardSchema pins the pairing that made the
+// receipt worth keeping per flow. A card.action.trigger response replaces the
+// clicked card wholesale, so a receipt in a different schema than the card it
+// overwrites would be asking Lark to swap a live card's schema mid-flight —
+// an assumption about the platform we have no reason to make and no way to
+// verify from here. The chat flow is 2.0 on both sides; the issue inbox flow
+// is 1.0 on both.
+func TestConfirmationReceiptMatchesItsCardSchema(t *testing.T) {
+	t.Parallel()
+	chatCard, err := renderConfirmationCard(
+		"是否触发流水线？【确认执行】",
+		ChatSessionBinding{ChannelChatID: "oc_1", ChatType: "p2p"},
+		"task-1", "ou_req", time.Unix(1720000000, 0),
+	)
+	if err != nil {
+		t.Fatalf("render chat card: %v", err)
+	}
+	chatReceipt, err := renderChatConfirmationResolvedCard("是否触发流水线？", confirmationActionConfirm, "确认执行")
+	if err != nil {
+		t.Fatalf("render chat receipt: %v", err)
+	}
+	if got := cardSchemaOf(t, chatCard); got != "2.0" {
+		t.Errorf("chat confirmation card schema=%q want 2.0", got)
+	}
+	if got := cardSchemaOf(t, chatReceipt); got != "2.0" {
+		t.Errorf("chat receipt schema=%q must match the card it replaces", got)
+	}
+
+	// The issue inbox confirmation card is schema 1.0, which carries no schema
+	// key and puts its components at the top level rather than under body.
+	issueReceipt, err := RenderIssueConfirmationResolvedCard("是否确认发布？", IssueConfirmationCardAction{
+		Action: confirmationActionConfirm, Message: "确认执行",
+	})
+	if err != nil {
+		t.Fatalf("render issue receipt: %v", err)
+	}
+	if got := cardSchemaOf(t, issueReceipt); got != "" {
+		t.Errorf("issue receipt schema=%q must stay 1.0 to match its card", got)
+	}
+	var issueDoc map[string]any
+	if err := json.Unmarshal([]byte(issueReceipt), &issueDoc); err != nil {
+		t.Fatalf("unmarshal issue receipt: %v", err)
+	}
+	if _, ok := issueDoc["elements"]; !ok {
+		t.Errorf("schema 1.0 receipt must keep top-level elements: %s", issueReceipt)
+	}
+}
+
+func cardSchemaOf(t *testing.T, cardJSON string) string {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(cardJSON), &doc); err != nil {
+		t.Fatalf("unmarshal card: %v", err)
+	}
+	schema, _ := doc["schema"].(string)
+	return schema
 }
 
 func containsCardTag(v any, tag string) bool {

@@ -462,13 +462,10 @@ func (s *ChannelStore) GetLarkOutboundCardByTask(ctx context.Context, taskID pgt
 
 func (s *ChannelStore) CreateLarkOutboundCardMessage(ctx context.Context, arg CreateOutboundCardMessageParams) (OutboundCardMessage, error) {
 	row, err := s.Queries.CreateChannelOutboundCardMessage(ctx, db.CreateChannelOutboundCardMessageParams{
-		ChatSessionID:        arg.ChatSessionID,
-		ChannelType:          channelTypeFeishu,
-		ChannelChatID:        arg.ChannelChatID,
-		ChannelCardMessageID: arg.ChannelCardMessageID,
-		Status:               arg.Status,
-		TaskID:               arg.TaskID,
-		StartDelaySeconds:    arg.StartDelaySeconds,
+		ChatSessionID: arg.ChatSessionID,
+		ChannelType:   channelTypeFeishu,
+		ChannelChatID: arg.ChannelChatID,
+		TaskID:        arg.TaskID,
 	})
 	if err != nil {
 		return OutboundCardMessage{}, err
@@ -476,83 +473,26 @@ func (s *ChannelStore) CreateLarkOutboundCardMessage(ctx context.Context, arg Cr
 	return outboundCardFromRow(row), nil
 }
 
-func (s *ChannelStore) ProjectLarkOutboundTaskMessage(ctx context.Context, arg ProjectOutboundTaskMessageParams) (OutboundCardMessage, error) {
-	row, err := s.Queries.ProjectChannelOutboundTaskMessage(ctx, db.ProjectChannelOutboundTaskMessageParams{
-		TaskID: arg.TaskID, ChannelType: channelTypeFeishu, Seq: arg.Seq,
-		VisibleTextAppend: arg.VisibleTextAppend, CurrentStage: arg.CurrentStage,
-		FilesReadDelta: arg.FilesReadDelta, FilesEditedDelta: arg.FilesEditedDelta,
-		SearchesDelta: arg.SearchesDelta, CommandsDelta: arg.CommandsDelta,
-		MinIntervalSeconds: arg.MinIntervalSeconds,
+func (s *ChannelStore) ClaimLarkOutboundCardWork(ctx context.Context, arg ClaimOutboundCardWorkParams) ([]OutboundCardMessage, error) {
+	rows, err := s.Queries.ClaimChannelOutboundCardWork(ctx, db.ClaimChannelOutboundCardWorkParams{
+		ChannelType:       channelTypeFeishu,
+		StartDelaySeconds: arg.StartDelaySeconds,
+		HeartbeatSeconds:  arg.HeartbeatSeconds,
+		MaxRows:           arg.MaxRows,
 	})
 	if err != nil {
-		return OutboundCardMessage{}, err
+		return nil, err
 	}
-	return outboundCardFromRow(row), nil
-}
-
-func (s *ChannelStore) ScheduleLarkOutboundTaskMessage(ctx context.Context, arg ScheduleOutboundTaskMessageParams) (OutboundCardMessage, error) {
-	row, err := s.Queries.ScheduleChannelOutboundTaskMessage(ctx, db.ScheduleChannelOutboundTaskMessageParams{
-		TaskID: arg.TaskID, ChannelType: channelTypeFeishu, MinIntervalSeconds: arg.MinIntervalSeconds,
-	})
-	if err != nil {
-		return OutboundCardMessage{}, err
+	cards := make([]OutboundCardMessage, len(rows))
+	for i, row := range rows {
+		cards[i] = outboundCardFromRow(row)
 	}
-	return outboundCardFromRow(row), nil
-}
-
-func (s *ChannelStore) SetLarkOutboundTerminalDesired(ctx context.Context, arg SetOutboundTerminalDesiredParams) (OutboundCardMessage, error) {
-	row, err := s.Queries.SetChannelOutboundTerminalDesired(ctx, db.SetChannelOutboundTerminalDesiredParams{
-		TaskID: arg.TaskID, ChannelType: channelTypeFeishu,
-		Status: arg.Status, TerminalContent: arg.TerminalContent,
-	})
-	if err != nil {
-		return OutboundCardMessage{}, err
-	}
-	return outboundCardFromRow(row), nil
-}
-
-func (s *ChannelStore) ClaimLarkOutboundCardDelivery(ctx context.Context, arg ClaimOutboundCardDeliveryParams) (OutboundCardMessage, error) {
-	var row db.ChannelOutboundCardMessage
-	var err error
-	if arg.TaskID.Valid {
-		row, err = s.Queries.ClaimChannelOutboundCardDeliveryByTask(ctx, db.ClaimChannelOutboundCardDeliveryByTaskParams{
-			TaskID: arg.TaskID, ChannelType: channelTypeFeishu,
-			LeaseToken: arg.LeaseToken, LeaseSeconds: arg.LeaseSeconds,
-		})
-	} else {
-		row, err = s.Queries.ClaimChannelOutboundCardDelivery(ctx, db.ClaimChannelOutboundCardDeliveryParams{
-			ChannelType: channelTypeFeishu, LeaseToken: arg.LeaseToken, LeaseSeconds: arg.LeaseSeconds,
-		})
-	}
-	if err != nil {
-		return OutboundCardMessage{}, err
-	}
-	return outboundCardFromRow(row), nil
-}
-
-func (s *ChannelStore) SetLarkOutboundInflightPayload(ctx context.Context, arg SetOutboundInflightPayloadParams) (OutboundCardMessage, error) {
-	row, err := s.Queries.SetChannelOutboundInflightPayload(ctx, db.SetChannelOutboundInflightPayloadParams{
-		ID: arg.ID, LeaseToken: arg.LeaseToken, DesiredRevision: arg.DesiredRevision, CardJson: arg.CardJSON,
-	})
-	if err != nil {
-		return OutboundCardMessage{}, err
-	}
-	return outboundCardFromRow(row), nil
-}
-
-func (s *ChannelStore) SetLarkOutboundCardEntityID(ctx context.Context, arg SetOutboundCardEntityIDParams) (OutboundCardMessage, error) {
-	row, err := s.Queries.SetChannelOutboundCardEntityID(ctx, db.SetChannelOutboundCardEntityIDParams{
-		ID: arg.ID, LeaseToken: arg.LeaseToken, ChannelCardID: arg.ChannelCardID,
-	})
-	if err != nil {
-		return OutboundCardMessage{}, err
-	}
-	return outboundCardFromRow(row), nil
+	return cards, nil
 }
 
 func (s *ChannelStore) SetLarkOutboundCardMessageID(ctx context.Context, arg SetOutboundCardMessageIDParams) (OutboundCardMessage, error) {
 	row, err := s.Queries.SetChannelOutboundCardMessageID(ctx, db.SetChannelOutboundCardMessageIDParams{
-		ID: arg.ID, LeaseToken: arg.LeaseToken, ChannelCardMessageID: arg.ChannelCardMessageID,
+		ID: arg.ID, ChannelCardMessageID: arg.ChannelCardMessageID,
 	})
 	if err != nil {
 		return OutboundCardMessage{}, err
@@ -560,35 +500,9 @@ func (s *ChannelStore) SetLarkOutboundCardMessageID(ctx context.Context, arg Set
 	return outboundCardFromRow(row), nil
 }
 
-func (s *ChannelStore) DowngradeLarkOutboundCardTransport(ctx context.Context, arg OutboundDeliveryLeaseParams) (OutboundCardMessage, error) {
-	row, err := s.Queries.DowngradeChannelOutboundCardTransport(ctx, db.DowngradeChannelOutboundCardTransportParams(arg))
-	if err != nil {
-		return OutboundCardMessage{}, err
-	}
-	return outboundCardFromRow(row), nil
-}
-
-func (s *ChannelStore) CompleteLarkOutboundCardDelivery(ctx context.Context, arg OutboundDeliveryLeaseParams) (OutboundCardMessage, error) {
-	row, err := s.Queries.CompleteChannelOutboundCardDelivery(ctx, db.CompleteChannelOutboundCardDeliveryParams(arg))
-	if err != nil {
-		return OutboundCardMessage{}, err
-	}
-	return outboundCardFromRow(row), nil
-}
-
-func (s *ChannelStore) FailLarkOutboundCardDelivery(ctx context.Context, arg FailOutboundCardDeliveryParams) (OutboundCardMessage, error) {
-	row, err := s.Queries.FailChannelOutboundCardDelivery(ctx, db.FailChannelOutboundCardDeliveryParams{
-		ID: arg.ID, LeaseToken: arg.LeaseToken, LastError: arg.LastError, RetrySeconds: arg.RetrySeconds,
-	})
-	if err != nil {
-		return OutboundCardMessage{}, err
-	}
-	return outboundCardFromRow(row), nil
-}
-
-func (s *ChannelStore) AbandonLarkOutboundCardDelivery(ctx context.Context, arg AbandonOutboundCardDeliveryParams) (OutboundCardMessage, error) {
-	row, err := s.Queries.AbandonChannelOutboundCardDelivery(ctx, db.AbandonChannelOutboundCardDeliveryParams{
-		ID: arg.ID, LeaseToken: arg.LeaseToken, LastError: arg.LastError,
+func (s *ChannelStore) SettleLarkOutboundCard(ctx context.Context, arg SettleOutboundCardParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.SettleChannelOutboundCard(ctx, db.SettleChannelOutboundCardParams{
+		TaskID: arg.TaskID, ChannelType: channelTypeFeishu, Status: arg.Status,
 	})
 	if err != nil {
 		return OutboundCardMessage{}, err

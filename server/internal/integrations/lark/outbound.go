@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -28,43 +27,33 @@ const (
 	CardStatusError     CardStatus = "error"
 )
 
-// CardKind enumerates the small set of card variants the patcher
-// renders. The Renderer is plug-replaceable so the on-wire card
-// template can evolve without touching the patcher's transport / DB
-// logic.
+// CardKind enumerates the small set of card variants the Renderer
+// produces. The Renderer is plug-replaceable so the on-wire card
+// template can evolve without touching transport or persistence logic.
 type CardKind string
 
 const (
-	CardKindThinking CardKind = "thinking"
-	CardKindRunning  CardKind = "running"
-	CardKindFinal    CardKind = "final"
-	CardKindError    CardKind = "error"
+	CardKindRunning CardKind = "running"
+	CardKindFinal   CardKind = "final"
+	CardKindError   CardKind = "error"
 )
 
 // CardRender is the rendered card body the Renderer produces. The
-// patcher serializes the JSON before handing it to APIClient.
+// caller serializes nothing further — this JSON goes on the wire.
 type CardRender struct {
 	JSON string
 }
 
-// RenderInput is the (typed) snapshot the Renderer sees when building
-// or patching a card. Fields are populated as they become available
-// during a task lifecycle — IssueNumber is set for `/issue` flows,
-// Content is set for completed chat tasks, ErrorMessage for failed.
+// RenderInput is the typed snapshot the Renderer sees. A running card knows
+// only how long the task has been going; Content is set for a completed chat
+// task and ErrorMessage for a failed one.
 type RenderInput struct {
 	Kind         CardKind
 	AgentName    string
-	IssueNumber  int32
-	IssueID      pgtype.UUID
 	TaskID       pgtype.UUID
 	Content      string
 	ErrorMessage string
-	Stage        string
 	ElapsedSecs  int64
-	FilesRead    int32
-	FilesEdited  int32
-	Searches     int32
-	Commands     int32
 }
 
 // Renderer turns a typed RenderInput into the actual Lark card JSON.
@@ -74,20 +63,14 @@ type Renderer interface {
 	Render(in RenderInput) (CardRender, error)
 }
 
-// defaultRenderer produces CardKit 2.0 cards with native streaming enabled
-// while work is in progress and explicitly disabled for terminal revisions.
+// defaultRenderer produces a schema-2.0 card with a single markdown block.
+// update_multi marks it as a shared card, which is what makes it patchable
+// after the fact for every viewer rather than per-recipient.
 type defaultRenderer struct{}
 
-const maxStreamingCardBytes = 24 * 1024
-
-const (
-	progressStageProcessing     = "processing"
-	progressStageReadingFiles   = "reading_files"
-	progressStageSearching      = "searching"
-	progressStageEditingFiles   = "editing_files"
-	progressStageRunningCommand = "running_command"
-	progressStageResponding     = "responding"
-)
+// Lark documents a 30KB ceiling for a card payload. Stay well under it so
+// JSON escaping of user-visible text cannot push a reply over the edge.
+const maxCardBytes = 24 * 1024
 
 // NewDefaultRenderer returns the production-default Renderer. Override
 // via PatcherConfig.Renderer when a custom template is needed.
@@ -102,21 +85,11 @@ func (defaultRenderer) Render(in RenderInput) (CardRender, error) {
 	if !ok {
 		return CardRender{}, fmt.Errorf("unknown card kind %q", in.Kind)
 	}
-	streaming := in.Kind == CardKindThinking || in.Kind == CardKindRunning
 	doc := map[string]any{
 		"schema": "2.0",
 		"config": map[string]any{
 			"wide_screen_mode": true,
 			"update_multi":     true,
-			"streaming_mode":   streaming,
-			"summary": map[string]any{
-				"content": map[bool]string{true: "正在生成回复…", false: "Multica 回复"}[streaming],
-			},
-			"streaming_config": map[string]any{
-				"print_frequency_ms": map[string]any{"default": 70, "android": 70, "ios": 70, "pc": 70},
-				"print_step":         map[string]any{"default": 1, "android": 1, "ios": 1, "pc": 1},
-				"print_strategy":     "fast",
-			},
 		},
 		"header": map[string]any{
 			"template": "blue",
@@ -136,45 +109,44 @@ func (defaultRenderer) Render(in RenderInput) (CardRender, error) {
 	if err != nil {
 		return CardRender{}, err
 	}
-	if len(raw) <= maxStreamingCardBytes {
+	if len(raw) <= maxCardBytes {
 		return CardRender{JSON: string(raw)}, nil
 	}
 	// User-visible assistant/error text is variable-sized. Trim by encoded byte
-	// budget, then rebuild so the final serialized card stays below CardKit's
-	// documented 30KB limit with headroom for JSON escaping.
-	trimRenderInput(&in, maxStreamingCardBytes/2)
-	body, _ = renderCardBody(in)
-	doc["body"].(map[string]any)["elements"].([]any)[0].(map[string]any)["content"] = body
-	raw, err = json.Marshal(doc)
-	if err != nil {
-		return CardRender{}, err
-	}
-	for len(raw) > maxStreamingCardBytes && renderInputTextLen(in) > 0 {
-		trimRenderInput(&in, renderInputTextLen(in)*3/4)
+	// budget, then rebuild until the serialized card fits.
+	trimRenderInput(&in, maxCardBytes/2)
+	for {
 		body, _ = renderCardBody(in)
 		doc["body"].(map[string]any)["elements"].([]any)[0].(map[string]any)["content"] = body
 		raw, err = json.Marshal(doc)
 		if err != nil {
 			return CardRender{}, err
 		}
+		if len(raw) <= maxCardBytes || renderInputTextLen(in) == 0 {
+			return CardRender{JSON: string(raw)}, nil
+		}
+		trimRenderInput(&in, renderInputTextLen(in)*3/4)
 	}
-	return CardRender{JSON: string(raw)}, nil
 }
 
 func renderCardBody(in RenderInput) (string, bool) {
 	switch in.Kind {
-	case CardKindThinking, CardKindRunning:
-		return progressMarkdown(in, "正在处理…"), true
+	case CardKindRunning:
+		return progressMarkdown(in), true
 	case CardKindFinal:
+		// Empty content reaches here only when a live card has to be settled:
+		// the native path drops it instead of speaking. A card cannot be
+		// dropped — leaving it on "正在处理" forever is worse — so it retires
+		// with a neutral line in the same language as the rest of the card.
 		if in.Content == "" {
-			return "Done.", true
+			return "**已完成**", true
 		}
 		return in.Content, true
 	case CardKindError:
 		if in.ErrorMessage == "" {
-			return "Run failed.", true
+			return "**运行失败**", true
 		}
-		return "Run failed: " + in.ErrorMessage, true
+		return "**运行失败**\n\n" + in.ErrorMessage, true
 	default:
 		return "", false
 	}
@@ -195,87 +167,15 @@ func trimRenderInput(in *RenderInput, max int) {
 	in.Content = truncateUTF8Bytes(in.Content, max)
 }
 
-type taskProgressProjection struct {
-	Seq               int32
-	Stage             string
-	VisibleTextAppend string
-	FilesReadDelta    int32
-	FilesEditedDelta  int32
-	SearchesDelta     int32
-	CommandsDelta     int32
-}
-
-func projectTaskProgress(message protocol.TaskMessagePayload) taskProgressProjection {
-	p := taskProgressProjection{Seq: int32(message.Seq), Stage: progressStageProcessing}
-	switch message.Type {
-	case "text":
-		p.Stage = progressStageResponding
-		p.VisibleTextAppend = message.Content
-	case "tool_use":
-		tool := strings.ToLower(message.Tool)
-		switch {
-		case strings.Contains(tool, "read"), strings.Contains(tool, "glob"):
-			p.Stage = progressStageReadingFiles
-			p.FilesReadDelta = 1
-		case strings.Contains(tool, "grep"), strings.Contains(tool, "search"):
-			p.Stage = progressStageSearching
-			p.SearchesDelta = 1
-		case strings.Contains(tool, "edit"), strings.Contains(tool, "write"):
-			p.Stage = progressStageEditingFiles
-			p.FilesEditedDelta = 1
-		case strings.Contains(tool, "bash"), strings.Contains(tool, "exec"), strings.Contains(tool, "terminal"):
-			p.Stage = progressStageRunningCommand
-			p.CommandsDelta = 1
-		}
-	}
-	return p
-}
-
-func progressStageLabel(stage string) string {
-	switch stage {
-	case progressStageReadingFiles:
-		return "正在读取文件"
-	case progressStageSearching:
-		return "正在搜索"
-	case progressStageEditingFiles:
-		return "正在修改文件"
-	case progressStageRunningCommand:
-		return "正在运行命令"
-	case progressStageResponding:
-		return "正在组织回复"
-	default:
-		return "正在处理"
-	}
-}
-
-func progressMarkdown(in RenderInput, fallback string) string {
-	stage := progressStageLabel(in.Stage)
+// progressMarkdown is the whole body of a running card: the fact that work is
+// happening, and for how long. It deliberately says nothing about what the
+// agent is doing — surfacing tool activity meant projecting every task message
+// into the row, and that machinery cost far more than the detail was worth.
+func progressMarkdown(in RenderInput) string {
 	if in.ElapsedSecs > 0 {
-		stage += fmt.Sprintf(" · %d 秒", in.ElapsedSecs)
+		return fmt.Sprintf("**正在处理 · %d 秒**", in.ElapsedSecs)
 	}
-	parts := []string{"**" + stage + "**"}
-	if strings.TrimSpace(in.Content) != "" {
-		parts = append(parts, strings.TrimSpace(in.Content))
-	} else if fallback != "" {
-		parts = append(parts, fallback)
-	}
-	var activity []string
-	if in.FilesRead > 0 {
-		activity = append(activity, fmt.Sprintf("读取 %d 个文件", in.FilesRead))
-	}
-	if in.FilesEdited > 0 {
-		activity = append(activity, fmt.Sprintf("修改 %d 个文件", in.FilesEdited))
-	}
-	if in.Searches > 0 {
-		activity = append(activity, fmt.Sprintf("搜索 %d 次", in.Searches))
-	}
-	if in.Commands > 0 {
-		activity = append(activity, fmt.Sprintf("执行 %d 条命令", in.Commands))
-	}
-	if len(activity) > 0 {
-		parts = append(parts, "---\n"+strings.Join(activity, " · "))
-	}
-	return strings.Join(parts, "\n\n")
+	return "**正在处理**"
 }
 
 func truncateUTF8Bytes(s string, max int) string {
@@ -304,19 +204,10 @@ type PatcherQueries interface {
 	GetLarkChatSessionBindingBySession(ctx context.Context, chatSessionID pgtype.UUID) (ChatSessionBinding, error)
 	ListActiveLarkUserBindingsByMember(ctx context.Context, arg ListInboxNotificationBindingsParams) ([]InboxNotificationBinding, error)
 	GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.UUID) (OutboundCardMessage, error)
-	ListTaskMessagesSince(ctx context.Context, arg db.ListTaskMessagesSinceParams) ([]db.TaskMessage, error)
 	CreateLarkOutboundCardMessage(ctx context.Context, arg CreateOutboundCardMessageParams) (OutboundCardMessage, error)
-	ProjectLarkOutboundTaskMessage(ctx context.Context, arg ProjectOutboundTaskMessageParams) (OutboundCardMessage, error)
-	ScheduleLarkOutboundTaskMessage(ctx context.Context, arg ScheduleOutboundTaskMessageParams) (OutboundCardMessage, error)
-	SetLarkOutboundTerminalDesired(ctx context.Context, arg SetOutboundTerminalDesiredParams) (OutboundCardMessage, error)
-	ClaimLarkOutboundCardDelivery(ctx context.Context, arg ClaimOutboundCardDeliveryParams) (OutboundCardMessage, error)
-	SetLarkOutboundInflightPayload(ctx context.Context, arg SetOutboundInflightPayloadParams) (OutboundCardMessage, error)
-	SetLarkOutboundCardEntityID(ctx context.Context, arg SetOutboundCardEntityIDParams) (OutboundCardMessage, error)
+	ClaimLarkOutboundCardWork(ctx context.Context, arg ClaimOutboundCardWorkParams) ([]OutboundCardMessage, error)
 	SetLarkOutboundCardMessageID(ctx context.Context, arg SetOutboundCardMessageIDParams) (OutboundCardMessage, error)
-	DowngradeLarkOutboundCardTransport(ctx context.Context, arg OutboundDeliveryLeaseParams) (OutboundCardMessage, error)
-	CompleteLarkOutboundCardDelivery(ctx context.Context, arg OutboundDeliveryLeaseParams) (OutboundCardMessage, error)
-	FailLarkOutboundCardDelivery(ctx context.Context, arg FailOutboundCardDeliveryParams) (OutboundCardMessage, error)
-	AbandonLarkOutboundCardDelivery(ctx context.Context, arg AbandonOutboundCardDeliveryParams) (OutboundCardMessage, error)
+	SettleLarkOutboundCard(ctx context.Context, arg SettleOutboundCardParams) (OutboundCardMessage, error)
 	UpdateChatAskChannelMessage(ctx context.Context, arg db.UpdateChatAskChannelMessageParams) error
 }
 
@@ -330,44 +221,41 @@ type CredentialsResolver interface {
 // PatcherConfig tunes the outbound Patcher. Defaults via withDefaults;
 // tests typically override timing, Renderer, Now, or Logger.
 type PatcherConfig struct {
-	// StreamingDelay keeps fast replies as native messages. A task becomes
-	// eligible for a progress card only after it has been running this long.
+	// StreamingDelay keeps fast replies as native messages. A task's progress
+	// card is only sent once it has been running this long.
 	StreamingDelay time.Duration
-	// MinPatchInterval is enforced by Postgres across server replicas.
-	MinPatchInterval   time.Duration
+	// HeartbeatInterval is how often a live card is repainted with its new
+	// elapsed time. Enforced by Postgres, so it holds across replicas.
+	HeartbeatInterval  time.Duration
 	WorkerPollInterval time.Duration
-	WorkerConcurrency  int
-	DeliveryLease      time.Duration
-	Metrics            OutboundMetrics
-	// Renderer drives the delayed progress card and its terminal states.
-	// Fast EventChatDone replies bypass it and keep their native text,
-	// markdown-card, or confirmation-card presentation.
+	// MaxBatch bounds how many cards one poll may paint.
+	MaxBatch int
+	Metrics  OutboundMetrics
+	// Renderer drives the progress card and its terminal states. Replies that
+	// never grew a card keep their native text, markdown-card, or
+	// confirmation-card presentation.
 	Renderer Renderer
 	Now      func() time.Time
 	Logger   *slog.Logger
 }
 
 type OutboundMetrics interface {
-	RecordCardStarted(transport string, seconds float64)
-	RecordDelivery(transport, status, outcome string, lagSeconds float64)
-	RecordFallback(reason string)
+	RecordCardStarted(seconds float64)
+	RecordDelivery(status, outcome string)
 }
 
 func (c PatcherConfig) withDefaults() PatcherConfig {
 	if c.StreamingDelay == 0 {
 		c.StreamingDelay = 7 * time.Second
 	}
-	if c.MinPatchInterval == 0 {
-		c.MinPatchInterval = 2 * time.Second
+	if c.HeartbeatInterval == 0 {
+		c.HeartbeatInterval = 30 * time.Second
 	}
 	if c.WorkerPollInterval == 0 {
-		c.WorkerPollInterval = 500 * time.Millisecond
+		c.WorkerPollInterval = time.Second
 	}
-	if c.WorkerConcurrency <= 0 {
-		c.WorkerConcurrency = 4
-	}
-	if c.DeliveryLease == 0 {
-		c.DeliveryLease = 30 * time.Second
+	if c.MaxBatch <= 0 {
+		c.MaxBatch = 50
 	}
 	if c.Renderer == nil {
 		c.Renderer = NewDefaultRenderer()
@@ -382,23 +270,20 @@ func (c PatcherConfig) withDefaults() PatcherConfig {
 }
 
 // Patcher reacts to task-lifecycle events on the event bus and forwards chat
-// replies to Lark. Fast runs keep native-feeling final replies. Runs that cross
-// StreamingDelay get one live card which is patched with visible assistant text
-// and then settled in place, avoiding both a long silent wait and card chrome on
-// the common fast path.
+// replies to Lark. A run that answers quickly keeps a native-feeling reply. A
+// run that crosses StreamingDelay grows one progress card, which is repainted
+// with its elapsed time and finally replaced in place by the answer.
 //
 // Scope:
 //
-//   - Only tasks whose chat_session has a lark_chat_session_binding
-//     produce outbound. Tasks born from the web UI or autopilot pass
-//     through unchanged.
+//   - Only tasks whose chat_session has a lark_chat_session_binding produce
+//     outbound. Tasks born from the web UI or autopilot pass through unchanged.
 //
-//   - EventTaskRunning durably schedules a card for StreamingDelay; task
-//     messages update its public-safe projection. Database rows coordinate
-//     delivery and MinPatchInterval across replicas.
+//   - EventTaskRunning only records the card row. Every remote call belongs to
+//     the worker, so the synchronous bus path never blocks on Lark.
 //
-//   - Only persisted visible text is streamed; reasoning and tool payloads are
-//     never rendered into the channel.
+//   - The card carries no transcript — only that work is in progress and for
+//     how long. Reasoning, tool payloads and partial text never reach a channel.
 type Patcher struct {
 	queries         PatcherQueries
 	credentials     CredentialsResolver
@@ -427,21 +312,20 @@ func (p *Patcher) SetTypingIndicatorManager(m *TypingIndicatorManager) {
 	p.typingIndicator = m
 }
 
-// Register subscribes the patcher to the task-lifecycle events it
-// cares about on the supplied bus. Idempotent only if you call it
-// against a fresh bus; call sites should invoke it exactly once
-// during server boot (after the bus + patcher are constructed and
-// before HTTP traffic starts).
+// Register subscribes the patcher to the task-lifecycle events it cares about
+// on the supplied bus. Idempotent only if you call it against a fresh bus; call
+// sites should invoke it exactly once during server boot (after the bus and
+// patcher are constructed and before HTTP traffic starts).
 //
-// EventTaskRunning schedules the quiet-run fallback, EventTaskMessage drives
-// progress updates, and terminal chat, failure, and cancellation events settle
-// the card. EventTaskCompleted stays unsubscribed because EventChatDone carries
-// the actual reply body.
+// EventTaskRunning opens the card; terminal chat, failure and cancellation
+// events settle it. EventTaskCompleted stays unsubscribed because EventChatDone
+// carries the actual reply body. EventTaskMessage stays unsubscribed too: the
+// card reports elapsed time rather than transcript, so a wakeup per streamed
+// token would buy nothing.
 func (p *Patcher) Register(bus *events.Bus) {
 	bus.Subscribe(protocol.EventTaskFailed, p.handleEvent)
 	bus.Subscribe(protocol.EventTaskCancelled, p.handleEvent)
 	bus.Subscribe(protocol.EventTaskRunning, p.handleEvent)
-	bus.Subscribe(protocol.EventTaskMessage, p.handleEvent)
 	bus.Subscribe(protocol.EventChatDone, p.handleEvent)
 	// Structured asks (docs/chat-ask-structured-signal-spec.md): render the
 	// declared interaction, and patch the card into its receipt form once
@@ -505,13 +389,7 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 		return nil
 	}
 	if e.Type == protocol.EventTaskRunning {
-		return p.scheduleStreamingStart(ctx, binding, task)
-	}
-	if e.Type == protocol.EventTaskMessage {
-		if _, ok := taskMessagePayloadFromEvent(e.Payload); !ok {
-			return nil
-		}
-		return p.scheduleTaskMessage(ctx, binding, task)
+		return p.openCard(ctx, binding, task)
 	}
 
 	inst, err := p.queries.GetLarkInstallation(ctx, binding.InstallationID)
@@ -536,13 +414,19 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 	switch e.Type {
 	case protocol.EventChatDone:
 		p.clearTyping(ctx, chatSessionID)
-		return p.sendChatReply(ctx, creds, inst, binding, taskID, agentName, e.Payload)
+		return p.settleReply(ctx, creds, inst, binding, taskID, agentName, RenderInput{
+			Kind: CardKindFinal, Content: chatDoneContent(e.Payload),
+		})
 	case protocol.EventTaskFailed:
 		p.clearTyping(ctx, chatSessionID)
-		return p.fail(ctx, creds, binding, taskID, agentName, e.Payload)
+		return p.settleReply(ctx, creds, inst, binding, taskID, agentName, RenderInput{
+			Kind: CardKindError, ErrorMessage: errorMessageFromPayload(e.Payload),
+		})
 	case protocol.EventTaskCancelled:
 		p.clearTyping(ctx, chatSessionID)
-		return p.cancelStreamCard(ctx, creds, binding, taskID, agentName)
+		return p.settleReply(ctx, creds, inst, binding, taskID, agentName, RenderInput{
+			Kind: CardKindFinal, Content: "已取消",
+		})
 	case protocol.EventChatAsk:
 		p.clearTyping(ctx, chatSessionID)
 		payload, ok := chatAskPayloadFromEvent(e.Payload)
@@ -567,129 +451,164 @@ func (p *Patcher) clearTyping(ctx context.Context, chatSessionID pgtype.UUID) {
 	}
 }
 
-func (p *Patcher) scheduleStreamingStart(ctx context.Context, binding ChatSessionBinding, task db.AgentTaskQueue) error {
+// openCard records the card row for a task that has started running. Nothing
+// goes to Lark yet: the worker sends the card once StreamingDelay has passed,
+// so a task that answers before then never grows card chrome at all.
+func (p *Patcher) openCard(ctx context.Context, binding ChatSessionBinding, task db.AgentTaskQueue) error {
 	switch task.Status {
 	case "completed", "failed", "cancelled":
 		return nil
 	}
 	_, err := p.queries.CreateLarkOutboundCardMessage(ctx, CreateOutboundCardMessageParams{
-		ChatSessionID:        binding.ChatSessionID,
-		ChannelChatID:        string(outboundChatID(binding)),
-		ChannelCardMessageID: "",
-		Status:               string(CardStatusPending),
-		TaskID:               task.ID,
-		StartDelaySeconds:    p.cfg.StreamingDelay.Seconds(),
+		ChatSessionID: binding.ChatSessionID,
+		ChannelChatID: string(outboundChatID(binding)),
+		TaskID:        task.ID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
+		// A card already exists for this task: duplicate EventTaskRunning from a
+		// bus replay or a second replica.
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("schedule streaming card: %w", err)
+		return fmt.Errorf("open progress card: %w", err)
 	}
 	return nil
 }
 
-func (p *Patcher) scheduleTaskMessage(ctx context.Context, binding ChatSessionBinding, task db.AgentTaskQueue) error {
-	switch task.Status {
-	case "completed", "failed", "cancelled":
-		return nil
-	}
-	if _, err := p.queries.GetLarkOutboundCardByTask(ctx, task.ID); errors.Is(err, pgx.ErrNoRows) {
-		delay := p.cfg.StreamingDelay
-		if task.CreatedAt.Valid {
-			delay -= p.cfg.Now().Sub(task.CreatedAt.Time)
-			if delay < 0 {
-				delay = 0
-			}
-		}
-		_, err = p.queries.CreateLarkOutboundCardMessage(ctx, CreateOutboundCardMessageParams{
-			ChatSessionID: binding.ChatSessionID, ChannelChatID: string(outboundChatID(binding)),
-			ChannelCardMessageID: "", Status: string(CardStatusPending), TaskID: task.ID,
-			StartDelaySeconds: delay.Seconds(),
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("recover missing streaming schedule: %w", err)
-		}
-	} else if err != nil {
-		return fmt.Errorf("load streaming projection: %w", err)
-	}
-	_, err := p.queries.ScheduleLarkOutboundTaskMessage(ctx, ScheduleOutboundTaskMessageParams{
-		TaskID:             task.ID,
-		MinIntervalSeconds: p.cfg.MinPatchInterval.Seconds(),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("schedule streaming task message: %w", err)
-	}
-	return nil
-}
-
-func taskMessagePayloadFromEvent(payload any) (protocol.TaskMessagePayload, bool) {
-	switch value := payload.(type) {
-	case protocol.TaskMessagePayload:
-		return value, true
-	case *protocol.TaskMessagePayload:
-		if value != nil {
-			return *value, true
-		}
-	}
-	return protocol.TaskMessagePayload{}, false
-}
-
-// sendChatReply turns ChatDonePayload.Content into a Lark message.
-// The wire shape is chosen per-reply based on whether the body
-// contains any markdown syntax:
+// settleReply delivers a task's single terminal message and closes its card.
 //
-//   - Plain prose (no markdown) → `msg_type=text`. A one-line "Hi!"
-//     reply should feel like a normal IM message, not a notification
-//     card with chrome around it.
-//
-//   - Anything with markdown (headings, lists, code blocks, tables,
-//     bold/italic, links) → schema-2.0 interactive card with a
-//     `tag: "markdown"` body element so Lark's client renders the
-//     formatting instead of leaving raw `**bold**` characters in
-//     the transcript. The card is visually subtler than the legacy
-//     binding-prompt template — just a single markdown block, no
-//     header / icon / CTA buttons.
-//
-// Empty content is silently dropped: we'd rather show nothing than
-// "Done." (the prior card fallback that confused Bohan in the live
-// dev env). In practice an empty Content means the daemon completed
-// the task without producing visible output, which only happens for
-// edge cases like a chat task that just acknowledged a system event;
-// not emitting a message there is the right product call.
-func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentials, inst Installation, binding ChatSessionBinding, taskID pgtype.UUID, agentName string, payload any) error {
-	content := chatDoneContent(payload)
-	finalized, err := p.finalizeStreamCard(ctx, creds, inst, binding, taskID, agentName, content)
+// A live card is patched in place, so the progress the user was already
+// watching becomes the answer instead of scrolling away above a second message.
+// Otherwise the reply is sent on its own, and the wire shape is chosen per
+// reply: plain prose goes out as msg_type=text, because a one-line "Hi!" should
+// feel like a normal IM message rather than a notification card with chrome;
+// anything containing markdown goes out as a card with a markdown body element
+// so Lark renders the formatting instead of leaving raw ** in the transcript.
+func (p *Patcher) settleReply(ctx context.Context, creds InstallationCredentials, inst Installation, binding ChatSessionBinding, taskID pgtype.UUID, agentName string, in RenderInput) error {
+	card, owned, err := p.claimReply(ctx, taskID, in.Kind)
 	if err != nil {
 		return err
 	}
-	if finalized {
+	if !owned {
 		return nil
 	}
-	if content == "" {
-		return nil
+	in.AgentName = agentName
+	in.TaskID = taskID
+	if card.ChannelCardMessageID != "" {
+		patchErr := p.patchTerminalCard(ctx, creds, inst, binding, card, in)
+		if patchErr == nil {
+			p.recordDelivery(card.Status, "patched")
+			return nil
+		}
+		// The stale card is left on screen, but a card we cannot patch must
+		// never swallow the answer: say it again as an ordinary message.
+		p.cfg.Logger.Warn("lark: terminal card patch failed, falling back to a native reply",
+			"task_id", uuidString(taskID), "error", patchErr)
+		p.recordDelivery(card.Status, "patch_failed")
 	}
-	target := threadReplyTarget(binding)
-	if chatReplyNeedsConfirmationAction(content) {
+	return p.sendNativeReply(ctx, creds, inst, binding, taskID, in)
+}
+
+// claimReply flips the task's card into its terminal status and reports whether
+// this caller now owns the reply. chat:done, task:failed and a cancel all race
+// for the same task, and only the event that wins that write may speak. A row
+// that is already terminal means somebody else won. No row at all means the
+// task never opened a card, which is the ordinary fast-reply path and still
+// speaks.
+func (p *Patcher) claimReply(ctx context.Context, taskID pgtype.UUID, kind CardKind) (OutboundCardMessage, bool, error) {
+	status := CardStatusFinal
+	if kind == CardKindError {
+		status = CardStatusError
+	}
+	card, err := p.queries.SettleLarkOutboundCard(ctx, SettleOutboundCardParams{
+		TaskID: taskID, Status: string(status),
+	})
+	if err == nil {
+		return card, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return OutboundCardMessage{}, false, fmt.Errorf("settle outbound card: %w", err)
+	}
+	_, loadErr := p.queries.GetLarkOutboundCardByTask(ctx, taskID)
+	if errors.Is(loadErr, pgx.ErrNoRows) {
+		return OutboundCardMessage{}, true, nil
+	}
+	if loadErr != nil {
+		return OutboundCardMessage{}, false, fmt.Errorf("load outbound card: %w", loadErr)
+	}
+	return OutboundCardMessage{}, false, nil
+}
+
+func (p *Patcher) patchTerminalCard(ctx context.Context, creds InstallationCredentials, inst Installation, binding ChatSessionBinding, card OutboundCardMessage, in RenderInput) error {
+	cardJSON, err := p.renderTerminalCard(ctx, inst, binding, card.TaskID, in)
+	if err != nil {
+		return err
+	}
+	return p.client.PatchInteractiveCard(ctx, PatchCardParams{
+		InstallationID:    creds,
+		LarkCardMessageID: card.ChannelCardMessageID,
+		CardJSON:          cardJSON,
+	})
+}
+
+// renderTerminalCard picks the template for a settled reply. A reply that asks
+// the user to confirm something renders as the interactive confirmation card
+// when the requester's Lark identity is known, so the buttons stay usable after
+// the progress card turns into the answer.
+func (p *Patcher) renderTerminalCard(ctx context.Context, inst Installation, binding ChatSessionBinding, taskID pgtype.UUID, in RenderInput) (string, error) {
+	if in.Kind == CardKindFinal && chatReplyNeedsConfirmationAction(in.Content) {
 		if allowedOpenID, ok := p.confirmationAllowedOpenID(ctx, inst.WorkspaceID, binding.InstallationID, taskID); ok {
-			return p.sendConfirmationCard(ctx, creds, binding, taskID, allowedOpenID, content, target)
+			return renderConfirmationCard(in.Content, binding, uuidString(taskID), allowedOpenID, p.cfg.Now())
+		}
+	}
+	render, err := p.cfg.Renderer.Render(in)
+	if err != nil {
+		return "", fmt.Errorf("render terminal card: %w", err)
+	}
+	return render.JSON, nil
+}
+
+// sendNativeReply posts a settled reply as its own message: for tasks that
+// never grew a card, and as the fallback when a live card cannot be patched.
+func (p *Patcher) sendNativeReply(ctx context.Context, creds InstallationCredentials, inst Installation, binding ChatSessionBinding, taskID pgtype.UUID, in RenderInput) error {
+	target := threadReplyTarget(binding)
+	if in.Kind == CardKindError {
+		// A failure keeps its own card so it stays visually distinct from a
+		// successful reply.
+		render, err := p.cfg.Renderer.Render(in)
+		if err != nil {
+			return fmt.Errorf("render error card: %w", err)
+		}
+		return sendWithThreadFallback(p.cfg.Logger, "send error card", target, func(t ReplyTarget) error {
+			_, err := p.client.SendInteractiveCard(ctx, SendCardParams{
+				InstallationID: creds, ChatID: outboundChatID(binding), CardJSON: render.JSON, ReplyTarget: t,
+			})
+			return err
+		})
+	}
+	// Empty content is silently dropped: we'd rather show nothing than "Done."
+	// (the card fallback that confused Bohan in the live dev env). In practice
+	// an empty Content means the daemon completed the task without producing
+	// visible output, which only happens for edge cases like a chat task that
+	// just acknowledged a system event; not emitting a message there is the
+	// right product call.
+	if in.Content == "" {
+		return nil
+	}
+	if chatReplyNeedsConfirmationAction(in.Content) {
+		if allowedOpenID, ok := p.confirmationAllowedOpenID(ctx, inst.WorkspaceID, binding.InstallationID, taskID); ok {
+			return p.sendConfirmationCard(ctx, creds, binding, taskID, allowedOpenID, in.Content, target)
 		}
 		p.cfg.Logger.Warn("lark: confirmation prompt fell back to native reply because requester binding was unavailable",
 			"task_id", uuidString(taskID),
 			"chat_type", binding.ChatType)
 	}
-	if containsMarkdown(content) {
+	if containsMarkdown(in.Content) {
 		return sendWithThreadFallback(p.cfg.Logger, "send markdown card", target, func(t ReplyTarget) error {
 			_, err := p.client.SendMarkdownCard(ctx, SendMarkdownCardParams{
 				InstallationID: creds,
 				ChatID:         outboundChatID(binding),
-				Markdown:       content,
+				Markdown:       in.Content,
 				ReplyTarget:    t,
 			})
 			return err
@@ -699,42 +618,17 @@ func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentia
 		_, err := p.client.SendTextMessage(ctx, SendTextParams{
 			InstallationID: creds,
 			ChatID:         outboundChatID(binding),
-			Text:           content,
+			Text:           in.Content,
 			ReplyTarget:    t,
 		})
 		return err
 	})
 }
 
-func (p *Patcher) finalizeStreamCard(ctx context.Context, creds InstallationCredentials, inst Installation, binding ChatSessionBinding, taskID pgtype.UUID, agentName, content string) (bool, error) {
-	card, err := p.queries.GetLarkOutboundCardByTask(ctx, taskID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+func (p *Patcher) recordDelivery(status, outcome string) {
+	if p.cfg.Metrics != nil {
+		p.cfg.Metrics.RecordDelivery(status, outcome)
 	}
-	if err != nil {
-		return false, fmt.Errorf("load streaming card for final: %w", err)
-	}
-	card, err = p.queries.SetLarkOutboundTerminalDesired(ctx, SetOutboundTerminalDesiredParams{
-		TaskID: taskID, Status: string(CardStatusFinal), TerminalContent: content,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		current, loadErr := p.queries.GetLarkOutboundCardByTask(ctx, taskID)
-		if loadErr == nil && (current.Status == string(CardStatusFinal) || current.Status == string(CardStatusError)) {
-			return true, nil
-		}
-		return false, loadErr
-	}
-	if err != nil {
-		return true, fmt.Errorf("queue final streaming card: %w", err)
-	}
-	// An unsent, unleased row settled locally: preserve the native fast reply.
-	if card.ChannelCardMessageID == "" && card.ChannelCardID == "" && card.AppliedRevision == card.DesiredRevision {
-		return false, nil
-	}
-	if err := p.flushTask(ctx, taskID); err != nil {
-		return true, err
-	}
-	return true, nil
 }
 
 func (p *Patcher) sendConfirmationCard(ctx context.Context, creds InstallationCredentials, binding ChatSessionBinding, taskID pgtype.UUID, allowedOpenID, content string, target ReplyTarget) error {
@@ -858,69 +752,6 @@ func (p *Patcher) installationCredentials(inst Installation) (InstallationCreden
 		creds.TenantKey = inst.TenantKey.String
 	}
 	return creds, nil
-}
-
-// fail settles an existing live card as an error. Fast failures that never
-// crossed StreamingDelay retain the existing one-shot error-card behavior.
-func (p *Patcher) fail(ctx context.Context, creds InstallationCredentials, binding ChatSessionBinding, taskID pgtype.UUID, agentName string, payload any) error {
-	errorMessage := errorMessageFromPayload(payload)
-	patched, err := p.queueTerminalStreamCard(ctx, taskID, CardStatusError, errorMessage)
-	if err != nil {
-		return err
-	}
-	if patched {
-		return p.flushTask(ctx, taskID)
-	}
-	render, err := p.cfg.Renderer.Render(RenderInput{
-		Kind:         CardKindError,
-		AgentName:    agentName,
-		TaskID:       taskID,
-		ErrorMessage: errorMessage,
-	})
-	if err != nil {
-		return fmt.Errorf("render error card: %w", err)
-	}
-	return sendWithThreadFallback(p.cfg.Logger, "send error card", threadReplyTarget(binding), func(t ReplyTarget) error {
-		_, err := p.client.SendInteractiveCard(ctx, SendCardParams{
-			InstallationID: creds,
-			ChatID:         outboundChatID(binding),
-			CardJSON:       render.JSON,
-			ReplyTarget:    t,
-		})
-		return err
-	})
-}
-
-func (p *Patcher) cancelStreamCard(ctx context.Context, creds InstallationCredentials, binding ChatSessionBinding, taskID pgtype.UUID, agentName string) error {
-	queued, err := p.queueTerminalStreamCard(ctx, taskID, CardStatusFinal, "已取消")
-	if err != nil || !queued {
-		return err
-	}
-	return p.flushTask(ctx, taskID)
-}
-
-func (p *Patcher) queueTerminalStreamCard(ctx context.Context, taskID pgtype.UUID, status CardStatus, content string) (bool, error) {
-	card, err := p.queries.GetLarkOutboundCardByTask(ctx, taskID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("load streaming card for terminal patch: %w", err)
-	}
-	card, err = p.queries.SetLarkOutboundTerminalDesired(ctx, SetOutboundTerminalDesiredParams{
-		TaskID: taskID, Status: string(status), TerminalContent: content,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		current, loadErr := p.queries.GetLarkOutboundCardByTask(ctx, taskID)
-		if loadErr == nil && (current.Status == string(CardStatusFinal) || current.Status == string(CardStatusError)) {
-			return true, nil
-		}
-		return false, loadErr
-	}
-	if err != nil {
-		return true, fmt.Errorf("queue terminal streaming card: %w", err)
-	}
-	return card.ChannelCardMessageID != "" || card.ChannelCardID != "" || card.AppliedRevision < card.DesiredRevision, nil
 }
 
 // taskAndSessionFromEvent parses the typed-ish payload broadcastTaskEvent

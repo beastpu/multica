@@ -314,7 +314,18 @@ func confirmationActionMessage(action, message string) (string, bool) {
 	}
 }
 
+// renderConfirmationCard builds the chat confirmation prompt: the agent's
+// question plus a confirm/cancel pair whose payload rides back through
+// decodeChatConfirmationCardAction.
+//
+// It is schema 2.0 for both of its uses — sent on its own, and patched over a
+// live progress card. One schema everywhere means no update ever turns a card
+// into a different schema, which is an assumption about Lark we would rather
+// not make. Buttons therefore carry their payload in `behaviors` callbacks
+// rather than the schema-1.0 top-level `value`; the trigger event normalizes
+// both into action.value, so the decode path is unaffected.
 func renderConfirmationCard(content string, binding ChatSessionBinding, taskID, allowedOpenID string, now time.Time) (string, error) {
+	content = truncateUTF8Bytes(content, 16*1024)
 	confirmMessage, ok := chatConfirmationReplyMessage(content)
 	if !ok {
 		confirmMessage = confirmationMessageConfirm
@@ -326,94 +337,6 @@ func renderConfirmationCard(content string, binding ChatSessionBinding, taskID, 
 	// re-enters the inbound pipeline, so ChatID must be the REAL chat id
 	// (a composite topic binding key is not a valid Lark chat id); together
 	// with ThreadID it re-derives the same per-topic session key.
-	chatID := string(outboundChatID(binding))
-	embeddedContent := truncateConfirmationCardContent(content)
-	confirm := confirmationCardValue{
-		Kind:          confirmationCardActionKind,
-		Action:        confirmationActionConfirm,
-		Message:       confirmMessage,
-		Content:       embeddedContent,
-		TaskID:        taskID,
-		ChatID:        chatID,
-		ChatType:      binding.ChatType,
-		AllowedOpenID: allowedOpenID,
-		IssuedAtUnix:  issuedAt,
-		ExpiresAtUnix: expiresAt,
-	}
-	cancel := confirmationCardValue{
-		Kind:          confirmationCardActionKind,
-		Action:        confirmationActionCancel,
-		Message:       cancelMessage,
-		Content:       embeddedContent,
-		TaskID:        taskID,
-		ChatID:        chatID,
-		ChatType:      binding.ChatType,
-		AllowedOpenID: allowedOpenID,
-		IssuedAtUnix:  issuedAt,
-		ExpiresAtUnix: expiresAt,
-	}
-	if binding.LastThreadID.Valid {
-		confirm.ThreadID = binding.LastThreadID.String
-		cancel.ThreadID = binding.LastThreadID.String
-	}
-	card := map[string]any{
-		"config": map[string]any{
-			"wide_screen_mode": true,
-		},
-		"header": map[string]any{
-			"template": "blue",
-			"title": map[string]any{
-				"tag":     "plain_text",
-				"content": "需要确认",
-			},
-		},
-		"elements": []any{
-			map[string]any{
-				"tag": "div",
-				"text": map[string]any{
-					"tag":     "lark_md",
-					"content": content,
-				},
-			},
-			map[string]any{"tag": "hr"},
-			map[string]any{
-				"tag": "action",
-				"actions": []any{
-					map[string]any{
-						"tag":   "button",
-						"text":  map[string]any{"tag": "plain_text", "content": confirmMessage},
-						"type":  "primary",
-						"value": confirm,
-					},
-					map[string]any{
-						"tag":   "button",
-						"text":  map[string]any{"tag": "plain_text", "content": cancelMessage},
-						"type":  "default",
-						"value": cancel,
-					},
-				},
-			},
-		},
-	}
-	raw, err := json.Marshal(card)
-	if err != nil {
-		return "", err
-	}
-	return string(raw), nil
-}
-
-// renderConfirmationCardV2 is the CardKit terminal variant. Streaming is
-// explicitly closed before interactive controls appear, as CardKit rejects
-// callback-driven updates while streaming_mode remains enabled.
-func renderConfirmationCardV2(content string, binding ChatSessionBinding, taskID, allowedOpenID string, now time.Time) (string, error) {
-	content = truncateUTF8Bytes(content, 16*1024)
-	confirmMessage, ok := chatConfirmationReplyMessage(content)
-	if !ok {
-		confirmMessage = confirmationMessageConfirm
-	}
-	cancelMessage := confirmationCancelMessage(confirmMessage)
-	issuedAt := now.Unix()
-	expiresAt := now.Add(confirmationCardTTL).Unix()
 	chatID := string(outboundChatID(binding))
 	embeddedContent := truncateConfirmationCardContent(content)
 	value := func(action, message string) confirmationCardValue {
@@ -431,9 +354,11 @@ func renderConfirmationCardV2(content string, binding ChatSessionBinding, taskID
 	card := map[string]any{
 		"schema": "2.0",
 		"config": map[string]any{
-			"update_multi":   true,
-			"streaming_mode": false,
-			"summary":        map[string]any{"content": "需要确认"},
+			"wide_screen_mode": true,
+			// Shared card: the receipt that replaces this one after a click has
+			// to reach everyone who can see it, not just the clicker.
+			"update_multi": true,
+			"summary":      map[string]any{"content": "需要确认"},
 		},
 		"header": map[string]any{
 			"template": "blue",
@@ -476,26 +401,23 @@ func truncateConfirmationCardContent(content string) string {
 	return string(runes[:maxConfirmationCardContentRunes]) + "…"
 }
 
-// RenderIssueConfirmationResolvedCard replaces an issue inbox confirmation
-// card after the user clicks one of its buttons. The original agent prompt is
-// kept visible, but the interactive controls are removed so the card no longer
-// invites a second action.
-func RenderIssueConfirmationResolvedCard(content string, action IssueConfirmationCardAction) (string, error) {
-	return renderConfirmationResolvedCard(content, action.Action, action.Message)
+// confirmationOutcome is what a receipt has to say once a confirmation card
+// has been clicked: which way it went, and the words the clicked button
+// carried. Shared by both flows; only the card body around it differs.
+type confirmationOutcome struct {
+	Status   string
+	Template string
+	Result   string
+	Content  string
 }
 
-// renderConfirmationResolvedCard is the shared receipt card for both the
-// issue and chat confirmation flows: original prompt kept, buttons removed,
-// outcome line appended.
-func renderConfirmationResolvedCard(content, action, rawMessage string) (string, error) {
-	status := "已处理"
-	template := "blue"
+func confirmationOutcomeOf(content, action, rawMessage string) confirmationOutcome {
+	out := confirmationOutcome{Status: "已处理", Template: "blue"}
 	switch action {
 	case confirmationActionConfirm:
-		status = "已确认"
-		template = "green"
+		out.Status, out.Template = "已确认", "green"
 	case confirmationActionCancel:
-		status = "已取消"
+		out.Status = "已取消"
 	}
 	message := strings.TrimSpace(rawMessage)
 	if message == "" {
@@ -503,24 +425,36 @@ func renderConfirmationResolvedCard(content, action, rawMessage string) (string,
 			message = fallback
 		}
 	}
-	result := status
+	out.Result = out.Status
 	if message != "" {
-		result += "：" + message
+		out.Result += "：" + message
 	}
-	content = strings.TrimSpace(content)
-	if content == "" {
-		content = result
+	out.Content = strings.TrimSpace(content)
+	if out.Content == "" {
+		out.Content = out.Result
 	}
+	return out
+}
+
+// RenderIssueConfirmationResolvedCard replaces an issue inbox confirmation
+// card after the user clicks one of its buttons. The original agent prompt is
+// kept visible, but the interactive controls are removed so the card no longer
+// invites a second action.
+//
+// Schema 1.0, matching the issue inbox confirmation card it replaces. A receipt
+// and the card it overwrites must agree on schema.
+func RenderIssueConfirmationResolvedCard(content string, action IssueConfirmationCardAction) (string, error) {
+	out := confirmationOutcomeOf(content, action.Action, action.Message)
 	card := map[string]any{
 		"config": map[string]any{
 			"wide_screen_mode": true,
 			"update_multi":     true,
 		},
 		"header": map[string]any{
-			"template": template,
+			"template": out.Template,
 			"title": map[string]any{
 				"tag":     "plain_text",
-				"content": status,
+				"content": out.Status,
 			},
 		},
 		"elements": []any{
@@ -528,7 +462,7 @@ func renderConfirmationResolvedCard(content, action, rawMessage string) (string,
 				"tag": "div",
 				"text": map[string]any{
 					"tag":     "lark_md",
-					"content": content,
+					"content": out.Content,
 				},
 			},
 			map[string]any{"tag": "hr"},
@@ -536,8 +470,39 @@ func renderConfirmationResolvedCard(content, action, rawMessage string) (string,
 				"tag": "div",
 				"text": map[string]any{
 					"tag":     "lark_md",
-					"content": "**" + result + "**",
+					"content": "**" + out.Result + "**",
 				},
+			},
+		},
+	}
+	raw, err := json.Marshal(card)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// renderChatConfirmationResolvedCard is the same receipt for the chat flow,
+// in schema 2.0 to match renderConfirmationCard. Prompt kept, buttons gone,
+// outcome appended.
+func renderChatConfirmationResolvedCard(content, action, rawMessage string) (string, error) {
+	out := confirmationOutcomeOf(content, action, rawMessage)
+	card := map[string]any{
+		"schema": "2.0",
+		"config": map[string]any{
+			"wide_screen_mode": true,
+			"update_multi":     true,
+			"summary":          map[string]any{"content": out.Status},
+		},
+		"header": map[string]any{
+			"template": out.Template,
+			"title":    map[string]any{"tag": "plain_text", "content": out.Status},
+		},
+		"body": map[string]any{
+			"elements": []any{
+				map[string]any{"tag": "markdown", "element_id": "confirmation_content", "content": out.Content},
+				map[string]any{"tag": "hr", "element_id": "confirmation_rule"},
+				map[string]any{"tag": "markdown", "element_id": "confirmation_result", "content": "**" + out.Result + "**"},
 			},
 		},
 	}
@@ -562,7 +527,7 @@ func RenderIssueConfirmationCardActionResponse(content string, action IssueConfi
 // response for a chat confirmation click from the button value alone (the
 // callback carries no card body — Content is the embedded prompt copy).
 func renderChatConfirmationCardActionResponse(value confirmationCardValue) (string, error) {
-	cardJSON, err := renderConfirmationResolvedCard(value.Content, value.Action, value.Message)
+	cardJSON, err := renderChatConfirmationResolvedCard(value.Content, value.Action, value.Message)
 	if err != nil {
 		return "", err
 	}

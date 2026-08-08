@@ -418,28 +418,6 @@ type ChannelOutboundCardMessage struct {
 	Status               string             `json:"status"`
 	LastPatchedAt        pgtype.Timestamptz `json:"last_patched_at"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	ChannelCardID        string             `json:"channel_card_id"`
-	Transport            string             `json:"transport"`
-	DesiredRevision      int64              `json:"desired_revision"`
-	AppliedRevision      int64              `json:"applied_revision"`
-	InflightRevision     pgtype.Int8        `json:"inflight_revision"`
-	InflightSequence     pgtype.Int4        `json:"inflight_sequence"`
-	InflightCardJson     string             `json:"inflight_card_json"`
-	OperationSequence    int32              `json:"operation_sequence"`
-	ProjectedSeq         int32              `json:"projected_seq"`
-	VisibleText          string             `json:"visible_text"`
-	CurrentStage         string             `json:"current_stage"`
-	FilesReadCount       int32              `json:"files_read_count"`
-	FilesEditedCount     int32              `json:"files_edited_count"`
-	SearchesCount        int32              `json:"searches_count"`
-	CommandsCount        int32              `json:"commands_count"`
-	TerminalContent      string             `json:"terminal_content"`
-	NextAttemptAt        pgtype.Timestamptz `json:"next_attempt_at"`
-	LeaseToken           pgtype.UUID        `json:"lease_token"`
-	LeaseExpiresAt       pgtype.Timestamptz `json:"lease_expires_at"`
-	AttemptCount         int32              `json:"attempt_count"`
-	DeliveryFailedAt     pgtype.Timestamptz `json:"delivery_failed_at"`
-	LastError            string             `json:"last_error"`
 }
 
 type ChannelUserBinding struct {
