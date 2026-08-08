@@ -55,7 +55,7 @@ func TestWorkflowAgentCriticRetriesOneUnreadableVerdict(t *testing.T) {
 
 			// First verdict: sound, unreadable.
 			if err := testHandler.recordWorkflowAgentCriticVerdict(
-				ctx, criticTask, unreadableCriticVerdict,
+				ctx, criticTask, unreadableCriticVerdict, "", "",
 			); err != nil {
 				t.Fatalf("record first Critic verdict: %v", err)
 			}
@@ -88,7 +88,7 @@ func TestWorkflowAgentCriticRetriesOneUnreadableVerdict(t *testing.T) {
 
 			// Second verdict.
 			if err := testHandler.recordWorkflowAgentCriticVerdict(
-				ctx, retryTask, test.retryOutput,
+				ctx, retryTask, test.retryOutput, "", "",
 			); err != nil {
 				t.Fatalf("record retry Critic verdict: %v", err)
 			}
@@ -259,5 +259,75 @@ func TestSweeperDoesNotAskForAnExecutorForTheCritic(t *testing.T) {
 			"an agent-reviewed node was told it needs a manual executor: %s",
 			node.WaitingReasons,
 		)
+	}
+}
+
+// A verdict declared with `multica workflow review` decides the node, whatever
+// the agent then wrote in prose.
+//
+// This is the point of the command. Every Critic failure this code has seen
+// came from reading a decision out of free text: the reviewer that wrote
+// `{"verdict":"approve"}` while rejecting, the one that tried fourteen request
+// bodies, the three that used a vocabulary the protocol never showed them. A
+// declared decision is checked where it is stated and cannot drift on the way
+// here.
+func TestDeclaredCriticDecisionOverridesTheOutput(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		decision    string
+		reason      string
+		output      string
+		wantAttempt int32
+		wantStatus  string
+	}{
+		{
+			name: "declared fail sends the node back", decision: "fail",
+			reason: "the button was removed, not wired",
+			// Prose that would have parsed as an approval. It must not.
+			output:      `{"result":"pass","reason":"looks good to me"}`,
+			wantAttempt: 2, wantStatus: "running",
+		},
+		{
+			name: "declared pass advances", decision: "pass", reason: "meets the criteria",
+			// Prose the parser cannot read at all. With a declared decision
+			// there is nothing to read.
+			output:      "I reviewed it and it looks fine.",
+			wantAttempt: 1, wantStatus: "completed",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+			cleanupWorkflowRuntimeTest(t)
+			ctx := context.Background()
+			workerID := createHandlerTestAgent(t, "declared-worker-"+test.name, nil)
+			criticID := createHandlerTestAgent(t, "declared-critic-"+test.name, nil)
+
+			work, instanceID := startCriticRetryFixture(t, workerID, criticID, test.name)
+			criticTask := latestCriticTaskForTest(t, work)
+
+			if err := testHandler.recordWorkflowAgentCriticVerdict(
+				ctx, criticTask, test.output, test.decision, test.reason,
+			); err != nil {
+				t.Fatalf("record declared verdict: %v", err)
+			}
+
+			node := latestWorkflowNodeForTest(t, instanceID, "work")
+			if node.Attempt != test.wantAttempt {
+				t.Fatalf("attempt = %d, want %d", node.Attempt, test.wantAttempt)
+			}
+			instance, err := testHandler.Queries.GetWorkflowInstanceInWorkspace(
+				ctx,
+				db.GetWorkflowInstanceInWorkspaceParams{
+					ID: parseUUID(instanceID), WorkspaceID: parseUUID(testWorkspaceID),
+				},
+			)
+			if err != nil || instance.Status != test.wantStatus {
+				t.Fatalf("instance status = %q, want %q (err=%v)", instance.Status, test.wantStatus, err)
+			}
+			// No retry task: there was nothing to re-ask.
+			if after := latestCriticTaskForTest(t, work); uuidToString(after.ID) != uuidToString(criticTask.ID) {
+				t.Fatal("a declared decision still triggered a retry")
+			}
+		})
 	}
 }

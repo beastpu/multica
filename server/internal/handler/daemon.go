@@ -2966,6 +2966,12 @@ type TaskCompleteRequest struct {
 	Output    string `json:"output"`
 	SessionID string `json:"session_id"` // Claude session ID for future resumption
 	WorkDir   string `json:"work_dir"`   // working directory used during execution
+	// ReviewDecision is the verdict a Critic recorded with
+	// `multica workflow review`, already checked against the allowed set by the
+	// command that accepted it. It is authoritative: the agent's prose is a
+	// report of the review, not the review.
+	ReviewDecision string `json:"review_decision,omitempty"`
+	ReviewReason   string `json:"review_reason,omitempty"`
 }
 
 func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
@@ -2995,7 +3001,9 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := h.recordWorkflowAgentCriticVerdict(r.Context(), *task, req.Output); err != nil {
+	if err := h.recordWorkflowAgentCriticVerdict(
+		r.Context(), *task, req.Output, req.ReviewDecision, req.ReviewReason,
+	); err != nil {
 		slog.Warn("record workflow critic verdict failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to record workflow critic verdict")
 		return

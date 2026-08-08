@@ -197,6 +197,34 @@ func TestRenderIssueContext_WorkflowCriticProtocol(t *testing.T) {
 	}
 }
 
+// The protocol must hand the reviewer a command. Left to state a verdict in
+// prose, three reviews in a row wrote a vocabulary the server does not accept,
+// and one spent its whole run guessing request bodies against an endpoint that
+// refuses agents.
+func TestRenderIssueContext_WorkflowCriticIsGivenACommand(t *testing.T) {
+	workflow := workflowFixture()
+	workflow.Phase = "critic"
+	md := renderIssueContext("claude", TaskContextForEnv{Workflow: workflow})
+
+	for _, want := range []string{
+		"multica workflow review --decision",
+		"pass|fail|blocked",
+		"--reason",
+		// The prose form survives only as a fallback, and must read as one.
+		"If the command is unavailable",
+		`{"result":"pass","reason":"short review opinion"}`,
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("critic protocol is missing %q:\n%s", want, md)
+		}
+	}
+	// The instruction it used to carry is gone: there IS a command now, and
+	// telling a reviewer there is none sends it back to guessing.
+	if strings.Contains(md, "Do not call an API or a `multica` command") {
+		t.Errorf("the protocol still forbids the command it now requires:\n%s", md)
+	}
+}
+
 // The retry has to name the objection and quote the Critic's own words. Told
 // only "your verdict was invalid", a reviewer re-reads the work and may land
 // somewhere else; shown what it wrote, it restates the judgement it already

@@ -2294,7 +2294,7 @@ func TestWorkflowAgentCriticCompletion(t *testing.T) {
 				t.Fatalf("unexpected Critic task: task=%#v context=%#v", criticTask, direct)
 			}
 			if err := testHandler.recordWorkflowAgentCriticVerdict(
-				ctx, criticTask, test.output,
+				ctx, criticTask, test.output, "", "",
 			); err != nil {
 				t.Fatalf("record Critic verdict: %v", err)
 			}

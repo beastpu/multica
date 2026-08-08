@@ -146,6 +146,29 @@ func daemonTaskWorkflow() (instanceID, nodeKey string) {
 		strings.TrimSpace(marker.WorkflowNodeKey)
 }
 
+// daemonTaskWorkflowNodeInstanceID reads which attempt of the node this task
+// belongs to. A rework opens a new node instance in the same work tree, so a
+// verdict has to name the attempt it judged or the next one inherits it.
+func daemonTaskWorkflowNodeInstanceID() string {
+	markerPath := daemonTaskContextMarkerPath()
+	if markerPath == "" {
+		return ""
+	}
+	data, err := os.ReadFile(markerPath)
+	if err != nil {
+		return ""
+	}
+	var marker struct {
+		ManagedBy              string `json:"managed_by"`
+		WorkflowNodeInstanceID string `json:"workflow_node_instance_id"`
+	}
+	if json.Unmarshal(data, &marker) != nil ||
+		marker.ManagedBy != execenv.TaskContextMarkerManagedBy {
+		return ""
+	}
+	return strings.TrimSpace(marker.WorkflowNodeInstanceID)
+}
+
 // errNotAWorkflowNode explains the failure in terms of what the caller
 // actually has. With no issue and no node in the marker, "issue  is not a
 // workflow node issue" named an empty string as the culprit.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -346,6 +347,8 @@ func (h *Handler) recordWorkflowAgentCriticVerdict(
 	ctx context.Context,
 	task db.AgentTaskQueue,
 	output string,
+	reviewDecision string,
+	reviewReason string,
 ) error {
 	direct, ok := service.ParseWorkflowNodeTaskContext(task)
 	if !ok || direct.Phase != service.WorkflowNodeTaskPhaseCritic {
@@ -392,6 +395,22 @@ func (h *Handler) recordWorkflowAgentCriticVerdict(
 		return err
 	}
 
+	// A verdict declared through `multica workflow review` is the verdict. It
+	// was checked against the allowed set where the reviewer stated it, so
+	// there is nothing here to infer and nothing to get wrong.
+	//
+	// Reading it out of the agent's prose is the fallback, and it is kept only
+	// for a reviewer that finished without running the command. That inference
+	// is why this function exists in the shape it does: the same reviewer wrote
+	// `{"verdict":"approve"}` when it meant to reject, and a lenient reader
+	// would have approved a fix that deleted the button it was asked to wire.
+	if reviewDecision != "" {
+		return h.applyWorkflowCriticVerdict(
+			ctx, task, instance, node, nodeDefinition,
+			reviewDecision, strings.TrimSpace(reviewReason), output,
+		)
+	}
+
 	critic, parseErr := workflowdomain.ParseCriticOutput(output)
 	result := critic.Result
 	reason := critic.Reason
@@ -420,9 +439,30 @@ func (h *Handler) recordWorkflowAgentCriticVerdict(
 		// left to inspect.
 		reason = workflowdomain.DescribeCriticParseFailure(parseErr, output)
 	}
+	return h.applyWorkflowCriticVerdict(
+		ctx, task, instance, node, nodeDefinition, result, reason, output,
+	)
+}
+
+// applyWorkflowCriticVerdict records one verdict and everything that follows
+// from it — artifact review status, rework, instance progression — inside a
+// single transaction. Both ways of arriving at a verdict end here, so a
+// declared decision and an inferred one cannot diverge in what they do.
+func (h *Handler) applyWorkflowCriticVerdict(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+	result string,
+	reason string,
+	output string,
+) error {
+	workspaceID := node.WorkspaceID
 	if result == "pass" && reason == "" {
 		reason = "Approved by workflow Critic"
 	}
+
 
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {

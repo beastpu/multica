@@ -224,17 +224,24 @@ func renderWorkflowCriticProtocol(b *strings.Builder, workflow *WorkflowTaskCont
 		b.WriteString(".\n")
 	}
 	b.WriteString("\nAlso apply your own agent Instructions as domain-specific review guidance. Approve only when the delivered result satisfies the requirement and node obligations. On rejection, give a concise, actionable reason the Worker can use for rework.\n\n")
-	// Said first, and plainly, because a reviewer that goes looking for an
-	// endpoint does not come back: WTE-14841's Critic spent its entire run
-	// guessing request bodies against the verdicts API — which refuses agents
-	// by design — and never delivered the review it had already completed.
-	b.WriteString("Do not call an API or a `multica` command to record this verdict. There is none for reviewers: the server reads your final output. Your final output must be exactly one JSON object with no prose or Markdown fence:\n\n")
-	b.WriteString("```json\n{\"result\":\"pass\",\"reason\":\"short review opinion\"}\n```\n\n")
+	// A reviewer looks for a command, because that is what an agent does with
+	// a decision. It used to have none, and the consequences were both kinds of
+	// wrong: one run spent itself guessing request bodies against an API that
+	// refuses agents, and three reviews stated their verdict in prose the
+	// server then had to guess at. Give it the command.
+	b.WriteString("State your verdict by running:\n\n")
 	fmt.Fprintf(
 		b,
-		"`result` is one of %s. Use `fail` to send the node back for rework, and `blocked` when you cannot judge it at all; both require a `reason` saying what must change or what is missing. `pass` advances the workflow.\n",
-		"`"+strings.Join(workflowdomain.CriticResults, "`, `")+"`",
+		"```bash\nmultica workflow review --decision %s --reason \"what must change\"\n```\n\n",
+		strings.Join(workflowdomain.CriticResults, "|"),
 	)
+	b.WriteString("Run it once, then finish the task. The verdict is applied when the task ends, so nothing is recorded twice and nothing is recorded early.\n\n")
+	fmt.Fprintf(
+		b,
+		"Use `fail` to send the node back for rework, and `blocked` when you cannot judge it at all; both need a `--reason` the worker can act on. `pass` advances the workflow.\n\n",
+	)
+	b.WriteString("If the command is unavailable, fall back to ending with exactly one JSON object and no prose or fence:\n\n")
+	b.WriteString("```json\n{\"result\":\"pass\",\"reason\":\"short review opinion\"}\n```\n")
 	renderWorkflowVerdictRetry(b, workflow.VerdictRetry)
 }
 

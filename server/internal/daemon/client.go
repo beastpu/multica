@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -408,8 +409,19 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 	}, nil)
 }
 
-func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string) error {
+func (c *Client) CompleteTask(
+	ctx context.Context,
+	taskID, output, branchName, sessionID, workDir string,
+	reviewDecision *execenv.ReviewDecision,
+) error {
 	body := map[string]any{"output": output}
+	// The verdict rides the completion callback, which is already the single
+	// owner of task state. A separate write would let a review land twice, or
+	// land without the task ending.
+	if reviewDecision != nil {
+		body["review_decision"] = reviewDecision.Decision
+		body["review_reason"] = reviewDecision.Reason
+	}
 	if branchName != "" {
 		body["branch_name"] = branchName
 	}

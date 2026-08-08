@@ -171,6 +171,11 @@ type terminalTaskReport struct {
 	sessionID     string
 	workDir       string
 	failureReason string
+	// reviewDecision is set only for a review task whose Critic recorded a
+	// verdict with `multica workflow review`. It travels beside the output
+	// rather than inside it so the server never has to read a judgement out
+	// of prose.
+	reviewDecision *execenv.ReviewDecision
 }
 
 type executionEnvironmentCommand func() ([]string, error)
@@ -3638,6 +3643,10 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			branchName: result.BranchName,
 			sessionID:  result.SessionID,
 			workDir:    result.WorkDir,
+			// Read at completion, not while the agent runs: a verdict recorded
+			// mid-task and then abandoned is not a verdict, and the task ending
+			// is what makes it final.
+			reviewDecision: execenv.ReadReviewDecision(result.WorkDir),
 		})
 		if err == nil {
 			return
@@ -3721,7 +3730,10 @@ func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTa
 
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir)
+		return d.client.CompleteTask(
+			ctx, report.taskID, report.output, report.branchName,
+			report.sessionID, report.workDir, report.reviewDecision,
+		)
 	case terminalTaskReportFail:
 		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.failureReason)
 	default:
