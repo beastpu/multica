@@ -2593,7 +2593,7 @@ UI：
 
 | RFC 能力 | 实现结果与主要位置 |
 | --- | --- |
-| Domain Foundation | `server/migrations/202_workflow_domain.*` 至 `239_workflow_primary_constraints.*` 建立模板、不可变版本、实例、节点 attempt、任务绑定、参与者、执行者解析、Submission、Verdict、Confirmation、Acceptance 与事件模型；关系由应用层和事务维护，不引入外键或级联删除。 |
+| Domain Foundation | `server/migrations/262_workflow_domain.*` 至 `299_workflow_primary_constraints.*` 建立模板、不可变版本、实例、节点 attempt、任务绑定、参与者、执行者解析、Submission、Verdict、Confirmation、Acceptance 与事件模型；关系由应用层和事务维护，不引入外键或级联删除。 |
 | 模板生命周期 | `server/internal/handler/workflow_template.go` 支持模板 CRUD、单 Draft、定义校验、发布不可变版本、归档；`server/internal/workflow/definition.go`、`condition.go`、`graph.go` 承担纯定义校验和图语义。 |
 | 原子启动 | `server/internal/handler/workflow_create.go` 支持“新建宿主 issue 并启动”和“从已有 issue 启动”，带客户端幂等键、单宿主活动实例约束和事务回滚。Standalone Workflow 未开放。 |
 | Activity Runtime | `server/internal/handler/workflow_graph_runtime.go`、`workflow_node_actions.go`、`workflow_acceptance.go` 实现 serial、parallel、gateway、join、skip、受控 rollback、新 attempt、结构化 Submission/Verdict、Member Confirmation 与显式业务验收。 |

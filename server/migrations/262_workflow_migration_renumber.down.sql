@@ -1,0 +1,63 @@
+-- Put the records back on the names the files had before the renumbering.
+--
+-- The down direction exists so a rollback that also restores the old files
+-- finds records it recognises. It is deliberately the exact inverse: a
+-- half-applied rename is worse than either end of it.
+
+UPDATE schema_migrations SET version = '202_workflow_domain' WHERE version = '263_workflow_domain';
+UPDATE schema_migrations SET version = '203_workflow_template_workspace_status_index' WHERE version = '264_workflow_template_workspace_status_index';
+UPDATE schema_migrations SET version = '204_workflow_template_version_unique_index' WHERE version = '265_workflow_template_version_unique_index';
+UPDATE schema_migrations SET version = '205_workflow_template_one_draft_index' WHERE version = '266_workflow_template_one_draft_index';
+UPDATE schema_migrations SET version = '206_workflow_instance_active_host_index' WHERE version = '267_workflow_instance_active_host_index';
+UPDATE schema_migrations SET version = '207_workflow_instance_workspace_status_index' WHERE version = '268_workflow_instance_workspace_status_index';
+UPDATE schema_migrations SET version = '208_workflow_node_instance_attempt_index' WHERE version = '269_workflow_node_instance_attempt_index';
+UPDATE schema_migrations SET version = '209_workflow_node_instance_status_index' WHERE version = '270_workflow_node_instance_status_index';
+UPDATE schema_migrations SET version = '210_workflow_node_task_key_index' WHERE version = '271_workflow_node_task_key_index';
+UPDATE schema_migrations SET version = '211_workflow_node_task_materialization_index' WHERE version = '272_workflow_node_task_materialization_index';
+UPDATE schema_migrations SET version = '212_workflow_node_submission_revision_index' WHERE version = '273_workflow_node_submission_revision_index';
+UPDATE schema_migrations SET version = '213_workflow_node_verdict_revision_index' WHERE version = '274_workflow_node_verdict_revision_index';
+UPDATE schema_migrations SET version = '214_workflow_acceptance_revision_index' WHERE version = '275_workflow_acceptance_revision_index';
+UPDATE schema_migrations SET version = '215_workflow_event_idempotency_index' WHERE version = '276_workflow_event_idempotency_index';
+UPDATE schema_migrations SET version = '216_workflow_event_instance_created_index' WHERE version = '277_workflow_event_instance_created_index';
+UPDATE schema_migrations SET version = '217_issue_workflow_origin_index' WHERE version = '278_issue_workflow_origin_index';
+UPDATE schema_migrations SET version = '218_workflow_role_assignment_unique_index' WHERE version = '279_workflow_role_assignment_unique_index';
+UPDATE schema_migrations SET version = '219_workflow_template_version_revision' WHERE version = '280_workflow_template_version_revision';
+UPDATE schema_migrations SET version = '220_workflow_start_idempotency_index' WHERE version = '281_workflow_start_idempotency_index';
+UPDATE schema_migrations SET version = '221_workflow_confirmation_member_index' WHERE version = '282_workflow_confirmation_member_index';
+UPDATE schema_migrations SET version = '222_workflow_node_task_issue_index' WHERE version = '283_workflow_node_task_issue_index';
+UPDATE schema_migrations SET version = '223_workflow_node_participant_node_index' WHERE version = '284_workflow_node_participant_node_index';
+UPDATE schema_migrations SET version = '224_workflow_executor_resolution_lookup_index' WHERE version = '285_workflow_executor_resolution_lookup_index';
+UPDATE schema_migrations SET version = '225_workflow_acceptance_idempotency_index' WHERE version = '286_workflow_acceptance_idempotency_index';
+UPDATE schema_migrations SET version = '226_workflow_template_primary_index' WHERE version = '287_workflow_template_primary_index';
+UPDATE schema_migrations SET version = '227_workflow_template_version_primary_index' WHERE version = '288_workflow_template_version_primary_index';
+UPDATE schema_migrations SET version = '228_workflow_instance_primary_index' WHERE version = '289_workflow_instance_primary_index';
+UPDATE schema_migrations SET version = '229_workflow_role_assignment_primary_index' WHERE version = '290_workflow_role_assignment_primary_index';
+UPDATE schema_migrations SET version = '230_workflow_node_instance_primary_index' WHERE version = '291_workflow_node_instance_primary_index';
+UPDATE schema_migrations SET version = '231_workflow_node_participant_primary_index' WHERE version = '292_workflow_node_participant_primary_index';
+UPDATE schema_migrations SET version = '232_workflow_executor_resolution_primary_index' WHERE version = '293_workflow_executor_resolution_primary_index';
+UPDATE schema_migrations SET version = '233_workflow_node_task_primary_index' WHERE version = '294_workflow_node_task_primary_index';
+UPDATE schema_migrations SET version = '234_workflow_node_submission_primary_index' WHERE version = '295_workflow_node_submission_primary_index';
+UPDATE schema_migrations SET version = '235_workflow_node_verdict_primary_index' WHERE version = '296_workflow_node_verdict_primary_index';
+UPDATE schema_migrations SET version = '236_workflow_node_confirmation_primary_index' WHERE version = '297_workflow_node_confirmation_primary_index';
+UPDATE schema_migrations SET version = '237_workflow_acceptance_primary_index' WHERE version = '298_workflow_acceptance_primary_index';
+UPDATE schema_migrations SET version = '238_workflow_event_primary_index' WHERE version = '299_workflow_event_primary_index';
+UPDATE schema_migrations SET version = '239_workflow_primary_constraints' WHERE version = '300_workflow_primary_constraints';
+UPDATE schema_migrations SET version = '240_workflow_instance_reconcile_after' WHERE version = '301_workflow_instance_reconcile_after';
+UPDATE schema_migrations SET version = '241_workflow_direct_executor_strategy' WHERE version = '302_workflow_direct_executor_strategy';
+UPDATE schema_migrations SET version = '242_workflow_artifact' WHERE version = '303_workflow_artifact';
+UPDATE schema_migrations SET version = '243_workflow_artifact_primary_index' WHERE version = '304_workflow_artifact_primary_index';
+UPDATE schema_migrations SET version = '244_workflow_artifact_current_index' WHERE version = '305_workflow_artifact_current_index';
+UPDATE schema_migrations SET version = '245_workflow_artifact_instance_index' WHERE version = '306_workflow_artifact_instance_index';
+UPDATE schema_migrations SET version = '246_workflow_submission_choice' WHERE version = '307_workflow_submission_choice';
+UPDATE schema_migrations SET version = '247_drop_submission_fields_from_definitions' WHERE version = '308_drop_submission_fields_from_definitions';
+UPDATE schema_migrations SET version = '248_dedupe_live_workflow_template_names' WHERE version = '309_dedupe_live_workflow_template_names';
+UPDATE schema_migrations SET version = '249_workflow_template_name_unique' WHERE version = '310_workflow_template_name_unique';
+UPDATE schema_migrations SET version = '250_workflow_node_model_subtraction' WHERE version = '311_workflow_node_model_subtraction';
+UPDATE schema_migrations SET version = '251_workflow_standalone_runs' WHERE version = '312_workflow_standalone_runs';
+UPDATE schema_migrations SET version = '252_workflow_direct_agent_tasks' WHERE version = '313_workflow_direct_agent_tasks';
+UPDATE schema_migrations SET version = '253_agent_task_workflow_node_task_index' WHERE version = '314_agent_task_workflow_node_task_index';
+UPDATE schema_migrations SET version = '254_workflow_definition_rename' WHERE version = '315_workflow_definition_rename';
+UPDATE schema_migrations SET version = '255_workflow_critic_task_source' WHERE version = '316_workflow_critic_task_source';
+UPDATE schema_migrations SET version = '256_workflow_drop_draft_state' WHERE version = '317_workflow_drop_draft_state';
+UPDATE schema_migrations SET version = '257_drop_workflow_definition_applies_to' WHERE version = '318_drop_workflow_definition_applies_to';
+UPDATE schema_migrations SET version = '258_workflow_drop_submission_choice' WHERE version = '319_workflow_drop_submission_choice';
