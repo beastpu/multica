@@ -2152,6 +2152,36 @@ func TestWorkflowAgentSubmissionCannotSelfApprove(t *testing.T) {
 			uuidToString(currentNode.LatestVerdictID),
 		)
 	}
+
+	// An agent that guesses the body must still be told it is at the wrong
+	// door. Validating the body first turned a closed door into a lock to be
+	// picked: WTE-14841's Critic tried fourteen shapes against this endpoint,
+	// met "invalid request body" every time, and spent its whole run there.
+	guessRecorder := httptest.NewRecorder()
+	guessRequest := withURLParam(
+		newRequest(
+			http.MethodPost,
+			"/api/workflow-node-instances/"+work.ID+"/verdicts?workspace_id="+testWorkspaceID,
+			map[string]any{"decision": "approved", "summary": "QA pass"},
+		),
+		"nodeInstanceId",
+		work.ID,
+	)
+	guessRequest.Header.Set("X-Agent-ID", agentID)
+	guessRequest.Header.Set("X-Task-ID", agentTaskID)
+	testHandler.CreateWorkflowNodeVerdict(guessRecorder, guessRequest)
+	if guessRecorder.Code != http.StatusConflict {
+		t.Fatalf(
+			"agent guessing the verdict body: status = %d, want %d, body = %s",
+			guessRecorder.Code, http.StatusConflict, guessRecorder.Body.String(),
+		)
+	}
+	if !strings.Contains(guessRecorder.Body.String(), "final output") {
+		t.Fatalf(
+			"refusal does not say where the verdict belongs: %s",
+			guessRecorder.Body.String(),
+		)
+	}
 }
 
 func TestWorkflowAgentCriticCompletion(t *testing.T) {
@@ -2161,8 +2191,8 @@ func TestWorkflowAgentCriticCompletion(t *testing.T) {
 		wantStatus  string
 		wantAttempt int32
 	}{
-		{name: "approval advances", output: `{"approved":true,"comment":"meets the acceptance criteria"}`, wantStatus: "completed", wantAttempt: 1},
-		{name: "rejection starts rework", output: `{"approved":false,"comment":"add the missing regression test"}`, wantStatus: "running", wantAttempt: 2},
+		{name: "approval advances", output: `{"result":"pass","reason":"meets the acceptance criteria"}`, wantStatus: "completed", wantAttempt: 1},
+		{name: "rejection starts rework", output: `{"result":"fail","reason":"add the missing regression test"}`, wantStatus: "running", wantAttempt: 2},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)

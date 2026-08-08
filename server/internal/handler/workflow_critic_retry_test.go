@@ -32,7 +32,7 @@ func TestWorkflowAgentCriticRetriesOneUnreadableVerdict(t *testing.T) {
 	}{
 		{
 			name:        "restated verdict is honoured",
-			retryOutput: `{"approved":false,"comment":"the fix removed the button instead of wiring it"}`,
+			retryOutput: `{"result":"fail","reason":"the fix removed the button instead of wiring it"}`,
 			wantBlocked: false,
 			wantAttempt: 2, // rejection sent the node to rework
 		},

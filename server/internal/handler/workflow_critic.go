@@ -393,8 +393,8 @@ func (h *Handler) recordWorkflowAgentCriticVerdict(
 	}
 
 	critic, parseErr := workflowdomain.ParseCriticOutput(output)
-	result := "pass"
-	reason := critic.Comment
+	result := critic.Result
+	reason := critic.Reason
 	if parseErr != nil {
 		// A verdict can be sound and still be shaped wrong. WTE-14841's Critic
 		// rejected a fix that had deleted the button it was meant to wire up,
@@ -419,8 +419,6 @@ func (h *Handler) recordWorkflowAgentCriticVerdict(
 		// undiagnosable after the fact — the run that hit this had nothing
 		// left to inspect.
 		reason = workflowdomain.DescribeCriticParseFailure(parseErr, output)
-	} else if !critic.Approved {
-		result = "fail"
 	}
 	if result == "pass" && reason == "" {
 		reason = "Approved by workflow Critic"

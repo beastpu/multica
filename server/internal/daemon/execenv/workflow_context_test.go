@@ -186,7 +186,7 @@ func TestRenderIssueContext_WorkflowCriticProtocol(t *testing.T) {
 		"Added the endpoint and tests",
 		"artifact-1",
 		"own agent Instructions",
-		`{"approved":true,"comment":"short review opinion"}`,
+		`{"result":"pass","reason":"short review opinion"}`,
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("critic protocol is missing %q:\n%s", want, md)

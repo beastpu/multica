@@ -786,6 +786,45 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 	if !h.workflowWriteEnabled(w, r) {
 		return
 	}
+	// Who is calling is settled before what they sent. An agent is refused
+	// here whatever its body says, and it has to learn that from its first
+	// attempt: WTE-14841's Critic met "invalid request body" fourteen times,
+	// each rejection an invitation to guess again, and never reached the one
+	// sentence that would have stopped it.
+	node, instance, ok := h.loadWorkflowNode(w, r)
+	if !ok {
+		return
+	}
+	var nodeDefinition workflowdomain.NodeDefinition
+	if err := json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition); err != nil {
+		writeError(w, http.StatusInternalServerError, "invalid workflow node snapshot")
+		return
+	}
+	if nodeDefinition.Reviewer == nil {
+		writeError(w, http.StatusConflict, "workflow node does not accept verdicts")
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	actorType, actorIDText := h.resolveActor(
+		r, userID, uuidToString(node.WorkspaceID),
+	)
+	actorID, ok := parseUUIDOrBadRequest(w, actorIDText, "actor_id")
+	if !ok {
+		return
+	}
+	if actorType == "agent" {
+		writeError(
+			w, http.StatusConflict,
+			"agent reviewer verdicts are recorded from Critic task completion, "+
+				"not from this endpoint: return {\"result\":\"pass|fail|blocked\","+
+				"\"reason\":\"...\"} as your final output instead",
+		)
+		return
+	}
+
 	var req createWorkflowVerdictRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -815,34 +854,6 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 	}
 	evidence, ok := normalizeWorkflowJSONArray(w, req.Evidence, "evidence")
 	if !ok {
-		return
-	}
-	node, instance, ok := h.loadWorkflowNode(w, r)
-	if !ok {
-		return
-	}
-	var nodeDefinition workflowdomain.NodeDefinition
-	if err := json.Unmarshal(node.DefinitionSnapshot, &nodeDefinition); err != nil {
-		writeError(w, http.StatusInternalServerError, "invalid workflow node snapshot")
-		return
-	}
-	if nodeDefinition.Reviewer == nil {
-		writeError(w, http.StatusConflict, "workflow node does not accept verdicts")
-		return
-	}
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	actorType, actorIDText := h.resolveActor(
-		r, userID, uuidToString(node.WorkspaceID),
-	)
-	actorID, ok := parseUUIDOrBadRequest(w, actorIDText, "actor_id")
-	if !ok {
-		return
-	}
-	if actorType == "agent" {
-		writeError(w, http.StatusConflict, "agent reviewer verdicts are recorded from Critic task completion")
 		return
 	}
 	reviewerType, reviewerID, resolved, err := workflowReviewerAssignment(

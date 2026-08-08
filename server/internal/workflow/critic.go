@@ -5,14 +5,28 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
 // CriticOutput is the stable result contract for the built-in Critic protocol.
+//
+// It speaks the same words as POST /workflow-node-instances/{id}/verdicts and
+// the workflow_node_verdict row: one verdict, one vocabulary. It used to say
+// `approved`/`comment` instead, which cost twice. A reviewer hunting for the
+// shape found the endpoint's `result`/`reason` and could not reconcile them —
+// WTE-14841's Critic tried fourteen bodies and wrote its final answer in a
+// blend of both. And a boolean cannot say `blocked`, so an agent Critic had no
+// way to report that it could not judge at all, though the endpoint and the
+// table have carried that state all along.
 type CriticOutput struct {
-	Approved bool   `json:"approved"`
-	Comment  string `json:"comment"`
+	Result string `json:"result"`
+	Reason string `json:"reason"`
 }
+
+// CriticResults are the verdicts a Critic may return, identical to the set the
+// verdict endpoint accepts.
+var CriticResults = []string{"pass", "fail", "blocked"}
 
 // ParseCriticOutput accepts the exact JSON object requested by the protocol.
 // A fenced object is tolerated because some providers insist on formatting
@@ -28,8 +42,8 @@ func ParseCriticOutput(output string) (CriticOutput, error) {
 		raw = strings.TrimSpace(raw[firstLine+1 : lastFence])
 	}
 	var wire struct {
-		Approved *bool  `json:"approved"`
-		Comment  string `json:"comment"`
+		Result string `json:"result"`
+		Reason string `json:"reason"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -39,15 +53,17 @@ func ParseCriticOutput(output string) (CriticOutput, error) {
 	if decoder.Decode(&struct{}{}) != io.EOF {
 		return CriticOutput{}, errors.New("critic verdict must contain one JSON object")
 	}
-	if wire.Approved == nil {
-		return CriticOutput{}, errors.New("critic verdict requires approved")
-	}
 	result := CriticOutput{
-		Approved: *wire.Approved,
-		Comment:  strings.TrimSpace(wire.Comment),
+		Result: strings.TrimSpace(wire.Result),
+		Reason: strings.TrimSpace(wire.Reason),
 	}
-	if !result.Approved && result.Comment == "" {
-		return CriticOutput{}, errors.New("a rejected verdict requires a comment")
+	if !slices.Contains(CriticResults, result.Result) {
+		return CriticOutput{}, fmt.Errorf(
+			"critic verdict result must be one of %s", strings.Join(CriticResults, ", "),
+		)
+	}
+	if result.Result != "pass" && result.Reason == "" {
+		return CriticOutput{}, fmt.Errorf("a %s verdict requires a reason", result.Result)
 	}
 	return result, nil
 }

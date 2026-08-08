@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
 )
 
 // WorkflowTaskContext mirrors the `workflow` block the server attaches to a
@@ -222,9 +224,17 @@ func renderWorkflowCriticProtocol(b *strings.Builder, workflow *WorkflowTaskCont
 		b.WriteString(".\n")
 	}
 	b.WriteString("\nAlso apply your own agent Instructions as domain-specific review guidance. Approve only when the delivered result satisfies the requirement and node obligations. On rejection, give a concise, actionable reason the Worker can use for rework.\n\n")
-	b.WriteString("Your final output must be exactly one JSON object with no prose or Markdown fence:\n\n")
-	b.WriteString("```json\n{\"approved\":true,\"comment\":\"short review opinion\"}\n```\n\n")
-	b.WriteString("Use `approved: false` when rejecting; `comment` must explain what must change. The server records this object as the node verdict: approval advances the workflow, rejection sends the node to rework.\n")
+	// Said first, and plainly, because a reviewer that goes looking for an
+	// endpoint does not come back: WTE-14841's Critic spent its entire run
+	// guessing request bodies against the verdicts API — which refuses agents
+	// by design — and never delivered the review it had already completed.
+	b.WriteString("Do not call an API or a `multica` command to record this verdict. There is none for reviewers: the server reads your final output. Your final output must be exactly one JSON object with no prose or Markdown fence:\n\n")
+	b.WriteString("```json\n{\"result\":\"pass\",\"reason\":\"short review opinion\"}\n```\n\n")
+	fmt.Fprintf(
+		b,
+		"`result` is one of %s. Use `fail` to send the node back for rework, and `blocked` when you cannot judge it at all; both require a `reason` saying what must change or what is missing. `pass` advances the workflow.\n",
+		"`"+strings.Join(workflowdomain.CriticResults, "`, `")+"`",
+	)
 	renderWorkflowVerdictRetry(b, workflow.VerdictRetry)
 }
 
@@ -247,7 +257,7 @@ func renderWorkflowVerdictRetry(b *strings.Builder, retry *WorkflowVerdictRetry)
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("Keep the same judgement. Re-express it as the exact object above: only `approved` and `comment`, no other keys, no prose, no fence. Put your reasoning — including any findings you listed — into `comment`.\n")
+	b.WriteString("Keep the same judgement. Re-express it as the exact object above: only `result` and `reason`, no other keys, no prose, no fence. Put your reasoning — including any findings you listed — into `reason`.\n")
 }
 
 // renderWorkflowRework writes why this node is being executed again. It comes
