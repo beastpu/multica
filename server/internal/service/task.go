@@ -1363,14 +1363,14 @@ func (s *TaskService) EnqueueWorkflowNodeTask(
 // explicit phase keeps the daemon prompt and completion callback unambiguous.
 func (s *TaskService) EnqueueWorkflowNodeCriticTask(
 	ctx context.Context,
-	workspaceID, requesterID, workflowNodeTaskID pgtype.UUID,
+	workspaceID, requesterID pgtype.UUID,
 	instanceID, nodeInstanceID pgtype.UUID,
 	agentID, squadID pgtype.UUID,
 	runTitle string,
 	submissionID pgtype.UUID,
 ) (db.AgentTaskQueue, error) {
 	return s.enqueueWorkflowNodeTask(
-		ctx, workspaceID, requesterID, workflowNodeTaskID, instanceID,
+		ctx, workspaceID, requesterID, pgtype.UUID{}, instanceID,
 		nodeInstanceID, agentID, squadID, runTitle, "",
 		WorkflowNodeTaskPhaseCritic, nil, util.UUIDToString(submissionID),
 	)
@@ -1382,7 +1382,7 @@ func (s *TaskService) EnqueueWorkflowNodeCriticTask(
 // and the retry needs its own idempotency key.
 func (s *TaskService) EnqueueWorkflowNodeCriticRetryTask(
 	ctx context.Context,
-	workspaceID, requesterID, workflowNodeTaskID pgtype.UUID,
+	workspaceID, requesterID pgtype.UUID,
 	instanceID, nodeInstanceID pgtype.UUID,
 	agentID, squadID pgtype.UUID,
 	runTitle string,
@@ -1390,7 +1390,7 @@ func (s *TaskService) EnqueueWorkflowNodeCriticRetryTask(
 	submissionID pgtype.UUID,
 ) (db.AgentTaskQueue, error) {
 	return s.enqueueWorkflowNodeTask(
-		ctx, workspaceID, requesterID, workflowNodeTaskID, instanceID,
+		ctx, workspaceID, requesterID, pgtype.UUID{}, instanceID,
 		nodeInstanceID, agentID, squadID, runTitle, "",
 		WorkflowNodeTaskPhaseCritic, &retry, util.UUIDToString(submissionID),
 	)
@@ -1438,7 +1438,9 @@ func (s *TaskService) enqueueWorkflowNodeTask(
 	overlay := s.buildRuntimeMCPOverlay(ctx, requesterID, agent)
 	task, err := s.Queries.CreateWorkflowAgentTask(ctx, db.CreateWorkflowAgentTaskParams{
 		AgentID: agentID, RuntimeID: agent.RuntimeID,
-		WorkflowNodeTaskID: workflowNodeTaskID, Priority: priorityToInt("high"),
+		WorkflowNodeTaskID:     workflowNodeTaskID,
+		WorkflowNodeInstanceID: nodeInstanceID,
+		Priority:               priorityToInt("high"),
 		Context:      contextJSON,
 		IsLeaderTask: pgtype.Bool{Bool: squadID.Valid, Valid: squadID.Valid}, SquadID: squadID,
 		OriginatorUserID: requesterID, AccountableUserID: attr.AccountableUserID,
@@ -4689,8 +4691,14 @@ func (s *TaskService) parseQuickCreateContext(task db.AgentTaskQueue) (QuickCrea
 // It is exported so the claim handler and activity mapper use the same
 // discriminator as workspace resolution.
 func ParseWorkflowNodeTaskContext(task db.AgentTaskQueue) (WorkflowNodeTaskContext, bool) {
+	// A workflow run is recognised by pointing at a node task or at a node. It
+	// used to require the node task, which assumed every workflow run is a unit
+	// of work with an executor — true of a worker, never true of a review,
+	// whose actor is the node's reviewer. That assumption is why a review had
+	// to be given a task row of its own to be recognised at all.
 	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid ||
-		!task.WorkflowNodeTaskID.Valid || len(task.Context) == 0 {
+		(!task.WorkflowNodeTaskID.Valid && !task.WorkflowNodeInstanceID.Valid) ||
+		len(task.Context) == 0 {
 		return WorkflowNodeTaskContext{}, false
 	}
 	var workflowTask WorkflowNodeTaskContext

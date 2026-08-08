@@ -379,24 +379,45 @@ RETURNING *;
 -- node readiness. A squad still executes through its leader agent while the
 -- squad id remains attached for briefing and audit.
 INSERT INTO agent_task_queue (
-    agent_id, runtime_id, issue_id, workflow_node_task_id, status, priority,
+    agent_id, runtime_id, issue_id, workflow_node_task_id,
+    workflow_node_instance_id, status, priority,
     context, is_leader_task, squad_id, originator_user_id,
     accountable_user_id, runtime_mcp_overlay, runtime_connected_apps,
     originator_source, trigger_evidence_kind, trigger_evidence_ref_id
 )
 VALUES (
-    @agent_id, @runtime_id, NULL, @workflow_node_task_id, 'queued', @priority,
+    @agent_id, @runtime_id, NULL, sqlc.narg(workflow_node_task_id),
+    sqlc.narg(workflow_node_instance_id), 'queued', @priority,
     @context, COALESCE(sqlc.narg('is_leader_task')::boolean, FALSE),
     sqlc.narg(squad_id), sqlc.narg(originator_user_id),
     sqlc.narg(accountable_user_id), sqlc.narg(runtime_mcp_overlay),
     sqlc.narg(runtime_connected_apps), sqlc.narg(originator_source),
-    'workflow_node', @workflow_node_task_id
+    'workflow_node',
+    -- A review has no node task to name, so it points at its node. The casts
+    -- are required: without them Postgres has to deduce one type for $3 from
+    -- both the column it is inserted into and this COALESCE, and refuses with
+    -- "inconsistent types deduced for parameter $3" — which surfaces as a
+    -- materialization failure, not a query error, so the node simply never
+    -- dispatches.
+    COALESCE(
+        sqlc.narg(workflow_node_task_id)::uuid,
+        sqlc.narg(workflow_node_instance_id)::uuid
+    )
 )
 RETURNING *;
 
 -- name: GetLatestAgentTaskForWorkflowNodeTask :one
 SELECT * FROM agent_task_queue
 WHERE workflow_node_task_id = @workflow_node_task_id
+ORDER BY attempt DESC, created_at DESC, id DESC
+LIMIT 1;
+
+-- name: GetLatestAgentTaskForWorkflowNodeReview :one
+-- The newest review run for a node. A review is found through the node it
+-- judges rather than through a task row standing in for it.
+SELECT * FROM agent_task_queue
+WHERE workflow_node_instance_id = @workflow_node_instance_id
+  AND context->>'phase' = 'critic'
 ORDER BY attempt DESC, created_at DESC, id DESC
 LIMIT 1;
 

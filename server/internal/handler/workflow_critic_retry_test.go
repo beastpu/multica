@@ -199,16 +199,8 @@ func startCriticRetryFixture(
 
 func latestCriticTaskForTest(t *testing.T, nodeInstanceID string) db.AgentTaskQueue {
 	t.Helper()
-	ctx := context.Background()
-	var carrierID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id FROM workflow_node_task
-		WHERE workflow_node_instance_id = $1 AND source = 'critic'
-	`, nodeInstanceID).Scan(&carrierID); err != nil {
-		t.Fatalf("load Critic carrier: %v", err)
-	}
-	task, err := testHandler.Queries.GetLatestAgentTaskForWorkflowNodeTask(
-		ctx, parseUUID(carrierID),
+	task, err := testHandler.Queries.GetLatestAgentTaskForWorkflowNodeReview(
+		context.Background(), parseUUID(nodeInstanceID),
 	)
 	if err != nil {
 		t.Fatalf("load Critic agent task: %v", err)
@@ -217,10 +209,14 @@ func latestCriticTaskForTest(t *testing.T, nodeInstanceID string) db.AgentTaskQu
 }
 
 // A node whose reviewer is an agent must not report that it needs a manual
-// executor. The critic carrier never holds an executor resolution — the
-// reviewer comes from the role binding at dispatch — so the sweeper's
-// "unresolved executor" test matched it on every pass, and every reviewed node
-// carried a demand for work nobody could perform.
+// executor.
+//
+// The review used to occupy a row in workflow_node_task — a table whose rows
+// mean "a unit of work with an executor" — while having no executor to resolve,
+// so the sweeper's unresolved-executor test matched it on every pass and every
+// reviewed node carried a demand nobody could satisfy. The review no longer
+// occupies that table at all, which is what makes the demand unreachable rather
+// than merely excepted.
 func TestSweeperDoesNotAskForAnExecutorForTheCritic(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
@@ -230,23 +226,22 @@ func TestSweeperDoesNotAskForAnExecutorForTheCritic(t *testing.T) {
 
 	work, instanceID := startCriticRetryFixture(t, workerID, criticID, "executor")
 
-	var criticSource string
-	if err := testPool.QueryRow(ctx, `
-		SELECT source FROM workflow_node_task
-		WHERE workflow_node_instance_id = $1 AND source = 'critic'
-	`, work).Scan(&criticSource); err != nil {
-		t.Fatalf("the fixture produced no critic carrier: %v", err)
+	// The review exists and is reachable through its node.
+	if _, err := testHandler.Queries.GetLatestAgentTaskForWorkflowNodeReview(
+		ctx, parseUUID(work),
+	); err != nil {
+		t.Fatalf("the review is not reachable through its node: %v", err)
 	}
-	// The premise: it has no executor resolution, and never will.
-	var resolved bool
+	// And it left nothing in the task table to be mistaken for assignable work.
+	var carriers int
 	if err := testPool.QueryRow(ctx, `
-		SELECT executor_resolution_id IS NOT NULL FROM workflow_node_task
+		SELECT count(*) FROM workflow_node_task
 		WHERE workflow_node_instance_id = $1 AND source = 'critic'
-	`, work).Scan(&resolved); err != nil {
-		t.Fatalf("load critic carrier: %v", err)
+	`, work).Scan(&carriers); err != nil {
+		t.Fatalf("count critic carriers: %v", err)
 	}
-	if resolved {
-		t.Skip("critic carriers now carry an executor resolution; this guard is obsolete")
+	if carriers != 0 {
+		t.Fatalf("the review still occupies %d row(s) in workflow_node_task", carriers)
 	}
 
 	if err := NewWorkflowSweeper(testHandler).SweepOnce(ctx); err != nil {

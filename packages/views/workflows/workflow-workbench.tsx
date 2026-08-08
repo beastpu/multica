@@ -888,11 +888,7 @@ export function WorkflowTaskCard({
         actor.type === resolution.actor_type && actor.id === resolution.actor_id,
     )
     : undefined;
-  // Same reason it is kept out of the intervention list: a critic task has no
-  // executor to assign. It still appears under internal tasks, where the point
-  // is to see it, not to act on it.
-  const needsExecutor = task.source !== "critic" &&
-    resolution?.status !== "resolved";
+  const needsExecutor = resolution?.status !== "resolved";
   const isRecoverable = task.materialization_status === "failed" ||
     task.materialization_status === "materializing" || executionFailed;
   const taskTitle = workflowTaskTitle(task);
@@ -913,8 +909,6 @@ export function WorkflowTaskCard({
               ? t(($) => $.workbench.direct_execution)
               : task.source === "dynamic"
               ? t(($) => $.workbench.dynamic_task)
-              : task.source === "critic"
-              ? t(($) => $.workbench.critic_task)
               : t(($) => $.workbench.template_task)}
           </p>
         </div>
@@ -2221,13 +2215,6 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
   ) ?? [];
   const taskInterventions = (nodeQuery.data?.tasks ?? []).filter((task) => {
     if (task.materialization_status === "cancelled") return false;
-    // A critic task carries the review execution, not an assignable job. Its
-    // actor comes from the node's reviewer binding and is resolved when the
-    // review is dispatched, so it never has an executor resolution — and the
-    // test below reads a missing resolution as "unresolved". The card then
-    // asked, for the whole life of every reviewed node, that somebody choose
-    // an executor, which resolves nothing and changes nothing.
-    if (task.source === "critic") return false;
     const resolution = nodeQuery.data?.executor_resolutions.find(
       (item) =>
         item.id === task.executor_resolution_id ||

@@ -345,16 +345,6 @@ func (w *WorkflowSweeper) SweepOnce(ctx context.Context) error {
 		hasUnresolvedExecutor := false
 		for _, task := range tasks {
 			existingTaskKeys[task.TaskKey] = struct{}{}
-			// A critic task has no executor to resolve. Its actor is the node's
-			// reviewer, bound to a role and resolved when the review is
-			// dispatched, so the resolution column is empty for the whole life
-			// of the task — and this test read that as "somebody must pick an
-			// executor". Every node with an agent reviewer therefore carried
-			// "A workflow task needs a manual executor", appearing and clearing
-			// as the reasons were recomputed, describing work no one could do.
-			if task.Source == "critic" {
-				continue
-			}
 			if !task.ExecutorResolutionID.Valid &&
 				task.MaterializationStatus != "cancelled" {
 				hasUnresolvedExecutor = true

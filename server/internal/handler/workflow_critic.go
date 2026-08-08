@@ -229,36 +229,15 @@ func (h *Handler) ensureWorkflowAgentCriticTask(
 		return fmt.Errorf("unsupported workflow reviewer type %q", reviewerType)
 	}
 
-	tasks, err := h.Queries.ListWorkflowNodeTasks(ctx, db.ListWorkflowNodeTasksParams{
-		WorkflowNodeInstanceID: node.ID, WorkspaceID: instance.WorkspaceID,
-	})
-	if err != nil {
-		return err
-	}
-	var carrier db.WorkflowNodeTask
-	for _, task := range tasks {
-		if task.Source == "critic" {
-			carrier = task
-			break
-		}
-	}
-	if !carrier.ID.Valid {
-		snapshot, _ := json.Marshal(nodeDefinition.Reviewer)
-		carrier, err = h.Queries.CreateWorkflowNodeTask(ctx, db.CreateWorkflowNodeTaskParams{
-			WorkspaceID: instance.WorkspaceID, WorkflowInstanceID: instance.ID,
-			WorkflowNodeInstanceID: node.ID, TaskKey: "critic", Source: "critic",
-			Required: false, DefinitionSnapshot: snapshot,
-			MaterializationStatus: "materialized", CreatedByType: "system",
-		})
-		if err != nil {
-			return fmt.Errorf("create critic task carrier: %w", err)
-		}
-	}
-	latest, err := h.Queries.GetLatestAgentTaskForWorkflowNodeTask(ctx, carrier.ID)
+	// A review is found through the node it judges. It used to be found through
+	// a workflow_node_task row created solely to be pointed at — a table whose
+	// rows mean "a unit of work with an executor", which a review is not. That
+	// row's executor column stayed null forever, and every reader of the table
+	// had to be taught the exception. Two of them were taught only after they
+	// had already told users to assign an executor that resolves nothing.
+	latest, err := h.Queries.GetLatestAgentTaskForWorkflowNodeReview(ctx, node.ID)
 	if err == nil {
-		context, ok := service.ParseWorkflowNodeTaskContext(latest)
-		if ok && context.Phase == service.WorkflowNodeTaskPhaseCritic &&
-			latest.AgentID == agentID &&
+		if latest.AgentID == agentID &&
 			latest.Status != "failed" && latest.Status != "cancelled" {
 			return nil
 		}
@@ -266,7 +245,7 @@ func (h *Handler) ensureWorkflowAgentCriticTask(
 		return err
 	}
 	_, err = h.TaskService.EnqueueWorkflowNodeCriticTask(
-		ctx, instance.WorkspaceID, instance.StartedByID, carrier.ID,
+		ctx, instance.WorkspaceID, instance.StartedByID,
 		instance.ID, node.ID, agentID, squadID, instance.Title,
 		node.LatestSubmissionID,
 	)
@@ -329,7 +308,7 @@ func (h *Handler) retryWorkflowAgentCriticVerdict(
 		return false, nil
 	}
 	if _, err := h.TaskService.EnqueueWorkflowNodeCriticRetryTask(
-		ctx, instance.WorkspaceID, instance.StartedByID, task.WorkflowNodeTaskID,
+		ctx, instance.WorkspaceID, instance.StartedByID,
 		instance.ID, current.ID, agentID, squadID, instance.Title,
 		service.WorkflowVerdictRetry{Problem: problem, Wrote: wrote},
 		// The retry judges the same revision as the attempt it replaces. A

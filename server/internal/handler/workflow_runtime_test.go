@@ -2275,18 +2275,25 @@ func TestWorkflowAgentCriticCompletion(t *testing.T) {
 				t.Fatalf("reconcile Worker delivery: %v", err)
 			}
 
-			var criticCarrierID string
-			if err := testPool.QueryRow(ctx, `
-				SELECT id FROM workflow_node_task
-				WHERE workflow_node_instance_id = $1 AND source = 'critic'
-			`, work.ID).Scan(&criticCarrierID); err != nil {
-				t.Fatalf("load Critic task carrier: %v", err)
-			}
-			criticTask, err := testHandler.Queries.GetLatestAgentTaskForWorkflowNodeTask(
-				ctx, parseUUID(criticCarrierID),
+			// The review is found through the node, not through a task row
+			// standing in for it.
+			criticTask, err := testHandler.Queries.GetLatestAgentTaskForWorkflowNodeReview(
+				ctx, parseUUID(work.ID),
 			)
 			if err != nil {
 				t.Fatalf("load Critic agent task: %v", err)
+			}
+			// And it leaves nothing behind in the task table, where every row
+			// is supposed to be a unit of work somebody can be assigned to.
+			var carriers int
+			if err := testPool.QueryRow(ctx, `
+				SELECT count(*) FROM workflow_node_task
+				WHERE workflow_node_instance_id = $1 AND source = 'critic'
+			`, work.ID).Scan(&carriers); err != nil {
+				t.Fatalf("count critic carriers: %v", err)
+			}
+			if carriers != 0 {
+				t.Fatalf("the review still created %d task row(s)", carriers)
 			}
 			direct, ok := service.ParseWorkflowNodeTaskContext(criticTask)
 			if !ok || direct.Phase != service.WorkflowNodeTaskPhaseCritic ||
