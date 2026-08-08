@@ -16,33 +16,59 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// fakePatcherQueries models the single channel_outbound_card_message row and
+// the guard each query puts on it. The guards are the point: they are what
+// makes duplicate events, replica races and late sends safe in Postgres, so a
+// fake that skipped them would let tests pass on behaviour the database
+// forbids.
 type fakePatcherQueries struct {
-	mu                   sync.Mutex
-	now                  func() time.Time
-	task                 db.AgentTaskQueue
-	taskErr              error
-	taskChannelIngested  bool
-	binding              ChatSessionBinding
-	bindingErr           error
-	installation         Installation
-	installationErr      error
-	agent                db.Agent
-	agentErr             error
-	bindings             []InboxNotificationBinding
-	bindingsErr          error
-	card                 OutboundCardMessage
-	cardErr              error
-	taskMessages         []db.TaskMessage
-	taskMessagesErr      error
-	created              []CreateOutboundCardMessageParams
-	createReturn         OutboundCardMessage
-	readyUpdates         []SetOutboundCardMessageIDParams
-	claimPatch           bool
-	setPayloadErr        error
-	failDeliveryCalls    []FailOutboundCardDeliveryParams
-	abandonDeliveryCalls []AbandonOutboundCardDeliveryParams
-	statusUpdates        []string
-	askMessageUpdates    []db.UpdateChatAskChannelMessageParams
+	mu                  sync.Mutex
+	now                 func() time.Time
+	task                db.AgentTaskQueue
+	taskErr             error
+	taskChannelIngested bool
+	binding             ChatSessionBinding
+	bindingErr          error
+	installation        Installation
+	installationErr     error
+	agent               db.Agent
+	agentErr            error
+	bindings            []InboxNotificationBinding
+	bindingsErr         error
+
+	card    OutboundCardMessage
+	hasCard bool
+	cardErr error
+
+	created           []CreateOutboundCardMessageParams
+	messageIDWrites   []SetOutboundCardMessageIDParams
+	settled           []string
+	askMessageUpdates []db.UpdateChatAskChannelMessageParams
+}
+
+func (f *fakePatcherQueries) clock() time.Time {
+	if f.now != nil {
+		return f.now()
+	}
+	return time.Now()
+}
+
+// seedLiveCard puts the fake in the state it reaches after a progress card has
+// been sent: the row is streaming and carries the Lark message id to patch.
+func (f *fakePatcherQueries) seedLiveCard(messageID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hasCard = true
+	f.card = OutboundCardMessage{
+		ID:                   uuidFromStringNoTest("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+		ChatSessionID:        f.binding.ChatSessionID,
+		TaskID:               f.task.ID,
+		ChannelChatID:        f.binding.ChannelChatID,
+		ChannelCardMessageID: messageID,
+		Status:               string(CardStatusStreaming),
+		LastPatchedAt:        pgtype.Timestamptz{Time: f.clock(), Valid: true},
+		CreatedAt:            pgtype.Timestamptz{Time: f.clock(), Valid: true},
+	}
 }
 
 func (f *fakePatcherQueries) GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error) {
@@ -66,200 +92,101 @@ func (f *fakePatcherQueries) GetLarkChatSessionBindingBySession(ctx context.Cont
 func (f *fakePatcherQueries) ListActiveLarkUserBindingsByMember(ctx context.Context, arg ListInboxNotificationBindingsParams) ([]InboxNotificationBinding, error) {
 	return f.bindings, f.bindingsErr
 }
+
 func (f *fakePatcherQueries) GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.UUID) (OutboundCardMessage, error) {
-	return f.card, f.cardErr
-}
-func (f *fakePatcherQueries) ListTaskMessagesSince(ctx context.Context, arg db.ListTaskMessagesSinceParams) ([]db.TaskMessage, error) {
-	if f.taskMessagesErr != nil {
-		return nil, f.taskMessagesErr
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.cardErr != nil {
+		return OutboundCardMessage{}, f.cardErr
 	}
-	var messages []db.TaskMessage
-	for _, message := range f.taskMessages {
-		if message.Seq > arg.Seq {
-			messages = append(messages, message)
-		}
+	if !f.hasCard {
+		return OutboundCardMessage{}, pgx.ErrNoRows
 	}
-	return messages, nil
+	return f.card, nil
 }
+
+// CreateLarkOutboundCardMessage mirrors ON CONFLICT (task_id) DO NOTHING: a
+// second EventTaskRunning for the same task reports no row rather than opening
+// a second card.
 func (f *fakePatcherQueries) CreateLarkOutboundCardMessage(ctx context.Context, arg CreateOutboundCardMessageParams) (OutboundCardMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.created = append(f.created, arg)
-	if f.cardErr == nil {
+	if f.hasCard {
 		return OutboundCardMessage{}, pgx.ErrNoRows
 	}
-	created := f.createReturn
-	if !created.ID.Valid {
-		created.ID = uuidFromStringNoTest("dddddddd-dddd-dddd-dddd-dddddddddddd")
+	now := f.clock()
+	f.card = OutboundCardMessage{
+		ID:            uuidFromStringNoTest("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+		ChatSessionID: arg.ChatSessionID,
+		TaskID:        arg.TaskID,
+		ChannelChatID: arg.ChannelChatID,
+		Status:        string(CardStatusPending),
+		LastPatchedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		CreatedAt:     pgtype.Timestamptz{Time: now, Valid: true},
 	}
-	created.ChatSessionID = arg.ChatSessionID
-	created.TaskID = arg.TaskID
-	created.ChannelChatID = arg.ChannelChatID
-	created.ChannelCardMessageID = arg.ChannelCardMessageID
-	created.Status = arg.Status
-	created.Transport = "legacy"
-	created.DesiredRevision = 1
-	created.NextAttemptAt = pgtype.Timestamptz{Time: time.Now().Add(time.Duration(arg.StartDelaySeconds * float64(time.Second))), Valid: true}
-	f.card = created
-	f.cardErr = nil
-	return created, nil
-}
-
-func (f *fakePatcherQueries) ProjectLarkOutboundTaskMessage(ctx context.Context, arg ProjectOutboundTaskMessageParams) (OutboundCardMessage, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.cardErr != nil || f.card.Status == string(CardStatusFinal) || f.card.Status == string(CardStatusError) || f.card.ProjectedSeq >= arg.Seq {
-		return OutboundCardMessage{}, pgx.ErrNoRows
-	}
-	f.card.ProjectedSeq = arg.Seq
-	f.card.VisibleText += arg.VisibleTextAppend
-	f.card.CurrentStage = arg.CurrentStage
-	f.card.FilesReadCount += arg.FilesReadDelta
-	f.card.FilesEditedCount += arg.FilesEditedDelta
-	f.card.SearchesCount += arg.SearchesDelta
-	f.card.CommandsCount += arg.CommandsDelta
-	f.card.DesiredRevision++
+	f.hasCard = true
 	return f.card, nil
 }
 
-func (f *fakePatcherQueries) ScheduleLarkOutboundTaskMessage(ctx context.Context, arg ScheduleOutboundTaskMessageParams) (OutboundCardMessage, error) {
+// ClaimLarkOutboundCardWork mirrors the due predicate and the last_patched_at
+// stamp that stands in for a delivery lease.
+func (f *fakePatcherQueries) ClaimLarkOutboundCardWork(ctx context.Context, arg ClaimOutboundCardWorkParams) ([]OutboundCardMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.cardErr != nil || f.card.Status == string(CardStatusFinal) || f.card.Status == string(CardStatusError) {
-		return OutboundCardMessage{}, pgx.ErrNoRows
+	if !f.hasCard {
+		return nil, nil
 	}
-	if f.card.ChannelCardMessageID != "" {
-		due := time.Now().Add(time.Duration(arg.MinIntervalSeconds * float64(time.Second)))
-		if !f.card.NextAttemptAt.Valid || due.Before(f.card.NextAttemptAt.Time) {
-			f.card.NextAttemptAt = pgtype.Timestamptz{Time: due, Valid: true}
-		}
+	switch f.task.Status {
+	case "completed", "failed", "cancelled":
+		return nil, nil
 	}
-	return f.card, nil
+	wait := arg.HeartbeatSeconds
+	if f.card.Status == string(CardStatusPending) {
+		wait = arg.StartDelaySeconds
+	} else if f.card.Status != string(CardStatusStreaming) {
+		return nil, nil
+	}
+	now := f.clock()
+	if now.Sub(f.card.LastPatchedAt.Time) < time.Duration(wait*float64(time.Second)) {
+		return nil, nil
+	}
+	f.card.LastPatchedAt = pgtype.Timestamptz{Time: now, Valid: true}
+	return []OutboundCardMessage{f.card}, nil
 }
 
-func (f *fakePatcherQueries) SetLarkOutboundTerminalDesired(ctx context.Context, arg SetOutboundTerminalDesiredParams) (OutboundCardMessage, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.cardErr != nil || f.card.Status == string(CardStatusFinal) || f.card.Status == string(CardStatusError) {
-		return OutboundCardMessage{}, pgx.ErrNoRows
-	}
-	f.card.Status = arg.Status
-	f.card.TerminalContent = arg.TerminalContent
-	f.card.DesiredRevision++
-	f.statusUpdates = append(f.statusUpdates, arg.Status)
-	if f.card.ChannelCardID == "" && f.card.ChannelCardMessageID == "" && !f.card.LeaseToken.Valid {
-		f.card.AppliedRevision = f.card.DesiredRevision
-	}
-	return f.card, nil
-}
-
-func (f *fakePatcherQueries) ClaimLarkOutboundCardDelivery(ctx context.Context, arg ClaimOutboundCardDeliveryParams) (OutboundCardMessage, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	hasUnprojected := false
-	for _, message := range f.taskMessages {
-		if message.Seq > f.card.ProjectedSeq {
-			hasUnprojected = true
-			break
-		}
-	}
-	now := time.Now
-	if f.now != nil {
-		now = f.now
-	}
-	if !f.claimPatch || f.cardErr != nil || f.card.DeliveryFailedAt.Valid ||
-		(f.card.DesiredRevision <= f.card.AppliedRevision && !hasUnprojected) || f.card.LeaseToken.Valid ||
-		(f.card.NextAttemptAt.Valid && f.card.NextAttemptAt.Time.After(now())) {
-		return OutboundCardMessage{}, pgx.ErrNoRows
-	}
-	f.card.LeaseToken = arg.LeaseToken
-	if !f.card.InflightRevision.Valid {
-		f.card.InflightRevision = pgtype.Int8{Int64: f.card.DesiredRevision, Valid: true}
-	}
-	return f.card, nil
-}
-
-func (f *fakePatcherQueries) SetLarkOutboundInflightPayload(ctx context.Context, arg SetOutboundInflightPayloadParams) (OutboundCardMessage, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.setPayloadErr != nil {
-		return OutboundCardMessage{}, f.setPayloadErr
-	}
-	if f.card.InflightCardJSON == "" {
-		f.card.InflightRevision = pgtype.Int8{Int64: arg.DesiredRevision, Valid: true}
-		if f.card.Transport == "cardkit" && f.card.ChannelCardMessageID != "" {
-			f.card.OperationSequence++
-			f.card.InflightSequence = pgtype.Int4{Int32: f.card.OperationSequence, Valid: true}
-		}
-		f.card.InflightCardJSON = arg.CardJSON
-	}
-	return f.card, nil
-}
-
-func (f *fakePatcherQueries) SetLarkOutboundCardEntityID(ctx context.Context, arg SetOutboundCardEntityIDParams) (OutboundCardMessage, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.card.ChannelCardID = arg.ChannelCardID
-	return f.card, nil
-}
-
+// SetLarkOutboundCardMessageID mirrors the guard that keeps a card which landed
+// after the task settled from dragging the row back into 'streaming'.
 func (f *fakePatcherQueries) SetLarkOutboundCardMessageID(ctx context.Context, arg SetOutboundCardMessageIDParams) (OutboundCardMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.messageIDWrites = append(f.messageIDWrites, arg)
+	if !f.hasCard || f.card.ChannelCardMessageID != "" || f.card.Status != string(CardStatusPending) {
+		return OutboundCardMessage{}, pgx.ErrNoRows
+	}
 	f.card.ChannelCardMessageID = arg.ChannelCardMessageID
-	f.readyUpdates = append(f.readyUpdates, arg)
+	f.card.Status = string(CardStatusStreaming)
+	f.card.LastPatchedAt = pgtype.Timestamptz{Time: f.clock(), Valid: true}
 	return f.card, nil
 }
 
-func (f *fakePatcherQueries) DowngradeLarkOutboundCardTransport(ctx context.Context, arg OutboundDeliveryLeaseParams) (OutboundCardMessage, error) {
+// SettleLarkOutboundCard mirrors the write that elects one terminal event as
+// the owner of the reply.
+func (f *fakePatcherQueries) SettleLarkOutboundCard(ctx context.Context, arg SettleOutboundCardParams) (OutboundCardMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.card.Transport = "legacy"
-	f.card.ChannelCardID = ""
-	return f.card, nil
-}
-
-func (f *fakePatcherQueries) CompleteLarkOutboundCardDelivery(ctx context.Context, arg OutboundDeliveryLeaseParams) (OutboundCardMessage, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.card.AppliedRevision = f.card.InflightRevision.Int64
-	if f.card.Status == string(CardStatusPending) {
-		f.card.Status = string(CardStatusStreaming)
+	if f.cardErr != nil {
+		return OutboundCardMessage{}, f.cardErr
 	}
-	f.card.InflightRevision = pgtype.Int8{}
-	f.card.InflightSequence = pgtype.Int4{}
-	f.card.InflightCardJSON = ""
-	f.card.LeaseToken = pgtype.UUID{}
-	f.card.NextAttemptAt = pgtype.Timestamptz{}
-	f.card.DeliveryFailedAt = pgtype.Timestamptz{}
+	if !f.hasCard || (f.card.Status != string(CardStatusPending) && f.card.Status != string(CardStatusStreaming)) {
+		return OutboundCardMessage{}, pgx.ErrNoRows
+	}
+	f.card.Status = arg.Status
+	f.card.LastPatchedAt = pgtype.Timestamptz{Time: f.clock(), Valid: true}
+	f.settled = append(f.settled, arg.Status)
 	return f.card, nil
 }
 
-func (f *fakePatcherQueries) FailLarkOutboundCardDelivery(ctx context.Context, arg FailOutboundCardDeliveryParams) (OutboundCardMessage, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.failDeliveryCalls = append(f.failDeliveryCalls, arg)
-	f.card.LeaseToken = pgtype.UUID{}
-	f.card.AttemptCount++
-	f.card.LastError = arg.LastError
-	now := time.Now
-	if f.now != nil {
-		now = f.now
-	}
-	f.card.NextAttemptAt = pgtype.Timestamptz{Time: now().Add(time.Duration(arg.RetrySeconds * float64(time.Second))), Valid: true}
-	return f.card, nil
-}
-func (f *fakePatcherQueries) AbandonLarkOutboundCardDelivery(ctx context.Context, arg AbandonOutboundCardDeliveryParams) (OutboundCardMessage, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.abandonDeliveryCalls = append(f.abandonDeliveryCalls, arg)
-	f.card.LeaseToken = pgtype.UUID{}
-	f.card.AttemptCount++
-	f.card.LastError = arg.LastError
-	f.card.DeliveryFailedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	f.card.NextAttemptAt = pgtype.Timestamptz{}
-	return f.card, nil
-}
 func (f *fakePatcherQueries) UpdateChatAskChannelMessage(ctx context.Context, arg db.UpdateChatAskChannelMessageParams) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -295,6 +222,9 @@ type fakeAPIClient struct {
 	// *APIError (to exercise the chat-level fallback) or an ambiguous
 	// transport error (to assert no fallback happens).
 	threadReplyErr error
+	// onSend runs after a card send is recorded but before the caller can
+	// persist its message id, so a test can interleave an event that races it.
+	onSend func()
 }
 
 // errThreadReplyClassified is a Lark business error the fallback path
@@ -310,12 +240,17 @@ func (f *fakeAPIClient) IsConfigured() bool { return true }
 
 func (f *fakeAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParams) (string, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.sent = append(f.sent, p)
-	if f.threadReplyErr != nil && p.ReplyTarget.IsSet() {
-		return "", f.threadReplyErr
+	threadErr, onSend := f.threadReplyErr, f.onSend
+	sendReturn, sendErr := f.sendReturn, f.sendErr
+	f.mu.Unlock()
+	if threadErr != nil && p.ReplyTarget.IsSet() {
+		return "", threadErr
 	}
-	return f.sendReturn, f.sendErr
+	if onSend != nil {
+		onSend()
+	}
+	return sendReturn, sendErr
 }
 func (f *fakeAPIClient) SendDirectInteractiveCard(ctx context.Context, p SendDirectCardParams) (string, error) {
 	f.mu.Lock()
@@ -398,9 +333,7 @@ func newTestPatcher(t *testing.T) (*Patcher, *fakePatcherQueries, *fakeAPIClient
 			Status:             string(InstallationActive),
 			AgentID:            uuidFromString(t, "aaaa1111-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
 		},
-		agent:      db.Agent{Name: "TestAgent"},
-		cardErr:    pgx.ErrNoRows,
-		claimPatch: true,
+		agent: db.Agent{Name: "TestAgent"},
 	}
 	api := &fakeAPIClient{sendReturn: "lark_card_msg_1", textSendReturn: "lark_text_msg_1"}
 	p := NewPatcher(q, fakeCredentials{secret: "shh"}, api, PatcherConfig{
@@ -408,6 +341,56 @@ func newTestPatcher(t *testing.T) (*Patcher, *fakePatcherQueries, *fakeAPIClient
 		Now:    time.Now,
 	})
 	return p, q, api
+}
+
+// newClockedPatcher is newTestPatcher on a clock the test drives, for the
+// timing the card lifecycle actually depends on: the start delay before a card
+// appears and the heartbeat between repaints.
+func newClockedPatcher(t *testing.T) (*Patcher, *fakePatcherQueries, *fakeAPIClient, func(time.Duration)) {
+	t.Helper()
+	p, q, api := newTestPatcher(t)
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	p.cfg.Now = clock
+	q.now = clock
+	return p, q, api, func(d time.Duration) { now = now.Add(d) }
+}
+
+// runningEvent is the event that opens a card.
+func runningEvent(q *fakePatcherQueries, taskID pgtype.UUID) events.Event {
+	return events.Event{
+		Type:          protocol.EventTaskRunning,
+		TaskID:        uuidString(taskID),
+		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		Payload: map[string]any{
+			"task_id":         uuidString(taskID),
+			"chat_session_id": uuidString(q.binding.ChatSessionID),
+		},
+	}
+}
+
+func chatDoneEvent(q *fakePatcherQueries, taskID pgtype.UUID, content string) events.Event {
+	return events.Event{
+		Type:          protocol.EventChatDone,
+		TaskID:        uuidString(taskID),
+		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		Payload: protocol.ChatDonePayload{
+			TaskID:        uuidString(taskID),
+			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			Content:       content,
+		},
+	}
+}
+
+// startChannelTask wires the fake up as a running, channel-ingested task.
+func startChannelTask(q *fakePatcherQueries, taskID pgtype.UUID) {
+	q.task = db.AgentTaskQueue{
+		ID:              taskID,
+		ChatSessionID:   q.binding.ChatSessionID,
+		ChatInputTaskID: taskID,
+		Status:          "running",
+	}
+	q.taskChannelIngested = true
 }
 
 func uuidFromStringNoTest(s string) pgtype.UUID {
@@ -485,454 +468,354 @@ func TestPatcherSendsPlainTextOnChatDone(t *testing.T) {
 	}
 }
 
-func TestPatcherDoesNotCreateStreamingCardBeforeDelay(t *testing.T) {
-	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-	p, q, api := newTestPatcher(t)
-	p.cfg.Now = func() time.Time { return now }
+// TestPatcherHoldsCardUntilStartDelay pins why the delay exists at all: a task
+// that answers quickly must reach the chat as an ordinary message, never as a
+// card that flashes up and is immediately overwritten.
+func TestPatcherHoldsCardUntilStartDelay(t *testing.T) {
+	p, q, api, advance := newClockedPatcher(t)
 	taskID := uuidFromString(t, "ee100001-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{
-		ID:              taskID,
-		ChatSessionID:   q.binding.ChatSessionID,
-		ChatInputTaskID: taskID,
-		CreatedAt:       pgtype.Timestamptz{Time: now.Add(-6 * time.Second), Valid: true},
-	}
-	q.taskChannelIngested = true
+	startChannelTask(q, taskID)
 
-	p.handleEvent(events.Event{
-		Type:   protocol.EventTaskMessage,
-		TaskID: uuidString(taskID),
-		Payload: protocol.TaskMessagePayload{
-			TaskID:  uuidString(taskID),
-			Seq:     1,
-			Type:    "text",
-			Content: "partial",
-		},
-	})
-
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.sent) != 0 || len(api.patched) != 0 {
-		t.Fatalf("fast task must stay native and card-free; sent=%d patched=%d", len(api.sent), len(api.patched))
-	}
-	if len(q.created) != 1 || q.created[0].StartDelaySeconds <= 0 {
-		t.Fatalf("fast task must persist only a future durable schedule; created=%+v", q.created)
-	}
-}
-
-func TestPatcherSchedulesCardAtDelayWhenRunGoesQuiet(t *testing.T) {
-	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-	p, q, api := newTestPatcher(t)
-	p.cfg.Now = func() time.Time { return now }
-	taskID := uuidFromString(t, "ee100013-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{
-		ID:              taskID,
-		ChatSessionID:   q.binding.ChatSessionID,
-		ChatInputTaskID: taskID,
-		Status:          "running",
-		CreatedAt:       pgtype.Timestamptz{Time: now, Valid: true},
-	}
-	q.taskChannelIngested = true
-
-	bus := events.New()
-	p.Register(bus)
-	bus.Publish(events.Event{
-		Type:          protocol.EventTaskRunning,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
-	})
-
-	if len(q.created) != 1 || q.created[0].StartDelaySeconds != 7 {
-		t.Fatalf("durable schedule=%+v, want one row due in 7s", q.created)
-	}
-	api.mu.Lock()
-	if len(api.sent) != 0 {
-		api.mu.Unlock()
-		t.Fatalf("running event must not show a card before the delay")
-	}
-	api.mu.Unlock()
-
-	q.card.NextAttemptAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
+	p.handleEvent(runningEvent(q, taskID))
+	advance(p.cfg.StreamingDelay - time.Second)
 	p.RunOnce(context.Background())
 
+	if len(q.created) != 1 {
+		t.Fatalf("running event must open exactly one card row; created=%d", len(q.created))
+	}
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	if len(api.sent) != 1 || api.sent[0].IdempotencyKey != "stream-"+uuidString(taskID) {
-		t.Fatalf("quiet long run must get one delayed card; sent=%+v", api.sent)
+	if len(api.sent) != 0 {
+		t.Fatalf("no card may reach Lark before the start delay; sent=%d", len(api.sent))
 	}
 }
 
-func TestPatcherScheduledCardRechecksTerminalStatus(t *testing.T) {
-	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-	p, q, api := newTestPatcher(t)
-	p.cfg.Now = func() time.Time { return now }
-	taskID := uuidFromString(t, "ee100014-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{
-		ID:              taskID,
-		ChatSessionID:   q.binding.ChatSessionID,
-		ChatInputTaskID: taskID,
-		Status:          "running",
-		CreatedAt:       pgtype.Timestamptz{Time: now, Valid: true},
-	}
-	q.taskChannelIngested = true
-
-	p.handleEvent(events.Event{Type: protocol.EventTaskRunning, TaskID: uuidString(taskID)})
-	q.task.Status = "completed"
-	p.handleEvent(events.Event{
-		Type: protocol.EventChatDone, TaskID: uuidString(taskID),
-		Payload: protocol.ChatDonePayload{TaskID: uuidString(taskID), ChatSessionID: uuidString(q.binding.ChatSessionID), Content: "快速完成"},
-	})
-
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.sent) != 0 || len(api.patched) != 0 || len(api.textSent) != 1 {
-		t.Fatalf("completed task must keep native final: sent=%d patched=%d text=%d", len(api.sent), len(api.patched), len(api.textSent))
-	}
-}
-
-func TestPatcherDoesNotResurrectTerminalTaskFromDelayedMessageEvent(t *testing.T) {
-	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-	p, q, api := newTestPatcher(t)
-	p.cfg.Now = func() time.Time { return now }
-	taskID := uuidFromString(t, "ee100010-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{
-		ID:              taskID,
-		ChatSessionID:   q.binding.ChatSessionID,
-		ChatInputTaskID: taskID,
-		Status:          "completed",
-		CreatedAt:       pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
-	}
-	q.taskChannelIngested = true
-
-	p.handleEvent(events.Event{Type: protocol.EventTaskMessage, TaskID: uuidString(taskID)})
-
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.sent) != 0 || len(api.patched) != 0 || len(q.created) != 0 {
-		t.Fatalf("delayed message event resurrected terminal task: sent=%d patched=%d created=%d", len(api.sent), len(api.patched), len(q.created))
-	}
-}
-
-func TestPatcherCreatesOneIdempotentCardForSlowTask(t *testing.T) {
-	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-	p, q, api := newTestPatcher(t)
-	p.cfg.Now = func() time.Time { return now }
+// TestPatcherSendsCardOnceStartDelayPasses is the other half: a run that is
+// still going after the delay gets exactly one card, and the row records the
+// Lark message id so later paints know what to patch.
+func TestPatcherSendsCardOnceStartDelayPasses(t *testing.T) {
+	p, q, api, advance := newClockedPatcher(t)
 	taskID := uuidFromString(t, "ee100002-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{
-		ID:              taskID,
-		ChatSessionID:   q.binding.ChatSessionID,
-		ChatInputTaskID: taskID,
-		CreatedAt:       pgtype.Timestamptz{Time: now.Add(-11 * time.Second), Valid: true},
-	}
-	q.taskChannelIngested = true
+	startChannelTask(q, taskID)
 
-	event := events.Event{
-		Type:   protocol.EventTaskMessage,
-		TaskID: uuidString(taskID),
-		Payload: protocol.TaskMessagePayload{
-			TaskID: uuidString(taskID),
-			Seq:    1,
-			Type:   "thinking",
-		},
-	}
-	p.handleEvent(event)
-	p.handleEvent(event)
-
-	api.mu.Lock()
-	if len(api.sent) != 0 || len(api.patched) != 0 {
-		api.mu.Unlock()
-		t.Fatalf("task-message event performed remote I/O: sent=%d patched=%d", len(api.sent), len(api.patched))
-	}
-	api.mu.Unlock()
-
-	q.taskMessages = []db.TaskMessage{{Seq: 1, Type: "thinking"}}
-	q.card.NextAttemptAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
+	p.handleEvent(runningEvent(q, taskID))
+	advance(p.cfg.StreamingDelay + time.Second)
 	p.RunOnce(context.Background())
 
 	api.mu.Lock()
 	defer api.mu.Unlock()
 	if len(api.sent) != 1 {
-		t.Fatalf("duplicate task events must create one card; sent=%d", len(api.sent))
+		t.Fatalf("expected one progress card; sent=%d", len(api.sent))
 	}
-	if got, want := api.sent[0].IdempotencyKey, "stream-"+uuidString(taskID); got != want {
-		t.Fatalf("stream card idempotency key=%q want %q", got, want)
+	if want := "progress-" + uuidString(taskID); api.sent[0].IdempotencyKey != want {
+		t.Errorf("idempotency key=%q want %q", api.sent[0].IdempotencyKey, want)
 	}
-	if len(q.created) != 1 || q.created[0].ChannelCardMessageID != "" {
-		t.Fatalf("expected one durable placeholder before remote send; created=%+v", q.created)
+	if !strings.Contains(api.sent[0].CardJSON, "正在处理") {
+		t.Errorf("progress card must say work is under way: %s", api.sent[0].CardJSON)
 	}
-	if len(q.readyUpdates) != 1 || q.readyUpdates[0].ChannelCardMessageID != api.sendReturn {
-		t.Fatalf("expected card message id to be persisted after send; updates=%+v", q.readyUpdates)
+	if q.card.ChannelCardMessageID != "lark_card_msg_1" {
+		t.Errorf("row must record the sent card; got %q", q.card.ChannelCardMessageID)
 	}
-}
-
-func TestPatcherRetriesUncertainInitialCardSendWithSameIdempotencyKey(t *testing.T) {
-	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-	p, q, api := newTestPatcher(t)
-	p.cfg.Now = func() time.Time { return now }
-	q.now = p.cfg.Now
-	taskID := uuidFromString(t, "ee100006-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{
-		ID:              taskID,
-		ChatSessionID:   q.binding.ChatSessionID,
-		ChatInputTaskID: taskID,
-		CreatedAt:       pgtype.Timestamptz{Time: now.Add(-11 * time.Second), Valid: true},
-	}
-	q.taskChannelIngested = true
-	api.sendErr = errors.New("result uncertain")
-	event := events.Event{Type: protocol.EventTaskMessage, TaskID: uuidString(taskID), Payload: protocol.TaskMessagePayload{
-		TaskID: uuidString(taskID), Seq: 1, Type: "thinking",
-	}}
-
-	p.handleEvent(event)
-	q.taskMessages = []db.TaskMessage{{Seq: 1, Type: "thinking"}}
-	q.card.NextAttemptAt = pgtype.Timestamptz{Time: now.Add(-time.Second), Valid: true}
-	p.RunOnce(context.Background())
-	api.sendErr = nil
-	now = now.Add(time.Second)
-	p.RunOnce(context.Background())
-
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.sent) != 2 {
-		t.Fatalf("uncertain send must be retried; sent=%d", len(api.sent))
-	}
-	if api.sent[0].IdempotencyKey == "" || api.sent[0].IdempotencyKey != api.sent[1].IdempotencyKey {
-		t.Fatalf("retry must reuse idempotency key; first=%q second=%q", api.sent[0].IdempotencyKey, api.sent[1].IdempotencyKey)
-	}
-	if api.sent[0].CardJSON != api.sent[1].CardJSON {
-		t.Fatalf("idempotent retry must reuse identical content")
-	}
-	if len(q.created) != 1 || len(q.readyUpdates) != 1 {
-		t.Fatalf("retry must reuse placeholder and persist one remote id; created=%d ready=%d", len(q.created), len(q.readyUpdates))
+	if q.card.Status != string(CardStatusStreaming) {
+		t.Errorf("row status=%q want streaming", q.card.Status)
 	}
 }
 
-func TestPatcherStreamsOnlyVisibleTextWithDatabaseThrottle(t *testing.T) {
-	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-	p, q, api := newTestPatcher(t)
-	p.cfg.Now = func() time.Time { return now }
+// TestPatcherRepaintsLiveCardOnHeartbeat covers the only thing the card reports
+// while a run is in flight: that it is still going, and for how long. A repaint
+// patches the message already on screen rather than posting another one.
+func TestPatcherRepaintsLiveCardOnHeartbeat(t *testing.T) {
+	p, q, api, advance := newClockedPatcher(t)
 	taskID := uuidFromString(t, "ee100003-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{
-		ID:              taskID,
-		ChatSessionID:   q.binding.ChatSessionID,
-		ChatInputTaskID: taskID,
-		CreatedAt:       pgtype.Timestamptz{Time: now.Add(-30 * time.Second), Valid: true},
-	}
-	q.taskChannelIngested = true
-	q.cardErr = nil
-	q.card = OutboundCardMessage{
-		ID:                   uuidFromString(t, "dd100003-dd10-dd10-dd10-dddddddddddd"),
-		ChatSessionID:        q.binding.ChatSessionID,
-		TaskID:               taskID,
-		ChannelChatID:        q.binding.ChannelChatID,
-		ChannelCardMessageID: "om_streaming",
-		Status:               string(CardStatusStreaming),
-	}
-	q.claimPatch = true
-	q.taskMessages = []db.TaskMessage{
-		{Seq: 1, Type: "text", Content: pgtype.Text{String: "第一段。", Valid: true}},
-		{Seq: 2, Type: "tool_use", Tool: pgtype.Text{String: "exec_command", Valid: true}, Input: []byte(`{"cmd":"secret command"}`)},
-		{Seq: 3, Type: "tool_result", Output: pgtype.Text{String: "secret output", Valid: true}},
-		{Seq: 4, Type: "text", Content: pgtype.Text{String: "第二段。", Valid: true}},
-	}
-	if _, err := q.ProjectLarkOutboundTaskMessage(context.Background(), ProjectOutboundTaskMessageParams{
-		TaskID: taskID, Seq: 1, VisibleTextAppend: "第一段。", CurrentStage: progressStageResponding,
-	}); err != nil {
-		t.Fatalf("seed first projection: %v", err)
-	}
+	startChannelTask(q, taskID)
 
-	p.handleEvent(events.Event{
-		Type:   protocol.EventTaskMessage,
-		TaskID: uuidString(taskID),
-		Payload: protocol.TaskMessagePayload{
-			TaskID:  uuidString(taskID),
-			Seq:     4,
-			Type:    "text",
-			Content: "第二段。",
-		},
-	})
-	q.card.NextAttemptAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
+	p.handleEvent(runningEvent(q, taskID))
+	advance(p.cfg.StreamingDelay + time.Second)
+	p.RunOnce(context.Background())
+
+	// Not due yet: a poll inside the heartbeat window must be a no-op.
+	advance(p.cfg.HeartbeatInterval - time.Second)
+	p.RunOnce(context.Background())
+	api.mu.Lock()
+	if len(api.patched) != 0 {
+		api.mu.Unlock()
+		t.Fatalf("repaint before the heartbeat is due; patched=%d", len(api.patched))
+	}
+	api.mu.Unlock()
+
+	advance(2 * time.Second)
 	p.RunOnce(context.Background())
 
 	api.mu.Lock()
 	defer api.mu.Unlock()
+	if len(api.sent) != 1 {
+		t.Fatalf("a repaint must not post a second card; sent=%d", len(api.sent))
+	}
 	if len(api.patched) != 1 {
-		t.Fatalf("expected one throttled stream patch; patched=%d", len(api.patched))
+		t.Fatalf("expected one repaint; patched=%d", len(api.patched))
 	}
-	body := api.patched[0].CardJSON
-	for _, want := range []string{"第一段。", "第二段。"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("stream card missing visible text %q: %s", want, body)
-		}
+	if api.patched[0].LarkCardMessageID != "lark_card_msg_1" {
+		t.Errorf("repaint targeted %q want lark_card_msg_1", api.patched[0].LarkCardMessageID)
 	}
-	for _, forbidden := range []string{"secret command", "secret output", "exec_command"} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("stream card leaked tool detail %q: %s", forbidden, body)
-		}
+	if !strings.Contains(api.patched[0].CardJSON, "秒") {
+		t.Errorf("repaint must carry elapsed time: %s", api.patched[0].CardJSON)
 	}
 }
 
-func TestPatcherWorkerRecoversPersistedMessagesMissingFromProjection(t *testing.T) {
-	p, q, api := newTestPatcher(t)
-	taskID := uuidFromString(t, "ee100015-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{
-		ID: taskID, ChatSessionID: q.binding.ChatSessionID, ChatInputTaskID: taskID,
-		CreatedAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true},
-	}
-	q.taskChannelIngested = true
-	q.cardErr = nil
-	q.card = OutboundCardMessage{
-		ID:                   uuidFromString(t, "dd100015-dd10-dd10-dd10-dddddddddddd"),
-		ChatSessionID:        q.binding.ChatSessionID,
-		TaskID:               taskID,
-		ChannelChatID:        q.binding.ChannelChatID,
-		ChannelCardMessageID: "om_recovery",
-		Status:               string(CardStatusStreaming),
-		Transport:            "legacy",
-		DesiredRevision:      1,
-		AppliedRevision:      1,
-	}
-	q.taskMessages = []db.TaskMessage{
-		{Seq: 1, Type: "text", Content: pgtype.Text{String: "第一段。", Valid: true}},
-		{Seq: 2, Type: "tool_use", Tool: pgtype.Text{String: "exec_command", Valid: true}},
-		{Seq: 3, Type: "text", Content: pgtype.Text{String: "第二段。", Valid: true}},
-	}
-
-	p.RunOnce(context.Background())
-
-	if q.card.ProjectedSeq != 3 || q.card.CommandsCount != 1 {
-		t.Fatalf("reconciled projection=%+v", q.card)
-	}
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.patched) != 1 {
-		t.Fatalf("recovered delivery patches=%d want 1", len(api.patched))
-	}
-	for _, want := range []string{"第一段。", "第二段。"} {
-		if !strings.Contains(api.patched[0].CardJSON, want) {
-			t.Errorf("recovered card missing %q: %s", want, api.patched[0].CardJSON)
-		}
-	}
-}
-
-func TestPatcherSkipsStreamPatchWhenAnotherReplicaOwnsThrottle(t *testing.T) {
-	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
-	p, q, api := newTestPatcher(t)
-	p.cfg.Now = func() time.Time { return now }
+// TestPatcherStopsPaintingWhenTaskIsTerminal keeps a card from counting upwards
+// forever when the task reached a terminal state without a terminal event —
+// a daemon that died, or an event lost on the way to this replica.
+func TestPatcherStopsPaintingWhenTaskIsTerminal(t *testing.T) {
+	p, q, api, advance := newClockedPatcher(t)
 	taskID := uuidFromString(t, "ee100004-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{
-		ID:              taskID,
-		ChatSessionID:   q.binding.ChatSessionID,
-		ChatInputTaskID: taskID,
-		CreatedAt:       pgtype.Timestamptz{Time: now.Add(-30 * time.Second), Valid: true},
-	}
-	q.taskChannelIngested = true
-	q.cardErr = nil
-	q.card = OutboundCardMessage{
-		ID:                   uuidFromString(t, "dd100004-dd10-dd10-dd10-dddddddddddd"),
-		ChannelCardMessageID: "om_streaming",
-		Status:               string(CardStatusStreaming),
-	}
-	q.claimPatch = false
+	startChannelTask(q, taskID)
 
-	p.handleEvent(events.Event{Type: protocol.EventTaskMessage, TaskID: uuidString(taskID)})
+	p.handleEvent(runningEvent(q, taskID))
+	advance(p.cfg.StreamingDelay + time.Second)
+	p.RunOnce(context.Background())
+
+	q.task.Status = "failed"
+	advance(p.cfg.HeartbeatInterval + time.Second)
+	p.RunOnce(context.Background())
 
 	api.mu.Lock()
 	defer api.mu.Unlock()
 	if len(api.patched) != 0 {
-		t.Fatalf("unclaimed replica must not patch; patched=%d", len(api.patched))
+		t.Fatalf("a terminal task must stop its card; patched=%d", len(api.patched))
 	}
 }
 
-func TestPatcherFinalizesExistingStreamCardWithoutSecondMessage(t *testing.T) {
-	p, q, api := newTestPatcher(t)
+// TestPatcherSkipsPaintWhenInstallationRevoked covers the bot being unbound
+// while a task is still running. There is no chat left to paint into, so the
+// worker must stop quietly rather than retry a call that can only fail.
+func TestPatcherSkipsPaintWhenInstallationRevoked(t *testing.T) {
+	p, q, api, advance := newClockedPatcher(t)
+	taskID := uuidFromString(t, "ee100016-ee10-ee10-ee10-eeeeeeeeeeee")
+	startChannelTask(q, taskID)
+
+	p.handleEvent(runningEvent(q, taskID))
+	q.installation.Status = string(InstallationRevoked)
+	advance(p.cfg.StreamingDelay + time.Second)
+	p.RunOnce(context.Background())
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.sent) != 0 || len(api.patched) != 0 {
+		t.Fatalf("a revoked installation must not be painted; sent=%d patched=%d", len(api.sent), len(api.patched))
+	}
+}
+
+// TestPatcherOpensOneCardPerTask covers duplicate EventTaskRunning delivery —
+// a bus replay, or the same event reaching two replicas.
+func TestPatcherOpensOneCardPerTask(t *testing.T) {
+	p, q, api, advance := newClockedPatcher(t)
 	taskID := uuidFromString(t, "ee100005-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{ID: taskID, ChatSessionID: q.binding.ChatSessionID, ChatInputTaskID: taskID}
-	q.taskChannelIngested = true
-	q.cardErr = nil
-	q.card = OutboundCardMessage{
-		ID:                   uuidFromString(t, "dd100005-dd10-dd10-dd10-dddddddddddd"),
-		ChatSessionID:        q.binding.ChatSessionID,
-		TaskID:               taskID,
-		ChannelChatID:        q.binding.ChannelChatID,
-		ChannelCardMessageID: "om_streaming",
-		Status:               string(CardStatusStreaming),
-	}
+	startChannelTask(q, taskID)
 
-	p.handleEvent(events.Event{
-		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
-		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
-			Content:       "最终答案。",
-		},
-	})
+	p.handleEvent(runningEvent(q, taskID))
+	p.handleEvent(runningEvent(q, taskID))
+	advance(p.cfg.StreamingDelay + time.Second)
+	p.RunOnce(context.Background())
 
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	if len(api.patched) != 1 || !strings.Contains(api.patched[0].CardJSON, "最终答案。") {
-		t.Fatalf("existing stream card must be finalized in place; patched=%+v", api.patched)
-	}
-	if len(api.textSent) != 0 || len(api.mdCardSent) != 0 || len(api.sent) != 0 {
-		t.Fatalf("slow task final must not create a second message; text=%d markdown=%d cards=%d",
-			len(api.textSent), len(api.mdCardSent), len(api.sent))
-	}
-	if len(q.statusUpdates) != 1 || q.statusUpdates[0] != string(CardStatusFinal) {
-		t.Fatalf("stream card must reach final status; updates=%+v", q.statusUpdates)
+	if len(api.sent) != 1 {
+		t.Fatalf("duplicate running events must not post two cards; sent=%d", len(api.sent))
 	}
 }
 
-func TestPatcherKeepsNativeFinalWhenDurableScheduleWasNeverSent(t *testing.T) {
+// TestPatcherFinalReplacesLiveCardInPlace is the payoff of keeping a card at
+// all: the thing the user was already watching turns into the answer, instead
+// of the answer arriving below a card still claiming to be working.
+func TestPatcherFinalReplacesLiveCardInPlace(t *testing.T) {
 	p, q, api := newTestPatcher(t)
-	taskID := uuidFromString(t, "ee100011-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{ID: taskID, ChatSessionID: q.binding.ChatSessionID, ChatInputTaskID: taskID}
-	q.taskChannelIngested = true
-	q.cardErr = nil
-	q.card = OutboundCardMessage{
-		ID:            uuidFromString(t, "dd100011-dd10-dd10-dd10-dddddddddddd"),
-		ChatSessionID: q.binding.ChatSessionID,
-		TaskID:        taskID,
-		Status:        string(CardStatusPending),
-	}
+	taskID := uuidFromString(t, "ee100006-ee10-ee10-ee10-eeeeeeeeeeee")
+	startChannelTask(q, taskID)
+	q.seedLiveCard("om_streaming")
 
-	p.handleEvent(events.Event{
-		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
-		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
-			Content:       "最终答案。",
-		},
-	})
+	p.handleEvent(chatDoneEvent(q, taskID, "the answer"))
 
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	if len(api.sent) != 0 || len(api.patched) != 0 || len(api.textSent) != 1 {
-		t.Fatalf("unsent schedule must settle locally and keep native final; cards=%d patched=%d text=%d", len(api.sent), len(api.patched), len(api.textSent))
+	if len(api.patched) != 1 {
+		t.Fatalf("expected the live card to be patched; patched=%d", len(api.patched))
+	}
+	if !strings.Contains(api.patched[0].CardJSON, "the answer") {
+		t.Errorf("final card missing the answer: %s", api.patched[0].CardJSON)
+	}
+	if len(api.textSent) != 0 || len(api.sent) != 0 || len(api.mdCardSent) != 0 {
+		t.Fatalf("a patched card must not also post a second message")
+	}
+	if q.card.Status != string(CardStatusFinal) {
+		t.Errorf("row status=%q want final", q.card.Status)
 	}
 }
 
-func TestPatcherFinalizesExistingStreamCardAsConfirmationAction(t *testing.T) {
+// TestPatcherFallsBackToNativeReplyWhenCardPatchFails is the regression for the
+// incident this whole path was rebuilt around: a card that cannot be patched
+// used to swallow the answer entirely. A stale card on screen is acceptable;
+// losing what the agent said is not.
+func TestPatcherFallsBackToNativeReplyWhenCardPatchFails(t *testing.T) {
+	p, q, api := newTestPatcher(t)
+	taskID := uuidFromString(t, "ee100007-ee10-ee10-ee10-eeeeeeeeeeee")
+	startChannelTask(q, taskID)
+	q.seedLiveCard("om_streaming")
+	api.patchErr = errors.New("fake: card is no longer patchable")
+
+	p.handleEvent(chatDoneEvent(q, taskID, "the answer"))
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.patched) != 1 {
+		t.Fatalf("expected one patch attempt; patched=%d", len(api.patched))
+	}
+	if len(api.textSent) != 1 || api.textSent[0].Text != "the answer" {
+		t.Fatalf("the answer must still reach the chat; textSent=%+v", api.textSent)
+	}
+}
+
+// TestPatcherKeepsNativeReplyWhenCardWasNeverSent covers the fast path once a
+// row exists but the start delay has not elapsed: the row settles and the reply
+// goes out as an ordinary message, with no orphan card left behind.
+func TestPatcherKeepsNativeReplyWhenCardWasNeverSent(t *testing.T) {
+	p, q, api, _ := newClockedPatcher(t)
+	taskID := uuidFromString(t, "ee100008-ee10-ee10-ee10-eeeeeeeeeeee")
+	startChannelTask(q, taskID)
+
+	p.handleEvent(runningEvent(q, taskID))
+	p.handleEvent(chatDoneEvent(q, taskID, "quick answer"))
+	p.RunOnce(context.Background())
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.textSent) != 1 || api.textSent[0].Text != "quick answer" {
+		t.Fatalf("fast reply must stay native; textSent=%+v", api.textSent)
+	}
+	if len(api.sent) != 0 || len(api.patched) != 0 {
+		t.Fatalf("no card outbound expected; sent=%d patched=%d", len(api.sent), len(api.patched))
+	}
+	if q.card.Status != string(CardStatusFinal) {
+		t.Errorf("row status=%q want final", q.card.Status)
+	}
+}
+
+// TestPatcherEmptyFinalRetiresLiveCardWithoutSpeaking covers the awkward pair
+// of rules around an empty reply. On its own it is dropped — we would rather
+// say nothing than post "Done." at someone. But a card already on screen cannot
+// be dropped: left alone it would sit on "正在处理" forever, so it retires with
+// a neutral line instead, and still posts no second message.
+func TestPatcherEmptyFinalRetiresLiveCardWithoutSpeaking(t *testing.T) {
+	p, q, api := newTestPatcher(t)
+	taskID := uuidFromString(t, "ee100014-ee10-ee10-ee10-eeeeeeeeeeee")
+	startChannelTask(q, taskID)
+	q.seedLiveCard("om_streaming")
+
+	p.handleEvent(chatDoneEvent(q, taskID, ""))
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.patched) != 1 {
+		t.Fatalf("a live card must be retired, not left spinning; patched=%d", len(api.patched))
+	}
+	if strings.Contains(api.patched[0].CardJSON, "正在处理") {
+		t.Errorf("retired card still claims to be working: %s", api.patched[0].CardJSON)
+	}
+	if strings.Contains(api.patched[0].CardJSON, "Done.") {
+		t.Errorf("retired card must not use the Done. wording: %s", api.patched[0].CardJSON)
+	}
+	if len(api.textSent) != 0 || len(api.sent) != 0 || len(api.mdCardSent) != 0 {
+		t.Fatalf("an empty reply must not post a message; textSent=%d sent=%d md=%d",
+			len(api.textSent), len(api.sent), len(api.mdCardSent))
+	}
+	if q.card.Status != string(CardStatusFinal) {
+		t.Errorf("row status=%q want final", q.card.Status)
+	}
+}
+
+// TestPatcherEmptyFinalWithoutCardStaysSilent is the other half: with no card
+// on screen there is nothing to retire, so the empty reply is simply dropped.
+func TestPatcherEmptyFinalWithoutCardStaysSilent(t *testing.T) {
+	p, q, api := newTestPatcher(t)
+	taskID := uuidFromString(t, "ee100015-ee10-ee10-ee10-eeeeeeeeeeee")
+	startChannelTask(q, taskID)
+
+	p.handleEvent(chatDoneEvent(q, taskID, ""))
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.textSent) != 0 || len(api.sent) != 0 || len(api.patched) != 0 {
+		t.Fatalf("empty reply must be silent; textSent=%d sent=%d patched=%d",
+			len(api.textSent), len(api.sent), len(api.patched))
+	}
+}
+
+// TestPatcherSecondTerminalEventStaysQuiet pins the settle write as the
+// dedup: chat:done and task:failed race for the same task, and the loser must
+// not add a second message.
+func TestPatcherSecondTerminalEventStaysQuiet(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee100009-ee10-ee10-ee10-eeeeeeeeeeee")
+	startChannelTask(q, taskID)
+	q.seedLiveCard("om_streaming")
+
+	p.handleEvent(chatDoneEvent(q, taskID, "the answer"))
+	p.handleEvent(events.Event{
+		Type:          protocol.EventTaskFailed,
+		TaskID:        uuidString(taskID),
+		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		Payload:       map[string]any{"error": "too late"},
+	})
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.patched) != 1 {
+		t.Fatalf("only the winning terminal event may speak; patched=%d", len(api.patched))
+	}
+	if len(api.sent) != 0 || len(api.textSent) != 0 {
+		t.Fatalf("late terminal event must stay quiet; sent=%d textSent=%d", len(api.sent), len(api.textSent))
+	}
+	if len(q.settled) != 1 {
+		t.Errorf("settle writes=%v want exactly one winner", q.settled)
+	}
+}
+
+// TestPatcherDoesNotAdoptCardThatLandedAfterSettle covers the narrow race where
+// a task finishes while its first card send is still in flight. The answer has
+// already gone out on its own, so the late card must not drag the row back to
+// streaming and start a heartbeat behind it.
+func TestPatcherDoesNotAdoptCardThatLandedAfterSettle(t *testing.T) {
+	p, q, api, advance := newClockedPatcher(t)
+	taskID := uuidFromString(t, "ee100010-ee10-ee10-ee10-eeeeeeeeeeee")
+	startChannelTask(q, taskID)
+	p.handleEvent(runningEvent(q, taskID))
+	advance(p.cfg.StreamingDelay + time.Second)
+
+	// The send lands, but the task settles before the row can record it.
+	api.onSend = func() { p.handleEvent(chatDoneEvent(q, taskID, "the answer")) }
+	p.RunOnce(context.Background())
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.textSent) != 1 || api.textSent[0].Text != "the answer" {
+		t.Fatalf("the answer must reach the chat on its own; textSent=%+v", api.textSent)
+	}
+	if q.card.Status != string(CardStatusFinal) {
+		t.Errorf("row status=%q want final", q.card.Status)
+	}
+	if q.card.ChannelCardMessageID != "" {
+		t.Errorf("settled row must not adopt the late card; got %q", q.card.ChannelCardMessageID)
+	}
+}
+
+// TestPatcherFinalCardCarriesConfirmationAction keeps the interactive
+// confirmation buttons usable when a live card becomes the answer.
+func TestPatcherFinalCardCarriesConfirmationAction(t *testing.T) {
+	p, q, api := newTestPatcher(t)
+	taskID := uuidFromString(t, "ee100011-ee10-ee10-ee10-eeeeeeeeeeee")
 	requesterID := uuidFromString(t, "99999999-9999-9999-9999-999999999999")
-	q.task = db.AgentTaskQueue{
-		ID:              taskID,
-		ChatSessionID:   q.binding.ChatSessionID,
-		ChatInputTaskID: taskID,
-		InitiatorUserID: requesterID,
-	}
-	q.taskChannelIngested = true
-	q.cardErr = nil
-	q.card = OutboundCardMessage{
-		ID:                   uuidFromString(t, "dd100009-dd10-dd10-dd10-dddddddddddd"),
-		ChatSessionID:        q.binding.ChatSessionID,
-		TaskID:               taskID,
-		ChannelCardMessageID: "om_streaming",
-		Status:               string(CardStatusStreaming),
-	}
+	startChannelTask(q, taskID)
+	q.task.InitiatorUserID = requesterID
+	q.seedLiveCard("om_streaming")
 	q.bindings = []InboxNotificationBinding{
 		{
 			UserBinding: UserBinding{
@@ -944,16 +827,7 @@ func TestPatcherFinalizesExistingStreamCardAsConfirmationAction(t *testing.T) {
 		},
 	}
 
-	p.handleEvent(events.Event{
-		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
-		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
-			Content:       "项目：`测试`\n\n请回复“确认执行”，我再触发。",
-		},
-	})
+	p.handleEvent(chatDoneEvent(q, taskID, "项目：`测试`\n\n请回复“确认执行”，我再触发。"))
 
 	api.mu.Lock()
 	defer api.mu.Unlock()
@@ -970,50 +844,13 @@ func TestPatcherFinalizesExistingStreamCardAsConfirmationAction(t *testing.T) {
 	}
 }
 
-func TestPatcherFailurePatchesExistingStreamCard(t *testing.T) {
-	p, q, api := newTestPatcher(t)
-	taskID := uuidFromString(t, "ee100007-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{ID: taskID, ChatSessionID: q.binding.ChatSessionID, ChatInputTaskID: taskID}
-	q.taskChannelIngested = true
-	q.cardErr = nil
-	q.card = OutboundCardMessage{
-		ID:                   uuidFromString(t, "dd100007-dd10-dd10-dd10-dddddddddddd"),
-		ChannelCardMessageID: "om_streaming",
-		Status:               string(CardStatusStreaming),
-	}
-
-	p.handleEvent(events.Event{
-		Type:          protocol.EventTaskFailed,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
-		Payload:       map[string]any{"error": "boom"},
-	})
-
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.patched) != 1 || !strings.Contains(api.patched[0].CardJSON, "boom") {
-		t.Fatalf("failure must patch the existing stream card; patched=%+v", api.patched)
-	}
-	if len(api.sent) != 0 {
-		t.Fatalf("failure must not create a second card; sent=%d", len(api.sent))
-	}
-	if len(q.statusUpdates) != 1 || q.statusUpdates[0] != string(CardStatusError) {
-		t.Fatalf("failure status updates=%+v", q.statusUpdates)
-	}
-}
-
-func TestPatcherFailureKeepsOneShotCardWhenDurableScheduleWasNeverSent(t *testing.T) {
+// TestPatcherFailurePatchesLiveCard settles a live card as an error rather than
+// leaving it spinning next to a separate failure notice.
+func TestPatcherFailurePatchesLiveCard(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee100012-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{ID: taskID, ChatSessionID: q.binding.ChatSessionID, ChatInputTaskID: taskID}
-	q.taskChannelIngested = true
-	q.cardErr = nil
-	q.card = OutboundCardMessage{
-		ID:            uuidFromString(t, "dd100012-dd10-dd10-dd10-dddddddddddd"),
-		ChatSessionID: q.binding.ChatSessionID,
-		TaskID:        taskID,
-		Status:        string(CardStatusPending),
-	}
+	startChannelTask(q, taskID)
+	q.seedLiveCard("om_streaming")
 
 	p.handleEvent(events.Event{
 		Type:          protocol.EventTaskFailed,
@@ -1024,45 +861,44 @@ func TestPatcherFailureKeepsOneShotCardWhenDurableScheduleWasNeverSent(t *testin
 
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	if len(api.sent) != 1 || api.sent[0].IdempotencyKey != "" || !strings.Contains(api.sent[0].CardJSON, "boom") {
-		t.Fatalf("unsent schedule must keep the one-shot error card; sent=%+v", api.sent)
+	if len(api.patched) != 1 {
+		t.Fatalf("expected the live card to be patched; patched=%d", len(api.patched))
 	}
-	if len(api.patched) != 0 {
-		t.Fatalf("unsent schedule must not patch a nonexistent card; patched=%+v", api.patched)
+	if !strings.Contains(api.patched[0].CardJSON, "boom") {
+		t.Errorf("error card missing the reason: %s", api.patched[0].CardJSON)
+	}
+	if len(api.sent) != 0 {
+		t.Fatalf("failure must not post a second card; sent=%d", len(api.sent))
+	}
+	if q.card.Status != string(CardStatusError) {
+		t.Errorf("row status=%q want error", q.card.Status)
 	}
 }
 
-func TestPatcherCancellationSettlesExistingStreamCard(t *testing.T) {
+// TestPatcherCancellationSettlesLiveCard stops the heartbeat and says so.
+func TestPatcherCancellationSettlesLiveCard(t *testing.T) {
 	p, q, api := newTestPatcher(t)
-	taskID := uuidFromString(t, "ee100008-ee10-ee10-ee10-eeeeeeeeeeee")
-	q.task = db.AgentTaskQueue{ID: taskID, ChatSessionID: q.binding.ChatSessionID, ChatInputTaskID: taskID}
-	q.taskChannelIngested = true
-	q.cardErr = nil
-	q.card = OutboundCardMessage{
-		ID:                   uuidFromString(t, "dd100008-dd10-dd10-dd10-dddddddddddd"),
-		ChannelCardMessageID: "om_streaming",
-		Status:               string(CardStatusStreaming),
-	}
+	taskID := uuidFromString(t, "ee100013-ee10-ee10-ee10-eeeeeeeeeeee")
+	startChannelTask(q, taskID)
+	q.seedLiveCard("om_streaming")
 
 	p.handleEvent(events.Event{
 		Type:          protocol.EventTaskCancelled,
 		TaskID:        uuidString(taskID),
 		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		Payload:       map[string]any{"task_id": uuidString(taskID)},
 	})
 
 	api.mu.Lock()
 	defer api.mu.Unlock()
 	if len(api.patched) != 1 || !strings.Contains(api.patched[0].CardJSON, "已取消") {
-		t.Fatalf("cancellation must settle the stream card; patched=%+v", api.patched)
+		t.Fatalf("cancellation must settle the card in place; patched=%+v", api.patched)
 	}
-	if len(q.statusUpdates) != 1 || q.statusUpdates[0] != string(CardStatusFinal) {
-		t.Fatalf("cancellation status updates=%+v", q.statusUpdates)
+	if q.card.Status != string(CardStatusFinal) {
+		t.Errorf("row status=%q want final", q.card.Status)
 	}
 }
 
-// TestPatcherRoutesConfirmationPromptToActionCard pins the Patcher-level
-// contract: explicit confirmation prompts in a channel reply render a Lark
-// interactive card with buttons, not the normal text/markdown reply path.
 func TestPatcherRoutesConfirmationPromptToActionCard(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -1406,12 +1242,12 @@ func TestPatcherIgnoresEventTaskCompletedForChatTasks(t *testing.T) {
 	}
 }
 
-// TestDefaultRendererConfigCarriesUpdateMulti pins the streaming-card
-// contract: every lifecycle kind is a CardKit JSON 2.0 card, remains shared,
-// and terminal kinds explicitly close streaming mode.
+// TestDefaultRendererConfigCarriesUpdateMulti pins the card contract: every
+// lifecycle kind is a JSON 2.0 card with a markdown body, and stays a shared
+// card so a later patch reaches everyone who can see it.
 func TestDefaultRendererConfigCarriesUpdateMulti(t *testing.T) {
 	r := NewDefaultRenderer()
-	for _, kind := range []CardKind{CardKindThinking, CardKindRunning, CardKindFinal, CardKindError} {
+	for _, kind := range []CardKind{CardKindRunning, CardKindFinal, CardKindError} {
 		t.Run(string(kind), func(t *testing.T) {
 			out, err := r.Render(RenderInput{Kind: kind, Content: "x", ErrorMessage: "y"})
 			if err != nil {
@@ -1439,11 +1275,28 @@ func TestDefaultRendererConfigCarriesUpdateMulti(t *testing.T) {
 			if !strings.Contains(string(raw), `"tag":"markdown"`) {
 				t.Errorf("card body must render markdown-capable visible text: %s", raw)
 			}
-			streaming, _ := cfg["streaming_mode"].(bool)
-			if want := kind == CardKindThinking || kind == CardKindRunning; streaming != want {
-				t.Errorf("streaming_mode=%v want %v", streaming, want)
-			}
 		})
+	}
+}
+
+// TestProgressCardReportsElapsedOnly pins what a running card is allowed to
+// say. Anything drawn from the transcript would put agent reasoning and tool
+// activity into a chat the requester does not control.
+func TestProgressCardReportsElapsedOnly(t *testing.T) {
+	out, err := NewDefaultRenderer().Render(RenderInput{
+		Kind: CardKindRunning, AgentName: "TestAgent", ElapsedSecs: 42,
+		Content: "secret reasoning", ErrorMessage: "secret failure",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out.JSON, "42 秒") {
+		t.Errorf("running card must report elapsed time: %s", out.JSON)
+	}
+	for _, leaked := range []string{"secret reasoning", "secret failure"} {
+		if strings.Contains(out.JSON, leaked) {
+			t.Errorf("running card leaked %q: %s", leaked, out.JSON)
+		}
 	}
 }
 

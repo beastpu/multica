@@ -141,16 +141,6 @@ type APIClient interface {
 	DeleteMessageReaction(ctx context.Context, p DeleteReactionParams) error
 }
 
-// CardKitAPIClient is the optional CardKit 2.0 transport used by long-running
-// agent replies. Keeping it separate from APIClient lets test doubles and
-// deployments that only implement the legacy IM surface degrade without
-// widening every Lark integration fake.
-type CardKitAPIClient interface {
-	CreateCardKitCard(ctx context.Context, p CreateCardKitCardParams) (string, error)
-	SendCardKitCard(ctx context.Context, p SendCardKitCardParams) (string, error)
-	UpdateCardKitCard(ctx context.Context, p UpdateCardKitCardParams) error
-}
-
 // ListMessagesParams selects a bounded, recent window of messages in a
 // single Lark chat for the group-context prefetch. Only the fields the
 // enricher needs today are exposed (ChatID, ThreadID, PageSize, EndTime);
@@ -300,27 +290,6 @@ type PatchCardParams struct {
 	InstallationID    InstallationCredentials
 	LarkCardMessageID string
 	CardJSON          string
-}
-
-type CreateCardKitCardParams struct {
-	InstallationID InstallationCredentials
-	CardJSON       string
-}
-
-type SendCardKitCardParams struct {
-	InstallationID InstallationCredentials
-	ChatID         ChatID
-	CardID         string
-	IdempotencyKey string
-	ReplyTarget    ReplyTarget
-}
-
-type UpdateCardKitCardParams struct {
-	InstallationID InstallationCredentials
-	CardID         string
-	CardJSON       string
-	IdempotencyKey string
-	Sequence       int32
 }
 
 // SendTextParams is the input shape for posting a plain text message.

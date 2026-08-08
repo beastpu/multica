@@ -649,262 +649,90 @@ WHERE installation_id = $1;
 -- =====================
 
 -- name: CreateChannelOutboundCardMessage :one
+-- One live card per task. A duplicate EventTaskRunning (bus replay, a second
+-- replica) must not mint a second card, and the partial unique index on
+-- (task_id) turns that into a no-op the caller reads as pgx.ErrNoRows.
+-- last_patched_at is stamped up front so the initial send is due on the same
+-- clock, and the same predicate, as every later repaint.
 INSERT INTO channel_outbound_card_message (
     chat_session_id, task_id, channel_type, channel_chat_id,
-    channel_card_message_id, status, desired_revision, next_attempt_at
+    channel_card_message_id, status, last_patched_at
 ) VALUES (
-    $1, sqlc.narg('task_id'), $2, $3, $4, $5, 1,
-    now() + make_interval(secs => sqlc.arg('start_delay_seconds')::double precision)
+    $1, sqlc.narg('task_id'), $2, $3, '', 'pending', now()
 )
-ON CONFLICT (task_id) WHERE task_id IS NOT NULL DO UPDATE
-SET next_attempt_at = LEAST(
-        channel_outbound_card_message.next_attempt_at,
-        EXCLUDED.next_attempt_at
-    )
-WHERE channel_outbound_card_message.status IN ('pending', 'streaming')
+ON CONFLICT (task_id) WHERE task_id IS NOT NULL DO NOTHING
 RETURNING *;
 
 -- name: GetChannelOutboundCardByTask :one
--- The partial unique index on (task_id) WHERE task_id IS NOT NULL
--- guarantees at most one row. Scoped by channel_type so a future non-Feishu
--- card for the same task is not patched as a Feishu card.
+-- The partial unique index on (task_id) WHERE task_id IS NOT NULL guarantees at
+-- most one row. Scoped by channel_type so a future non-Feishu card for the same
+-- task is not patched as a Feishu card.
 SELECT * FROM channel_outbound_card_message
 WHERE task_id = sqlc.arg('task_id')
   AND channel_type = sqlc.arg('channel_type');
 
--- name: ProjectChannelOutboundTaskMessage :one
--- Applies a public-safe projection of one persisted task event. Raw tool input,
--- output, commands, prompts, and paths never enter the outbound row. projected_seq
--- makes duplicate bus delivery idempotent. The existing due time is preserved
--- until the delayed initial send; once a card exists, updates are coalesced by
--- the DB clock instead of a process clock.
-UPDATE channel_outbound_card_message
-SET projected_seq = sqlc.arg('seq'),
-    visible_text = right(visible_text || sqlc.arg('visible_text_append'), 20000),
-    current_stage = sqlc.arg('current_stage'),
-    files_read_count = files_read_count + sqlc.arg('files_read_delta'),
-    files_edited_count = files_edited_count + sqlc.arg('files_edited_delta'),
-    searches_count = searches_count + sqlc.arg('searches_delta'),
-    commands_count = commands_count + sqlc.arg('commands_delta'),
-    desired_revision = desired_revision + 1,
-    next_attempt_at = CASE
-        WHEN channel_card_message_id = '' THEN next_attempt_at
-        ELSE LEAST(
-            COALESCE(next_attempt_at, now() + make_interval(secs => sqlc.arg('min_interval_seconds')::double precision)),
-            now() + make_interval(secs => sqlc.arg('min_interval_seconds')::double precision)
-        )
-    END
-WHERE task_id = sqlc.arg('task_id')
-  AND channel_type = sqlc.arg('channel_type')
-  AND status IN ('pending', 'streaming')
-  AND projected_seq < sqlc.arg('seq')
-RETURNING *;
-
--- name: ScheduleChannelOutboundTaskMessage :one
--- Task-message ingestion only wakes the durable worker. The worker projects
--- the persisted transcript under the delivery lease, so the synchronous event
--- path never performs remote I/O and a crashed event listener loses no data.
-UPDATE channel_outbound_card_message
-SET next_attempt_at = CASE
-        WHEN channel_card_message_id = '' THEN next_attempt_at
-        ELSE LEAST(
-            COALESCE(next_attempt_at, now() + make_interval(secs => sqlc.arg('min_interval_seconds')::double precision)),
-            now() + make_interval(secs => sqlc.arg('min_interval_seconds')::double precision)
-        )
-    END
-WHERE task_id = sqlc.arg('task_id')
-  AND channel_type = sqlc.arg('channel_type')
-  AND status IN ('pending', 'streaming')
-  AND delivery_failed_at IS NULL
-RETURNING *;
-
--- name: SetChannelOutboundTerminalDesired :one
--- A terminal event is monotonic: later progress events cannot reopen it. When
--- no worker owns the unsent row, applied_revision is advanced immediately and
--- the caller keeps the native fast-reply path. If a worker already started the
--- remote card, the terminal revision is queued for that same card.
-UPDATE channel_outbound_card_message
-SET status = sqlc.arg('status'),
-    terminal_content = sqlc.arg('terminal_content'),
-    desired_revision = desired_revision + 1,
-    applied_revision = CASE
-        WHEN channel_card_id = ''
-         AND channel_card_message_id = ''
-         AND (lease_expires_at IS NULL OR lease_expires_at <= now())
-        THEN desired_revision + 1
-        ELSE applied_revision
-    END,
-    next_attempt_at = CASE
-        WHEN channel_card_id = ''
-         AND channel_card_message_id = ''
-         AND (lease_expires_at IS NULL OR lease_expires_at <= now())
-        THEN NULL
-        ELSE now()
-    END
-WHERE task_id = sqlc.arg('task_id')
-  AND channel_type = sqlc.arg('channel_type')
-  AND status IN ('pending', 'streaming')
-RETURNING *;
-
--- name: ClaimChannelOutboundCardDelivery :one
-WITH candidate AS (
-    SELECT pending.id
-    FROM channel_outbound_card_message AS pending
-    WHERE pending.channel_type = sqlc.arg('channel_type')
-      AND pending.delivery_failed_at IS NULL
-      AND (
-          pending.desired_revision > pending.applied_revision
-          OR EXISTS (
-              SELECT 1 FROM task_message AS message
-              WHERE message.task_id = pending.task_id
-                AND message.seq > pending.projected_seq
-          )
-      )
-      AND (
-          pending.next_attempt_at <= now()
-          OR (
-              pending.next_attempt_at IS NULL
-              AND pending.status IN ('pending', 'streaming')
-              AND EXISTS (
-                  SELECT 1 FROM task_message AS message
-                  WHERE message.task_id = pending.task_id
-                    AND message.seq > pending.projected_seq
-              )
-          )
-      )
-      AND (pending.lease_expires_at IS NULL OR pending.lease_expires_at <= now())
-    ORDER BY pending.next_attempt_at, pending.created_at
-    FOR UPDATE SKIP LOCKED
-    LIMIT 1
-)
-UPDATE channel_outbound_card_message AS c
-SET lease_token = sqlc.arg('lease_token'),
-    lease_expires_at = now() + make_interval(secs => sqlc.arg('lease_seconds')::double precision),
-    inflight_revision = COALESCE(c.inflight_revision, c.desired_revision)
-FROM candidate
-WHERE c.id = candidate.id
-RETURNING c.*;
-
--- name: ClaimChannelOutboundCardDeliveryByTask :one
-UPDATE channel_outbound_card_message AS c
-SET lease_token = sqlc.arg('lease_token'),
-    lease_expires_at = now() + make_interval(secs => sqlc.arg('lease_seconds')::double precision),
-    inflight_revision = COALESCE(inflight_revision, desired_revision)
-WHERE c.task_id = sqlc.arg('task_id')
-  AND c.channel_type = sqlc.arg('channel_type')
-  AND c.delivery_failed_at IS NULL
-  AND (
-      c.desired_revision > c.applied_revision
-      OR EXISTS (
-          SELECT 1 FROM task_message AS message
-          WHERE message.task_id = c.task_id
-            AND message.seq > c.projected_seq
-      )
+-- name: ClaimChannelOutboundCardWork :many
+-- Claims the cards whose next repaint is due, stamping last_patched_at in the
+-- same statement that selects them. That stamp is the entire concurrency story:
+-- a second replica running this at the same moment blocks on the row, re-checks
+-- the outer predicate against the committed row, and finds it no longer due.
+-- No lease column is needed, because losing the race costs nothing either way —
+-- painting a card twice from the same row is the same bytes twice.
+--
+-- A 'pending' row has never been sent, so its due time is the start delay that
+-- keeps quick replies as native messages; a 'streaming' row is repainted on the
+-- slower heartbeat. Rows whose task already reached a terminal status are left
+-- alone: the terminal event settles them, and if that event never arrived the
+-- card should stop moving rather than count upwards forever.
+UPDATE channel_outbound_card_message AS card
+SET last_patched_at = now()
+WHERE card.last_patched_at < now() - make_interval(secs => CASE
+        WHEN card.status = 'pending'
+        THEN sqlc.arg('start_delay_seconds')::double precision
+        ELSE sqlc.arg('heartbeat_seconds')::double precision
+    END)
+  AND card.id IN (
+      SELECT due.id
+      FROM channel_outbound_card_message AS due
+      JOIN agent_task_queue AS task ON task.id = due.task_id
+      WHERE due.channel_type = sqlc.arg('channel_type')
+        AND due.status IN ('pending', 'streaming')
+        AND task.status NOT IN ('completed', 'failed', 'cancelled')
+        AND due.last_patched_at < now() - make_interval(secs => CASE
+                WHEN due.status = 'pending'
+                THEN sqlc.arg('start_delay_seconds')::double precision
+                ELSE sqlc.arg('heartbeat_seconds')::double precision
+            END)
+      ORDER BY due.last_patched_at
+      LIMIT sqlc.arg('max_rows')
   )
-  AND (
-      c.next_attempt_at <= now()
-      OR (
-          c.next_attempt_at IS NULL
-          AND c.status IN ('pending', 'streaming')
-          AND EXISTS (
-              SELECT 1 FROM task_message AS message
-              WHERE message.task_id = c.task_id
-                AND message.seq > c.projected_seq
-          )
-      )
-  )
-  AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= now())
-RETURNING c.*;
-
--- name: SetChannelOutboundInflightPayload :one
-UPDATE channel_outbound_card_message
-SET inflight_revision = sqlc.arg('desired_revision')::bigint,
-    inflight_sequence = CASE
-        WHEN transport = 'cardkit' AND channel_card_message_id <> ''
-        THEN operation_sequence + 1
-        ELSE NULL
-    END,
-    operation_sequence = CASE
-        WHEN transport = 'cardkit' AND channel_card_message_id <> ''
-        THEN operation_sequence + 1
-        ELSE operation_sequence
-    END,
-    inflight_card_json = sqlc.arg('card_json')
-WHERE id = sqlc.arg('id')
-  AND lease_token = sqlc.arg('lease_token')
-  AND desired_revision >= sqlc.arg('desired_revision')::bigint
-  AND inflight_card_json = ''
-RETURNING *;
-
--- name: SetChannelOutboundCardEntityID :one
-UPDATE channel_outbound_card_message
-SET channel_card_id = sqlc.arg('channel_card_id')
-WHERE id = sqlc.arg('id')
-  AND lease_token = sqlc.arg('lease_token')
-  AND (channel_card_id = '' OR channel_card_id = sqlc.arg('channel_card_id'))
 RETURNING *;
 
 -- name: SetChannelOutboundCardMessageID :one
+-- Records the card the initial send produced, so a repaint or a terminal patch
+-- on any replica can find it. Guarded on the empty id: if two replicas somehow
+-- both sent, the loser's write is rejected and its message id is reported as a
+-- duplicate rather than silently replacing the live one.
 UPDATE channel_outbound_card_message
-SET channel_card_message_id = sqlc.arg('channel_card_message_id')
+SET channel_card_message_id = sqlc.arg('channel_card_message_id'),
+    status = 'streaming',
+    last_patched_at = now()
 WHERE id = sqlc.arg('id')
-  AND lease_token = sqlc.arg('lease_token')
-  AND (channel_card_message_id = '' OR channel_card_message_id = sqlc.arg('channel_card_message_id'))
-RETURNING *;
-
--- name: DowngradeChannelOutboundCardTransport :one
-UPDATE channel_outbound_card_message
-SET transport = 'legacy',
-    channel_card_id = ''
-WHERE id = sqlc.arg('id')
-  AND lease_token = sqlc.arg('lease_token')
-  AND transport = 'cardkit'
   AND channel_card_message_id = ''
+  AND status = 'pending'
 RETURNING *;
 
--- name: CompleteChannelOutboundCardDelivery :one
+-- name: SettleChannelOutboundCard :one
+-- Terminal events race each other (chat:done against task:failed against a
+-- cancel). Whoever flips the row out of its live statuses owns the reply; the
+-- losers read pgx.ErrNoRows and send nothing, so the chat never sees the same
+-- answer twice.
 UPDATE channel_outbound_card_message
-SET applied_revision = inflight_revision,
-    status = CASE WHEN status = 'pending' THEN 'streaming' ELSE status END,
-    last_patched_at = now(),
-    inflight_revision = NULL,
-    inflight_sequence = NULL,
-    inflight_card_json = '',
-    lease_token = NULL,
-    lease_expires_at = NULL,
-    attempt_count = 0,
-    delivery_failed_at = NULL,
-    last_error = '',
-    next_attempt_at = CASE
-        WHEN desired_revision > inflight_revision THEN now()
-        ELSE NULL
-    END
-WHERE id = sqlc.arg('id')
-  AND lease_token = sqlc.arg('lease_token')
-  AND inflight_revision IS NOT NULL
-RETURNING *;
-
--- name: AbandonChannelOutboundCardDelivery :one
-UPDATE channel_outbound_card_message
-SET lease_token = NULL,
-    lease_expires_at = NULL,
-    attempt_count = attempt_count + 1,
-    delivery_failed_at = now(),
-    last_error = sqlc.arg('last_error'),
-    next_attempt_at = NULL
-WHERE id = sqlc.arg('id')
-  AND lease_token = sqlc.arg('lease_token')
-RETURNING *;
-
--- name: FailChannelOutboundCardDelivery :one
-UPDATE channel_outbound_card_message
-SET lease_token = NULL,
-    lease_expires_at = NULL,
-    attempt_count = attempt_count + 1,
-    last_error = sqlc.arg('last_error'),
-    next_attempt_at = now() + make_interval(secs => sqlc.arg('retry_seconds')::double precision)
-WHERE id = sqlc.arg('id')
-  AND lease_token = sqlc.arg('lease_token')
+SET status = sqlc.arg('status'),
+    last_patched_at = now()
+WHERE task_id = sqlc.arg('task_id')
+  AND channel_type = sqlc.arg('channel_type')
+  AND status IN ('pending', 'streaming')
 RETURNING *;
 
 -- name: DeleteChannelOutboundCardMessagesBySession :exec

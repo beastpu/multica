@@ -165,76 +165,26 @@ type CreateBindingTokenParams struct {
 
 // CreateOutboundCardMessageParams records an outbound card for a task/session.
 type CreateOutboundCardMessageParams struct {
-	ChatSessionID        pgtype.UUID
-	ChannelChatID        string
-	ChannelCardMessageID string
-	Status               string
-	TaskID               pgtype.UUID
-	StartDelaySeconds    float64
+	ChatSessionID pgtype.UUID
+	ChannelChatID string
+	TaskID        pgtype.UUID
 }
 
-type ProjectOutboundTaskMessageParams struct {
-	TaskID             pgtype.UUID
-	Seq                int32
-	VisibleTextAppend  string
-	CurrentStage       string
-	FilesReadDelta     int32
-	FilesEditedDelta   int32
-	SearchesDelta      int32
-	CommandsDelta      int32
-	MinIntervalSeconds float64
-}
-
-type ScheduleOutboundTaskMessageParams struct {
-	TaskID             pgtype.UUID
-	MinIntervalSeconds float64
-}
-
-type SetOutboundTerminalDesiredParams struct {
-	TaskID          pgtype.UUID
-	Status          string
-	TerminalContent string
-}
-
-type ClaimOutboundCardDeliveryParams struct {
-	TaskID       pgtype.UUID
-	LeaseToken   pgtype.UUID
-	LeaseSeconds float64
-}
-
-type SetOutboundInflightPayloadParams struct {
-	ID              pgtype.UUID
-	LeaseToken      pgtype.UUID
-	DesiredRevision int64
-	CardJSON        string
-}
-
-type SetOutboundCardEntityIDParams struct {
-	ID            pgtype.UUID
-	LeaseToken    pgtype.UUID
-	ChannelCardID string
+// ClaimOutboundCardWorkParams asks for the cards whose next paint is due.
+// A card that has never been sent waits StartDelaySeconds, so quick replies
+// stay native; a live card is repainted every HeartbeatSeconds.
+type ClaimOutboundCardWorkParams struct {
+	StartDelaySeconds float64
+	HeartbeatSeconds  float64
+	MaxRows           int32
 }
 
 type SetOutboundCardMessageIDParams struct {
 	ID                   pgtype.UUID
-	LeaseToken           pgtype.UUID
 	ChannelCardMessageID string
 }
 
-type OutboundDeliveryLeaseParams struct {
-	ID         pgtype.UUID
-	LeaseToken pgtype.UUID
-}
-
-type FailOutboundCardDeliveryParams struct {
-	ID           pgtype.UUID
-	LeaseToken   pgtype.UUID
-	LastError    string
-	RetrySeconds float64
-}
-
-type AbandonOutboundCardDeliveryParams struct {
-	ID         pgtype.UUID
-	LeaseToken pgtype.UUID
-	LastError  string
+type SettleOutboundCardParams struct {
+	TaskID pgtype.UUID
+	Status string
 }
