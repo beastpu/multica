@@ -1629,6 +1629,7 @@ type WorkflowNodeVerdict struct {
 	EvaluatorID            pgtype.UUID        `json:"evaluator_id"`
 	DefinitionSnapshot     []byte             `json:"definition_snapshot"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	SubmissionID           pgtype.UUID        `json:"submission_id"`
 }
 
 type WorkflowVersion struct {

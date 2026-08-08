@@ -1604,11 +1604,11 @@ WHERE id = @id AND workspace_id = @workspace_id;
 INSERT INTO workflow_node_verdict (
     workspace_id, workflow_instance_id, workflow_node_instance_id, revision,
     result, reason, confidence, evidence, basis, evaluator_type,
-    evaluator_id, definition_snapshot
+    evaluator_id, definition_snapshot, submission_id
 ) VALUES (
     @workspace_id, @workflow_instance_id, @workflow_node_instance_id, @revision,
     @result, @reason, sqlc.narg(confidence), @evidence, @basis, @evaluator_type,
-    sqlc.narg(evaluator_id), @definition_snapshot
+    sqlc.narg(evaluator_id), @definition_snapshot, sqlc.narg(submission_id)
 )
 RETURNING *;
 

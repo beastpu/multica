@@ -1445,13 +1445,13 @@ const createWorkflowVerdict = `-- name: CreateWorkflowVerdict :one
 INSERT INTO workflow_node_verdict (
     workspace_id, workflow_instance_id, workflow_node_instance_id, revision,
     result, reason, confidence, evidence, basis, evaluator_type,
-    evaluator_id, definition_snapshot
+    evaluator_id, definition_snapshot, submission_id
 ) VALUES (
     $1, $2, $3, $4,
     $5, $6, $7, $8, $9, $10,
-    $11, $12
+    $11, $12, $13
 )
-RETURNING id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, result, reason, confidence, evidence, basis, evaluator_type, evaluator_id, definition_snapshot, created_at
+RETURNING id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, result, reason, confidence, evidence, basis, evaluator_type, evaluator_id, definition_snapshot, created_at, submission_id
 `
 
 type CreateWorkflowVerdictParams struct {
@@ -1467,6 +1467,7 @@ type CreateWorkflowVerdictParams struct {
 	EvaluatorType          string        `json:"evaluator_type"`
 	EvaluatorID            pgtype.UUID   `json:"evaluator_id"`
 	DefinitionSnapshot     []byte        `json:"definition_snapshot"`
+	SubmissionID           pgtype.UUID   `json:"submission_id"`
 }
 
 func (q *Queries) CreateWorkflowVerdict(ctx context.Context, arg CreateWorkflowVerdictParams) (WorkflowNodeVerdict, error) {
@@ -1483,6 +1484,7 @@ func (q *Queries) CreateWorkflowVerdict(ctx context.Context, arg CreateWorkflowV
 		arg.EvaluatorType,
 		arg.EvaluatorID,
 		arg.DefinitionSnapshot,
+		arg.SubmissionID,
 	)
 	var i WorkflowNodeVerdict
 	err := row.Scan(
@@ -1500,6 +1502,7 @@ func (q *Queries) CreateWorkflowVerdict(ctx context.Context, arg CreateWorkflowV
 		&i.EvaluatorID,
 		&i.DefinitionSnapshot,
 		&i.CreatedAt,
+		&i.SubmissionID,
 	)
 	return i, err
 }
@@ -2704,7 +2707,7 @@ func (q *Queries) GetWorkflowSubmissionInWorkspace(ctx context.Context, arg GetW
 }
 
 const getWorkflowVerdictInWorkspace = `-- name: GetWorkflowVerdictInWorkspace :one
-SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, result, reason, confidence, evidence, basis, evaluator_type, evaluator_id, definition_snapshot, created_at FROM workflow_node_verdict
+SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, result, reason, confidence, evidence, basis, evaluator_type, evaluator_id, definition_snapshot, created_at, submission_id FROM workflow_node_verdict
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -2731,6 +2734,7 @@ func (q *Queries) GetWorkflowVerdictInWorkspace(ctx context.Context, arg GetWork
 		&i.EvaluatorID,
 		&i.DefinitionSnapshot,
 		&i.CreatedAt,
+		&i.SubmissionID,
 	)
 	return i, err
 }
@@ -4623,7 +4627,7 @@ func (q *Queries) ListWorkflowTasksForInstances(ctx context.Context, arg ListWor
 }
 
 const listWorkflowVerdicts = `-- name: ListWorkflowVerdicts :many
-SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, result, reason, confidence, evidence, basis, evaluator_type, evaluator_id, definition_snapshot, created_at FROM workflow_node_verdict
+SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, result, reason, confidence, evidence, basis, evaluator_type, evaluator_id, definition_snapshot, created_at, submission_id FROM workflow_node_verdict
 WHERE workflow_node_instance_id = $1 AND workspace_id = $2
 ORDER BY revision DESC
 `
@@ -4657,6 +4661,7 @@ func (q *Queries) ListWorkflowVerdicts(ctx context.Context, arg ListWorkflowVerd
 			&i.EvaluatorID,
 			&i.DefinitionSnapshot,
 			&i.CreatedAt,
+			&i.SubmissionID,
 		); err != nil {
 			return nil, err
 		}

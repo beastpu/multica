@@ -1314,6 +1314,12 @@ type WorkflowNodeTaskContext struct {
 	// VerdictRetry is set only on a Critic task that replaces one whose verdict
 	// could not be read. Its presence is also what stops a second retry.
 	VerdictRetry *WorkflowVerdictRetry `json:"verdict_retry,omitempty"`
+	// SubmissionID is the revision a Critic task was dispatched to judge. The
+	// verdict is recorded against this, not against whatever is newest when the
+	// review ends: those differ exactly when a new revision arrived mid-review,
+	// and attributing the verdict to a revision the reviewer never saw is how a
+	// rejection of one revision silently condemns another.
+	SubmissionID string `json:"submission_id,omitempty"`
 }
 
 // WorkflowVerdictRetry carries an unreadable verdict back to its author.
@@ -1348,7 +1354,7 @@ func (s *TaskService) EnqueueWorkflowNodeTask(
 	return s.enqueueWorkflowNodeTask(
 		ctx, workspaceID, requesterID, workflowNodeTaskID, instanceID,
 		nodeInstanceID, agentID, squadID, runTitle, prompt,
-		WorkflowNodeTaskPhaseWorker, nil,
+		WorkflowNodeTaskPhaseWorker, nil, "",
 	)
 }
 
@@ -1361,11 +1367,12 @@ func (s *TaskService) EnqueueWorkflowNodeCriticTask(
 	instanceID, nodeInstanceID pgtype.UUID,
 	agentID, squadID pgtype.UUID,
 	runTitle string,
+	submissionID pgtype.UUID,
 ) (db.AgentTaskQueue, error) {
 	return s.enqueueWorkflowNodeTask(
 		ctx, workspaceID, requesterID, workflowNodeTaskID, instanceID,
 		nodeInstanceID, agentID, squadID, runTitle, "",
-		WorkflowNodeTaskPhaseCritic, nil,
+		WorkflowNodeTaskPhaseCritic, nil, util.UUIDToString(submissionID),
 	)
 }
 
@@ -1380,11 +1387,12 @@ func (s *TaskService) EnqueueWorkflowNodeCriticRetryTask(
 	agentID, squadID pgtype.UUID,
 	runTitle string,
 	retry WorkflowVerdictRetry,
+	submissionID pgtype.UUID,
 ) (db.AgentTaskQueue, error) {
 	return s.enqueueWorkflowNodeTask(
 		ctx, workspaceID, requesterID, workflowNodeTaskID, instanceID,
 		nodeInstanceID, agentID, squadID, runTitle, "",
-		WorkflowNodeTaskPhaseCritic, &retry,
+		WorkflowNodeTaskPhaseCritic, &retry, util.UUIDToString(submissionID),
 	)
 }
 
@@ -1395,6 +1403,7 @@ func (s *TaskService) enqueueWorkflowNodeTask(
 	agentID, squadID pgtype.UUID,
 	runTitle, prompt, phase string,
 	verdictRetry *WorkflowVerdictRetry,
+	submissionID string,
 ) (db.AgentTaskQueue, error) {
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
@@ -1412,7 +1421,7 @@ func (s *TaskService) enqueueWorkflowNodeTask(
 		InstanceID: util.UUIDToString(instanceID), NodeInstanceID: util.UUIDToString(nodeInstanceID),
 		NodeTaskID: util.UUIDToString(workflowNodeTaskID), RunTitle: runTitle,
 		Prompt: strings.TrimSpace(prompt), SquadID: util.UUIDToString(squadID),
-		VerdictRetry: verdictRetry,
+		VerdictRetry: verdictRetry, SubmissionID: submissionID,
 	}
 	contextJSON, err := json.Marshal(payload)
 	if err != nil {

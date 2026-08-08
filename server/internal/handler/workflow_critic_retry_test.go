@@ -331,3 +331,71 @@ func TestDeclaredCriticDecisionOverridesTheOutput(t *testing.T) {
 		})
 	}
 }
+
+// A verdict is recorded against the revision its reviewer was given, and a
+// review of a revision that has since been replaced is discarded rather than
+// applied to the new one.
+//
+// Submissions are listed newest-first, so the recorder used to attribute every
+// verdict to whatever arrived last. When a worker submits again mid-review the
+// two differ, and a rejection of the revision actually read would have landed
+// on a revision nobody reviewed.
+func TestCriticVerdictBelongsToTheRevisionItJudged(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+	workerID := createHandlerTestAgent(t, "revision-worker", nil)
+	criticID := createHandlerTestAgent(t, "revision-critic", nil)
+
+	work, instanceID := startCriticRetryFixture(t, workerID, criticID, "revision")
+	criticTask := latestCriticTaskForTest(t, work)
+
+	direct, ok := service.ParseWorkflowNodeTaskContext(criticTask)
+	if !ok || direct.SubmissionID == "" {
+		t.Fatalf("the critic task does not name the revision it judges: %#v", direct)
+	}
+
+	// The worker submits again while the reviewer is out: the revision under
+	// review is superseded and a newer valid one takes its place. This pair is
+	// the whole point — with only the supersede, both the old code and the new
+	// find nothing and behave alike.
+	if _, err := testPool.Exec(ctx, `
+		UPDATE workflow_node_submission SET status = 'superseded'
+		WHERE id = $1
+	`, direct.SubmissionID); err != nil {
+		t.Fatalf("supersede the reviewed revision: %v", err)
+	}
+	var newerID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workflow_node_submission (
+			workspace_id, workflow_instance_id, workflow_node_instance_id,
+			revision, status, summary, submitted_by_type, submitted_by_id
+		)
+		SELECT workspace_id, workflow_instance_id, workflow_node_instance_id,
+		       revision + 1, 'valid', 'a newer revision', submitted_by_type,
+		       submitted_by_id
+		FROM workflow_node_submission WHERE id = $1
+		RETURNING id
+	`, direct.SubmissionID).Scan(&newerID); err != nil {
+		t.Fatalf("add the newer revision: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE workflow_node_instance SET latest_submission_id = $2 WHERE id = $1
+	`, work, newerID); err != nil {
+		t.Fatalf("point the node at the newer revision: %v", err)
+	}
+
+	if err := testHandler.recordWorkflowAgentCriticVerdict(
+		ctx, criticTask, "", "fail", "the button was removed, not wired",
+	); err != nil {
+		t.Fatalf("record verdict: %v", err)
+	}
+
+	node := latestWorkflowNodeForTest(t, instanceID, "work")
+	if node.LatestVerdictID.Valid {
+		t.Fatal("a verdict for a superseded revision was applied to the node")
+	}
+	if node.Attempt != 1 {
+		t.Fatalf("the discarded verdict still sent the node to rework: attempt = %d", node.Attempt)
+	}
+}

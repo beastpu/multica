@@ -268,6 +268,7 @@ func (h *Handler) ensureWorkflowAgentCriticTask(
 	_, err = h.TaskService.EnqueueWorkflowNodeCriticTask(
 		ctx, instance.WorkspaceID, instance.StartedByID, carrier.ID,
 		instance.ID, node.ID, agentID, squadID, instance.Title,
+		node.LatestSubmissionID,
 	)
 	if err != nil {
 		return fmt.Errorf("enqueue workflow critic: %w", err)
@@ -331,6 +332,9 @@ func (h *Handler) retryWorkflowAgentCriticVerdict(
 		ctx, instance.WorkspaceID, instance.StartedByID, task.WorkflowNodeTaskID,
 		instance.ID, current.ID, agentID, squadID, instance.Title,
 		service.WorkflowVerdictRetry{Problem: problem, Wrote: wrote},
+		// The retry judges the same revision as the attempt it replaces. A
+		// retry that silently moved to a newer one would be a different review.
+		current.LatestSubmissionID,
 	); err != nil {
 		return false, fmt.Errorf("enqueue critic verdict retry: %w", err)
 	}
@@ -458,6 +462,13 @@ func (h *Handler) applyWorkflowCriticVerdict(
 	reason string,
 	output string,
 ) error {
+	// Which revision this review was dispatched to judge. Empty on a task
+	// enqueued before this was carried, where the old newest-wins behaviour is
+	// the only thing available.
+	var judged string
+	if direct, ok := service.ParseWorkflowNodeTaskContext(task); ok {
+		judged = strings.TrimSpace(direct.SubmissionID)
+	}
 	workspaceID := node.WorkspaceID
 	if result == "pass" && reason == "" {
 		reason = "Approved by workflow Critic"
@@ -514,14 +525,36 @@ func (h *Handler) applyWorkflowCriticVerdict(
 	if err != nil {
 		return err
 	}
+	// The verdict belongs to the revision the reviewer was given, which is not
+	// always the newest one: submissions are listed newest-first, so taking the
+	// first valid one recorded a judgement against whatever arrived last. If a
+	// new revision lands mid-review, the reviewer never saw it, and a rejection
+	// of the old one would have condemned it anyway.
 	var submission db.WorkflowNodeSubmission
 	for _, candidate := range submissions {
-		if candidate.Status == "valid" {
-			submission = candidate
-			break
+		if candidate.Status != "valid" {
+			continue
 		}
+		if judged != "" && uuidToString(candidate.ID) != judged {
+			continue
+		}
+		submission = candidate
+		break
 	}
 	if !submission.ID.Valid {
+		if judged != "" {
+			// The revision under review is gone or no longer valid. There is
+			// nothing to attribute this verdict to, and inventing an
+			// attribution is what this guard exists to stop. The node stays in
+			// review; the reconciler dispatches a reviewer for what is current.
+			slog.Info(
+				"workflow critic verdict discarded: the revision it judged is no longer valid",
+				"workflow_instance_id", uuidToString(instance.ID),
+				"node_key", currentNode.NodeKey,
+				"submission_id", judged,
+			)
+			return nil
+		}
 		return errors.New("workflow critic requires a valid submission")
 	}
 	artifactIDs, err := reviewWorkflowArtifactsForVerdict(
@@ -551,6 +584,7 @@ func (h *Handler) applyWorkflowCriticVerdict(
 		Result: result, Reason: reason, Evidence: []byte("[]"), Basis: basis,
 		EvaluatorType: "agent", EvaluatorID: task.AgentID,
 		DefinitionSnapshot: definitionSnapshot,
+		SubmissionID:       submission.ID,
 	})
 	if err != nil {
 		return err
