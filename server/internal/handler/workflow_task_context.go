@@ -45,6 +45,14 @@ type WorkflowTaskContext struct {
 	Rework           *WorkflowReworkContext    `json:"rework,omitempty"`
 	Outputs          []WorkflowOutputDuty      `json:"outputs,omitempty"`
 	ReviewSubmission *WorkflowReviewSubmission `json:"review_submission,omitempty"`
+	VerdictRetry     *WorkflowVerdictRetry     `json:"verdict_retry,omitempty"`
+}
+
+// WorkflowVerdictRetry shows a Critic the verdict of its own that could not be
+// read, and the objection to it. Present only on a retry.
+type WorkflowVerdictRetry struct {
+	Problem string `json:"problem"`
+	Wrote   string `json:"wrote"`
 }
 
 // WorkflowReviewSubmission is the exact worker handoff the Critic judges.
@@ -287,6 +295,12 @@ func (h *Handler) workflowTaskContextForDirectTask(
 	}
 	if strings.TrimSpace(direct.RunTitle) != "" {
 		result.RunTitle = strings.TrimSpace(direct.RunTitle)
+	}
+	if direct.VerdictRetry != nil {
+		result.VerdictRetry = &WorkflowVerdictRetry{
+			Problem: direct.VerdictRetry.Problem,
+			Wrote:   direct.VerdictRetry.Wrote,
+		}
 	}
 	return result
 }

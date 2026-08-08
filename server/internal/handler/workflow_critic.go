@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -273,6 +274,74 @@ func (h *Handler) ensureWorkflowAgentCriticTask(
 	return nil
 }
 
+// retryWorkflowAgentCriticVerdict re-asks the same reviewer for a readable
+// verdict. It reports whether a retry was enqueued; false means the caller
+// should record the blocked verdict as before.
+//
+// The retry is refused when the node has moved on — a stale Critic finishing
+// after its node was cancelled, superseded, or already judged must not queue
+// work against it.
+func (h *Handler) retryWorkflowAgentCriticVerdict(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
+	nodeDefinition workflowdomain.NodeDefinition,
+	problem string,
+	wrote string,
+) (bool, error) {
+	current, err := h.Queries.GetWorkflowNodeInstanceInWorkspace(
+		ctx,
+		db.GetWorkflowNodeInstanceInWorkspaceParams{
+			ID: node.ID, WorkspaceID: instance.WorkspaceID,
+		},
+	)
+	if err != nil {
+		return false, err
+	}
+	if instance.Status != "running" || !workflowNodeIsOpen(current) {
+		return false, nil
+	}
+	reviewerType, reviewerID, resolved, err := workflowReviewerAssignment(
+		ctx, h.Queries, current, nodeDefinition,
+	)
+	if err != nil || !resolved {
+		return false, err
+	}
+	agentID := reviewerID
+	var squadID pgtype.UUID
+	switch reviewerType {
+	case "agent":
+	case "squad":
+		squad, squadErr := h.Queries.GetSquadInWorkspace(
+			ctx,
+			db.GetSquadInWorkspaceParams{ID: reviewerID, WorkspaceID: instance.WorkspaceID},
+		)
+		if squadErr != nil {
+			return false, fmt.Errorf("load critic squad: %w", squadErr)
+		}
+		agentID = squad.LeaderID
+		squadID = squad.ID
+	default:
+		// A human reviewer has no protocol to violate.
+		return false, nil
+	}
+	if _, err := h.TaskService.EnqueueWorkflowNodeCriticRetryTask(
+		ctx, instance.WorkspaceID, instance.StartedByID, task.WorkflowNodeTaskID,
+		instance.ID, current.ID, agentID, squadID, instance.Title,
+		service.WorkflowVerdictRetry{Problem: problem, Wrote: wrote},
+	); err != nil {
+		return false, fmt.Errorf("enqueue critic verdict retry: %w", err)
+	}
+	slog.Info(
+		"workflow critic verdict unreadable, retrying once",
+		"workflow_instance_id", uuidToString(instance.ID),
+		"node_key", current.NodeKey,
+		"problem", problem,
+	)
+	return true, nil
+}
+
 func (h *Handler) recordWorkflowAgentCriticVerdict(
 	ctx context.Context,
 	task db.AgentTaskQueue,
@@ -327,6 +396,23 @@ func (h *Handler) recordWorkflowAgentCriticVerdict(
 	result := "pass"
 	reason := critic.Comment
 	if parseErr != nil {
+		// A verdict can be sound and still be shaped wrong. WTE-14841's Critic
+		// rejected a fix that had deleted the button it was meant to wire up,
+		// listed four findings, and wrote them under `verdict`/`reason` instead
+		// of `approved`/`comment` — a correct review, discarded on a field name,
+		// and a human called to redo it. Ask once, showing the objection, before
+		// spending a person.
+		if direct.VerdictRetry == nil {
+			retried, retryErr := h.retryWorkflowAgentCriticVerdict(
+				ctx, task, instance, node, nodeDefinition, parseErr.Error(), output,
+			)
+			if retryErr != nil {
+				return retryErr
+			}
+			if retried {
+				return nil
+			}
+		}
 		result = "blocked"
 		// The reviewer's own words go into the reason. Discarding them left a
 		// blocked node explained only by a byte offset, and made the failure

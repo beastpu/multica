@@ -31,6 +31,15 @@ type WorkflowTaskContext struct {
 	Rework           *WorkflowReworkContext    `json:"rework,omitempty"`
 	Outputs          []WorkflowOutputDuty      `json:"outputs,omitempty"`
 	ReviewSubmission *WorkflowReviewSubmission `json:"review_submission,omitempty"`
+	VerdictRetry     *WorkflowVerdictRetry     `json:"verdict_retry,omitempty"`
+}
+
+// WorkflowVerdictRetry is set when this Critic task replaces one whose verdict
+// the server could not read. It carries the objection and the earlier output so
+// the same judgement can be restated in the required shape.
+type WorkflowVerdictRetry struct {
+	Problem string `json:"problem"`
+	Wrote   string `json:"wrote"`
 }
 
 type WorkflowReviewSubmission struct {
@@ -216,6 +225,29 @@ func renderWorkflowCriticProtocol(b *strings.Builder, workflow *WorkflowTaskCont
 	b.WriteString("Your final output must be exactly one JSON object with no prose or Markdown fence:\n\n")
 	b.WriteString("```json\n{\"approved\":true,\"comment\":\"short review opinion\"}\n```\n\n")
 	b.WriteString("Use `approved: false` when rejecting; `comment` must explain what must change. The server records this object as the node verdict: approval advances the workflow, rejection sends the node to rework.\n")
+	renderWorkflowVerdictRetry(b, workflow.VerdictRetry)
+}
+
+// renderWorkflowVerdictRetry comes last so it is the final instruction read.
+//
+// The judgement is not in question here — only its shape. Restating the
+// objection without the original output would invite the Critic to review the
+// work a second time, which wastes the first review and can reach a different
+// conclusion on the same evidence.
+func renderWorkflowVerdictRetry(b *strings.Builder, retry *WorkflowVerdictRetry) {
+	if retry == nil {
+		return
+	}
+	b.WriteString("\n### Your previous verdict could not be read\n\n")
+	fmt.Fprintf(b, "The server rejected it: %s\n\n", strings.TrimSpace(retry.Problem))
+	if wrote := strings.TrimSpace(retry.Wrote); wrote != "" {
+		b.WriteString("What you wrote:\n\n")
+		for line := range strings.SplitSeq(wrote, "\n") {
+			fmt.Fprintf(b, "> %s\n", line)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("Keep the same judgement. Re-express it as the exact object above: only `approved` and `comment`, no other keys, no prose, no fence. Put your reasoning — including any findings you listed — into `comment`.\n")
 }
 
 // renderWorkflowRework writes why this node is being executed again. It comes

@@ -197,6 +197,39 @@ func TestRenderIssueContext_WorkflowCriticProtocol(t *testing.T) {
 	}
 }
 
+// The retry has to name the objection and quote the Critic's own words. Told
+// only "your verdict was invalid", a reviewer re-reads the work and may land
+// somewhere else; shown what it wrote, it restates the judgement it already
+// reached.
+func TestRenderIssueContext_WorkflowCriticVerdictRetry(t *testing.T) {
+	workflow := workflowFixture()
+	workflow.Phase = "critic"
+	workflow.VerdictRetry = &WorkflowVerdictRetry{
+		Problem: `decode critic verdict: json: unknown field "verdict"`,
+		Wrote:   `{"verdict":"reject","reason":"deleted the button","confidence":0.93}`,
+	}
+	md := renderIssueContext("claude", TaskContextForEnv{Workflow: workflow})
+
+	for _, want := range []string{
+		"previous verdict could not be read",
+		`unknown field "verdict"`,
+		`> {"verdict":"reject","reason":"deleted the button","confidence":0.93}`,
+		"Keep the same judgement",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("verdict retry is missing %q:\n%s", want, md)
+		}
+	}
+
+	// An ordinary Critic task must carry none of it.
+	workflow.VerdictRetry = nil
+	if md := renderIssueContext("claude", TaskContextForEnv{Workflow: workflow}); strings.Contains(
+		md, "previous verdict could not be read",
+	) {
+		t.Errorf("a first-attempt Critic was told its verdict failed:\n%s", md)
+	}
+}
+
 // A rejected artifact blocks completion exactly like a missing one, so it has
 // to read as outstanding rather than as delivered.
 func TestPendingRequiredArtifacts(t *testing.T) {
