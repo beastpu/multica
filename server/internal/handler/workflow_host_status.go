@@ -2,9 +2,11 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
@@ -22,7 +24,55 @@ func (h *Handler) updateManagedWorkflowHostStatus(
 	if instance.HostStatusMode != "managed" || !instance.HostIssueID.Valid {
 		return nil
 	}
+	if !h.managedHostWriteAllowed(ctx, instance) {
+		return nil
+	}
 	return h.updateWorkflowHostStatus(ctx, instance, status)
+}
+
+// managedHostWriteAllowed asks whether this run still speaks for its host.
+//
+// An issue accumulates runs, and each managed run maintained the issue as if
+// it were the only one — which oscillates rather than merely disagreeing. The
+// reconciler claims a completed run whenever its host is not 'done' and a
+// running one whenever its host is not 'in_progress', so a new run on an issue
+// whose previous run finished leaves the two rewriting the same field on every
+// pass. Observed on WTE-14841 with five managed runs: the host flipped to
+// in_progress at start and back to done five minutes later, with no node
+// having completed in between.
+//
+// A lookup failure allows the write. The alternative is a run unable to report
+// its own state because a query failed, which is a worse silence than a stale
+// status.
+func (h *Handler) managedHostWriteAllowed(
+	ctx context.Context,
+	instance db.WorkflowInstance,
+) bool {
+	writerIsLive := instance.Status == "running" ||
+		instance.Status == "needs_setup" ||
+		instance.Status == "paused"
+
+	live, err := h.Queries.GetActiveWorkflowInstanceByHost(
+		ctx,
+		db.GetActiveWorkflowInstanceByHostParams{
+			HostIssueID: instance.HostIssueID, WorkspaceID: instance.WorkspaceID,
+		},
+	)
+	liveExists := err == nil && live.ID.Valid
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		slog.Warn("managed host status: could not check for a live run",
+			"workflow_instance_id", uuidToString(instance.ID),
+			"host_issue_id", uuidToString(instance.HostIssueID),
+			"error", err)
+		return true
+	}
+
+	// The live run found may be this one, which is the ordinary case for a run
+	// reporting its own progress.
+	if liveExists && live.ID == instance.ID {
+		writerIsLive = true
+	}
+	return workflowdomain.ManagedHostStatusWriteAllowed(liveExists, writerIsLive)
 }
 
 // applyWorkflowNodeActions runs a node's controlled side effects after its
