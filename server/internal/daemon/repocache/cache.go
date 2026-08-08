@@ -192,6 +192,17 @@ func (e *SyncError) Failed(url string) bool {
 	return ok
 }
 
+// Err returns why this specific repo failed, or nil if it did not. A caller
+// gating on one repo should report that repo's reason and no other: an error
+// naming three repos when only one was asked about invites the reader to blame
+// a sibling, which is the confusion SyncError exists to end.
+func (e *SyncError) Err(url string) error {
+	if e == nil {
+		return nil
+	}
+	return e.failed[url]
+}
+
 func (e *SyncError) Error() string {
 	if e == nil || len(e.failed) == 0 {
 		return "repo sync failed"

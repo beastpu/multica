@@ -2008,8 +2008,8 @@ func (d *Daemon) ensureRepoReady(ctx context.Context, workspaceID, repoURL strin
 	// unavailable, would reach for a leftover working copy instead.
 	var perRepo *repocache.SyncError
 	if errors.As(syncErr, &perRepo) {
-		if perRepo.Failed(repoURL) {
-			return fmt.Errorf("repo is configured but not synced: %w", syncErr)
+		if own := perRepo.Err(repoURL); own != nil {
+			return fmt.Errorf("repo is configured but not synced: %w", own)
 		}
 		return fmt.Errorf("repo is configured but not synced")
 	}

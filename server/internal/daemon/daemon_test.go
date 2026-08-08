@@ -2825,6 +2825,50 @@ func TestEnsureRepoReadyReportsSyncFailure(t *testing.T) {
 	}
 }
 
+// A workspace where one repo is broken and one is fine. The gate must judge
+// the repo it was asked about, and when that repo is the broken one it must
+// say so without naming the sibling — an error reciting three repos when one
+// was asked about sends the reader after the wrong failure, which is the
+// confusion the per-repo split exists to end.
+func TestEnsureRepoReadyJudgesTheRepoItWasAskedAbout(t *testing.T) {
+	t.Parallel()
+
+	healthy := createDaemonTestRepo(t)
+	broken := filepath.Join(t.TempDir(), "missing-repo")
+	// A second casualty, because that is the shape the fleet actually hits:
+	// credentials go missing for a whole host and every repo behind it fails
+	// at once. With one failure the aggregate error names only the repo that
+	// failed, so the bug this guards against cannot appear.
+	alsoBroken := filepath.Join(t.TempDir(), "missing-repo-two")
+
+	d := newRepoReadyTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(WorkspaceReposResponse{
+			WorkspaceID:  "ws-1",
+			Repos:        []RepoData{{URL: broken}, {URL: alsoBroken}, {URL: healthy}},
+			ReposVersion: "v1",
+		})
+	})
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, "", nil, nil)
+
+	if err := d.ensureRepoReady(context.Background(), "ws-1", healthy); err != nil {
+		t.Fatalf("healthy repo blocked by a broken sibling: %v", err)
+	}
+
+	err := d.ensureRepoReady(context.Background(), "ws-1", broken)
+	if err == nil {
+		t.Fatal("broken repo reported ready")
+	}
+	if !strings.Contains(err.Error(), "repo is configured but not synced:") {
+		t.Fatalf("unexpected error for the broken repo: %v", err)
+	}
+	if strings.Contains(err.Error(), alsoBroken) {
+		t.Fatalf("error about one broken repo names another: %v", err)
+	}
+	if strings.Contains(err.Error(), healthy) {
+		t.Fatalf("error about the broken repo names the healthy sibling: %v", err)
+	}
+}
+
 func TestEnsureRepoReadyConcurrentMissRefreshesOnce(t *testing.T) {
 	t.Parallel()
 
