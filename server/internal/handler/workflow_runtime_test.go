@@ -578,14 +578,19 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 			got, firstAttemptIssueID,
 		)
 	}
+	// The reused carrier is reopened before binding and then follows its node
+	// like any other: attempt 2 is active and an executor is on it, so the
+	// board says in_progress. This still proves the reopen happened — had it
+	// not, the issue would read done, and activation does not move a done
+	// carrier at all.
 	var reworkIssueStatus string
 	if err := testPool.QueryRow(ctx,
 		`SELECT status FROM issue WHERE id = $1`, firstAttemptIssueID,
 	).Scan(&reworkIssueStatus); err != nil {
 		t.Fatalf("read reused issue status: %v", err)
 	}
-	if reworkIssueStatus != "todo" {
-		t.Fatalf("reused rework issue status = %q, want todo", reworkIssueStatus)
+	if reworkIssueStatus != "in_progress" {
+		t.Fatalf("reused rework issue status = %q, want in_progress", reworkIssueStatus)
 	}
 	// The reused issue carries the prior attempt, but nothing on it says the
 	// work was rejected or why. That has to reach the executor through the task
@@ -875,7 +880,7 @@ func TestWorkflowConcurrentStartCreatesOneActiveInstance(t *testing.T) {
 	}
 }
 
-func TestWorkflowPauseResumeAndCancelPreserveExistingIssue(t *testing.T) {
+func TestWorkflowPauseResumeAndCancelCarrierLifecycle(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	ctx := context.Background()
 	cleanupWorkflowRuntimeTest(t)
@@ -996,6 +1001,17 @@ func TestWorkflowPauseResumeAndCancelPreserveExistingIssue(t *testing.T) {
 	if resumed := transitionInstance("resume", "lifecycle-resume"); resumed.Instance.Status != "running" {
 		t.Fatalf("resumed workflow status = %q", resumed.Instance.Status)
 	}
+	// Pausing suspends the run without ending anyone's work, so the carrier is
+	// left exactly as it was. Only cancellation is terminal.
+	var pausedIssueStatus string
+	if err := testPool.QueryRow(ctx, `
+		SELECT status FROM issue WHERE id = $1
+	`, issueID).Scan(&pausedIssueStatus); err != nil || pausedIssueStatus != "todo" {
+		t.Fatalf(
+			"pause/resume changed the carrier: status=%q err=%v",
+			pausedIssueStatus, err,
+		)
+	}
 
 	cancelRecorder := httptest.NewRecorder()
 	cancelRequest := withURLParam(
@@ -1033,11 +1049,17 @@ func TestWorkflowPauseResumeAndCancelPreserveExistingIssue(t *testing.T) {
 			t.Fatalf("cancelled node %s status=%q err=%v", nodeID, status, err)
 		}
 	}
+	// Cancelling closes the carriers with the nodes they belong to. This issue
+	// exists only because the workflow made it (origin_type = 'workflow'); with
+	// the run cancelled it is work nobody will do, and leaving it open puts it
+	// on a board looking like something somebody should pick up. Issues a
+	// person owns are never bound to a node task, so nothing here can reach
+	// them — the host issue is governed separately by host_status_mode.
 	var issueStatus string
 	if err := testPool.QueryRow(ctx, `
 		SELECT status FROM issue WHERE id = $1
-	`, issueID).Scan(&issueStatus); err != nil || issueStatus != "todo" {
-		t.Fatalf("cancel changed existing issue status=%q err=%v", issueStatus, err)
+	`, issueID).Scan(&issueStatus); err != nil || issueStatus != "cancelled" {
+		t.Fatalf("cancel left the carrier open: status=%q err=%v", issueStatus, err)
 	}
 }
 
