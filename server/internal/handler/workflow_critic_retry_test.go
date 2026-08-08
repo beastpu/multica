@@ -215,3 +215,49 @@ func latestCriticTaskForTest(t *testing.T, nodeInstanceID string) db.AgentTaskQu
 	}
 	return task
 }
+
+// A node whose reviewer is an agent must not report that it needs a manual
+// executor. The critic carrier never holds an executor resolution — the
+// reviewer comes from the role binding at dispatch — so the sweeper's
+// "unresolved executor" test matched it on every pass, and every reviewed node
+// carried a demand for work nobody could perform.
+func TestSweeperDoesNotAskForAnExecutorForTheCritic(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+	workerID := createHandlerTestAgent(t, "critic-executor-worker", nil)
+	criticID := createHandlerTestAgent(t, "critic-executor-reviewer", nil)
+
+	work, instanceID := startCriticRetryFixture(t, workerID, criticID, "executor")
+
+	var criticSource string
+	if err := testPool.QueryRow(ctx, `
+		SELECT source FROM workflow_node_task
+		WHERE workflow_node_instance_id = $1 AND source = 'critic'
+	`, work).Scan(&criticSource); err != nil {
+		t.Fatalf("the fixture produced no critic carrier: %v", err)
+	}
+	// The premise: it has no executor resolution, and never will.
+	var resolved bool
+	if err := testPool.QueryRow(ctx, `
+		SELECT executor_resolution_id IS NOT NULL FROM workflow_node_task
+		WHERE workflow_node_instance_id = $1 AND source = 'critic'
+	`, work).Scan(&resolved); err != nil {
+		t.Fatalf("load critic carrier: %v", err)
+	}
+	if resolved {
+		t.Skip("critic carriers now carry an executor resolution; this guard is obsolete")
+	}
+
+	if err := NewWorkflowSweeper(testHandler).SweepOnce(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+
+	node := latestWorkflowNodeForTest(t, instanceID, "work")
+	if jsonContainsWaitingReason(node.WaitingReasons, "executor_unresolved") {
+		t.Fatalf(
+			"an agent-reviewed node was told it needs a manual executor: %s",
+			node.WaitingReasons,
+		)
+	}
+}

@@ -244,6 +244,7 @@
     "verdict_confidence": "Confidence (0–1)",
     "dynamic_task": "Dynamic task",
     "template_task": "Template task",
+    "critic_task": "Review execution",
     "executor": "Executor",
     "executor_resolution": "Resolution",
     "executor_required": "Choose an executor before the workflow can continue",

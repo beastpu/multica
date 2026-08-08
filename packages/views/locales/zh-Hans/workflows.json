@@ -243,6 +243,7 @@
     "verdict_confidence": "置信度（0–1）",
     "dynamic_task": "动态任务",
     "template_task": "模板任务",
+    "critic_task": "评审执行",
     "executor": "执行人",
     "executor_resolution": "解析决策",
     "executor_required": "需要配置执行人后才能继续",
