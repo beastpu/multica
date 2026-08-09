@@ -187,6 +187,9 @@ func TestRenderIssueContext_WorkflowCriticProtocol(t *testing.T) {
 		"artifact-1",
 		"own agent Instructions",
 		"multica workflow review --decision",
+		// Review is judgment, not a second pass at the work: a reviewer that
+		// can rewrite the delivery can approve its own fix.
+		"The review is read-only",
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("critic protocol is missing %q:\n%s", want, md)

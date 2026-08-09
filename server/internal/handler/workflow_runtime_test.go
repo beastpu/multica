@@ -2176,7 +2176,7 @@ func TestWorkflowAgentSubmissionCannotSelfApprove(t *testing.T) {
 			guessRecorder.Code, http.StatusConflict, guessRecorder.Body.String(),
 		)
 	}
-	if !strings.Contains(guessRecorder.Body.String(), "final output") {
+	if !strings.Contains(guessRecorder.Body.String(), "multica workflow review") {
 		t.Fatalf(
 			"refusal does not say where the verdict belongs: %s",
 			guessRecorder.Body.String(),

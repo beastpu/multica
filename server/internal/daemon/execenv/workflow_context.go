@@ -224,6 +224,11 @@ func renderWorkflowCriticProtocol(b *strings.Builder, workflow *WorkflowTaskCont
 		b.WriteString(".\n")
 	}
 	b.WriteString("\nAlso apply your own agent Instructions as domain-specific review guidance. Approve only when the delivered result satisfies the requirement and node obligations. On rejection, give a concise, actionable reason the Worker can use for rework.\n\n")
+	// A reviewer that can rewrite the delivery can fix it and then approve its
+	// own fix, and the review stops being independent. The platform already
+	// refuses artifact writes while the node is in review; the work tree is not
+	// the platform's to freeze, so the rest of the boundary is stated here.
+	b.WriteString("The review is read-only. Do not modify the Worker's code or branches, do not commit or push, and do not submit or replace artifacts or submissions — the platform refuses artifact writes while the node is in review. If the delivery is defective, put what must change into the verdict reason; fixing it is the Worker's rework, not yours.\n\n")
 	// A reviewer looks for a command, because that is what an agent does with
 	// a decision. It used to have none, and the consequences were both kinds of
 	// wrong: one run spent itself guessing request bodies against an API that

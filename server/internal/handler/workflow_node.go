@@ -819,8 +819,9 @@ func (h *Handler) CreateWorkflowNodeVerdict(w http.ResponseWriter, r *http.Reque
 		writeError(
 			w, http.StatusConflict,
 			"agent reviewer verdicts are recorded from Critic task completion, "+
-				"not from this endpoint: return {\"result\":\"pass|fail|blocked\","+
-				"\"reason\":\"...\"} as your final output instead",
+				"not from this endpoint: run `multica workflow review --decision "+
+				strings.Join(workflowdomain.CriticResults, "|")+
+				" --reason \"...\"` and finish the task instead",
 		)
 		return
 	}
