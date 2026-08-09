@@ -2052,8 +2052,10 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         name: squad.name,
       })),
   ], [agents, members, squads]);
+  // type is server-driven and may be a value this build does not know;
+  // an unknown type simply never matches and the raw id shows through.
   const actorName = (
-    type: "member" | "agent" | "squad",
+    type: string,
     id: string,
   ) => actorOptions.find((actor) => actor.type === type && actor.id === id)?.name ??
     id;
@@ -2129,6 +2131,27 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
     canAdmin ||
       (userId && instance?.started_by_type === "member" &&
         instance.started_by_id === userId),
+  );
+  // What this run is and who is playing which part. All of it was already in
+  // the responses — the workflow's description, the instructions typed into
+  // the start dialog (input.instructions), and the role assignments — but
+  // none of it was rendered anywhere after the dialog closed.
+  const workflowDescription = templateQuery.data?.workflow.description ?? "";
+  const runInstructions =
+    typeof instance?.input?.instructions === "string"
+      ? instance.input.instructions
+      : "";
+  const roleOverview = (templateVersion?.definition.roles ?? []).map((role) => ({
+    role,
+    assignment: detailQuery.data?.role_assignments.find(
+      (assignment) => assignment.role_key === role.key,
+    ),
+  }));
+  const roleSetupVisible = Boolean(
+    templateVersion &&
+      (instance?.status === "needs_setup" ||
+        instance?.next_action === "configure_roles" ||
+        instance?.next_action === "configure_executor"),
   );
   // Every activity in the template is a legitimate destination; the approver
   // picks one at rejection time and everything after it rolls back with it.
@@ -2899,10 +2922,65 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
           </div>
         </section>
 
-        {templateVersion &&
-          (instance.status === "needs_setup" ||
-            instance.next_action === "configure_roles" ||
-            instance.next_action === "configure_executor") && (
+        {(workflowDescription || runInstructions ||
+          (roleOverview.length > 0 && !roleSetupVisible)) && (
+          <section
+            data-testid="workflow-run-brief"
+            className="shrink-0 border-b px-4 py-3"
+          >
+            <div className="mx-auto max-w-[100rem] space-y-1.5 text-sm">
+              {workflowDescription && (
+                <p className="text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    {t(($) => $.workbench.workflow_purpose)}
+                    {": "}
+                  </span>
+                  {workflowDescription}
+                </p>
+              )}
+              {runInstructions && (
+                <p className="whitespace-pre-wrap text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    {t(($) => $.workbench.run_instructions)}
+                    {": "}
+                  </span>
+                  {runInstructions}
+                </p>
+              )}
+              {roleOverview.length > 0 && !roleSetupVisible && (
+                <ul
+                  aria-label={t(($) => $.workbench.run_roles)}
+                  className="flex flex-wrap items-center gap-1.5"
+                >
+                  {roleOverview.map(({ role, assignment }) => (
+                    <li
+                      key={role.key}
+                      className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"
+                    >
+                      <span className="text-muted-foreground">
+                        {role.name}
+                      </span>
+                      {assignment ? (
+                        <span className="font-medium">
+                          {actorName(
+                            assignment.actor_type,
+                            assignment.actor_id,
+                          )}
+                        </span>
+                      ) : (
+                        <span className="italic text-muted-foreground/70">
+                          {t(($) => $.workbench.role_unassigned)}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
+        )}
+
+        {roleSetupVisible && templateVersion && (
           <section className="max-h-64 shrink-0 overflow-y-auto border-b px-4 py-3">
             <RoleSetupPanel
               instanceId={instanceId}
