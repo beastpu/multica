@@ -40,7 +40,6 @@ const definition = {
       completion: {
         mode: "manual",
         required_issue_outcome: "none",
-        handoff_required: true,
       },
     },
     { key: "end", kind: "end", name: "End" },

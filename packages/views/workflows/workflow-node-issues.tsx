@@ -10,6 +10,7 @@ import { WORKFLOW_SECTION_HEADING } from "./workflow-status";
 import { useT } from "../i18n";
 import { StatusIcon } from "../issues/components/status-icon";
 import { StatusPicker } from "../issues/components/pickers";
+import { TakeoverButton } from "../issues/components/takeover-button";
 import { AppLink } from "../navigation";
 
 // WorkflowNodeIssues is the node's "what is left" block: what still blocks it,
@@ -110,6 +111,13 @@ export function WorkflowNodeIssues({
                 <span className="min-w-0 flex-1 truncate text-sm">
                   {issue.title}
                 </span>
+                {/* Takeover shows only on agent-worked issues: it stops the
+                    agent and hands this issue to the caller. The node itself
+                    is untouched — it keeps waiting on the issue outcome, which
+                    the person now owns. */}
+                {canManage && issue.assignee_type === "agent" && (
+                  <TakeoverButton issueId={issue.id} iconOnly />
+                )}
                 <AppLink
                   href={p.issueDetail(issue.id)}
                   className="inline-flex min-h-11 shrink-0 items-center rounded-md px-2 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"

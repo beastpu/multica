@@ -482,8 +482,8 @@ func TestWorkflowHumanCriticRejectionStartsRework(t *testing.T) {
 	}
 }
 
-// startHandoffWorkflow boots a two-activity run whose first node owes a handoff
-// summary, so the gate and the upstream view can both be exercised.
+// startHandoffWorkflow boots a two-activity run so the upstream view has a
+// predecessor whose conclusion it can carry.
 func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -498,7 +498,7 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 		t.Fatalf("create host issue: %v", err)
 	}
 
-	activity := func(nodeKey, name string, handoff bool) workflowdomain.NodeDefinition {
+	activity := func(nodeKey, name string) workflowdomain.NodeDefinition {
 		return workflowdomain.NodeDefinition{
 			Key: nodeKey, Kind: "activity", Name: name,
 			OwnerRole: "owner", IssuePolicy: "none",
@@ -507,7 +507,7 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 				Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 			},
 			Completion: workflowdomain.CompletionDefinition{
-				Mode: "manual", RequiredIssueOutcome: "none", HandoffRequired: handoff,
+				Mode: "manual", RequiredIssueOutcome: "none",
 			},
 		}
 	}
@@ -519,8 +519,8 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 		}},
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
-			activity("review", "Review", true),
-			activity("design", "Design", false),
+			activity("review", "Review"),
+			activity("design", "Design"),
 			{Key: "end", Kind: "end", Name: "End"},
 		},
 		Edges: []workflowdomain.EdgeDefinition{
@@ -586,37 +586,6 @@ func submitHandoff(t *testing.T, nodeID, summary, key string) *httptest.Response
 	), "nodeInstanceId", nodeID)
 	testHandler.CreateWorkflowNodeSubmission(recorder, request)
 	return recorder
-}
-
-// A node that owes a conclusion is not finished without one — otherwise the
-// next node inherits nothing and the requirement is decorative.
-func TestWorkflowHandoffSummaryGatesCompletion(t *testing.T) {
-	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
-	cleanupWorkflowRuntimeTest(t)
-	_, reviewID, _ := startHandoffWorkflow(t, "gate")
-
-	complete := func(n int) *httptest.ResponseRecorder {
-		recorder := httptest.NewRecorder()
-		request := withURLParam(newRequest(
-			http.MethodPost,
-			"/api/workflow-node-instances/"+reviewID+"/complete?workspace_id="+testWorkspaceID,
-			map[string]any{"idempotency_key": fmt.Sprintf("handoff-gate-%d", n)},
-		), "nodeInstanceId", reviewID)
-		testHandler.CompleteWorkflowNode(recorder, request)
-		return recorder
-	}
-
-	if recorder := complete(1); recorder.Code == http.StatusOK {
-		t.Fatal("node completed without its handoff summary")
-	}
-	if recorder := submitHandoff(
-		t, reviewID, "Scope confirmed; first release is linear only.", "handoff-gate-summary",
-	); recorder.Code != http.StatusCreated {
-		t.Fatalf("submit handoff status = %d, body = %s", recorder.Code, recorder.Body.String())
-	}
-	if recorder := complete(2); recorder.Code != http.StatusOK {
-		t.Fatalf("complete status = %d after handoff, body = %s", recorder.Code, recorder.Body.String())
-	}
 }
 
 func TestWorkflowHandoffSummaryRejectsOverlongText(t *testing.T) {
@@ -798,6 +767,64 @@ func TestWorkflowUpstreamFallsBackToWorkerOutputAndIssues(t *testing.T) {
 // Once the executor writes a conclusion, that is the handoff. Carrying the raw
 // transcript alongside it would bury the conclusion in a downstream brief that
 // has its own instructions to fit.
+// A node that needs a verdict but declares no schema gets a submission
+// synthesised for it, carrying a canned summary. Downstream must never read
+// that as the executor's conclusion — the summary field is reserved for text a
+// person or agent actually wrote, and the platform's record travels only
+// through the worker-output fallback.
+func TestWorkflowUpstreamHidesSystemAuthoredSummary(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	_, reviewID, designID := startHandoffWorkflow(t, "system-upstream")
+
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO workflow_node_submission (
+			workspace_id, workflow_instance_id, workflow_node_instance_id,
+			revision, status, payload, summary, evidence, submitted_by_type,
+			schema_version
+		)
+		SELECT workspace_id, workflow_instance_id, id, 1, 'valid', '{}'::jsonb,
+		       'All required issues are done', '[]'::jsonb, 'system', 1
+		FROM workflow_node_instance WHERE id = $1
+	`, reviewID); err != nil {
+		t.Fatalf("insert system submission: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE workflow_node_instance SET latest_submission_id = (
+			SELECT id FROM workflow_node_submission
+			WHERE workflow_node_instance_id = $1 ORDER BY revision DESC LIMIT 1
+		) WHERE id = $1
+	`, reviewID); err != nil {
+		t.Fatalf("link system submission: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(
+		http.MethodGet,
+		"/api/workflow-node-instances/"+designID+"/upstream?workspace_id="+testWorkspaceID,
+		nil,
+	), "nodeInstanceId", designID)
+	testHandler.GetWorkflowNodeUpstream(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("upstream status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Upstream []struct {
+			Summary string `json:"summary"`
+		} `json:"upstream"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode upstream: %v", err)
+	}
+	if len(response.Upstream) != 1 {
+		t.Fatalf("upstream entries = %d, want exactly the direct predecessor", len(response.Upstream))
+	}
+	if response.Upstream[0].Summary != "" {
+		t.Errorf("summary = %q, want empty: the platform wrote it, not the executor",
+			response.Upstream[0].Summary)
+	}
+}
+
 func TestWorkflowUpstreamOmitsWorkerOutputOnceHandoffExists(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
@@ -878,45 +905,93 @@ func workIssueNumber(t *testing.T, issueID string) int {
 	return number
 }
 
-// A node needing a verdict but declaring no schema gets a submission
-// synthesised for it, carrying a canned summary. That record must not satisfy
-// the handoff gate: downstream would inherit a conclusion the platform wrote,
-// which is exactly what requiring a handoff is meant to prevent.
-func TestWorkflowHandoffGateRejectsSystemAuthoredSummary(t *testing.T) {
+// Most executors meet the work as a node child issue — from a notification, the
+// issue list, or a phone — never as the run. What upstream concluded is not
+// written onto that issue and must not be, so the issue has to be able to read
+// it.
+func TestIssueWorkflowNodeServesUpstreamConclusion(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
-	_, reviewID, _ := startHandoffWorkflow(t, "system-summary")
+	ctx := context.Background()
+	instanceID, reviewID, _ := startHandoffWorkflow(t, "issue-node-context")
 
-	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO workflow_node_submission (
-			workspace_id, workflow_instance_id, workflow_node_instance_id,
-			revision, status, payload, summary, evidence, submitted_by_type,
-			schema_version
-		)
-		SELECT workspace_id, workflow_instance_id, id, 1, 'valid', '{}'::jsonb,
-		       'All required issues are done', '[]'::jsonb, 'system', 1
-		FROM workflow_node_instance WHERE id = $1
-	`, reviewID); err != nil {
-		t.Fatalf("insert system submission: %v", err)
+	if recorder := submitHandoff(
+		t, reviewID, "Scope confirmed; pricing edge cases stay open.", "issue-node-context",
+	); recorder.Code != http.StatusCreated {
+		t.Fatalf("submit handoff status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	if _, err := testPool.Exec(context.Background(), `
-		UPDATE workflow_node_instance SET latest_submission_id = (
-			SELECT id FROM workflow_node_submission
-			WHERE workflow_node_instance_id = $1 ORDER BY revision DESC LIMIT 1
-		) WHERE id = $1
-	`, reviewID); err != nil {
-		t.Fatalf("link system submission: %v", err)
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_type, creator_id,
+			number, position, metadata
+		) VALUES ($1, 'Design work', 'todo', 'none', 'member', $2, $3, 0,
+			jsonb_build_object('workflow', jsonb_build_object(
+				'instance_id', $4::text, 'node_key', 'design', 'host_issue', 'MUL-1'
+			)))
+		RETURNING id
+	`, testWorkspaceID, testUserID, nextWorkspaceIssueNumber(t), instanceID).Scan(&issueID); err != nil {
+		t.Fatalf("create node child issue: %v", err)
 	}
 
 	recorder := httptest.NewRecorder()
 	request := withURLParam(newRequest(
-		http.MethodPost,
-		"/api/workflow-node-instances/"+reviewID+"/complete?workspace_id="+testWorkspaceID,
-		map[string]any{"idempotency_key": "handoff-system-summary"},
-	), "nodeInstanceId", reviewID)
-	testHandler.CompleteWorkflowNode(recorder, request)
-	if recorder.Code == http.StatusOK {
-		t.Fatal("node completed on a summary the platform wrote for it")
+		http.MethodGet,
+		"/api/issues/"+issueID+"/workflow-node?workspace_id="+testWorkspaceID,
+		nil,
+	), "id", issueID)
+	testHandler.GetIssueWorkflowNode(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("workflow-node status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		NodeKey  string `json:"node_key"`
+		Upstream []struct {
+			NodeKey string `json:"node_key"`
+			Summary string `json:"summary"`
+		} `json:"upstream"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode workflow-node: %v", err)
+	}
+	if response.NodeKey != "design" {
+		t.Errorf("node_key = %q, want the node the issue belongs to", response.NodeKey)
+	}
+	if len(response.Upstream) != 1 || response.Upstream[0].NodeKey != "review" {
+		t.Fatalf("upstream = %+v, want the direct predecessor", response.Upstream)
+	}
+	if !strings.Contains(response.Upstream[0].Summary, "pricing edge cases") {
+		t.Errorf("upstream summary = %q, want the predecessor's conclusion",
+			response.Upstream[0].Summary)
+	}
+}
+
+// An ordinary issue is not a node of anything, and the panel that asks must be
+// able to tell that apart from a failure.
+func TestIssueWorkflowNodeIsNotFoundForOrdinaryIssues(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+
+	var issueID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_type, creator_id, number, position
+		) VALUES ($1, 'Ordinary issue', 'todo', 'none', 'member', $2, $3, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID, nextWorkspaceIssueNumber(t)).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(
+		http.MethodGet,
+		"/api/issues/"+issueID+"/workflow-node?workspace_id="+testWorkspaceID,
+		nil,
+	), "id", issueID)
+	testHandler.GetIssueWorkflowNode(recorder, request)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 

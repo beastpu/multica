@@ -1089,7 +1089,7 @@ func TestWorkflowPromptSectionPointsAtKeyDiscovery(t *testing.T) {
 // of the obligations is how one of them goes stale.
 func TestWorkflowPromptSectionUsesPushedContext(t *testing.T) {
 	task := Task{IssueID: "issue-abc-123", Workflow: &execenv.WorkflowTaskContext{
-		NodeKey: "implement", NodeName: "代码实施", HandoffRequired: true,
+		NodeKey: "implement", NodeName: "代码实施",
 		Artifacts: []execenv.WorkflowArtifactDuty{
 			{Key: "impl_notes", Required: true},
 			{Key: "done_already", Required: true, Delivered: true, ReviewStatus: "approved"},

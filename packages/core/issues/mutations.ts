@@ -430,6 +430,27 @@ export function useUpdateIssue() {
   });
 }
 
+/**
+ * Takeover: stop the agent's in-flight tasks and hand the issue to the caller
+ * in one atomic server action. Never optimistic — the outcome (which tasks
+ * were cancelled, what the work scene is) is only known server-side, and the
+ * caller renders the returned card.
+ */
+export function useTakeoverIssue() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (id: string) => api.takeoverIssue(id),
+    onSuccess: (_data, id) => {
+      // Assignee changed, tasks were cancelled, a system note was written.
+      qc.invalidateQueries({ queryKey: issueKeys.detail(wsId, id) });
+      qc.invalidateQueries({ queryKey: issueKeys.list(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.tasks(id) });
+      qc.invalidateQueries({ queryKey: issueKeys.timeline(id) });
+    },
+  });
+}
+
 export function useDeleteIssue() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();

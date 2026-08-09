@@ -18,6 +18,7 @@ import { formatDuration } from "../../agents/components/agent-activity-hover-con
 import { TranscriptButton } from "../../common/task-transcript";
 import { failureReasonLabel } from "../../agents/components/tabs/task-failure";
 import { useT } from "../../i18n";
+import { TakeoverButton } from "./takeover-button";
 import { TerminateTaskConfirmDialog } from "./terminate-task-confirm-dialog";
 
 // Right-panel section that lists every agent run for this issue. Active
@@ -325,6 +326,10 @@ export function ActiveTaskRow({
             title={t(($) => $.execution_log.transcript_tooltip)}
           />
         )}
+        {/* Takeover sits beside cancel because they answer the same moment
+            differently: cancel stops the agent, takeover stops it AND hands
+            the issue plus the work scene to the person watching. */}
+        <TakeoverButton issueId={issueId} iconOnly />
         <Tooltip>
           <TooltipTrigger
             render={

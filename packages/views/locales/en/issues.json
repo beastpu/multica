@@ -483,6 +483,24 @@
     "stop_tooltip": "Stop agent",
     "cancel_failed": "Failed to cancel task"
   },
+  "takeover": {
+    "action": "Take over",
+    "confirm_title": "Take over this issue?",
+    "confirm_body": "The agent's in-flight tasks will be stopped and the issue reassigned to you. The work it leaves behind — branch, directory, session — is handed to you to continue.",
+    "confirm": "Take over",
+    "cancel": "Cancel",
+    "failed": "Takeover failed",
+    "card_title": "Work scene handed over",
+    "card_from": "Taken over from {{agent}}. Continue from where it stopped:",
+    "card_body": "Continue from where the agent stopped:",
+    "card_empty": "No recorded work scene — the agent had not started yet.",
+    "runtime": "Runtime",
+    "work_dir": "Working directory",
+    "session": "Agent session",
+    "session_hint": "On that machine you can resume the agent's own conversation, e.g. claude --resume <session>.",
+    "copy": "Copy",
+    "copied": "Copied"
+  },
   "execution_log": {
     "section": "Execution log",
     "show_past": "Show past runs ({{count}})",

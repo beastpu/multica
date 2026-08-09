@@ -1954,23 +1954,6 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 		}
 		return false, reasons, submission, db.WorkflowNodeVerdict{}, nil
 	}
-	// The handoff summary is what the next node reads first, so a node that
-	// owes one is not finished without it. Checked against the live submission
-	// rather than any submission: an earlier revision's conclusion described
-	// work that has since changed.
-	// The summary must come from whoever did the work. A node that needs a
-	// verdict but declares no schema gets a submission synthesised for it, and
-	// that record carries a canned summary — letting it satisfy the gate would
-	// hand downstream a conclusion the platform wrote, which the design
-	// deliberately prevents.
-	if nodeDefinition.Completion.HandoffRequired &&
-		(submission.SubmittedByType == "system" ||
-			strings.TrimSpace(submission.Summary) == "") {
-		return false, []workflowdomain.WaitingReason{{
-			Code:    "handoff_summary_required",
-			Message: "A handoff summary is required before this node can complete",
-		}}, submission, db.WorkflowNodeVerdict{}, nil
-	}
 	if !reviewRequired {
 		return h.evaluateWorkflowManualCompletion(
 			ctx, q, workspaceID, node, nodeDefinition, submission,

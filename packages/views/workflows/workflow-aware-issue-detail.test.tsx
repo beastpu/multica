@@ -48,6 +48,9 @@ vi.mock("@multica/core/workflows", () => ({
   issueWorkflowOptions: () => ({
     queryKey: ["workflows", "workspace-1", "issue", "issue-1"],
   }),
+  issueWorkflowNodeOptions: () => ({
+    queryKey: ["workflows", "workspace-1", "issue", "issue-1", "node"],
+  }),
 }));
 
 vi.mock("../i18n", () => ({

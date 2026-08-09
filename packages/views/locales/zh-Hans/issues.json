@@ -463,6 +463,24 @@
     "stop_tooltip": "停止智能体",
     "cancel_failed": "取消 task 失败"
   },
+  "takeover": {
+    "action": "接管",
+    "confirm_title": "接管这个 issue？",
+    "confirm_body": "将停止智能体的在途任务，并把 issue 改派给你。它留下的工作现场（分支、目录、会话）会交接给你继续。",
+    "confirm": "接管",
+    "cancel": "取消",
+    "failed": "接管失败",
+    "card_title": "工作现场已交接",
+    "card_from": "已从 {{agent}} 接管。从它停下的地方继续：",
+    "card_body": "从智能体停下的地方继续：",
+    "card_empty": "没有可交接的工作现场——智能体还没开始动手。",
+    "runtime": "运行时",
+    "work_dir": "工作目录",
+    "session": "智能体会话",
+    "session_hint": "在那台机器上可以恢复智能体自己的对话，例如 claude --resume <会话 ID>。",
+    "copy": "复制",
+    "copied": "已复制"
+  },
   "execution_log": {
     "section": "执行日志",
     "show_past": "显示历史运行（{{count}}）",

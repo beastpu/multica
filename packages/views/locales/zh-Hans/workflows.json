@@ -519,6 +519,20 @@
     "condition_use_rows": "回到字段选择",
     "condition_host_issue": "需求"
   },
+  "node_context": {
+    "open_run": "打开运行",
+    "upstream": "上游交接",
+    "no_upstream": "本活动是这次运行的第一个环节。",
+    "no_conclusion": "上游还没有交接内容。",
+    "extracted_output": "上游没有写结论，以下是执行的原始输出。",
+    "owes": "本活动要交付",
+    "owes_conclusion_only": "没有正式交付物，完成前交出结论即可。",
+    "output_field": "结论字段",
+    "required": "必需",
+    "optional": "可选",
+    "delivered": "已提交",
+    "not_delivered": "未提交"
+  },
   "status": {
     "needs_setup": "待配置",
     "running": "运行中",

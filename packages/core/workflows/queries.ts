@@ -28,6 +28,8 @@ export const workflowKeys = {
     [...workflowKeys.instances(wsId), "detail", instanceId] as const,
   issueInstance: (wsId: string, issueId: string) =>
     [...workflowKeys.instances(wsId), "issue", issueId] as const,
+  issueNode: (wsId: string, issueId: string) =>
+    [...workflowKeys.instances(wsId), "issue", issueId, "node"] as const,
   instanceIssues: (wsId: string, instanceId: string) =>
     [...workflowKeys.instance(wsId, instanceId), "issues"] as const,
   acceptances: (wsId: string, instanceId: string) =>
@@ -90,6 +92,17 @@ export function issueWorkflowOptions(wsId: string, issueId: string) {
   return queryOptions({
     queryKey: workflowKeys.issueInstance(wsId, issueId),
     queryFn: () => api.getIssueWorkflow(issueId),
+    enabled: Boolean(issueId),
+    retry: false,
+  });
+}
+
+// The node context behind a child issue. A 404 means the issue is not a node
+// of anything, which is the common case and not a failure — hence retry: false.
+export function issueWorkflowNodeOptions(wsId: string, issueId: string) {
+  return queryOptions({
+    queryKey: workflowKeys.issueNode(wsId, issueId),
+    queryFn: () => api.getIssueWorkflowNode(issueId),
     enabled: Boolean(issueId),
     retry: false,
   });

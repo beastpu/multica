@@ -4908,6 +4908,44 @@ func TestClaimTaskByRuntime_CommentResumeDefaultOn(t *testing.T) {
 	}
 }
 
+// TestClaimTaskByRuntime_CancelledSessionResumes is the interrupt-and-steer
+// contract: a user who cancels a running task and comments a correction is
+// steering the same conversation, not starting a new one. The cancelled task's
+// session (pinned mid-flight via UpdateAgentTaskSession) must be what the
+// comment-triggered follow-up resumes — a fresh session here silently discards
+// the very context the user was correcting.
+func TestClaimTaskByRuntime_CancelledSessionResumes(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Cancel resume runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Cancel resume agent")
+
+	// The interrupted run: cancelled by the user mid-flight, session pinned.
+	const cancelledSession = "sess-cancelled-steer"
+	var priorTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority,
+			session_id, started_at, completed_at
+		)
+		VALUES ($1, $2, $3, 'cancelled', 0, $4, now(), now())
+		RETURNING id
+	`, agentID, runtimeID, issueID, cancelledSession).Scan(&priorTaskID); err != nil {
+		t.Fatalf("insert cancelled prior task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, priorTaskID) })
+
+	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
+
+	resp := claimCommentTask(t, runtimeID, "cancel-resume-daemon")
+	if resp.Task.PriorSessionID != cancelledSession {
+		t.Errorf("prior_session_id = %q, want %q (a cancelled session is steerable, not poisoned)",
+			resp.Task.PriorSessionID, cancelledSession)
+	}
+}
+
 // TestAckTaskCancelled verifies the cancel-ack endpoint settles a deferred
 // chat finalization (marker claimed, Stopped. row written for a transcript
 // that filled in late) and keeps the anti-enumeration shape of

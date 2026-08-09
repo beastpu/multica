@@ -1459,6 +1459,65 @@ func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue
 	return i, err
 }
 
+const updateIssueAssignee = `-- name: UpdateIssueAssignee :one
+UPDATE issue SET
+    assignee_type = $2,
+    assignee_id = $3,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $4
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties
+`
+
+type UpdateIssueAssigneeParams struct {
+	ID           pgtype.UUID `json:"id"`
+	AssigneeType pgtype.Text `json:"assignee_type"`
+	AssigneeID   pgtype.UUID `json:"assignee_id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+}
+
+// Focused reassign for flows that must not touch any other field (takeover).
+// UpdateIssue overwrites every unconditional-narg column, so a caller that only
+// wants to move the assignee would have to round-trip the whole row to avoid
+// clearing dates and project. Workspace_id is the SQL-layer tenant guard.
+func (q *Queries) UpdateIssueAssignee(ctx context.Context, arg UpdateIssueAssigneeParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, updateIssueAssignee,
+		arg.ID,
+		arg.AssigneeType,
+		arg.AssigneeID,
+		arg.WorkspaceID,
+	)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+		&i.Properties,
+	)
+	return i, err
+}
+
 const updateIssueStatus = `-- name: UpdateIssueStatus :one
 UPDATE issue SET
     status = $2,

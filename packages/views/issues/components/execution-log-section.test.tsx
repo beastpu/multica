@@ -27,6 +27,12 @@ vi.mock("./terminate-task-confirm-dialog", () => ({
   TerminateTaskConfirmDialog: () => null,
 }));
 
+// The takeover mutation reaches for the QueryClient; these cases are about the
+// row itself, so the hook stays inert.
+vi.mock("@multica/core/issues/mutations", () => ({
+  useTakeoverIssue: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
 import { ActiveTaskRow, TaskCommentCoverage } from "./execution-log-section";
 
 function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {

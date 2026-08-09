@@ -8,12 +8,13 @@ import (
 
 func TestWorkflowTaskIssueDescription(t *testing.T) {
 	tests := []struct {
-		name     string
-		template string
-		node     string
-		host     string
-		purpose  string
-		want     string
+		name            string
+		template        string
+		node            string
+		host            string
+		hostDescription string
+		purpose         string
+		want            string
 	}{
 		{
 			name:     "template instructions carry the reference",
@@ -21,6 +22,18 @@ func TestWorkflowTaskIssueDescription(t *testing.T) {
 			node:     "Design node",
 			host:     "MUL-123",
 			want:     "Produce the technical design.\n\n> Parent requirement: MUL-123",
+		},
+		{
+			// The identifier alone is not something a person can work from in a
+			// notification or on a phone, which is where most executors meet
+			// the child issue first.
+			name:            "the requirement is quoted under its reference",
+			template:        "Produce the technical design.",
+			host:            "MUL-123",
+			hostDescription: "Import users from a CSV file.\nValidate each row.",
+			want: "Produce the technical design.\n\n" +
+				"> Parent requirement: MUL-123\n>\n" +
+				"> Import users from a CSV file.\n> Validate each row.",
 		},
 		{
 			name:     "node description is the fallback when the template omits one",
@@ -65,7 +78,9 @@ func TestWorkflowTaskIssueDescription(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := workflowTaskIssueDescription(test.template, test.node, test.host, test.purpose)
+			got := workflowTaskIssueDescription(
+				test.template, test.node, test.host, test.hostDescription, test.purpose,
+			)
 			if !got.Valid || got.String != test.want {
 				t.Errorf("workflowTaskIssueDescription() = %q (valid=%v), want %q",
 					got.String, got.Valid, test.want)
@@ -75,22 +90,42 @@ func TestWorkflowTaskIssueDescription(t *testing.T) {
 }
 
 func TestWorkflowTaskIssueDescriptionIsEmptyWithoutContent(t *testing.T) {
-	got := workflowTaskIssueDescription("", "", "", "")
+	got := workflowTaskIssueDescription("", "", "", "", "")
 	if got.Valid {
 		t.Errorf("workflowTaskIssueDescription() = %q, want an unset value", got.String)
 	}
 }
 
-// The reference points at the host issue; copying its description would give
-// every node child issue a private snapshot that stops following the original.
-func TestWorkflowTaskIssueDescriptionReferencesRatherThanCopies(t *testing.T) {
+// The excerpt is a convenience, not the record. It always travels under the
+// identifier, because the host issue keeps being edited and this copy does not
+// follow — a reader who needs the current text has to be told where it lives.
+func TestWorkflowTaskIssueDescriptionQuotesUnderTheReference(t *testing.T) {
 	hostDescription := "Import users from a CSV file, validating each row."
-	got := workflowTaskIssueDescription("Review the requirement.", "", "MUL-123", "")
-	if strings.Contains(got.String, hostDescription) {
-		t.Errorf("description embedded the host requirement: %q", got.String)
-	}
+	got := workflowTaskIssueDescription(
+		"Review the requirement.", "", "MUL-123", hostDescription, "",
+	)
 	if !strings.Contains(got.String, "MUL-123") {
 		t.Errorf("description dropped the host reference: %q", got.String)
+	}
+	if !strings.Contains(got.String, "> "+hostDescription) {
+		t.Errorf("description did not quote the requirement: %q", got.String)
+	}
+	if strings.Index(got.String, "MUL-123") > strings.Index(got.String, hostDescription) {
+		t.Errorf("the excerpt must sit under its reference: %q", got.String)
+	}
+}
+
+// A long requirement would otherwise bury the node's own instructions, and the
+// identifier above the excerpt is what the reader follows for the rest.
+func TestWorkflowTaskIssueDescriptionTruncatesALongRequirement(t *testing.T) {
+	got := workflowTaskIssueDescription(
+		"", "", "MUL-123", strings.Repeat("借", maxHostExcerptRunes+50), "",
+	)
+	if !strings.HasSuffix(got.String, "\n> …") {
+		t.Errorf("a truncated excerpt must say so: %q", got.String[len(got.String)-40:])
+	}
+	if quoted := strings.Count(got.String, "借"); quoted != maxHostExcerptRunes {
+		t.Errorf("quoted %d runes, want the %d-rune cap", quoted, maxHostExcerptRunes)
 	}
 }
 

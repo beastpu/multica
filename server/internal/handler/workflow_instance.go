@@ -1382,6 +1382,7 @@ func (h *Handler) materializeWorkflowTask(
 			template.Description,
 			nodeDefinition.Description,
 			hostIdentifier,
+			host.Description.String,
 			h.workflowPurpose(ctx, workspaceID, instance, host.ID.Valid),
 		),
 		Status: status, Priority: priority,
@@ -1566,29 +1567,58 @@ const workflowHostReferencePrefix = "> Parent requirement: "
 // host issue falls back to, so a reader can tell it from a requirement.
 const workflowPurposePrefix = "> What this workflow is for: "
 
-// workflowTaskIssueDescription composes a node child issue's description from
-// the task instructions and a reference to the host issue.
+// maxHostExcerptRunes caps the quoted requirement. The excerpt exists so an
+// executor who opens the child issue from a notification, a phone, or the issue
+// list can read what is being asked without navigating to the host issue; past
+// a screenful it stops serving that and starts burying the node's own
+// instructions.
+const maxHostExcerptRunes = 1000
+
+// workflowHostExcerpt renders the host requirement as a blockquote under the
+// reference line.
 //
-// The reference carries the bare identifier and nothing else. The frontend
-// already autolinks identifiers into an issue mention card that renders the
-// title and status, so repeating them here would only create a second copy to
-// drift. Copying the host description itself would be worse: every node child
-// issue would hold its own snapshot of the requirement, and none of them would
-// follow an edit to the original.
+// It is quoted rather than transcribed: the identifier above it names where the
+// authoritative text lives, so a reader who finds the excerpt truncated — or
+// suspects it is stale, because the host issue keeps being edited and this is a
+// snapshot taken at materialization — knows exactly where to go.
+func workflowHostExcerpt(hostDescription string) string {
+	text := strings.TrimSpace(hostDescription)
+	if text == "" {
+		return ""
+	}
+	truncated := false
+	if runes := []rune(text); len(runes) > maxHostExcerptRunes {
+		text = strings.TrimSpace(string(runes[:maxHostExcerptRunes]))
+		truncated = true
+	}
+	lines := strings.Split(text, "\n")
+	for index, line := range lines {
+		lines[index] = strings.TrimRight("> "+line, " ")
+	}
+	if truncated {
+		lines = append(lines, "> …")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// workflowTaskIssueDescription writes what the executor of this task is being
+// asked to do: the node's own instructions, then the requirement it serves.
+//
+// The requirement travels as an identifier plus a quoted excerpt. The
+// identifier is what stays true — the frontend autolinks it into a mention card
+// carrying the live title and status, and it is where an edit to the
+// requirement lands. The excerpt is a convenience snapshot: without it the
+// child issue says only "Parent requirement: MUL-123", which is nothing to work
+// from on a phone or in a notification. workflowPurpose is the last resort — a
+// run with no host issue has nothing else that says why it is running at all.
 //
 // English matches the rest of the server's generated content; there is no i18n
 // layer on this side.
-// workflowTaskIssueDescription writes what the executor of this task is being
-// asked to do.
-//
-// The host issue travels as a reference, never as a copy: the requirement keeps
-// changing on the issue that owns it, and a transcribed copy would be wrong the
-// first time someone edited it. workflowPurpose is the last resort — a run with
-// no host issue has nothing else that says why it is running at all.
 func workflowTaskIssueDescription(
 	templateDescription string,
 	nodeDescription string,
 	hostIdentifier string,
+	hostDescription string,
 	workflowPurpose string,
 ) pgtype.Text {
 	instructions := strings.TrimSpace(templateDescription)
@@ -1600,7 +1630,11 @@ func workflowTaskIssueDescription(
 		parts = append(parts, instructions)
 	}
 	if reference := strings.TrimSpace(hostIdentifier); reference != "" {
-		parts = append(parts, workflowHostReferencePrefix+reference)
+		block := workflowHostReferencePrefix + reference
+		if excerpt := workflowHostExcerpt(hostDescription); excerpt != "" {
+			block += "\n>\n" + excerpt
+		}
+		parts = append(parts, block)
 	} else if purpose := strings.TrimSpace(workflowPurpose); purpose != "" {
 		parts = append(parts, workflowPurposePrefix+purpose)
 	}
@@ -1782,6 +1816,30 @@ func (h *Handler) GetIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeWorkflowInstanceDetail(w, r, instance, http.StatusOK)
+}
+
+// GetIssueWorkflowNode answers "which node is this issue, and what does that
+// node owe" for a node child issue.
+//
+// It serves the same protocol pushed to an agent on claim, read live. The issue
+// itself carries only its instructions and a reference to the requirement:
+// what upstream concluded, which artifacts and output fields this node owes,
+// and how far the run has got are all things a rework changes, so writing them
+// into the description would freeze a copy that stops being true. A person
+// opening the issue gets them by reading, exactly like the agent does.
+//
+// 404 is the ordinary answer for every issue that is not a live workflow node.
+func (h *Handler) GetIssueWorkflowNode(w http.ResponseWriter, r *http.Request) {
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	nodeContext := h.workflowTaskContext(r.Context(), issue)
+	if nodeContext == nil {
+		writeError(w, http.StatusNotFound, "issue is not a workflow node issue")
+		return
+	}
+	writeJSON(w, http.StatusOK, nodeContext)
 }
 
 func (h *Handler) GetWorkflowInstance(w http.ResponseWriter, r *http.Request) {

@@ -799,7 +799,10 @@ func (h *Handler) GetWorkflowNodeUpstream(w http.ResponseWriter, r *http.Request
 					ID: candidate.LatestSubmissionID, WorkspaceID: instance.WorkspaceID,
 				},
 			)
-			if err == nil {
+			// A synthesised submission carries a canned summary; showing it as
+			// the conclusion would attribute platform text to the executor.
+			// The worker-output fallback below is the honest channel for it.
+			if err == nil && submission.SubmittedByType != "system" {
 				entry.Summary = submission.Summary
 			}
 		}

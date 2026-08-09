@@ -39,7 +39,6 @@ type WorkflowTaskContext struct {
 	DirectExecution  bool                      `json:"direct_execution,omitempty"`
 	HostIssue        string                    `json:"host_issue,omitempty"`
 	NodeIssues       []string                  `json:"node_issues,omitempty"`
-	HandoffRequired  bool                      `json:"handoff_required,omitempty"`
 	Artifacts        []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
 	Upstream         []WorkflowUpstreamContext `json:"upstream,omitempty"`
 	Rework           *WorkflowReworkContext    `json:"rework,omitempty"`
@@ -225,15 +224,14 @@ func (h *Handler) workflowTaskContext(
 		}
 	}
 	result := &WorkflowTaskContext{
-		InstanceID:      uuidToString(instance.ID),
-		Phase:           service.WorkflowNodeTaskPhaseWorker,
-		NodeInstanceID:  uuidToString(node.ID),
-		NodeKey:         node.NodeKey,
-		NodeName:        node.NameSnapshot,
-		RunTitle:        instance.Title,
-		Instructions:    strings.TrimSpace(nodeDefinition.Description),
-		HostIssue:       hostIssue,
-		HandoffRequired: nodeDefinition.Completion.HandoffRequired,
+		InstanceID:     uuidToString(instance.ID),
+		Phase:          service.WorkflowNodeTaskPhaseWorker,
+		NodeInstanceID: uuidToString(node.ID),
+		NodeKey:        node.NodeKey,
+		NodeName:       node.NameSnapshot,
+		RunTitle:       instance.Title,
+		Instructions:   strings.TrimSpace(nodeDefinition.Description),
+		HostIssue:      hostIssue,
 	}
 	result.Artifacts = h.workflowArtifactDuties(ctx, instance.WorkspaceID, node, nodeDefinition)
 	result.NodeIssues = h.workflowNodeIssueIdentifiers(ctx, instance.WorkspaceID, node)
@@ -569,7 +567,11 @@ func (h *Handler) workflowUpstreamContext(
 				db.GetWorkflowSubmissionInWorkspaceParams{
 					ID: candidate.LatestSubmissionID, WorkspaceID: instance.WorkspaceID,
 				},
-			); err == nil {
+			); err == nil && submission.SubmittedByType != "system" {
+				// A synthesised submission carries a canned summary. Passing it
+				// on would tell downstream a person concluded something the
+				// platform wrote; the worker-output fallback below is the
+				// honest channel for that case.
 				entry.Summary = submission.Summary
 			}
 		}

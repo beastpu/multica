@@ -519,6 +519,20 @@
     "condition_use_rows": "필드 선택으로 돌아가기",
     "condition_host_issue": "요구사항"
   },
+  "node_context": {
+    "open_run": "실행 열기",
+    "upstream": "상위 단계 인계",
+    "no_upstream": "이 활동은 실행의 첫 단계입니다.",
+    "no_conclusion": "아직 인계된 내용이 없습니다.",
+    "extracted_output": "결론이 작성되지 않아 실행의 원본 출력을 표시합니다.",
+    "owes": "이 활동의 산출물",
+    "owes_conclusion_only": "정식 산출물은 없습니다. 완료 전에 결론을 인계하세요.",
+    "output_field": "출력 필드",
+    "required": "필수",
+    "optional": "선택",
+    "delivered": "제출됨",
+    "not_delivered": "미제출"
+  },
   "status": {
     "needs_setup": "설정 필요",
     "running": "실행 중",
