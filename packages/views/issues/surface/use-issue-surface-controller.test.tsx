@@ -182,7 +182,14 @@ describe("useIssueSurfaceController", () => {
   // A `case "workflow": throw` looked safe on that reasoning, but this memo
   // evaluates on every render regardless of view mode — the workbench went
   // blank, and the run underneath it looked like it had never happened.
-  it("renders a workflow-scoped surface instead of throwing on the Table spec", async () => {
+  //
+  // The fix for that was to degrade to the workspace window, on the argument
+  // that nothing would ever issue the spec. Board and swimlane do: they go
+  // through the server status/group surfaces, which read this same spec. So
+  // the run's board asked for the workspace and got it — 1074 issues under a
+  // run that had 191, and no error anywhere, because a board full of the wrong
+  // issues still looks like a board.
+  it("scopes the Table spec to the workflow run rather than the workspace", async () => {
     const { result } = renderHook(
       () =>
         useIssueSurfaceController({
@@ -193,7 +200,34 @@ describe("useIssueSurfaceController", () => {
     );
 
     expect(result.current).toBeTruthy();
-    expect(result.current.tableQuerySpec.scope).toEqual({ kind: "workspace" });
+    expect(result.current.tableQuerySpec.scope).toEqual({
+      kind: "workflow",
+      instance_id: "instance-1",
+    });
+  });
+
+  // Selecting an activity narrows the same surface. The workbench's two tabs
+  // are this one scope with and without the key, so a dropped key silently
+  // turns "this activity" into "the whole run".
+  it("carries the selected activity into the Table spec", async () => {
+    const { result } = renderHook(
+      () =>
+        useIssueSurfaceController({
+          scope: {
+            type: "workflow",
+            instanceId: "instance-1",
+            activityKey: "triage",
+          },
+          modes: ["board", "list", "swimlane"],
+        }),
+      { wrapper: makeWrapper(qc, "workflow:instance-1:triage") },
+    );
+
+    expect(result.current.tableQuerySpec.scope).toEqual({
+      kind: "workflow",
+      instance_id: "instance-1",
+      activity_key: "triage",
+    });
   });
 
   it("derives the project scope and canonical server query", async () => {

@@ -72,6 +72,11 @@ type issueTableScope struct {
 	ProjectID     string              `json:"project_id,omitempty"`
 	Actor         *issueTableActorRef `json:"actor,omitempty"`
 	Relation      string              `json:"relation,omitempty"`
+	// InstanceID and ActivityKey scope the table to one workflow run, and
+	// optionally to one activity within it. Without them the workbench's board
+	// had no way to ask for a run's issues and asked for the workspace's.
+	InstanceID  string `json:"instance_id,omitempty"`
+	ActivityKey string `json:"activity_key,omitempty"`
 }
 
 type issueTableDateFilterRequest struct {
@@ -500,6 +505,40 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 			writeError(w, http.StatusBadRequest, "invalid scope.relation")
 			return issueTableSQL{}, false
 		}
+	case "workflow":
+		// The run is required and the activity is not: the workbench offers a
+		// per-activity board and an all-issues-in-this-run board, and both are
+		// this scope. What must never happen is the third reading — a workflow
+		// scope the server cannot satisfy quietly becoming the workspace, which
+		// is what put 1074 issues on a board belonging to a run of 191.
+		instanceID, err := util.ParseUUID(spec.Scope.InstanceID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid scope.instance_id")
+			return issueTableSQL{}, false
+		}
+		predicates := []string{
+			fmt.Sprintf("workflow_task.workflow_instance_id = %s::uuid", addArg(instanceID)),
+			"workflow_task.issue_id = i.id",
+			"workflow_task.workspace_id = i.workspace_id",
+		}
+		if activityKey := strings.TrimSpace(spec.Scope.ActivityKey); activityKey != "" {
+			if len(activityKey) > 128 {
+				writeError(w, http.StatusBadRequest, "scope.activity_key is too long")
+				return issueTableSQL{}, false
+			}
+			predicates = append(
+				predicates,
+				fmt.Sprintf("workflow_node.node_key = %s::text", addArg(activityKey)),
+			)
+		}
+		where = append(where, fmt.Sprintf(`EXISTS (
+  SELECT 1
+  FROM workflow_node_task workflow_task
+  JOIN workflow_node_instance workflow_node
+    ON workflow_node.id = workflow_task.workflow_node_instance_id
+   AND workflow_node.workspace_id = workflow_task.workspace_id
+  WHERE %s
+)`, strings.Join(predicates, " AND ")))
 	default:
 		writeError(w, http.StatusBadRequest, "invalid scope.kind")
 		return issueTableSQL{}, false

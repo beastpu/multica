@@ -257,7 +257,11 @@ export type IssueTableScope =
   | { kind: "project"; project_id: string }
   | { kind: "assignee"; actor: IssueActorRef }
   | { kind: "creator"; actor: IssueActorRef }
-  | { kind: "my"; relation: "assigned" | "created" | "involved" | "any" };
+  | { kind: "my"; relation: "assigned" | "created" | "involved" | "any" }
+  /** One workflow run, optionally one activity inside it. The workbench's
+   * board and swimlane read through the Table endpoints, so without this the
+   * only expressible scope was the workspace — and that is what they showed. */
+  | { kind: "workflow"; instance_id: string; activity_key?: string };
 
 export interface IssueTableFilters {
   statuses?: IssueStatus[];

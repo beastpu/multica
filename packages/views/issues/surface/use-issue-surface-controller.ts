@@ -369,14 +369,26 @@ export function useIssueSurfaceController({
           actor: { type: scope.actorType, id: scope.actorId },
         };
         break;
-      // Neither scope has a Table query to express. Throwing here looked safe
-      // — the workflow workbench offers list/board/swimlane only — but this
-      // memo runs on every render regardless of view mode, so the throw took
-      // the whole workbench down with a blank page. Degrade to the workspace
-      // window instead: `usesTable` is false for both surfaces, so nothing
-      // ever issues this spec, and an inert value cannot query the wrong
-      // thing the way a wrong-but-plausible scope could.
       case "workflow":
+        queryScope = {
+          kind: "workflow",
+          instance_id: scope.instanceId,
+          ...(scope.activityKey ? { activity_key: scope.activityKey } : {}),
+        };
+        break;
+      // Team has no Table query to express, and nothing constructs a team
+      // surface scope yet. Throwing took the whole surface down with a blank
+      // page — this memo runs on every render, whatever the view mode — so it
+      // still has to produce something.
+      //
+      // The workspace window is a placeholder, and workflow is the warning
+      // about it: that case degraded here too, on the argument that `usesTable`
+      // is false so the spec is never issued. It is. `usesServerStatusSurface`
+      // and `usesServerGroupSurface` issue this same spec, and board and
+      // swimlane set both — which is how a run's board came to answer with the
+      // whole workspace, 1074 issues under a run that had 191, looking like a
+      // real board rather than an error. Whoever makes team real: give it a
+      // scope the server can satisfy before giving it a board.
       case "team":
         queryScope = { kind: "workspace" };
         break;
