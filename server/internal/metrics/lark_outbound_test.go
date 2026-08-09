@@ -7,34 +7,21 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-func TestLarkOutboundMetricsRecordBoundedDeliverySignals(t *testing.T) {
+func TestLarkOutboundMetricsRecordDeliveryOutcomes(t *testing.T) {
 	m := NewLarkOutboundMetrics()
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(m.Collectors()...)
 
-	m.RecordCardStarted(7.25)
-	m.RecordDelivery("streaming", "sent")
-	m.RecordDelivery("streaming", "repaint")
-	m.RecordDelivery("final", "patched")
+	m.RecordDelivery("final", "sent")
+	m.RecordDelivery("error", "sent")
+	m.RecordDelivery("final", "failed")
 
-	if got := testutil.ToFloat64(m.CardsStarted); got != 1 {
-		t.Fatalf("cards started=%v want 1", got)
+	for _, tc := range [][2]string{{"final", "sent"}, {"error", "sent"}, {"final", "failed"}} {
+		if got := testutil.ToFloat64(m.Deliveries.WithLabelValues(tc[0], tc[1])); got != 1 {
+			t.Errorf("deliveries%v=%v want 1", tc, got)
+		}
 	}
-	if got := testutil.ToFloat64(m.Deliveries.WithLabelValues("streaming", "sent")); got != 1 {
-		t.Fatalf("sent deliveries=%v want 1", got)
-	}
-	if got := testutil.ToFloat64(m.Deliveries.WithLabelValues("streaming", "repaint")); got != 1 {
-		t.Fatalf("repaint deliveries=%v want 1", got)
-	}
-	if got := testutil.ToFloat64(m.Deliveries.WithLabelValues("final", "patched")); got != 1 {
-		t.Fatalf("patched deliveries=%v want 1", got)
-	}
-	wanted := []string{
-		"multica_lark_outbound_cards_started_total",
-		"multica_lark_outbound_first_feedback_seconds",
-		"multica_lark_outbound_deliveries_total",
-	}
-	if got, err := testutil.GatherAndCount(registry, wanted...); err != nil || got < len(wanted) {
-		t.Fatalf("metric families=%d want at least %d (err=%v)", got, len(wanted), err)
+	if got, err := testutil.GatherAndCount(registry, "multica_lark_outbound_deliveries_total"); err != nil || got != 3 {
+		t.Fatalf("recorded series=%d want 3 (err=%v)", got, err)
 	}
 }

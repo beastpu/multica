@@ -68,7 +68,7 @@ Workspace-wide management lives in **Settings → Integrations**:
 - **Bind / disconnect** require workspace **owner** or **admin**. Members see the connected-bots list but no bind or disconnect controls.
 - **Talking to the Bot** requires being a workspace member with a bound Lark identity. Everyone else is dropped.
 - The integration never stores message bodies for dropped messages — only a drop reason, for audit.
-- A run that is still going after a few seconds posts a progress card that reports how long it has been working, and is replaced in place by the answer. It needs no scope beyond the ones binding already grants. If that card cannot be updated, the answer is sent as an ordinary message instead rather than being dropped.
+- Once the agent starts writing, its answer streams into a card and keeps filling in until the run finishes. This uses CardKit and needs the Bot app scope `cardkit:card:write`; an admin can grant it from **Manage in Lark**. Apps without it fall back to an ordinary updateable card — same answer, no typewriter. A reply that arrives before the agent narrates anything is sent as a normal message, with no card at all.
 
 ## Self-host setup
 

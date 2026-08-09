@@ -543,6 +543,174 @@ func (c *httpAPIClient) PatchInteractiveCard(ctx context.Context, p PatchCardPar
 	return nil
 }
 
+// --- CardKit 2.0 transport ---------------------------------------------
+//
+// Wire shapes below are the documented ones, and the contract test enforces
+// them against a fake that validates like the Open Platform does. That test
+// exists because an earlier version sent the card document as `card` instead
+// of the {type,data} envelope: every update 400'd with 99992402, and because
+// a 4xx is a permanent failure the reply was dropped rather than retried.
+
+func (c *httpAPIClient) CreateCardKitCard(ctx context.Context, p CreateCardKitCardParams) (string, error) {
+	if p.CardJSON == "" {
+		return "", errors.New("lark http client: missing CardKit card json")
+	}
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	if err != nil {
+		return "", err
+	}
+	body := map[string]any{"type": "card_json", "data": p.CardJSON}
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			CardID string `json:"card_id"`
+		} `json:"data"`
+	}
+	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, "/open-apis/cardkit/v1/cards", token, body, &resp); err != nil {
+		return "", fmt.Errorf("lark http client: create CardKit card: %w", err)
+	}
+	if resp.Code != 0 || resp.Data.CardID == "" {
+		if isTokenError(resp.Code) {
+			c.invalidateToken(p.InstallationID.AppID)
+		}
+		return "", &APIError{Op: "create CardKit card", Code: resp.Code, Msg: resp.Msg}
+	}
+	return resp.Data.CardID, nil
+}
+
+func (c *httpAPIClient) SendCardKitCard(ctx context.Context, p SendCardKitCardParams) (string, error) {
+	if p.ChatID == "" {
+		return "", errors.New("lark http client: missing chat_id")
+	}
+	if p.CardID == "" {
+		return "", errors.New("lark http client: missing CardKit card_id")
+	}
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	if err != nil {
+		return "", err
+	}
+	content, err := json.Marshal(map[string]any{
+		"type": "card",
+		"data": map[string]string{"card_id": p.CardID},
+	})
+	if err != nil {
+		return "", fmt.Errorf("lark http client: encode CardKit message content: %w", err)
+	}
+	path, body := outboundMessageRequest(p.ChatID, "interactive", string(content), p.ReplyTarget)
+	if p.IdempotencyKey != "" {
+		body["uuid"] = p.IdempotencyKey
+	}
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			MessageID string `json:"message_id"`
+		} `json:"data"`
+	}
+	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, path, token, body, &resp); err != nil {
+		return "", fmt.Errorf("lark http client: send CardKit card: %w", err)
+	}
+	if resp.Code != 0 || resp.Data.MessageID == "" {
+		if isTokenError(resp.Code) {
+			c.invalidateToken(p.InstallationID.AppID)
+		}
+		return "", &APIError{Op: "send CardKit card", Code: resp.Code, Msg: resp.Msg}
+	}
+	return resp.Data.MessageID, nil
+}
+
+// StreamCardKitText replaces one element's text. Content is the whole text so
+// far, never a delta — Feishu diffs it against what the element holds and
+// animates the tail when the old text is a prefix of the new one.
+func (c *httpAPIClient) StreamCardKitText(ctx context.Context, p StreamCardKitTextParams) error {
+	if p.CardID == "" || p.ElementID == "" {
+		return errors.New("lark http client: missing CardKit card_id or element_id")
+	}
+	if p.Sequence <= 0 {
+		return errors.New("lark http client: CardKit sequence must be positive")
+	}
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{"content": p.Content, "sequence": p.Sequence}
+	if p.IdempotencyKey != "" {
+		body["uuid"] = p.IdempotencyKey
+	}
+	path := "/open-apis/cardkit/v1/cards/" + url.PathEscape(p.CardID) +
+		"/elements/" + url.PathEscape(p.ElementID) + "/content"
+	return c.cardKitCall(ctx, p.InstallationID, http.MethodPut, path, token, body, "stream CardKit text")
+}
+
+// CloseCardKitStreaming turns streaming_mode off. settings is a JSON *string*,
+// not an object — the same envelope trap as the full update.
+func (c *httpAPIClient) CloseCardKitStreaming(ctx context.Context, p CloseCardKitStreamingParams) error {
+	if p.CardID == "" {
+		return errors.New("lark http client: missing CardKit card_id")
+	}
+	if p.Sequence <= 0 {
+		return errors.New("lark http client: CardKit sequence must be positive")
+	}
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{
+		"settings": `{"config":{"streaming_mode":false}}`,
+		"sequence": p.Sequence,
+	}
+	if p.IdempotencyKey != "" {
+		body["uuid"] = p.IdempotencyKey
+	}
+	path := "/open-apis/cardkit/v1/cards/" + url.PathEscape(p.CardID) + "/settings"
+	return c.cardKitCall(ctx, p.InstallationID, http.MethodPatch, path, token, body, "close CardKit streaming")
+}
+
+// UpdateCardKitCard replaces the whole card. The document travels as a string
+// under card.data, not as a nested object.
+func (c *httpAPIClient) UpdateCardKitCard(ctx context.Context, p UpdateCardKitCardParams) error {
+	if p.CardID == "" {
+		return errors.New("lark http client: missing CardKit card_id")
+	}
+	if !json.Valid([]byte(p.CardJSON)) {
+		return errors.New("lark http client: malformed CardKit card json")
+	}
+	if p.Sequence <= 0 {
+		return errors.New("lark http client: CardKit sequence must be positive")
+	}
+	token, err := c.tenantAccessToken(ctx, p.InstallationID)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{
+		"card":     map[string]any{"type": "card_json", "data": p.CardJSON},
+		"sequence": p.Sequence,
+	}
+	if p.IdempotencyKey != "" {
+		body["uuid"] = p.IdempotencyKey
+	}
+	path := "/open-apis/cardkit/v1/cards/" + url.PathEscape(p.CardID)
+	return c.cardKitCall(ctx, p.InstallationID, http.MethodPut, path, token, body, "update CardKit card")
+}
+
+func (c *httpAPIClient) cardKitCall(ctx context.Context, creds InstallationCredentials, method, path, token string, body map[string]any, op string) error {
+	var resp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := c.doJSON(ctx, c.resolveBaseURL(creds), method, path, token, body, &resp); err != nil {
+		return fmt.Errorf("lark http client: %s: %w", op, err)
+	}
+	if resp.Code != 0 {
+		if isTokenError(resp.Code) {
+			c.invalidateToken(creds.AppID)
+		}
+		return &APIError{Op: op, Code: resp.Code, Msg: resp.Msg}
+	}
+	return nil
+}
+
 // SendBindingPromptCard renders the member-binding card and posts it
 // directly to the unbound user's open_id (not the chat). Keeping the
 // card template inside this client — rather than the dispatcher —

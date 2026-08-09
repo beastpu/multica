@@ -133,6 +133,16 @@ type OutboundCardMessage struct {
 	Status               string
 	LastPatchedAt        pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
+	ChannelCardID        string
+	Transport            string
+	OperationSequence    int32
+	VisibleText          string
+	StreamingClosedAt    pgtype.Timestamptz
+	TerminalContent      string
+	LeaseToken           pgtype.UUID
+	LeaseExpiresAt       pgtype.Timestamptz
+	AttemptCount         int32
+	LastError            string
 }
 
 // feishuInstallConfig is the JSON shape of channel_installation.config for the
@@ -290,6 +300,16 @@ func outboundCardFromRow(row db.ChannelOutboundCardMessage) OutboundCardMessage 
 		Status:               row.Status,
 		LastPatchedAt:        row.LastPatchedAt,
 		CreatedAt:            row.CreatedAt,
+		ChannelCardID:        row.ChannelCardID,
+		Transport:            row.Transport,
+		OperationSequence:    row.OperationSequence,
+		VisibleText:          row.VisibleText,
+		StreamingClosedAt:    row.StreamingClosedAt,
+		TerminalContent:      row.TerminalContent,
+		LeaseToken:           row.LeaseToken,
+		LeaseExpiresAt:       row.LeaseExpiresAt,
+		AttemptCount:         row.AttemptCount,
+		LastError:            row.LastError,
 	}
 }
 

@@ -465,7 +465,7 @@ func TestHTTPClient_SendInteractiveCard_DefaultRendererBodyHasUpdateMulti(t *tes
 	)
 
 	r := NewDefaultRenderer()
-	render, err := r.Render(RenderInput{Kind: CardKindRunning, AgentName: "TestAgent"})
+	render, err := r.Render(RenderInput{Kind: CardKindFinal, AgentName: "TestAgent", Content: "done"})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -500,7 +500,7 @@ func TestHTTPClient_PatchInteractiveCard_DefaultRendererBodyHasUpdateMulti(t *te
 	)
 
 	r := NewDefaultRenderer()
-	render, err := r.Render(RenderInput{Kind: CardKindRunning, AgentName: "TestAgent"})
+	render, err := r.Render(RenderInput{Kind: CardKindFinal, AgentName: "TestAgent", Content: "done"})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}

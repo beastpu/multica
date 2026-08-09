@@ -205,9 +205,9 @@ type Handler struct {
 	// UI consults IsConfigured() to decide whether to surface install
 	// entry points.
 	LarkAPIClient lark.APIClient
-	// LarkOutboundPatcher owns the progress-card worker. The router constructs
-	// and registers it; main starts Run under sweepCtx so a card that comes due
-	// is still sent when the event handler that opened it is long gone.
+	// LarkOutboundPatcher streams agent replies into Feishu cards. The router
+	// constructs and subscribes it; main starts Run under sweepCtx so a card
+	// keeps painting after the event that opened it is long gone.
 	LarkOutboundPatcher *lark.Patcher
 	// Composio integration (MUL-3720). Nil when COMPOSIO_API_KEY is unset;
 	// the composio HTTP handlers return 503 in that case. Wired in

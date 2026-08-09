@@ -477,9 +477,9 @@ func main() {
 		go h.ChannelMediaReconciler.Run(sweepCtx)
 	}
 
-	// Durable Feishu progress-card outbox. Every replica may run a worker;
-	// database leases and SKIP LOCKED ensure only one sends a revision while
-	// expired leases make crash recovery automatic.
+	// Feishu outbound card worker. Every replica may run one; the database
+	// hands out the CardKit operation sequence under a lease, so concurrent
+	// workers take different cards instead of colliding on one.
 	if h.LarkOutboundPatcher != nil {
 		go h.LarkOutboundPatcher.Run(sweepCtx)
 	}
