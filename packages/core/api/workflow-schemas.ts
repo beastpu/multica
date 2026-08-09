@@ -59,7 +59,6 @@ const WorkflowCompletionDefinitionSchema = z.object({
   required_issue_outcome: z.enum(["done", "terminal", "none"])
     .optional().catch(undefined),
   submission_required: z.boolean().optional().catch(undefined),
-  handoff_required: z.boolean().optional().catch(undefined),
   max_attempts: z.number().optional().catch(undefined),
   authorized_roles: arrayOrEmpty(z.string()).optional(),
 }).loose();

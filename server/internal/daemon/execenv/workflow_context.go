@@ -27,7 +27,6 @@ type WorkflowTaskContext struct {
 	DirectExecution  bool                      `json:"direct_execution,omitempty"`
 	HostIssue        string                    `json:"host_issue,omitempty"`
 	NodeIssues       []string                  `json:"node_issues,omitempty"`
-	HandoffRequired  bool                      `json:"handoff_required,omitempty"`
 	Artifacts        []WorkflowArtifactDuty    `json:"artifacts,omitempty"`
 	Upstream         []WorkflowUpstreamContext `json:"upstream,omitempty"`
 	Rework           *WorkflowReworkContext    `json:"rework,omitempty"`
@@ -408,9 +407,6 @@ func renderWorkflowUpstream(
 
 // renderWorkflowDuties writes what this node owes and exactly how to deliver it.
 func renderWorkflowDuties(b *strings.Builder, workflow *WorkflowTaskContext, deferDelivery bool) {
-	if len(workflow.Artifacts) == 0 && !workflow.HandoffRequired {
-		return
-	}
 	b.WriteString("### What this node owes\n\n")
 	for _, duty := range workflow.Artifacts {
 		state := "not submitted"
@@ -457,12 +453,14 @@ func renderWorkflowDuties(b *strings.Builder, workflow *WorkflowTaskContext, def
 			"for a document, or `{\"artifact_key\":\"<key>\",\"attachment_id\":\"<id>\"}` for an attachment.\n\n",
 			workflow.NodeInstanceID)
 	}
-	if workflow.HandoffRequired {
-		b.WriteString("Before you finish, hand off your conclusion — the next node reads " +
-			"this first, and it is not a copy of the document:\n\n")
-		b.WriteString("```\nmultica workflow submit --summary \"<conclusion, decisions, " +
-			"open risks, what the next node should watch for>\"\n```\n\n")
-	}
+	// Every node owes its conclusion. The template used to decide whether to
+	// ask, which meant most nodes handed the next one raw execution output and
+	// called it a handover — the summary is cheap to write and the only thing
+	// downstream reads first, so it is asked for unconditionally.
+	b.WriteString("Before you finish, hand off your conclusion — the next node reads " +
+		"this first, and it is not a copy of the document:\n\n")
+	b.WriteString("```\nmultica workflow submit --summary \"<conclusion, decisions, " +
+		"open risks, what the next node should watch for>\"\n```\n\n")
 	if pending := workflow.PendingRequiredArtifacts(); len(pending) > 0 {
 		keys := make([]string, 0, len(pending))
 		for _, duty := range pending {

@@ -7,12 +7,11 @@ import (
 
 func workflowFixture() *WorkflowTaskContext {
 	return &WorkflowTaskContext{
-		InstanceID:      "run-1",
-		NodeInstanceID:  "node-inst-1",
-		NodeKey:         "implement",
-		NodeName:        "代码实施",
-		HostIssue:       "WTE-14773",
-		HandoffRequired: true,
+		InstanceID:     "run-1",
+		NodeInstanceID: "node-inst-1",
+		NodeKey:        "implement",
+		NodeName:       "代码实施",
+		HostIssue:      "WTE-14773",
 		Artifacts: []WorkflowArtifactDuty{
 			{Key: "impl_notes", Name: "实现说明", Kind: "document", Required: true},
 		},

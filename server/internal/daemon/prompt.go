@@ -115,9 +115,7 @@ func workflowPromptSection(task Task) string {
 			fmt.Fprintf(&b, "Required artifacts still outstanding: %s.\n",
 				strings.Join(keys, ", "))
 		}
-		if workflow.HandoffRequired {
-			b.WriteString("This node also owes a handoff summary before it can complete.\n")
-		}
+		b.WriteString("This node also owes the next node a handoff summary.\n")
 		return b.String()
 	}
 	return "\nIf this issue is a workflow node, run `multica workflow current` first. It " +

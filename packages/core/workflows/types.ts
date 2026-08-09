@@ -55,7 +55,6 @@ export interface WorkflowCompletionDefinition {
   mode?: "automatic" | "manual";
   required_issue_outcome?: "done" | "terminal" | "none";
   submission_required?: boolean;
-  handoff_required?: boolean;
   /** Cap on rework rounds; 0 or absent means uncapped. */
   max_attempts?: number;
   /** Workflow roles additionally allowed to complete/skip/rollback. */

@@ -208,11 +208,6 @@ type CompletionDefinition struct {
 	Mode                 string `json:"mode,omitempty"`
 	RequiredIssueOutcome string `json:"required_issue_outcome,omitempty"`
 	SubmissionRequired   bool   `json:"submission_required,omitempty"`
-	// HandoffRequired blocks completion until the node carries a non-empty
-	// handoff summary. It is separate from SubmissionRequired because a node
-	// can owe a structured result without owing a conclusion, and far more
-	// often owes the conclusion alone.
-	HandoffRequired bool `json:"handoff_required,omitempty"`
 	// MaxAttempts caps how many times this activity may be reworked. A
 	// reviewer and an executor can otherwise hand work back and forth
 	// indefinitely, and nothing in the run reports that it is looping —

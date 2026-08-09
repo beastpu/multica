@@ -482,8 +482,8 @@ func TestWorkflowHumanCriticRejectionStartsRework(t *testing.T) {
 	}
 }
 
-// startHandoffWorkflow boots a two-activity run whose first node owes a handoff
-// summary, so the gate and the upstream view can both be exercised.
+// startHandoffWorkflow boots a two-activity run so the upstream view has a
+// predecessor whose conclusion it can carry.
 func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -498,7 +498,7 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 		t.Fatalf("create host issue: %v", err)
 	}
 
-	activity := func(nodeKey, name string, handoff bool) workflowdomain.NodeDefinition {
+	activity := func(nodeKey, name string) workflowdomain.NodeDefinition {
 		return workflowdomain.NodeDefinition{
 			Key: nodeKey, Kind: "activity", Name: name,
 			OwnerRole: "owner", IssuePolicy: "none",
@@ -507,7 +507,7 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 				Fallback: &workflowdomain.ExecutorDefinition{Kind: "manual"},
 			},
 			Completion: workflowdomain.CompletionDefinition{
-				Mode: "manual", RequiredIssueOutcome: "none", HandoffRequired: handoff,
+				Mode: "manual", RequiredIssueOutcome: "none",
 			},
 		}
 	}
@@ -519,8 +519,8 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 		}},
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
-			activity("review", "Review", true),
-			activity("design", "Design", false),
+			activity("review", "Review"),
+			activity("design", "Design"),
 			{Key: "end", Kind: "end", Name: "End"},
 		},
 		Edges: []workflowdomain.EdgeDefinition{
@@ -586,37 +586,6 @@ func submitHandoff(t *testing.T, nodeID, summary, key string) *httptest.Response
 	), "nodeInstanceId", nodeID)
 	testHandler.CreateWorkflowNodeSubmission(recorder, request)
 	return recorder
-}
-
-// A node that owes a conclusion is not finished without one — otherwise the
-// next node inherits nothing and the requirement is decorative.
-func TestWorkflowHandoffSummaryGatesCompletion(t *testing.T) {
-	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
-	cleanupWorkflowRuntimeTest(t)
-	_, reviewID, _ := startHandoffWorkflow(t, "gate")
-
-	complete := func(n int) *httptest.ResponseRecorder {
-		recorder := httptest.NewRecorder()
-		request := withURLParam(newRequest(
-			http.MethodPost,
-			"/api/workflow-node-instances/"+reviewID+"/complete?workspace_id="+testWorkspaceID,
-			map[string]any{"idempotency_key": fmt.Sprintf("handoff-gate-%d", n)},
-		), "nodeInstanceId", reviewID)
-		testHandler.CompleteWorkflowNode(recorder, request)
-		return recorder
-	}
-
-	if recorder := complete(1); recorder.Code == http.StatusOK {
-		t.Fatal("node completed without its handoff summary")
-	}
-	if recorder := submitHandoff(
-		t, reviewID, "Scope confirmed; first release is linear only.", "handoff-gate-summary",
-	); recorder.Code != http.StatusCreated {
-		t.Fatalf("submit handoff status = %d, body = %s", recorder.Code, recorder.Body.String())
-	}
-	if recorder := complete(2); recorder.Code != http.StatusOK {
-		t.Fatalf("complete status = %d after handoff, body = %s", recorder.Code, recorder.Body.String())
-	}
 }
 
 func TestWorkflowHandoffSummaryRejectsOverlongText(t *testing.T) {
@@ -876,48 +845,6 @@ func workIssueNumber(t *testing.T, issueID string) int {
 		t.Fatalf("read issue number: %v", err)
 	}
 	return number
-}
-
-// A node needing a verdict but declaring no schema gets a submission
-// synthesised for it, carrying a canned summary. That record must not satisfy
-// the handoff gate: downstream would inherit a conclusion the platform wrote,
-// which is exactly what requiring a handoff is meant to prevent.
-func TestWorkflowHandoffGateRejectsSystemAuthoredSummary(t *testing.T) {
-	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
-	cleanupWorkflowRuntimeTest(t)
-	_, reviewID, _ := startHandoffWorkflow(t, "system-summary")
-
-	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO workflow_node_submission (
-			workspace_id, workflow_instance_id, workflow_node_instance_id,
-			revision, status, payload, summary, evidence, submitted_by_type,
-			schema_version
-		)
-		SELECT workspace_id, workflow_instance_id, id, 1, 'valid', '{}'::jsonb,
-		       'All required issues are done', '[]'::jsonb, 'system', 1
-		FROM workflow_node_instance WHERE id = $1
-	`, reviewID); err != nil {
-		t.Fatalf("insert system submission: %v", err)
-	}
-	if _, err := testPool.Exec(context.Background(), `
-		UPDATE workflow_node_instance SET latest_submission_id = (
-			SELECT id FROM workflow_node_submission
-			WHERE workflow_node_instance_id = $1 ORDER BY revision DESC LIMIT 1
-		) WHERE id = $1
-	`, reviewID); err != nil {
-		t.Fatalf("link system submission: %v", err)
-	}
-
-	recorder := httptest.NewRecorder()
-	request := withURLParam(newRequest(
-		http.MethodPost,
-		"/api/workflow-node-instances/"+reviewID+"/complete?workspace_id="+testWorkspaceID,
-		map[string]any{"idempotency_key": "handoff-system-summary"},
-	), "nodeInstanceId", reviewID)
-	testHandler.CompleteWorkflowNode(recorder, request)
-	if recorder.Code == http.StatusOK {
-		t.Fatal("node completed on a summary the platform wrote for it")
-	}
 }
 
 // A link artifact is agent-submitted and later rendered as a clickable
