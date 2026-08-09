@@ -464,6 +464,7 @@ func (s *ChannelStore) OpenLarkOutboundCard(ctx context.Context, arg OpenOutboun
 	row, err := s.Queries.OpenChannelOutboundCard(ctx, db.OpenChannelOutboundCardParams{
 		ChatSessionID: arg.ChatSessionID, ChannelType: channelTypeFeishu,
 		ChannelChatID: arg.ChannelChatID, TaskID: arg.TaskID,
+		CardSuppressed: arg.CardSuppressed,
 	})
 	if err != nil {
 		return OutboundCardMessage{}, err
