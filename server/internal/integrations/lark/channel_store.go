@@ -16,6 +16,7 @@ package lark
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -451,8 +452,7 @@ func (s *ChannelStore) ConsumeLarkBindingToken(ctx context.Context, tokenHash st
 
 func (s *ChannelStore) GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.UUID) (OutboundCardMessage, error) {
 	row, err := s.Queries.GetChannelOutboundCardByTask(ctx, db.GetChannelOutboundCardByTaskParams{
-		TaskID:      taskID,
-		ChannelType: channelTypeFeishu,
+		TaskID: taskID, ChannelType: channelTypeFeishu,
 	})
 	if err != nil {
 		return OutboundCardMessage{}, err
@@ -460,12 +460,10 @@ func (s *ChannelStore) GetLarkOutboundCardByTask(ctx context.Context, taskID pgt
 	return outboundCardFromRow(row), nil
 }
 
-func (s *ChannelStore) CreateLarkOutboundCardMessage(ctx context.Context, arg CreateOutboundCardMessageParams) (OutboundCardMessage, error) {
-	row, err := s.Queries.CreateChannelOutboundCardMessage(ctx, db.CreateChannelOutboundCardMessageParams{
-		ChatSessionID: arg.ChatSessionID,
-		ChannelType:   channelTypeFeishu,
-		ChannelChatID: arg.ChannelChatID,
-		TaskID:        arg.TaskID,
+func (s *ChannelStore) OpenLarkOutboundCard(ctx context.Context, arg OpenOutboundCardParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.OpenChannelOutboundCard(ctx, db.OpenChannelOutboundCardParams{
+		ChatSessionID: arg.ChatSessionID, ChannelType: channelTypeFeishu,
+		ChannelChatID: arg.ChannelChatID, TaskID: arg.TaskID,
 	})
 	if err != nil {
 		return OutboundCardMessage{}, err
@@ -473,27 +471,52 @@ func (s *ChannelStore) CreateLarkOutboundCardMessage(ctx context.Context, arg Cr
 	return outboundCardFromRow(row), nil
 }
 
-func (s *ChannelStore) ClaimLarkOutboundCardWork(ctx context.Context, arg ClaimOutboundCardWorkParams) ([]OutboundCardMessage, error) {
-	rows, err := s.Queries.ClaimChannelOutboundCardWork(ctx, db.ClaimChannelOutboundCardWorkParams{
-		ChannelType:       channelTypeFeishu,
-		StartDelaySeconds: arg.StartDelaySeconds,
-		HeartbeatSeconds:  arg.HeartbeatSeconds,
-		MaxRows:           arg.MaxRows,
+func (s *ChannelStore) ClaimLarkOutboundCardPaint(ctx context.Context, arg ClaimOutboundCardPaintParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.ClaimChannelOutboundCardPaint(ctx, db.ClaimChannelOutboundCardPaintParams{
+		ChannelType: channelTypeFeishu, LeaseToken: arg.LeaseToken,
+		LeaseSeconds: arg.LeaseSeconds, ThrottleSeconds: arg.ThrottleSeconds,
+		SequenceReserve: arg.SequenceReserve,
 	})
 	if err != nil {
-		return nil, err
+		return OutboundCardMessage{}, err
 	}
-	cards := make([]OutboundCardMessage, len(rows))
-	for i, row := range rows {
-		cards[i] = outboundCardFromRow(row)
-	}
-	return cards, nil
+	return outboundCardFromRow(row), nil
 }
 
-func (s *ChannelStore) SetLarkOutboundCardMessageID(ctx context.Context, arg SetOutboundCardMessageIDParams) (OutboundCardMessage, error) {
-	row, err := s.Queries.SetChannelOutboundCardMessageID(ctx, db.SetChannelOutboundCardMessageIDParams{
-		ID: arg.ID, ChannelCardMessageID: arg.ChannelCardMessageID,
+func (s *ChannelStore) RecordLarkOutboundCardEntity(ctx context.Context, arg RecordOutboundCardEntityParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.RecordChannelOutboundCardEntity(ctx, db.RecordChannelOutboundCardEntityParams{
+		ID: arg.ID, LeaseToken: arg.LeaseToken,
+		ChannelCardID: arg.ChannelCardID, ChannelCardMessageID: arg.ChannelCardMessageID,
 	})
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) CompleteLarkOutboundCardPaint(ctx context.Context, arg CompleteOutboundCardPaintParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.CompleteChannelOutboundCardPaint(ctx, db.CompleteChannelOutboundCardPaintParams{
+		ID: arg.ID, LeaseToken: arg.LeaseToken,
+		VisibleText: arg.VisibleText, StreamingClosed: arg.StreamingClosed,
+	})
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) FailLarkOutboundCardPaint(ctx context.Context, arg FailOutboundCardPaintParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.FailChannelOutboundCardPaint(ctx, db.FailChannelOutboundCardPaintParams{
+		ID: arg.ID, LeaseToken: arg.LeaseToken, LastError: arg.LastError,
+	})
+	if err != nil {
+		return OutboundCardMessage{}, err
+	}
+	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) DowngradeLarkOutboundCardTransport(ctx context.Context, arg OutboundCardLeaseParams) (OutboundCardMessage, error) {
+	row, err := s.Queries.DowngradeChannelOutboundCardTransport(ctx, db.DowngradeChannelOutboundCardTransportParams(arg))
 	if err != nil {
 		return OutboundCardMessage{}, err
 	}
@@ -502,12 +525,28 @@ func (s *ChannelStore) SetLarkOutboundCardMessageID(ctx context.Context, arg Set
 
 func (s *ChannelStore) SettleLarkOutboundCard(ctx context.Context, arg SettleOutboundCardParams) (OutboundCardMessage, error) {
 	row, err := s.Queries.SettleChannelOutboundCard(ctx, db.SettleChannelOutboundCardParams{
-		TaskID: arg.TaskID, ChannelType: channelTypeFeishu, Status: arg.Status,
+		TaskID: arg.TaskID, ChannelType: channelTypeFeishu,
+		Status: arg.Status, TerminalContent: arg.TerminalContent,
 	})
 	if err != nil {
 		return OutboundCardMessage{}, err
 	}
 	return outboundCardFromRow(row), nil
+}
+
+func (s *ChannelStore) ListLarkTaskVisibleText(ctx context.Context, taskID pgtype.UUID) (string, error) {
+	rows, err := s.Queries.ListTaskMessagesSince(ctx, db.ListTaskMessagesSinceParams{TaskID: taskID, Seq: 0})
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, row := range rows {
+		if row.Type != "text" || !row.Content.Valid {
+			continue
+		}
+		b.WriteString(row.Content.String)
+	}
+	return b.String(), nil
 }
 
 // installationsFromRows maps a slice of channel_installation rows to domain

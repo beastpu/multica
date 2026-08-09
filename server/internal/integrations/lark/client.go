@@ -481,3 +481,61 @@ func (s *stubAPIClient) DeleteMessageReaction(ctx context.Context, p DeleteReact
 	s.log.Warn("lark stub client: DeleteMessageReaction called", "message_id", p.MessageID, "reaction_id", p.ReactionID)
 	return ErrAPIClientNotConfigured
 }
+
+// CardKitAPIClient is the CardKit 2.0 transport used for streaming replies.
+// Optional: an app whose scopes lack cardkit:card:write cannot create a card
+// entity, and the caller downgrades to the legacy message-patch transport.
+//
+// Every call against one card entity shares a single operation sequence that
+// must strictly increase — Feishu rejects a stale or repeated number — so the
+// caller is responsible for handing out Sequence under a lease.
+type CardKitAPIClient interface {
+	CreateCardKitCard(ctx context.Context, p CreateCardKitCardParams) (string, error)
+	SendCardKitCard(ctx context.Context, p SendCardKitCardParams) (string, error)
+	StreamCardKitText(ctx context.Context, p StreamCardKitTextParams) error
+	CloseCardKitStreaming(ctx context.Context, p CloseCardKitStreamingParams) error
+	UpdateCardKitCard(ctx context.Context, p UpdateCardKitCardParams) error
+}
+
+type CreateCardKitCardParams struct {
+	InstallationID InstallationCredentials
+	CardJSON       string
+}
+
+type SendCardKitCardParams struct {
+	InstallationID InstallationCredentials
+	ChatID         ChatID
+	CardID         string
+	IdempotencyKey string
+	ReplyTarget    ReplyTarget
+}
+
+// StreamCardKitTextParams streams one element's text. Content is the FULL text,
+// not a delta: Feishu compares it with what the element already holds and
+// animates the added characters when the old text is a prefix of the new.
+type StreamCardKitTextParams struct {
+	InstallationID InstallationCredentials
+	CardID         string
+	ElementID      string
+	Content        string
+	Sequence       int32
+	IdempotencyKey string
+}
+
+// CloseCardKitStreamingParams turns streaming_mode off. Required before a card
+// can answer an interaction: while streaming is open Feishu will not apply a
+// callback-driven update, so buttons would appear dead.
+type CloseCardKitStreamingParams struct {
+	InstallationID InstallationCredentials
+	CardID         string
+	Sequence       int32
+	IdempotencyKey string
+}
+
+type UpdateCardKitCardParams struct {
+	InstallationID InstallationCredentials
+	CardID         string
+	CardJSON       string
+	Sequence       int32
+	IdempotencyKey string
+}

@@ -288,84 +288,156 @@ func (q *Queries) ClaimChannelMediaPendingObjectsForReconcile(ctx context.Contex
 	return items, nil
 }
 
-const claimChannelOutboundCardWork = `-- name: ClaimChannelOutboundCardWork :many
+const claimChannelOutboundCardPaint = `-- name: ClaimChannelOutboundCardPaint :one
 UPDATE channel_outbound_card_message AS card
-SET last_patched_at = now()
-WHERE card.last_patched_at < now() - make_interval(secs => CASE
-        WHEN card.status = 'pending'
-        THEN $1::double precision
-        ELSE $2::double precision
-    END)
-  AND card.id IN (
-      SELECT due.id
-      FROM channel_outbound_card_message AS due
-      JOIN agent_task_queue AS task ON task.id = due.task_id
-      WHERE due.channel_type = $3
-        AND due.status IN ('pending', 'streaming')
-        AND task.status NOT IN ('completed', 'failed', 'cancelled')
-        AND due.last_patched_at < now() - make_interval(secs => CASE
-                WHEN due.status = 'pending'
-                THEN $1::double precision
-                ELSE $2::double precision
-            END)
-      ORDER BY due.last_patched_at
-      LIMIT $4
-  )
-RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at
+SET lease_token = $1,
+    lease_expires_at = now() + make_interval(secs => $2::double precision),
+    operation_sequence = card.operation_sequence + $3::int
+WHERE card.id = (
+    SELECT due.id
+    FROM channel_outbound_card_message AS due
+    JOIN agent_task_queue AS task ON task.id = due.task_id
+    WHERE due.channel_type = $4
+      AND due.status IN ('pending', 'streaming', 'final', 'error')
+      AND (due.lease_expires_at IS NULL OR due.lease_expires_at <= now())
+      AND (
+          -- terminal work is always due: closing streaming and drawing the
+          -- answer must not wait on the throttle.
+          -- Terminal work is due until it has been drawn. The terminal paint
+          -- always stamps streaming_closed_at, so that stamp is the marker
+          -- for "the answer is on the card" and keeps the row from looping.
+          (
+              due.status IN ('final', 'error')
+              AND (due.channel_card_id <> '' OR due.channel_card_message_id <> '')
+              AND due.streaming_closed_at IS NULL
+          )
+          OR (
+              due.status IN ('pending', 'streaming')
+              AND task.status NOT IN ('completed', 'failed', 'cancelled')
+              AND due.last_patched_at < now() - make_interval(secs => $5::double precision)
+              AND EXISTS (
+                  SELECT 1 FROM task_message AS m
+                  WHERE m.task_id = due.task_id AND m.type = 'text'
+                    AND coalesce(m.content, '') <> ''
+              )
+          )
+      )
+    ORDER BY due.last_patched_at
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
 `
 
-type ClaimChannelOutboundCardWorkParams struct {
-	StartDelaySeconds float64 `json:"start_delay_seconds"`
-	HeartbeatSeconds  float64 `json:"heartbeat_seconds"`
-	ChannelType       string  `json:"channel_type"`
-	MaxRows           int32   `json:"max_rows"`
+type ClaimChannelOutboundCardPaintParams struct {
+	LeaseToken      pgtype.UUID `json:"lease_token"`
+	LeaseSeconds    float64     `json:"lease_seconds"`
+	SequenceReserve int32       `json:"sequence_reserve"`
+	ChannelType     string      `json:"channel_type"`
+	ThrottleSeconds float64     `json:"throttle_seconds"`
 }
 
-// Claims the cards whose next repaint is due, stamping last_patched_at in the
-// same statement that selects them. That stamp is the entire concurrency story:
-// a second replica running this at the same moment blocks on the row, re-checks
-// the outer predicate against the committed row, and finds it no longer due.
-// No lease column is needed, because losing the race costs nothing either way —
-// painting a card twice from the same row is the same bytes twice.
+// Leases one card whose next paint is due and reserves the CardKit operation
+// numbers that paint will spend.
 //
-// A 'pending' row has never been sent, so its due time is the start delay that
-// keeps quick replies as native messages; a 'streaming' row is repainted on the
-// slower heartbeat. Rows whose task already reached a terminal status are left
-// alone: the terminal event settles them, and if that event never arrived the
-// card should stop moving rather than count upwards forever.
-func (q *Queries) ClaimChannelOutboundCardWork(ctx context.Context, arg ClaimChannelOutboundCardWorkParams) ([]ChannelOutboundCardMessage, error) {
-	rows, err := q.db.Query(ctx, claimChannelOutboundCardWork,
-		arg.StartDelaySeconds,
-		arg.HeartbeatSeconds,
+// Every CardKit call against a card entity shares one strictly increasing
+// sequence, so the numbers cannot be chosen in process: two replicas would
+// pick the same one and Feishu would reject the loser. Reserving a block up
+// front means a crashed paint burns its numbers rather than reusing them —
+// gaps are fine, repeats are not.
+//
+// A card becomes due once it has something to say: either the task has
+// produced visible text, or a terminal answer is parked on the row. A task
+// that finishes without ever emitting text therefore never grows a card, and
+// its reply goes out as an ordinary message.
+func (q *Queries) ClaimChannelOutboundCardPaint(ctx context.Context, arg ClaimChannelOutboundCardPaintParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, claimChannelOutboundCardPaint,
+		arg.LeaseToken,
+		arg.LeaseSeconds,
+		arg.SequenceReserve,
 		arg.ChannelType,
-		arg.MaxRows,
+		arg.ThrottleSeconds,
 	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ChannelOutboundCardMessage{}
-	for rows.Next() {
-		var i ChannelOutboundCardMessage
-		if err := rows.Scan(
-			&i.ID,
-			&i.ChatSessionID,
-			&i.TaskID,
-			&i.ChannelType,
-			&i.ChannelChatID,
-			&i.ChannelCardMessageID,
-			&i.Status,
-			&i.LastPatchedAt,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.OperationSequence,
+		&i.VisibleText,
+		&i.StreamingClosedAt,
+		&i.TerminalContent,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const completeChannelOutboundCardPaint = `-- name: CompleteChannelOutboundCardPaint :one
+UPDATE channel_outbound_card_message
+SET visible_text = $1,
+    streaming_closed_at = CASE
+        WHEN $2::boolean THEN coalesce(streaming_closed_at, now())
+        ELSE streaming_closed_at
+    END,
+    last_patched_at = now(),
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    attempt_count = 0,
+    last_error = ''
+WHERE id = $3
+  AND lease_token = $4
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
+`
+
+type CompleteChannelOutboundCardPaintParams struct {
+	VisibleText     string      `json:"visible_text"`
+	StreamingClosed bool        `json:"streaming_closed"`
+	ID              pgtype.UUID `json:"id"`
+	LeaseToken      pgtype.UUID `json:"lease_token"`
+}
+
+// Releases the lease and records what the card now shows.
+func (q *Queries) CompleteChannelOutboundCardPaint(ctx context.Context, arg CompleteChannelOutboundCardPaintParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, completeChannelOutboundCardPaint,
+		arg.VisibleText,
+		arg.StreamingClosed,
+		arg.ID,
+		arg.LeaseToken,
+	)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.OperationSequence,
+		&i.VisibleText,
+		&i.StreamingClosedAt,
+		&i.TerminalContent,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.LastError,
+	)
+	return i, err
 }
 
 const consumeChannelBindingToken = `-- name: ConsumeChannelBindingToken :one
@@ -517,55 +589,6 @@ func (q *Queries) CreateChannelChatSessionBinding(ctx context.Context, arg Creat
 		&i.LastMessageID,
 		&i.LastThreadID,
 		&i.Config,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const createChannelOutboundCardMessage = `-- name: CreateChannelOutboundCardMessage :one
-
-INSERT INTO channel_outbound_card_message (
-    chat_session_id, task_id, channel_type, channel_chat_id,
-    channel_card_message_id, status, last_patched_at
-) VALUES (
-    $1, $4, $2, $3, '', 'pending', now()
-)
-ON CONFLICT (task_id) WHERE task_id IS NOT NULL DO NOTHING
-RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at
-`
-
-type CreateChannelOutboundCardMessageParams struct {
-	ChatSessionID pgtype.UUID `json:"chat_session_id"`
-	ChannelType   string      `json:"channel_type"`
-	ChannelChatID string      `json:"channel_chat_id"`
-	TaskID        pgtype.UUID `json:"task_id"`
-}
-
-// =====================
-// channel_outbound_card_message
-// =====================
-// One live card per task. A duplicate EventTaskRunning (bus replay, a second
-// replica) must not mint a second card, and the partial unique index on
-// (task_id) turns that into a no-op the caller reads as pgx.ErrNoRows.
-// last_patched_at is stamped up front so the initial send is due on the same
-// clock, and the same predicate, as every later repaint.
-func (q *Queries) CreateChannelOutboundCardMessage(ctx context.Context, arg CreateChannelOutboundCardMessageParams) (ChannelOutboundCardMessage, error) {
-	row := q.db.QueryRow(ctx, createChannelOutboundCardMessage,
-		arg.ChatSessionID,
-		arg.ChannelType,
-		arg.ChannelChatID,
-		arg.TaskID,
-	)
-	var i ChannelOutboundCardMessage
-	err := row.Scan(
-		&i.ID,
-		&i.ChatSessionID,
-		&i.TaskID,
-		&i.ChannelType,
-		&i.ChannelChatID,
-		&i.ChannelCardMessageID,
-		&i.Status,
-		&i.LastPatchedAt,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -805,6 +828,98 @@ type DeleteChannelUserBindingsByWorkspaceMemberParams struct {
 func (q *Queries) DeleteChannelUserBindingsByWorkspaceMember(ctx context.Context, arg DeleteChannelUserBindingsByWorkspaceMemberParams) error {
 	_, err := q.db.Exec(ctx, deleteChannelUserBindingsByWorkspaceMember, arg.WorkspaceID, arg.MulticaUserID)
 	return err
+}
+
+const downgradeChannelOutboundCardTransport = `-- name: DowngradeChannelOutboundCardTransport :one
+UPDATE channel_outbound_card_message
+SET transport = 'legacy', channel_card_id = ''
+WHERE id = $1
+  AND lease_token = $2
+  AND transport = 'cardkit'
+  AND channel_card_message_id = ''
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
+`
+
+type DowngradeChannelOutboundCardTransportParams struct {
+	ID         pgtype.UUID `json:"id"`
+	LeaseToken pgtype.UUID `json:"lease_token"`
+}
+
+// An app without the cardkit:card:write scope cannot create a card entity.
+// Only a card that was never sent may change transport, otherwise the chat
+// would end up with two messages for one reply.
+func (q *Queries) DowngradeChannelOutboundCardTransport(ctx context.Context, arg DowngradeChannelOutboundCardTransportParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, downgradeChannelOutboundCardTransport, arg.ID, arg.LeaseToken)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.OperationSequence,
+		&i.VisibleText,
+		&i.StreamingClosedAt,
+		&i.TerminalContent,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const failChannelOutboundCardPaint = `-- name: FailChannelOutboundCardPaint :one
+UPDATE channel_outbound_card_message
+SET last_patched_at = now(),
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    attempt_count = attempt_count + 1,
+    last_error = $1
+WHERE id = $2
+  AND lease_token = $3
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
+`
+
+type FailChannelOutboundCardPaintParams struct {
+	LastError  string      `json:"last_error"`
+	ID         pgtype.UUID `json:"id"`
+	LeaseToken pgtype.UUID `json:"lease_token"`
+}
+
+// Releases the lease after a failed paint. last_patched_at is stamped so the
+// throttle also serves as the retry backoff floor.
+func (q *Queries) FailChannelOutboundCardPaint(ctx context.Context, arg FailChannelOutboundCardPaintParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, failChannelOutboundCardPaint, arg.LastError, arg.ID, arg.LeaseToken)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.OperationSequence,
+		&i.VisibleText,
+		&i.StreamingClosedAt,
+		&i.TerminalContent,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.LastError,
+	)
+	return i, err
 }
 
 const findReusableChannelUserBinding = `-- name: FindReusableChannelUserBinding :one
@@ -1111,7 +1226,7 @@ func (q *Queries) GetChannelLarkInboxIssueCard(ctx context.Context, arg GetChann
 }
 
 const getChannelOutboundCardByTask = `-- name: GetChannelOutboundCardByTask :one
-SELECT id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at FROM channel_outbound_card_message
+SELECT id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error FROM channel_outbound_card_message
 WHERE task_id = $1
   AND channel_type = $2
 `
@@ -1121,9 +1236,6 @@ type GetChannelOutboundCardByTaskParams struct {
 	ChannelType string      `json:"channel_type"`
 }
 
-// The partial unique index on (task_id) WHERE task_id IS NOT NULL guarantees at
-// most one row. Scoped by channel_type so a future non-Feishu card for the same
-// task is not patched as a Feishu card.
 func (q *Queries) GetChannelOutboundCardByTask(ctx context.Context, arg GetChannelOutboundCardByTaskParams) (ChannelOutboundCardMessage, error) {
 	row := q.db.QueryRow(ctx, getChannelOutboundCardByTask, arg.TaskID, arg.ChannelType)
 	var i ChannelOutboundCardMessage
@@ -1137,6 +1249,16 @@ func (q *Queries) GetChannelOutboundCardByTask(ctx context.Context, arg GetChann
 		&i.Status,
 		&i.LastPatchedAt,
 		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.OperationSequence,
+		&i.VisibleText,
+		&i.StreamingClosedAt,
+		&i.TerminalContent,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -1539,6 +1661,63 @@ func (q *Queries) NullChannelInboundAuditInstallationID(ctx context.Context, ins
 	return err
 }
 
+const openChannelOutboundCard = `-- name: OpenChannelOutboundCard :one
+
+INSERT INTO channel_outbound_card_message (
+    chat_session_id, task_id, channel_type, channel_chat_id,
+    channel_card_message_id, status, last_patched_at
+) VALUES (
+    $1, $4, $2, $3, '', 'pending', now()
+)
+ON CONFLICT (task_id) WHERE task_id IS NOT NULL DO NOTHING
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
+`
+
+type OpenChannelOutboundCardParams struct {
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	ChannelType   string      `json:"channel_type"`
+	ChannelChatID string      `json:"channel_chat_id"`
+	TaskID        pgtype.UUID `json:"task_id"`
+}
+
+// =====================
+// channel_outbound_card_message
+// =====================
+// Opens the card ledger for a task that has started running. Nothing is drawn
+// yet; the worker decides when there is something worth showing. ON CONFLICT
+// DO NOTHING makes a duplicate EventTaskRunning a no-op.
+func (q *Queries) OpenChannelOutboundCard(ctx context.Context, arg OpenChannelOutboundCardParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, openChannelOutboundCard,
+		arg.ChatSessionID,
+		arg.ChannelType,
+		arg.ChannelChatID,
+		arg.TaskID,
+	)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.OperationSequence,
+		&i.VisibleText,
+		&i.StreamingClosedAt,
+		&i.TerminalContent,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.LastError,
+	)
+	return i, err
+}
+
 const purgeChannelInboundDedup = `-- name: PurgeChannelInboundDedup :exec
 DELETE FROM channel_inbound_message_dedup
 WHERE received_at < $1
@@ -1751,6 +1930,57 @@ func (q *Queries) RecordChannelMediaPendingObject(ctx context.Context, arg Recor
 	return storage_key, err
 }
 
+const recordChannelOutboundCardEntity = `-- name: RecordChannelOutboundCardEntity :one
+UPDATE channel_outbound_card_message
+SET channel_card_id = coalesce(nullif($1, ''), channel_card_id),
+    channel_card_message_id = coalesce(nullif($2, ''), channel_card_message_id),
+    status = CASE WHEN status = 'pending' THEN 'streaming' ELSE status END
+WHERE id = $3
+  AND lease_token = $4
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
+`
+
+type RecordChannelOutboundCardEntityParams struct {
+	ChannelCardID        interface{} `json:"channel_card_id"`
+	ChannelCardMessageID interface{} `json:"channel_card_message_id"`
+	ID                   pgtype.UUID `json:"id"`
+	LeaseToken           pgtype.UUID `json:"lease_token"`
+}
+
+// Persists the CardKit entity id and the IM message that carries it, so a
+// later paint on any replica can find both.
+func (q *Queries) RecordChannelOutboundCardEntity(ctx context.Context, arg RecordChannelOutboundCardEntityParams) (ChannelOutboundCardMessage, error) {
+	row := q.db.QueryRow(ctx, recordChannelOutboundCardEntity,
+		arg.ChannelCardID,
+		arg.ChannelCardMessageID,
+		arg.ID,
+		arg.LeaseToken,
+	)
+	var i ChannelOutboundCardMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.ChannelType,
+		&i.ChannelChatID,
+		&i.ChannelCardMessageID,
+		&i.Status,
+		&i.LastPatchedAt,
+		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.OperationSequence,
+		&i.VisibleText,
+		&i.StreamingClosedAt,
+		&i.TerminalContent,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.LastError,
+	)
+	return i, err
+}
+
 const releaseChannelInboundDedup = `-- name: ReleaseChannelInboundDedup :execrows
 DELETE FROM channel_inbound_message_dedup
 WHERE installation_id = $1
@@ -1901,65 +2131,33 @@ func (q *Queries) SetChannelInstallationStatus(ctx context.Context, arg SetChann
 	return err
 }
 
-const setChannelOutboundCardMessageID = `-- name: SetChannelOutboundCardMessageID :one
-UPDATE channel_outbound_card_message
-SET channel_card_message_id = $1,
-    status = 'streaming',
-    last_patched_at = now()
-WHERE id = $2
-  AND channel_card_message_id = ''
-  AND status = 'pending'
-RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at
-`
-
-type SetChannelOutboundCardMessageIDParams struct {
-	ChannelCardMessageID string      `json:"channel_card_message_id"`
-	ID                   pgtype.UUID `json:"id"`
-}
-
-// Records the card the initial send produced, so a repaint or a terminal patch
-// on any replica can find it. Guarded on the empty id: if two replicas somehow
-// both sent, the loser's write is rejected and its message id is reported as a
-// duplicate rather than silently replacing the live one.
-func (q *Queries) SetChannelOutboundCardMessageID(ctx context.Context, arg SetChannelOutboundCardMessageIDParams) (ChannelOutboundCardMessage, error) {
-	row := q.db.QueryRow(ctx, setChannelOutboundCardMessageID, arg.ChannelCardMessageID, arg.ID)
-	var i ChannelOutboundCardMessage
-	err := row.Scan(
-		&i.ID,
-		&i.ChatSessionID,
-		&i.TaskID,
-		&i.ChannelType,
-		&i.ChannelChatID,
-		&i.ChannelCardMessageID,
-		&i.Status,
-		&i.LastPatchedAt,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const settleChannelOutboundCard = `-- name: SettleChannelOutboundCard :one
 UPDATE channel_outbound_card_message
 SET status = $1,
-    last_patched_at = now()
-WHERE task_id = $2
-  AND channel_type = $3
+    terminal_content = $2
+WHERE task_id = $3
+  AND channel_type = $4
   AND status IN ('pending', 'streaming')
-RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
 `
 
 type SettleChannelOutboundCardParams struct {
-	Status      string      `json:"status"`
-	TaskID      pgtype.UUID `json:"task_id"`
-	ChannelType string      `json:"channel_type"`
+	Status          string      `json:"status"`
+	TerminalContent string      `json:"terminal_content"`
+	TaskID          pgtype.UUID `json:"task_id"`
+	ChannelType     string      `json:"channel_type"`
 }
 
-// Terminal events race each other (chat:done against task:failed against a
-// cancel). Whoever flips the row out of its live statuses owns the reply; the
-// losers read pgx.ErrNoRows and send nothing, so the chat never sees the same
-// answer twice.
+// Parks the terminal answer and elects the one event allowed to deliver it.
+// Whoever flips the row out of its live statuses owns the reply; the losers
+// read pgx.ErrNoRows and stay quiet.
 func (q *Queries) SettleChannelOutboundCard(ctx context.Context, arg SettleChannelOutboundCardParams) (ChannelOutboundCardMessage, error) {
-	row := q.db.QueryRow(ctx, settleChannelOutboundCard, arg.Status, arg.TaskID, arg.ChannelType)
+	row := q.db.QueryRow(ctx, settleChannelOutboundCard,
+		arg.Status,
+		arg.TerminalContent,
+		arg.TaskID,
+		arg.ChannelType,
+	)
 	var i ChannelOutboundCardMessage
 	err := row.Scan(
 		&i.ID,
@@ -1971,6 +2169,16 @@ func (q *Queries) SettleChannelOutboundCard(ctx context.Context, arg SettleChann
 		&i.Status,
 		&i.LastPatchedAt,
 		&i.CreatedAt,
+		&i.ChannelCardID,
+		&i.Transport,
+		&i.OperationSequence,
+		&i.VisibleText,
+		&i.StreamingClosedAt,
+		&i.TerminalContent,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.AttemptCount,
+		&i.LastError,
 	)
 	return i, err
 }

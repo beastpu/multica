@@ -419,6 +419,16 @@ type ChannelOutboundCardMessage struct {
 	Status               string             `json:"status"`
 	LastPatchedAt        pgtype.Timestamptz `json:"last_patched_at"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	ChannelCardID        string             `json:"channel_card_id"`
+	Transport            string             `json:"transport"`
+	OperationSequence    int32              `json:"operation_sequence"`
+	VisibleText          string             `json:"visible_text"`
+	StreamingClosedAt    pgtype.Timestamptz `json:"streaming_closed_at"`
+	TerminalContent      string             `json:"terminal_content"`
+	LeaseToken           pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt       pgtype.Timestamptz `json:"lease_expires_at"`
+	AttemptCount         int32              `json:"attempt_count"`
+	LastError            string             `json:"last_error"`
 }
 
 type ChannelUserBinding struct {

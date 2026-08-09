@@ -163,28 +163,49 @@ type CreateBindingTokenParams struct {
 	ExpiresAt      pgtype.Timestamptz
 }
 
-// CreateOutboundCardMessageParams records an outbound card for a task/session.
-type CreateOutboundCardMessageParams struct {
+// OpenOutboundCardParams opens the card ledger for a running task.
+type OpenOutboundCardParams struct {
 	ChatSessionID pgtype.UUID
 	ChannelChatID string
 	TaskID        pgtype.UUID
 }
 
-// ClaimOutboundCardWorkParams asks for the cards whose next paint is due.
-// A card that has never been sent waits StartDelaySeconds, so quick replies
-// stay native; a live card is repainted every HeartbeatSeconds.
-type ClaimOutboundCardWorkParams struct {
-	StartDelaySeconds float64
-	HeartbeatSeconds  float64
-	MaxRows           int32
+// ClaimOutboundCardPaintParams leases a due card and reserves the CardKit
+// operation numbers the paint will spend.
+type ClaimOutboundCardPaintParams struct {
+	LeaseToken      pgtype.UUID
+	LeaseSeconds    float64
+	ThrottleSeconds float64
+	SequenceReserve int32
 }
 
-type SetOutboundCardMessageIDParams struct {
+type RecordOutboundCardEntityParams struct {
 	ID                   pgtype.UUID
+	LeaseToken           pgtype.UUID
+	ChannelCardID        string
 	ChannelCardMessageID string
 }
 
+type CompleteOutboundCardPaintParams struct {
+	ID              pgtype.UUID
+	LeaseToken      pgtype.UUID
+	VisibleText     string
+	StreamingClosed bool
+}
+
+type FailOutboundCardPaintParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.UUID
+	LastError  string
+}
+
+type OutboundCardLeaseParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.UUID
+}
+
 type SettleOutboundCardParams struct {
-	TaskID pgtype.UUID
-	Status string
+	TaskID          pgtype.UUID
+	Status          string
+	TerminalContent string
 }
