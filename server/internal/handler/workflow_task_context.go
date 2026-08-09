@@ -567,7 +567,11 @@ func (h *Handler) workflowUpstreamContext(
 				db.GetWorkflowSubmissionInWorkspaceParams{
 					ID: candidate.LatestSubmissionID, WorkspaceID: instance.WorkspaceID,
 				},
-			); err == nil {
+			); err == nil && submission.SubmittedByType != "system" {
+				// A synthesised submission carries a canned summary. Passing it
+				// on would tell downstream a person concluded something the
+				// platform wrote; the worker-output fallback below is the
+				// honest channel for that case.
 				entry.Summary = submission.Summary
 			}
 		}

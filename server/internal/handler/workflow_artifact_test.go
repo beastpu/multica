@@ -767,6 +767,64 @@ func TestWorkflowUpstreamFallsBackToWorkerOutputAndIssues(t *testing.T) {
 // Once the executor writes a conclusion, that is the handoff. Carrying the raw
 // transcript alongside it would bury the conclusion in a downstream brief that
 // has its own instructions to fit.
+// A node that needs a verdict but declares no schema gets a submission
+// synthesised for it, carrying a canned summary. Downstream must never read
+// that as the executor's conclusion — the summary field is reserved for text a
+// person or agent actually wrote, and the platform's record travels only
+// through the worker-output fallback.
+func TestWorkflowUpstreamHidesSystemAuthoredSummary(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	_, reviewID, designID := startHandoffWorkflow(t, "system-upstream")
+
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO workflow_node_submission (
+			workspace_id, workflow_instance_id, workflow_node_instance_id,
+			revision, status, payload, summary, evidence, submitted_by_type,
+			schema_version
+		)
+		SELECT workspace_id, workflow_instance_id, id, 1, 'valid', '{}'::jsonb,
+		       'All required issues are done', '[]'::jsonb, 'system', 1
+		FROM workflow_node_instance WHERE id = $1
+	`, reviewID); err != nil {
+		t.Fatalf("insert system submission: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE workflow_node_instance SET latest_submission_id = (
+			SELECT id FROM workflow_node_submission
+			WHERE workflow_node_instance_id = $1 ORDER BY revision DESC LIMIT 1
+		) WHERE id = $1
+	`, reviewID); err != nil {
+		t.Fatalf("link system submission: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(
+		http.MethodGet,
+		"/api/workflow-node-instances/"+designID+"/upstream?workspace_id="+testWorkspaceID,
+		nil,
+	), "nodeInstanceId", designID)
+	testHandler.GetWorkflowNodeUpstream(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("upstream status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Upstream []struct {
+			Summary string `json:"summary"`
+		} `json:"upstream"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode upstream: %v", err)
+	}
+	if len(response.Upstream) != 1 {
+		t.Fatalf("upstream entries = %d, want exactly the direct predecessor", len(response.Upstream))
+	}
+	if response.Upstream[0].Summary != "" {
+		t.Errorf("summary = %q, want empty: the platform wrote it, not the executor",
+			response.Upstream[0].Summary)
+	}
+}
+
 func TestWorkflowUpstreamOmitsWorkerOutputOnceHandoffExists(t *testing.T) {
 	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
 	cleanupWorkflowRuntimeTest(t)
