@@ -75,53 +75,6 @@ func (h *Handler) managedHostWriteAllowed(
 	return workflowdomain.ManagedHostStatusWriteAllowed(liveExists, writerIsLive)
 }
 
-// applyWorkflowNodeActions runs a node's controlled side effects after its
-// state transition committed. Explicit template actions apply regardless of
-// host_status_mode: the mode governs the implicit lifecycle, not authored
-// per-node instructions.
-//
-// A failure does not roll the transition back — the node has already moved and
-// the run is correct without the side effect — but it is not swallowed either.
-// The author asked for the host to say something and it does not; only the log
-// can say the instruction was issued and lost.
-func (h *Handler) applyWorkflowNodeActions(
-	ctx context.Context,
-	instance db.WorkflowInstance,
-	actions []workflowdomain.NodeActionDefinition,
-) {
-	for _, action := range actions {
-		if action.Kind != "set_host_status" {
-			continue
-		}
-		if err := h.updateWorkflowHostStatus(ctx, instance, action.Status); err != nil {
-			slog.Warn("workflow node action could not set the host status",
-				"workflow_instance_id", uuidToString(instance.ID),
-				"host_issue_id", uuidToString(instance.HostIssueID),
-				"requested_status", action.Status,
-				"error", err)
-		}
-	}
-}
-
-// applyWorkflowNodeEnterActions applies on_enter actions for freshly
-// activated activity nodes.
-func (h *Handler) applyWorkflowNodeEnterActions(
-	ctx context.Context,
-	instance db.WorkflowInstance,
-	definition workflowdomain.Definition,
-	nodes []db.WorkflowNodeInstance,
-) {
-	byKey := make(map[string]workflowdomain.NodeDefinition, len(definition.Nodes))
-	for _, node := range definition.Nodes {
-		byKey[node.Key] = node
-	}
-	for _, node := range nodes {
-		if nodeDefinition, ok := byKey[node.NodeKey]; ok {
-			h.applyWorkflowNodeActions(ctx, instance, nodeDefinition.OnEnter)
-		}
-	}
-}
-
 // updateWorkflowHostStatus is the internal Issue status boundary for
 // Workflow-owned changes. It publishes the same issue:updated shape as the
 // HTTP update path and records the actor as system; Workflow runtime code

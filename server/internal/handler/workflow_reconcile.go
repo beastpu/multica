@@ -381,9 +381,6 @@ func (h *Handler) reconcileWorkflowInstance(
 		if completedNode.ID.Valid {
 			h.recordWorkflowNodeTransition(completedNode, "completed")
 			h.syncWorkflowNodeIssueStatus(ctx, workspaceID, completedNode, "completed")
-			if nodeDefinition, ok := plan.Node(completedNode.NodeKey); ok {
-				h.applyWorkflowNodeActions(ctx, updated, nodeDefinition.OnComplete)
-			}
 		}
 		for _, blockedNode := range blockedNodes {
 			h.recordWorkflowNodeTransition(blockedNode, "blocked")
@@ -424,7 +421,6 @@ func (h *Handler) reconcileWorkflowInstance(
 			repairedTasks || updated.Status != locked.Status
 		transitioned = transitioned || stepTransitioned
 		current = updated
-		h.applyWorkflowNodeEnterActions(ctx, updated, definition, activated)
 		for _, node := range activated {
 			h.materializeWorkflowNodeTasks(ctx, workspaceID, updated, node)
 		}

@@ -167,7 +167,6 @@ func (h *Handler) StartWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	h.publishWorkflowInstanceUpdated(
 		workspaceID, "member", userID, uuidToString(instance.ID), firstWorkflowNodeID(activeNodes),
 	)
-	h.applyWorkflowNodeEnterActions(r.Context(), instance, definition, activeNodes)
 	for _, activeNode := range activeNodes {
 		h.publishWorkflowNodeUpdated(
 			workspaceID, "member", userID, uuidToString(instance.ID), uuidToString(activeNode.ID),

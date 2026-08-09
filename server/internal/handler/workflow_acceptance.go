@@ -317,10 +317,6 @@ func (h *Handler) DecideWorkflowAcceptance(w http.ResponseWriter, r *http.Reques
 			r.Context(),
 			[]db.WorkflowNodeInstance{activatedNode},
 		)
-		h.applyWorkflowNodeEnterActions(
-			r.Context(), updated, definition,
-			[]db.WorkflowNodeInstance{activatedNode},
-		)
 		h.materializeWorkflowNodeTasks(r.Context(), locked.WorkspaceID, updated, activatedNode)
 	}
 	if req.Status == "approved" {

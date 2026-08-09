@@ -327,40 +327,32 @@ func TestValidateDefinitionCompletionAuthorizedRoles(t *testing.T) {
 	}
 }
 
-func TestValidateDefinitionNodeActions(t *testing.T) {
-	valid := validDefinition()
-	valid.Nodes[1].OnEnter = []NodeActionDefinition{{
+// Node events are retired: stored definitions carrying them must still parse,
+// and saving through the authoring path must drop them.
+func TestRetiredNodeActionsParseAndNormalizeAway(t *testing.T) {
+	stored := validDefinition()
+	stored.Nodes[1].OnEnter = []NodeActionDefinition{{
 		Kind: "set_host_status", Status: "in_progress",
 	}}
-	valid.Nodes[1].OnComplete = []NodeActionDefinition{{
+	stored.Nodes[1].OnComplete = []NodeActionDefinition{{
 		Kind: "set_host_status", Status: "in_review",
 	}}
-	if err := ValidateDefinition(valid); err != nil {
-		t.Fatalf("ValidateDefinition() error = %v", err)
+	raw, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatalf("marshal stored definition: %v", err)
+	}
+	if _, err := ParseDefinition(raw); err != nil {
+		t.Fatalf("ParseDefinition() rejected a stored definition with node events: %v", err)
 	}
 
-	badKind := validDefinition()
-	badKind.Nodes[1].OnComplete = []NodeActionDefinition{{Kind: "launch_missiles"}}
-	if err := ValidateDefinition(badKind); err == nil ||
-		!strings.Contains(err.Error(), "action") {
-		t.Fatalf("ValidateDefinition() error = %v, want action kind error", err)
+	normalized, err := NormalizeAuthoringDefinition(stored)
+	if err != nil {
+		t.Fatalf("NormalizeAuthoringDefinition() error = %v", err)
 	}
-
-	badStatus := validDefinition()
-	badStatus.Nodes[1].OnComplete = []NodeActionDefinition{{
-		Kind: "set_host_status", Status: "shipped",
-	}}
-	if err := ValidateDefinition(badStatus); err == nil ||
-		!strings.Contains(err.Error(), "status") {
-		t.Fatalf("ValidateDefinition() error = %v, want status error", err)
-	}
-
-	onControl := validDefinition()
-	onControl.Nodes[0].OnEnter = []NodeActionDefinition{{
-		Kind: "set_host_status", Status: "todo",
-	}}
-	if err := ValidateDefinition(onControl); err == nil {
-		t.Fatal("ValidateDefinition() accepted actions on a control node")
+	for _, node := range normalized.Nodes {
+		if len(node.OnEnter) > 0 || len(node.OnComplete) > 0 {
+			t.Fatalf("node %q kept retired node events after normalization", node.Key)
+		}
 	}
 }
 

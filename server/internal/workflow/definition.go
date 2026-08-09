@@ -69,9 +69,10 @@ type NodeDefinition struct {
 	// review without leaving the main line. Empty means switch.
 	Mode       string               `json:"mode,omitempty"`
 	Completion CompletionDefinition `json:"completion,omitempty"`
-	// OnEnter/OnComplete run controlled side effects when an activity
-	// activates or completes. Only white-listed action kinds are allowed;
-	// notifications and integrations stay in their own subsystems.
+	// OnEnter/OnComplete are retired. The runtime no longer applies them —
+	// host_status_mode: managed covers the host issue's lifecycle — but the
+	// fields stay so stored definitions keep parsing under
+	// DisallowUnknownFields. NormalizeAuthoringDefinition clears them on save.
 	OnEnter    []NodeActionDefinition `json:"on_enter,omitempty"`
 	OnComplete []NodeActionDefinition `json:"on_complete,omitempty"`
 }
@@ -367,6 +368,9 @@ func ValidateDefinition(definition Definition) error {
 func NormalizeAuthoringDefinition(definition Definition) (Definition, error) {
 	for index := range definition.Nodes {
 		node := &definition.Nodes[index]
+		// Node events are retired: parsed for compatibility, dropped on save.
+		node.OnEnter = nil
+		node.OnComplete = nil
 		if node.Kind != "activity" {
 			continue
 		}
@@ -573,13 +577,6 @@ func validateNodes(definitions []NodeDefinition, roles map[string]RoleDefinition
 		default:
 			return nil, "", 0, 0, fmt.Errorf("node %q has invalid kind %q", node.Key, node.Kind)
 		}
-		if node.Kind != "activity" &&
-			(len(node.OnEnter) > 0 || len(node.OnComplete) > 0) {
-			return nil, "", 0, 0, fmt.Errorf(
-				"node %q cannot declare actions; only activities run side effects",
-				node.Key,
-			)
-		}
 		taskCount += len(NodeIssueTemplates(node))
 		if node.SubmissionSchema != nil {
 		}
@@ -629,12 +626,6 @@ func validateActivity(
 	}
 	if node.Completion.MaxAttempts < 0 {
 		return fmt.Errorf("activity %q max_attempts cannot be negative", node.Key)
-	}
-	if err := validateNodeActions(node.Key, "on_enter", node.OnEnter); err != nil {
-		return err
-	}
-	if err := validateNodeActions(node.Key, "on_complete", node.OnComplete); err != nil {
-		return err
 	}
 	switch node.IssuePolicy {
 	case "", "none", "auto", "fixed", "dynamic", "fixed_and_dynamic":
@@ -821,42 +812,6 @@ func validateReviewer(node NodeDefinition, roles map[string]RoleDefinition) erro
 	}
 	if reviewer.Kind != "auto" && hasJSONValue(reviewer.Condition) {
 		return fmt.Errorf("activity %q only an auto reviewer can declare condition", node.Key)
-	}
-	return nil
-}
-
-const maxNodeActions = 8
-
-func validateNodeActions(nodeKey, phase string, actions []NodeActionDefinition) error {
-	if len(actions) > maxNodeActions {
-		return fmt.Errorf(
-			"activity %q %s actions exceed limit %d",
-			nodeKey,
-			phase,
-			maxNodeActions,
-		)
-	}
-	for _, action := range actions {
-		switch action.Kind {
-		case "set_host_status":
-			switch action.Status {
-			case "backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled":
-			default:
-				return fmt.Errorf(
-					"activity %q %s action has invalid status %q",
-					nodeKey,
-					phase,
-					action.Status,
-				)
-			}
-		default:
-			return fmt.Errorf(
-				"activity %q %s has invalid action kind %q",
-				nodeKey,
-				phase,
-				action.Kind,
-			)
-		}
 	}
 	return nil
 }

@@ -46,11 +46,6 @@ export interface WorkflowReviewerDefinition {
   required?: boolean;
 }
 
-export interface WorkflowNodeAction {
-  kind: string;
-  status?: string;
-}
-
 export interface WorkflowCompletionDefinition {
   mode?: "automatic" | "manual";
   required_issue_outcome?: "done" | "terminal" | "none";
@@ -119,9 +114,6 @@ export interface WorkflowNodeDefinition {
   completion?: WorkflowCompletionDefinition;
   executor?: WorkflowExecutorDefinition;
   reviewer?: WorkflowReviewerDefinition;
-  /** Controlled side effects when the activity activates / completes. */
-  on_enter?: WorkflowNodeAction[];
-  on_complete?: WorkflowNodeAction[];
 }
 
 /** One artifact the node owes, paired with whether it has been delivered. */

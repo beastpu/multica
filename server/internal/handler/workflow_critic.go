@@ -181,19 +181,6 @@ func (h *Handler) activateWorkflowVerdictRework(
 ) {
 	h.recordWorkflowInstanceStatusTransition(previous.Status, updated.Status)
 	h.recordWorkflowNodesActivated(ctx, []db.WorkflowNodeInstance{reworkNode})
-	version, err := h.Queries.GetWorkflowVersionInWorkspace(
-		ctx,
-		db.GetWorkflowVersionInWorkspaceParams{
-			ID: updated.WorkflowVersionID, WorkspaceID: updated.WorkspaceID,
-		},
-	)
-	if err == nil {
-		if definition, parseErr := workflowdomain.ParseDefinition(version.Definition); parseErr == nil {
-			h.applyWorkflowNodeEnterActions(
-				ctx, updated, definition, []db.WorkflowNodeInstance{reworkNode},
-			)
-		}
-	}
 	h.materializeWorkflowNodeTasks(ctx, updated.WorkspaceID, updated, reworkNode)
 }
 
@@ -495,7 +482,6 @@ func (h *Handler) applyWorkflowCriticVerdict(
 	if result == "pass" && reason == "" {
 		reason = "Approved by workflow Critic"
 	}
-
 
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {

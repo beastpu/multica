@@ -8,7 +8,6 @@ import {
   type WorkflowDefinition,
   type WorkflowExecutorDefinition,
   type WorkflowIssueTemplate,
-  type WorkflowNodeAction,
   type WorkflowNodeDefinition,
   type WorkflowOutputField,
   type WorkflowReviewerDefinition,
@@ -56,58 +55,6 @@ function parseActorOption(value: string) {
 
 function stableKey(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-}
-
-const hostStatuses = [
-  "backlog",
-  "todo",
-  "in_progress",
-  "in_review",
-  "done",
-  "blocked",
-  "cancelled",
-] as const;
-
-function HostStatusActionSelect({
-  label,
-  actions,
-  readOnly,
-  onChange,
-}: {
-  label: string;
-  actions?: WorkflowNodeAction[];
-  readOnly: boolean;
-  onChange: (actions: WorkflowNodeAction[] | undefined) => void;
-}) {
-  const current = (actions ?? []).find(
-    (action) => action.kind === "set_host_status",
-  )?.status ?? "";
-  return (
-    <div className="space-y-1.5">
-      <Label>{label}</Label>
-      <select
-        aria-label={label}
-        value={current}
-        disabled={readOnly}
-        className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-        onChange={(event) => {
-          // Preserve action kinds this select does not manage.
-          const others = (actions ?? []).filter(
-            (action) => action.kind !== "set_host_status",
-          );
-          const next = event.target.value
-            ? [...others, { kind: "set_host_status", status: event.target.value }]
-            : others;
-          onChange(next.length > 0 ? next : undefined);
-        }}
-      >
-        <option value="">—</option>
-        {hostStatuses.map((status) => (
-          <option key={status} value={status}>{status}</option>
-        ))}
-      </select>
-    </div>
-  );
 }
 
 function InspectorSection({
@@ -1479,26 +1426,6 @@ export function WorkflowNodeDefinitionInspector({
             readOnly={readOnly}
             onChange={onChange}
           />
-          <div className="space-y-3 border-t pt-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {t(($) => $.editor.section_node_events)}
-            </p>
-            <HostStatusActionSelect
-              label={t(($) => $.editor.on_enter_host_status)}
-              actions={node.on_enter}
-              readOnly={readOnly}
-              onChange={(actions) => onChange({ ...node, on_enter: actions })}
-            />
-            <HostStatusActionSelect
-              label={t(($) => $.editor.on_complete_host_status)}
-              actions={node.on_complete}
-              readOnly={readOnly}
-              onChange={(actions) => onChange({ ...node, on_complete: actions })}
-            />
-            <p className="text-xs text-muted-foreground">
-              {t(($) => $.editor.node_events_hint)}
-            </p>
-          </div>
         </TabsContent>
       </Tabs>
     </div>

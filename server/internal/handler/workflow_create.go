@@ -249,9 +249,6 @@ func (h *Handler) CreateWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		workspaceID, "member", userID,
 		uuidToString(createdInstance.ID), firstWorkflowNodeID(activeNodes),
 	)
-	h.applyWorkflowNodeEnterActions(
-		r.Context(), createdInstance, definition, activeNodes,
-	)
 	for _, activeNode := range activeNodes {
 		h.publishWorkflowNodeUpdated(
 			workspaceID, "member", userID,
