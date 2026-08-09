@@ -1,6 +1,6 @@
 ---
 name: multica-release
-description: Multica release and deployment SOP for Lilith internal GitLab/ACK. Use when asked to merge develop to main, create or verify release tags, build and push multica-server/multica-web images, update multica-test or multica production, run migrations, roll Kubernetes deployments, patch release config, promote test to prod, or debug release fallout such as missing runtime env vars.
+description: Multica release and deployment SOP for Lilith internal GitLab/ACK. Use when asked to merge develop to main, create or verify release tags, build and push multica-server/multica-web images, update multica-test or multica production, run migrations, roll Kubernetes deployments, patch release config, promote test to prod, ship a daemon or CLI change to the cloud-runtime nodes, or debug release fallout such as missing runtime env vars or a node running an old multica CLI.
 ---
 
 # Multica Release
@@ -25,6 +25,7 @@ Release Multica through the internal GitLab repository and ACK namespaces while 
 - Always run migrations before rolling server/web when the server image changes, even if logs later show all migrations already applied.
 - For config fixes, patch only the exact ConfigMap/Secret key required and roll only affected deployments.
 - For default Feishu Project plugin credentials, `FEISHU_PROJECT_DEFAULT_PLUGIN_ID` and `FEISHU_PROJECT_DEFAULT_PLUGIN_SECRET` must exist as a pair. Usually ID is in ConfigMap and secret is in Secret.
+- Deploying the server does not update the runtime nodes. A change under `server/internal/daemon/` or `server/cmd/multica/` reaches an agent only through the chain in **Runtime Node CLI**; without it, a server deploy proves nothing about agent behaviour. Check before concluding a deploy is done.
 
 ## Develop To Main And Tag
 
@@ -188,6 +189,130 @@ kubectl -n multica-test exec deploy/multica-server -- wget -qO- http://127.0.0.1
 curl -fsS -o /tmp/multica-test-config.json -w 'api_config_http=%{http_code}\n' https://multica-test.lilithgames.com/api/config
 curl -fsS -o /tmp/multica-test-home.html -w 'home_http=%{http_code} bytes=%{size_download}\n' https://multica-test.lilithgames.com/
 ```
+
+## Runtime Node CLI
+
+The `multica` binary an agent runs is not the one in the server image. Nodes
+install it from OSS, pinned by cloud-runtime's `runtimes/catalog.json`. So a
+server deploy leaves every node exactly as it was, and a daemon or CLI change
+argued from a server deploy is argued from nothing.
+
+Decide whether the chain is needed by diffing the two paths that ship to nodes:
+
+```bash
+git diff --stat <deployed-commit> <new-commit> -- server/internal/daemon/ server/cmd/multica/
+```
+
+Empty output means the node's CLI is behaviourally identical and nothing below
+is required. Any output means the node is now behind the server.
+
+### The chain
+
+Four steps, in order. Stopping after any of them leaves the node unchanged.
+
+1. **Publish the CLI.** multica CI's `publish-cli` job writes
+   `downloads/multica-cli-<tag>-linux-<arch>.tar.gz` and the channel pointer
+   `latest-cli-test.txt`. It runs on `main` or on a web/api-triggered pipeline,
+   not on an ordinary branch push. Confirm what landed:
+
+```bash
+curl -sS https://multica.lilithgames.com/api/downloads/latest-cli-test.txt
+```
+
+2. **Pin it in cloud-runtime.** The catalog pins a version, two URLs and two
+   digests; it does not follow the pointer. In a clone of
+   `https://gitlab.lilithgame.com/devops/cloud-runtime.git`:
+
+```bash
+./scripts/sync-multica-cli.sh --channel test --dry-run
+./scripts/sync-multica-cli.sh --channel test
+```
+
+   Commit the 5-insertion/5-deletion diff on a branch, open an MR, merge. The
+   `workflow.rules` there only build `main`, tags and manual pipelines, so an
+   unmerged branch publishes nothing.
+
+3. **Read the published revision** out of the `publish-runtime-tools` job log —
+   `RUNTIME_TOOLS_REVISION` and `RUNTIME_TOOLS_SHA256`. The tools tarball is
+   large enough that the job's CI artifact upload is the part most likely to
+   fail; the OSS upload and its signed-URL check are what matter, and they are
+   logged separately. A red job whose `✅ signed URL fetches` line is present
+   has published correctly.
+
+4. **Point the node at that revision** (see below), then restart it. The sync
+   runs as an initContainer, so the pod must roll for it to take effect.
+
+### Patching a node
+
+Get the cluster: the cloud-runtime kubeconfig lives in srt as
+`cloud-runtime-kubeconfig`, field `content`. Resolve it inside a child process
+and never write it anywhere durable:
+
+```bash
+srt secrets env cloud-runtime-kubeconfig content --var KUBECONFIG_CONTENT
+srt run --env-file <file> -- sh -c '
+KC=$(mktemp); chmod 600 "$KC"; printf "%s" "$KUBECONFIG_CONTENT" > "$KC"; export KUBECONFIG="$KC"
+kubectl get statefulset -A | grep -E "node-"
+rm -f "$KC"'
+```
+
+Patch only the three variables that name the revision. Do not use
+`scripts/runtime-tools-rollout.sh` without reading what it writes: it assumes
+the workspace directory is the namespace name and the app container is called
+`multica`, and a node onboarded with a workspace-UUID directory and a container
+called `runtime` gets its `HOME` and mount rewritten and a second, imageless
+container added.
+
+```bash
+kubectl -n <ns> patch sts <node> --patch-file <(cat <<'EOF'
+{"spec":{"template":{"spec":{"initContainers":[{"name":"runtime-tools-sync","env":[
+{"name":"MULTICA_TOOLS_REVISION","value":"<revision>"},
+{"name":"MULTICA_TOOLS_URL","value":"oss://<bucket>/multica-cloud-runtime-tools/<revision>/runtime-tools.tar.gz"},
+{"name":"MULTICA_TOOLS_SHA256","value":"<sha256>"}]}]}}}}
+EOF
+) --dry-run=server -o jsonpath='{range .spec.template.spec.initContainers[0].env[*]}{.name}={.value}{"\n"}{end}'
+```
+
+Run the server-side dry-run first and confirm `HOME` and `MULTICA_WORKSPACE`
+come back unchanged. Then apply and `rollout status`.
+
+### PATH, and why the sync can succeed while changing nothing
+
+The tools land in `$HOME/.runtime-tools/current/`, and the app container only
+uses them if its `PATH` puts that ahead of `/usr/local/bin`. Without it the
+initContainer logs `activated runtime tools revision <rev>`, the pod is healthy,
+CI is green, and the node keeps running the CLI baked into its image.
+
+The `PATH` entry belongs on the app container and must be a literal path.
+Kubernetes expands `$(VAR)` only against variables defined **earlier in the same
+container's env list**, and a strategic-merge patch prepends — so
+`/workspace/$(MULTICA_WORKSPACE)/...` lands unexpanded and matches nothing.
+
+```json
+{"spec":{"template":{"spec":{"containers":[{"name":"runtime","env":[{"name":"PATH","value":"/workspace/<workspace-uuid>/.runtime-tools/current/npm-global/bin:/workspace/<workspace-uuid>/.runtime-tools/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}]}]}}}}
+```
+
+### Profiles decide which CLIs exist
+
+`runtimes/catalog.json` defines `codex`, `claude`, `pi` and `all`; the profile
+selects which components the tools package installs, and the agent CLIs are
+installed by the package — the image ships none of them. A node on the `claude`
+profile has no `codex` binary, which surfaces only as a runtime that reads as
+offline, with nothing in any log. `RUNTIME_PROFILE` in cloud-runtime's
+`.gitlab-ci.yml` sets this for the whole fleet; a node needs `all` to serve both.
+
+### Verify on the node, not in the logs
+
+The sync fails soft by design: any failure falls back to the image's tools and
+exits 0. The only evidence that a node updated is the node.
+
+```bash
+kubectl -n <ns> exec <pod> -c runtime -- sh -c 'command -v multica; multica --version'
+```
+
+`command -v` must resolve under `.runtime-tools/current/`, and the version must
+be the tag just published. Use `sh -c`, not `sh -lc`: a login shell re-reads
+`/etc/profile` and reports the image's `PATH` instead of the container's.
 
 ## Deploy To Production
 
