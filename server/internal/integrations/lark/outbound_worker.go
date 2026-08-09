@@ -88,7 +88,11 @@ func (p *Patcher) paintCard(ctx context.Context, card OutboundCardMessage) error
 	seq := card.OperationSequence - sequenceReserve
 	next := func() int32 { seq++; return seq }
 
-	if card.Transport != "cardkit" {
+	// Route on the card that actually exists, not on the column alone. A row
+	// written by the previous design carries a delivered message and no
+	// CardKit entity; treating it as CardKit would call the entity APIs with
+	// an empty card id, which fails locally and can never recover.
+	if card.Transport != "cardkit" || (card.ChannelCardID == "" && card.ChannelCardMessageID != "") {
 		return p.paintLegacy(ctx, card, target)
 	}
 	// Gate on delivery, not on the entity: a card that was created but whose
