@@ -7,7 +7,11 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import enCommon from "../locales/en/common.json";
 import enWorkflows from "../locales/en/workflows.json";
-import { WorkflowStartDialog, defaultAssignments } from "./workflow-start-dialog";
+import {
+  WorkflowStartDialog,
+  defaultAssignments,
+  hostAssigneeDefault,
+} from "./workflow-start-dialog";
 
 const mocks = vi.hoisted(() => ({
   start: vi.fn(),
@@ -213,6 +217,52 @@ describe("WorkflowStartDialog", () => {
         }),
       );
     });
+  });
+
+  it("pre-fills the issue assignee into the role that executes the most activities", () => {
+    // Mirrors the built-in bug_fix shape: fixer executes two activities,
+    // qa executes one — the assignee is the fixer.
+    const roles = [
+      {
+        key: "qa",
+        name: "QA",
+        required: true,
+        allowed_actor_types: ["member", "agent"],
+      },
+      {
+        key: "fixer",
+        name: "Fixer",
+        required: true,
+        allowed_actor_types: ["member", "agent"],
+      },
+    ];
+    const nodes = [
+      { key: "triage", kind: "activity", name: "Triage", executor: { kind: "role" as const, role: "qa" } },
+      { key: "root_cause", kind: "activity", name: "Root cause", executor: { kind: "role" as const, role: "fixer" } },
+      { key: "fix", kind: "activity", name: "Fix", executor: { kind: "role" as const, role: "fixer" } },
+    ];
+
+    expect(hostAssigneeDefault(
+      { roles, nodes },
+      { type: "agent", id: "agent-1" },
+    )).toEqual({ roleKey: "fixer", value: "agent:agent-1" });
+
+    // A tie names no deliverer, so nothing is guessed.
+    expect(hostAssigneeDefault(
+      { roles, nodes: nodes.slice(0, 2) },
+      { type: "agent", id: "agent-1" },
+    )).toBeNull();
+
+    // An assignee the role cannot hold is not forced into it.
+    expect(hostAssigneeDefault(
+      {
+        roles: [{ ...roles[1]!, allowed_actor_types: ["member"] }],
+        nodes,
+      },
+      { type: "agent", id: "agent-1" },
+    )).toBeNull();
+
+    expect(hostAssigneeDefault({ roles, nodes }, null)).toBeNull();
   });
 
   it("falls back to the current user for a member-only owner role", () => {

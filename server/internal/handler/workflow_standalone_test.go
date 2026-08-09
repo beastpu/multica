@@ -731,3 +731,52 @@ func TestListWorkflowInstancesFiltersByHostIssuePresence(t *testing.T) {
 		t.Fatalf("has_host_issue=maybe status=%d, want 400", status)
 	}
 }
+
+// Starting from an issue used to be the only start path without the owner
+// fallback: standalone and create-run both defaulted the starter into an
+// unassigned owner role, this one dropped the run into needs_setup instead.
+func TestStartIssueWorkflowDefaultsOwnerToStarter(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Owner fallback",
+		Roles: []workflowdomain.RoleDefinition{{
+			Key: "owner", Name: "Owner", Required: true,
+			AllowedActorTypes: []string{"member"},
+		}},
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{
+				Key: "work", Kind: "activity", Name: "Work",
+				OwnerRole: "owner", IssuePolicy: "none",
+			},
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{
+			{From: "start", To: "work"},
+			{From: "work", To: "end"},
+		},
+	}
+	templateID := createPublishedWorkflowForTest(
+		t,
+		"Owner fallback template",
+		definition,
+	)
+	hostID := createWorkflowHostForTest(t, "Owner fallback issue")
+
+	started := startWorkflowForTest(t, hostID, templateID, nil, "owner-fallback-start")
+	if started.Instance.Status == "needs_setup" {
+		t.Fatalf("run status = needs_setup, want the owner defaulted to the starter")
+	}
+	var ownerActorID string
+	for _, assignment := range started.RoleAssignments {
+		if assignment.RoleKey == "owner" {
+			ownerActorID = assignment.ActorID
+		}
+	}
+	if ownerActorID != testUserID {
+		t.Fatalf("owner assignment = %q, want starter %q", ownerActorID, testUserID)
+	}
+}

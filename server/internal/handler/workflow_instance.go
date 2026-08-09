@@ -624,6 +624,7 @@ func (h *Handler) StartIssueWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	req.RoleAssignments = defaultWorkflowOwnerAssignment(definition, req.RoleAssignments, userID)
 	assignments, missingRoles, ok := h.validateWorkflowRoleAssignments(w, r, wsUUID, workspaceID, definition, req.RoleAssignments)
 	if !ok {
 		return

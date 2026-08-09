@@ -5,12 +5,16 @@ import { useQuery } from "@tanstack/react-query";
 import { GitBranch, Loader2, Users } from "lucide-react";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { issueListOptions } from "@multica/core/issues/queries";
+import {
+  issueDetailOptions,
+  issueListOptions,
+} from "@multica/core/issues/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   useStartIssueWorkflow,
   workflowListOptions,
   workflowOptions,
+  type WorkflowDefinition,
   type WorkflowRoleDefinition,
 } from "@multica/core/workflows";
 import {
@@ -75,6 +79,47 @@ export function defaultAssignments(
   return assignments;
 }
 
+// The host issue's assignee is who the work was already given to, and the
+// role that executes the most activities is the run's deliverer. When the two
+// are compatible, that role is pre-filled with the assignee; an ambiguous
+// definition (no executor roles, or a tie) pre-fills nothing.
+export function hostAssigneeDefault(
+  definition: Pick<WorkflowDefinition, "roles" | "nodes">,
+  assignee: { type: WorkflowActorType; id: string } | null,
+): { roleKey: string; value: string } | null {
+  if (!assignee) return null;
+  const executorCounts = new Map<string, number>();
+  for (const node of definition.nodes) {
+    if (node.kind !== "activity") continue;
+    const executor = node.executor;
+    if (executor?.kind === "role" && executor.role) {
+      executorCounts.set(
+        executor.role,
+        (executorCounts.get(executor.role) ?? 0) + 1,
+      );
+    }
+  }
+  let topRole: string | null = null;
+  let topCount = 0;
+  let tied = false;
+  for (const [roleKey, count] of executorCounts) {
+    if (count > topCount) {
+      topRole = roleKey;
+      topCount = count;
+      tied = false;
+    } else if (count === topCount) {
+      tied = true;
+    }
+  }
+  if (!topRole || tied) return null;
+  const role = definition.roles.find((item) => item.key === topRole);
+  if (!role || !role.allowed_actor_types.includes(assignee.type)) return null;
+  return {
+    roleKey: role.key,
+    value: assignmentKey(assignee.type, assignee.id),
+  };
+}
+
 export function WorkflowStartDialog({ issueId }: { issueId?: string }) {
   const { t } = useT("workflows");
   const wsId = useWorkspaceId();
@@ -104,6 +149,26 @@ export function WorkflowStartDialog({ issueId }: { issueId?: string }) {
     [issueOptionsQuery.data],
   );
   const resolvedIssueId = issueId ?? selectedIssueId;
+
+  const hostIssueQuery = useQuery({
+    ...issueDetailOptions(wsId, resolvedIssueId),
+    enabled: open && Boolean(resolvedIssueId),
+  });
+  const hostAssigneeType = hostIssueQuery.data?.assignee_type;
+  const hostAssigneeId = hostIssueQuery.data?.assignee_id;
+  const hostAssignee = useMemo(
+    () =>
+      (hostAssigneeType === "member" || hostAssigneeType === "agent" ||
+          hostAssigneeType === "squad") && hostAssigneeId
+        ? { type: hostAssigneeType, id: hostAssigneeId }
+        : null,
+    [hostAssigneeType, hostAssigneeId],
+  );
+  // Remembered so submit can tell an untouched pre-fill (source:
+  // host_assignee) from a choice the user made or changed (user_selected).
+  const [hostPrefill, setHostPrefill] = useState<
+    { roleKey: string; value: string } | null
+  >(null);
 
   const templatesQuery = useQuery({
     ...workflowListOptions(wsId, { status: "published" }),
@@ -173,8 +238,15 @@ export function WorkflowStartDialog({ issueId }: { issueId?: string }) {
   useEffect(() => {
     if (!selectedVersion) return;
     setVersionId(selectedVersion.id);
-    setAssignments(defaultAssignments(selectedVersion.definition.roles, userId));
-  }, [selectedVersion, userId]);
+    const defaults = defaultAssignments(
+      selectedVersion.definition.roles,
+      userId,
+    );
+    const prefill = hostAssigneeDefault(selectedVersion.definition, hostAssignee);
+    if (prefill) defaults[prefill.roleKey] = prefill.value;
+    setHostPrefill(prefill);
+    setAssignments(defaults);
+  }, [selectedVersion, userId, hostAssignee]);
 
   const missingRequiredRole = roles.some(
     (role) => role.required && !parseAssignment(assignments[role.key] ?? ""),
@@ -187,6 +259,7 @@ export function WorkflowStartDialog({ issueId }: { issueId?: string }) {
     setVersionId("");
     setHostStatusMode("independent");
     setAssignments({});
+    setHostPrefill(null);
     setError("");
   };
 
@@ -209,7 +282,11 @@ export function WorkflowStartDialog({ issueId }: { issueId?: string }) {
             role_key: role.key,
             actor_type: actor.actorType,
             actor_id: actor.actorId,
-            source: "user_selected",
+            source: hostPrefill &&
+                role.key === hostPrefill.roleKey &&
+                assignments[role.key] === hostPrefill.value
+              ? "host_assignee"
+              : "user_selected",
           }]
           : [];
       }),
