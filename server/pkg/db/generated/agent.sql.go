@@ -3399,7 +3399,7 @@ const getLastTaskSession = `-- name: GetLastTaskSession :one
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
   AND (
-    status = 'completed'
+    status IN ('completed', 'cancelled')
     OR (
       status = 'failed'
       AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity', 'agent_error.context_overflow')
@@ -3424,13 +3424,21 @@ type GetLastTaskSessionRow struct {
 
 // Returns the session_id and work_dir from the most recent task for a given
 // (agent_id, issue_id) pair, used for session resumption on the auto-retry
-// path. We accept both 'completed' and 'failed' tasks: a failed task may
-// have established a real agent session before crashing (orphaned by a
-// daemon restart, runtime offline, or sweeper timeout), and the daemon pins
-// the resume pointer mid-flight via UpdateAgentTaskSession. Without this,
-// an auto-retry of a mid-run failure would silently start a fresh
-// conversation and lose the in-flight context — exactly what MUL-1128's B
-// branch is meant to fix.
+// path. We accept 'completed', non-poisoned 'failed', and 'cancelled' tasks:
+// a failed task may have established a real agent session before crashing
+// (orphaned by a daemon restart, runtime offline, or sweeper timeout), and
+// the daemon pins the resume pointer mid-flight via UpdateAgentTaskSession.
+// Without this, an auto-retry of a mid-run failure would silently start a
+// fresh conversation and lose the in-flight context — exactly what
+// MUL-1128's B branch is meant to fix.
+//
+// Cancelled is included because cancellation is a person saying "stop", not
+// evidence the conversation is bad. The interrupt-and-steer loop depends on
+// it: cancel the running task, comment the correction, and the follow-up must
+// resume the very session that was heading the wrong way — a fresh session
+// there discards exactly the context the user was correcting. A user who does
+// think the conversation is ruined has the rerun path, which pins
+// force_fresh_session.
 //
 // Manual rerun (TaskService.RerunIssue) does NOT take this path. The claim
 // handler branches on rerun_of_task_id FIRST and resolves the session/workdir
