@@ -1012,6 +1012,15 @@ func (h *Handler) ListWorkflowInstances(w http.ResponseWriter, r *http.Request) 
 		}
 		relatedToMe = parsed
 	}
+	var hasHostIssue pgtype.Bool
+	if value := strings.TrimSpace(r.URL.Query().Get("has_host_issue")); value != "" {
+		parsed, parseErr := strconv.ParseBool(value)
+		if parseErr != nil {
+			writeError(w, http.StatusBadRequest, "has_host_issue must be true or false")
+			return
+		}
+		hasHostIssue = pgtype.Bool{Bool: parsed, Valid: true}
+	}
 	var interventionType pgtype.Text
 	if value := strings.TrimSpace(r.URL.Query().Get("intervention_type")); value != "" {
 		switch value {
@@ -1055,7 +1064,7 @@ func (h *Handler) ListWorkflowInstances(w http.ResponseWriter, r *http.Request) 
 		WorkflowID: templateID, CurrentNodeKey: currentNodeKey,
 		OwnerID: ownerID, OwnerType: ownerType,
 		RelatedToMe: relatedToMe, ViewerID: viewerID,
-		InterventionType: interventionType,
+		InterventionType: interventionType, HasHostIssue: hasHostIssue,
 	}
 	total, err := h.Queries.CountWorkflowInstances(r.Context(), filter)
 	if err != nil {
@@ -1068,7 +1077,8 @@ func (h *Handler) ListWorkflowInstances(w http.ResponseWriter, r *http.Request) 
 		WorkflowID: templateID, CurrentNodeKey: currentNodeKey,
 		OwnerID: ownerID, OwnerType: ownerType,
 		RelatedToMe: relatedToMe, ViewerID: viewerID,
-		InterventionType: interventionType, CursorUpdatedAt: cursorUpdatedAt,
+		InterventionType: interventionType, HasHostIssue: hasHostIssue,
+		CursorUpdatedAt:        cursorUpdatedAt,
 		CursorInterventionRank: cursorInterventionRank,
 		CursorID:               cursorID, RowLimit: int32(limit + 1),
 	})

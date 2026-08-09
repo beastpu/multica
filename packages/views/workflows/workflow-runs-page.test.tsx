@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { I18nProvider } from "@multica/core/i18n/react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,6 +34,8 @@ const finishedRun = {
   id: "run-2",
   title: "",
   host_issue_title: "Hotfix",
+  host_issue_id: "issue-2",
+  host_issue_identifier: "MUL-7",
   status: "completed",
   current_activities: [],
   activity_completed: 3,
@@ -62,6 +64,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => {
     ...actual,
     useWorkspacePaths: () => ({
       workflowRun: (id: string) => `/workspace/workflows/runs/${id}`,
+      issueDetail: (id: string) => `/workspace/issues/${id}`,
     }),
   };
 });
@@ -115,6 +118,44 @@ describe("WorkflowRunsPage", () => {
     // A standalone run has no title of its own, so the host issue names it.
     expect(screen.getByRole("link", { name: /Hotfix/ }))
       .toHaveAttribute("href", "/workspace/workflows/runs/run-2");
+  });
+
+  it("shows the host issue when a run has one, and says so when it does not", () => {
+    mockRuns([run, finishedRun]);
+    render(<WorkflowRunsPage />, { wrapper });
+
+    expect(screen.getByRole("link", { name: "MUL-7" }))
+      .toHaveAttribute("href", "/workspace/issues/issue-2");
+    expect(within(screen.getByRole("table"))
+      .getByText(enWorkflows.runs.standalone)).toBeInTheDocument();
+  });
+
+  it("filters by whether a run carries a host issue", async () => {
+    const user = userEvent.setup();
+    mockRuns([finishedRun]);
+    render(<WorkflowRunsPage />, { wrapper });
+
+    await user.click(
+      screen.getByRole("button", { name: enWorkflows.runs.host_issue }),
+    );
+    expect(mocks.infiniteQuery).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        queryKey: expect.arrayContaining([
+          expect.objectContaining({ has_host_issue: true }),
+        ]),
+      }),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: enWorkflows.runs.standalone }),
+    );
+    expect(mocks.infiniteQuery).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        queryKey: expect.arrayContaining([
+          expect.objectContaining({ has_host_issue: false }),
+        ]),
+      }),
+    );
   });
 
   it("splits history by whether a run is still in flight", async () => {

@@ -605,6 +605,10 @@ WHERE wi.workspace_id = @workspace_id
       AND host.project_id = sqlc.narg(project_id)
   ))
   AND (sqlc.narg(workflow_id)::uuid IS NULL OR wi.workflow_id = sqlc.narg(workflow_id))
+  AND (
+    sqlc.narg(has_host_issue)::boolean IS NULL
+    OR sqlc.narg(has_host_issue)::boolean = (wi.host_issue_id IS NOT NULL)
+  )
   AND (sqlc.narg(current_node_key)::text IS NULL OR EXISTS (
     SELECT 1 FROM workflow_node_instance current_node
     WHERE current_node.workflow_instance_id = wi.id
@@ -958,6 +962,10 @@ WHERE wi.workspace_id = @workspace_id
       AND host.project_id = sqlc.narg(project_id)
   ))
   AND (sqlc.narg(workflow_id)::uuid IS NULL OR wi.workflow_id = sqlc.narg(workflow_id))
+  AND (
+    sqlc.narg(has_host_issue)::boolean IS NULL
+    OR sqlc.narg(has_host_issue)::boolean = (wi.host_issue_id IS NOT NULL)
+  )
   AND (sqlc.narg(current_node_key)::text IS NULL OR EXISTS (
     SELECT 1 FROM workflow_node_instance current_node
     WHERE current_node.workflow_instance_id = wi.id

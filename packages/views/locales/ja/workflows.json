@@ -139,6 +139,8 @@
     "all_projects": "すべてのプロジェクト",
     "template": "テンプレート",
     "all_templates": "すべてのテンプレート",
+    "source": "起動元",
+    "all_sources": "すべての起動元",
     "owner": "現在の担当者",
     "all_owners": "すべての担当者",
     "current_node": "現在のノードキー"

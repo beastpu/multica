@@ -10,6 +10,7 @@ export interface WorkflowInstanceFilters {
   owner_type?: "member" | "agent" | "squad";
   owner_id?: string;
   intervention_type?: string;
+  has_host_issue?: boolean;
   cursor?: string;
   limit?: number;
 }

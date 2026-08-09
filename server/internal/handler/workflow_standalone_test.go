@@ -643,3 +643,91 @@ func startDirectStandaloneRunForTest(
 	}
 	return started
 }
+
+func TestListWorkflowInstancesFiltersByHostIssuePresence(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+
+	definition := workflowdomain.Definition{
+		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
+		Name:          "Host presence filter",
+		Nodes: []workflowdomain.NodeDefinition{
+			{Key: "start", Kind: "start", Name: "Start"},
+			{Key: "end", Kind: "end", Name: "End"},
+		},
+		Edges: []workflowdomain.EdgeDefinition{{From: "start", To: "end"}},
+	}
+	templateID := createPublishedWorkflowForTest(
+		t,
+		"Host presence filter template",
+		definition,
+	)
+
+	hostID := createWorkflowHostForTest(t, "Hosted run issue")
+	hosted := startWorkflowForTest(t, hostID, templateID, nil, "host-presence-hosted")
+
+	recorder := httptest.NewRecorder()
+	request := withURLParam(
+		newRequest(http.MethodPost,
+			"/api/workflow-templates/"+templateID+"/runs?workspace_id="+testWorkspaceID,
+			map[string]any{
+				"title":           "Standalone presence run",
+				"idempotency_key": "host-presence-standalone",
+			},
+		),
+		"id", templateID,
+	)
+	testHandler.StartWorkflowRun(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("StartWorkflowRun status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var standalone workflowInstanceDetailResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &standalone); err != nil {
+		t.Fatalf("decode standalone run: %v", err)
+	}
+
+	list := func(query string) (int, []workflowInstanceResponse, int64) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		request := newRequest(http.MethodGet,
+			"/api/workflow-instances?workspace_id="+testWorkspaceID+query, nil)
+		testHandler.ListWorkflowInstances(recorder, request)
+		var response struct {
+			Instances []workflowInstanceResponse `json:"instances"`
+			Total     int64                      `json:"total"`
+		}
+		if recorder.Code == http.StatusOK {
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode workflow instance list: %v", err)
+			}
+		}
+		return recorder.Code, response.Instances, response.Total
+	}
+
+	status, hostedOnly, hostedTotal := list("&has_host_issue=true")
+	if status != http.StatusOK || hostedTotal != 1 || len(hostedOnly) != 1 ||
+		hostedOnly[0].ID != hosted.Instance.ID {
+		t.Fatalf(
+			"has_host_issue=true: status=%d total=%d instances=%#v",
+			status, hostedTotal, hostedOnly,
+		)
+	}
+
+	status, standaloneOnly, standaloneTotal := list("&has_host_issue=false")
+	if status != http.StatusOK || standaloneTotal != 1 || len(standaloneOnly) != 1 ||
+		standaloneOnly[0].ID != standalone.Instance.ID {
+		t.Fatalf(
+			"has_host_issue=false: status=%d total=%d instances=%#v",
+			status, standaloneTotal, standaloneOnly,
+		)
+	}
+
+	status, _, allTotal := list("")
+	if status != http.StatusOK || allTotal != 2 {
+		t.Fatalf("unfiltered list: status=%d total=%d", status, allTotal)
+	}
+
+	if status, _, _ := list("&has_host_issue=maybe"); status != http.StatusBadRequest {
+		t.Fatalf("has_host_issue=maybe status=%d, want 400", status)
+	}
+}

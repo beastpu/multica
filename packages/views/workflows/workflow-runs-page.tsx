@@ -29,6 +29,10 @@ import { WorkflowStatusBadge } from "./workflow-status";
 // as active because a failed run can still be reconciled or resumed.
 type RunScope = "all" | "open" | "closed";
 
+// The second cut that matters: runs that carry an issue are the ones people
+// come back to; standalone runs are usually one-off tryouts.
+type RunSource = "all" | "issue" | "standalone";
+
 // History is read by comparing rows and matching them against something that
 // happened elsewhere — a deploy, an incident, another run. "18 hours ago" does
 // not survive either use, so the column carries the timestamp itself, in a
@@ -46,15 +50,17 @@ export function WorkflowRunsPage({ workflowId }: { workflowId?: string }) {
   const wsId = useWorkspaceId();
   const p = useWorkspacePaths();
   const [scope, setScope] = useState<RunScope>("all");
+  const [source, setSource] = useState<RunSource>("all");
   const [workflow, setWorkflow] = useState(workflowId ?? "");
 
   const filters = useMemo<WorkflowInstanceFilters>(() => ({
     status: scope === "all"
       ? undefined
       : (scope === "open" ? "active" : "terminal"),
+    has_host_issue: source === "all" ? undefined : source === "issue",
     workflow_id: workflow || undefined,
     limit: 50,
-  }), [scope, workflow]);
+  }), [scope, source, workflow]);
 
   const runsQuery = useInfiniteQuery(
     workflowInstanceInfiniteListOptions(wsId, filters),
@@ -109,6 +115,31 @@ export function WorkflowRunsPage({ workflowId }: { workflowId?: string }) {
               </button>
             ))}
           </div>
+          <div
+            aria-label={t(($) => $.filters.source)}
+            className="flex items-center gap-1 border-l pl-2"
+          >
+            {([
+              ["all", t(($) => $.filters.all_sources)],
+              ["issue", t(($) => $.runs.host_issue)],
+              ["standalone", t(($) => $.runs.standalone)],
+            ] as Array<[RunSource, string]>).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={source === value}
+                onClick={() => setSource(value)}
+                className={cn(
+                  "min-h-8 rounded-md px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  source === value
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted/60",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <select
             aria-label={t(($) => $.filters.template)}
             value={workflow}
@@ -149,6 +180,9 @@ export function WorkflowRunsPage({ workflowId }: { workflowId?: string }) {
                 <tr className="border-b text-xs text-muted-foreground">
                   <th scope="col" className="px-3 py-2 text-left font-medium">
                     {t(($) => $.runs.column_run)}
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    {t(($) => $.runs.host_issue)}
                   </th>
                   <th scope="col" className="px-3 py-2 text-left font-medium">
                     {t(($) => $.templates.column_status)}
@@ -198,6 +232,7 @@ export function WorkflowRunsPage({ workflowId }: { workflowId?: string }) {
 
 function RunRow({ run, href }: { run: WorkflowInstance; href: string }) {
   const { t } = useT("workflows");
+  const p = useWorkspacePaths();
   const current = run.current_activities?.[0];
   return (
     <tr className="h-12 transition-colors hover:bg-muted/30">
@@ -214,6 +249,20 @@ function RunRow({ run, href }: { run: WorkflowInstance; href: string }) {
             {run.workflow_name}
           </span>
         </AppLink>
+      </td>
+      <td className="px-3 py-2">
+        {run.host_issue_id && run.host_issue_identifier ? (
+          <AppLink
+            href={p.issueDetail(run.host_issue_id)}
+            className="text-xs tabular-nums text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {run.host_issue_identifier}
+          </AppLink>
+        ) : (
+          <span className="text-xs text-muted-foreground/60">
+            {t(($) => $.runs.standalone)}
+          </span>
+        )}
       </td>
       <td className="px-3 py-2">
         <WorkflowStatusBadge status={run.status} />

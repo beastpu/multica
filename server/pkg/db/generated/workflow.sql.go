@@ -726,15 +726,19 @@ WHERE wi.workspace_id = $3
       AND host.project_id = $5
   ))
   AND ($6::uuid IS NULL OR wi.workflow_id = $6)
-  AND ($7::text IS NULL OR EXISTS (
+  AND (
+    $7::boolean IS NULL
+    OR $7::boolean = (wi.host_issue_id IS NOT NULL)
+  )
+  AND ($8::text IS NULL OR EXISTS (
     SELECT 1 FROM workflow_node_instance current_node
     WHERE current_node.workflow_instance_id = wi.id
       AND current_node.workspace_id = wi.workspace_id
-      AND current_node.node_key = $7
+      AND current_node.node_key = $8
       AND current_node.status IN ('active', 'in_review', 'waiting', 'blocked')
   ))
   AND (
-    $8::uuid IS NULL
+    $9::uuid IS NULL
     OR EXISTS (
       SELECT 1 FROM workflow_node_participant owner_filter
       JOIN workflow_node_instance owner_node
@@ -743,12 +747,12 @@ WHERE wi.workspace_id = $3
       WHERE owner_node.workflow_instance_id = wi.id
         AND owner_node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND owner_filter.role = 'owner'
-        AND owner_filter.actor_type = $9
-        AND owner_filter.actor_id = $8
+        AND owner_filter.actor_type = $10
+        AND owner_filter.actor_id = $9
     )
   )
   AND (
-    NOT $10::boolean
+    NOT $11::boolean
     OR EXISTS (
       SELECT 1 FROM workflow_instance_role_assignment role_assignment
       WHERE role_assignment.workflow_instance_id = wi.id
@@ -779,8 +783,8 @@ WHERE wi.workspace_id = $3
     )
   )
   AND (
-    $11::text IS NULL
-    OR workflow_personalized.action = $11
+    $12::text IS NULL
+    OR workflow_personalized.action = $12
   )
 `
 
@@ -791,6 +795,7 @@ type CountWorkflowInstancesParams struct {
 	Status           pgtype.Text `json:"status"`
 	ProjectID        pgtype.UUID `json:"project_id"`
 	WorkflowID       pgtype.UUID `json:"workflow_id"`
+	HasHostIssue     pgtype.Bool `json:"has_host_issue"`
 	CurrentNodeKey   pgtype.Text `json:"current_node_key"`
 	OwnerID          pgtype.UUID `json:"owner_id"`
 	OwnerType        pgtype.Text `json:"owner_type"`
@@ -806,6 +811,7 @@ func (q *Queries) CountWorkflowInstances(ctx context.Context, arg CountWorkflowI
 		arg.Status,
 		arg.ProjectID,
 		arg.WorkflowID,
+		arg.HasHostIssue,
 		arg.CurrentNodeKey,
 		arg.OwnerID,
 		arg.OwnerType,
@@ -3935,15 +3941,19 @@ WHERE wi.workspace_id = $3
       AND host.project_id = $5
   ))
   AND ($6::uuid IS NULL OR wi.workflow_id = $6)
-  AND ($7::text IS NULL OR EXISTS (
+  AND (
+    $7::boolean IS NULL
+    OR $7::boolean = (wi.host_issue_id IS NOT NULL)
+  )
+  AND ($8::text IS NULL OR EXISTS (
     SELECT 1 FROM workflow_node_instance current_node
     WHERE current_node.workflow_instance_id = wi.id
       AND current_node.workspace_id = wi.workspace_id
-      AND current_node.node_key = $7
+      AND current_node.node_key = $8
       AND current_node.status IN ('active', 'in_review', 'waiting', 'blocked')
   ))
   AND (
-    $8::uuid IS NULL
+    $9::uuid IS NULL
     OR EXISTS (
       SELECT 1 FROM workflow_node_participant owner_filter
       JOIN workflow_node_instance owner_node
@@ -3952,12 +3962,12 @@ WHERE wi.workspace_id = $3
       WHERE owner_node.workflow_instance_id = wi.id
         AND owner_node.status IN ('active', 'in_review', 'waiting', 'blocked')
         AND owner_filter.role = 'owner'
-        AND owner_filter.actor_type = $9
-        AND owner_filter.actor_id = $8
+        AND owner_filter.actor_type = $10
+        AND owner_filter.actor_id = $9
     )
   )
   AND (
-    NOT $10::boolean
+    NOT $11::boolean
     OR EXISTS (
       SELECT 1 FROM workflow_instance_role_assignment role_assignment
       WHERE role_assignment.workflow_instance_id = wi.id
@@ -3988,23 +3998,23 @@ WHERE wi.workspace_id = $3
     )
   )
   AND (
-    $11::text IS NULL
-    OR workflow_personalized.action = $11
+    $12::text IS NULL
+    OR workflow_personalized.action = $12
   )
   AND (
-    $12::timestamptz IS NULL
+    $13::timestamptz IS NULL
     OR CASE
       WHEN workflow_personalized.action IN ('none', 'view_current_activity') THEN 1
       ELSE 0
-    END > $13::integer
+    END > $14::integer
     OR (
       CASE
         WHEN workflow_personalized.action IN ('none', 'view_current_activity') THEN 1
         ELSE 0
-      END = $13::integer
+      END = $14::integer
       AND (wi.updated_at, wi.id) < (
-        $12::timestamptz,
-        $14::uuid
+        $13::timestamptz,
+        $15::uuid
       )
     )
   )
@@ -4015,7 +4025,7 @@ ORDER BY
   END,
   wi.updated_at DESC,
   wi.id DESC
-LIMIT $15
+LIMIT $16
 `
 
 type ListWorkflowInstancesParams struct {
@@ -4025,6 +4035,7 @@ type ListWorkflowInstancesParams struct {
 	Status                 pgtype.Text        `json:"status"`
 	ProjectID              pgtype.UUID        `json:"project_id"`
 	WorkflowID             pgtype.UUID        `json:"workflow_id"`
+	HasHostIssue           pgtype.Bool        `json:"has_host_issue"`
 	CurrentNodeKey         pgtype.Text        `json:"current_node_key"`
 	OwnerID                pgtype.UUID        `json:"owner_id"`
 	OwnerType              pgtype.Text        `json:"owner_type"`
@@ -4044,6 +4055,7 @@ func (q *Queries) ListWorkflowInstances(ctx context.Context, arg ListWorkflowIns
 		arg.Status,
 		arg.ProjectID,
 		arg.WorkflowID,
+		arg.HasHostIssue,
 		arg.CurrentNodeKey,
 		arg.OwnerID,
 		arg.OwnerType,

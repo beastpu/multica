@@ -139,6 +139,8 @@
     "all_projects": "All projects",
     "template": "Template",
     "all_templates": "All templates",
+    "source": "Source",
+    "all_sources": "All sources",
     "owner": "Current owner",
     "all_owners": "All owners",
     "current_node": "Current node key"

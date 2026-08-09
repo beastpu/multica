@@ -139,6 +139,8 @@
     "all_projects": "모든 프로젝트",
     "template": "템플릿",
     "all_templates": "모든 템플릿",
+    "source": "시작 유형",
+    "all_sources": "모든 시작 유형",
     "owner": "현재 담당자",
     "all_owners": "모든 담당자",
     "current_node": "현재 노드 키"

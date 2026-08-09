@@ -3455,12 +3455,16 @@ export class ApiClient {
     owner_type?: "member" | "agent" | "squad";
     owner_id?: string;
     intervention_type?: string;
+    has_host_issue?: boolean;
     cursor?: string;
     limit?: number;
   }): Promise<ListWorkflowInstancesResponse> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
     if (params?.related_to_me) search.set("related_to_me", "true");
+    if (params?.has_host_issue !== undefined) {
+      search.set("has_host_issue", String(params.has_host_issue));
+    }
     if (params?.project_id) search.set("project_id", params.project_id);
     if (params?.workflow_id) search.set("workflow_id", params.workflow_id);
     if (params?.current_node_key) search.set("current_node_key", params.current_node_key);

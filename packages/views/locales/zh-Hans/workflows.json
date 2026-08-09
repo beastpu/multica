@@ -139,6 +139,8 @@
     "all_projects": "全部项目",
     "template": "模板",
     "all_templates": "全部模板",
+    "source": "来源",
+    "all_sources": "全部来源",
     "owner": "当前负责人",
     "all_owners": "全部负责人",
     "current_node": "当前节点 Key"
