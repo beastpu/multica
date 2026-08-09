@@ -814,6 +814,43 @@ func TestPatcherDrawsAnswerEvenIfClosingStreamingFails(t *testing.T) {
 	}
 }
 
+// TestPatcherTreatsPreCardKitRowAsLegacy is the regression for a defect that
+// only production could show: a row written by the previous message-patch
+// design carries a delivered message and no CardKit entity, and migration 325
+// labelled every existing row 'cardkit'. Routing it into the entity APIs fails
+// on an empty card id before any request is sent, so it can never recover — it
+// retried forty-seven times in seven seconds on the test cluster.
+func TestPatcherTreatsPreCardKitRowAsLegacy(t *testing.T) {
+	p, q, api, _ := newStreamPatcher(t)
+	taskID := uuidFromString(t, "ee100011-ee10-ee10-ee10-eeeeeeeeeeee")
+	startChannelTask(q, taskID)
+	p.handleEvent(runningEvent(q, taskID))
+
+	// Exactly the shape migration 325 leaves behind.
+	q.mu.Lock()
+	q.card.Transport = "cardkit"
+	q.card.ChannelCardID = ""
+	q.card.ChannelCardMessageID = "om_from_the_old_design"
+	q.card.Status = string(CardStatusStreaming)
+	q.mu.Unlock()
+
+	p.handleEvent(chatDoneEvent(q, taskID, "the answer"))
+	p.RunOnce(context.Background())
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.cardKitClosed) != 0 || len(api.cardKitUpdated) != 0 {
+		t.Fatalf("a row with no CardKit entity must not use the entity APIs; closed=%d updated=%d",
+			len(api.cardKitClosed), len(api.cardKitUpdated))
+	}
+	if len(api.patched) != 1 {
+		t.Fatalf("it must be patched as an ordinary card; patched=%d", len(api.patched))
+	}
+	if !strings.Contains(api.patched[0].CardJSON, "the answer") {
+		t.Errorf("terminal card missing the answer: %s", api.patched[0].CardJSON)
+	}
+}
+
 // TestPatcherSecondTerminalEventStaysQuiet pins the settle write as the dedup.
 func TestPatcherSecondTerminalEventStaysQuiet(t *testing.T) {
 	p, q, api, _ := newStreamPatcher(t)

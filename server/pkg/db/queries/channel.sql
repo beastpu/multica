@@ -701,6 +701,15 @@ WHERE card.id = (
               due.status IN ('final', 'error')
               AND (due.channel_card_id <> '' OR due.channel_card_message_id <> '')
               AND due.streaming_closed_at IS NULL
+              -- The first terminal paint is due at once: an answer should not
+              -- wait on the streaming throttle. A retry backs off, growing with
+              -- the attempt count, because a terminal paint that keeps failing
+              -- would otherwise spin as fast as the worker polls.
+              AND (
+                  due.attempt_count = 0
+                  OR due.last_patched_at < now() - make_interval(secs =>
+                      sqlc.arg('throttle_seconds')::double precision * least(due.attempt_count, 40))
+              )
           )
           OR (
               due.status IN ('pending', 'streaming')
