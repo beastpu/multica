@@ -520,6 +520,20 @@
     "condition_use_rows": "Back to fields",
     "condition_host_issue": "Requirement"
   },
+  "node_context": {
+    "open_run": "Open run",
+    "upstream": "From upstream",
+    "no_upstream": "This is the first activity in the run.",
+    "no_conclusion": "Nothing handed over yet.",
+    "extracted_output": "No conclusion was written — this is the raw execution output.",
+    "owes": "What this activity owes",
+    "owes_conclusion_only": "Nothing formal. Hand off a conclusion when you finish.",
+    "output_field": "output field",
+    "required": "required",
+    "optional": "optional",
+    "delivered": "delivered",
+    "not_delivered": "not submitted"
+  },
   "status": {
     "needs_setup": "Needs setup",
     "running": "Running",

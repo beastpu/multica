@@ -124,6 +124,61 @@ export interface WorkflowNodeDefinition {
   on_complete?: WorkflowNodeAction[];
 }
 
+/** One artifact the node owes, paired with whether it has been delivered. */
+export interface WorkflowNodeContextDuty {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  kind: string;
+  required: boolean;
+  delivered: boolean;
+  review_status: string;
+}
+
+export interface WorkflowNodeContextUpstreamArtifact {
+  id: string;
+  artifact_key: string;
+  kind: string;
+  name: string;
+}
+
+/**
+ * One direct predecessor's handover. `summary` is the conclusion its author
+ * wrote; `worker_output` is raw execution output the platform fell back to when
+ * nobody wrote one. They stay apart so an extract is never shown as a
+ * conclusion.
+ */
+export interface WorkflowNodeContextUpstream {
+  node_key: string;
+  name: string;
+  status: string;
+  summary: string;
+  worker_output: string;
+  issues: string[];
+  artifacts: WorkflowNodeContextUpstreamArtifact[];
+}
+
+/**
+ * What a node child issue is a node of, read live. None of it is stored on the
+ * issue: a rework changes the upstream conclusion, the delivery state and the
+ * run's position together, so a copy written into the description would be
+ * wrong exactly when it mattered.
+ */
+export interface WorkflowNodeContext {
+  instance_id: string;
+  node_instance_id: string;
+  node_key: string;
+  node_name: string;
+  run_title: string;
+  instructions: string;
+  host_issue: string;
+  node_issues: string[];
+  artifacts: WorkflowNodeContextDuty[];
+  outputs: WorkflowOutputField[];
+  upstream: WorkflowNodeContextUpstream[];
+}
+
 export interface WorkflowDefinition {
   schema_version: number;
   name: string;

@@ -1226,6 +1226,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
 					r.Get("/reviews", h.ListPerforceReviewsForIssue)
 					r.Get("/workflow", h.GetIssueWorkflow)
+					r.Get("/workflow-node", h.GetIssueWorkflowNode)
 					r.Post("/workflow", h.StartIssueWorkflow)
 				})
 			})

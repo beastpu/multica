@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { parseWithFallback } from "./schema";
 import {
   EMPTY_WORKFLOW_INSTANCE_DETAIL,
+  EMPTY_WORKFLOW_NODE_CONTEXT,
+  WorkflowNodeContextSchema,
   ListBuiltinWorkflowTemplatesResponseSchema,
   ListWorkflowsResponseSchema,
   WorkflowInstanceDetailSchema,
@@ -358,5 +360,50 @@ describe("workflow response schemas", () => {
     expect(parsed.instance.host_issue_id).toBe("issue-1");
     expect(parsed.tasks).toHaveLength(1);
     expect(parsed.tasks[0]?.task_key).toBe("critic");
+  });
+
+  // The node context panel renders on an ordinary issue page. A partial or
+  // wrong-typed payload has to degrade to empty collections rather than throw,
+  // or a server change takes the whole issue view down with it.
+  it("keeps a node context readable when its collections are missing or wrong", () => {
+    const parsed = parseWithFallback(
+      {
+        instance_id: "run-1",
+        node_key: "implement",
+        node_name: "Implementation",
+        // The server sends arrays here; a null and an object are what a
+        // partial rollout or a serialisation bug actually produces.
+        artifacts: null,
+        upstream: { node_key: "design" },
+        outputs: undefined,
+      },
+      WorkflowNodeContextSchema,
+      EMPTY_WORKFLOW_NODE_CONTEXT,
+      { endpoint: "GET /api/issues/:id/workflow-node" },
+    );
+
+    expect(parsed.node_key).toBe("implement");
+    expect(parsed.artifacts).toEqual([]);
+    expect(parsed.upstream).toEqual([]);
+    expect(parsed.outputs).toEqual([]);
+    expect(parsed.host_issue).toBe("");
+  });
+
+  // summary and worker_output are different claims — one authored, one
+  // extracted — and the panel labels them differently, so the schema must not
+  // let one stand in for the other.
+  it("keeps an upstream conclusion apart from an extracted output", () => {
+    const parsed = WorkflowNodeContextSchema.parse({
+      node_key: "implement",
+      upstream: [
+        { node_key: "design", summary: "Two edge cases stay open." },
+        { node_key: "review", worker_output: "Ran the importer." },
+      ],
+    });
+
+    expect(parsed.upstream[0]?.summary).toBe("Two edge cases stay open.");
+    expect(parsed.upstream[0]?.worker_output).toBe("");
+    expect(parsed.upstream[1]?.summary).toBe("");
+    expect(parsed.upstream[1]?.worker_output).toBe("Ran the importer.");
   });
 });

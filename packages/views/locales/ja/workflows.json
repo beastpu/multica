@@ -519,6 +519,20 @@
     "condition_use_rows": "フィールド選択に戻る",
     "condition_host_issue": "要件"
   },
+  "node_context": {
+    "open_run": "実行を開く",
+    "upstream": "上流からの引き継ぎ",
+    "no_upstream": "このアクティビティは実行の最初の工程です。",
+    "no_conclusion": "引き継ぎ内容はまだありません。",
+    "extracted_output": "結論が書かれていないため、実行の生の出力を表示しています。",
+    "owes": "このアクティビティの提出物",
+    "owes_conclusion_only": "正式な提出物はありません。完了前に結論を引き継いでください。",
+    "output_field": "出力フィールド",
+    "required": "必須",
+    "optional": "任意",
+    "delivered": "提出済み",
+    "not_delivered": "未提出"
+  },
   "status": {
     "needs_setup": "設定が必要",
     "running": "実行中",

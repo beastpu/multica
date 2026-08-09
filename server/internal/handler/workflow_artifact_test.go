@@ -905,6 +905,96 @@ func workIssueNumber(t *testing.T, issueID string) int {
 	return number
 }
 
+// Most executors meet the work as a node child issue — from a notification, the
+// issue list, or a phone — never as the run. What upstream concluded is not
+// written onto that issue and must not be, so the issue has to be able to read
+// it.
+func TestIssueWorkflowNodeServesUpstreamConclusion(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+	instanceID, reviewID, _ := startHandoffWorkflow(t, "issue-node-context")
+
+	if recorder := submitHandoff(
+		t, reviewID, "Scope confirmed; pricing edge cases stay open.", "issue-node-context",
+	); recorder.Code != http.StatusCreated {
+		t.Fatalf("submit handoff status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_type, creator_id,
+			number, position, metadata
+		) VALUES ($1, 'Design work', 'todo', 'none', 'member', $2, $3, 0,
+			jsonb_build_object('workflow', jsonb_build_object(
+				'instance_id', $4::text, 'node_key', 'design', 'host_issue', 'MUL-1'
+			)))
+		RETURNING id
+	`, testWorkspaceID, testUserID, nextWorkspaceIssueNumber(t), instanceID).Scan(&issueID); err != nil {
+		t.Fatalf("create node child issue: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(
+		http.MethodGet,
+		"/api/issues/"+issueID+"/workflow-node?workspace_id="+testWorkspaceID,
+		nil,
+	), "id", issueID)
+	testHandler.GetIssueWorkflowNode(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("workflow-node status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		NodeKey  string `json:"node_key"`
+		Upstream []struct {
+			NodeKey string `json:"node_key"`
+			Summary string `json:"summary"`
+		} `json:"upstream"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode workflow-node: %v", err)
+	}
+	if response.NodeKey != "design" {
+		t.Errorf("node_key = %q, want the node the issue belongs to", response.NodeKey)
+	}
+	if len(response.Upstream) != 1 || response.Upstream[0].NodeKey != "review" {
+		t.Fatalf("upstream = %+v, want the direct predecessor", response.Upstream)
+	}
+	if !strings.Contains(response.Upstream[0].Summary, "pricing edge cases") {
+		t.Errorf("upstream summary = %q, want the predecessor's conclusion",
+			response.Upstream[0].Summary)
+	}
+}
+
+// An ordinary issue is not a node of anything, and the panel that asks must be
+// able to tell that apart from a failure.
+func TestIssueWorkflowNodeIsNotFoundForOrdinaryIssues(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+
+	var issueID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_type, creator_id, number, position
+		) VALUES ($1, 'Ordinary issue', 'todo', 'none', 'member', $2, $3, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID, nextWorkspaceIssueNumber(t)).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := withURLParam(newRequest(
+		http.MethodGet,
+		"/api/issues/"+issueID+"/workflow-node?workspace_id="+testWorkspaceID,
+		nil,
+	), "id", issueID)
+	testHandler.GetIssueWorkflowNode(recorder, request)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 // A link artifact is agent-submitted and later rendered as a clickable
 // address, so its scheme is an injection boundary.
 func TestWorkflowArtifactRejectsNonBrowsableLink(t *testing.T) {

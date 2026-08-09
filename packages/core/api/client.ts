@@ -207,6 +207,7 @@ import type {
   WorkflowIssuesResponse,
   WorkflowExecutorResolution,
   BuiltinWorkflowTemplate,
+  WorkflowNodeContext,
   WorkflowNodeDetail,
   WorkflowNodeTask,
   WorkflowSubmission,
@@ -380,6 +381,8 @@ import {
   WorkflowInstanceDetailSchema,
   WorkflowIssuesResponseSchema,
   WorkflowNodeDetailSchema,
+  WorkflowNodeContextSchema,
+  EMPTY_WORKFLOW_NODE_CONTEXT,
   WorkflowArtifactListSchema,
   EMPTY_WORKFLOW_ARTIFACT_LIST,
   WorkflowSubmissionMutationResponseSchema,
@@ -3529,6 +3532,15 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/workflow`);
     return parseWithFallback(raw, WorkflowInstanceDetailSchema, EMPTY_WORKFLOW_INSTANCE_DETAIL, {
       endpoint: "GET /api/issues/:id/workflow",
+    });
+  }
+
+  // 404 is the ordinary answer for every issue that is not a workflow node, so
+  // callers treat the error as "no panel" rather than as a failure.
+  async getIssueWorkflowNode(issueId: string): Promise<WorkflowNodeContext> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/workflow-node`);
+    return parseWithFallback(raw, WorkflowNodeContextSchema, EMPTY_WORKFLOW_NODE_CONTEXT, {
+      endpoint: "GET /api/issues/:id/workflow-node",
     });
   }
 

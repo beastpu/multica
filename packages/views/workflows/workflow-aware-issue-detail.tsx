@@ -11,6 +11,7 @@ import { useT } from "../i18n";
 import { AppLink } from "../navigation";
 import { IssueDetail } from "../issues/components";
 import { ArtifactAdoptProvider } from "./artifact-adopt-provider";
+import { WorkflowNodeContextPanel } from "./workflow-node-context-panel";
 import { WorkflowStartDialog } from "./workflow-start-dialog";
 import { WorkflowStatusBadge } from "./workflow-status";
 
@@ -78,7 +79,17 @@ export function WorkflowAwareIssueDetail({
     </ArtifactAdoptProvider>
   );
 
-  if (!instance?.id) return detail;
+  // A host issue and a node child issue are two different relationships to a
+  // run, and an issue is only ever one of them: the host owns the run, a child
+  // is one activity inside it.
+  if (!instance?.id) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <WorkflowNodeContextPanel issueId={issueId} />
+        {detail}
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">

@@ -7,6 +7,7 @@ import type {
   WorkflowDefinition,
   WorkflowInstance,
   WorkflowInstanceDetail,
+  WorkflowNodeContext,
   WorkflowNodeDetail,
   WorkflowSubmission,
   WorkflowAcceptancesResponse,
@@ -415,6 +416,70 @@ export const WorkflowArtifactListSchema = z.object({
 export type WorkflowArtifactList = z.infer<typeof WorkflowArtifactListSchema>;
 
 export const EMPTY_WORKFLOW_ARTIFACT_LIST: WorkflowArtifactList = { artifacts: [] };
+
+// What a node child issue is a node of, read live rather than written onto the
+// issue. Nothing here is stored on the issue itself: a rework changes the
+// upstream conclusion, the delivery state and the run's position all at once,
+// so a copy in the description would be wrong the moment it mattered.
+const WorkflowNodeContextDutySchema = z.object({
+  id: z.string().optional().default(""),
+  key: z.string(),
+  name: z.string().optional().default(""),
+  description: z.string().optional().default(""),
+  kind: z.string().optional().default("document"),
+  required: z.boolean().optional().default(false),
+  delivered: z.boolean().optional().default(false),
+  review_status: z.string().optional().default(""),
+}).loose();
+
+const WorkflowNodeContextUpstreamArtifactSchema = z.object({
+  id: z.string().optional().default(""),
+  artifact_key: z.string().optional().default(""),
+  kind: z.string().optional().default("document"),
+  name: z.string().optional().default(""),
+}).loose();
+
+// summary is the conclusion its author wrote; worker_output is the raw
+// execution output the platform fell back to when nobody wrote one. They stay
+// separate fields so the panel never presents an extract as a conclusion.
+const WorkflowNodeContextUpstreamSchema = z.object({
+  node_key: z.string(),
+  name: z.string().optional().default(""),
+  status: z.string().optional().default(""),
+  summary: z.string().optional().default(""),
+  worker_output: z.string().optional().default(""),
+  issues: arrayOrEmpty(z.string()).optional().default([]),
+  artifacts: arrayOrEmpty(WorkflowNodeContextUpstreamArtifactSchema)
+    .optional().default([]),
+}).loose();
+
+export const WorkflowNodeContextSchema = z.object({
+  instance_id: z.string().optional().default(""),
+  node_instance_id: z.string().optional().default(""),
+  node_key: z.string().optional().default(""),
+  node_name: z.string().optional().default(""),
+  run_title: z.string().optional().default(""),
+  instructions: z.string().optional().default(""),
+  host_issue: z.string().optional().default(""),
+  node_issues: arrayOrEmpty(z.string()).optional().default([]),
+  artifacts: arrayOrEmpty(WorkflowNodeContextDutySchema).optional().default([]),
+  outputs: arrayOrEmpty(WorkflowOutputFieldSchema).optional().default([]),
+  upstream: arrayOrEmpty(WorkflowNodeContextUpstreamSchema).optional().default([]),
+}).loose();
+
+export const EMPTY_WORKFLOW_NODE_CONTEXT: WorkflowNodeContext = {
+  instance_id: "",
+  node_instance_id: "",
+  node_key: "",
+  node_name: "",
+  run_title: "",
+  instructions: "",
+  host_issue: "",
+  node_issues: [],
+  artifacts: [],
+  outputs: [],
+  upstream: [],
+};
 
 export const WorkflowNodeDetailSchema = z.object({
   instance: WorkflowInstanceSchema,
