@@ -242,6 +242,51 @@ curl -sS https://multica.lilithgames.com/api/downloads/latest-cli-test.txt
 4. **Point the node at that revision** (see below), then restart it. The sync
    runs as an initContainer, so the pod must roll for it to take effect.
 
+### Which fleet the channel moves
+
+`--channel test` does not mean "the test nodes". There is one
+`runtimes/catalog.json` and one `multica` version in it, so the channel decides
+what the **next package built for anyone** contains. Read it as "point the
+catalog at a branch build", not as an environment.
+
+```bash
+curl -sS https://multica.lilithgames.com/api/downloads/latest-cli.txt       # release: tag builds
+curl -sS https://multica.lilithgames.com/api/downloads/latest-cli-test.txt  # test: branch builds
+jq -r '.components[] | select(.id=="multica") | .version' runtimes/catalog.json
+```
+
+Three things could separate test from production, and only the last one does:
+
+- **Channel.** One catalog, one value. Not a separation.
+- **Rollout scope.** `runtime-tools-rollout.sh --mode canary|stable` selects on
+  `multica.lilithgames.com/update-channel` and `...=/runtime-profile`. No node
+  in the fleet carries either label today, so both modes select nothing and
+  `--mode target <ns>/<name>` is the only one that acts. Check before relying
+  on them:
+
+```bash
+kubectl get statefulset -A -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,CHANNEL:.metadata.labels.multica\.lilithgames\.com/update-channel
+```
+
+- **The per-node pin.** The three initContainer variables. A node moves when it
+  is patched and not before, so the isolation in practice is that only the nodes
+  you patch — and only the nodes that have `runtime-tools-sync` at all — ever
+  see a new CLI.
+
+That last line is the whole safety margin, and it is a property of the current
+fleet rather than of the design. Before adding `runtime-tools-sync` to a
+production node, check what the catalog holds: if a branch build is pinned, that
+node inherits it on its first sync. Move the catalog back first.
+
+```bash
+./scripts/sync-multica-cli.sh --channel release      # back to the tag builds
+./scripts/sync-multica-cli.sh --version <known-good> # or an exact version
+```
+
+The same seam catches the other way round: resolving without `--pinned` reads
+`latest-cli.txt`, which silently replaces a test build under test with the
+released one.
+
 ### Patching a node
 
 Get the cluster: the cloud-runtime kubeconfig lives in srt as
