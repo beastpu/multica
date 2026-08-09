@@ -186,7 +186,7 @@ func TestRenderIssueContext_WorkflowCriticProtocol(t *testing.T) {
 		"Added the endpoint and tests",
 		"artifact-1",
 		"own agent Instructions",
-		`{"result":"pass","reason":"short review opinion"}`,
+		"multica workflow review --decision",
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("critic protocol is missing %q:\n%s", want, md)
@@ -210,9 +210,9 @@ func TestRenderIssueContext_WorkflowCriticIsGivenACommand(t *testing.T) {
 		"multica workflow review --decision",
 		"pass|fail|blocked",
 		"--reason",
-		// The prose form survives only as a fallback, and must read as one.
-		"If the command is unavailable",
-		`{"result":"pass","reason":"short review opinion"}`,
+		// A review that does not run it has not concluded — stated, so the
+		// reviewer knows silence is not an option rather than a default.
+		"has not concluded",
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("critic protocol is missing %q:\n%s", want, md)

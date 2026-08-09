@@ -378,15 +378,15 @@ func (h *Handler) recordWorkflowAgentCriticVerdict(
 		return err
 	}
 
-	// A verdict declared through `multica workflow review` is the verdict. It
-	// was checked against the allowed set where the reviewer stated it, so
-	// there is nothing here to infer and nothing to get wrong.
+	// A verdict is declared through `multica workflow review`, never inferred
+	// from what the reviewer wrote afterwards.
 	//
-	// Reading it out of the agent's prose is the fallback, and it is kept only
-	// for a reviewer that finished without running the command. That inference
-	// is why this function exists in the shape it does: the same reviewer wrote
-	// `{"verdict":"approve"}` when it meant to reject, and a lenient reader
-	// would have approved a fix that deleted the button it was asked to wire.
+	// Inference is what this code did, and it failed the only way that matters:
+	// plausibly. The same reviewer wrote `{"verdict":"approve"}` while
+	// rejecting a fix that had deleted the button it was asked to wire up —
+	// read leniently, that ships. Three reviews in a row used a vocabulary the
+	// protocol had shown them verbatim, and one spent its entire run guessing
+	// request bodies against an endpoint that refuses agents.
 	if reviewDecision != "" {
 		return h.applyWorkflowCriticVerdict(
 			ctx, task, instance, node, nodeDefinition,
@@ -394,37 +394,80 @@ func (h *Handler) recordWorkflowAgentCriticVerdict(
 		)
 	}
 
-	critic, parseErr := workflowdomain.ParseCriticOutput(output)
-	result := critic.Result
-	reason := critic.Reason
-	if parseErr != nil {
-		// A verdict can be sound and still be shaped wrong. WTE-14841's Critic
-		// rejected a fix that had deleted the button it was meant to wire up,
-		// listed four findings, and wrote them under `verdict`/`reason` instead
-		// of `approved`/`comment` — a correct review, discarded on a field name,
-		// and a human called to redo it. Ask once, showing the objection, before
-		// spending a person.
-		if direct.VerdictRetry == nil {
-			retried, retryErr := h.retryWorkflowAgentCriticVerdict(
-				ctx, task, instance, node, nodeDefinition, parseErr.Error(), output,
-			)
-			if retryErr != nil {
-				return retryErr
-			}
-			if retried {
-				return nil
-			}
+	// No decision was declared, so the review did not conclude. That is not a
+	// verdict of any kind — least of all `blocked`, which means "I looked and
+	// cannot judge this". Recording one would put words in a reviewer's mouth.
+	//
+	// Ask once, saying plainly what is missing, then leave the node in review
+	// for a person. A run that ends here has a reviewer that finished without
+	// deciding, which is a thing worth a human's attention rather than a
+	// synthesised judgement that reads like one.
+	if direct.VerdictRetry == nil {
+		retried, retryErr := h.retryWorkflowAgentCriticVerdict(
+			ctx, task, instance, node, nodeDefinition,
+			"the review ended without running `multica workflow review`", output,
+		)
+		if retryErr != nil {
+			return retryErr
 		}
-		result = "blocked"
-		// The reviewer's own words go into the reason. Discarding them left a
-		// blocked node explained only by a byte offset, and made the failure
-		// undiagnosable after the fact — the run that hit this had nothing
-		// left to inspect.
-		reason = workflowdomain.DescribeCriticParseFailure(parseErr, output)
+		if retried {
+			return nil
+		}
 	}
-	return h.applyWorkflowCriticVerdict(
-		ctx, task, instance, node, nodeDefinition, result, reason, output,
+	return h.markWorkflowCriticVerdictUndeclared(ctx, instance, node, output)
+}
+
+// markWorkflowCriticVerdictUndeclared records that a review finished without
+// stating a verdict, and leaves the node waiting for a person.
+//
+// Deliberately not a verdict row. "The reviewer did not decide" and "the
+// reviewer decided it cannot be judged" are different facts with different
+// remedies, and the first used to be filed as the second — so a node whose
+// reviewer simply never answered looked, in the UI and in the data, exactly
+// like one that had been examined and found unjudgeable.
+func (h *Handler) markWorkflowCriticVerdictUndeclared(
+	ctx context.Context,
+	instance db.WorkflowInstance,
+	node db.WorkflowNodeInstance,
+	output string,
+) error {
+	current, err := h.Queries.GetWorkflowNodeInstanceInWorkspace(
+		ctx,
+		db.GetWorkflowNodeInstanceInWorkspaceParams{
+			ID: node.ID, WorkspaceID: instance.WorkspaceID,
+		},
 	)
+	if err != nil {
+		return err
+	}
+	reasons := appendWorkflowWaitingReason(
+		decodeWorkflowWaitingReasons(current.WaitingReasons),
+		workflowdomain.WaitingReason{
+			Code: "verdict_not_declared",
+			// The reviewer's own words are the only evidence of what it did
+			// instead. Discarding them left a stuck node explained by nothing.
+			Message: workflowdomain.DescribeUndeclaredVerdict(output),
+		},
+	)
+	if _, err := h.Queries.SetWorkflowNodeWaitingReasons(
+		ctx,
+		db.SetWorkflowNodeWaitingReasonsParams{
+			WaitingReasons: workflowdomain.EncodeWaitingReasons(reasons),
+			ID:             current.ID, WorkspaceID: instance.WorkspaceID,
+		},
+	); err != nil {
+		return err
+	}
+	slog.Info(
+		"workflow review ended without a declared verdict",
+		"workflow_instance_id", uuidToString(instance.ID),
+		"node_key", current.NodeKey,
+	)
+	h.publishWorkflowInstanceUpdated(
+		uuidToString(instance.WorkspaceID), "system", "",
+		uuidToString(instance.ID), uuidToString(current.ID),
+	)
+	return nil
 }
 
 // applyWorkflowCriticVerdict records one verdict and everything that follows

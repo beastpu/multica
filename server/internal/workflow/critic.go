@@ -1,100 +1,43 @@
 package workflow
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"slices"
 	"strings"
 )
 
-// CriticOutput is the stable result contract for the built-in Critic protocol.
-//
-// It speaks the same words as POST /workflow-node-instances/{id}/verdicts and
-// the workflow_node_verdict row: one verdict, one vocabulary. It used to say
-// `approved`/`comment` instead, which cost twice. A reviewer hunting for the
-// shape found the endpoint's `result`/`reason` and could not reconcile them —
-// WTE-14841's Critic tried fourteen bodies and wrote its final answer in a
-// blend of both. And a boolean cannot say `blocked`, so an agent Critic had no
-// way to report that it could not judge at all, though the endpoint and the
-// table have carried that state all along.
-type CriticOutput struct {
-	Result string `json:"result"`
-	Reason string `json:"reason"`
-}
-
-// CriticResults are the verdicts a Critic may return, identical to the set the
-// verdict endpoint accepts.
+// CriticResults are the verdicts a review may declare, identical to the set the
+// verdict endpoint and the workflow_node_verdict row accept, so a decision
+// never has to be translated on its way to the database.
 var CriticResults = []string{"pass", "fail", "blocked"}
 
-// ParseCriticOutput accepts the exact JSON object requested by the protocol.
-// A fenced object is tolerated because some providers insist on formatting
-// JSON despite the instruction; prose and extra fields remain fail-closed.
-func ParseCriticOutput(output string) (CriticOutput, error) {
-	raw := strings.TrimSpace(output)
-	if strings.HasPrefix(raw, "```") {
-		firstLine := strings.IndexByte(raw, '\n')
-		lastFence := strings.LastIndex(raw, "```")
-		if firstLine < 0 || lastFence <= firstLine {
-			return CriticOutput{}, errors.New("invalid fenced JSON verdict")
-		}
-		raw = strings.TrimSpace(raw[firstLine+1 : lastFence])
-	}
-	var wire struct {
-		Result string `json:"result"`
-		Reason string `json:"reason"`
-	}
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&wire); err != nil {
-		return CriticOutput{}, fmt.Errorf("decode critic verdict: %w", err)
-	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		return CriticOutput{}, errors.New("critic verdict must contain one JSON object")
-	}
-	result := CriticOutput{
-		Result: strings.TrimSpace(wire.Result),
-		Reason: strings.TrimSpace(wire.Reason),
-	}
-	if !slices.Contains(CriticResults, result.Result) {
-		return CriticOutput{}, fmt.Errorf(
-			"critic verdict result must be one of %s", strings.Join(CriticResults, ", "),
-		)
-	}
-	if result.Result != "pass" && result.Reason == "" {
-		return CriticOutput{}, fmt.Errorf("a %s verdict requires a reason", result.Result)
-	}
-	return result, nil
-}
-
-// maxCriticOutputInReason bounds how much of an unreadable verdict travels
+// maxCriticOutputInReason bounds how much of a review's closing words travel
 // into a waiting reason. Long enough to hold a real short review, short enough
 // that a UI can render it inline.
 const maxCriticOutputInReason = 800
 
-// DescribeCriticParseFailure explains a rejected verdict in terms of what the
-// Critic actually wrote.
+// DescribeUndeclaredVerdict explains a review that ended without stating a
+// verdict, in terms of what the reviewer said instead.
 //
-// The parse error alone — "invalid character 'å' looking for beginning of
-// value" — names a byte, not a problem. It leaves whoever comes to unblock the
-// node unable to see the judgement that was made, and leaves nobody able to
-// tell a Critic that answered in prose from one that never answered at all.
-// The output is the evidence for both.
-func DescribeCriticParseFailure(err error, output string) string {
+// The words matter because nothing else survives. A review that finishes
+// without declaring leaves no verdict row, and the node stops with no account
+// of why — which is how the earlier version of this failure became
+// undiagnosable after the fact: the run that hit it had nothing left to
+// inspect. Whatever the reviewer wrote is the only evidence of what it did.
+func DescribeUndeclaredVerdict(output string) string {
 	var sb strings.Builder
-	sb.WriteString("Critic output did not match Workflow Critic Protocol v1: ")
-	if err != nil {
-		sb.WriteString(err.Error())
-	}
+	sb.WriteString(
+		"The review ended without declaring a verdict. It must run " +
+			"`multica workflow review --decision " +
+			strings.Join(CriticResults, "|") + " --reason \"...\"`.",
+	)
 
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
-		sb.WriteString("\n\nThe Critic produced no output.")
+		sb.WriteString("\n\nThe reviewer produced no output.")
 		return sb.String()
 	}
 
-	sb.WriteString("\n\nWhat the Critic wrote:\n")
+	sb.WriteString("\n\nWhat the reviewer wrote instead:\n")
 	runes := []rune(trimmed)
 	if len(runes) > maxCriticOutputInReason {
 		sb.WriteString(string(runes[:maxCriticOutputInReason]))

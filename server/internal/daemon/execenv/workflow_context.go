@@ -240,8 +240,12 @@ func renderWorkflowCriticProtocol(b *strings.Builder, workflow *WorkflowTaskCont
 		b,
 		"Use `fail` to send the node back for rework, and `blocked` when you cannot judge it at all; both need a `--reason` the worker can act on. `pass` advances the workflow.\n\n",
 	)
-	b.WriteString("If the command is unavailable, fall back to ending with exactly one JSON object and no prose or fence:\n\n")
-	b.WriteString("```json\n{\"result\":\"pass\",\"reason\":\"short review opinion\"}\n```\n")
+	// No JSON fallback. A reviewer offered one reached for it and stated its
+	// verdict in a vocabulary the server does not accept — three times — and
+	// the server, reading prose, once came within a lenient parse of approving
+	// a fix that deleted the button it was asked to wire up. A review that ends
+	// without running the command has not concluded, and is treated as such.
+	b.WriteString("A review that ends without running this command has not concluded: no verdict is recorded, and the node waits for a person.\n")
 	renderWorkflowVerdictRetry(b, workflow.VerdictRetry)
 }
 
@@ -264,7 +268,7 @@ func renderWorkflowVerdictRetry(b *strings.Builder, retry *WorkflowVerdictRetry)
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("Keep the same judgement. Re-express it as the exact object above: only `result` and `reason`, no other keys, no prose, no fence. Put your reasoning — including any findings you listed — into `reason`.\n")
+	b.WriteString("Keep the same judgement and state it with the command above. Put your reasoning — including any findings you listed — into `--reason`.\n")
 }
 
 // renderWorkflowRework writes why this node is being executed again. It comes

@@ -2187,12 +2187,13 @@ func TestWorkflowAgentSubmissionCannotSelfApprove(t *testing.T) {
 func TestWorkflowAgentCriticCompletion(t *testing.T) {
 	for _, test := range []struct {
 		name        string
-		output      string
+		decision    string
+		reason      string
 		wantStatus  string
 		wantAttempt int32
 	}{
-		{name: "approval advances", output: `{"result":"pass","reason":"meets the acceptance criteria"}`, wantStatus: "completed", wantAttempt: 1},
-		{name: "rejection starts rework", output: `{"result":"fail","reason":"add the missing regression test"}`, wantStatus: "running", wantAttempt: 2},
+		{name: "approval advances", decision: "pass", reason: "meets the acceptance criteria", wantStatus: "completed", wantAttempt: 1},
+		{name: "rejection starts rework", decision: "fail", reason: "add the missing regression test", wantStatus: "running", wantAttempt: 2},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
@@ -2301,7 +2302,7 @@ func TestWorkflowAgentCriticCompletion(t *testing.T) {
 				t.Fatalf("unexpected Critic task: task=%#v context=%#v", criticTask, direct)
 			}
 			if err := testHandler.recordWorkflowAgentCriticVerdict(
-				ctx, criticTask, test.output, "", "",
+				ctx, criticTask, "", test.decision, test.reason,
 			); err != nil {
 				t.Fatalf("record Critic verdict: %v", err)
 			}

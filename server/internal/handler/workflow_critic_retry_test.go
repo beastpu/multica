@@ -14,105 +14,75 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// The verdict WTE-14841's Critic actually produced. It rejected a fix that had
-// deleted the button it was meant to wire up, with four findings — a correct
-// review the protocol could not read, because the keys are its own.
-const unreadableCriticVerdict = `{"verdict":"reject","reason":"the fix removed the button instead of wiring it","blocking_findings":["schema.ts still holds a single domain"],"confidence":0.93}`
+// What a review wrote instead of declaring. It is not parsed for a verdict —
+// that inference is gone — but it is the only evidence of what the reviewer
+// did, so it has to survive into the node's waiting reason.
+const undeclaredCriticOutput = `{"verdict":"reject","reason":"the fix removed the button instead of wiring it","confidence":0.93}`
 
-// A Critic gets one chance to restate an unreadable verdict before a human is
-// called. Blocking on the first bad shape threw away a review that had already
-// been done, and asking forever would let a Critic stuck on its own vocabulary
-// spin without end.
-func TestWorkflowAgentCriticRetriesOneUnreadableVerdict(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		retryOutput string
-		wantBlocked bool
-		wantAttempt int32
-	}{
-		{
-			name:        "restated verdict is honoured",
-			retryOutput: `{"result":"fail","reason":"the fix removed the button instead of wiring it"}`,
-			wantBlocked: false,
-			wantAttempt: 2, // rejection sent the node to rework
-		},
-		{
-			name:        "a second unreadable verdict blocks",
-			retryOutput: unreadableCriticVerdict,
-			wantBlocked: true,
-			wantAttempt: 1,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
-			cleanupWorkflowRuntimeTest(t)
-			ctx := context.Background()
-			workerID := createHandlerTestAgent(t, "critic-retry-worker-"+test.name, nil)
-			criticID := createHandlerTestAgent(t, "critic-retry-reviewer-"+test.name, nil)
+// A review that ends without declaring gets one more chance, then leaves the
+// node waiting for a person — and never a verdict.
+//
+// "The reviewer did not decide" and "the reviewer decided it cannot be judged"
+// are different facts with different remedies. The first used to be filed as
+// the second, so a node whose reviewer simply never answered looked exactly
+// like one that had been examined and found unjudgeable.
+func TestWorkflowAgentCriticAsksOnceThenWaitsForAPerson(t *testing.T) {
+	withFeatureFlag(t, testHandler, featureflags.WorkflowsActivityEngine, true)
+	cleanupWorkflowRuntimeTest(t)
+	ctx := context.Background()
+	workerID := createHandlerTestAgent(t, "undeclared-worker", nil)
+	criticID := createHandlerTestAgent(t, "undeclared-critic", nil)
 
-			work, instanceID := startCriticRetryFixture(t, workerID, criticID, test.name)
-			criticTask := latestCriticTaskForTest(t, work)
+	work, instanceID := startCriticRetryFixture(t, workerID, criticID, "undeclared")
+	criticTask := latestCriticTaskForTest(t, work)
 
-			// First verdict: sound, unreadable.
-			if err := testHandler.recordWorkflowAgentCriticVerdict(
-				ctx, criticTask, unreadableCriticVerdict, "", "",
-			); err != nil {
-				t.Fatalf("record first Critic verdict: %v", err)
-			}
+	// First review: says plenty, declares nothing.
+	if err := testHandler.recordWorkflowAgentCriticVerdict(
+		ctx, criticTask, undeclaredCriticOutput, "", "",
+	); err != nil {
+		t.Fatalf("record first review: %v", err)
+	}
 
-			node := latestWorkflowNodeForTest(t, instanceID, "work")
-			if node.Status == "blocked" {
-				t.Fatalf("first unreadable verdict blocked the node instead of re-asking")
-			}
-			if node.LatestVerdictID.Valid {
-				t.Fatalf("a verdict was recorded from output that could not be read")
-			}
+	node := latestWorkflowNodeForTest(t, instanceID, "work")
+	if node.LatestVerdictID.Valid {
+		t.Fatal("a verdict was recorded from a review that declared none")
+	}
+	retryTask := latestCriticTaskForTest(t, work)
+	if uuidToString(retryTask.ID) == uuidToString(criticTask.ID) {
+		t.Fatal("the reviewer was not asked again")
+	}
+	direct, ok := service.ParseWorkflowNodeTaskContext(retryTask)
+	if !ok || direct.VerdictRetry == nil {
+		t.Fatalf("the second ask carries no explanation: %#v", direct)
+	}
+	if !strings.Contains(direct.VerdictRetry.Problem, "multica workflow review") {
+		t.Fatalf("the ask does not name the command: %q", direct.VerdictRetry.Problem)
+	}
 
-			retryTask := latestCriticTaskForTest(t, work)
-			if uuidToString(retryTask.ID) == uuidToString(criticTask.ID) {
-				t.Fatal("no retry task was enqueued")
-			}
-			direct, ok := service.ParseWorkflowNodeTaskContext(retryTask)
-			if !ok || direct.VerdictRetry == nil {
-				t.Fatalf("retry task carries no verdict retry: %#v", direct)
-			}
-			if !strings.Contains(direct.VerdictRetry.Problem, "unknown field") {
-				t.Fatalf("retry does not name the objection: %q", direct.VerdictRetry.Problem)
-			}
-			if direct.VerdictRetry.Wrote != unreadableCriticVerdict {
-				t.Fatalf("retry does not quote the Critic: %q", direct.VerdictRetry.Wrote)
-			}
-			if uuidToString(retryTask.AgentID) != criticID {
-				t.Fatalf("retry went to a different reviewer: %s", uuidToString(retryTask.AgentID))
-			}
+	// Second review: same silence.
+	if err := testHandler.recordWorkflowAgentCriticVerdict(
+		ctx, retryTask, undeclaredCriticOutput, "", "",
+	); err != nil {
+		t.Fatalf("record second review: %v", err)
+	}
 
-			// Second verdict.
-			if err := testHandler.recordWorkflowAgentCriticVerdict(
-				ctx, retryTask, test.retryOutput, "", "",
-			); err != nil {
-				t.Fatalf("record retry Critic verdict: %v", err)
-			}
-
-			final := latestWorkflowNodeForTest(t, instanceID, "work")
-			if blocked := final.Status == "blocked" &&
-				jsonContainsWaitingReason(final.WaitingReasons, "verdict_blocked"); blocked != test.wantBlocked {
-				t.Fatalf(
-					"blocked = %v, want %v (status=%q reasons=%s)",
-					blocked, test.wantBlocked, final.Status, final.WaitingReasons,
-				)
-			}
-			if final.Attempt != test.wantAttempt {
-				t.Fatalf("work attempt = %d, want %d", final.Attempt, test.wantAttempt)
-			}
-
-			// A third unreadable verdict must not queue a fourth Critic.
-			if test.wantBlocked {
-				after := latestCriticTaskForTest(t, work)
-				if uuidToString(after.ID) != uuidToString(retryTask.ID) {
-					t.Fatal("a second retry was enqueued; the retry is not bounded to one")
-				}
-			}
-		})
+	final := latestWorkflowNodeForTest(t, instanceID, "work")
+	if final.LatestVerdictID.Valid {
+		t.Fatal("a verdict was invented after the second silent review")
+	}
+	if final.Attempt != 1 {
+		t.Fatalf("a review that declared nothing sent the node to rework: attempt = %d", final.Attempt)
+	}
+	if !jsonContainsWaitingReason(final.WaitingReasons, "verdict_not_declared") {
+		t.Fatalf("the node does not say why it is stuck: %s", final.WaitingReasons)
+	}
+	// The reviewer's own words are the only account of what it did instead.
+	if !strings.Contains(string(final.WaitingReasons), "confidence") {
+		t.Fatalf("the reviewer's output was discarded: %s", final.WaitingReasons)
+	}
+	// And it is asked only twice.
+	if after := latestCriticTaskForTest(t, work); uuidToString(after.ID) != uuidToString(retryTask.ID) {
+		t.Fatal("a third review was queued; the ask is not bounded to one retry")
 	}
 }
 
