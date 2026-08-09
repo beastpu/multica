@@ -481,6 +481,36 @@ export const EMPTY_WORKFLOW_NODE_CONTEXT: WorkflowNodeContext = {
   upstream: [],
 };
 
+// The work-scene handoff a takeover returns: where the agent was working, so
+// the person continues instead of restarting. Every field is best-effort — a
+// task that died before pinning its workdir simply hands over less.
+export const IssueTakeoverCardSchema = z.object({
+  from_agent: z.object({
+    id: z.string().optional().default(""),
+    name: z.string().optional().default(""),
+  }).loose().nullable().optional().default(null),
+  task_id: z.string().optional().default(""),
+  runtime: z.object({
+    id: z.string().optional().default(""),
+    name: z.string().optional().default(""),
+  }).loose().nullable().optional().default(null),
+  work_dir: z.string().optional().default(""),
+  session_id: z.string().optional().default(""),
+}).loose();
+
+export type IssueTakeoverCard = z.infer<typeof IssueTakeoverCardSchema>;
+
+export const IssueTakeoverResponseSchema = z.object({
+  issue: IssueSchema.optional(),
+  takeover: IssueTakeoverCardSchema.nullable().optional().default(null),
+}).loose();
+
+export type IssueTakeoverResponse = z.infer<typeof IssueTakeoverResponseSchema>;
+
+export const EMPTY_ISSUE_TAKEOVER_RESPONSE: IssueTakeoverResponse = {
+  takeover: null,
+};
+
 export const WorkflowNodeDetailSchema = z.object({
   instance: WorkflowInstanceSchema,
   node: WorkflowNodeInstanceSchema,

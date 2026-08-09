@@ -463,6 +463,24 @@
     "stop_tooltip": "에이전트 중지",
     "cancel_failed": "작업을 취소하지 못했습니다"
   },
+  "takeover": {
+    "action": "인계받기",
+    "confirm_title": "이 issue를 인계받을까요?",
+    "confirm_body": "에이전트의 진행 중인 작업을 중지하고 issue를 나에게 재할당합니다. 남겨진 작업(브랜치, 디렉터리, 세션)은 나에게 인계됩니다.",
+    "confirm": "인계받기",
+    "cancel": "취소",
+    "failed": "인계에 실패했습니다",
+    "card_title": "작업 현장이 인계되었습니다",
+    "card_from": "{{agent}}에게서 인계받았습니다. 중단된 지점부터 이어가세요:",
+    "card_body": "에이전트가 중단한 지점부터 이어가세요:",
+    "card_empty": "인계할 작업 현장이 없습니다. 에이전트가 아직 시작하지 않았습니다.",
+    "runtime": "런타임",
+    "work_dir": "작업 디렉터리",
+    "session": "에이전트 세션",
+    "session_hint": "해당 머신에서 에이전트의 대화를 이어갈 수 있습니다. 예: claude --resume <세션 ID>",
+    "copy": "복사",
+    "copied": "복사됨"
+  },
   "execution_log": {
     "section": "실행 로그",
     "show_past": "이전 실행 보기 ({{count}})",

@@ -463,6 +463,24 @@
     "stop_tooltip": "エージェントを停止",
     "cancel_failed": "タスクをキャンセルできませんでした"
   },
+  "takeover": {
+    "action": "引き継ぐ",
+    "confirm_title": "この issue を引き継ぎますか？",
+    "confirm_body": "エージェントの実行中タスクを停止し、issue をあなたに再アサインします。残された作業（ブランチ、ディレクトリ、セッション）はあなたに引き継がれます。",
+    "confirm": "引き継ぐ",
+    "cancel": "キャンセル",
+    "failed": "引き継ぎに失敗しました",
+    "card_title": "作業内容を引き継ぎました",
+    "card_from": "{{agent}} から引き継ぎました。中断地点から続けてください：",
+    "card_body": "エージェントが中断した地点から続けてください：",
+    "card_empty": "引き継げる作業がありません——エージェントはまだ着手していませんでした。",
+    "runtime": "ランタイム",
+    "work_dir": "作業ディレクトリ",
+    "session": "エージェントセッション",
+    "session_hint": "そのマシン上でエージェントの会話を再開できます。例：claude --resume <セッション ID>",
+    "copy": "コピー",
+    "copied": "コピーしました"
+  },
   "execution_log": {
     "section": "実行ログ",
     "show_past": "過去の実行を表示 ({{count}})",

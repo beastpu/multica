@@ -124,6 +124,18 @@ UPDATE issue SET
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateIssueAssignee :one
+-- Focused reassign for flows that must not touch any other field (takeover).
+-- UpdateIssue overwrites every unconditional-narg column, so a caller that only
+-- wants to move the assignee would have to round-trip the whole row to avoid
+-- clearing dates and project. Workspace_id is the SQL-layer tenant guard.
+UPDATE issue SET
+    assignee_type = $2,
+    assignee_id = $3,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $4
+RETURNING *;
+
 -- name: UpdateIssueStatus :one
 -- Workspace_id in the WHERE clause is a SQL-layer tenant guard; see DeleteIssue.
 UPDATE issue SET

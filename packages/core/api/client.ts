@@ -383,6 +383,9 @@ import {
   WorkflowNodeDetailSchema,
   WorkflowNodeContextSchema,
   EMPTY_WORKFLOW_NODE_CONTEXT,
+  IssueTakeoverResponseSchema,
+  EMPTY_ISSUE_TAKEOVER_RESPONSE,
+  type IssueTakeoverResponse,
   WorkflowArtifactListSchema,
   EMPTY_WORKFLOW_ARTIFACT_LIST,
   WorkflowSubmissionMutationResponseSchema,
@@ -3532,6 +3535,27 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/workflow`);
     return parseWithFallback(raw, WorkflowInstanceDetailSchema, EMPTY_WORKFLOW_INSTANCE_DETAIL, {
       endpoint: "GET /api/issues/:id/workflow",
+    });
+  }
+
+  // Takeover: stop the agent's in-flight tasks and hand the issue to the
+  // caller in one atomic action. Idempotent — a double-click returns the same
+  // card without a second timeline note.
+  async takeoverIssue(issueId: string): Promise<IssueTakeoverResponse> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/takeover`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, IssueTakeoverResponseSchema, EMPTY_ISSUE_TAKEOVER_RESPONSE, {
+      endpoint: "POST /api/issues/:id/takeover",
+    });
+  }
+
+  // 404 means "no agent ever worked this issue" — callers hide the card rather
+  // than report a failure.
+  async getIssueTakeover(issueId: string): Promise<IssueTakeoverResponse> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/takeover`);
+    return parseWithFallback(raw, IssueTakeoverResponseSchema, EMPTY_ISSUE_TAKEOVER_RESPONSE, {
+      endpoint: "GET /api/issues/:id/takeover",
     });
   }
 
