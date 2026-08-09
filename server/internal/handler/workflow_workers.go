@@ -261,6 +261,29 @@ func (w *WorkflowReconciler) ProcessNext(ctx context.Context) (bool, error) {
 		ctx, instance.WorkspaceID, instance.ID, "system", pgtype.UUID{},
 		"worker-reconcile:"+uuidToString(instance.ID),
 	)
+	if errors.Is(reconcileErr, errWorkflowTransitionLimit) {
+		// Already recorded as an event and raised for intervention, so this is
+		// handled rather than failed. It still has to back off: the claim wakes
+		// on node updated_at, and the transitions the run just wrote make it due
+		// again immediately, which would spend the whole limit every cycle.
+		slog.Warn(
+			"workflow reconcile hit the transition safety limit",
+			"workspace_id", workspaceID,
+			"workflow_template_id", uuidToString(instance.WorkflowID),
+			"workflow_version_id", uuidToString(instance.WorkflowVersionID),
+			"workflow_instance_id", uuidToString(instance.ID),
+			"host_issue_id", uuidToString(instance.HostIssueID),
+			"failure_type", "transition_limit_exceeded",
+		)
+		_, deferErr := w.h.Queries.DeferWorkflowInstanceReconcile(
+			ctx,
+			db.DeferWorkflowInstanceReconcileParams{
+				ID: instance.ID, WorkspaceID: instance.WorkspaceID,
+				DeferSeconds: workflowReconcilerDeferInterval.Seconds(),
+			},
+		)
+		return deferErr == nil, deferErr
+	}
 	if reconcileErr != nil && !errors.Is(reconcileErr, errWorkflowNoop) {
 		slog.Warn(
 			"workflow reconcile failed",

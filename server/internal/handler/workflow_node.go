@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -1151,6 +1153,11 @@ func (h *Handler) ReconcileWorkflowInstance(w http.ResponseWriter, r *http.Reque
 
 var errWorkflowNoop = errors.New("workflow reconciliation made no transition")
 
+// errWorkflowTransitionLimit reports that a run kept transitioning until the
+// safety limit and never settled. It is named so the reconciler can back the
+// instance off rather than re-claim it and spend the same work again.
+var errWorkflowTransitionLimit = errors.New("workflow exceeded transition safety limit")
+
 type workflowCriticDispatch struct {
 	node       db.WorkflowNodeInstance
 	definition workflowdomain.NodeDefinition
@@ -1188,6 +1195,10 @@ func (h *Handler) reconcileWorkflowInstance(
 		return db.WorkflowInstance{}, err
 	}
 	maxTransitions := 128
+	// Which activities completed, and how many times each. A run that reaches
+	// the limit is cycling through some subset of its graph, and the counts name
+	// that subset — the one thing a reader needs to start looking.
+	nodeCompletions := map[string]int{}
 	for step := 0; step < maxTransitions; step++ {
 		tx, err := h.TxStarter.Begin(ctx)
 		if err != nil {
@@ -1328,6 +1339,7 @@ func (h *Handler) reconcileWorkflowInstance(
 					return locked, err
 				}
 				propagated.Nodes[active.NodeKey] = completedNode
+				nodeCompletions[completedNode.NodeKey]++
 				completionSubmission = submission
 				completionVerdict = verdict
 				continue
@@ -1508,7 +1520,66 @@ func (h *Handler) reconcileWorkflowInstance(
 			return updated, errWorkflowNoop
 		}
 	}
-	return current, errors.New("workflow exceeded transition safety limit")
+	h.recordWorkflowTransitionLimit(ctx, current, maxTransitions, nodeCompletions)
+	return current, errWorkflowTransitionLimit
+}
+
+// recordWorkflowTransitionLimit makes an exhausted reconcile findable.
+//
+// Every other way a run stops making progress writes a waiting reason and
+// raises an intervention. This one returned a bare error that reached a log
+// line and nothing else: the run stayed 'running' with no sign anything was
+// wrong, and because the transitions it had just written made it due again,
+// the reconciler re-claimed it every cycle to spend the same work.
+//
+// The idempotency key digests the completion counts, following the sweeper —
+// the same cycle raises one finding, a different one is a new finding.
+func (h *Handler) recordWorkflowTransitionLimit(
+	ctx context.Context,
+	instance db.WorkflowInstance,
+	transitions int,
+	nodeCompletions map[string]int,
+) {
+	cycling := make([]string, 0, len(nodeCompletions))
+	for nodeKey := range nodeCompletions {
+		cycling = append(cycling, nodeKey)
+	}
+	sort.Strings(cycling)
+	var signature strings.Builder
+	for _, nodeKey := range cycling {
+		fmt.Fprintf(&signature, "%s=%d;", nodeKey, nodeCompletions[nodeKey])
+	}
+	digest := sha256.Sum256([]byte(signature.String()))
+	payload, _ := json.Marshal(map[string]any{
+		"transitions":      transitions,
+		"node_completions": nodeCompletions,
+	})
+	event, err := h.Queries.CreateWorkflowEvent(ctx, db.CreateWorkflowEventParams{
+		WorkspaceID:        instance.WorkspaceID,
+		WorkflowInstanceID: instance.ID,
+		EventType:          "workflow.transition_limit_exceeded",
+		ActorType:          "system",
+		IdempotencyKey:     fmt.Sprintf("transition-limit:%x", digest[:8]),
+		Payload:            payload,
+	})
+	if err != nil || !event.ID.Valid {
+		return
+	}
+	// The run is the subject, not any one activity. The limit says the graph as
+	// a whole stopped settling, and the activity that happened to complete last
+	// is a symptom — naming it would point the reader at the wrong thing.
+	h.notifyWorkflowActionRequired(
+		ctx, instance, nil, "transition_limit",
+		"Workflow run stopped settling",
+		fmt.Sprintf(
+			"The run reached its %d-transition safety limit without settling and needs a person. Activities that kept completing: %s",
+			transitions, strings.Join(cycling, ", "),
+		),
+		map[string]any{
+			"transitions":      transitions,
+			"node_completions": nodeCompletions,
+		},
+	)
 }
 
 func currentWorkflowNode(nodes []db.WorkflowNodeInstance) (db.WorkflowNodeInstance, bool) {
