@@ -1848,6 +1848,74 @@ func (q *Queries) DetachWorkflowNodeTasksByIssue(ctx context.Context, arg Detach
 	return err
 }
 
+const findEquivalentWorkflowSubmission = `-- name: FindEquivalentWorkflowSubmission :one
+SELECT id, workspace_id, workflow_instance_id, workflow_node_instance_id, revision, status, payload, summary, evidence, submitted_by_type, submitted_by_id, source_issue_id, source_agent_run_id, schema_version, created_at FROM workflow_node_submission
+WHERE workflow_node_instance_id = $1
+  AND workspace_id = $2
+  AND status = $3
+  AND summary = $4
+  AND payload = $5
+  AND submitted_by_type = $6
+  AND submitted_by_id IS NOT DISTINCT FROM $7
+  AND source_issue_id IS NOT DISTINCT FROM $8
+ORDER BY revision DESC
+LIMIT 1
+`
+
+type FindEquivalentWorkflowSubmissionParams struct {
+	WorkflowNodeInstanceID pgtype.UUID `json:"workflow_node_instance_id"`
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
+	Status                 string      `json:"status"`
+	Summary                string      `json:"summary"`
+	Payload                []byte      `json:"payload"`
+	SubmittedByType        string      `json:"submitted_by_type"`
+	SubmittedByID          pgtype.UUID `json:"submitted_by_id"`
+	SourceIssueID          pgtype.UUID `json:"source_issue_id"`
+}
+
+// The submission this node already carries that would be written again.
+//
+// The caller's idempotency key is derived from what it sent; the row is written
+// from what the server made of it, so every coercion the server performs falls
+// through that check — `true`, `"true"` and `"1"` are three keys and one stored
+// value. Comparing the normalised form instead asks the question a reader asks
+// looking at the two cards: is this the same handoff?
+//
+// payload is compared as jsonb, so key order and whitespace do not matter, and
+// source_issue_id participates because the per-task policies legitimately carry
+// one submission per task.
+func (q *Queries) FindEquivalentWorkflowSubmission(ctx context.Context, arg FindEquivalentWorkflowSubmissionParams) (WorkflowNodeSubmission, error) {
+	row := q.db.QueryRow(ctx, findEquivalentWorkflowSubmission,
+		arg.WorkflowNodeInstanceID,
+		arg.WorkspaceID,
+		arg.Status,
+		arg.Summary,
+		arg.Payload,
+		arg.SubmittedByType,
+		arg.SubmittedByID,
+		arg.SourceIssueID,
+	)
+	var i WorkflowNodeSubmission
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowInstanceID,
+		&i.WorkflowNodeInstanceID,
+		&i.Revision,
+		&i.Status,
+		&i.Payload,
+		&i.Summary,
+		&i.Evidence,
+		&i.SubmittedByType,
+		&i.SubmittedByID,
+		&i.SourceIssueID,
+		&i.SourceAgentRunID,
+		&i.SchemaVersion,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getActiveWorkflowInstanceByHost = `-- name: GetActiveWorkflowInstanceByHost :one
 SELECT id, workspace_id, workflow_id, workflow_version_id, host_issue_id, status, host_status_mode, input, result, revision, started_by_type, started_by_id, started_at, paused_at, completed_at, cancelled_at, last_reconciled_at, created_at, updated_at, reconcile_after, title FROM workflow_instance
 WHERE host_issue_id = $1

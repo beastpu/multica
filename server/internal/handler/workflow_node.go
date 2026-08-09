@@ -483,6 +483,33 @@ func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Re
 		)
 		return
 	}
+	// The idempotency key above catches a caller repeating itself verbatim. It
+	// cannot catch a caller repeating itself in different words, because the key
+	// is derived from what was sent and the row is written from what the server
+	// made of it: `true`, `"true"` and `"1"` are three keys and one stored value.
+	// A node then carried the same conclusion twice, both marked valid, with
+	// nothing on screen to say which one a reviewer was judging.
+	//
+	// Asked against the normalised form, this is the question a reader asks
+	// looking at the two cards. A conclusion that actually changed still lands:
+	// only a row that would be written identically is folded back.
+	trimmedSummary := strings.TrimSpace(req.Summary)
+	if existing, findErr := qtx.FindEquivalentWorkflowSubmission(
+		r.Context(),
+		db.FindEquivalentWorkflowSubmissionParams{
+			WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
+			Status: status, Summary: trimmedSummary, Payload: payload,
+			SubmittedByType: actorType, SubmittedByID: actorID,
+			SourceIssueID: sourceIssueID,
+		},
+	); findErr == nil && existing.ID.Valid {
+		tx.Rollback(r.Context())
+		h.Metrics.RecordWorkflowOperation("duplicate", "prevented")
+		writeJSON(w, http.StatusOK, map[string]any{
+			"submission": workflowSubmissionToResponse(existing), "validation_errors": reasons,
+		})
+		return
+	}
 	revision, err := qtx.GetNextWorkflowSubmissionRevision(r.Context(), db.GetNextWorkflowSubmissionRevisionParams{
 		WorkflowNodeInstanceID: node.ID, WorkspaceID: node.WorkspaceID,
 	})
@@ -492,7 +519,7 @@ func (h *Handler) CreateWorkflowNodeSubmission(w http.ResponseWriter, r *http.Re
 	}
 	submission, err := qtx.CreateWorkflowSubmission(r.Context(), db.CreateWorkflowSubmissionParams{
 		WorkspaceID: node.WorkspaceID, WorkflowInstanceID: instance.ID, WorkflowNodeInstanceID: node.ID,
-		Revision: revision, Status: status, Payload: payload, Summary: strings.TrimSpace(req.Summary),
+		Revision: revision, Status: status, Payload: payload, Summary: trimmedSummary,
 		Evidence: evidence, SubmittedByType: actorType, SubmittedByID: actorID,
 		SourceIssueID: sourceIssueID, SourceAgentRunID: sourceAgentRunID, SchemaVersion: 1,
 	})

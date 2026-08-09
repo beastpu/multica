@@ -1585,6 +1585,30 @@ SELECT * FROM workflow_node_submission
 WHERE workflow_node_instance_id = @workflow_node_instance_id AND workspace_id = @workspace_id
 ORDER BY revision DESC;
 
+-- name: FindEquivalentWorkflowSubmission :one
+-- The submission this node already carries that would be written again.
+--
+-- The caller's idempotency key is derived from what it sent; the row is written
+-- from what the server made of it, so every coercion the server performs falls
+-- through that check — `true`, `"true"` and `"1"` are three keys and one stored
+-- value. Comparing the normalised form instead asks the question a reader asks
+-- looking at the two cards: is this the same handoff?
+--
+-- payload is compared as jsonb, so key order and whitespace do not matter, and
+-- source_issue_id participates because the per-task policies legitimately carry
+-- one submission per task.
+SELECT * FROM workflow_node_submission
+WHERE workflow_node_instance_id = @workflow_node_instance_id
+  AND workspace_id = @workspace_id
+  AND status = @status
+  AND summary = @summary
+  AND payload = @payload
+  AND submitted_by_type = @submitted_by_type
+  AND submitted_by_id IS NOT DISTINCT FROM sqlc.narg(submitted_by_id)
+  AND source_issue_id IS NOT DISTINCT FROM sqlc.narg(source_issue_id)
+ORDER BY revision DESC
+LIMIT 1;
+
 -- name: GetWorkflowSubmissionInWorkspace :one
 SELECT * FROM workflow_node_submission
 WHERE id = @id AND workspace_id = @workspace_id;
