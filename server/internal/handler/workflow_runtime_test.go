@@ -3970,18 +3970,21 @@ func TestWorkflowMissingRoleCreatesInboxAction(t *testing.T) {
 	cleanupWorkflowRuntimeTest(t)
 	ctx := context.Background()
 
+	// The role is deliberately not "owner": every start path now defaults an
+	// unassigned owner role to the starter, so only a differently named
+	// required role can still leave a run in needs_setup.
 	definition := workflowdomain.Definition{
 		SchemaVersion: workflowdomain.DefinitionSchemaVersion,
 		Name:          "Needs setup",
 		Roles: []workflowdomain.RoleDefinition{{
-			Key: "owner", Name: "Owner", Required: true,
+			Key: "approver", Name: "Approver", Required: true,
 			AllowedActorTypes: []string{"member"},
 		}},
 		Nodes: []workflowdomain.NodeDefinition{
 			{Key: "start", Kind: "start", Name: "Start"},
 			{
 				Key: "work", Kind: "activity", Name: "Work",
-				OwnerRole: "owner",
+				OwnerRole: "approver",
 			},
 			{Key: "end", Kind: "end", Name: "End"},
 		},
@@ -4021,13 +4024,13 @@ func TestWorkflowMissingRoleCreatesInboxAction(t *testing.T) {
 	`, testWorkspaceID, hostID, testUserID).Scan(&count, &details); err != nil {
 		t.Fatalf("load needs-setup inbox action: %v", err)
 	}
-	if count != 1 || !strings.Contains(string(details), `"owner"`) {
+	if count != 1 || !strings.Contains(string(details), `"approver"`) {
 		t.Fatalf("needs-setup inbox count=%d details=%s", count, details)
 	}
 
 	roleBody := map[string]any{
 		"role_assignments": []map[string]any{{
-			"role_key": "owner", "actor_type": "member",
+			"role_key": "approver", "actor_type": "member",
 			"actor_id": testUserID,
 		}},
 		"idempotency_key": "needs-setup-role-replay",
