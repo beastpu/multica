@@ -128,7 +128,7 @@ describe("WorkflowRunsPage", () => {
     expect(mocks.infiniteQuery).toHaveBeenLastCalledWith(
       expect.objectContaining({
         queryKey: expect.arrayContaining([
-          expect.objectContaining({ status: "completed,cancelled,failed" }),
+          expect.objectContaining({ status: "terminal" }),
         ]),
       }),
     );

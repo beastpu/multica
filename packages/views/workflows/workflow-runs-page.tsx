@@ -25,10 +25,9 @@ import { WorkflowStatusBadge } from "./workflow-status";
 // A run is finished or it is not, and that is the only cut worth putting in
 // front of someone reading history. The five-select filter bar this replaced
 // asked for a project, an owner and a node key before showing a single row.
+// "active"/"terminal" are the server's aggregate status values; failed counts
+// as active because a failed run can still be reconciled or resumed.
 type RunScope = "all" | "open" | "closed";
-
-const OPEN_STATUSES = ["needs_setup", "running", "paused"];
-const CLOSED_STATUSES = ["completed", "cancelled", "failed"];
 
 // History is read by comparing rows and matching them against something that
 // happened elsewhere — a deploy, an incident, another run. "18 hours ago" does
@@ -52,7 +51,7 @@ export function WorkflowRunsPage({ workflowId }: { workflowId?: string }) {
   const filters = useMemo<WorkflowInstanceFilters>(() => ({
     status: scope === "all"
       ? undefined
-      : (scope === "open" ? OPEN_STATUSES : CLOSED_STATUSES).join(","),
+      : (scope === "open" ? "active" : "terminal"),
     workflow_id: workflow || undefined,
     limit: 50,
   }), [scope, workflow]);
