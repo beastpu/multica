@@ -429,6 +429,7 @@ type ChannelOutboundCardMessage struct {
 	LeaseExpiresAt       pgtype.Timestamptz `json:"lease_expires_at"`
 	AttemptCount         int32              `json:"attempt_count"`
 	LastError            string             `json:"last_error"`
+	CardSuppressed       bool               `json:"card_suppressed"`
 }
 
 type ChannelUserBinding struct {

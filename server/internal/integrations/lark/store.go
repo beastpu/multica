@@ -143,6 +143,7 @@ type OutboundCardMessage struct {
 	LeaseExpiresAt       pgtype.Timestamptz
 	AttemptCount         int32
 	LastError            string
+	CardSuppressed       bool
 }
 
 // feishuInstallConfig is the JSON shape of channel_installation.config for the
@@ -310,6 +311,7 @@ func outboundCardFromRow(row db.ChannelOutboundCardMessage) OutboundCardMessage 
 		LeaseExpiresAt:       row.LeaseExpiresAt,
 		AttemptCount:         row.AttemptCount,
 		LastError:            row.LastError,
+		CardSuppressed:       row.CardSuppressed,
 	}
 }
 

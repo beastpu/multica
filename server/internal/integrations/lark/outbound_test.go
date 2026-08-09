@@ -97,8 +97,9 @@ func (f *fakePatcherQueries) OpenLarkOutboundCard(ctx context.Context, arg OpenO
 		return OutboundCardMessage{}, pgx.ErrNoRows
 	}
 	f.card = OutboundCardMessage{
-		ID:            uuidFromStringNoTest("dddddddd-dddd-dddd-dddd-dddddddddddd"),
-		ChatSessionID: arg.ChatSessionID, TaskID: arg.TaskID, ChannelChatID: arg.ChannelChatID,
+		CardSuppressed: arg.CardSuppressed,
+		ID:             uuidFromStringNoTest("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+		ChatSessionID:  arg.ChatSessionID, TaskID: arg.TaskID, ChannelChatID: arg.ChannelChatID,
 		Status: string(CardStatusPending), Transport: "cardkit",
 		LastPatchedAt: pgtype.Timestamptz{Time: f.clock(), Valid: true},
 		CreatedAt:     pgtype.Timestamptz{Time: f.clock(), Valid: true},
@@ -112,7 +113,7 @@ func (f *fakePatcherQueries) OpenLarkOutboundCard(ctx context.Context, arg OpenO
 func (f *fakePatcherQueries) ClaimLarkOutboundCardPaint(ctx context.Context, arg ClaimOutboundCardPaintParams) (OutboundCardMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if !f.hasCard || f.card.LeaseToken.Valid {
+	if !f.hasCard || f.card.LeaseToken.Valid || f.card.CardSuppressed {
 		return OutboundCardMessage{}, pgx.ErrNoRows
 	}
 	terminal := f.card.Status == string(CardStatusFinal) || f.card.Status == string(CardStatusError)
@@ -848,6 +849,63 @@ func TestPatcherTreatsPreCardKitRowAsLegacy(t *testing.T) {
 	}
 	if !strings.Contains(api.patched[0].CardJSON, "the answer") {
 		t.Errorf("terminal card missing the answer: %s", api.patched[0].CardJSON)
+	}
+}
+
+// TestPatcherSuppressesCardInGroupMainFeed: a group's main feed is shared, and
+// a card repainting every second and a half serves one asker at everyone
+// else's expense. There the Typing reaction carries "working" and the answer
+// arrives as one message.
+func TestPatcherSuppressesCardInGroupMainFeed(t *testing.T) {
+	p, q, api, advance := newStreamPatcher(t)
+	taskID := uuidFromString(t, "ee100012-ee10-ee10-ee10-eeeeeeeeeeee")
+	q.binding.ChatType = string(ChatTypeGroup)
+	q.binding.LastThreadID = pgtype.Text{}
+	startChannelTask(q, taskID)
+
+	p.handleEvent(runningEvent(q, taskID))
+	q.visibleText = "写到一半"
+	advance(p.cfg.StreamThrottle + time.Second)
+	p.RunOnce(context.Background())
+	p.handleEvent(chatDoneEvent(q, taskID, "the answer"))
+	p.RunOnce(context.Background())
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.cardKitCreated) != 0 || len(api.sent) != 0 {
+		t.Fatalf("no card belongs in a group main feed; created=%d sent=%d",
+			len(api.cardKitCreated), len(api.sent))
+	}
+	if len(api.textSent) != 1 || api.textSent[0].Text != "the answer" {
+		t.Fatalf("the answer must arrive as one message; textSent=%+v", api.textSent)
+	}
+	if len(q.settled) != 1 {
+		t.Errorf("the ledger must still elect one answering event; settled=%v", q.settled)
+	}
+}
+
+// TestPatcherStreamsInsideGroupTopic: a topic is already isolated from the
+// feed, so it reads like a private chat and keeps the streaming card.
+func TestPatcherStreamsInsideGroupTopic(t *testing.T) {
+	p, q, api, advance := newStreamPatcher(t)
+	taskID := uuidFromString(t, "ee100013-ee10-ee10-ee10-eeeeeeeeeeee")
+	q.binding.ChatType = string(ChatTypeGroup)
+	q.binding.LastThreadID = pgtype.Text{String: "omt_topic1", Valid: true}
+	q.binding.LastMessageID = pgtype.Text{String: "om_trigger", Valid: true}
+	startChannelTask(q, taskID)
+
+	p.handleEvent(runningEvent(q, taskID))
+	q.visibleText = "写到一半"
+	advance(p.cfg.StreamThrottle + time.Second)
+	p.RunOnce(context.Background())
+
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.cardKitCreated) != 1 {
+		t.Fatalf("a topic keeps the streaming card; created=%d", len(api.cardKitCreated))
+	}
+	if !api.cardKitSent[0].ReplyTarget.InThread {
+		t.Error("the card must land inside the topic, not the main feed")
 	}
 }
 

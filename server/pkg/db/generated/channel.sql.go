@@ -298,6 +298,7 @@ WHERE card.id = (
     FROM channel_outbound_card_message AS due
     JOIN agent_task_queue AS task ON task.id = due.task_id
     WHERE due.channel_type = $4
+      AND NOT due.card_suppressed
       AND due.status IN ('pending', 'streaming', 'final', 'error')
       AND (due.lease_expires_at IS NULL OR due.lease_expires_at <= now())
       AND (
@@ -335,7 +336,7 @@ WHERE card.id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error, card_suppressed
 `
 
 type ClaimChannelOutboundCardPaintParams struct {
@@ -388,6 +389,7 @@ func (q *Queries) ClaimChannelOutboundCardPaint(ctx context.Context, arg ClaimCh
 		&i.LeaseExpiresAt,
 		&i.AttemptCount,
 		&i.LastError,
+		&i.CardSuppressed,
 	)
 	return i, err
 }
@@ -406,7 +408,7 @@ SET visible_text = $1,
     last_error = ''
 WHERE id = $3
   AND lease_token = $4
-RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error, card_suppressed
 `
 
 type CompleteChannelOutboundCardPaintParams struct {
@@ -445,6 +447,7 @@ func (q *Queries) CompleteChannelOutboundCardPaint(ctx context.Context, arg Comp
 		&i.LeaseExpiresAt,
 		&i.AttemptCount,
 		&i.LastError,
+		&i.CardSuppressed,
 	)
 	return i, err
 }
@@ -846,7 +849,7 @@ WHERE id = $1
   AND lease_token = $2
   AND transport = 'cardkit'
   AND channel_card_message_id = ''
-RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error, card_suppressed
 `
 
 type DowngradeChannelOutboundCardTransportParams struct {
@@ -880,6 +883,7 @@ func (q *Queries) DowngradeChannelOutboundCardTransport(ctx context.Context, arg
 		&i.LeaseExpiresAt,
 		&i.AttemptCount,
 		&i.LastError,
+		&i.CardSuppressed,
 	)
 	return i, err
 }
@@ -893,7 +897,7 @@ SET last_patched_at = now(),
     last_error = $1
 WHERE id = $2
   AND lease_token = $3
-RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error, card_suppressed
 `
 
 type FailChannelOutboundCardPaintParams struct {
@@ -927,6 +931,7 @@ func (q *Queries) FailChannelOutboundCardPaint(ctx context.Context, arg FailChan
 		&i.LeaseExpiresAt,
 		&i.AttemptCount,
 		&i.LastError,
+		&i.CardSuppressed,
 	)
 	return i, err
 }
@@ -1235,7 +1240,7 @@ func (q *Queries) GetChannelLarkInboxIssueCard(ctx context.Context, arg GetChann
 }
 
 const getChannelOutboundCardByTask = `-- name: GetChannelOutboundCardByTask :one
-SELECT id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error FROM channel_outbound_card_message
+SELECT id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error, card_suppressed FROM channel_outbound_card_message
 WHERE task_id = $1
   AND channel_type = $2
 `
@@ -1268,6 +1273,7 @@ func (q *Queries) GetChannelOutboundCardByTask(ctx context.Context, arg GetChann
 		&i.LeaseExpiresAt,
 		&i.AttemptCount,
 		&i.LastError,
+		&i.CardSuppressed,
 	)
 	return i, err
 }
@@ -1674,19 +1680,21 @@ const openChannelOutboundCard = `-- name: OpenChannelOutboundCard :one
 
 INSERT INTO channel_outbound_card_message (
     chat_session_id, task_id, channel_type, channel_chat_id,
-    channel_card_message_id, status, last_patched_at
+    channel_card_message_id, status, last_patched_at, card_suppressed
 ) VALUES (
-    $1, $4, $2, $3, '', 'pending', now()
+    $1, $4, $2, $3, '', 'pending', now(),
+    $5
 )
 ON CONFLICT (task_id) WHERE task_id IS NOT NULL DO NOTHING
-RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error, card_suppressed
 `
 
 type OpenChannelOutboundCardParams struct {
-	ChatSessionID pgtype.UUID `json:"chat_session_id"`
-	ChannelType   string      `json:"channel_type"`
-	ChannelChatID string      `json:"channel_chat_id"`
-	TaskID        pgtype.UUID `json:"task_id"`
+	ChatSessionID  pgtype.UUID `json:"chat_session_id"`
+	ChannelType    string      `json:"channel_type"`
+	ChannelChatID  string      `json:"channel_chat_id"`
+	TaskID         pgtype.UUID `json:"task_id"`
+	CardSuppressed bool        `json:"card_suppressed"`
 }
 
 // =====================
@@ -1701,6 +1709,7 @@ func (q *Queries) OpenChannelOutboundCard(ctx context.Context, arg OpenChannelOu
 		arg.ChannelType,
 		arg.ChannelChatID,
 		arg.TaskID,
+		arg.CardSuppressed,
 	)
 	var i ChannelOutboundCardMessage
 	err := row.Scan(
@@ -1723,6 +1732,7 @@ func (q *Queries) OpenChannelOutboundCard(ctx context.Context, arg OpenChannelOu
 		&i.LeaseExpiresAt,
 		&i.AttemptCount,
 		&i.LastError,
+		&i.CardSuppressed,
 	)
 	return i, err
 }
@@ -1946,7 +1956,7 @@ SET channel_card_id = coalesce(nullif($1, ''), channel_card_id),
     status = CASE WHEN status = 'pending' THEN 'streaming' ELSE status END
 WHERE id = $3
   AND lease_token = $4
-RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error, card_suppressed
 `
 
 type RecordChannelOutboundCardEntityParams struct {
@@ -1986,6 +1996,7 @@ func (q *Queries) RecordChannelOutboundCardEntity(ctx context.Context, arg Recor
 		&i.LeaseExpiresAt,
 		&i.AttemptCount,
 		&i.LastError,
+		&i.CardSuppressed,
 	)
 	return i, err
 }
@@ -2147,7 +2158,7 @@ SET status = $1,
 WHERE task_id = $3
   AND channel_type = $4
   AND status IN ('pending', 'streaming')
-RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error
+RETURNING id, chat_session_id, task_id, channel_type, channel_chat_id, channel_card_message_id, status, last_patched_at, created_at, channel_card_id, transport, operation_sequence, visible_text, streaming_closed_at, terminal_content, lease_token, lease_expires_at, attempt_count, last_error, card_suppressed
 `
 
 type SettleChannelOutboundCardParams struct {
@@ -2188,6 +2199,7 @@ func (q *Queries) SettleChannelOutboundCard(ctx context.Context, arg SettleChann
 		&i.LeaseExpiresAt,
 		&i.AttemptCount,
 		&i.LastError,
+		&i.CardSuppressed,
 	)
 	return i, err
 }

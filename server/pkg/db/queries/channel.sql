@@ -654,9 +654,10 @@ WHERE installation_id = $1;
 -- DO NOTHING makes a duplicate EventTaskRunning a no-op.
 INSERT INTO channel_outbound_card_message (
     chat_session_id, task_id, channel_type, channel_chat_id,
-    channel_card_message_id, status, last_patched_at
+    channel_card_message_id, status, last_patched_at, card_suppressed
 ) VALUES (
-    $1, sqlc.narg('task_id'), $2, $3, '', 'pending', now()
+    $1, sqlc.narg('task_id'), $2, $3, '', 'pending', now(),
+    sqlc.arg('card_suppressed')
 )
 ON CONFLICT (task_id) WHERE task_id IS NOT NULL DO NOTHING
 RETURNING *;
@@ -689,6 +690,7 @@ WHERE card.id = (
     FROM channel_outbound_card_message AS due
     JOIN agent_task_queue AS task ON task.id = due.task_id
     WHERE due.channel_type = sqlc.arg('channel_type')
+      AND NOT due.card_suppressed
       AND due.status IN ('pending', 'streaming', 'final', 'error')
       AND (due.lease_expires_at IS NULL OR due.lease_expires_at <= now())
       AND (

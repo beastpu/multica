@@ -168,6 +168,9 @@ type OpenOutboundCardParams struct {
 	ChatSessionID pgtype.UUID
 	ChannelChatID string
 	TaskID        pgtype.UUID
+	// CardSuppressed opens the ledger without a card, for chats where a
+	// repainting card would cost more attention than it gives.
+	CardSuppressed bool
 }
 
 // ClaimOutboundCardPaintParams leases a due card and reserves the CardKit

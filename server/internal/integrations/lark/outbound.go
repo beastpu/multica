@@ -459,9 +459,10 @@ func (p *Patcher) openCard(ctx context.Context, binding ChatSessionBinding, task
 		return nil
 	}
 	_, err := p.queries.OpenLarkOutboundCard(ctx, OpenOutboundCardParams{
-		ChatSessionID: binding.ChatSessionID,
-		ChannelChatID: string(outboundChatID(binding)),
-		TaskID:        task.ID,
+		ChatSessionID:  binding.ChatSessionID,
+		ChannelChatID:  string(outboundChatID(binding)),
+		TaskID:         task.ID,
+		CardSuppressed: !cardBelongsIn(binding),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Duplicate EventTaskRunning: a bus replay, or a second replica.
@@ -471,6 +472,21 @@ func (p *Patcher) openCard(ctx context.Context, binding ChatSessionBinding, task
 		return fmt.Errorf("open outbound card: %w", err)
 	}
 	return nil
+}
+
+// cardBelongsIn reports whether a live card is worth its noise in this chat.
+//
+// A one-to-one chat is a private waiting room: the asker is the only reader,
+// and watching the answer form is the point. A group's main feed is shared —
+// a card repainting every second and a half spends twenty people's attention
+// to serve one, so there the inbound Typing reaction carries "working" and the
+// answer arrives as a single message. A group topic is already isolated from
+// the feed, so it reads like a private chat and keeps the card.
+func cardBelongsIn(binding ChatSessionBinding) bool {
+	if ChatType(binding.ChatType) != ChatTypeGroup {
+		return true
+	}
+	return binding.LastThreadID.Valid && binding.LastThreadID.String != ""
 }
 
 // settleReply parks a task's terminal answer and, when no card is on screen,
