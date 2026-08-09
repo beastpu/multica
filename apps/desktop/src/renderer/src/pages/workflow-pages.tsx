@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
-import { Navigate, useParams, useSearchParams } from "react-router-dom";
+import { useEffect, type ReactNode } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useWorkspaceFeatureState } from "@multica/core/config";
 import { WORKFLOWS_ACTIVITY_ENGINE_FLAG } from "@multica/core/feature-flags";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { useNavigation } from "@multica/views/navigation";
 import {
   WorkflowsPage,
   WorkflowPage,
@@ -19,10 +20,14 @@ function WorkflowRouteGate({ children }: { children: ReactNode }) {
     WORKFLOWS_ACTIVITY_ENGINE_FLAG,
   );
   const paths = useWorkspacePaths();
-  if (featureState === "loading") return null;
-  return featureState === "enabled"
-    ? children
-    : <Navigate to={paths.issues()} replace />;
+  const navigation = useNavigation();
+  // The redirect goes through the navigation adapter, not react-router's
+  // <Navigate>: direct navigation breaks the Coordinator protocol (MUL-4741).
+  const blocked = featureState !== "loading" && featureState !== "enabled";
+  useEffect(() => {
+    if (blocked) navigation.replace(paths.issues());
+  }, [blocked, navigation, paths]);
+  return featureState === "enabled" ? children : null;
 }
 
 export function WorkflowsRoute() {
