@@ -356,7 +356,11 @@ function TemplatesPanel({
   const { data, isLoading, isError } = useQuery(
     workflowListOptions(wsId),
   );
-  const [statusFilter, setStatusFilter] = useState<TemplateStatusFilter>("all");
+  // Archived workflows are audit history, not working material — they stay
+  // one click away behind the "archived" chip instead of padding the default
+  // view of every admin who opens the page.
+  const [statusFilter, setStatusFilter] =
+    useState<TemplateStatusFilter>("published");
   const allTemplates = data?.workflows ?? [];
   const visibleTemplates = allTemplates.filter((template) =>
     matchesTemplateStatus(template, statusFilter)
