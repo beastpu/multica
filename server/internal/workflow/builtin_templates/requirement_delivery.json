@@ -51,9 +51,7 @@
         }
       },
       "issue_policy": "none",
-      "completion": {
-        "submission_required": true
-      },
+      "completion": {},
       "timeout_minutes": 1440,
       "outputs": [
         {
@@ -110,19 +108,10 @@
         "role": "product_owner",
         "required": true
       },
-      "issue_policy": "fixed",
-      "issue_templates": [
-        {
-          "key": "design_solution",
-          "title": "方案设计：{{host.title}}",
-          "required": true,
-          "initial_status": "todo"
-        }
-      ],
+      "issue_policy": "auto",
       "completion": {
         "mode": "automatic",
-        "required_issue_outcome": "done",
-        "submission_required": true
+        "required_issue_outcome": "done"
       },
       "artifacts": [
         {
@@ -161,19 +150,10 @@
         "role": "approver",
         "required": true
       },
-      "issue_policy": "fixed",
-      "issue_templates": [
-        {
-          "key": "implement_solution",
-          "title": "实现：{{host.title}}",
-          "required": true,
-          "initial_status": "todo"
-        }
-      ],
+      "issue_policy": "auto",
       "completion": {
         "mode": "automatic",
-        "required_issue_outcome": "done",
-        "submission_required": true
+        "required_issue_outcome": "done"
       },
       "timeout_minutes": 1440,
       "artifacts": [

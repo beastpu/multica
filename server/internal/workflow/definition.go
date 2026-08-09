@@ -148,11 +148,12 @@ func ReviewerAcceptsActor(node NodeDefinition) bool {
 	}
 }
 
-// RequiresReview reports whether delivery must wait for a verdict. A reviewer
-// that is present but not required may still record one; it just does not hold
-// the node.
+// RequiresReview reports whether delivery must wait for a verdict. Declaring
+// a reviewer IS the decision to gate — NormalizeAuthoringDefinition has
+// stamped Required on every stored reviewer since review and transition gates
+// were unified, so the field no longer carries a choice.
 func RequiresReview(node NodeDefinition) bool {
-	return node.Reviewer != nil && node.Reviewer.Required
+	return node.Reviewer != nil
 }
 
 type IssueTemplate struct {
@@ -208,7 +209,9 @@ type SubmissionSchema struct {
 type CompletionDefinition struct {
 	Mode                 string `json:"mode,omitempty"`
 	RequiredIssueOutcome string `json:"required_issue_outcome,omitempty"`
-	SubmissionRequired   bool   `json:"submission_required,omitempty"`
+	// SubmissionRequired is retired: tolerated for stored definitions, no
+	// longer read by the runtime or the save-time reviewer inference.
+	SubmissionRequired bool `json:"submission_required,omitempty"`
 	// MaxAttempts caps how many times this activity may be reworked. A
 	// reviewer and an executor can otherwise hand work back and forth
 	// indefinitely, and nothing in the run reports that it is looping —
@@ -373,6 +376,22 @@ func NormalizeAuthoringDefinition(definition Definition) (Definition, error) {
 		node.OnComplete = nil
 		if node.Kind != "activity" {
 			continue
+		}
+		// Fixed and dynamic issue policies are retired. Every template anyone
+		// ever declared said what the auto issue already says (node name as
+		// title, activity description as body), so authored templates fold
+		// into auto on save. Runtime keeps honoring stored fixed definitions.
+		if len(node.IssueTemplates) > 0 || node.IssuePolicy == "fixed" ||
+			node.IssuePolicy == "dynamic" ||
+			node.IssuePolicy == "fixed_and_dynamic" {
+			node.IssuePolicy = "auto"
+			node.IssueTemplates = nil
+		}
+		// A listed artifact is a deliverable. "Listed but optional" was a
+		// contradiction the block's own heading ("what this activity must
+		// deliver") never supported, and nothing ever used it.
+		for artifactIndex := range node.Artifacts {
+			node.Artifacts[artifactIndex].Required = true
 		}
 		requiresManualReview := node.Completion.Mode == "manual" ||
 			(node.Completion.Mode == "" && RequiresManualCompletion(*node) &&
@@ -876,9 +895,15 @@ func RequiresManualCompletion(node NodeDefinition) bool {
 	case "automatic":
 		return false
 	}
-	if node.SubmissionSchema != nil || node.Completion.SubmissionRequired ||
-		node.Reviewer != nil {
+	if node.SubmissionSchema != nil || node.Reviewer != nil {
 		return false
+	}
+	// A required output gates completion the same way a required issue does
+	// (reconcile blocks on output_field_required until it is submitted).
+	for _, field := range node.Outputs {
+		if field.Required {
+			return false
+		}
 	}
 	for _, task := range NodeIssueTemplates(node) {
 		if task.Required {

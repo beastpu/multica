@@ -14,14 +14,18 @@ export function workflowCompletionMode(
   }
   if (node.completion?.mode) return node.completion.mode;
 
-  const completion = node.completion ?? {};
-  const hasRequiredIssue = (node.issue_templates ?? []).some(
-    (task) => task.required,
+  // Mirrors RequiresManualCompletion in server/internal/workflow. An auto
+  // policy synthesizes a required issue; a required output gates completion
+  // the same way. completion.submission_required is retired and ignored.
+  const hasRequiredIssue = node.issue_policy === "auto" ||
+    (node.issue_templates ?? []).some((task) => task.required);
+  const hasRequiredOutput = (node.outputs ?? []).some(
+    (field) => field.required,
   );
   const hasConfiguredGate = Boolean(
     node.submission_schema ||
       node.reviewer ||
-      completion.submission_required === true ||
+      hasRequiredOutput ||
       hasRequiredIssue,
   );
 

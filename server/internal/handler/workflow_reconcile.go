@@ -828,8 +828,10 @@ func (h *Handler) evaluateWorkflowNodeReadiness(
 		}
 	}
 	reviewRequired := workflowdomain.RequiresReview(nodeDefinition)
-	submissionRequired := nodeDefinition.Completion.SubmissionRequired ||
-		submissionPolicy != "none"
+	// completion.submission_required is retired: with a schema the policy is
+	// already non-none, and without one the synthesized submission below
+	// satisfied the flag immediately — it never held a node.
+	submissionRequired := submissionPolicy != "none"
 	if !submission.ID.Valid && nodeDefinition.SubmissionSchema == nil &&
 		(submissionRequired || reviewRequired) {
 		revision, err := q.GetNextWorkflowSubmissionRevision(ctx, db.GetNextWorkflowSubmissionRevisionParams{

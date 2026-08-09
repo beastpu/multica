@@ -44,9 +44,7 @@
         }
       },
       "issue_policy": "none",
-      "completion": {
-        "submission_required": true
-      },
+      "completion": {},
       "outputs": [
         {
           "key": "is_bug",
@@ -103,15 +101,7 @@
           "kind": "manual"
         }
       },
-      "issue_policy": "fixed",
-      "issue_templates": [
-        {
-          "key": "analyze_root_cause",
-          "title": "根因分析：{{host.title}}",
-          "required": true,
-          "initial_status": "todo"
-        }
-      ],
+      "issue_policy": "auto",
       "artifacts": [
         {
           "key": "root_cause_report",
@@ -123,8 +113,7 @@
       ],
       "completion": {
         "mode": "automatic",
-        "required_issue_outcome": "done",
-        "submission_required": true
+        "required_issue_outcome": "done"
       },
       "outputs": [
         {
@@ -160,19 +149,10 @@
         "role": "qa",
         "required": true
       },
-      "issue_policy": "fixed",
-      "issue_templates": [
-        {
-          "key": "fix_bug",
-          "title": "修复：{{host.title}}",
-          "required": true,
-          "initial_status": "todo"
-        }
-      ],
+      "issue_policy": "auto",
       "completion": {
         "mode": "automatic",
-        "required_issue_outcome": "done",
-        "submission_required": true
+        "required_issue_outcome": "done"
       },
       "artifacts": [
         {

@@ -7,7 +7,6 @@ import {
   type WorkflowArtifactRequirement,
   type WorkflowDefinition,
   type WorkflowExecutorDefinition,
-  type WorkflowIssueTemplate,
   type WorkflowNodeDefinition,
   type WorkflowOutputField,
   type WorkflowReviewerDefinition,
@@ -515,25 +514,6 @@ function ArtifactEditor({
                 </option>
               </select>
             </div>
-            <label className="flex min-h-9 items-center gap-2 self-end text-xs">
-              {/*
-                Absent means optional, matching the server: the Go field is
-                tagged omitempty and the definition is re-marshalled on save,
-                so an unchecked box is stored as no field at all. Reading the
-                absence as "required" drew the box checked on every reload of
-                an artifact the engine was already treating as optional.
-              */}
-              <input
-                type="checkbox"
-                checked={artifact.required === true}
-                disabled={readOnly}
-                onChange={(event) => update(index, {
-                  ...artifact,
-                  required: event.target.checked,
-                })}
-              />
-              {t(($) => $.editor.artifact_required)}
-            </label>
           </div>
         </div>
       ))}
@@ -688,7 +668,10 @@ function OutputsEditor({
           className="min-h-9 w-full"
           onClick={() => onChange({
             ...node,
-            outputs: [...outputs, { key: "", type: "enum" }],
+            // Required by default: an optional field a gateway reads falls
+            // through to else silently when unfilled. Relaxing is the
+            // deliberate act, not the accident.
+            outputs: [...outputs, { key: "", type: "enum", required: true }],
           })}
         >
           <Plus />
@@ -699,141 +682,14 @@ function OutputsEditor({
   );
 }
 
-// Runtime decomposition at the workflow level is retired — see the comment at
-// the policy select. These values are still accepted so existing definitions
-// keep running; they are simply no longer offered.
-function isDeprecatedIssuePolicy(policy: string | undefined): policy is string {
-  return policy === "dynamic" || policy === "fixed_and_dynamic";
-}
-
-function issuePolicyForEditor(node: WorkflowNodeDefinition): string {
-  if (node.issue_policy) return node.issue_policy;
-  return (node.issue_templates?.length ?? 0) > 0 ? "fixed" : "none";
-}
-
-function IssueTemplateEditor({
-  node,
-  readOnly,
-  onChange,
-}: {
-  node: WorkflowNodeDefinition;
-  readOnly: boolean;
-  onChange: (node: WorkflowNodeDefinition) => void;
-}) {
-  const { t } = useT("workflows");
-  const templates = node.issue_templates ?? [];
-  const policy = issuePolicyForEditor(node);
-  const canDeclareFixed = policy === "fixed" || policy === "fixed_and_dynamic";
-  const update = (index: number, template: WorkflowIssueTemplate) => {
-    const next = [...templates];
-    next[index] = template;
-    onChange({ ...node, issue_templates: next });
-  };
-
-  return (
-    <div className="space-y-3">
-      {templates.map((template, index) => (
-        <div key={template.key} className="space-y-3 rounded-lg border p-2.5">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <Label>{t(($) => $.editor.issue_title)}</Label>
-              <Input
-                value={template.title}
-                disabled={readOnly}
-                className="min-h-9 text-xs"
-                onChange={(event) => update(index, {
-                  ...template,
-                  title: event.target.value,
-                })}
-              />
-              <p className="font-mono text-xs text-muted-foreground">{template.key}</p>
-            </div>
-            <RemoveButton
-              label={t(($) => $.actions.remove)}
-              disabled={readOnly}
-              onClick={() => onChange({
-                ...node,
-                issue_templates: templates.filter((item) => item.key !== template.key),
-              })}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>{t(($) => $.editor.issue_description)}</Label>
-            <Textarea
-              value={template.description ?? ""}
-              disabled={readOnly}
-              rows={2}
-              onChange={(event) => update(index, {
-                ...template,
-                description: event.target.value || undefined,
-              })}
-            />
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>{t(($) => $.editor.priority)}</Label>
-              <select
-                value={template.priority ?? "none"}
-                disabled={readOnly}
-                className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
-                onChange={(event) => update(index, {
-                  ...template,
-                  priority: event.target.value,
-                })}
-              >
-                {["none", "low", "medium", "high", "urgent"].map((priority) => (
-                  <option key={priority} value={priority}>{priority}</option>
-                ))}
-              </select>
-            </div>
-            <label className="flex min-h-9 items-center gap-2 pt-5 text-xs">
-              <input
-                type="checkbox"
-                checked={template.required}
-                disabled={readOnly}
-                onChange={(event) => update(index, {
-                  ...template,
-                  required: event.target.checked,
-                })}
-              />
-              {t(($) => $.editor.required_task)}
-            </label>
-          </div>
-        </div>
-      ))}
-      {!canDeclareFixed && (
-        <p className="text-xs text-muted-foreground">
-          {t(($) => $.editor.fixed_tasks_disabled)}
-        </p>
-      )}
-      {!readOnly && canDeclareFixed && (
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-9 w-full"
-          onClick={() => {
-            const key = stableKey("task");
-            onChange({
-              ...node,
-              issue_templates: [
-                ...templates,
-                {
-                  key,
-                  title: "Complete {{host.title}}",
-                  required: true,
-                  initial_status: "todo",
-                  priority: "none",
-                },
-              ],
-            });
-          }}
-        >
-          <Plus />
-          {t(($) => $.editor.add_issue_template)}
-        </Button>
-      )}
-    </div>
-  );
+// The only choice left is whether the node's work rides on an issue. The
+// retired policies (fixed, dynamic, fixed_and_dynamic) keep running in stored
+// definitions — the save path folds them into auto, because every template
+// anyone ever declared said what the auto issue already says.
+function issuePolicyForEditor(node: WorkflowNodeDefinition): "auto" | "none" {
+  const policy = node.issue_policy ||
+    ((node.issue_templates?.length ?? 0) > 0 ? "fixed" : "none");
+  return policy === "none" ? "none" : "auto";
 }
 
 function CompletionEditor({
@@ -1319,13 +1175,7 @@ export function WorkflowNodeDefinitionInspector({
               className="min-h-9 w-full rounded-lg border border-input bg-background px-2.5 text-xs"
               onChange={(event) => {
                 const policy = event.target.value;
-                // Auto declares no template of its own, so it drops any the
-                // author had — but it is still issue-backed, and its node
-                // waits for that issue like any other.
-                const withoutFixedIssues = policy === "none" ||
-                  policy === "auto" || policy === "dynamic";
-                const withoutIssues = policy === "none" || policy === "dynamic";
-                const requiredIssueOutcome = withoutIssues
+                const requiredIssueOutcome = policy === "none"
                   ? "none"
                   : node.completion?.required_issue_outcome === "none"
                   ? "done"
@@ -1333,9 +1183,7 @@ export function WorkflowNodeDefinitionInspector({
                 onChange({
                   ...node,
                   issue_policy: policy,
-                  issue_templates: withoutFixedIssues
-                    ? []
-                    : node.issue_templates,
+                  issue_templates: [],
                   completion: {
                     ...node.completion,
                     required_issue_outcome: requiredIssueOutcome,
@@ -1345,50 +1193,13 @@ export function WorkflowNodeDefinitionInspector({
             >
               <option value="auto">{t(($) => $.editor.issue_policy_auto)}</option>
               <option value="none">{t(($) => $.editor.issue_policy_none)}</option>
-              <option value="fixed">{t(($) => $.editor.issue_policy_fixed)}</option>
-              {/*
-                Runtime decomposition is not offered any more. Breaking work
-                down already happens one level below, as sub-issues under the
-                activity's own issue — that is what squads do, and the stage
-                barrier already reports when they are all finished. A parallel
-                decomposition at the workflow level was the same thing recorded
-                twice, and it was never used once: every task ever materialised
-                came from a template.
-                Existing definitions keep working, and a node still carrying an
-                old policy shows it so the value is legible rather than silently
-                rewritten.
-              */}
-              {isDeprecatedIssuePolicy(node.issue_policy) && (
-                <option value={node.issue_policy}>
-                  {node.issue_policy === "dynamic"
-                    ? t(($) => $.editor.issue_policy_dynamic)
-                    : t(($) => $.editor.issue_policy_both)}
-                  {" · "}
-                  {t(($) => $.editor.issue_policy_deprecated)}
-                </option>
-              )}
             </select>
-            {isDeprecatedIssuePolicy(node.issue_policy) && (
-              <p className="text-xs text-amber-700 dark:text-amber-300">
-                {t(($) => $.editor.issue_policy_deprecated_hint)}
-              </p>
-            )}
           </div>
-          {/* Auto names its own issue, so there is no template to fill in.
-              Showing an empty title and description under it would read as
-              two more required fields before the node can do anything. */}
-          {issuePolicy !== "none" && issuePolicy !== "auto" && (
-            <IssueTemplateEditor
-              node={node}
-              readOnly={readOnly}
-              onChange={onChange}
-            />
-          )}
-          {issuePolicy === "auto" && (
-            <p className="text-xs text-muted-foreground">
-              {t(($) => $.editor.issue_policy_auto_hint)}
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground">
+            {issuePolicy === "auto"
+              ? t(($) => $.editor.issue_policy_auto_hint)
+              : t(($) => $.editor.issue_policy_none_hint)}
+          </p>
           {/* Artifacts are independent of issue generation. A run-only node
               can still owe the following nodes a formal deliverable. */}
           <div className="space-y-1.5 border-t pt-3">

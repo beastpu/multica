@@ -1322,3 +1322,37 @@ func TestSelectGatewayCasesRecordsAbsentFieldsAsEvidence(t *testing.T) {
 		t.Fatalf("evidence = %v, want triage.is_bug present and empty", routing.Evidence)
 	}
 }
+
+// Fixed issue policies and optional artifacts are retired on save: templates
+// fold into auto (the auto issue already says what every template said) and
+// a listed artifact is always a deliverable.
+func TestNormalizeAuthoringDefinitionRetiresFixedTemplatesAndOptionalArtifacts(
+	t *testing.T,
+) {
+	definition := validDefinition()
+	definition.Nodes[1].IssuePolicy = "fixed"
+	definition.Nodes[1].IssueTemplates = []IssueTemplate{{
+		Key: "work_item", Title: "Fix: {{host.title}}", Required: true,
+		InitialStatus: "todo",
+	}}
+	definition.Nodes[1].Artifacts = []ArtifactRequirement{{
+		Key: "report", Name: "Report", Kind: "document", Required: false,
+	}}
+
+	normalized, err := NormalizeAuthoringDefinition(definition)
+	if err != nil {
+		t.Fatalf("NormalizeAuthoringDefinition() error = %v", err)
+	}
+	node := normalized.Nodes[1]
+	if node.IssuePolicy != "auto" || len(node.IssueTemplates) != 0 {
+		t.Fatalf(
+			"fixed policy survived: policy=%q templates=%d",
+			node.IssuePolicy, len(node.IssueTemplates),
+		)
+	}
+	for _, artifact := range node.Artifacts {
+		if !artifact.Required {
+			t.Fatalf("artifact %q stayed optional after normalization", artifact.Key)
+		}
+	}
+}

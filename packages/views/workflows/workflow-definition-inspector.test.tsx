@@ -212,32 +212,26 @@ describe("WorkflowNodeDefinitionInspector", () => {
       .not.toBeInTheDocument();
   });
 
-  it("asks whether each issue gates the activity, not the activity as a whole", async () => {
+  it("keeps completion gates off the transition tab and switches off the work tab", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     renderInspector(onChange);
 
-    // The gate is a property of the issue — a node with no issues has nothing
-    // to gate on, which is why a node-level outcome select could be set to
-    // something meaningless. The transition tab keeps who reviews and who may
-    // override; it no longer carries a completion gate or a submission policy.
+    // The transition tab keeps who reviews and who may override; it carries
+    // no completion gate or submission policy.
     await user.click(
       screen.getByRole("tab", { name: enWorkflows.editor.tab_transition }),
     );
     expect(screen.queryByRole("combobox", { name: /submission|outcome/i }))
       .not.toBeInTheDocument();
 
+    // The work tab used to ask "required?" once per issue template and once
+    // per artifact. Listed now means required, so a node with no output
+    // fields shows no checkbox at all.
     await user.click(
       screen.getByRole("tab", { name: enWorkflows.editor.tab_work }),
     );
-    const gate = screen.getByRole("checkbox", {
-      name: enWorkflows.editor.required_task,
-    });
-    expect(gate).toBeChecked();
-    await user.click(gate);
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
-      issue_templates: [expect.objectContaining({ required: false })],
-    }));
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
   it("says which buttons an activity grows at run time", async () => {
@@ -476,14 +470,11 @@ describe("WorkflowNodeDefinitionInspector", () => {
     await user.click(screen.getByRole("tab", { name: enWorkflows.editor.tab_work }));
 
     expect(screen.getByLabelText(enWorkflows.editor.issue_policy)).toHaveValue("none");
-    expect(screen.queryByText(enWorkflows.editor.issue_title)).toBeNull();
-    expect(screen.queryByText(enWorkflows.editor.issue_description)).toBeNull();
-    expect(screen.queryByText(enWorkflows.editor.priority)).toBeNull();
-    expect(screen.queryByText(enWorkflows.editor.required_task)).toBeNull();
-    expect(screen.queryByText(enWorkflows.editor.fixed_tasks_disabled)).toBeNull();
+    expect(screen.getByText(enWorkflows.editor.issue_policy_none_hint))
+      .toBeInTheDocument();
   });
 
-  it("shows legacy nodes with issue templates as fixed tasks", async () => {
+  it("shows a legacy fixed node as issue-backed, its templates folded on save", async () => {
     const user = userEvent.setup();
     render(
       <I18nProvider locale="en" resources={{ en: { workflows: enWorkflows } }}>
@@ -499,10 +490,10 @@ describe("WorkflowNodeDefinitionInspector", () => {
 
     await user.click(screen.getByRole("tab", { name: enWorkflows.editor.tab_work }));
 
-    expect(screen.getByLabelText(enWorkflows.editor.issue_policy)).toHaveValue("fixed");
-    expect(screen.getByText(enWorkflows.editor.issue_title)).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Implement {{host.title}}"))
-      .toBeInTheDocument();
+    // Fixed is retired: every template ever written said what the auto issue
+    // already says, so the node reads as auto and no template form renders.
+    expect(screen.getByLabelText(enWorkflows.editor.issue_policy)).toHaveValue("auto");
+    expect(screen.queryByDisplayValue("Implement {{host.title}}")).toBeNull();
   });
 
   it("clears issue-only configuration when switching to no issues", async () => {
@@ -612,44 +603,14 @@ describe("artifact declarations", () => {
     // The key is shown, not editable: agents submit against it and the server
     // rejects anything else, so renaming it would orphan live submissions.
     expect(screen.getByText("design_doc")).toBeInTheDocument();
+    // Listing an artifact IS declaring it must be delivered — the card asks
+    // no "required?" question (the save path stamps required on every one).
+    expect(screen.queryByRole("checkbox")).toBeNull();
 
     await user.click(screen.getAllByRole("button", {
       name: enWorkflows.actions.remove,
     }).at(-1)!);
     const afterRemove = onChange.mock.calls.at(-1)![0] as WorkflowNodeDefinition;
     expect(afterRemove.artifacts).toEqual([]);
-  });
-
-  // The checkbox read "required unless explicitly false", but Go tags the
-  // field `omitempty` and re-marshals the definition on save, so `false` never
-  // survives the round trip — unchecking it stored "optional" and redrew the
-  // box checked. The server was right and the panel was lying about it.
-  it("shows an artifact the server treats as optional as unchecked", async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    const withArtifact: WorkflowNodeDefinition = {
-      ...node,
-      // What comes back from the server after the author unchecked it.
-      artifacts: [{ key: "design_doc", name: "Design doc", kind: "document" }],
-    };
-    render(
-      <I18nProvider locale="en" resources={{ en: { workflows: enWorkflows } }}>
-        <WorkflowNodeDefinitionInspector
-          node={withArtifact}
-          definition={definition}
-          actorOptions={actorOptions}
-          readOnly={false}
-          onChange={onChange}
-        />
-      </I18nProvider>,
-    );
-
-    await user.click(screen.getByRole("tab", { name: enWorkflows.editor.tab_work }));
-    const box = screen.getByLabelText(enWorkflows.editor.artifact_required);
-    expect(box).not.toBeChecked();
-
-    await user.click(box);
-    const patched = onChange.mock.calls.at(-1)![0] as WorkflowNodeDefinition;
-    expect(patched.artifacts?.[0]?.required).toBe(true);
   });
 });
