@@ -99,6 +99,15 @@ type issueTableFiltersRequest struct {
 	WorkingOnly       bool                         `json:"working_only,omitempty"`
 	WorkingIssueIDs   []string                     `json:"working_issue_ids,omitempty"`
 	IncludeSubIssues  *bool                        `json:"include_sub_issues,omitempty"`
+	// Workflow facets. The table surface answers every Issues view — list,
+	// board, swimlane and the table itself — so a filter this endpoint cannot
+	// express is a filter the page cannot apply, however plainly the chip says
+	// it is on. Scope (kind:"workflow") is a different question: it is the
+	// workbench asking for one node's issues, not a filter over the workspace.
+	WorkflowID          string `json:"workflow_id,omitempty"`
+	WorkflowInstanceID  string `json:"workflow_instance_id,omitempty"`
+	WorkflowActivityKey string `json:"workflow_activity_key,omitempty"`
+	WorkflowIssuesOnly  bool   `json:"workflow_issues_only,omitempty"`
 }
 
 type issueTableSortRequest struct {
@@ -654,6 +663,11 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 	if spec.Filters.IncludeSubIssues != nil && !*spec.Filters.IncludeSubIssues {
 		where = append(where, "i.parent_issue_id IS NULL")
 	}
+	workflowWhere, ok := appendIssueTableWorkflowFilters(w, spec.Filters, where, addArg)
+	if !ok {
+		return issueTableSQL{}, false
+	}
+	where = workflowWhere
 	where = appendIssueTableSearchFilter(where, addArg, spec.Search)
 
 	return issueTableSQL{
@@ -662,4 +676,66 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 		fingerprint: fingerprint,
 		workspaceID: workspaceUUID,
 	}, true
+}
+
+// appendIssueTableWorkflowFilters narrows the table to issues carried by a
+// workflow. The predicate is the same three-table EXISTS the legacy list
+// endpoint uses (appendIssueWorkflowFilters in issue.go), so both surfaces
+// answer "which issues belong to this workflow" identically.
+func appendIssueTableWorkflowFilters(
+	w http.ResponseWriter,
+	filters issueTableFiltersRequest,
+	where []string,
+	addArg func(any) string,
+) ([]string, bool) {
+	predicates := []string{
+		"workflow_task.issue_id = i.id",
+		"workflow_task.workspace_id = i.workspace_id",
+	}
+	needsFilter := filters.WorkflowIssuesOnly
+
+	if raw := strings.TrimSpace(filters.WorkflowID); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "filters.workflow_id")
+		if !ok {
+			return nil, false
+		}
+		predicates = append(predicates, fmt.Sprintf(
+			"workflow_instance.workflow_id = %s::uuid", addArg(id),
+		))
+		needsFilter = true
+	}
+	if raw := strings.TrimSpace(filters.WorkflowInstanceID); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "filters.workflow_instance_id")
+		if !ok {
+			return nil, false
+		}
+		predicates = append(predicates, fmt.Sprintf(
+			"workflow_task.workflow_instance_id = %s::uuid", addArg(id),
+		))
+		needsFilter = true
+	}
+	if key := strings.TrimSpace(filters.WorkflowActivityKey); key != "" {
+		if len(key) > 128 {
+			writeError(w, http.StatusBadRequest, "filters.workflow_activity_key is too long")
+			return nil, false
+		}
+		predicates = append(predicates, fmt.Sprintf(
+			"workflow_node.node_key = %s::text", addArg(key),
+		))
+		needsFilter = true
+	}
+	if !needsFilter {
+		return where, true
+	}
+	return append(where, fmt.Sprintf(`EXISTS (
+  SELECT 1
+  FROM workflow_node_task workflow_task
+  JOIN workflow_node_instance workflow_node
+    ON workflow_node.id = workflow_task.workflow_node_instance_id
+   AND workflow_node.workspace_id = workflow_task.workspace_id
+  JOIN workflow_instance workflow_instance
+    ON workflow_instance.id = workflow_task.workflow_instance_id
+   AND workflow_instance.workspace_id = workflow_task.workspace_id
+  WHERE %s
+)`, strings.Join(predicates, " AND "))), true
 }

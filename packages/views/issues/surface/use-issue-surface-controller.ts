@@ -422,6 +422,17 @@ export function useIssueSurfaceController({
         ...(agentRunningFilter
           ? { working_issue_ids: [...workingIssueIDs] }
           : {}),
+        // Every Issues view reads this spec, and client-side filtering is
+        // short-circuited on all of them — a workflow facet that stops here
+        // is a filter the page counts in its chip and never applies.
+        ...(workflowFilter ? { workflow_id: workflowFilter } : {}),
+        ...(workflowInstanceFilter
+          ? { workflow_instance_id: workflowInstanceFilter }
+          : {}),
+        ...(workflowActivityFilter
+          ? { workflow_activity_key: workflowActivityFilter }
+          : {}),
+        ...(workflowIssueOnly ? { workflow_issues_only: true } : {}),
         include_sub_issues: showSubIssues,
       },
       ...(debouncedActiveSearch ? { search: debouncedActiveSearch } : {}),
@@ -447,6 +458,10 @@ export function useIssueSurfaceController({
     statusFilters,
     viewIncludeNoProject,
     viewProjectFilters,
+    workflowActivityFilter,
+    workflowFilter,
+    workflowInstanceFilter,
+    workflowIssueOnly,
     workingIssueIDs,
   ]);
 
@@ -573,6 +588,10 @@ export function useIssueSurfaceController({
         showSubIssues,
         dateParams,
         debouncedActiveSearch,
+        workflowFilter,
+        workflowInstanceFilter,
+        workflowActivityFilter,
+        workflowIssueOnly,
       ]),
     [
       agentRunningFilter,
@@ -588,6 +607,10 @@ export function useIssueSurfaceController({
       statusFilters,
       viewIncludeNoProject,
       viewProjectFilters,
+      workflowActivityFilter,
+      workflowFilter,
+      workflowInstanceFilter,
+      workflowIssueOnly,
     ],
   );
   const selection = useCreateIssueSurfaceSelection(

@@ -283,6 +283,13 @@ export interface IssueTableFilters {
    *  `/api/working-agents`. An explicit empty list matches nothing. */
   working_issue_ids?: string[];
   include_sub_issues?: boolean;
+  /** Workflow facets. Every Issues view is served by the table endpoint, so
+   *  these have to travel in the query spec — client-side post-filtering is
+   *  short-circuited on all of them. */
+  workflow_id?: string;
+  workflow_instance_id?: string;
+  workflow_activity_key?: string;
+  workflow_issues_only?: boolean;
 }
 
 export type IssueTableSortField =

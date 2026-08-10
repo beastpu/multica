@@ -77,9 +77,14 @@ type IssueResponse struct {
 }
 
 type IssueWorkflowContextResponse struct {
-	WorkflowInstanceID     string `json:"workflow_instance_id"`
-	WorkflowID             string `json:"workflow_template_id"`
-	WorkflowName           string `json:"workflow_template_name"`
+	WorkflowInstanceID string `json:"workflow_instance_id"`
+	// The template layer is gone, and the client's schema requires these two
+	// under the workflow_* names. Renaming only the Go fields left the wire
+	// names behind, and because the schema catches its own failure the whole
+	// workflow_context degraded to undefined on every issue — the chip, the
+	// activity submenu and the gantt filter all silently lost their data.
+	WorkflowID             string `json:"workflow_workflow_id"`
+	WorkflowName           string `json:"workflow_workflow_name"`
 	WorkflowNodeInstanceID string `json:"workflow_node_instance_id"`
 	ActivityKey            string `json:"activity_key"`
 	ActivityName           string `json:"activity_name"`
@@ -1558,14 +1563,19 @@ func appendIssueWorkflowFilters(
 	}
 	needsFilter := r.URL.Query().Get("workflow_issue_only") == "true"
 
-	if raw := strings.TrimSpace(r.URL.Query().Get("workflow_template_id")); raw != "" {
-		id, ok := parseUUIDOrBadRequest(w, raw, "workflow_template_id")
+	// The client sends workflow_workflow_id (a workflow's id, in the workflow
+	// filter bag), and the column it filters on was renamed from template_id
+	// to workflow_id when the template layer was retired. Reading the old
+	// param name meant the filter was accepted, counted in the UI, and then
+	// silently dropped — the list came back unfiltered.
+	if raw := strings.TrimSpace(r.URL.Query().Get("workflow_workflow_id")); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "workflow_workflow_id")
 		if !ok {
 			return nil, false
 		}
 		predicates = append(
 			predicates,
-			fmt.Sprintf("workflow_instance.template_id = %s::uuid", addArg(id)),
+			fmt.Sprintf("workflow_instance.workflow_id = %s::uuid", addArg(id)),
 		)
 		needsFilter = true
 	}

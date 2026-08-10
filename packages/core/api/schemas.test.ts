@@ -176,6 +176,36 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
     expect(parsed.issues[0]?.workflow_context).toEqual(workflowContext);
   });
 
+  // The fixture above is written in the schema's own vocabulary, so it passed
+  // while the server was emitting workflow_template_id — and because the field
+  // catches its own failure, every issue's workflow_context silently became
+  // undefined. This asserts the wire names the Go handler actually marshals
+  // (IssueWorkflowContextResponse in server/internal/handler/issue.go).
+  it("parses the workflow context field names the server emits", () => {
+    const fromServer = {
+      workflow_instance_id: "instance-1",
+      workflow_workflow_id: "workflow-1",
+      workflow_workflow_name: "缺陷修复",
+      workflow_node_instance_id: "node-1",
+      activity_key: "triage",
+      activity_name: "问题分诊",
+      host_issue_id: "host-1",
+      host_issue_identifier: "MUL-7",
+      host_issue_title: "登录页白屏",
+      required: true,
+    };
+    const parsed = ListIssuesResponseSchema.parse({
+      issues: [{ ...baseIssue, workflow_context: fromServer }],
+      total: 1,
+    });
+
+    expect(parsed.issues[0]?.workflow_context).toBeDefined();
+    expect(parsed.issues[0]?.workflow_context?.workflow_workflow_id)
+      .toBe("workflow-1");
+    expect(parsed.issues[0]?.workflow_context?.workflow_workflow_name)
+      .toBe("缺陷修复");
+  });
+
   it("drops a malformed workflow context without dropping the issue", () => {
     const parsed = ListIssuesResponseSchema.parse({
       issues: [{
