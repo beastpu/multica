@@ -1385,82 +1385,103 @@ export function IssueDisplayControls({
                     {t(($) => $.filters.workflow_issues_only)}
                   </DropdownMenuCheckboxItem>
 
+                  {/*
+                    Base UI's GroupLabel throws (error #31) when rendered
+                    outside a Group, and the error boundary takes the whole
+                    Issues page down with it — same trap help-launcher.tsx
+                    documents (MUL-4819). Labels here stay inside
+                    DropdownMenuGroup, separators outside, matching
+                    app-sidebar and table-view.
+                  */}
                   {(workflowData?.workflows.length ?? 0) > 0 && (
                     <>
                       <DropdownMenuSeparator />
-                      <DropdownMenuLabel>
-                        {t(($) => $.filters.workflow_template)}
-                      </DropdownMenuLabel>
-                      {workflowData!.workflows.map((template) => {
-                        const checked = workflowFilter === template.id;
-                        return (
-                          <DropdownMenuCheckboxItem
-                            key={template.id}
-                            checked={checked}
-                            onCheckedChange={() =>
-                              act.setWorkflowFilter(checked ? "" : template.id)}
-                            className={FILTER_ITEM_CLASS}
-                          >
-                            <HoverCheck checked={checked} />
-                            <span className="truncate">{template.name}</span>
-                          </DropdownMenuCheckboxItem>
-                        );
-                      })}
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>
+                          {t(($) => $.filters.workflow_template)}
+                        </DropdownMenuLabel>
+                        {workflowData!.workflows.map((template) => {
+                          const checked = workflowFilter === template.id;
+                          return (
+                            <DropdownMenuCheckboxItem
+                              key={template.id}
+                              checked={checked}
+                              onCheckedChange={() =>
+                                act.setWorkflowFilter(checked ? "" : template.id)}
+                              className={FILTER_ITEM_CLASS}
+                            >
+                              <HoverCheck checked={checked} />
+                              <span className="truncate">{template.name}</span>
+                            </DropdownMenuCheckboxItem>
+                          );
+                        })}
+                      </DropdownMenuGroup>
                     </>
                   )}
 
                   {(workflowInstanceData?.instances.length ?? 0) > 0 && (
                     <>
                       <DropdownMenuSeparator />
-                      <DropdownMenuLabel>
-                        {t(($) => $.filters.workflow_instance)}
-                      </DropdownMenuLabel>
-                      {workflowInstanceData!.instances
-                        .filter((instance) =>
-                          !workflowFilter ||
-                          instance.workflow_id === workflowFilter
-                        )
-                        .map((instance) => {
-                          const checked = workflowInstanceFilter === instance.id;
-                          return (
-                            <DropdownMenuCheckboxItem
-                              key={instance.id}
-                              checked={checked}
-                              onCheckedChange={() =>
-                                act.setWorkflowInstanceFilter(checked ? "" : instance.id)}
-                              className={FILTER_ITEM_CLASS}
-                            >
-                              <HoverCheck checked={checked} />
-                              <span className="truncate">
-                                {instance.host_issue_identifier || instance.host_issue_title}
-                              </span>
-                            </DropdownMenuCheckboxItem>
-                          );
-                        })}
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>
+                          {t(($) => $.filters.workflow_instance)}
+                        </DropdownMenuLabel>
+                        {workflowInstanceData!.instances
+                          .filter((instance) =>
+                            !workflowFilter ||
+                            instance.workflow_id === workflowFilter
+                          )
+                          .map((instance) => {
+                            const checked = workflowInstanceFilter === instance.id;
+                            return (
+                              <DropdownMenuCheckboxItem
+                                key={instance.id}
+                                checked={checked}
+                                onCheckedChange={() =>
+                                  act.setWorkflowInstanceFilter(checked ? "" : instance.id)}
+                                className={FILTER_ITEM_CLASS}
+                              >
+                                <HoverCheck checked={checked} />
+                                {/* A standalone run has no host issue; its own
+                                    title is what names it, and the workflow
+                                    name is the last resort so no row ever
+                                    renders blank. */}
+                                <span className="truncate">
+                                  {instance.title ||
+                                    instance.host_issue_identifier ||
+                                    instance.host_issue_title ||
+                                    instance.workflow_name}
+                                </span>
+                              </DropdownMenuCheckboxItem>
+                            );
+                          })}
+                      </DropdownMenuGroup>
                     </>
                   )}
 
                   {workflowActivityOptions.length > 0 && (
                     <>
                       <DropdownMenuSeparator />
-                      <DropdownMenuLabel>
-                        {t(($) => $.filters.workflow_activity)}
-                      </DropdownMenuLabel>
-                      {workflowActivityOptions.map((activity) => {
-                        const checked = workflowActivityFilter === activity.key;
-                        return (
-                          <DropdownMenuCheckboxItem
-                            key={activity.key}
-                            checked={checked}
-                            onCheckedChange={() =>
-                              act.setWorkflowActivityFilter(checked ? "" : activity.key)}
-                            className={FILTER_ITEM_CLASS}
-                          >
-                            <HoverCheck checked={checked} />
-                            <span className="truncate">{activity.name}</span>
-                          </DropdownMenuCheckboxItem>
-                        );
-                      })}
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>
+                          {t(($) => $.filters.workflow_activity)}
+                        </DropdownMenuLabel>
+                        {workflowActivityOptions.map((activity) => {
+                          const checked = workflowActivityFilter === activity.key;
+                          return (
+                            <DropdownMenuCheckboxItem
+                              key={activity.key}
+                              checked={checked}
+                              onCheckedChange={() =>
+                                act.setWorkflowActivityFilter(checked ? "" : activity.key)}
+                              className={FILTER_ITEM_CLASS}
+                            >
+                              <HoverCheck checked={checked} />
+                              <span className="truncate">{activity.name}</span>
+                            </DropdownMenuCheckboxItem>
+                          );
+                        })}
+                      </DropdownMenuGroup>
                     </>
                   )}
                 </DropdownMenuSubContent>
