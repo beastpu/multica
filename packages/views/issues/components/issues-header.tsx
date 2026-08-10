@@ -989,8 +989,12 @@ export function IssueDisplayControls({
     WORKFLOWS_ACTIVITY_ENGINE_FLAG,
     false,
   );
+  // Published only. Archiving is how a workflow is retired, and a workspace
+  // accumulates far more retired ones than live ones — listing them buried the
+  // handful anyone still filters by. Their issues stay reachable through the
+  // run itself; this menu is for narrowing current work.
   const { data: workflowData } = useQuery({
-    ...workflowListOptions(headerWsId),
+    ...workflowListOptions(headerWsId, { status: "published" }),
     enabled: workflowsEnabled,
   });
   const { data: workflowInstanceData } = useQuery({
