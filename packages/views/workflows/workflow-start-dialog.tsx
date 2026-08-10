@@ -36,7 +36,10 @@ import { Label } from "@multica/ui/components/ui/label";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useT } from "../i18n";
 import { useNavigation } from "../navigation";
-import { workflowPreviewActivities } from "./workflow-preview";
+import {
+  workflowPreviewActivities,
+  workflowPreviewBranches,
+} from "./workflow-preview";
 
 type WorkflowActorType = "member" | "agent" | "squad";
 
@@ -464,7 +467,10 @@ export function WorkflowStartDialog({ issueId }: { issueId?: string }) {
                   {workflowPreviewActivities(selectedVersion.definition)
                     .map((node, index) => (
                       <li key={node.key} className="flex items-center gap-1.5 text-sm">
-                        {index > 0 && <span aria-hidden className="text-muted-foreground">→</span>}
+                        {index > 0 &&
+                          !workflowPreviewBranches(selectedVersion.definition) && (
+                          <span aria-hidden className="text-muted-foreground">→</span>
+                        )}
                         <span className="rounded-md border bg-background px-2 py-1">
                           {node.name}
                         </span>

@@ -177,7 +177,8 @@
     "column_updated": "最近发布",
     "delete_title": "删除这个工作流？",
     "delete_description": "将永久删除“{{name}}”及其已保存的版本，不可恢复。",
-    "delete_blocked": "“{{name}}”已有运行记录，不能删除。改用归档：运行记录仍可查看，但不能再启动新的运行。"
+    "delete_blocked": "“{{name}}”已有运行记录，不能删除。改用归档：运行记录仍可查看，但不能再启动新的运行。",
+    "browse_builtin": "浏览内置模板"
   },
   "workbench": {
     "title": "工作流工作台",
@@ -342,7 +343,13 @@
     "output_problem_type": "类型不正确",
     "output_problem_too_long": "内容过长",
     "driven_by_run": "这个 issue 由一次工作流运行驱动。",
-    "open_workbench": "打开工作台"
+    "open_workbench": "打开工作台",
+    "force_complete_missing_outputs": "必填输出尚未填写（{{fields}}）。强制完成后，下游网关将按缺省分支路由。",
+    "output_bool_true": "是（true）",
+    "output_bool_false": "否（false）",
+    "direct_execution_member": "由你直接执行",
+    "direct_execution_member_help": "该活动不创建 issue。请在右侧「交付」面板填写结果并提交。",
+    "end_node_hint": "终点节点：运行到达这里即结束这条路径，节点本身没有工作或交付。"
   },
   "editor": {
     "title": "工作流模板",
@@ -508,7 +515,9 @@
     "condition_add_row": "添加条件",
     "condition_use_text": "改为手写表达式",
     "condition_use_rows": "回到字段选择",
-    "condition_host_issue": "需求"
+    "condition_host_issue": "需求",
+    "role_used_by": "被引用：{{nodes}}",
+    "role_unused": "还没有节点引用这个角色。"
   },
   "node_context": {
     "open_run": "打开运行",
@@ -557,5 +566,29 @@
     "reason_required": "返工必须填写原因并选择返回活动。",
     "action_failed": "操作失败，请刷新状态后重试。",
     "feature_disabled": "当前工作区尚未启用工作流。"
+  },
+  "waiting": {
+    "output_field_required": "必填输出「{{field}}」尚未提交",
+    "valid_submission_required": "需要一次有效的结果提交",
+    "required_artifact_missing": "必需制品「{{field}}」尚未提交",
+    "required_artifact_rejected": "必需制品「{{field}}」被驳回，需要重新提交",
+    "required_artifact_review_pending": "必需制品「{{field}}」等待评审",
+    "task_submission_required": "还有必需任务未提交结果",
+    "review_required": "等待评审判定",
+    "verdict_not_declared": "评审人尚未给出判定",
+    "api_verdict_not_passed": "自动检查未通过",
+    "manual_completion_required": "等待人工确认完成",
+    "node_timeout": "活动已超过时限",
+    "executor_needs_setup": "需要先配置执行人",
+    "executor_unresolved": "执行人未能解析，需要重新配置",
+    "required_task_not_materialized": "必需任务尚未生成载体",
+    "stale_materialization": "任务载体已过期，需要修复运行状态",
+    "missing_node_task": "节点任务记录缺失，需要修复运行状态",
+    "direct_execution_failed": "直接执行失败（{{field}}）",
+    "direct_execution_not_dispatched": "执行任务尚未派发",
+    "direct_execution_running": "执行中，等待完成",
+    "awaiting_decomposition": "等待拆解子任务",
+    "rework_attempts_exhausted": "返工次数已用尽，需要人工介入",
+    "wait_control": "等待节点：按设定停留"
   }
 }

@@ -177,7 +177,8 @@
     "column_updated": "마지막 게시",
     "delete_title": "이 워크플로우를 삭제할까요?",
     "delete_description": "‘{{name}}’와 저장된 버전이 영구적으로 삭제됩니다. 되돌릴 수 없습니다.",
-    "delete_blocked": "‘{{name}}’은(는) 실행 기록이 있어 삭제할 수 없습니다. 대신 아카이브하세요. 기록은 남고 새 실행만 막힙니다."
+    "delete_blocked": "‘{{name}}’은(는) 실행 기록이 있어 삭제할 수 없습니다. 대신 아카이브하세요. 기록은 남고 새 실행만 막힙니다.",
+    "browse_builtin": "스타터 템플릿 보기"
   },
   "workbench": {
     "title": "워크플로 작업대",
@@ -342,7 +343,13 @@
     "output_problem_type": "형식이 올바르지 않습니다",
     "output_problem_too_long": "너무 깁니다",
     "driven_by_run": "이 이슈는 워크플로우 실행이 진행합니다.",
-    "open_workbench": "워크벤치 열기"
+    "open_workbench": "워크벤치 열기",
+    "force_complete_missing_outputs": "필수 출력이 입력되지 않았습니다({{fields}}). 강제 완료하면 하위 게이트웨이는 기본 분기로 라우팅됩니다.",
+    "output_bool_true": "예(true)",
+    "output_bool_false": "아니요(false)",
+    "direct_execution_member": "당신이 직접 실행합니다",
+    "direct_execution_member_help": "이 활동은 이슈를 만들지 않습니다. 오른쪽 ‘전달’ 패널에서 결과를 입력해 제출하세요.",
+    "end_node_hint": "종료 노드: 여기 도달한 경로는 종료됩니다. 이 노드 자체에는 작업이나 전달물이 없습니다."
   },
   "editor": {
     "title": "워크플로 템플릿",
@@ -508,7 +515,9 @@
     "condition_add_row": "조건 추가",
     "condition_use_text": "식으로 직접 작성",
     "condition_use_rows": "필드 선택으로 돌아가기",
-    "condition_host_issue": "요구사항"
+    "condition_host_issue": "요구사항",
+    "role_used_by": "참조: {{nodes}}",
+    "role_unused": "아직 이 역할을 참조하는 노드가 없습니다."
   },
   "node_context": {
     "open_run": "실행 열기",
@@ -557,5 +566,29 @@
     "reason_required": "이유와 돌아갈 활동이 필요합니다.",
     "action_failed": "작업에 실패했습니다. 상태를 새로 고치고 다시 시도하세요.",
     "feature_disabled": "이 워크스페이스에서는 워크플로가 활성화되지 않았습니다."
+  },
+  "waiting": {
+    "output_field_required": "필수 출력 ‘{{field}}’이(가) 제출되지 않았습니다",
+    "valid_submission_required": "유효한 결과 제출이 필요합니다",
+    "required_artifact_missing": "필수 산출물 ‘{{field}}’이(가) 제출되지 않았습니다",
+    "required_artifact_rejected": "필수 산출물 ‘{{field}}’이(가) 반려되어 재제출이 필요합니다",
+    "required_artifact_review_pending": "필수 산출물 ‘{{field}}’이(가) 검토 대기 중입니다",
+    "task_submission_required": "필수 작업의 결과가 아직 제출되지 않았습니다",
+    "review_required": "검토 판정을 기다리는 중입니다",
+    "verdict_not_declared": "검토자가 아직 판정하지 않았습니다",
+    "api_verdict_not_passed": "자동 검사를 통과하지 못했습니다",
+    "manual_completion_required": "수동 완료 확인을 기다리는 중입니다",
+    "node_timeout": "활동이 제한 시간을 초과했습니다",
+    "executor_needs_setup": "먼저 실행자를 설정해야 합니다",
+    "executor_unresolved": "실행자를 해석하지 못했습니다. 재설정이 필요합니다",
+    "required_task_not_materialized": "필수 작업의 실체가 아직 생성되지 않았습니다",
+    "stale_materialization": "작업 실체가 오래되었습니다. 실행 상태 복구가 필요합니다",
+    "missing_node_task": "노드 작업 기록이 없습니다. 실행 상태 복구가 필요합니다",
+    "direct_execution_failed": "직접 실행이 실패했습니다({{field}})",
+    "direct_execution_not_dispatched": "실행 작업이 아직 전달되지 않았습니다",
+    "direct_execution_running": "실행 중입니다. 완료를 기다리는 중입니다",
+    "awaiting_decomposition": "작업 분해를 기다리는 중입니다",
+    "rework_attempts_exhausted": "재작업 횟수를 모두 사용했습니다. 사람의 개입이 필요합니다",
+    "wait_control": "대기 노드: 설정대로 대기 중입니다"
   }
 }

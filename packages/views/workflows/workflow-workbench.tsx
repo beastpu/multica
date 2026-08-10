@@ -190,6 +190,65 @@ function outputProblemText(
   }
 }
 
+// waitingReasonText localizes the server's waiting reasons the same way
+// outputProblemText localizes problem codes: by the machine-readable code,
+// with the field slotted in, falling back to the server's English message for
+// any code this build does not know yet.
+function waitingReasonText(
+  t: ReturnType<typeof useT<"workflows">>["t"],
+  reason: { code: string; field?: string; message: string },
+): string {
+  const field = reason.field ?? "";
+  switch (reason.code) {
+    case "output_field_required":
+      return t(($) => $.waiting.output_field_required, { field });
+    case "valid_submission_required":
+      return t(($) => $.waiting.valid_submission_required);
+    case "required_artifact_missing":
+      return t(($) => $.waiting.required_artifact_missing, { field });
+    case "required_artifact_rejected":
+      return t(($) => $.waiting.required_artifact_rejected, { field });
+    case "required_artifact_review_pending":
+      return t(($) => $.waiting.required_artifact_review_pending, { field });
+    case "task_submission_required":
+      return t(($) => $.waiting.task_submission_required);
+    case "review_required":
+      return t(($) => $.waiting.review_required);
+    case "verdict_not_declared":
+      return t(($) => $.waiting.verdict_not_declared);
+    case "api_verdict_not_passed":
+      return t(($) => $.waiting.api_verdict_not_passed);
+    case "manual_completion_required":
+      return t(($) => $.waiting.manual_completion_required);
+    case "node_timeout":
+      return t(($) => $.waiting.node_timeout);
+    case "executor_needs_setup":
+      return t(($) => $.waiting.executor_needs_setup);
+    case "executor_unresolved":
+      return t(($) => $.waiting.executor_unresolved);
+    case "required_task_not_materialized":
+      return t(($) => $.waiting.required_task_not_materialized);
+    case "stale_materialization":
+      return t(($) => $.waiting.stale_materialization);
+    case "missing_node_task":
+      return t(($) => $.waiting.missing_node_task);
+    case "direct_execution_failed":
+      return t(($) => $.waiting.direct_execution_failed, { field });
+    case "direct_execution_not_dispatched":
+      return t(($) => $.waiting.direct_execution_not_dispatched);
+    case "direct_execution_running":
+      return t(($) => $.waiting.direct_execution_running);
+    case "awaiting_decomposition":
+      return t(($) => $.waiting.awaiting_decomposition);
+    case "rework_attempts_exhausted":
+      return t(($) => $.waiting.rework_attempts_exhausted);
+    case "wait_control":
+      return t(($) => $.waiting.wait_control);
+    default:
+      return reason.message || reason.code;
+  }
+}
+
 /** A declared output field's value, as it reads on the delivery card. */
 function submissionOutputText(value: unknown): string {
   // A declared field with nothing behind it is the reason a branch fell
@@ -337,7 +396,13 @@ export function SubmissionPanel({
                           ? ["true", "false"]
                           : field.values ?? []
                         ).map((option) => (
-                          <option key={option} value={option}>{option}</option>
+                          <option key={option} value={option}>
+                            {field.type === "bool"
+                              ? option === "true"
+                                ? t(($) => $.workbench.output_bool_true)
+                                : t(($) => $.workbench.output_bool_false)
+                              : option}
+                          </option>
                         ))}
                       </select>
                     ) : (
@@ -1438,7 +1503,7 @@ export function NodeTransitionPanel({
                   <ul className="list-disc space-y-1 pl-4">
                     {prerequisiteReasons.map((reason, index) => (
                       <li key={`${reason.code}-${index}`}>
-                        {reason.message || reason.code}
+                        {waitingReasonText(t, reason)}
                       </li>
                     ))}
                   </ul>
@@ -1535,6 +1600,27 @@ export function NodeTransitionPanel({
                 />
               </div>
             )}
+          {/*
+            Force-completing skips the output contract entirely, and a gateway
+            reading an absent field falls through to its else branch with no
+            trace. The admin about to do that deserves to know before, not
+            after the run has quietly taken the default route.
+          */}
+          {managementAction === "complete" && (() => {
+            const missingOutputFields = node.waiting_reasons
+              .filter((reason) => reason.code === "output_field_required")
+              .map((reason) => reason.field)
+              .filter(Boolean);
+            return missingOutputFields.length > 0
+              ? (
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  {t(($) => $.workbench.force_complete_missing_outputs, {
+                    fields: missingOutputFields.join(", "),
+                  })}
+                </p>
+              )
+              : null;
+          })()}
           {(transition.isError || recordVerdict.isError) && (
             <p role="alert" className="text-xs text-destructive">
               {t(($) => $.errors.action_failed)}
@@ -2081,10 +2167,29 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
     (resolution) => !resolution.workflow_node_task_id,
   ) ?? (nodeQuery.data?.executor_resolutions ?? [])[0];
   const selectedExecutorKind = selectedNode?.definition.executor?.kind ?? "manual";
+  // A run-only node whose executor role resolved to a member gets no task and
+  // no resolution rows at all (materialization only dispatches agents), so the
+  // role assignment is the only record naming who owes the delivery. Without
+  // this branch that member saw a read-only panel and the node was a dead end
+  // only an admin's force-complete could clear.
+  const selectedExecutorRole =
+    selectedNode?.definition.executor?.kind === "role"
+      ? selectedNode.definition.executor.role
+      : undefined;
+  const viewerHoldsExecutorRole = Boolean(
+    userId && selectedExecutorRole &&
+      detailQuery.data?.role_assignments.some(
+        (assignment) =>
+          assignment.role_key === selectedExecutorRole &&
+          assignment.actor_type === "member" &&
+          assignment.actor_id === userId,
+      ),
+  );
   const viewerOwesSelectedDelivery = Boolean(
     userId && (
       (selectedExecutor?.actor_type === "member" &&
         selectedExecutor.actor_id === userId) ||
+      (!selectedExecutor?.actor_id && viewerHoldsExecutorRole) ||
       // No resolution names an actor and the definition never asked for one:
       // the node is worked by hand, and its owner is who works it.
       (selectedExecutorKind === "manual" && !selectedExecutor?.actor_id &&
@@ -2292,11 +2397,17 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
       issue.workflow_context?.workflow_instance_id === instanceId,
     onSelect: (issue: Issue) => setDetachIssue(issue),
   }], [instanceId, t]);
-  const completedWorkflowNodes = nodes.filter(
+  // Progress counts activities only, matching the runs list: start, ends and
+  // gateways are plumbing, and counting them made the two surfaces disagree
+  // about how far the same run had come (1/3 in the list, 4/7 here).
+  const workflowActivities = nodes.filter(
+    (node) => node.node_kind === "activity",
+  );
+  const completedWorkflowNodes = workflowActivities.filter(
     (node) => node.status === "completed" || node.status === "skipped",
   ).length;
-  const workflowProgressPercent = nodes.length > 0
-    ? (completedWorkflowNodes / nodes.length) * 100
+  const workflowProgressPercent = workflowActivities.length > 0
+    ? (completedWorkflowNodes / workflowActivities.length) * 100
     : 0;
   const hostIssue = hostIssueQuery.data;
 
@@ -2332,7 +2443,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
           <ul className="list-disc space-y-1 pl-4">
             {visibleWaitingReasons.map((reason, index) => (
               <li key={`${reason.code}-${index}`}>
-                {reason.message || reason.code}
+                {waitingReasonText(t, reason)}
               </li>
             ))}
           </ul>
@@ -2399,13 +2510,13 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
             </AppLink>
           )}
         </div>
-        {nodes.length > 0 && (
+        {workflowActivities.length > 0 && (
           <div className="flex items-center gap-2">
             <div
               className="h-1 flex-1 overflow-hidden rounded-full bg-muted"
               role="progressbar"
               aria-valuemin={0}
-              aria-valuemax={nodes.length}
+              aria-valuemax={workflowActivities.length}
               aria-valuenow={completedWorkflowNodes}
               aria-label={t(($) => $.workbench.workflow_progress)}
             >
@@ -2415,7 +2526,7 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
               />
             </div>
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-              {completedWorkflowNodes}/{nodes.length}
+              {completedWorkflowNodes}/{workflowActivities.length}
             </span>
           </div>
         )}
@@ -2477,6 +2588,15 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         {selectedNode.definition.description && (
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
             {selectedNode.definition.description}
+          </p>
+        )}
+        {/* A pending end node otherwise renders a panel of nothing: no
+            delivery, no owners, an empty event list. One line saying what an
+            end node is beats leaving the reader to infer it from absence. */}
+        {selectedNode.node_kind === "end" &&
+          !selectedNode.definition.description && (
+          <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+            {t(($) => $.workbench.end_node_hint)}
           </p>
         )}
         {/*
@@ -2829,7 +2949,9 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
         )}
         actions={(
           <>
-            {hostIssueQuery.data && (
+            {/* "none" is the absence of a priority; rendering it drew a
+                dangling "— none" next to the status badge. */}
+            {hostIssueQuery.data && hostIssueQuery.data.priority !== "none" && (
               <span
                 className="inline-flex items-center gap-1 text-xs text-muted-foreground"
                 aria-label={t(($) => $.workbench.host_priority, {
@@ -3098,10 +3220,20 @@ export function WorkflowWorkbench({ instanceId }: { instanceId: string }) {
                       </div>
                       <div className="min-w-0 flex-1">
                         <h3 className="text-sm font-medium">
-                          {t(($) => $.workbench.direct_execution)}
+                          {viewerOwesSelectedDelivery
+                            ? t(($) => $.workbench.direct_execution_member)
+                            : t(($) => $.workbench.direct_execution)}
                         </h3>
+                        {/*
+                          The card used to insist the work was "assigned to an
+                          agent or squad" even when the executor role resolved
+                          to the member reading it — who then had no idea the
+                          delivery form on the right was theirs to fill.
+                        */}
                         <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                          {t(($) => $.workbench.direct_execution_help)}
+                          {viewerOwesSelectedDelivery
+                            ? t(($) => $.workbench.direct_execution_member_help)
+                            : t(($) => $.workbench.direct_execution_help)}
                         </p>
                         {nodeOwners.length > 0 && (
                           <div className="mt-3 flex flex-wrap gap-2">

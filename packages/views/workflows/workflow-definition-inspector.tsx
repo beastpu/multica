@@ -158,12 +158,32 @@ function JsonObjectEditor({
   );
 }
 
+// roleUsageNodes names the nodes that address a role — as executor, reviewer,
+// owner or completion authorizer. Deleting a role blind to this failed only
+// at save time, with a validation error naming a node the author then had to
+// go find.
+function roleUsageNodes(
+  nodes: WorkflowNodeDefinition[],
+  roleKey: string,
+): string[] {
+  return nodes
+    .filter((node) =>
+      node.owner_role === roleKey ||
+      (node.executor?.kind === "role" && node.executor.role === roleKey) ||
+      (node.reviewer?.kind === "role" && node.reviewer.role === roleKey) ||
+      (node.completion?.authorized_roles ?? []).includes(roleKey)
+    )
+    .map((node) => node.name || node.key);
+}
+
 export function WorkflowRoleEditor({
   roles,
+  nodes = [],
   readOnly,
   onChange,
 }: {
   roles: WorkflowRoleDefinition[];
+  nodes?: WorkflowNodeDefinition[];
   readOnly: boolean;
   onChange: (roles: WorkflowRoleDefinition[]) => void;
 }) {
@@ -237,6 +257,18 @@ export function WorkflowRoleEditor({
               ))}
             </div>
           </fieldset>
+          {(() => {
+            const usedBy = roleUsageNodes(nodes, role.key);
+            return (
+              <p className="text-xs text-muted-foreground">
+                {usedBy.length > 0
+                  ? t(($) => $.editor.role_used_by, {
+                    nodes: usedBy.join("、"),
+                  })
+                  : t(($) => $.editor.role_unused)}
+              </p>
+            );
+          })()}
         </div>
       ))}
       {!readOnly && (

@@ -90,7 +90,10 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT, useTimeAgo } from "../i18n";
 import { WorkflowStatusBadge } from "./workflow-status";
 import { canManageWorkflows } from "./workflow-list";
-import { workflowPreviewActivities } from "./workflow-preview";
+import {
+  workflowPreviewActivities,
+  workflowPreviewBranches,
+} from "./workflow-preview";
 import {
   defaultNewWorkflowAssignments,
   parseWorkflowAssignment,
@@ -311,7 +314,10 @@ function BuiltinTemplatesPanel({ canManage }: { canManage: boolean }) {
           <Card key={builtin.key} size="sm">
             <CardHeader>
               <CardTitle className="truncate">{builtin.name}</CardTitle>
-              <CardDescription className="line-clamp-3">
+              {/* The full description is the only preview a card offers;
+                  clamping it hid exactly the part that says what the flow
+                  does with agents. */}
+              <CardDescription>
                 {builtin.description}
               </CardDescription>
             </CardHeader>
@@ -345,8 +351,10 @@ function BuiltinTemplatesPanel({ canManage }: { canManage: boolean }) {
 
 function TemplatesPanel({
   canManage,
+  onBrowseBuiltin,
 }: {
   canManage: boolean;
+  onBrowseBuiltin?: () => void;
 }) {
   const { t } = useT("workflows");
   const { t: commonT } = useT("common");
@@ -581,6 +589,12 @@ function TemplatesPanel({
           icon={LayoutTemplate}
           title={t(($) => $.templates.empty_title)}
           description={t(($) => $.templates.empty_description)}
+          // The copy said "start from a template" and offered no way there.
+          actions={onBrowseBuiltin && (
+            <Button variant="outline" size="sm" onClick={onBrowseBuiltin}>
+              {t(($) => $.templates.browse_builtin)}
+            </Button>
+          )}
         />
       )}
       <WorkflowRunDialog
@@ -913,7 +927,10 @@ export function NewWorkflowDialog() {
                         key={node.key}
                         className="flex items-center gap-1.5 text-sm"
                       >
-                        {index > 0 && (
+                        {index > 0 &&
+                          !workflowPreviewBranches(
+                            selectedVersion.definition,
+                          ) && (
                           <span aria-hidden className="text-muted-foreground">
                             →
                           </span>
@@ -1100,7 +1117,10 @@ export function WorkflowsPage() {
           {tab === "builtin" ? (
             <BuiltinTemplatesPanel canManage={canManage} />
           ) : (
-            <TemplatesPanel canManage={canManage} />
+            <TemplatesPanel
+              canManage={canManage}
+              onBrowseBuiltin={() => setTab("builtin")}
+            />
           )}
         </div>
       </main>

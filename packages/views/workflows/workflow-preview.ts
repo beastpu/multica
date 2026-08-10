@@ -63,3 +63,25 @@ export function workflowPreviewActivities(
 
   return ordered;
 }
+
+/**
+ * Whether the definition branches at all. The activity preview joins nodes
+ * with arrows, which reads as a strict sequence — accurate for a chain,
+ * misleading the moment a gateway or a parallel split fans the flow out.
+ */
+export function workflowPreviewBranches(
+  definition: WorkflowDefinition,
+): boolean {
+  if (
+    definition.nodes.some(
+      (node) => node.kind === "gateway" || node.kind === "parallel_split",
+    )
+  ) {
+    return true;
+  }
+  const outCounts = new Map<string, number>();
+  for (const edge of definition.edges) {
+    outCounts.set(edge.from, (outCounts.get(edge.from) ?? 0) + 1);
+  }
+  return [...outCounts.values()].some((count) => count > 1);
+}

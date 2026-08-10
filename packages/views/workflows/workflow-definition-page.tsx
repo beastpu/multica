@@ -1032,6 +1032,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
                 </div>
                 <WorkflowRoleEditor
                   roles={definition.roles}
+                  nodes={definition.nodes}
                   readOnly={!canEdit}
                   onChange={(roles) =>
                     changeDefinition({ ...definition, roles })}

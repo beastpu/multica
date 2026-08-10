@@ -177,7 +177,8 @@
     "column_updated": "最終公開",
     "delete_title": "このワークフローを削除しますか？",
     "delete_description": "「{{name}}」と保存済みのバージョンを完全に削除します。元に戻せません。",
-    "delete_blocked": "「{{name}}」には実行履歴があるため削除できません。アーカイブを使ってください。履歴は残り、新しい実行は開始できなくなります。"
+    "delete_blocked": "「{{name}}」には実行履歴があるため削除できません。アーカイブを使ってください。履歴は残り、新しい実行は開始できなくなります。",
+    "browse_builtin": "スターターテンプレートを見る"
   },
   "workbench": {
     "title": "ワークフロー作業台",
@@ -342,7 +343,13 @@
     "output_problem_type": "型が正しくありません",
     "output_problem_too_long": "長すぎます",
     "driven_by_run": "この issue はワークフローの実行によって進行しています。",
-    "open_workbench": "ワークベンチを開く"
+    "open_workbench": "ワークベンチを開く",
+    "force_complete_missing_outputs": "必須出力が未入力です（{{fields}}）。強制完了すると、下流のゲートウェイは既定の分岐を通ります。",
+    "output_bool_true": "はい（true）",
+    "output_bool_false": "いいえ（false）",
+    "direct_execution_member": "あなたが直接実行します",
+    "direct_execution_member_help": "このアクティビティは Issue を作成しません。右側の「成果物」パネルで結果を入力して提出してください。",
+    "end_node_hint": "終端ノード：ここに到達した経路は終了します。このノード自体に作業や成果物はありません。"
   },
   "editor": {
     "title": "ワークフローテンプレート",
@@ -508,7 +515,9 @@
     "condition_add_row": "条件を追加",
     "condition_use_text": "式を直接書く",
     "condition_use_rows": "フィールド選択に戻る",
-    "condition_host_issue": "要件"
+    "condition_host_issue": "要件",
+    "role_used_by": "参照元：{{nodes}}",
+    "role_unused": "このロールを参照するノードはまだありません。"
   },
   "node_context": {
     "open_run": "実行を開く",
@@ -557,5 +566,29 @@
     "reason_required": "理由と戻り先を指定してください。",
     "action_failed": "操作に失敗しました。状態を更新して再試行してください。",
     "feature_disabled": "このワークスペースではワークフローが有効ではありません。"
+  },
+  "waiting": {
+    "output_field_required": "必須出力「{{field}}」が未提出です",
+    "valid_submission_required": "有効な結果の提出が必要です",
+    "required_artifact_missing": "必須成果物「{{field}}」が未提出です",
+    "required_artifact_rejected": "必須成果物「{{field}}」が差し戻されました。再提出が必要です",
+    "required_artifact_review_pending": "必須成果物「{{field}}」はレビュー待ちです",
+    "task_submission_required": "必須タスクの結果が未提出です",
+    "review_required": "レビュー判定を待っています",
+    "verdict_not_declared": "レビュアーがまだ判定していません",
+    "api_verdict_not_passed": "自動チェックが未通過です",
+    "manual_completion_required": "手動での完了確認を待っています",
+    "node_timeout": "アクティビティが制限時間を超えました",
+    "executor_needs_setup": "先に実行者の設定が必要です",
+    "executor_unresolved": "実行者を解決できませんでした。再設定が必要です",
+    "required_task_not_materialized": "必須タスクの実体がまだ作成されていません",
+    "stale_materialization": "タスクの実体が古くなっています。実行状態の修復が必要です",
+    "missing_node_task": "ノードのタスク記録が欠落しています。実行状態の修復が必要です",
+    "direct_execution_failed": "直接実行が失敗しました（{{field}}）",
+    "direct_execution_not_dispatched": "実行タスクがまだ配信されていません",
+    "direct_execution_running": "実行中です。完了を待っています",
+    "awaiting_decomposition": "作業の分解を待っています",
+    "rework_attempts_exhausted": "手戻り回数を使い切りました。人の介入が必要です",
+    "wait_control": "待機ノード：設定どおり待機しています"
   }
 }

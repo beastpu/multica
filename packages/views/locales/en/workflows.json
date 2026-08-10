@@ -177,7 +177,8 @@
     "column_updated": "Last published",
     "delete_title": "Delete this workflow?",
     "delete_description": "“{{name}}” and its saved versions are removed for good. This cannot be undone.",
-    "delete_blocked": "“{{name}}” has runs, so it cannot be deleted. Archive it instead — the runs stay readable and it can no longer start new ones."
+    "delete_blocked": "“{{name}}” has runs, so it cannot be deleted. Archive it instead — the runs stay readable and it can no longer start new ones.",
+    "browse_builtin": "Browse starter templates"
   },
   "workbench": {
     "title": "Workflow workbench",
@@ -343,7 +344,13 @@
     "output_problem_type": "wrong type",
     "output_problem_too_long": "too long",
     "driven_by_run": "A workflow run drives this issue.",
-    "open_workbench": "Open workbench"
+    "open_workbench": "Open workbench",
+    "force_complete_missing_outputs": "Required output fields are not filled ({{fields}}). Force-completing routes the downstream gateway through its default branch.",
+    "output_bool_true": "Yes (true)",
+    "output_bool_false": "No (false)",
+    "direct_execution_member": "You execute this activity directly",
+    "direct_execution_member_help": "No issue is created for this activity. Fill in the result on the Delivery panel to the right and submit it there.",
+    "end_node_hint": "End node: a path that reaches here is finished. No work or delivery happens on this node."
   },
   "editor": {
     "title": "Workflow template",
@@ -509,7 +516,9 @@
     "condition_add_row": "Add condition",
     "condition_use_text": "Write as text",
     "condition_use_rows": "Back to fields",
-    "condition_host_issue": "Requirement"
+    "condition_host_issue": "Requirement",
+    "role_used_by": "Used by: {{nodes}}",
+    "role_unused": "Not referenced by any node yet."
   },
   "node_context": {
     "open_run": "Open run",
@@ -558,5 +567,29 @@
     "reason_required": "A reason and return activity are required.",
     "action_failed": "The action failed. Refresh the workflow and try again.",
     "feature_disabled": "Workflows are not enabled for this workspace."
+  },
+  "waiting": {
+    "output_field_required": "Required output “{{field}}” has not been submitted",
+    "valid_submission_required": "A valid result submission is required",
+    "required_artifact_missing": "Required artifact “{{field}}” has not been submitted",
+    "required_artifact_rejected": "Required artifact “{{field}}” was rejected and needs a new submission",
+    "required_artifact_review_pending": "Required artifact “{{field}}” is awaiting review",
+    "task_submission_required": "A required task has not submitted its result",
+    "review_required": "Waiting for the reviewer's verdict",
+    "verdict_not_declared": "The reviewer has not recorded a verdict",
+    "api_verdict_not_passed": "The automated check has not passed",
+    "manual_completion_required": "Waiting for manual completion",
+    "node_timeout": "The activity exceeded its time limit",
+    "executor_needs_setup": "An executor must be configured first",
+    "executor_unresolved": "The executor could not be resolved",
+    "required_task_not_materialized": "A required task has no carrier yet",
+    "stale_materialization": "The task carrier is stale; repair the run state",
+    "missing_node_task": "The node's task record is missing; repair the run state",
+    "direct_execution_failed": "Direct execution failed ({{field}})",
+    "direct_execution_not_dispatched": "The execution task has not been dispatched yet",
+    "direct_execution_running": "Executing; waiting for it to finish",
+    "awaiting_decomposition": "Waiting for the work to be broken down",
+    "rework_attempts_exhausted": "Rework attempts are exhausted; a person must step in",
+    "wait_control": "Wait node: holding as configured"
   }
 }

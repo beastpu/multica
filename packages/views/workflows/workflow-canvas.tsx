@@ -142,6 +142,64 @@ export function WorkflowCanvas({
     observer.observe(element);
     return () => observer.disconnect();
   }, [fill]);
+
+  // Keep the selected node in view. The inspector hides the canvas's right
+  // edge, and selecting a half-hidden node used to leave it half-hidden —
+  // the canvas never followed the selection.
+  const selectedNodeKey = selectedKey ??
+    nodes.find((node) => node.id === selectedId)?.node_key;
+  useEffect(() => {
+    if (!selectedNodeKey) return;
+    const target = viewportRef.current?.querySelector(
+      `[data-canvas-node="${CSS.escape(selectedNodeKey)}"]`,
+    );
+    if (target && typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest",
+      });
+    }
+  }, [selectedNodeKey]);
+
+  // Drag-to-pan on the background. A wide graph was reachable only through
+  // the scrollbar, and dragging the canvas selected node labels instead of
+  // moving the view — preventDefault on the empty surface stops the text
+  // selection, and pointer capture keeps the pan alive outside the box.
+  const panState = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    scrollLeft: number;
+    scrollTop: number;
+  } | null>(null);
+  const handlePanStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest("button, a")) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    panState.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: viewport.scrollLeft,
+      scrollTop: viewport.scrollTop,
+    };
+    viewport.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  };
+  const handlePanMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const state = panState.current;
+    const viewport = viewportRef.current;
+    if (!state || state.pointerId !== event.pointerId || !viewport) return;
+    viewport.scrollLeft = state.scrollLeft - (event.clientX - state.startX);
+    viewport.scrollTop = state.scrollTop - (event.clientY - state.startY);
+  };
+  const handlePanEnd = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (panState.current?.pointerId !== event.pointerId) return;
+    panState.current = null;
+    viewportRef.current?.releasePointerCapture?.(event.pointerId);
+  };
   const byKey = useMemo(
     () => new Map(layout.nodes.map((node) => [node.definition.key, node])),
     [layout.nodes],
@@ -158,8 +216,12 @@ export function WorkflowCanvas({
   return (
     <div
       ref={viewportRef}
+      onPointerDown={handlePanStart}
+      onPointerMove={handlePanMove}
+      onPointerUp={handlePanEnd}
+      onPointerCancel={handlePanEnd}
       className={cn(
-        "overflow-auto",
+        "cursor-grab overflow-auto",
         fill
           ? "size-full bg-muted/20"
           : "rounded-xl border bg-background shadow-xs",
@@ -388,6 +450,7 @@ export function WorkflowCanvas({
                   type="button"
                   disabled={!selectable}
                   aria-pressed={selected}
+                  data-canvas-node={node.key}
                   aria-label={`${node.name || node.key}, ${
                     instance
                       ? workflowNodeDisplayStatus(instance.status)
