@@ -2,7 +2,7 @@
 
 import {
   AlertCircle,
-  Archive,
+  Trash2,
   ArrowDown,
   ArrowLeft,
   ArrowUp,
@@ -11,7 +11,6 @@ import {
   Pencil,
   Play,
   Save,
-  Trash2,
   Waypoints,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -21,7 +20,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
-  useArchiveWorkflow,
+  useDeleteWorkflow,
   useUpdateWorkflow,
   useSaveWorkflowDefinition,
   workflowOptions,
@@ -79,6 +78,7 @@ import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { cn } from "@multica/ui/lib/utils";
 import { CollectionPageState } from "../layout/collection-page";
 import { useT } from "../i18n";
+import { toast } from "sonner";
 import { useNavigation } from "../navigation";
 import { WorkflowCanvas } from "./workflow-canvas";
 import {
@@ -567,7 +567,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
   const [selectedVersionId, setSelectedVersionId] = useState("");
   const [loadedVersionId, setLoadedVersionId] = useState("");
   const [dirty, setDirty] = useState(false);
-  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
@@ -576,7 +576,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
   const [saveError, setSaveError] = useState("");
   const [changeSummary, setChangeSummary] = useState("");
   const saveDefinition = useSaveWorkflowDefinition(templateId);
-  const archive = useArchiveWorkflow();
+  const deleteWorkflow = useDeleteWorkflow();
 
   const selectedVersion = versions.find(
     (version) => version.id === selectedVersionId,
@@ -597,8 +597,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
       selectedVersion.id !== latestVersion.id,
   );
   const canEdit = canManage && !isMobile &&
-    (selectedVersion?.id === latestVersion?.id || supersededWhileEditing) &&
-    detailQuery.data?.workflow.status !== "archived";
+    (selectedVersion?.id === latestVersion?.id || supersededWhileEditing);
 
   useEffect(() => {
     if (versions.length === 0) return;
@@ -677,7 +676,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
     navigation.push(paths.workflows());
   };
   const openRun = () => {
-    if (!selectedVersion || detailQuery.data?.workflow.status !== "published") {
+    if (!selectedVersion) {
       return;
     }
     if (dirty && canEdit) {
@@ -757,8 +756,6 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
     ? t(($) => $.templates.admin_only)
     : isMobile
     ? t(($) => $.editor.mobile_read_only)
-    : template.status === "archived"
-    ? t(($) => $.templates.archived_help)
     : "";
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
@@ -838,7 +835,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
               </Button>
             </>
           )}
-          {template.status === "published" && selectedVersion && (
+          {selectedVersion && (
             <Button
               type="button"
               size="sm"
@@ -853,10 +850,11 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
             </Button>
           )}
           {/*
-            Editing the name and archiving are rare and never urgent, so
-            they sit behind the overflow rather than competing with save.
+            Editing the name and deleting the workflow are rare and never
+            urgent, so they sit behind the overflow rather than competing
+            with save.
           */}
-          {canManage && !isMobile && template.status !== "archived" && (
+          {canManage && !isMobile && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
@@ -876,11 +874,12 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
                   {t(($) => $.actions.edit_metadata)}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() => setArchiveOpen(true)}
-                  disabled={archive.isPending}
+                  variant="destructive"
+                  onClick={() => setDeleteOpen(true)}
+                  disabled={deleteWorkflow.isPending}
                 >
-                  <Archive />
-                  {t(($) => $.actions.archive)}
+                  <Trash2 />
+                  {t(($) => $.actions.delete)}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -889,7 +888,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
       </header>
       {readOnlyNotice && (
         <Alert className="mx-3 mt-3">
-          {template.status === "archived" ? <Archive /> : <AlertCircle />}
+          <AlertCircle />
           <AlertTitle>{readOnlyNotice}</AlertTitle>
         </Alert>
       )}
@@ -1043,7 +1042,7 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
         )
       )}
 
-      {template && template.status !== "archived" && (
+      {template && (
         <TemplateMetadataDialog
           template={template}
           open={metadataOpen}
@@ -1104,25 +1103,38 @@ export function WorkflowPage({ templateId }: { templateId: string }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <AlertDialog open={archiveOpen} onOpenChange={setArchiveOpen}>
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t(($) => $.templates.archive_title)}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t(($) => $.templates.delete_title)}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {t(($) => $.templates.archive_description)}
+              {(template.run_count ?? 0) > 0
+                ? t(($) => $.templates.delete_with_runs, {
+                  name: template.name,
+                  count: template.run_count,
+                })
+                : t(($) => $.templates.delete_description, {
+                  name: template.name,
+                })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={archive.isPending}>
+            <AlertDialogCancel disabled={deleteWorkflow.isPending}>
               {commonT(($) => $.cancel)}
             </AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => archive.mutate(templateId, {
-                onSuccess: () => setArchiveOpen(false),
+              onClick={() => deleteWorkflow.mutate(templateId, {
+                onSuccess: () => {
+                  setDeleteOpen(false);
+                  navigation.push(paths.workflows());
+                },
+                onError: () => toast.error(t(($) => $.errors.action_failed)),
               })}
-              disabled={archive.isPending}
+              disabled={deleteWorkflow.isPending}
             >
-              {t(($) => $.actions.archive)}
+              {t(($) => $.actions.delete)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

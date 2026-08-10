@@ -994,7 +994,7 @@ export function IssueDisplayControls({
   // handful anyone still filters by. Their issues stay reachable through the
   // run itself; this menu is for narrowing current work.
   const { data: workflowData } = useQuery({
-    ...workflowListOptions(headerWsId, { status: "published" }),
+    ...workflowListOptions(headerWsId),
     enabled: workflowsEnabled,
   });
   const { data: workflowInstanceData } = useQuery({

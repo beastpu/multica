@@ -48,7 +48,6 @@
     "edit_workflow": "Edit workflow",
     "save_metadata": "Save details",
     "save_roles": "Save role assignments",
-    "archive": "Archive",
     "start_workflow": "Start workflow",
     "start_existing_workflow": "Start from existing issue",
     "load_more": "Load more",
@@ -151,7 +150,6 @@
     "empty_description": "Create one, or start from a template.",
     "admin_only": "Only workspace owners and admins can manage templates.",
     "published": "Active",
-    "archived": "Archived",
     "version": "Version {{version}}",
     "activities": "Nodes",
     "runs": "Runs",
@@ -165,10 +163,6 @@
     "metadata_description": "Update the template name, description, and the issue type it applies to.",
     "name": "Template name",
     "description": "Description",
-    "archive_title": "Archive this template?",
-    "archive_description": "Archived templates remain visible in history and existing runs, but cannot start new workflows.",
-    "archived_help": "This template is archived and read-only. Existing runs and published versions remain available.",
-    "show_archived": "Archived ({{count}})",
     "builtin_description": "Ready-to-use delivery flows shipped with Multica. Create one to start immediately, or edit it afterwards.",
     "builtin_create": "Create",
     "column_name": "Name",
@@ -177,8 +171,8 @@
     "column_updated": "Last published",
     "delete_title": "Delete this workflow?",
     "delete_description": "“{{name}}” and its saved versions are removed for good. This cannot be undone.",
-    "delete_blocked": "“{{name}}” has runs, so it cannot be deleted. Archive it instead — the runs stay readable and it can no longer start new ones.",
-    "browse_builtin": "Browse starter templates"
+    "browse_builtin": "Browse starter templates",
+    "delete_with_runs": "“{{name}}” and its {{count}} finished runs are removed for good. Issues the runs created stay in the workspace. This cannot be undone."
   },
   "workbench": {
     "title": "Workflow workbench",

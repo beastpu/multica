@@ -159,10 +159,8 @@ export const WorkflowSchema = z.object({
   workspace_id: z.string(),
   name: z.string().optional().default("Untitled workflow"),
   description: z.string().optional().default(""),
-  status: z.string().optional().default("published"),
   latest_published_version_id: nullableString,
   created_by: z.string().optional().default(""),
-  archived_at: nullableString,
   created_at: z.string().optional().default(""),
   updated_at: z.string().optional().default(""),
   latest_published_version: z.number().optional().default(0),
@@ -647,8 +645,8 @@ export const EMPTY_WORKFLOW_NODE_DETAIL: WorkflowNodeDetail = {
 export const EMPTY_WORKFLOW_DETAIL: WorkflowDetail = {
   workflow: {
     id: "", workspace_id: "", name: "", description: "",
-    status: "unknown", latest_published_version_id: null,
-    created_by: "", archived_at: null, created_at: "", updated_at: "",
+    latest_published_version_id: null,
+    created_by: "", created_at: "", updated_at: "",
     latest_published_version: 0,
     activity_count: 0, run_count: 0, recent_runs: [], last_published_by: null,
     last_published_at: null, latest_change_summary: "",

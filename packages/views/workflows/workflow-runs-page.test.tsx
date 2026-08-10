@@ -49,8 +49,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
     useQuery: () => ({
       data: {
         workflows: [
-          { id: "wf-1", name: "Delivery workflow", status: "published" },
-          { id: "wf-archived", name: "Retired workflow", status: "archived" },
+          { id: "wf-1", name: "Delivery workflow" },
         ],
       },
       isLoading: false,
@@ -178,29 +177,6 @@ describe("WorkflowRunsPage", () => {
         ]),
       }),
     );
-  });
-
-  it("keeps retired workflows out of the picker unless one is selected", () => {
-    mockRuns([run]);
-    const { unmount } = render(<WorkflowRunsPage />, { wrapper });
-
-    const picker = screen.getByLabelText(enWorkflows.filters.template);
-    expect(within(picker).getByRole("option", { name: "Delivery workflow" }))
-      .toBeInTheDocument();
-    expect(within(picker).queryByRole("option", { name: /Retired workflow/ }))
-      .toBeNull();
-    unmount();
-
-    // Arriving from an archived workflow's run-history link must not leave the
-    // select showing a blank, so that one stays listed — and says it is retired.
-    mockRuns([run]);
-    render(<WorkflowRunsPage workflowId="wf-archived" />, { wrapper });
-    expect(
-      within(screen.getByLabelText(enWorkflows.filters.template))
-        .getByRole("option", {
-          name: `Retired workflow · ${enWorkflows.templates.archived}`,
-        }),
-    ).toBeInTheDocument();
   });
 
   it("opens narrowed to one workflow when asked", () => {

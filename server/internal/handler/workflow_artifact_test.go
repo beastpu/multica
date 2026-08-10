@@ -64,8 +64,8 @@ func startArtifactWorkflow(t *testing.T, key string) (string, string) {
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow (workspace_id, name, status, created_by)
-		VALUES ($1, $3, 'published', $2)
+		INSERT INTO workflow (workspace_id, name, created_by)
+		VALUES ($1, $3, $2)
 		RETURNING id
 	`, testWorkspaceID, testUserID, "Artifact test template "+t.Name()).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)
@@ -533,8 +533,8 @@ func startHandoffWorkflow(t *testing.T, key string) (string, string, string) {
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow (workspace_id, name, status, created_by)
-		VALUES ($1, $3, 'published', $2) RETURNING id
+		INSERT INTO workflow (workspace_id, name, created_by)
+		VALUES ($1, $3, $2) RETURNING id
 	`, testWorkspaceID, testUserID, "Handoff test template "+t.Name()).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
@@ -1224,8 +1224,8 @@ func TestDynamicNodeWaitsToBeDecomposed(t *testing.T) {
 	}
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow (workspace_id, name, status, created_by)
-		VALUES ($1, $3, 'published', $2)
+		INSERT INTO workflow (workspace_id, name, created_by)
+		VALUES ($1, $3, $2)
 		RETURNING id
 	`, testWorkspaceID, testUserID, "Decomposition "+t.Name()).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)

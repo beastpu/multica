@@ -375,11 +375,12 @@ export class TestApiClient {
     this.createdIssueIds = [];
     for (const id of this.createdWorkflowIds) {
       try {
-        await this.authedFetch(`/api/workflows/${id}/archive`, {
-          method: "POST",
-        });
+        // Really removed, not hidden: cleanup used to archive because a
+        // workflow with runs could not be deleted, which left every e2e run's
+        // workflows behind for good.
+        await this.authedFetch(`/api/workflows/${id}`, { method: "DELETE" });
       } catch {
-        /* ignore — may already be archived */
+        /* ignore — may already be gone */
       }
     }
     this.createdWorkflowIds = [];

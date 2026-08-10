@@ -85,8 +85,8 @@ func (h *Handler) CreateWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		r.Context(),
 		db.GetWorkflowInWorkspaceParams{ID: templateID, WorkspaceID: wsUUID},
 	)
-	if errors.Is(err, pgx.ErrNoRows) || template.Status != "published" {
-		writeError(w, http.StatusNotFound, "published workflow template not found")
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "workflow not found")
 		return
 	}
 	if err != nil {

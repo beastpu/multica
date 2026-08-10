@@ -1439,10 +1439,8 @@ type Workflow struct {
 	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
 	Name                     string             `json:"name"`
 	Description              string             `json:"description"`
-	Status                   string             `json:"status"`
 	LatestPublishedVersionID pgtype.UUID        `json:"latest_published_version_id"`
 	CreatedBy                pgtype.UUID        `json:"created_by"`
-	ArchivedAt               pgtype.Timestamptz `json:"archived_at"`
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
 }

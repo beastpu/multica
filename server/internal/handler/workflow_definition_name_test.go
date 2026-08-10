@@ -54,18 +54,20 @@ func renameTemplate(t *testing.T, id, name string) int {
 	return recorder.Code
 }
 
-func archiveTemplateForTest(t *testing.T, id string) {
+// Deleting is now the only way to give a name back. Archiving used to free it
+// while keeping the workflow, which is why uniqueness was a partial index.
+func deleteTemplateForTest(t *testing.T, id string) {
 	t.Helper()
 	recorder := httptest.NewRecorder()
 	request := newRequest(
-		http.MethodPost,
-		"/api/workflow-templates/"+id+"/archive?workspace_id="+testWorkspaceID,
+		http.MethodDelete,
+		"/api/workflows/"+id+"?workspace_id="+testWorkspaceID,
 		nil,
 	)
-	testHandler.ArchiveWorkflow(recorder, withURLParam(request, "id", id))
-	if recorder.Code != http.StatusOK {
+	testHandler.DeleteWorkflow(recorder, withURLParam(request, "id", id))
+	if recorder.Code != http.StatusNoContent {
 		t.Fatalf(
-			"archive template: got %d, body %s", recorder.Code, recorder.Body.String(),
+			"delete workflow: got %d, body %s", recorder.Code, recorder.Body.String(),
 		)
 	}
 }
@@ -122,11 +124,11 @@ func TestWorkflowNameUniqueAmongLiveTemplates(t *testing.T) {
 		)
 	}
 
-	archiveTemplateForTest(t, firstID)
+	deleteTemplateForTest(t, firstID)
 
 	status, _ = createWorkflowNamed(t, "Delivery pipeline")
 	if status != http.StatusOK && status != http.StatusCreated {
-		t.Fatalf("reusing an archived name: got %d, want success", status)
+		t.Fatalf("reusing a deleted workflow's name: got %d, want success", status)
 	}
 }
 

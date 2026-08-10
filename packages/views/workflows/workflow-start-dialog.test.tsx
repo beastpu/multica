@@ -72,7 +72,6 @@ const templateDetail = {
   versions: [{
     id: "version-1",
     version: 1,
-    status: "published",
     definition,
   }],
 };
@@ -80,7 +79,6 @@ const templateList = {
   workflows: [{
     id: "template-1",
     name: "Delivery",
-    status: "published",
   }],
 };
 

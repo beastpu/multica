@@ -48,7 +48,6 @@
     "edit_workflow": "워크플로 편집",
     "save_metadata": "상세 저장",
     "save_roles": "역할 배정 저장",
-    "archive": "보관",
     "start_workflow": "워크플로 시작",
     "start_existing_workflow": "기존 issue에서 시작",
     "load_more": "더 보기",
@@ -151,7 +150,6 @@
     "empty_description": "재사용 가능한 활동, 역할, 산출물과 승인을 정의합니다.",
     "admin_only": "Owner와 관리자만 템플릿을 관리할 수 있습니다.",
     "published": "게시됨",
-    "archived": "보관됨",
     "version": "버전 {{version}}",
     "activities": "활동",
     "runs": "실행 수",
@@ -165,10 +163,6 @@
     "metadata_description": "템플릿 이름, 설명 및 적용할 Issue 유형을 수정합니다.",
     "name": "템플릿 이름",
     "description": "설명",
-    "archive_title": "이 템플릿을 보관할까요?",
-    "archive_description": "기록과 기존 실행에는 남지만 새 워크플로를 시작할 수 없습니다.",
-    "archived_help": "이 템플릿은 보관되어 읽기 전용입니다. 기존 실행과 게시된 버전은 계속 사용할 수 있습니다.",
-    "show_archived": "보관됨 ({{count}})",
     "builtin_description": "바로 사용할 수 있는 표준 개발 플로우입니다. 생성 후 즉시 사용하거나 나중에 편집할 수 있습니다.",
     "builtin_create": "생성",
     "column_name": "이름",
@@ -177,8 +171,8 @@
     "column_updated": "마지막 게시",
     "delete_title": "이 워크플로우를 삭제할까요?",
     "delete_description": "‘{{name}}’와 저장된 버전이 영구적으로 삭제됩니다. 되돌릴 수 없습니다.",
-    "delete_blocked": "‘{{name}}’은(는) 실행 기록이 있어 삭제할 수 없습니다. 대신 아카이브하세요. 기록은 남고 새 실행만 막힙니다.",
-    "browse_builtin": "스타터 템플릿 보기"
+    "browse_builtin": "스타터 템플릿 보기",
+    "delete_with_runs": "‘{{name}}’과(와) 종료된 실행 {{count}}건을 영구히 삭제합니다. 실행이 만든 이슈는 워크스페이스에 남습니다. 되돌릴 수 없습니다."
   },
   "workbench": {
     "title": "워크플로 작업대",

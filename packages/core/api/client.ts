@@ -3934,11 +3934,8 @@ export class ApiClient {
     );
   }
 
-  async listWorkflows(params?: { status?: string }): Promise<ListWorkflowsResponse> {
-    const search = new URLSearchParams();
-    if (params?.status) search.set("status", params.status);
-    const suffix = search.size > 0 ? `?${search.toString()}` : "";
-    const raw = await this.fetch<unknown>(`/api/workflows${suffix}`);
+  async listWorkflows(): Promise<ListWorkflowsResponse> {
+    const raw = await this.fetch<unknown>("/api/workflows");
     return parseWithFallback(raw, ListWorkflowsResponseSchema, EMPTY_LIST_WORKFLOWS, {
       endpoint: "GET /api/workflows",
     });
@@ -4058,12 +4055,6 @@ export class ApiClient {
     );
   }
 
-  async archiveWorkflow(templateId: string): Promise<Workflow> {
-    const raw = await this.fetch<unknown>(`/api/workflows/${templateId}/archive`, { method: "POST" });
-    return parseWithFallback(raw, WorkflowSchema, EMPTY_WORKFLOW_DETAIL.workflow, {
-      endpoint: "POST /api/workflows/:id/archive",
-    });
-  }
 
   /** Permanently deletes a workflow that has never run. The server refuses
    * with 409 once runs exist — they name the workflow by id — so callers

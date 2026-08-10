@@ -7,7 +7,6 @@ import (
 
 	"github.com/multica-ai/multica/server/pkg/protocol"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	workflowdomain "github.com/multica-ai/multica/server/internal/workflow"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -76,15 +75,13 @@ func (h *Handler) CreateWorkflowFromBuiltin(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "builtin workflow template definition invalid")
 		return
 	}
-	existing, err := h.Queries.ListWorkflows(r.Context(), db.ListWorkflowsParams{
-		WorkspaceID: wsUUID, Status: pgtype.Text{},
-	})
+	existing, err := h.Queries.ListWorkflows(r.Context(), wsUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list workflow templates")
 		return
 	}
 	for _, template := range existing {
-		if template.Status != "archived" && template.Name == builtin.Name {
+		if template.Name == builtin.Name {
 			writeError(w, http.StatusConflict, "a workflow template with this name already exists")
 			return
 		}

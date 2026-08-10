@@ -20,7 +20,6 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
   saveDefinition: vi.fn(),
   deleteWorkflow: vi.fn(),
-  archiveWorkflow: vi.fn(),
   // A real mutation reports itself pending between the click and the reply.
   // With isPending pinned to false the confirmation looked fine in tests while
   // the browser left it on screen, backdrop and all.
@@ -61,7 +60,6 @@ const definition = {
 
 const templateSummary = {
   id: "template-1",
-  status: "published",
   name: "Delivery workflow",
   description: "A long explanation that belongs in workflow details.",
   activity_count: 2,
@@ -118,7 +116,6 @@ const templateDetail = {
     id: "version-1",
     version: 1,
     revision: 1,
-    status: "published",
     change_summary: "Initial release",
     definition,
   }],
@@ -209,17 +206,6 @@ vi.mock("@multica/core/workflows", async (importOriginal) => {
     useDeleteWorkflow: () => ({
       mutate: (id: string, options?: { onSuccess?: () => void }) => {
         mocks.deleteWorkflow(id);
-        mocks.pending.current = true;
-        mocks.settle.current = () => {
-          mocks.pending.current = false;
-          options?.onSuccess?.();
-        };
-      },
-      isPending: mocks.pending.current,
-    }),
-    useArchiveWorkflow: () => ({
-      mutate: (id: string, options?: { onSuccess?: () => void }) => {
-        mocks.archiveWorkflow(id);
         mocks.pending.current = true;
         mocks.settle.current = () => {
           mocks.pending.current = false;
@@ -351,7 +337,6 @@ describe("WorkflowsPage", () => {
   beforeEach(() => {
     mocks.saveDefinition.mockReset();
     mocks.deleteWorkflow.mockReset();
-    mocks.archiveWorkflow.mockReset();
     mocks.pending.current = false;
     mocks.settle.current = () => {};
   });
@@ -376,8 +361,6 @@ describe("WorkflowsPage", () => {
     render(<WorkflowsPage />, { wrapper });
 
     expect(screen.getByRole("columnheader", { name: "Name" }))
-      .toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Status" }))
       .toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Nodes" }))
       .toBeInTheDocument();
@@ -472,29 +455,26 @@ describe("WorkflowsPage", () => {
     expect(mocks.deleteWorkflow).toHaveBeenCalledWith("template-2");
   });
 
-  // Runs name the workflow by id, so deleting one that has run would leave
-  // them pointing at nothing. The confirmation says so and offers the action
-  // that does work, rather than dead-ending on a refusal.
-  it("offers archiving instead of deleting a workflow that has runs", async () => {
+  // Deleting takes the run history with it, so the confirmation says how many
+  // runs go — that count is the whole difference between this and deleting a
+  // workflow nobody ever ran.
+  it("says how much history goes with a workflow that has runs", async () => {
     const user = userEvent.setup();
     render(<WorkflowsPage />, { wrapper });
 
     await user.click(screen.getAllByRole("button", { name: "More actions" })[0]!);
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 
-    expect(screen.getByText(/cannot be deleted/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: "Archive" }));
-    expect(mocks.archiveWorkflow).toHaveBeenCalledWith("template-1");
-    expect(mocks.deleteWorkflow).not.toHaveBeenCalled();
+    expect(screen.getByText(/finished runs are removed/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(mocks.deleteWorkflow).toHaveBeenCalledWith("template-1");
   });
 
   // The mutation used to take its id when the hook ran, which is fine on a page
-  // that edits one workflow and wrong on a list: the second confirmation
-  // archived whatever the first one had, the server answered 200 for it, and
-  // the row the reader actually picked was left untouched.
-  it("archives the workflow named in the confirmation, not the previous one", async () => {
+  // that edits one workflow and wrong on a list: the second confirmation acted
+  // on whatever the first one had, the server answered for it, and the row the
+  // reader actually picked was left untouched.
+  it("deletes the workflow named in the confirmation, not the previous one", async () => {
     const user = userEvent.setup();
     render(<WorkflowsPage />, { wrapper });
 
@@ -506,20 +486,20 @@ describe("WorkflowsPage", () => {
     };
 
     await openDeleteFor(0);
-    await user.click(screen.getByRole("button", { name: "Archive" }));
-    expect(mocks.archiveWorkflow).toHaveBeenLastCalledWith("template-1");
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(mocks.deleteWorkflow).toHaveBeenLastCalledWith("template-1");
     mocks.settle.current();
 
     // Same dialog, different row. Nothing about the first choice may survive.
     await openDeleteFor(2);
-    await user.click(screen.getByRole("button", { name: "Archive" }));
-    expect(mocks.archiveWorkflow).toHaveBeenLastCalledWith("template-3");
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(mocks.deleteWorkflow).toHaveBeenLastCalledWith("template-3");
   });
 
-  // The blocked branch said only "this workflow has runs", so a reader could
-  // not tell which workflow they were about to archive — which is exactly how
-  // the stale-id bug above stayed invisible while it fired six times.
-  it("names the workflow in the archive-instead confirmation", async () => {
+  // The confirmation has to name the workflow: without it a reader could not
+  // tell which one they were about to delete, which is exactly how the
+  // stale-id bug above stayed invisible while it fired six times.
+  it("names the workflow in the delete confirmation", async () => {
     const user = userEvent.setup();
     render(<WorkflowsPage />, { wrapper });
 
@@ -532,7 +512,7 @@ describe("WorkflowsPage", () => {
 
   // Confirming left the dialog on screen with its backdrop still swallowing
   // clicks, so the row you picked next never registered and the next
-  // confirmation was still about the previous workflow. One archive per page
+  // confirmation was still about the previous workflow. One deletion per page
   // load was all the list could do.
   it("closes the confirmation as soon as it is confirmed", async () => {
     const user = userEvent.setup();
@@ -540,7 +520,7 @@ describe("WorkflowsPage", () => {
 
     await user.click(screen.getAllByRole("button", { name: "More actions" })[0]!);
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
-    await user.click(screen.getByRole("button", { name: "Archive" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
 
     // Still in flight — this is the window the dialog used to get stuck in.
     await waitFor(() => {
@@ -562,10 +542,10 @@ describe("WorkflowsPage", () => {
       mocks.settle.current();
     };
 
-    await confirmFor(0, "Archive");
+    await confirmFor(0, "Delete");
     await confirmFor(1, "Delete");
 
-    expect(mocks.archiveWorkflow).toHaveBeenCalledWith("template-1");
+    expect(mocks.deleteWorkflow).toHaveBeenCalledWith("template-1");
     expect(mocks.deleteWorkflow).toHaveBeenCalledWith("template-2");
   });
 

@@ -621,23 +621,6 @@ export function useSaveWorkflowDefinition(templateId: string) {
   });
 }
 
-// The id arrives with the call, not with the hook. Binding it at hook time
-// works only where it never changes — one workflow, one page — and silently
-// archives the wrong one anywhere the same mutation serves a list: the request
-// carries whichever id the hook first saw, the server returns 200 for it, and
-// the row the reader actually chose stays exactly as it was.
-export function useArchiveWorkflow() {
-  const qc = useQueryClient();
-  const wsId = useWorkspaceId();
-  return useMutation({
-    mutationFn: (workflowId: string) => api.archiveWorkflow(workflowId),
-    onSettled: (_data, _error, workflowId) => {
-      qc.invalidateQueries({ queryKey: workflowKeys.template(wsId, workflowId) });
-      qc.invalidateQueries({ queryKey: workflowKeys.templates(wsId) });
-    },
-  });
-}
-
 // Deleting is not optimistic: the list is what the user is looking at when
 // they confirm, and a row that vanishes and comes back on a 409 ("this one has
 // runs") is a worse answer than one that waits for the server.

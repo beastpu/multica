@@ -23,10 +23,8 @@ type workflowResponse struct {
 	WorkspaceID              string                      `json:"workspace_id"`
 	Name                     string                      `json:"name"`
 	Description              string                      `json:"description"`
-	Status                   string                      `json:"status"`
 	LatestPublishedVersionID *string                     `json:"latest_published_version_id"`
 	CreatedBy                string                      `json:"created_by"`
-	ArchivedAt               *string                     `json:"archived_at"`
 	CreatedAt                string                      `json:"created_at"`
 	UpdatedAt                string                      `json:"updated_at"`
 	LatestPublishedVersion   int32                       `json:"latest_published_version"`
@@ -51,10 +49,9 @@ func workflowSummaryToResponse(
 ) workflowResponse {
 	return workflowResponse{
 		ID: uuidToString(row.ID), WorkspaceID: uuidToString(row.WorkspaceID),
-		Name: row.Name, Description: row.Description, Status: row.Status,
+		Name: row.Name, Description: row.Description,
 		LatestPublishedVersionID: uuidToPtr(row.LatestPublishedVersionID),
 		CreatedBy:                uuidToString(row.CreatedBy),
-		ArchivedAt:               timestampToPtr(row.ArchivedAt),
 		CreatedAt:                timestampToString(row.CreatedAt),
 		UpdatedAt:                timestampToString(row.UpdatedAt),
 		LatestPublishedVersion:   row.LatestPublishedVersion,
@@ -88,10 +85,8 @@ func workflowToResponse(row db.Workflow) workflowResponse {
 		WorkspaceID:              uuidToString(row.WorkspaceID),
 		Name:                     row.Name,
 		Description:              row.Description,
-		Status:                   row.Status,
 		LatestPublishedVersionID: uuidToPtr(row.LatestPublishedVersionID),
 		CreatedBy:                uuidToString(row.CreatedBy),
-		ArchivedAt:               timestampToPtr(row.ArchivedAt),
 		CreatedAt:                timestampToString(row.CreatedAt),
 		UpdatedAt:                timestampToString(row.UpdatedAt),
 		RecentRuns:               []workflowRecentRunResponse{},
@@ -190,29 +185,14 @@ func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var status pgtype.Text
+	// A workflow has one state now. The parameter is still rejected rather than
+	// ignored so a caller filtering by a state that no longer exists hears
+	// about it instead of receiving the whole list as if it had been honoured.
 	if value := strings.TrimSpace(r.URL.Query().Get("status")); value != "" {
-		switch value {
-		case "published", "archived":
-			if !isAdmin && value != "published" {
-				writeError(w, http.StatusForbidden, "insufficient permissions")
-				return
-			}
-			status = pgtype.Text{String: value, Valid: true}
-		default:
-			writeError(w, http.StatusBadRequest, "invalid status")
-			return
-		}
-	} else if !isAdmin {
-		status = pgtype.Text{String: "published", Valid: true}
+		writeError(w, http.StatusBadRequest, "status is no longer a workflow filter")
+		return
 	}
-	rows, err := h.Queries.ListWorkflowSummaries(
-		r.Context(),
-		db.ListWorkflowSummariesParams{
-			WorkspaceID: wsUUID,
-			Status:      status,
-		},
-	)
+	rows, err := h.Queries.ListWorkflowSummaries(r.Context(), wsUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list workflow templates")
 		return
@@ -535,10 +515,6 @@ func (h *Handler) ensureWorkflowWritable(
 		writeError(w, http.StatusInternalServerError, "failed to load workflow template")
 		return db.Workflow{}, false
 	}
-	if template.Status == "archived" {
-		writeError(w, http.StatusConflict, "workflow template is archived")
-		return db.Workflow{}, false
-	}
 	return template, true
 }
 
@@ -738,42 +714,14 @@ func (h *Handler) SaveWorkflowDefinition(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func (h *Handler) ArchiveWorkflow(w http.ResponseWriter, r *http.Request) {
-	if !h.workflowTemplateWriteEnabled(w, r) {
-		return
-	}
-	workspaceID := h.resolveWorkspaceID(r)
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	templateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workflow_id")
-	if !ok {
-		return
-	}
-	template, err := h.Queries.ArchiveWorkflow(r.Context(), db.ArchiveWorkflowParams{
-		ID: templateID, WorkspaceID: wsUUID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "workflow template not found")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to archive workflow template")
-		return
-	}
-	h.publishWorkflowRealtime(
-		protocol.EventWorkflowUpdated, workspaceID, "system", "",
-		map[string]any{"workflow_template_id": uuidToString(template.ID)},
-	)
-	writeJSON(w, http.StatusOK, workflowToResponse(template))
-}
-
-// DeleteWorkflow permanently removes a workflow and its stored versions, and
-// only while nothing has run it. A workflow with runs is load-bearing: the runs
-// name it by id and there is no foreign key to stop them from pointing at
-// nothing, so that case is refused with the reason rather than cascaded —
-// archiving is the route for a workflow that has been used.
+// DeleteWorkflow removes a workflow, its versions and its whole run history,
+// once nothing is still running. A live run is the only thing deletion waits
+// for: it would be left naming a workflow that no longer exists, and there are
+// no foreign keys in this domain to stop it. Finished runs are history, and
+// deleting the process takes its history with it.
+//
+// What it does not take is the work. Issues the runs created are somebody's,
+// not the process's: they survive, unbound from the run that asked for them.
 func (h *Handler) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 	if !h.workflowTemplateWriteEnabled(w, r) {
 		return
@@ -788,6 +736,36 @@ func (h *Handler) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := h.Queries.GetWorkflowInWorkspace(
+		r.Context(),
+		db.GetWorkflowInWorkspaceParams{ID: workflowID, WorkspaceID: wsUUID},
+	); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "workflow not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow")
+		return
+	}
+	// Reported before the transaction so the caller hears the reason rather
+	// than a bare conflict. The authoritative check is the guard inside the
+	// final DELETE, which a run started in between still loses to.
+	live, err := h.Queries.CountLiveWorkflowRuns(
+		r.Context(),
+		db.CountLiveWorkflowRunsParams{WorkflowID: workflowID, WorkspaceID: wsUUID},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to inspect workflow runs")
+		return
+	}
+	if live > 0 {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":     "workflow_has_live_runs",
+			"message":   "finish or cancel the workflow's runs before deleting it",
+			"live_runs": live,
+		})
+		return
+	}
+
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start workflow delete")
@@ -796,35 +774,48 @@ func (h *Handler) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
-	deletedID, err := qtx.DeleteUnusedWorkflow(r.Context(), db.DeleteUnusedWorkflowParams{
-		ID: workflowID, WorkspaceID: wsUUID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		// No row matched for one of two reasons, and they need different
-		// answers: "it has runs" is something the author can act on by
-		// archiving instead, "it is gone" is not.
-		_ = tx.Rollback(r.Context())
-		if _, lookupErr := h.Queries.GetWorkflowInWorkspace(
-			r.Context(),
-			db.GetWorkflowInWorkspaceParams{ID: workflowID, WorkspaceID: wsUUID},
-		); lookupErr == nil {
-			writeError(
-				w, http.StatusConflict,
-				"workflow has runs and cannot be deleted; archive it instead",
-			)
-			return
-		}
-		writeError(w, http.StatusNotFound, "workflow not found")
+	// Order matters and is explicit: unbind what outlives the workflow first,
+	// then delete the run tree from the leaves, then the definition.
+	if err := qtx.DetachIssuesFromWorkflow(r.Context(), db.DetachIssuesFromWorkflowParams{
+		WorkspaceID: wsUUID, WorkflowID: workflowID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to detach workflow issues")
 		return
 	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to delete workflow")
+	if err := qtx.DetachAgentTasksFromWorkflow(
+		r.Context(),
+		db.DetachAgentTasksFromWorkflowParams{WorkflowID: workflowID, WorkspaceID: wsUUID},
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to detach workflow agent tasks")
+		return
+	}
+	if err := qtx.DeleteWorkflowRunData(r.Context(), db.DeleteWorkflowRunDataParams{
+		WorkflowID: workflowID, WorkspaceID: wsUUID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete workflow runs")
 		return
 	}
 	if err := qtx.DeleteWorkflowVersions(r.Context(), db.DeleteWorkflowVersionsParams{
 		WorkflowID: workflowID, WorkspaceID: wsUUID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete workflow versions")
+		return
+	}
+	deletedID, err := qtx.DeleteWorkflowWhenSettled(
+		r.Context(),
+		db.DeleteWorkflowWhenSettledParams{ID: workflowID, WorkspaceID: wsUUID},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// A run was started while the cascade was running. Rolling back is the
+		// point: its rows are intact and the workflow it names still exists.
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":   "workflow_has_live_runs",
+			"message": "a run started while the workflow was being deleted; try again",
+		})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete workflow")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {

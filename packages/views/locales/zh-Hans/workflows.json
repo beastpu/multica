@@ -48,7 +48,6 @@
     "edit_workflow": "编辑工作流",
     "save_metadata": "保存详情",
     "save_roles": "保存角色分配",
-    "archive": "归档",
     "start_workflow": "启动工作流",
     "start_existing_workflow": "从已有 issue 启动",
     "load_more": "加载更多",
@@ -151,7 +150,6 @@
     "empty_description": "新建一个工作流，或从内置模板开始。",
     "admin_only": "只有工作区 Owner 和管理员可以管理模板。",
     "published": "已发布",
-    "archived": "已归档",
     "version": "版本 {{version}}",
     "activities": "活动数",
     "runs": "运行数",
@@ -165,10 +163,6 @@
     "metadata_description": "修改模板名称、说明以及适用的 issue 类型。",
     "name": "模板名称",
     "description": "模板说明",
-    "archive_title": "归档这个模板？",
-    "archive_description": "归档后仍保留历史版本和已有运行实例，但不能再启动新的工作流。",
-    "archived_help": "这个模板已归档并进入只读状态；已有运行实例和已发布版本仍然保留。",
-    "show_archived": "已归档（{{count}}）",
     "builtin_description": "由官方提供的常用研发流程，创建后立即可用，也可以再编辑调整。",
     "builtin_create": "创建",
     "column_name": "名称",
@@ -177,8 +171,8 @@
     "column_updated": "最近发布",
     "delete_title": "删除这个工作流？",
     "delete_description": "将永久删除“{{name}}”及其已保存的版本，不可恢复。",
-    "delete_blocked": "“{{name}}”已有运行记录，不能删除。改用归档：运行记录仍可查看，但不能再启动新的运行。",
-    "browse_builtin": "浏览内置模板"
+    "browse_builtin": "浏览内置模板",
+    "delete_with_runs": "将永久删除「{{name}}」及其 {{count}} 次已结束的运行记录。运行创建的 issue 会保留在工作区。此操作不可恢复。"
   },
   "workbench": {
     "title": "工作流工作台",

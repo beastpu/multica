@@ -57,7 +57,6 @@ vi.mock("../navigation", () => ({ useNavigation: () => ({ push: vi.fn() }) }));
 const workflowFixture = {
   id: "workflow-1",
   name: "Defect fix",
-  status: "published",
 } as unknown as Workflow;
 
 function version(id: string, number: number): WorkflowVersion {

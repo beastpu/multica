@@ -11,36 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const archiveWorkflow = `-- name: ArchiveWorkflow :one
-UPDATE workflow
-SET status = 'archived', archived_at = now(), updated_at = now()
-WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
-`
-
-type ArchiveWorkflowParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) ArchiveWorkflow(ctx context.Context, arg ArchiveWorkflowParams) (Workflow, error) {
-	row := q.db.QueryRow(ctx, archiveWorkflow, arg.ID, arg.WorkspaceID)
-	var i Workflow
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.Description,
-		&i.Status,
-		&i.LatestPublishedVersionID,
-		&i.CreatedBy,
-		&i.ArchivedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const bindWorkflowNodeTaskIssue = `-- name: BindWorkflowNodeTaskIssue :one
 UPDATE workflow_node_task
 SET issue_id = $1,
@@ -425,12 +395,38 @@ func (q *Queries) ClearWorkflowIssueOrigin(ctx context.Context, arg ClearWorkflo
 	return err
 }
 
+const countLiveWorkflowRuns = `-- name: CountLiveWorkflowRuns :one
+
+SELECT count(*)::bigint
+FROM workflow_instance
+WHERE workflow_id = $1
+  AND workspace_id = $2
+  AND status NOT IN ('completed', 'cancelled')
+`
+
+type CountLiveWorkflowRunsParams struct {
+	WorkflowID  pgtype.UUID `json:"workflow_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// =====================
+// Workflow deletion
+// =====================
+// Runs that are still in flight, and therefore still name the workflow they
+// were started from. Deletion waits for them; completed and cancelled runs are
+// history, which deletion is allowed to take with it.
+func (q *Queries) CountLiveWorkflowRuns(ctx context.Context, arg CountLiveWorkflowRunsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveWorkflowRuns, arg.WorkflowID, arg.WorkspaceID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countLiveWorkflowsByName = `-- name: CountLiveWorkflowsByName :one
 
 SELECT count(*) FROM workflow
 WHERE workspace_id = $1
   AND lower(btrim(name)) = lower(btrim($2::text))
-  AND status <> 'archived'
   -- NULL on create (nothing to exclude). ` + "`" + `id <> NULL` + "`" + ` evaluates to NULL, not
   -- true, which would filter every row out and make the check always pass.
   AND ($3::uuid IS NULL OR id <> $3)
@@ -445,9 +441,9 @@ type CountLiveWorkflowsByNameParams struct {
 // =====================
 // Workflows: the versioned definition a run executes.
 // =====================
-// Counts live workflows already using a name. Archived ones are excluded:
-// replacing a workflow by archiving the old one and recreating it under the
-// same name is the normal revision path once runs depend on the old version.
+// Counts workflows already using a name. Every workflow counts now: archiving
+// used to exempt retired ones so their name could be reused, and deleting a
+// workflow frees its name outright.
 func (q *Queries) CountLiveWorkflowsByName(ctx context.Context, arg CountLiveWorkflowsByNameParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countLiveWorkflowsByName, arg.WorkspaceID, arg.Name, arg.ExcludeID)
 	var count int64
@@ -825,11 +821,11 @@ func (q *Queries) CountWorkflowInstances(ctx context.Context, arg CountWorkflowI
 
 const createWorkflow = `-- name: CreateWorkflow :one
 INSERT INTO workflow (
-    workspace_id, name, description, status, created_by
+    workspace_id, name, description, created_by
 ) VALUES (
-    $1, $2, $3, 'published', $4
+    $1, $2, $3, $4
 )
-RETURNING id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
+RETURNING id, workspace_id, name, description, latest_published_version_id, created_by, created_at, updated_at
 `
 
 type CreateWorkflowParams struct {
@@ -852,10 +848,8 @@ func (q *Queries) CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) 
 		&i.WorkspaceID,
 		&i.Name,
 		&i.Description,
-		&i.Status,
 		&i.LatestPublishedVersionID,
 		&i.CreatedBy,
-		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1633,34 +1627,6 @@ func (q *Queries) DeletePendingWorkflowAcceptance(ctx context.Context, arg Delet
 	return err
 }
 
-const deleteUnusedWorkflow = `-- name: DeleteUnusedWorkflow :one
-DELETE FROM workflow
-WHERE workflow.id = $1 AND workflow.workspace_id = $2
-  AND NOT EXISTS (
-    SELECT 1 FROM workflow_instance instance
-    WHERE instance.workflow_id = workflow.id
-      AND instance.workspace_id = workflow.workspace_id
-  )
-RETURNING workflow.id
-`
-
-type DeleteUnusedWorkflowParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-// Deletes a workflow only while nothing has run it. Runs name the workflow and
-// its version by id, and the schema has no foreign keys to stop those rows from
-// outliving it, so a workflow with history is archived instead. The NOT EXISTS
-// lives inside the DELETE rather than in a preceding read: a run started
-// concurrently then loses the race instead of being orphaned by it.
-func (q *Queries) DeleteUnusedWorkflow(ctx context.Context, arg DeleteUnusedWorkflowParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, deleteUnusedWorkflow, arg.ID, arg.WorkspaceID)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
 const deleteWorkflowNodeParticipants = `-- name: DeleteWorkflowNodeParticipants :exec
 DELETE FROM workflow_node_participant
 WHERE workflow_node_instance_id = $1
@@ -1677,6 +1643,84 @@ func (q *Queries) DeleteWorkflowNodeParticipants(ctx context.Context, arg Delete
 	return err
 }
 
+const deleteWorkflowRunData = `-- name: DeleteWorkflowRunData :exec
+WITH doomed_instances AS (
+    SELECT id FROM workflow_instance
+    WHERE workflow_id = $1 AND workspace_id = $2
+),
+doomed_nodes AS (
+    SELECT id FROM workflow_node_instance
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = $2
+),
+cleared_participants AS (
+    DELETE FROM workflow_node_participant
+    WHERE workflow_node_instance_id IN (SELECT id FROM doomed_nodes)
+      AND workspace_id = $2
+),
+cleared_resolutions AS (
+    DELETE FROM workflow_executor_resolution
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = $2
+),
+cleared_verdicts AS (
+    DELETE FROM workflow_node_verdict
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = $2
+),
+cleared_submissions AS (
+    DELETE FROM workflow_node_submission
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = $2
+),
+cleared_artifacts AS (
+    DELETE FROM workflow_artifact
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = $2
+),
+cleared_acceptances AS (
+    DELETE FROM workflow_acceptance
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = $2
+),
+cleared_events AS (
+    DELETE FROM workflow_event
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = $2
+),
+cleared_roles AS (
+    DELETE FROM workflow_instance_role_assignment
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = $2
+),
+cleared_tasks AS (
+    DELETE FROM workflow_node_task
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = $2
+),
+cleared_nodes AS (
+    DELETE FROM workflow_node_instance
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = $2
+)
+DELETE FROM workflow_instance
+WHERE workflow_instance.workflow_id = $1
+  AND workflow_instance.workspace_id = $2
+`
+
+type DeleteWorkflowRunDataParams struct {
+	WorkflowID  pgtype.UUID `json:"workflow_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Every table hanging off a workflow's runs, leaves first. There are no
+// foreign keys in this domain, so nothing here is implicit — a table missing
+// from this list becomes a row pointing at an id that no longer resolves.
+func (q *Queries) DeleteWorkflowRunData(ctx context.Context, arg DeleteWorkflowRunDataParams) error {
+	_, err := q.db.Exec(ctx, deleteWorkflowRunData, arg.WorkflowID, arg.WorkspaceID)
+	return err
+}
+
 const deleteWorkflowVersions = `-- name: DeleteWorkflowVersions :exec
 DELETE FROM workflow_version
 WHERE workflow_id = $1 AND workspace_id = $2
@@ -1689,6 +1733,95 @@ type DeleteWorkflowVersionsParams struct {
 
 func (q *Queries) DeleteWorkflowVersions(ctx context.Context, arg DeleteWorkflowVersionsParams) error {
 	_, err := q.db.Exec(ctx, deleteWorkflowVersions, arg.WorkflowID, arg.WorkspaceID)
+	return err
+}
+
+const deleteWorkflowWhenSettled = `-- name: DeleteWorkflowWhenSettled :one
+DELETE FROM workflow
+WHERE workflow.id = $1
+  AND workflow.workspace_id = $2
+  AND NOT EXISTS (
+    SELECT 1 FROM workflow_instance
+    WHERE workflow_instance.workflow_id = workflow.id
+      AND workflow_instance.workspace_id = workflow.workspace_id
+      AND workflow_instance.status NOT IN ('completed', 'cancelled')
+  )
+RETURNING workflow.id
+`
+
+type DeleteWorkflowWhenSettledParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// The guard is part of the statement, not a check before it: a run started
+// between a separate check and this delete would be left naming a workflow
+// that no longer exists. No row comes back when a live run appeared, and the
+// caller rolls the whole cascade back.
+func (q *Queries) DeleteWorkflowWhenSettled(ctx context.Context, arg DeleteWorkflowWhenSettledParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, deleteWorkflowWhenSettled, arg.ID, arg.WorkspaceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const detachAgentTasksFromWorkflow = `-- name: DetachAgentTasksFromWorkflow :exec
+UPDATE agent_task_queue
+SET workflow_node_instance_id = NULL,
+    workflow_node_task_id = NULL
+WHERE agent_task_queue.workflow_node_instance_id IN (
+    SELECT node.id
+    FROM workflow_node_instance node
+    JOIN workflow_instance instance
+      ON instance.id = node.workflow_instance_id
+     AND instance.workspace_id = node.workspace_id
+    WHERE instance.workflow_id = $1
+      AND instance.workspace_id = $2
+  )
+`
+
+type DetachAgentTasksFromWorkflowParams struct {
+	WorkflowID  pgtype.UUID `json:"workflow_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Agent task rows are the runtime's own ledger and are kept: they record work
+// an agent really did. Only their pointers into the deleted run are cleared.
+func (q *Queries) DetachAgentTasksFromWorkflow(ctx context.Context, arg DetachAgentTasksFromWorkflowParams) error {
+	_, err := q.db.Exec(ctx, detachAgentTasksFromWorkflow, arg.WorkflowID, arg.WorkspaceID)
+	return err
+}
+
+const detachIssuesFromWorkflow = `-- name: DetachIssuesFromWorkflow :exec
+UPDATE issue
+SET origin_type = NULL,
+    origin_id = NULL,
+    metadata = issue.metadata - 'workflow',
+    stage = NULL,
+    updated_at = now()
+WHERE issue.workspace_id = $1
+  AND EXISTS (
+    SELECT 1
+    FROM workflow_node_task task
+    JOIN workflow_instance instance
+      ON instance.id = task.workflow_instance_id
+     AND instance.workspace_id = task.workspace_id
+    WHERE task.issue_id = issue.id
+      AND task.workspace_id = issue.workspace_id
+      AND instance.workflow_id = $2
+  )
+`
+
+type DetachIssuesFromWorkflowParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	WorkflowID  pgtype.UUID `json:"workflow_id"`
+}
+
+// The issues a workflow's runs created are somebody's work; the process that
+// asked for them is not. They outlive the workflow, unbound: the origin
+// pointer would dangle and the metadata would name a run nobody can open.
+func (q *Queries) DetachIssuesFromWorkflow(ctx context.Context, arg DetachIssuesFromWorkflowParams) error {
+	_, err := q.db.Exec(ctx, detachIssuesFromWorkflow, arg.WorkspaceID, arg.WorkflowID)
 	return err
 }
 
@@ -2457,7 +2590,7 @@ func (q *Queries) GetWorkflowExecutorResolutionInWorkspace(ctx context.Context, 
 }
 
 const getWorkflowInWorkspace = `-- name: GetWorkflowInWorkspace :one
-SELECT id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at FROM workflow
+SELECT id, workspace_id, name, description, latest_published_version_id, created_by, created_at, updated_at FROM workflow
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -2474,10 +2607,8 @@ func (q *Queries) GetWorkflowInWorkspace(ctx context.Context, arg GetWorkflowInW
 		&i.WorkspaceID,
 		&i.Name,
 		&i.Description,
-		&i.Status,
 		&i.LatestPublishedVersionID,
 		&i.CreatedBy,
-		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -4558,7 +4689,7 @@ func (q *Queries) ListWorkflowSubmissions(ctx context.Context, arg ListWorkflowS
 
 const listWorkflowSummaries = `-- name: ListWorkflowSummaries :many
 SELECT
-  workflow_def.id, workflow_def.workspace_id, workflow_def.name, workflow_def.description, workflow_def.status, workflow_def.latest_published_version_id, workflow_def.created_by, workflow_def.archived_at, workflow_def.created_at, workflow_def.updated_at,
+  workflow_def.id, workflow_def.workspace_id, workflow_def.name, workflow_def.description, workflow_def.latest_published_version_id, workflow_def.created_by, workflow_def.created_at, workflow_def.updated_at,
   COALESCE(published.version, 0)::integer AS latest_published_version,
   COALESCE((
     SELECT count(*)::integer
@@ -4586,27 +4717,16 @@ LEFT JOIN LATERAL (
   LIMIT 1
 ) published ON true
 WHERE workflow_def.workspace_id = $1
-  AND (
-    $2::text IS NULL
-    OR workflow_def.status = $2
-  )
 ORDER BY workflow_def.updated_at DESC, workflow_def.id DESC
 `
-
-type ListWorkflowSummariesParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Status      pgtype.Text `json:"status"`
-}
 
 type ListWorkflowSummariesRow struct {
 	ID                       pgtype.UUID        `json:"id"`
 	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
 	Name                     string             `json:"name"`
 	Description              string             `json:"description"`
-	Status                   string             `json:"status"`
 	LatestPublishedVersionID pgtype.UUID        `json:"latest_published_version_id"`
 	CreatedBy                pgtype.UUID        `json:"created_by"`
-	ArchivedAt               pgtype.Timestamptz `json:"archived_at"`
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
 	LatestPublishedVersion   int32              `json:"latest_published_version"`
@@ -4617,8 +4737,8 @@ type ListWorkflowSummariesRow struct {
 	LatestChangeSummary      string             `json:"latest_change_summary"`
 }
 
-func (q *Queries) ListWorkflowSummaries(ctx context.Context, arg ListWorkflowSummariesParams) ([]ListWorkflowSummariesRow, error) {
-	rows, err := q.db.Query(ctx, listWorkflowSummaries, arg.WorkspaceID, arg.Status)
+func (q *Queries) ListWorkflowSummaries(ctx context.Context, workspaceID pgtype.UUID) ([]ListWorkflowSummariesRow, error) {
+	rows, err := q.db.Query(ctx, listWorkflowSummaries, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -4631,10 +4751,8 @@ func (q *Queries) ListWorkflowSummaries(ctx context.Context, arg ListWorkflowSum
 			&i.WorkspaceID,
 			&i.Name,
 			&i.Description,
-			&i.Status,
 			&i.LatestPublishedVersionID,
 			&i.CreatedBy,
-			&i.ArchivedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LatestPublishedVersion,
@@ -4799,19 +4917,13 @@ func (q *Queries) ListWorkflowVersions(ctx context.Context, arg ListWorkflowVers
 }
 
 const listWorkflows = `-- name: ListWorkflows :many
-SELECT id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at FROM workflow
+SELECT id, workspace_id, name, description, latest_published_version_id, created_by, created_at, updated_at FROM workflow
 WHERE workspace_id = $1
-  AND ($2::text IS NULL OR status = $2)
 ORDER BY updated_at DESC, id DESC
 `
 
-type ListWorkflowsParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Status      pgtype.Text `json:"status"`
-}
-
-func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]Workflow, error) {
-	rows, err := q.db.Query(ctx, listWorkflows, arg.WorkspaceID, arg.Status)
+func (q *Queries) ListWorkflows(ctx context.Context, workspaceID pgtype.UUID) ([]Workflow, error) {
+	rows, err := q.db.Query(ctx, listWorkflows, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -4824,10 +4936,8 @@ func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([
 			&i.WorkspaceID,
 			&i.Name,
 			&i.Description,
-			&i.Status,
 			&i.LatestPublishedVersionID,
 			&i.CreatedBy,
-			&i.ArchivedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -5309,11 +5419,10 @@ func (q *Queries) SetWorkflowNodeWaitingReasons(ctx context.Context, arg SetWork
 
 const setWorkflowPublishedVersion = `-- name: SetWorkflowPublishedVersion :one
 UPDATE workflow
-SET status = 'published',
-    latest_published_version_id = $1,
+SET latest_published_version_id = $1,
     updated_at = now()
-WHERE id = $2 AND workspace_id = $3 AND status <> 'archived'
-RETURNING id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
+WHERE id = $2 AND workspace_id = $3
+RETURNING id, workspace_id, name, description, latest_published_version_id, created_by, created_at, updated_at
 `
 
 type SetWorkflowPublishedVersionParams struct {
@@ -5330,10 +5439,8 @@ func (q *Queries) SetWorkflowPublishedVersion(ctx context.Context, arg SetWorkfl
 		&i.WorkspaceID,
 		&i.Name,
 		&i.Description,
-		&i.Status,
 		&i.LatestPublishedVersionID,
 		&i.CreatedBy,
-		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -5430,8 +5537,8 @@ UPDATE workflow
 SET name = COALESCE($1, name),
     description = COALESCE($2, description),
     updated_at = now()
-WHERE id = $3 AND workspace_id = $4 AND status <> 'archived'
-RETURNING id, workspace_id, name, description, status, latest_published_version_id, created_by, archived_at, created_at, updated_at
+WHERE id = $3 AND workspace_id = $4
+RETURNING id, workspace_id, name, description, latest_published_version_id, created_by, created_at, updated_at
 `
 
 type UpdateWorkflowMetadataParams struct {
@@ -5454,10 +5561,8 @@ func (q *Queries) UpdateWorkflowMetadata(ctx context.Context, arg UpdateWorkflow
 		&i.WorkspaceID,
 		&i.Name,
 		&i.Description,
-		&i.Status,
 		&i.LatestPublishedVersionID,
 		&i.CreatedBy,
-		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

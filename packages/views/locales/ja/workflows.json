@@ -48,7 +48,6 @@
     "edit_workflow": "ワークフローを編集",
     "save_metadata": "詳細を保存",
     "save_roles": "ロール割り当てを保存",
-    "archive": "アーカイブ",
     "start_workflow": "ワークフローを開始",
     "start_existing_workflow": "既存 issue から開始",
     "load_more": "さらに読み込む",
@@ -151,7 +150,6 @@
     "empty_description": "再利用可能なアクティビティ、役割、成果物、承認を定義します。",
     "admin_only": "テンプレートを管理できるのは Owner と管理者のみです。",
     "published": "公開済み",
-    "archived": "アーカイブ",
     "version": "バージョン {{version}}",
     "activities": "アクティビティ",
     "runs": "実行数",
@@ -165,10 +163,6 @@
     "metadata_description": "テンプレート名、説明、適用する Issue タイプを更新します。",
     "name": "テンプレート名",
     "description": "説明",
-    "archive_title": "このテンプレートをアーカイブしますか？",
-    "archive_description": "履歴と既存の実行には残りますが、新しいワークフローを開始できなくなります。",
-    "archived_help": "このテンプレートはアーカイブ済みで読み取り専用です。既存の実行と公開バージョンは引き続き利用できます。",
-    "show_archived": "アーカイブ済み（{{count}}）",
     "builtin_description": "すぐに使える標準の開発フローです。作成後すぐに利用でき、後から編集もできます。",
     "builtin_create": "作成",
     "column_name": "名称",
@@ -177,8 +171,8 @@
     "column_updated": "最終公開",
     "delete_title": "このワークフローを削除しますか？",
     "delete_description": "「{{name}}」と保存済みのバージョンを完全に削除します。元に戻せません。",
-    "delete_blocked": "「{{name}}」には実行履歴があるため削除できません。アーカイブを使ってください。履歴は残り、新しい実行は開始できなくなります。",
-    "browse_builtin": "スターターテンプレートを見る"
+    "browse_builtin": "スターターテンプレートを見る",
+    "delete_with_runs": "「{{name}}」と終了済みの {{count}} 件の実行履歴を完全に削除します。実行が作成した Issue はワークスペースに残ります。元に戻せません。"
   },
   "workbench": {
     "title": "ワークフロー作業台",

@@ -2,14 +2,13 @@
 -- Workflows: the versioned definition a run executes.
 -- =====================
 
--- Counts live workflows already using a name. Archived ones are excluded:
--- replacing a workflow by archiving the old one and recreating it under the
--- same name is the normal revision path once runs depend on the old version.
+-- Counts workflows already using a name. Every workflow counts now: archiving
+-- used to exempt retired ones so their name could be reused, and deleting a
+-- workflow frees its name outright.
 -- name: CountLiveWorkflowsByName :one
 SELECT count(*) FROM workflow
 WHERE workspace_id = @workspace_id
   AND lower(btrim(name)) = lower(btrim(@name::text))
-  AND status <> 'archived'
   -- NULL on create (nothing to exclude). `id <> NULL` evaluates to NULL, not
   -- true, which would filter every row out and make the check always pass.
   AND (@exclude_id::uuid IS NULL OR id <> @exclude_id);
@@ -17,7 +16,6 @@ WHERE workspace_id = @workspace_id
 -- name: ListWorkflows :many
 SELECT * FROM workflow
 WHERE workspace_id = @workspace_id
-  AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status))
 ORDER BY updated_at DESC, id DESC;
 
 -- name: ListWorkflowSummaries :many
@@ -50,10 +48,6 @@ LEFT JOIN LATERAL (
   LIMIT 1
 ) published ON true
 WHERE workflow_def.workspace_id = @workspace_id
-  AND (
-    sqlc.narg(status)::text IS NULL
-    OR workflow_def.status = sqlc.narg(status)
-  )
 ORDER BY workflow_def.updated_at DESC, workflow_def.id DESC;
 
 -- name: ListRecentWorkflowRuns :many
@@ -79,9 +73,9 @@ WHERE id = @id AND workspace_id = @workspace_id;
 
 -- name: CreateWorkflow :one
 INSERT INTO workflow (
-    workspace_id, name, description, status, created_by
+    workspace_id, name, description, created_by
 ) VALUES (
-    @workspace_id, @name, @description, 'published', @created_by
+    @workspace_id, @name, @description, @created_by
 )
 RETURNING *;
 
@@ -90,29 +84,8 @@ UPDATE workflow
 SET name = COALESCE(sqlc.narg(name), name),
     description = COALESCE(sqlc.narg(description), description),
     updated_at = now()
-WHERE id = @id AND workspace_id = @workspace_id AND status <> 'archived'
-RETURNING *;
-
--- name: ArchiveWorkflow :one
-UPDATE workflow
-SET status = 'archived', archived_at = now(), updated_at = now()
 WHERE id = @id AND workspace_id = @workspace_id
 RETURNING *;
-
--- Deletes a workflow only while nothing has run it. Runs name the workflow and
--- its version by id, and the schema has no foreign keys to stop those rows from
--- outliving it, so a workflow with history is archived instead. The NOT EXISTS
--- lives inside the DELETE rather than in a preceding read: a run started
--- concurrently then loses the race instead of being orphaned by it.
--- name: DeleteUnusedWorkflow :one
-DELETE FROM workflow
-WHERE workflow.id = @id AND workflow.workspace_id = @workspace_id
-  AND NOT EXISTS (
-    SELECT 1 FROM workflow_instance instance
-    WHERE instance.workflow_id = workflow.id
-      AND instance.workspace_id = workflow.workspace_id
-  )
-RETURNING workflow.id;
 
 -- name: DeleteWorkflowVersions :exec
 DELETE FROM workflow_version
@@ -161,10 +134,9 @@ RETURNING *;
 
 -- name: SetWorkflowPublishedVersion :one
 UPDATE workflow
-SET status = 'published',
-    latest_published_version_id = @latest_published_version_id,
+SET latest_published_version_id = @latest_published_version_id,
     updated_at = now()
-WHERE id = @id AND workspace_id = @workspace_id AND status <> 'archived'
+WHERE id = @id AND workspace_id = @workspace_id
 RETURNING *;
 
 -- =====================
@@ -1897,3 +1869,138 @@ SET review_status = @review_status,
     updated_at = now()
 WHERE id = @id AND workspace_id = @workspace_id AND superseded_at IS NULL
 RETURNING *;
+
+-- =====================
+-- Workflow deletion
+-- =====================
+
+-- name: CountLiveWorkflowRuns :one
+-- Runs that are still in flight, and therefore still name the workflow they
+-- were started from. Deletion waits for them; completed and cancelled runs are
+-- history, which deletion is allowed to take with it.
+SELECT count(*)::bigint
+FROM workflow_instance
+WHERE workflow_id = @workflow_id
+  AND workspace_id = @workspace_id
+  AND status NOT IN ('completed', 'cancelled');
+
+-- name: DetachIssuesFromWorkflow :exec
+-- The issues a workflow's runs created are somebody's work; the process that
+-- asked for them is not. They outlive the workflow, unbound: the origin
+-- pointer would dangle and the metadata would name a run nobody can open.
+UPDATE issue
+SET origin_type = NULL,
+    origin_id = NULL,
+    metadata = issue.metadata - 'workflow',
+    stage = NULL,
+    updated_at = now()
+WHERE issue.workspace_id = @workspace_id
+  AND EXISTS (
+    SELECT 1
+    FROM workflow_node_task task
+    JOIN workflow_instance instance
+      ON instance.id = task.workflow_instance_id
+     AND instance.workspace_id = task.workspace_id
+    WHERE task.issue_id = issue.id
+      AND task.workspace_id = issue.workspace_id
+      AND instance.workflow_id = @workflow_id
+  );
+
+-- name: DetachAgentTasksFromWorkflow :exec
+-- Agent task rows are the runtime's own ledger and are kept: they record work
+-- an agent really did. Only their pointers into the deleted run are cleared.
+UPDATE agent_task_queue
+SET workflow_node_instance_id = NULL,
+    workflow_node_task_id = NULL
+WHERE agent_task_queue.workflow_node_instance_id IN (
+    SELECT node.id
+    FROM workflow_node_instance node
+    JOIN workflow_instance instance
+      ON instance.id = node.workflow_instance_id
+     AND instance.workspace_id = node.workspace_id
+    WHERE instance.workflow_id = @workflow_id
+      AND instance.workspace_id = @workspace_id
+  );
+
+-- name: DeleteWorkflowRunData :exec
+-- Every table hanging off a workflow's runs, leaves first. There are no
+-- foreign keys in this domain, so nothing here is implicit — a table missing
+-- from this list becomes a row pointing at an id that no longer resolves.
+WITH doomed_instances AS (
+    SELECT id FROM workflow_instance
+    WHERE workflow_id = @workflow_id AND workspace_id = @workspace_id
+),
+doomed_nodes AS (
+    SELECT id FROM workflow_node_instance
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = @workspace_id
+),
+cleared_participants AS (
+    DELETE FROM workflow_node_participant
+    WHERE workflow_node_instance_id IN (SELECT id FROM doomed_nodes)
+      AND workspace_id = @workspace_id
+),
+cleared_resolutions AS (
+    DELETE FROM workflow_executor_resolution
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = @workspace_id
+),
+cleared_verdicts AS (
+    DELETE FROM workflow_node_verdict
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = @workspace_id
+),
+cleared_submissions AS (
+    DELETE FROM workflow_node_submission
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = @workspace_id
+),
+cleared_artifacts AS (
+    DELETE FROM workflow_artifact
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = @workspace_id
+),
+cleared_acceptances AS (
+    DELETE FROM workflow_acceptance
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = @workspace_id
+),
+cleared_events AS (
+    DELETE FROM workflow_event
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = @workspace_id
+),
+cleared_roles AS (
+    DELETE FROM workflow_instance_role_assignment
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = @workspace_id
+),
+cleared_tasks AS (
+    DELETE FROM workflow_node_task
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = @workspace_id
+),
+cleared_nodes AS (
+    DELETE FROM workflow_node_instance
+    WHERE workflow_instance_id IN (SELECT id FROM doomed_instances)
+      AND workspace_id = @workspace_id
+)
+DELETE FROM workflow_instance
+WHERE workflow_instance.workflow_id = @workflow_id
+  AND workflow_instance.workspace_id = @workspace_id;
+
+-- name: DeleteWorkflowWhenSettled :one
+-- The guard is part of the statement, not a check before it: a run started
+-- between a separate check and this delete would be left naming a workflow
+-- that no longer exists. No row comes back when a live run appeared, and the
+-- caller rolls the whole cascade back.
+DELETE FROM workflow
+WHERE workflow.id = @id
+  AND workflow.workspace_id = @workspace_id
+  AND NOT EXISTS (
+    SELECT 1 FROM workflow_instance
+    WHERE workflow_instance.workflow_id = workflow.id
+      AND workflow_instance.workspace_id = workflow.workspace_id
+      AND workflow_instance.status NOT IN ('completed', 'cancelled')
+  )
+RETURNING workflow.id;

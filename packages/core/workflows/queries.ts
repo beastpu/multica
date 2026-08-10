@@ -15,10 +15,6 @@ export interface WorkflowInstanceFilters {
   limit?: number;
 }
 
-export interface WorkflowFilters {
-  status?: string;
-}
-
 export const workflowKeys = {
   all: (wsId: string) => ["workflows", wsId] as const,
   instances: (wsId: string) =>
@@ -43,8 +39,8 @@ export const workflowKeys = {
     [...workflowKeys.all(wsId), "nodes", nodeInstanceId] as const,
   templates: (wsId: string) =>
     [...workflowKeys.all(wsId), "templates"] as const,
-  templateList: (wsId: string, filters: WorkflowFilters = {}) =>
-    [...workflowKeys.templates(wsId), "list", filters] as const,
+  templateList: (wsId: string) =>
+    [...workflowKeys.templates(wsId), "list"] as const,
   template: (wsId: string, templateId: string) =>
     [...workflowKeys.templates(wsId), "detail", templateId] as const,
   builtinTemplates: (wsId: string) =>
@@ -172,13 +168,10 @@ export function workflowInstanceArtifactsOptions(wsId: string, instanceId: strin
   });
 }
 
-export function workflowListOptions(
-  wsId: string,
-  filters: WorkflowFilters = {},
-) {
+export function workflowListOptions(wsId: string) {
   return queryOptions({
-    queryKey: workflowKeys.templateList(wsId, filters),
-    queryFn: () => api.listWorkflows(filters),
+    queryKey: workflowKeys.templateList(wsId),
+    queryFn: () => api.listWorkflows(),
   });
 }
 

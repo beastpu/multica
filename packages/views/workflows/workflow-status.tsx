@@ -2,7 +2,6 @@
 
 import {
   AlertTriangle,
-  Archive,
   CheckCircle2,
   Circle,
   CircleDashed,
@@ -38,11 +37,8 @@ const statusStyle: Record<string, string> = {
   pass: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   rejected: "border-destructive/30 bg-destructive/10 text-destructive",
   fail: "border-destructive/30 bg-destructive/10 text-destructive",
-  // Workflow lifecycle. Published is live and archived is retired — the
-  // latter reads as muted on purpose, since an archived workflow is shown
-  // only when the user asked to see retired ones.
+  // Workflow lifecycle. A workflow has one state: it exists and is runnable.
   published: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  archived: "border-muted-foreground/20 bg-muted text-muted-foreground",
   valid: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
   invalid: "border-destructive/30 bg-destructive/10 text-destructive",
 };
@@ -119,8 +115,6 @@ function StatusIcon({ status }: { status: string }) {
       return <SkipForward className={className} />;
     case "published":
       return <CheckCircle2 className={className} />;
-    case "archived":
-      return <Archive className={className} />;
     case "unknown":
       return <CircleDashed className={className} />;
     default:
@@ -162,7 +156,6 @@ export function WorkflowStatusBadge({
       case "pass": return t(($) => $.status.pass);
       case "fail": return t(($) => $.status.fail);
       case "published": return t(($) => $.templates.published);
-      case "archived": return t(($) => $.templates.archived);
       default: return t(($) => $.status.unknown);
     }
   })();

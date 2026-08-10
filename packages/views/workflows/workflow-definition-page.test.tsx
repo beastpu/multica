@@ -13,7 +13,7 @@ import { WorkflowPage } from "./workflow-definition-page";
 const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   updateMetadata: vi.fn(),
-  archive: vi.fn(),
+  deleteWorkflow: vi.fn(),
   navigate: vi.fn(),
   validation: { valid: true, errors: [] as string[] },
 }));
@@ -40,10 +40,8 @@ const detail = {
     workspace_id: "workspace-1",
     name: "Delivery workflow",
     description: "Ship a requirement safely",
-    status: "published",
     latest_published_version_id: "version-1",
     created_by: "user-1",
-    archived_at: null,
     created_at: "2026-07-23T00:00:00Z",
     updated_at: "2026-07-23T00:00:00Z",
     latest_published_version: 1,
@@ -152,13 +150,13 @@ vi.mock("@multica/core/workflows", () => ({
       });
     },
   }),
-  useArchiveWorkflow: () => ({
+  useDeleteWorkflow: () => ({
     isPending: false,
     mutate: (
       input: unknown,
       options?: { onSuccess?: () => void },
     ) => {
-      mocks.archive(input);
+      mocks.deleteWorkflow(input);
       options?.onSuccess?.();
     },
   }),
@@ -425,7 +423,7 @@ describe("WorkflowPage", () => {
     });
   });
 
-  it("does not archive until the destructive action is confirmed", async () => {
+  it("does not delete until the destructive action is confirmed", async () => {
     const user = userEvent.setup();
     renderPage();
 
@@ -433,13 +431,13 @@ describe("WorkflowPage", () => {
       await screen.findByRole("button", { name: "More actions" }),
     );
     await user.click(
-      await screen.findByRole("menuitem", { name: "Archive" }),
+      await screen.findByRole("menuitem", { name: "Delete" }),
     );
-    expect(mocks.archive).not.toHaveBeenCalled();
+    expect(mocks.deleteWorkflow).not.toHaveBeenCalled();
 
     const dialog = await screen.findByRole("alertdialog");
-    await user.click(within(dialog).getByRole("button", { name: "Archive" }));
-    await waitFor(() => expect(mocks.archive).toHaveBeenCalledTimes(1));
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(mocks.deleteWorkflow).toHaveBeenCalledTimes(1));
   });
 
   it("inserts a connected node from the graph instead of creating an orphan", async () => {

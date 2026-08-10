@@ -68,16 +68,8 @@ export function WorkflowRunsPage({ workflowId }: { workflowId?: string }) {
   const workflowsQuery = useQuery(workflowListOptions(wsId));
   // Narrowed to one workflow, the page is that workflow's history and says so
   // — otherwise every workflow's history looks like the same page.
-  const allWorkflows = workflowsQuery.data?.workflows ?? [];
-  const scopedWorkflow = allWorkflows.find((item) => item.id === workflow);
-  // Retired workflows outnumber live ones and their runs are still listed here
-  // regardless — what the picker owes the reader is the workflows they might
-  // narrow to, not the whole archive. The one currently narrowed to stays in
-  // the list even when archived, so arriving from its run-history link does
-  // not leave the select showing a blank.
-  const pickerWorkflows = allWorkflows.filter(
-    (item) => item.status !== "archived" || item.id === workflow,
-  );
+  const pickerWorkflows = workflowsQuery.data?.workflows ?? [];
+  const scopedWorkflow = pickerWorkflows.find((item) => item.id === workflow);
   const runs = useMemo(
     () => runsQuery.data?.pages.flatMap((page) => page.instances) ?? [],
     [runsQuery.data],
@@ -155,11 +147,7 @@ export function WorkflowRunsPage({ workflowId }: { workflowId?: string }) {
           >
             <option value="">{t(($) => $.filters.all_templates)}</option>
             {pickerWorkflows.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.status === "archived"
-                  ? `${item.name} · ${t(($) => $.templates.archived)}`
-                  : item.name}
-              </option>
+              <option key={item.id} value={item.id}>{item.name}</option>
             ))}
           </select>
         </div>

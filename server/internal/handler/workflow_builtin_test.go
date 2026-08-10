@@ -91,7 +91,6 @@ func TestCreateWorkflowFromBuiltin(t *testing.T) {
 		Workflow struct {
 			ID                       string `json:"id"`
 			Name                     string `json:"name"`
-			Status                   string `json:"status"`
 			LatestPublishedVersionID string `json:"latest_published_version_id"`
 		} `json:"workflow"`
 		Version struct {
@@ -104,9 +103,6 @@ func TestCreateWorkflowFromBuiltin(t *testing.T) {
 	}
 	if response.Workflow.Name != builtin.Name {
 		t.Fatalf("template name = %q, want %q", response.Workflow.Name, builtin.Name)
-	}
-	if response.Workflow.Status != "published" {
-		t.Fatalf("template status = %q, want published", response.Workflow.Status)
 	}
 	if response.Version.Version != 1 {
 		t.Fatalf("version = %d, want 1", response.Version.Version)

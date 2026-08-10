@@ -21,7 +21,6 @@ import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
-  useArchiveWorkflow,
   useCreateWorkflow,
   useCreateWorkflowTemplateFromBuiltin,
   useCopyWorkflow,
@@ -88,7 +87,6 @@ import {
 } from "../layout/collection-page";
 import { cn } from "@multica/ui/lib/utils";
 import { useT, useTimeAgo } from "../i18n";
-import { WorkflowStatusBadge } from "./workflow-status";
 import { canManageWorkflows } from "./workflow-list";
 import {
   workflowPreviewActivities,
@@ -144,8 +142,6 @@ function defaultWorkflowDefinition(): WorkflowDefinition {
     acceptance: {},
   };
 }
-
-type TemplateStatusFilter = "all" | "published" | "archived";
 
 function recentRunMarkerClass(status: string): string {
   switch (status) {
@@ -224,17 +220,6 @@ function RunHistoryCell({ template }: { template: Workflow }) {
   );
 }
 
-function matchesTemplateStatus(
-  template: Workflow,
-  filter: TemplateStatusFilter,
-): boolean {
-  switch (filter) {
-    case "all":
-      return true;
-    default:
-      return template.status === filter;
-  }
-}
 
 // unusedWorkflowName suffixes the starter name until it is free. The server
 // rejects a duplicate name, and the starter name is the same every time — so
@@ -364,25 +349,15 @@ function TemplatesPanel({
   const { data, isLoading, isError } = useQuery(
     workflowListOptions(wsId),
   );
-  // Archived workflows are audit history, not working material — they stay
-  // one click away behind the "archived" chip instead of padding the default
-  // view of every admin who opens the page.
-  const [statusFilter, setStatusFilter] =
-    useState<TemplateStatusFilter>("published");
-  const allTemplates = data?.workflows ?? [];
-  const visibleTemplates = allTemplates.filter((template) =>
-    matchesTemplateStatus(template, statusFilter)
-  );
+  const visibleTemplates = data?.workflows ?? [];
   const copyTemplate = useCopyWorkflow();
   const [runTemplate, setRunTemplate] = useState<Workflow | null>(null);
   const [deleteTemplate, setDeleteTemplate] = useState<Workflow | null>(null);
-  // A workflow that has run cannot be deleted — the runs name it by id and
-  // would be left pointing at nothing — so the same confirmation offers
-  // archiving instead of dead-ending on a refusal the reader can't act on.
-  const deleteHasRuns = (deleteTemplate?.run_count ?? 0) > 0;
+  // Deleting takes the run history with it, so the confirmation says how much
+  // history is about to go rather than just naming the workflow.
+  const deleteRunCount = deleteTemplate?.run_count ?? 0;
   const deleteWorkflow = useDeleteWorkflow();
-  const archiveWorkflow = useArchiveWorkflow();
-  const deletePending = deleteWorkflow.isPending || archiveWorkflow.isPending;
+  const deletePending = deleteWorkflow.isPending;
 
   if (isError) {
     return (
@@ -411,9 +386,6 @@ function TemplatesPanel({
                 <th scope="col" className="px-3 py-2 text-left font-medium">
                   {t(($) => $.templates.column_name)}
                 </th>
-                <th scope="col" className="px-3 py-2 text-left font-medium">
-                  {t(($) => $.templates.column_status)}
-                </th>
                 <th scope="col" className="px-3 py-2 text-right font-medium">
                   {t(($) => $.templates.activities)}
                 </th>
@@ -426,39 +398,6 @@ function TemplatesPanel({
               </tr>
             </thead>
             <tbody className="divide-y">
-              {/* The filters read as part of the list, not a control bar
-                  hovering above it — same alignment, same rules. */}
-              <tr>
-                <td colSpan={5} className="px-3 py-2">
-                  <div
-                    aria-label={t(($) => $.filters.status)}
-                    className="flex flex-wrap items-center gap-1"
-                  >
-                    {([
-                      ["all", t(($) => $.filters.all_statuses)],
-                      ["published", t(($) => $.templates.published)],
-                      ["archived", t(($) => $.templates.archived)],
-                    ] as Array<[TemplateStatusFilter, string]>).map(
-                      ([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          aria-pressed={statusFilter === value}
-                          onClick={() => setStatusFilter(value)}
-                          className={cn(
-                            "min-h-8 rounded-md px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                            statusFilter === value
-                              ? "bg-muted text-foreground"
-                              : "text-muted-foreground hover:bg-muted/60",
-                          )}
-                        >
-                          {label}
-                        </button>
-                      ),
-                    )}
-                  </div>
-                </td>
-              </tr>
               {visibleTemplates.map((template) => (
                 <tr
                   key={template.id}
@@ -486,9 +425,6 @@ function TemplatesPanel({
                       </div>
                     </div>
                   </td>
-                  <td className="px-3 py-2">
-                    <WorkflowStatusBadge status={template.status} />
-                  </td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {template.activity_count}
                   </td>
@@ -509,7 +445,7 @@ function TemplatesPanel({
                       overflow where a mis-click cannot reach them.
                     */}
                     <div className="-mr-2 flex items-center justify-end gap-0.5">
-                      {template.status === "published" && (
+                      {(
                         <Button
                           size="icon-sm"
                           variant="ghost"
@@ -623,12 +559,14 @@ function TemplatesPanel({
               {t(($) => $.templates.delete_title)}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {t(
-                ($) => deleteHasRuns
-                  ? $.templates.delete_blocked
-                  : $.templates.delete_description,
-                { name: deleteTemplate?.name ?? "" },
-              )}
+              {deleteRunCount > 0
+                ? t(($) => $.templates.delete_with_runs, {
+                  name: deleteTemplate?.name ?? "",
+                  count: deleteRunCount,
+                })
+                : t(($) => $.templates.delete_description, {
+                  name: deleteTemplate?.name ?? "",
+                })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -644,17 +582,11 @@ function TemplatesPanel({
                 const failed = {
                   onError: () => toast.error(t(($) => $.errors.action_failed)),
                 };
-                if (target.run_count > 0) {
-                  archiveWorkflow.mutate(target.id, failed);
-                } else {
-                  deleteWorkflow.mutate(target.id, failed);
-                }
+                deleteWorkflow.mutate(target.id, failed);
                 setDeleteTemplate(null);
               }}
             >
-              {deleteHasRuns
-                ? t(($) => $.actions.archive)
-                : t(($) => $.actions.delete)}
+              {t(($) => $.actions.delete)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -680,7 +612,7 @@ export function NewWorkflowDialog() {
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const templatesQuery = useQuery(
-    workflowListOptions(wsId, { status: "published" }),
+    workflowListOptions(wsId),
   );
   const templateQuery = useQuery({
     ...workflowOptions(wsId, templateId),
@@ -700,9 +632,7 @@ export function NewWorkflowDialog() {
   });
   const create = useCreateWorkflowRun();
   const templates = useMemo(
-    () => (templatesQuery.data?.workflows ?? []).filter(
-      (template) => template.status === "published",
-    ),
+    () => templatesQuery.data?.workflows ?? [],
     [templatesQuery.data?.workflows],
   );
   // Every stored version is runnable, so the whole history is startable.

@@ -75,8 +75,8 @@ func TestWorkflowRuntimeReworkAndAcceptance(t *testing.T) {
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workflow (
-			workspace_id, name, status, created_by
-		) VALUES ($1, 'Runtime test template', 'published', $2)
+			workspace_id, name, created_by
+		) VALUES ($1, 'Runtime test template', $2)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)
@@ -702,8 +702,8 @@ func TestCreateWorkflowAtomicAndIdempotent(t *testing.T) {
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow (workspace_id, name, status, created_by)
-		VALUES ($1, 'Atomic test template', 'published', $2)
+		INSERT INTO workflow (workspace_id, name, created_by)
+		VALUES ($1, 'Atomic test template', $2)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)
@@ -4501,8 +4501,8 @@ func createPublishedWorkflowForTest(
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow (workspace_id, name, status, created_by)
-		VALUES ($1, $2, 'published', $3)
+		INSERT INTO workflow (workspace_id, name, created_by)
+		VALUES ($1, $2, $3)
 		RETURNING id
 	`, testWorkspaceID, name, testUserID).Scan(&templateID); err != nil {
 		t.Fatalf("create workflow template %q: %v", name, err)
@@ -5020,8 +5020,8 @@ func TestWorkflowMemberRejectionIsNotAttributedToTheCritic(t *testing.T) {
 	definitionJSON, _ := json.Marshal(definition)
 	var templateID, versionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workflow (workspace_id, name, status, created_by)
-		VALUES ($1, 'Rejection attribution template', 'published', $2)
+		INSERT INTO workflow (workspace_id, name, created_by)
+		VALUES ($1, 'Rejection attribution template', $2)
 		RETURNING id
 	`, testWorkspaceID, testUserID).Scan(&templateID); err != nil {
 		t.Fatalf("create template: %v", err)

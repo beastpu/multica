@@ -195,10 +195,8 @@ export interface Workflow {
   workspace_id: string;
   name: string;
   description: string;
-  status: string;
   latest_published_version_id: string | null;
   created_by: string;
-  archived_at: string | null;
   created_at: string;
   updated_at: string;
   latest_published_version: number;
